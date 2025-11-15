@@ -1,0 +1,10 @@
+# Compiled binaries
+software-aes
+cloud-kms
+cloud-kms-aws
+cloud-kms-gcp
+cloud-kms-azure
+
+# Test output
+*.out
+*.test

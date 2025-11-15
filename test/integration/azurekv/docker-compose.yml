@@ -1,0 +1,17 @@
+services:
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/azurekv/Dockerfile
+    environment:
+      # No AZURE_KEYVAULT_ENDPOINT - use mock client
+      - AZURE_TENANT_ID=test-tenant
+      - AZURE_CLIENT_ID=test-client
+      - AZURE_CLIENT_SECRET=test-secret
+    volumes:
+      - ../../..:/app
+    working_dir: /app
+
+networks:
+  default:
+    name: keychain-azurekv-test

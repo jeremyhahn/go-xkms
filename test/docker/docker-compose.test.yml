@@ -1,0 +1,93 @@
+# Docker Compose Test Configuration
+# Optimized configuration for running integration tests
+# Usage: docker compose -f docker-compose.yml -f test/docker/docker-compose.test.yml up --abort-on-container-exit
+
+version: '3.8'
+
+services:
+  # SWTPM service overrides for testing
+  swtpm:
+    environment:
+      # Enable more verbose logging for tests
+      - SWTPM_LOG_LEVEL=20
+    # Faster health check for tests
+    healthcheck:
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  # SoftHSM service overrides for testing
+  softhsm:
+    # Faster health check for tests
+    healthcheck:
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+  # Integration test service overrides
+  integration-test:
+    environment:
+      # Test-specific environment variables
+      - GO_TEST_TIMEOUT=30m
+      - GO_TEST_VERBOSE=1
+      - TEST_SWTPM_HOST=swtpm
+      - TEST_SWTPM_PORT=2321
+      - TEST_SOFTHSM_TOKENS=/tokens
+    command: >
+      sh -c "
+        echo 'Waiting for SWTPM to be ready...' &&
+        sleep 2 &&
+        echo 'Running integration tests...' &&
+        make integration-test
+      "
+    # Exit on test completion
+    restart: "no"
+
+  # Standalone test runner for quick tests
+  test-runner:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: go-keychain-test:latest
+    container_name: go-keychain-test-runner
+    depends_on:
+      swtpm:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    volumes:
+      - ..:/workspace:cached
+      - softhsm-tokens:/tokens
+      - swtpm-data:/var/lib/swtpm/tpmstate
+      # Cache Go modules for faster builds
+      - go-build-cache:/root/.cache/go-build
+      - go-mod-cache:/go/pkg/mod
+    environment:
+      - CGO_ENABLED=1
+      - GOCACHE=/root/.cache/go-build
+      - GOMODCACHE=/go/pkg/mod
+      # TPM configuration
+      - TPM_DEVICE_PATH=tcp://swtpm:2321
+      - TPM_USE_SIMULATOR=true
+      - TPM_SIM_HOST=swtpm
+      - TPM_SIM_PORT=2321
+      - TPM2TOOLS_TCTI=mssim:host=swtpm,port=2321
+      # PKCS#11 configuration
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+      - PKCS11_TOKEN=test-token
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      # Test configuration
+      - GO_TEST_TIMEOUT=30m
+      - GO_TEST_VERBOSE=1
+    working_dir: /workspace
+    command: ["make", "test"]
+    restart: "no"
+    networks:
+      - keychain-test
+
+volumes:
+  # Additional volumes for test caching
+  go-build-cache:
+    driver: local
+  go-mod-cache:
+    driver: local

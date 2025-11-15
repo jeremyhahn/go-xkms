@@ -1,0 +1,138 @@
+version: '3.8'
+
+services:
+  # SWTPM TPM 2.0 Simulator Service
+  swtpm:
+    build:
+      context: test/docker/swtpm
+      dockerfile: Dockerfile
+    image: go-keychain-swtpm:latest
+    container_name: go-keychain-swtpm
+    ports:
+      - "2321:2321"  # TPM command port
+      - "2322:2322"  # TPM control port
+    volumes:
+      - swtpm-data:/var/lib/swtpm/tpmstate
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - keychain-test
+
+  # SoftHSM PKCS#11 Service
+  softhsm:
+    build:
+      context: test/docker/softhsm
+      dockerfile: Dockerfile
+    image: go-keychain-softhsm:latest
+    container_name: go-keychain-softhsm
+    volumes:
+      - softhsm-tokens:/tokens
+    environment:
+      - SOFTHSM2_CONF=/home/softhsm/softhsm2.conf
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+    healthcheck:
+      test: ["CMD", "test", "-f", "/usr/local/lib/softhsm/libsofthsm2.so"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - keychain-test
+
+  # Integration test service
+  integration-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: go-keychain-test:latest
+    container_name: go-keychain-integration
+    depends_on:
+      swtpm:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    volumes:
+      # Mount source code for development
+      - .:/workspace:cached
+      # Mount SoftHSM tokens from softhsm service
+      - softhsm-tokens:/tokens
+      # Mount SWTPM state from swtpm service
+      - swtpm-data:/var/lib/swtpm/tpmstate
+    environment:
+      - CGO_ENABLED=1
+      # TPM configuration
+      - TPM_DEVICE_PATH=tcp://swtpm:2321
+      - TPM_USE_SIMULATOR=true
+      - TPM_SIM_HOST=swtpm
+      - TPM_SIM_PORT=2321
+      - TPM2TOOLS_TCTI=mssim:host=swtpm,port=2321
+      # PKCS#11 configuration
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+      - PKCS11_TOKEN=test-token
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+    command: ["go", "test", "-v", "-tags=integration", "./test/integration/..."]
+    networks:
+      - keychain-test
+
+  # Unit test service
+  unit-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: go-keychain-test:latest
+    container_name: go-keychain-unit
+    volumes:
+      - .:/workspace:cached
+    environment:
+      - CGO_ENABLED=1
+    command: ["go", "test", "-v", "-race", "-coverprofile=coverage.out", "./..."]
+    networks:
+      - keychain-test
+
+  # Development shell service
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: go-keychain-test:latest
+    container_name: go-keychain-dev
+    depends_on:
+      swtpm:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    volumes:
+      - .:/workspace:cached
+      # Mount SoftHSM tokens from softhsm service
+      - softhsm-tokens:/tokens
+      # Mount SWTPM state from swtpm service
+      - swtpm-data:/var/lib/swtpm/tpmstate
+    environment:
+      - CGO_ENABLED=1
+      # TPM configuration
+      - TPM_DEVICE_PATH=tcp://swtpm:2321
+      - TPM_USE_SIMULATOR=true
+      - TPM_SIM_HOST=swtpm
+      - TPM_SIM_PORT=2321
+      - TPM2TOOLS_TCTI=mssim:host=swtpm,port=2321
+      # PKCS#11 configuration
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+      - PKCS11_TOKEN=test-token
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+    entrypoint: ["/bin/bash"]
+    stdin_open: true
+    tty: true
+    networks:
+      - keychain-test
+
+volumes:
+  softhsm-tokens:
+    driver: local
+  swtpm-data:
+    driver: local
+
+networks:
+  keychain-test:
+    driver: bridge

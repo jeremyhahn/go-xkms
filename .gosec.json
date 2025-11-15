@@ -1,0 +1,15 @@
+{
+  "exclude-generated": true,
+  "exclude-dirs": [
+    "vendor",
+    ".git"
+  ],
+  "exclude": [
+    "G103"
+  ],
+  "exclude-rules": {
+    "G304": {
+      "description": "File path provided as tainted input - excluded for filesystem abstraction layer"
+    }
+  }
+}

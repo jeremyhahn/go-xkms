@@ -1,0 +1,43 @@
+services:
+  tpm-simulator:
+    image: ghcr.io/stefanberger/swtpm:latest
+    command:
+      - socket
+      - --tpmstate
+      - dir=/tmp
+      - --tpm2
+      - --server
+      - type=tcp,port=2321,bindaddr=0.0.0.0
+      - --ctrl
+      - type=tcp,port=2322,bindaddr=0.0.0.0
+      - --flags
+      - startup-clear
+      - --log
+      - level=1
+    healthcheck:
+      test: ["CMD", "sh", "-c", "pidof swtpm || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "2321:2321"
+      - "2322:2322"
+
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/tpm2/Dockerfile
+    depends_on:
+      tpm-simulator:
+        condition: service_healthy
+    environment:
+      - TPM2_SIMULATOR_HOST=tpm-simulator
+      - TPM2_SIMULATOR_PORT=2321
+    volumes:
+      - ../../..:/app
+    working_dir: /app
+
+networks:
+  default:
+    name: keychain-tpm2-test

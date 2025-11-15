@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+  # Unified server (all protocols)
+  keychain-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: go-keychain/server:${VERSION:-latest}
+    container_name: keychain-server
+    ports:
+      - "8443:8443"   # REST
+      - "9443:9443"   # gRPC
+      - "8444:8444/udp" # QUIC
+      - "9444:9444"   # MCP
+    volumes:
+      - keychain-data:/var/lib/keychain
+      - ./configs:/etc/keychain:ro
+    environment:
+      - KEYSTORE_CONFIG=/etc/keychain/config.yaml
+    restart: unless-stopped
+    networks:
+      - keychain-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8443/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # REST-only server
+  keychain-rest:
+    build:
+      context: .
+      dockerfile: Dockerfile.rest
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: go-keychain/rest:${VERSION:-latest}
+    container_name: keychain-rest
+    ports:
+      - "8445:8443"
+    volumes:
+      - keychain-rest-data:/var/lib/keychain
+      - ./configs:/etc/keychain:ro
+    environment:
+      - KEYSTORE_CONFIG=/etc/keychain/config-rest.yaml
+    restart: unless-stopped
+    networks:
+      - keychain-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8443/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - rest-only
+
+  # gRPC-only server
+  keychain-grpc:
+    build:
+      context: .
+      dockerfile: Dockerfile.grpc
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: go-keychain/grpc:${VERSION:-latest}
+    container_name: keychain-grpc
+    ports:
+      - "9445:9443"
+    volumes:
+      - keychain-grpc-data:/var/lib/keychain
+      - ./configs:/etc/keychain:ro
+    environment:
+      - KEYSTORE_CONFIG=/etc/keychain/config-grpc.yaml
+    restart: unless-stopped
+    networks:
+      - keychain-net
+    healthcheck:
+      test: ["CMD", "sh", "-c", "netstat -an | grep 9443 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - grpc-only
+
+  # QUIC-only server
+  keychain-quic:
+    build:
+      context: .
+      dockerfile: Dockerfile.quic
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: go-keychain/quic:${VERSION:-latest}
+    container_name: keychain-quic
+    ports:
+      - "8446:8444/udp"
+    volumes:
+      - keychain-quic-data:/var/lib/keychain
+      - ./configs:/etc/keychain:ro
+    environment:
+      - KEYSTORE_CONFIG=/etc/keychain/config-quic.yaml
+    restart: unless-stopped
+    networks:
+      - keychain-net
+    healthcheck:
+      test: ["CMD", "sh", "-c", "netstat -anu | grep 8444 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - quic-only
+
+  # MCP-only server
+  keychain-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-unknown}
+    image: go-keychain/mcp:${VERSION:-latest}
+    container_name: keychain-mcp
+    ports:
+      - "9446:9444"
+    volumes:
+      - keychain-mcp-data:/var/lib/keychain
+      - ./configs:/etc/keychain:ro
+    environment:
+      - KEYSTORE_CONFIG=/etc/keychain/config-mcp.yaml
+    restart: unless-stopped
+    networks:
+      - keychain-net
+    healthcheck:
+      test: ["CMD", "sh", "-c", "netstat -an | grep 9444 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+      - mcp-only
+
+networks:
+  keychain-net:
+    driver: bridge
+
+volumes:
+  keychain-data:
+    driver: local
+  keychain-rest-data:
+    driver: local
+  keychain-grpc-data:
+    driver: local
+  keychain-quic-data:
+    driver: local
+  keychain-mcp-data:
+    driver: local

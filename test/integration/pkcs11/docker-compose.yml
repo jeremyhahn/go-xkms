@@ -1,0 +1,20 @@
+services:
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/pkcs11/Dockerfile
+    environment:
+      - PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so
+      - PKCS11_TOKEN_LABEL=test-token
+      - PKCS11_PIN=1234
+    volumes:
+      - ../../..:/app
+      - softhsm-data:/var/lib/softhsm
+    working_dir: /app
+
+volumes:
+  softhsm-data:
+
+networks:
+  default:
+    name: keychain-pkcs11-test

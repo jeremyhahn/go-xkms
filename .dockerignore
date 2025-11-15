@@ -1,0 +1,49 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation (not needed for testing)
+*.md
+!CLAUDE.md
+!DOCKER.md
+docs/
+RNG_INTEGRATION_SUMMARY.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test artifacts
+coverage.out
+*.test
+*.out
+
+# Build artifacts
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# CI/CD files (if any)
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Docker files (keep production compose)
+docker-compose.yml
+!docker-compose.production.yml
+
+# OS files
+Thumbs.db

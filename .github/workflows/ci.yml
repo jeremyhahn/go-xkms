@@ -1,0 +1,376 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main, develop ]
+
+env:
+  GO_VERSION: '1.25.3'
+  COVERAGE_THRESHOLD: 90
+  REGISTRY: ghcr.io
+  IMAGE_NAME: jeremyhahn/keychain-cli
+
+jobs:
+  # Job 1: Unit Tests with Coverage Enforcement
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests with coverage
+        run: make coverage
+
+      - name: Calculate coverage
+        id: coverage
+        run: |
+          COVERAGE=$(go tool cover -func=build/coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+          echo "Total coverage: ${COVERAGE}%"
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=${{ steps.coverage.outputs.coverage }}
+          if (( $(echo "${COVERAGE} < ${COVERAGE_THRESHOLD}" | bc -l) )); then
+            echo "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+            exit 1
+          else
+            echo "Coverage ${COVERAGE}% meets threshold ${COVERAGE_THRESHOLD}%"
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: ./build/coverage/coverage.out
+          flags: unittests
+          name: go-keychain-coverage
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            build/coverage/coverage.html
+            build/coverage/coverage.out
+            build/coverage/test.log
+          retention-days: 30
+
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverage = '${{ steps.coverage.outputs.coverage }}';
+            const threshold = '${{ env.COVERAGE_THRESHOLD }}';
+            const status = parseFloat(coverage) >= parseFloat(threshold) ? '✅' : '❌';
+
+            const comment = `## Coverage Report ${status}
+
+            **Total Coverage**: ${coverage}%
+            **Threshold**: ${threshold}%
+
+            ${parseFloat(coverage) >= parseFloat(threshold)
+              ? '✅ Coverage meets the required threshold!'
+              : '❌ Coverage is below the required threshold. Please add more tests.'}
+
+            [View detailed coverage report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  # Job 2: Integration Tests
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: make docker-build
+
+      - name: Run integration tests
+        run: make integration-test
+        timeout-minutes: 30
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            *.out
+            *.log
+            build/test-results/
+          retention-days: 7
+
+  # Job 3: Lint
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run gofmt check
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Code is not formatted:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+          install-mode: goinstall
+
+  # Job 4: Security Scanning
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec security scanner
+        run: gosec -fmt sarif -out gosec-results.sarif ./...
+        continue-on-error: true
+
+      - name: Upload gosec results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: gosec-results.sarif
+          category: gosec
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  # Job 5: Build Binaries
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    strategy:
+      matrix:
+        backend: [software, pkcs8, tpm2, pkcs11, awskms, gcpkms, azurekv, vault]
+        binary: [cli, server, rest-server, grpc-server, quic-server, mcp-server]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev
+
+      - name: Build ${{ matrix.binary }} with ${{ matrix.backend }} backend
+        env:
+          CGO_ENABLED: 1
+        run: |
+          TAGS="${{ matrix.backend }}"
+          if [ "${{ matrix.binary }}" = "cli" ]; then
+            go build -tags="${TAGS}" -o build/keychain-${{ matrix.backend }} ./cmd/cli/main.go
+          else
+            go build -tags="${TAGS}" -o build/keychain-${{ matrix.binary }}-${{ matrix.backend }} ./cmd/${{ matrix.binary }}/main.go
+          fi
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.binary }}-${{ matrix.backend }}
+          path: build/keychain-*
+          retention-days: 7
+
+  # Job 6: Docker Multi-Platform Build with Security Scanning
+  docker:
+    name: Docker Build & Scan
+    runs-on: ubuntu-latest
+    needs: [test, lint, security]
+    if: github.event_name == 'push'
+    permissions:
+      security-events: write
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker image for scanning (amd64 only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.cli
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=dev
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      - name: Run Grype vulnerability scanner
+        uses: anchore/scan-action@v3
+        id: grype
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          fail-build: false
+          severity-cutoff: high
+
+      - name: Upload Grype results
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype
+
+      - name: Push Docker image
+        if: false  # Disabled - Docker publishing is handled by release workflow only
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.cli
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=dev
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Job 7: Race Detector
+  race:
+    name: Race Detector
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with race detector
+        run: go test -race -short ./...

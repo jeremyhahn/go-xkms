@@ -1,0 +1,73 @@
+go-keychain
+Copyright (c) 2025 Jeremy Hahn
+Copyright (c) 2025 Automate The Things, LLC
+
+This software is dual-licensed:
+
+1. GNU Affero General Public License v3.0 (AGPL-3.0)
+   See LICENSE file for full license text
+   https://www.gnu.org/licenses/agpl-3.0.html
+
+2. Commercial License
+   Contact: licensing@automatethethings.com
+   See LICENSE-COMMERCIAL file for details
+
+---
+
+THIRD-PARTY COMPONENTS
+
+This software uses the following open-source components:
+
+## Go Standard Library
+Copyright (c) 2009 The Go Authors
+License: BSD 3-Clause
+https://golang.org/LICENSE
+
+## google/go-tpm
+Copyright (c) 2018 Google LLC
+License: Apache License 2.0
+https://github.com/google/go-tpm
+
+## miekg/pkcs11
+Copyright (c) 2013 Miek Gieben
+License: BSD 3-Clause
+https://github.com/miekg/pkcs11
+
+## AWS SDK for Go
+Copyright (c) 2015 Amazon.com, Inc. or its affiliates
+License: Apache License 2.0
+https://github.com/aws/aws-sdk-go-v2
+
+## Google Cloud Go
+Copyright (c) 2014 Google LLC
+License: Apache License 2.0
+https://github.com/googleapis/google-cloud-go
+
+## Azure SDK for Go
+Copyright (c) Microsoft Corporation
+License: MIT License
+https://github.com/Azure/azure-sdk-for-go
+
+## HashiCorp Vault API
+Copyright (c) HashiCorp, Inc.
+License: MPL 2.0
+https://github.com/hashicorp/vault
+
+---
+
+TRADEMARKS
+
+"go-keychain" is a trademark of Automate The Things, LLC.
+
+TPM, Trusted Platform Module are trademarks of Trusted Computing Group.
+PKCS is a trademark of RSA Security LLC.
+YubiKey is a trademark of Yubico AB.
+AWS, Amazon Web Services are trademarks of Amazon.com, Inc.
+Google Cloud, GCP are trademarks of Google LLC.
+Microsoft Azure is a trademark of Microsoft Corporation.
+HashiCorp Vault is a trademark of HashiCorp, Inc.
+
+---
+
+For licensing inquiries, contact:
+licensing@automatethethings.com

@@ -1,0 +1,52 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Log files
+*.log
+
+# Build artifacts
+/build/
+/dist/
+/bin/
+
+# Go workspace files
+go.work
+go.work.sum
+
+# Test coverage
+*.coverprofile
+coverage.html
+coverage.out
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Keystore test data
+/test/testdata/keys/
+/test/testdata/tokens/
+/test/integration/keys/
+/test/integration/tokens/
+
+# Docker volumes
+/.docker-data/
+
+# Azure Key Vault emulator certificates
+/.azure-emulator/
+
+# Claude Code
+CLAUDE.md
+.claude/

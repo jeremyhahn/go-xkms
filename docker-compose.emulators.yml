@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # LocalStack - AWS KMS Emulator
+  localstack:
+    image: localstack/localstack:latest
+    container_name: go-keychain-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=kms
+      - DEBUG=0
+      - PERSISTENCE=0
+      - SKIP_INFRA_DOWNLOADS=1
+    volumes:
+      - "${TMPDIR:-/tmp}/localstack:/var/lib/localstack"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - keychain-test
+
+  # Azure Key Vault Emulator
+  azure-keyvault:
+    image: jamesgoulddev/azure-keyvault-emulator:latest
+    container_name: go-keychain-azure-kv
+    ports:
+      - "4997:4997"
+    environment:
+      - Persist=false
+      - Kestrel__Certificates__Default__Password=emulator
+      - Kestrel__Certificates__Default__Path=/certs/emulator.pfx
+      - ASPNETCORE_ENVIRONMENT=Development
+      - DisableAuthentication=true
+      - AzureKeyVault__DisableAuthentication=true
+    volumes:
+      - "./.azure-emulator/certs:/certs"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:4997/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - keychain-test
+
+  # HashiCorp Vault
+  vault:
+    image: hashicorp/vault:latest
+    container_name: go-keychain-vault
+    ports:
+      - "8200:8200"
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=root
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+      - VAULT_ADDR=http://0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    command: server -dev -dev-root-token-id=root
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - keychain-test
+
+networks:
+  keychain-test:
+    driver: bridge

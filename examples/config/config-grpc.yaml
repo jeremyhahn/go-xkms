@@ -1,0 +1,54 @@
+# Example configuration for gRPC-only go-keychain server
+
+server:
+  host: 0.0.0.0
+  grpc_port: 9443
+
+protocols:
+  rest: false
+  grpc: true
+  quic: false
+  mcp: false
+
+logging:
+  level: info
+  format: json
+
+tls:
+  enabled: true
+  cert_file: /etc/keychain/server.crt
+  key_file: /etc/keychain/server.key
+  ca_file: /etc/keychain/ca.crt
+  client_auth: require_and_verify
+  client_cas:
+    - /etc/keychain/client-ca.crt
+  min_version: TLS1.2
+
+auth:
+  enabled: true
+  type: mtls
+  mtls: true
+
+ratelimit:
+  enabled: true
+  requests_per_min: 1000
+
+metrics:
+  enabled: true
+  path: /metrics
+  port: 9090
+
+health:
+  enabled: true
+  path: /health
+
+storage:
+  backend: file
+  path: /var/lib/keychain/metadata
+
+default_backend: pkcs8
+
+backends:
+  pkcs8:
+    enabled: true
+    path: /var/lib/keychain/keys

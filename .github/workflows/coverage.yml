@@ -1,0 +1,152 @@
+name: Coverage
+
+on:
+  workflow_dispatch:  # Manual trigger only
+  # Disabled automatic triggers - functionality covered by ci.yml
+  # push:
+  #   branches: [ master, main, develop ]
+  # pull_request:
+  #   branches: [ master, main, develop ]
+
+env:
+  GO_VERSION: '1.25.3'
+  COVERAGE_THRESHOLD: 90
+
+jobs:
+  coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run unit tests with coverage
+        run: make coverage
+
+      - name: Calculate coverage from Makefile output
+        id: coverage
+        run: |
+          COVERAGE=$(go tool cover -func=build/coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "coverage=${COVERAGE}" >> $GITHUB_OUTPUT
+          echo "Total coverage: ${COVERAGE}%"
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE=${{ steps.coverage.outputs.coverage }}
+          if (( $(echo "${COVERAGE} < ${COVERAGE_THRESHOLD}" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+            exit 1
+          else
+            echo "✅ Coverage ${COVERAGE}% meets threshold ${COVERAGE_THRESHOLD}%"
+          fi
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./build/coverage/coverage.out
+          flags: unittests
+          name: go-keychain-coverage
+          fail_ci_if_error: true
+
+      - name: Upload coverage reports as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: |
+            build/coverage/coverage.html
+            build/coverage/coverage.out
+            build/coverage/test.log
+          retention-days: 30
+
+      - name: Comment PR with coverage
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverage = '${{ steps.coverage.outputs.coverage }}';
+            const threshold = '${{ env.COVERAGE_THRESHOLD }}';
+            const status = parseFloat(coverage) >= parseFloat(threshold) ? '✅' : '❌';
+
+            const comment = `## Coverage Report ${status}
+
+            **Total Coverage**: ${coverage}%
+            **Threshold**: ${threshold}%
+
+            ${parseFloat(coverage) >= parseFloat(threshold)
+              ? '✅ Coverage meets the required threshold!'
+              : '❌ Coverage is below the required threshold. Please add more tests.'}
+
+            [View detailed coverage report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+          install-mode: goinstall
+
+  race:
+    name: Race Detector
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with race detector
+        run: make test
+
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run integration tests
+        run: make compose-integration

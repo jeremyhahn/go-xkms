@@ -1,0 +1,467 @@
+// Copyright (c) 2025 Jeremy Hahn
+// SPDX-License-Identifier: AGPL-3.0
+
+syntax = "proto3";
+
+package keychain.v1;
+
+option go_package = "github.com/jeremyhahn/go-keychain/api/proto/keychainv1";
+
+import "google/protobuf/timestamp.proto";
+
+// KeystoreService provides key management and cryptographic operations
+service KeystoreService {
+  // Health returns the health status of the service
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // ListBackends returns all available backend providers
+  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse);
+
+  // GetBackendInfo returns detailed information about a specific backend
+  rpc GetBackendInfo(GetBackendInfoRequest) returns (GetBackendInfoResponse);
+
+  // GenerateKey generates a new cryptographic key
+  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse);
+
+  // ListKeys lists all keys in the specified backend
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+
+  // GetKey retrieves information about a specific key
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+
+  // Sign signs data with the specified key
+  rpc Sign(SignRequest) returns (SignResponse);
+
+  // Verify verifies a signature with the specified key
+  rpc Verify(VerifyRequest) returns (VerifyResponse);
+
+  // DeleteKey deletes a key from the backend
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+
+  // RotateKey rotates an existing key
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+
+  // Encrypt encrypts data with the specified key (symmetric encryption)
+  rpc Encrypt(EncryptRequest) returns (EncryptResponse);
+
+  // Decrypt decrypts data with the specified key
+  rpc Decrypt(DecryptRequest) returns (DecryptResponse);
+
+  // SaveCert stores a certificate
+  rpc SaveCert(SaveCertRequest) returns (SaveCertResponse);
+
+  // GetCert retrieves a certificate
+  rpc GetCert(GetCertRequest) returns (GetCertResponse);
+
+  // DeleteCert removes a certificate
+  rpc DeleteCert(DeleteCertRequest) returns (DeleteCertResponse);
+
+  // ListCerts lists all certificates
+  rpc ListCerts(ListCertsRequest) returns (ListCertsResponse);
+
+  // CertExists checks if a certificate exists
+  rpc CertExists(CertExistsRequest) returns (CertExistsResponse);
+
+  // SaveCertChain stores a certificate chain
+  rpc SaveCertChain(SaveCertChainRequest) returns (SaveCertChainResponse);
+
+  // GetCertChain retrieves a certificate chain
+  rpc GetCertChain(GetCertChainRequest) returns (GetCertChainResponse);
+
+  // GetTLSCertificate returns a TLS certificate with private key
+  rpc GetTLSCertificate(GetTLSCertificateRequest) returns (GetTLSCertificateResponse);
+
+  // GetImportParameters retrieves parameters needed to import a key
+  rpc GetImportParameters(GetImportParametersRequest) returns (GetImportParametersResponse);
+
+  // WrapKey wraps key material for secure transport
+  rpc WrapKey(WrapKeyRequest) returns (WrapKeyResponse);
+
+  // UnwrapKey unwraps previously wrapped key material
+  rpc UnwrapKey(UnwrapKeyRequest) returns (UnwrapKeyResponse);
+
+  // ImportKey imports externally generated key material into the backend
+  rpc ImportKey(ImportKeyRequest) returns (ImportKeyResponse);
+
+  // ExportKey exports a key in wrapped form for secure transport
+  rpc ExportKey(ExportKeyRequest) returns (ExportKeyResponse);
+
+  // CopyKey copies a key from one backend to another
+  rpc CopyKey(CopyKeyRequest) returns (CopyKeyResponse);
+}
+
+// HealthRequest is the request for health check
+message HealthRequest {}
+
+// HealthResponse contains the health status
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+}
+
+// BackendInfo describes a backend provider
+message BackendInfo {
+  string name = 1;
+  string type = 2;
+  string description = 3;
+  bool hardware_backed = 4;
+  bool supports_signing = 5;
+  bool supports_decryption = 6;
+  bool supports_rotation = 7;
+  bool supports_symmetric_encryption = 8;
+}
+
+// ListBackendsRequest requests the list of available backends
+message ListBackendsRequest {}
+
+// ListBackendsResponse contains the list of backends
+message ListBackendsResponse {
+  repeated BackendInfo backends = 1;
+  int32 count = 2;
+}
+
+// GetBackendInfoRequest requests info about a specific backend
+message GetBackendInfoRequest {
+  string name = 1;
+}
+
+// GetBackendInfoResponse contains backend information
+message GetBackendInfoResponse {
+  BackendInfo backend = 1;
+}
+
+// GenerateKeyRequest requests generation of a new key
+message GenerateKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;  // "rsa", "ecdsa", "ed25519", "aes"
+  int32 key_size = 4;
+  string curve = 5;
+  string hash = 6;
+  string partition = 7;
+  string algorithm = 8;  // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+}
+
+// GenerateKeyResponse contains the generated key information
+message GenerateKeyResponse {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;
+  string public_key_pem = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// KeyInfo contains information about a key
+message KeyInfo {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;
+  string algorithm = 4;
+  int32 key_size = 5;
+  string curve = 6;
+  string partition = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// ListKeysRequest requests a list of keys
+message ListKeysRequest {
+  string backend = 1;
+  string partition = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+// ListKeysResponse contains the list of keys
+message ListKeysResponse {
+  repeated KeyInfo keys = 1;
+  int32 total = 2;
+}
+
+// GetKeyRequest requests information about a specific key
+message GetKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// GetKeyResponse contains key information
+message GetKeyResponse {
+  KeyInfo key = 1;
+}
+
+// SignRequest requests data to be signed
+message SignRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes data = 3;
+  string hash = 4;
+}
+
+// SignResponse contains the signature
+message SignResponse {
+  bytes signature = 1;
+}
+
+// VerifyRequest requests signature verification
+message VerifyRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes data = 3;
+  bytes signature = 4;
+  string hash = 5;
+}
+
+// VerifyResponse contains verification result
+message VerifyResponse {
+  bool valid = 1;
+  string message = 2;
+}
+
+// DeleteKeyRequest requests deletion of a key
+message DeleteKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// DeleteKeyResponse contains deletion result
+message DeleteKeyResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// RotateKeyRequest requests rotation of an existing key
+message RotateKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// RotateKeyResponse contains the rotated key information
+message RotateKeyResponse {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;
+  string public_key_pem = 4;
+  google.protobuf.Timestamp rotated_at = 5;
+}
+
+// EncryptRequest requests encryption of data (symmetric encryption)
+message EncryptRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes plaintext = 3;
+  bytes additional_data = 4;  // Optional AAD for GCM mode
+}
+
+// EncryptResponse contains the encrypted data
+message EncryptResponse {
+  bytes ciphertext = 1;
+  bytes nonce = 2;
+  bytes tag = 3;
+}
+
+// DecryptRequest requests decryption of data
+message DecryptRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes ciphertext = 3;
+  bytes additional_data = 4;  // Optional AAD for symmetric decryption
+  bytes nonce = 5;            // Required for symmetric decryption
+  bytes tag = 6;              // Required for symmetric decryption (GCM)
+}
+
+// DecryptResponse contains the decrypted data
+message DecryptResponse {
+  bytes plaintext = 1;
+}
+
+// SaveCertRequest requests storage of a certificate
+message SaveCertRequest {
+  string key_id = 1;
+  string cert_pem = 2;
+}
+
+// SaveCertResponse contains the result of certificate storage
+message SaveCertResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// GetCertRequest requests retrieval of a certificate
+message GetCertRequest {
+  string key_id = 1;
+}
+
+// GetCertResponse contains the certificate
+message GetCertResponse {
+  string cert_pem = 1;
+}
+
+// DeleteCertRequest requests deletion of a certificate
+message DeleteCertRequest {
+  string key_id = 1;
+}
+
+// DeleteCertResponse contains the result of certificate deletion
+message DeleteCertResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// ListCertsRequest requests a list of all certificates
+message ListCertsRequest {}
+
+// ListCertsResponse contains the list of certificate IDs
+message ListCertsResponse {
+  repeated string key_ids = 1;
+  int32 total = 2;
+}
+
+// CertExistsRequest checks if a certificate exists
+message CertExistsRequest {
+  string key_id = 1;
+}
+
+// CertExistsResponse contains the result of existence check
+message CertExistsResponse {
+  bool exists = 1;
+}
+
+// SaveCertChainRequest requests storage of a certificate chain
+message SaveCertChainRequest {
+  string key_id = 1;
+  repeated string cert_chain_pem = 2;
+}
+
+// SaveCertChainResponse contains the result of certificate chain storage
+message SaveCertChainResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// GetCertChainRequest requests retrieval of a certificate chain
+message GetCertChainRequest {
+  string key_id = 1;
+}
+
+// GetCertChainResponse contains the certificate chain
+message GetCertChainResponse {
+  repeated string cert_chain_pem = 1;
+}
+
+// GetTLSCertificateRequest requests a TLS certificate with private key
+message GetTLSCertificateRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// GetTLSCertificateResponse contains the TLS certificate and private key
+message GetTLSCertificateResponse {
+  string cert_pem = 1;
+  repeated string cert_chain_pem = 2;
+  string private_key_pem = 3;
+}
+
+// GetImportParametersRequest requests parameters needed to import a key
+message GetImportParametersRequest {
+  string key_id = 1;
+  string backend = 2;
+  string wrapping_algorithm = 3;  // "RSAES_OAEP_SHA_1", "RSAES_OAEP_SHA_256", "RSA_AES_KEY_WRAP_SHA_1", "RSA_AES_KEY_WRAP_SHA_256"
+  string key_type = 4;  // "rsa", "ecdsa", "ed25519", "aes"
+  int32 key_size = 5;
+  string curve = 6;
+  string hash = 7;
+  string partition = 8;
+}
+
+// GetImportParametersResponse contains parameters needed for key import
+message GetImportParametersResponse {
+  bytes wrapping_public_key = 1;  // DER-encoded public key
+  bytes import_token = 2;
+  string algorithm = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  string key_spec = 5;
+}
+
+// WrapKeyRequest requests wrapping of key material
+message WrapKeyRequest {
+  bytes key_material = 1;
+  bytes wrapping_public_key = 2;  // DER-encoded public key
+  bytes import_token = 3;
+  string algorithm = 4;
+  string key_spec = 5;
+}
+
+// WrapKeyResponse contains wrapped key material
+message WrapKeyResponse {
+  bytes wrapped_key = 1;
+  string algorithm = 2;
+  bytes import_token = 3;
+  map<string, string> metadata = 4;
+}
+
+// UnwrapKeyRequest requests unwrapping of key material
+message UnwrapKeyRequest {
+  bytes wrapped_key = 1;
+  string algorithm = 2;
+  bytes import_token = 3;
+  bytes wrapping_public_key = 4;  // DER-encoded public key
+  string key_spec = 5;
+  map<string, string> metadata = 6;
+}
+
+// UnwrapKeyResponse contains unwrapped key material
+message UnwrapKeyResponse {
+  bytes key_material = 1;
+}
+
+// ImportKeyRequest requests import of externally generated key material
+message ImportKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes wrapped_key = 3;
+  string algorithm = 4;
+  bytes import_token = 5;
+  map<string, string> metadata = 6;
+  string key_type = 7;  // "rsa", "ecdsa", "ed25519", "aes"
+  int32 key_size = 8;
+  string curve = 9;
+  string hash = 10;
+  string partition = 11;
+}
+
+// ImportKeyResponse contains the result of key import
+message ImportKeyResponse {
+  bool success = 1;
+  string message = 2;
+  string key_id = 3;
+}
+
+// ExportKeyRequest requests export of a key in wrapped form
+message ExportKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+  string wrapping_algorithm = 3;
+}
+
+// ExportKeyResponse contains wrapped key material for export
+message ExportKeyResponse {
+  bytes wrapped_key = 1;
+  string algorithm = 2;
+  bytes import_token = 3;
+  map<string, string> metadata = 4;
+}
+
+// CopyKeyRequest requests copying a key from one backend to another
+message CopyKeyRequest {
+  string source_backend = 1;
+  string source_key_id = 2;
+  string dest_backend = 3;
+  string dest_key_id = 4;
+  string wrapping_algorithm = 5;  // Wrapping algorithm to use for secure transport
+}
+
+// CopyKeyResponse contains the result of key copy operation
+message CopyKeyResponse {
+  bool success = 1;
+  string message = 2;
+  string dest_key_id = 3;
+}

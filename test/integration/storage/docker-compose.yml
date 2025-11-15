@@ -1,0 +1,158 @@
+version: '3.8'
+
+services:
+  # Integration test runner for storage packages
+  test:
+    image: golang:1.25-alpine
+    working_dir: /app
+    volumes:
+      - ../../..:/app
+    environment:
+      - CGO_ENABLED=1
+      - GOCACHE=/tmp/go-cache
+      - GOPATH=/tmp/go
+    command: >
+      sh -c "
+      apk add --no-cache build-base &&
+      go test -v -tags=integration ./test/integration/storage/... -timeout 30m
+      "
+    networks:
+      - storage-test-network
+
+  # File storage tests (no special requirements, run standalone)
+  test-file:
+    image: golang:1.25-alpine
+    working_dir: /app
+    volumes:
+      - ../../..:/app
+    environment:
+      - CGO_ENABLED=0
+      - GOCACHE=/tmp/go-cache
+      - GOPATH=/tmp/go
+    command: >
+      sh -c "
+      go test -v -tags=integration ./test/integration/storage/...
+      -run 'TestFileStorage' -timeout 15m
+      "
+    networks:
+      - storage-test-network
+
+  # Memory storage tests (no special requirements, run standalone)
+  test-memory:
+    image: golang:1.25-alpine
+    working_dir: /app
+    volumes:
+      - ../../..:/app
+    environment:
+      - CGO_ENABLED=0
+      - GOCACHE=/tmp/go-cache
+      - GOPATH=/tmp/go
+    command: >
+      sh -c "
+      go test -v -tags=integration ./test/integration/storage/...
+      -run 'TestMemoryStorage' -timeout 15m
+      "
+    networks:
+      - storage-test-network
+
+  # Hardware storage tests with PKCS#11 (SoftHSM)
+  test-hardware-pkcs11:
+    image: golang:1.25-alpine
+    working_dir: /app
+    volumes:
+      - ../../..:/app
+      - softhsm-tokens:/var/lib/softhsm/tokens
+    environment:
+      - CGO_ENABLED=1
+      - GOCACHE=/tmp/go-cache
+      - GOPATH=/tmp/go
+      - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
+      - PKCS11_LIB=/usr/lib/softhsm/libsofthsm2.so
+    depends_on:
+      - softhsm-init
+    command: >
+      sh -c "
+      apk add --no-cache build-base softhsm &&
+      go test -v -tags='integration,pkcs11' ./test/integration/storage/...
+      -run 'TestHardwareStorage' -timeout 30m
+      "
+    networks:
+      - storage-test-network
+
+  # Hardware storage tests with TPM2
+  test-hardware-tpm2:
+    image: golang:1.25-alpine
+    working_dir: /app
+    volumes:
+      - ../../..:/app
+    environment:
+      - CGO_ENABLED=1
+      - GOCACHE=/tmp/go-cache
+      - GOPATH=/tmp/go
+      - TPM2_SIMULATOR_HOST=tpm-simulator
+      - TPM2_SIMULATOR_PORT=2321
+    depends_on:
+      tpm-simulator:
+        condition: service_healthy
+    command: >
+      sh -c "
+      apk add --no-cache build-base tpm2-tss-dev &&
+      sleep 3 &&
+      go test -v -tags='integration,tpm2' ./test/integration/storage/...
+      -run 'TestHardwareStorage' -timeout 30m
+      "
+    networks:
+      - storage-test-network
+
+  # SoftHSM initialization service
+  softhsm-init:
+    image: golang:1.25-alpine
+    volumes:
+      - softhsm-tokens:/var/lib/softhsm/tokens
+      - ../../..:/app
+    environment:
+      - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
+    command: >
+      sh -c "
+      apk add --no-cache softhsm &&
+      mkdir -p /var/lib/softhsm/tokens &&
+      softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234 &&
+      echo 'SoftHSM initialized successfully'
+      "
+    networks:
+      - storage-test-network
+
+  # TPM2 simulator for hardware tests
+  tpm-simulator:
+    image: ghcr.io/stefanberger/swtpm:latest
+    command:
+      - socket
+      - --tpmstate
+      - dir=/tmp
+      - --tpm2
+      - --server
+      - type=tcp,port=2321,bindaddr=0.0.0.0
+      - --ctrl
+      - type=tcp,port=2322,bindaddr=0.0.0.0
+      - --flags
+      - startup-clear
+      - --log
+      - level=1
+    healthcheck:
+      test: ["CMD", "sh", "-c", "pidof swtpm || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    ports:
+      - "2321:2321"
+      - "2322:2322"
+    networks:
+      - storage-test-network
+
+networks:
+  storage-test-network:
+    driver: bridge
+
+volumes:
+  softhsm-tokens:

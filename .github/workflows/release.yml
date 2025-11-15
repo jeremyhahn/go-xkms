@@ -1,0 +1,614 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GO_VERSION: '1.25.3'
+  REGISTRY: ghcr.io
+  IMAGE_NAME_SERVER: jeremyhahn/keychain-server
+  IMAGE_NAME_CLI: jeremyhahn/keychain-cli
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "Version: ${VERSION}"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "First release - generating full changelog"
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)" --no-merges)
+          else
+            echo "Generating changelog from ${PREV_TAG} to ${GITHUB_REF_NAME}"
+            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" --no-merges)
+          fi
+
+          # Save changelog to file
+          cat > CHANGELOG.md << EOF
+          ## What's Changed
+
+          ${CHANGELOG}
+
+          ## Installation
+
+          ### Binary Downloads
+          Download the appropriate binary for your platform from the assets below.
+
+          ### Docker Images
+          \`\`\`bash
+          # Multi-protocol server (REST, gRPC, QUIC, MCP)
+          docker pull ghcr.io/jeremyhahn/keychain-server:${{ steps.get_version.outputs.version }}
+
+          # CLI tool
+          docker pull ghcr.io/jeremyhahn/keychain-cli:${{ steps.get_version.outputs.version }}
+          \`\`\`
+
+          ### Verify Checksums
+          \`\`\`bash
+          sha256sum -c checksums.txt
+          \`\`\`
+
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${GITHUB_REF_NAME}
+          EOF
+
+          cat CHANGELOG.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.version, 'alpha') || contains(steps.get_version.outputs.version, 'beta') || contains(steps.get_version.outputs.version, 'rc') }}
+          generate_release_notes: false
+
+  build-binaries:
+    name: Build Binaries (${{ matrix.platform }})
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+          - platform: linux/arm64
+            arch: arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.platform }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binaries in native container
+        run: |
+          # Create a build script
+          cat > build.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          # Install build dependencies
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libsofthsm2 \
+            libsofthsm2-dev \
+            softhsm2 \
+            libtss2-dev \
+            ca-certificates \
+            file
+
+          # Build information
+          VERSION="${VERSION}"
+          GOARCH="${GOARCH}"
+
+          # Enable ALL backends
+          BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault"
+
+          # Static linking flags
+          LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w -linkmode external -extldflags '-static'"
+
+          echo "Building for linux/${GOARCH} with CGO_ENABLED=1 (native)"
+          echo "Build flags: ${BUILD_FLAGS}"
+
+          mkdir -p /workspace/dist
+
+          # Build CLI
+          echo "Building keychain CLI..."
+          CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+            -o /workspace/dist/keychain-cli \
+            ./cmd/cli
+
+          # Build multi-protocol Server (supports REST, gRPC, QUIC, MCP)
+          echo "Building keychain-server..."
+          CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+            -o /workspace/dist/keychain-server \
+            ./cmd/server
+
+          # Verify binaries are statically linked
+          echo ""
+          echo "Verifying static builds..."
+          for binary in /workspace/dist/*; do
+            echo "Checking $binary:"
+            file "$binary"
+            ldd "$binary" 2>&1 || echo "  ✓ Static binary (no dynamic dependencies)"
+            echo ""
+          done
+
+          # Set permissions
+          chmod +x /workspace/dist/*
+          EOF
+
+          chmod +x build.sh
+
+          # Run build in native container for the target architecture
+          docker run --rm \
+            --platform=${{ matrix.platform }} \
+            -v $(pwd):/workspace \
+            -w /workspace \
+            -e VERSION=${{ needs.create-release.outputs.version }} \
+            -e COMMIT=${{ github.sha }} \
+            -e DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -e GOARCH=${{ matrix.arch }} \
+            golang:1.25-bookworm \
+            bash /workspace/build.sh
+
+          # Verify binaries were created
+          echo "Build artifacts:"
+          ls -lh dist/
+
+      - name: Create archive
+        run: |
+          cd dist
+
+          # Create archive name
+          ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}"
+
+          # Create tar.gz archive
+          tar czf ../${ARCHIVE_NAME}.tar.gz *
+
+          cd ..
+
+          # Generate SHA256 checksum
+          sha256sum ${ARCHIVE_NAME}.tar.gz > ${ARCHIVE_NAME}.sha256
+
+          echo "Created archive: ${ARCHIVE_NAME}.tar.gz"
+          ls -lh ${ARCHIVE_NAME}.*
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
+            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.sha256
+
+  build-darwin-binaries:
+    name: Build Darwin Binaries (${{ matrix.arch }})
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build darwin binaries
+        env:
+          GOOS: darwin
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          # Darwin builds without CGO - cloud backends only
+          BUILD_FLAGS="-tags=software,awskms,gcpkms,azurekv,vault"
+          LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
+
+          mkdir -p dist
+
+          echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0"
+          echo "Build flags: ${BUILD_FLAGS}"
+
+          # Build CLI
+          echo "Building keychain-cli..."
+          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+            -o dist/keychain-cli \
+            ./cmd/cli
+
+          # Build Server
+          echo "Building keychain-server..."
+          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+            -o dist/keychain-server \
+            ./cmd/server
+
+          # Verify binaries
+          echo "Build artifacts:"
+          ls -lh dist/
+          file dist/*
+
+      - name: Create archive
+        run: |
+          cd dist
+
+          ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}"
+
+          # Create tar.gz archive
+          tar czf ../${ARCHIVE_NAME}.tar.gz *
+
+          cd ..
+
+          # Generate SHA256 checksum
+          sha256sum ${ARCHIVE_NAME}.tar.gz > ${ARCHIVE_NAME}.sha256
+
+          echo "Created archive: ${ARCHIVE_NAME}.tar.gz"
+          ls -lh ${ARCHIVE_NAME}.*
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.tar.gz
+            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
+
+  build-windows-binaries:
+    name: Build Windows Binaries (${{ matrix.arch }})
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build windows binaries
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          # Windows builds without CGO - cloud backends only
+          BUILD_FLAGS="-tags=software,awskms,gcpkms,azurekv,vault"
+          LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
+
+          mkdir -p dist
+
+          echo "Building for windows/${{ matrix.arch }} with CGO_ENABLED=0"
+          echo "Build flags: ${BUILD_FLAGS}"
+
+          # Build CLI
+          echo "Building keychain-cli.exe..."
+          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+            -o dist/keychain-cli.exe \
+            ./cmd/cli
+
+          # Build Server
+          echo "Building keychain-server.exe..."
+          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+            -o dist/keychain-server.exe \
+            ./cmd/server
+
+          # Verify binaries
+          echo "Build artifacts:"
+          ls -lh dist/
+          file dist/*
+
+      - name: Create archive
+        run: |
+          cd dist
+
+          ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-windows-${{ matrix.arch }}"
+
+          # Create zip archive for Windows
+          zip ../${ARCHIVE_NAME}.zip *
+
+          cd ..
+
+          # Generate SHA256 checksum
+          sha256sum ${ARCHIVE_NAME}.zip > ${ARCHIVE_NAME}.sha256
+
+          echo "Created archive: ${ARCHIVE_NAME}.zip"
+          ls -lh ${ARCHIVE_NAME}.*
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            go-keychain-${{ needs.create-release.outputs.version }}-windows-${{ matrix.arch }}.zip
+            go-keychain-${{ needs.create-release.outputs.version }}-windows-${{ matrix.arch }}.sha256
+
+  build-docker:
+    name: Build Docker Server Image
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SERVER }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Create Dockerfile for server
+        run: |
+          # Create a production Dockerfile for the multi-protocol server
+          cat > Dockerfile.release << 'EOF'
+          # Multi-stage Dockerfile for keychain production deployment
+          # Stage 1: Builder
+          FROM golang:1.25-bookworm AS builder
+
+          ENV GOTOOLCHAIN=auto
+
+          # Install build dependencies
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              build-essential \
+              pkg-config \
+              libsofthsm2 \
+              libtss2-dev \
+              ca-certificates \
+              && rm -rf /var/lib/apt/lists/*
+
+          WORKDIR /build
+
+          # Copy go mod files
+          COPY go.mod go.sum ./
+          RUN go mod download
+
+          # Copy source code
+          COPY . .
+
+          # Build the server with all backends enabled
+          ARG VERSION
+          ARG COMMIT
+          ARG DATE
+
+          RUN CGO_ENABLED=1 GOOS=linux go build \
+              -buildvcs=false \
+              -tags="pkcs8 tpm2 pkcs11 awskms gcpkms azurekv vault" \
+              -ldflags="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
+              -o /build/keychain-server \
+              ./cmd/server
+
+          # Stage 2: Runtime
+          FROM debian:bookworm-slim
+
+          # Install runtime dependencies
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+              ca-certificates \
+              libsofthsm2 \
+              softhsm2 \
+              libtss2-esys-3.0.2-0 \
+              libtss2-tcti-device0 \
+              && rm -rf /var/lib/apt/lists/*
+
+          # Create non-root user
+          RUN useradd -m -u 1000 keychain
+
+          # Create directories
+          RUN mkdir -p /etc/keychain /var/lib/keychain /var/lib/softhsm/tokens && \
+              chown -R keychain:keychain /etc/keychain /var/lib/keychain /var/lib/softhsm
+
+          # Copy binary from builder
+          COPY --from=builder /build/keychain-server /usr/local/bin/keychain-server
+
+          # Switch to non-root user
+          USER keychain
+
+          # Expose ports for all protocols: REST, gRPC, QUIC, MCP
+          EXPOSE 8080 8443 9090 9091
+
+          ENTRYPOINT ["/usr/local/bin/keychain-server"]
+          CMD ["-config", "/etc/keychain/config.yaml"]
+          EOF
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.release
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-docker-cli:
+    name: Build Docker CLI Image
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_CLI }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push CLI Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.cli
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.create-release.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  create-checksums:
+    name: Create Master Checksums
+    needs: [create-release, build-binaries, build-darwin-binaries, build-windows-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the tag name
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+
+          # Download all release assets
+          gh release download ${TAG_NAME} --pattern "*.sha256" --dir checksums || true
+
+      - name: Create master checksums file
+        run: |
+          if [ -d checksums ]; then
+            cd checksums
+            cat *.sha256 > ../checksums.txt 2>/dev/null || echo "No checksums found" > ../checksums.txt
+            cd ..
+          else
+            echo "No checksums directory found" > checksums.txt
+          fi
+
+          echo "Master checksums file created:"
+          cat checksums.txt
+
+      - name: Upload master checksums to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: checksums.txt
+
+  announce-release:
+    name: Announce Release
+    needs: [create-release, build-binaries, build-darwin-binaries, build-windows-binaries, build-docker, build-docker-cli]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Update release notes
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const release = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: context.ref.replace('refs/tags/', '')
+            });
+
+            const currentBody = release.data.body || '';
+            const dockerInfo = `\n\n## Docker Images\n\nMulti-protocol server supporting REST, gRPC, QUIC, and MCP:\n\n- \`ghcr.io/jeremyhahn/keychain-server:${{ needs.create-release.outputs.version }}\`\n\nCLI tool:\n\n- \`ghcr.io/jeremyhahn/keychain-cli:${{ needs.create-release.outputs.version }}\`\n\nAll images support both \`linux/amd64\` and \`linux/arm64\` platforms.\n`;
+
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.data.id,
+              body: currentBody + dockerInfo
+            });
+
+      - name: Release summary
+        run: |
+          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Version: **${{ needs.create-release.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts Published" >> $GITHUB_STEP_SUMMARY
+          echo "- Binaries for Linux (amd64, arm64) - all backends with CGO" >> $GITHUB_STEP_SUMMARY
+          echo "- Binaries for macOS/Darwin (amd64, arm64) - cloud backends" >> $GITHUB_STEP_SUMMARY
+          echo "- Binaries for Windows (amd64, arm64) - cloud backends" >> $GITHUB_STEP_SUMMARY
+          echo "- Docker images (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
+          echo "- SHA256 checksums" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "# Multi-protocol server (REST, gRPC, QUIC, MCP)" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/jeremyhahn/keychain-server:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "# CLI tool" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/jeremyhahn/keychain-cli:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

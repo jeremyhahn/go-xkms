@@ -1,0 +1,14 @@
+services:
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/gcpkms/Dockerfile
+    environment:
+      - GOOGLE_CLOUD_PROJECT=test-project
+    volumes:
+      - ../../..:/app
+    working_dir: /app
+
+networks:
+  default:
+    name: keychain-gcpkms-test

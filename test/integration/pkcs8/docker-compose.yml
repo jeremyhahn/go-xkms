@@ -1,0 +1,12 @@
+services:
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/pkcs8/Dockerfile
+    volumes:
+      - ../../..:/app
+    working_dir: /app
+
+networks:
+  default:
+    name: keychain-pkcs8-test
