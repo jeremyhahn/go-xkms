@@ -21,6 +21,7 @@ import (
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -83,15 +84,16 @@ type StoreType string
 
 const (
 	// Store type constants
-	StorePKCS8   StoreType = "pkcs8"
-	StorePKCS11  StoreType = "pkcs11"
-	StoreTPM2    StoreType = "tpm2"
-	StoreAWSKMS  StoreType = "awskms"
-	StoreGCPKMS  StoreType = "gcpkms"
-	StoreAzureKV StoreType = "azurekv"
-	StoreVault   StoreType = "vault"
-	StoreQuantum StoreType = "quantum"
-	StoreUnknown StoreType = "unknown"
+	StorePKCS8     StoreType = "pkcs8"
+	StorePKCS11    StoreType = "pkcs11"
+	StoreTPM2      StoreType = "tpm2"
+	StoreAWSKMS    StoreType = "awskms"
+	StoreGCPKMS    StoreType = "gcpkms"
+	StoreAzureKV   StoreType = "azurekv"
+	StoreVault     StoreType = "vault"
+	StoreQuantum   StoreType = "quantum"
+	StoreThreshold StoreType = "threshold"
+	StoreUnknown   StoreType = "unknown"
 )
 
 // String returns the string representation of the store type.
@@ -154,6 +156,7 @@ const (
 	BackendTypeAzureKV      BackendType = "azurekv"      // Azure Key Vault
 	BackendTypeVault        BackendType = "vault"        // HashiCorp Vault
 	BackendTypeQuantum      BackendType = "quantum"      // Quantum-safe cryptography (ML-DSA, ML-KEM)
+	BackendTypeThreshold    BackendType = "threshold"    // Threshold cryptography (Shamir, threshold ECDSA)
 )
 
 // =============================================================================
@@ -310,6 +313,55 @@ type ECCAttributes struct {
 	Curve elliptic.Curve
 }
 
+// MarshalJSON implements custom JSON marshaling for ECCAttributes.
+// Converts elliptic.Curve to a string identifier.
+func (e *ECCAttributes) MarshalJSON() ([]byte, error) {
+	var curveName string
+	if e.Curve != nil {
+		switch e.Curve.Params().Name {
+		case "P-224":
+			curveName = "P-224"
+		case "P-256":
+			curveName = "P-256"
+		case "P-384":
+			curveName = "P-384"
+		case "P-521":
+			curveName = "P-521"
+		default:
+			curveName = e.Curve.Params().Name
+		}
+	}
+	return json.Marshal(map[string]string{"curve": curveName})
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for ECCAttributes.
+// Converts string identifier back to elliptic.Curve.
+func (e *ECCAttributes) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Curve string `json:"curve"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	switch aux.Curve {
+	case "P-224":
+		e.Curve = elliptic.P224()
+	case "P-256":
+		e.Curve = elliptic.P256()
+	case "P-384":
+		e.Curve = elliptic.P384()
+	case "P-521":
+		e.Curve = elliptic.P521()
+	case "":
+		e.Curve = nil
+	default:
+		return fmt.Errorf("unsupported elliptic curve: %s", aux.Curve)
+	}
+
+	return nil
+}
+
 // RSAAttributes contains RSA specific parameters.
 type RSAAttributes struct {
 	// KeySize specifies the RSA key size in bits
@@ -360,6 +412,67 @@ const (
 type QuantumAttributes struct {
 	// Algorithm specifies the quantum-safe algorithm to use
 	Algorithm QuantumAlgorithm
+}
+
+// =============================================================================
+// Threshold Cryptography Types
+// =============================================================================
+
+// ThresholdAlgorithm identifies the threshold signature or encryption scheme.
+type ThresholdAlgorithm string
+
+const (
+	// ThresholdAlgorithmShamir uses Shamir Secret Sharing for threshold operations
+	// Split/combine for symmetric keys and secrets
+	ThresholdAlgorithmShamir ThresholdAlgorithm = "SHAMIR"
+)
+
+// ThresholdAttributes contains threshold cryptography configuration for M-of-N operations.
+// This enables distributed key management where M participants out of N total must
+// collaborate to perform cryptographic operations (signing, decryption, etc.).
+type ThresholdAttributes struct {
+	// Threshold is the minimum number of shares required for operations (M)
+	// Must be: 2 <= Threshold <= Total <= 255
+	Threshold int
+
+	// Total is the total number of shares to generate (N)
+	// Must be: Threshold <= Total <= 255
+	Total int
+
+	// Algorithm specifies the threshold scheme to use
+	Algorithm ThresholdAlgorithm
+
+	// Participants contains identifiers for each share holder
+	// Length must equal Total. Each participant gets one share.
+	// Example: ["node1", "node2", "node3", "node4", "node5"]
+	Participants []string
+
+	// ShareID identifies which share this node owns (1 to Total)
+	// Only used when loading a key that already has shares distributed
+	ShareID int
+}
+
+// Validate checks if the threshold attributes are valid
+func (ta *ThresholdAttributes) Validate() error {
+	if ta.Threshold < 2 {
+		return fmt.Errorf("threshold must be at least 2, got %d", ta.Threshold)
+	}
+	if ta.Total < ta.Threshold {
+		return fmt.Errorf("total (%d) must be >= threshold (%d)", ta.Total, ta.Threshold)
+	}
+	if ta.Threshold > 255 {
+		return fmt.Errorf("threshold cannot exceed 255, got %d", ta.Threshold)
+	}
+	if ta.Total > 255 {
+		return fmt.Errorf("total cannot exceed 255, got %d", ta.Total)
+	}
+	if len(ta.Participants) > 0 && len(ta.Participants) != ta.Total {
+		return fmt.Errorf("participants length (%d) must match total (%d)", len(ta.Participants), ta.Total)
+	}
+	if ta.ShareID != 0 && (ta.ShareID < 1 || ta.ShareID > ta.Total) {
+		return fmt.Errorf("shareID (%d) must be between 1 and total (%d)", ta.ShareID, ta.Total)
+	}
+	return nil
 }
 
 // TPMAttributes contains Trusted Platform Module specific configuration.
@@ -481,6 +594,9 @@ type KeyAttributes struct {
 
 	// QuantumAttributes contains quantum-safe algorithm configuration (ML-DSA, ML-KEM)
 	QuantumAttributes *QuantumAttributes
+
+	// ThresholdAttributes contains threshold cryptography configuration (M-of-N signatures)
+	ThresholdAttributes *ThresholdAttributes
 
 	// AESAttributes contains AES-specific parameters (only for AES keys)
 	AESAttributes *AESAttributes
