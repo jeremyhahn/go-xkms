@@ -10,6 +10,8 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/keychain-server
   IMAGE_NAME_CLI: jeremyhahn/keychain-cli
+  GOPROXY: direct
+  GOSUMDB: off
 
 permissions:
   contents: write

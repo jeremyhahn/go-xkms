@@ -11,6 +11,8 @@ env:
   COVERAGE_THRESHOLD: 90
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/keychain-cli
+  GOPROXY: direct
+  GOSUMDB: off
 
 jobs:
   # Job 1: Unit Tests with Coverage Enforcement

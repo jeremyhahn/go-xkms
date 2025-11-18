@@ -21,6 +21,7 @@ require (
 	github.com/google/go-tpm-tools v0.3.13-0.20230620182252-4639ecce2aba
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/vault/api v1.22.0
+	github.com/jeremyhahn/go-common v0.1.0
 	github.com/miekg/pkcs11 v1.1.1
 	github.com/prometheus/client_golang v1.19.1
 	github.com/quic-go/quic-go v0.55.0
