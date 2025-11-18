@@ -90,6 +90,7 @@ const (
 	StoreGCPKMS  StoreType = "gcpkms"
 	StoreAzureKV StoreType = "azurekv"
 	StoreVault   StoreType = "vault"
+	StoreQuantum StoreType = "quantum"
 	StoreUnknown StoreType = "unknown"
 )
 
@@ -101,7 +102,7 @@ func (st StoreType) String() string {
 // IsValid returns true if the store type is recognized.
 func (st StoreType) IsValid() bool {
 	switch st {
-	case StorePKCS8, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault:
+	case StorePKCS8, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum:
 		return true
 	default:
 		return false
@@ -127,6 +128,8 @@ func ParseStoreType(s string) StoreType {
 		return StoreAzureKV
 	case "vault":
 		return StoreVault
+	case "quantum":
+		return StoreQuantum
 	default:
 		return StoreUnknown
 	}
@@ -150,6 +153,7 @@ const (
 	BackendTypeGCPKMS       BackendType = "gcpkms"       // Google Cloud Key Management Service
 	BackendTypeAzureKV      BackendType = "azurekv"      // Azure Key Vault
 	BackendTypeVault        BackendType = "vault"        // HashiCorp Vault
+	BackendTypeQuantum      BackendType = "quantum"      // Quantum-safe cryptography (ML-DSA, ML-KEM)
 )
 
 // =============================================================================
@@ -322,6 +326,42 @@ type X25519Attributes struct {
 	// No additional parameters needed - X25519 keys are always 32 bytes
 }
 
+// QuantumAlgorithm identifies a post-quantum cryptographic algorithm.
+type QuantumAlgorithm string
+
+const (
+	// QuantumAlgorithmMLDSA44 is ML-DSA-44 (Dilithium2) for digital signatures
+	// NIST FIPS 204 standard - Security level 2
+	QuantumAlgorithmMLDSA44 QuantumAlgorithm = "ML-DSA-44"
+
+	// QuantumAlgorithmMLDSA65 is ML-DSA-65 (Dilithium3) for digital signatures
+	// NIST FIPS 204 standard - Security level 3
+	QuantumAlgorithmMLDSA65 QuantumAlgorithm = "ML-DSA-65"
+
+	// QuantumAlgorithmMLDSA87 is ML-DSA-87 (Dilithium5) for digital signatures
+	// NIST FIPS 204 standard - Security level 5
+	QuantumAlgorithmMLDSA87 QuantumAlgorithm = "ML-DSA-87"
+
+	// QuantumAlgorithmMLKEM512 is ML-KEM-512 (Kyber512) for key encapsulation
+	// NIST FIPS 203 standard - Security level 1
+	QuantumAlgorithmMLKEM512 QuantumAlgorithm = "ML-KEM-512"
+
+	// QuantumAlgorithmMLKEM768 is ML-KEM-768 (Kyber768) for key encapsulation
+	// NIST FIPS 203 standard - Security level 3
+	QuantumAlgorithmMLKEM768 QuantumAlgorithm = "ML-KEM-768"
+
+	// QuantumAlgorithmMLKEM1024 is ML-KEM-1024 (Kyber1024) for key encapsulation
+	// NIST FIPS 203 standard - Security level 5
+	QuantumAlgorithmMLKEM1024 QuantumAlgorithm = "ML-KEM-1024"
+)
+
+// QuantumAttributes contains quantum-safe cryptography specific parameters.
+// Used with ML-DSA (signatures) and ML-KEM (key encapsulation) algorithms.
+type QuantumAttributes struct {
+	// Algorithm specifies the quantum-safe algorithm to use
+	Algorithm QuantumAlgorithm
+}
+
 // TPMAttributes contains Trusted Platform Module specific configuration.
 // This struct intentionally uses interface{} for TPM-specific types to avoid
 // requiring TPM dependencies in the core keystore package.
@@ -439,6 +479,9 @@ type KeyAttributes struct {
 	// X25519Attributes contains X25519-specific configuration for key agreement
 	X25519Attributes *X25519Attributes
 
+	// QuantumAttributes contains quantum-safe algorithm configuration (ML-DSA, ML-KEM)
+	QuantumAttributes *QuantumAttributes
+
 	// AESAttributes contains AES-specific parameters (only for AES keys)
 	AESAttributes *AESAttributes
 
@@ -526,6 +569,16 @@ func (attrs *KeyAttributes) Validate() error {
 	if attrs.X25519Attributes != nil {
 		// X25519 key agreement validation
 		// X25519 has no additional attributes to validate beyond the struct itself
+	} else if attrs.QuantumAttributes != nil {
+		// Quantum-safe key validation
+		switch attrs.QuantumAttributes.Algorithm {
+		case QuantumAlgorithmMLDSA44, QuantumAlgorithmMLDSA65, QuantumAlgorithmMLDSA87:
+			// ML-DSA signatures - no additional attributes required
+		case QuantumAlgorithmMLKEM512, QuantumAlgorithmMLKEM768, QuantumAlgorithmMLKEM1024:
+			// ML-KEM key encapsulation - no additional attributes required
+		default:
+			return fmt.Errorf("unsupported quantum algorithm: %s", attrs.QuantumAttributes.Algorithm)
+		}
 	} else if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
 		// Asymmetric key validation
 		switch attrs.KeyAlgorithm {
@@ -564,7 +617,7 @@ func (attrs *KeyAttributes) Validate() error {
 			return fmt.Errorf("unsupported symmetric algorithm: %s", attrs.SymmetricAlgorithm)
 		}
 	} else {
-		return fmt.Errorf("either KeyAlgorithm or SymmetricAlgorithm must be set")
+		return fmt.Errorf("either KeyAlgorithm, SymmetricAlgorithm, or QuantumAttributes must be set")
 	}
 
 	return nil
@@ -578,6 +631,7 @@ func (attrs *KeyAttributes) IsSymmetric() bool {
 
 // ID returns a unique identifier for the key based on its attributes.
 // Format for X25519 keys: [partition:]storetype:keytype:cn:x25519
+// Format for quantum keys: [partition:]storetype:keytype:cn:quantumalgorithm
 // Format for asymmetric keys: [partition:]storetype:keytype:cn:keyalgorithm
 // Format for symmetric keys: [partition:]storetype:keytype:cn:symmetricalgorithm
 func (attrs *KeyAttributes) ID() string {
@@ -587,6 +641,9 @@ func (attrs *KeyAttributes) ID() string {
 	if attrs.X25519Attributes != nil {
 		// X25519 key agreement
 		algorithm = "x25519"
+	} else if attrs.QuantumAttributes != nil {
+		// Quantum-safe key
+		algorithm = strings.ToLower(string(attrs.QuantumAttributes.Algorithm))
 	} else if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
 		// Asymmetric key
 		algorithm = strings.ToLower(attrs.KeyAlgorithm.String())

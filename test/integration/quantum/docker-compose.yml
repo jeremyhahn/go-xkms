@@ -1,0 +1,25 @@
+services:
+  quantum-test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/quantum/Dockerfile
+    environment:
+      - GO111MODULE=on
+      - CGO_ENABLED=1
+    volumes:
+      - ../../../:/workspace
+      - go-modules:/go/pkg/mod
+    working_dir: /workspace
+    command: >
+      go test -v -tags="integration quantum"
+      -timeout 30m
+      ./test/integration/quantum/...
+    networks:
+      - quantum-test-network
+
+networks:
+  quantum-test-network:
+    driver: bridge
+
+volumes:
+  go-modules:

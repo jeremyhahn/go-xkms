@@ -23,6 +23,10 @@ WITH_AZURE_KV ?= 0
 WITH_VAULT ?= 0
 WITH_PKCS11 ?= 0
 
+# Quantum-safe cryptography support (Dilithium, Kyber via liboqs)
+# Default: Disabled - requires liboqs C library to be installed
+WITH_QUANTUM ?= 0
+
 # Group variables (convenience flags to enable all backends for a provider)
 # Setting these will override individual backend flags
 WITH_AWS ?= 0
@@ -63,6 +67,9 @@ ifeq ($(WITH_VAULT),1)
 endif
 ifeq ($(WITH_PKCS11),1)
 	BUILD_TAGS += pkcs11
+endif
+ifeq ($(WITH_QUANTUM),1)
+	BUILD_TAGS += quantum
 endif
 
 
@@ -150,6 +157,65 @@ deps:
 	@echo "$(YELLOW)Note: For integration tests, ensure SoftHSM and SWTPM are installed:$(RESET)"
 	@echo "  - Ubuntu/Debian: sudo apt-get install softhsm2 swtpm swtpm-tools"
 	@echo "  - macOS: brew install softhsm swtpm"
+ifeq ($(WITH_QUANTUM),1)
+	@echo "$(YELLOW)Note: Quantum-safe cryptography requires liboqs. Run 'make deps-quantum' to install.$(RESET)"
+endif
+
+.PHONY: deps-quantum
+## deps-quantum: Install liboqs library for quantum-safe cryptography (Dilithium, Kyber)
+deps-quantum:
+	@echo "$(CYAN)$(BOLD)→ Installing liboqs for quantum-safe cryptography...$(RESET)"
+	@echo "$(YELLOW)This will clone and build liboqs from source$(RESET)"
+	@mkdir -p $(BUILD_DIR)/deps
+	@if [ ! -d "$(BUILD_DIR)/deps/liboqs" ]; then \
+		echo "$(CYAN)Cloning liboqs repository...$(RESET)"; \
+		git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git $(BUILD_DIR)/deps/liboqs; \
+	else \
+		echo "$(CYAN)liboqs already cloned, updating...$(RESET)"; \
+		cd $(BUILD_DIR)/deps/liboqs && git pull; \
+	fi
+	@echo "$(CYAN)Building liboqs...$(RESET)"
+	@cd $(BUILD_DIR)/deps/liboqs && \
+		mkdir -p build && \
+		cd build && \
+		cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
+		ninja
+	@echo "$(CYAN)Installing liboqs (requires sudo)...$(RESET)"
+	@cd $(BUILD_DIR)/deps/liboqs/build && sudo ninja install
+	@sudo ldconfig 2>/dev/null || true
+	@echo "$(CYAN)Creating liboqs-go.pc for Go bindings...$(RESET)"
+	@sudo mkdir -p /usr/local/lib/pkgconfig
+	@printf '%s\n' \
+		'prefix=/usr/local' \
+		'exec_prefix=$${prefix}' \
+		'libdir=$${exec_prefix}/lib' \
+		'includedir=$${prefix}/include' \
+		'' \
+		'Name: liboqs-go' \
+		'Description: Open Quantum Safe liboqs library for Go bindings' \
+		'Version: 0.9.0' \
+		'Libs: -L$${libdir} -loqs' \
+		'Cflags: -I$${includedir}' \
+		| sudo tee /usr/local/lib/pkgconfig/liboqs-go.pc > /dev/null
+	@echo "$(GREEN)✓ liboqs installed successfully$(RESET)"
+	@echo "$(YELLOW)Note: You may need to set PKG_CONFIG_PATH and LD_LIBRARY_PATH:$(RESET)"
+	@echo "  export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:\$$PKG_CONFIG_PATH"
+	@echo "  export LD_LIBRARY_PATH=/usr/local/lib:\$$LD_LIBRARY_PATH"
+
+.PHONY: deps-quantum-debian
+## deps-quantum-debian: Install liboqs build dependencies on Debian/Ubuntu
+deps-quantum-debian:
+	@echo "$(CYAN)$(BOLD)→ Installing liboqs build dependencies...$(RESET)"
+	@sudo apt-get update
+	@sudo apt-get install -y --no-install-recommends \
+		build-essential \
+		cmake \
+		ninja-build \
+		libssl-dev \
+		git \
+		pkg-config
+	@echo "$(GREEN)✓ Build dependencies installed$(RESET)"
+	@echo "$(YELLOW)Now run 'make deps-quantum' to build and install liboqs$(RESET)"
 
 .PHONY: build
 ## build: Build the shared library, CLI, and all server binaries (default)
@@ -235,7 +301,7 @@ test:
 	@bash -c 'set -o pipefail; \
 	export WITH_TPM2=0; \
 	$(GOTEST) $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/...  2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|yubikey|/mocks)$$") \
+		$$(go list -e ./pkg/...  2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|yubikey|/mocks|/quantum)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -462,7 +528,7 @@ coverage-migration:
 
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends)
-integration-test: clean-test-containers integration-test-software integration-test-aes integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils
+integration-test: clean-test-containers integration-test-software integration-test-aes integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -745,6 +811,20 @@ integration-test-vault:
 	@cd test/integration/vault && (docker compose run --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ Vault integration tests complete$(RESET)"
 
+.PHONY: integration-test-quantum
+## integration-test-quantum: Run quantum-safe cryptography integration tests (Dilithium, Kyber)
+integration-test-quantum:
+ifeq ($(WITH_QUANTUM),1)
+	@echo "$(CYAN)$(BOLD)→ Running quantum-safe cryptography integration tests...$(RESET)"
+	@echo "$(YELLOW)Note: Testing Dilithium2 signatures and Kyber768 key encapsulation$(RESET)"
+	@cd test/integration/quantum && docker compose down -v >/dev/null 2>&1 || true
+	@cd test/integration/quantum && docker compose build quantum-test
+	@cd test/integration/quantum && (docker compose run --rm quantum-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
+else
+	@echo "$(YELLOW)⚠ Skipping quantum-safe integration tests (WITH_QUANTUM=0)$(RESET)"
+	@echo "$(YELLOW)  To enable, run: make integration-test-quantum WITH_QUANTUM=1$(RESET)"
+endif
 
 .PHONY: integration-test-signing
 ## integration-test-signing: Run signing package integration tests

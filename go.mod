@@ -35,6 +35,9 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+// Quantum-safe cryptography (optional, enabled with quantum build tag)
+require github.com/open-quantum-safe/liboqs-go v0.0.0-20240412174151-8a109c3b4878
+
 require (
 	cloud.google.com/go v0.120.0 // indirect
 	cloud.google.com/go/auth v0.17.0 // indirect

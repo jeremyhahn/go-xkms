@@ -59,12 +59,20 @@ jobs:
           ### Binary Downloads
           Download the appropriate binary for your platform from the assets below.
 
+          **Standard builds** - No quantum-safe cryptography (smaller, no liboqs dependency):
+          - Linux: \`go-keychain-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}.tar.gz\`
+          - macOS: \`go-keychain-${{ steps.get_version.outputs.version }}-darwin-{amd64,arm64}.tar.gz\`
+
+          **Quantum builds** - Includes ML-DSA (Dilithium) and ML-KEM (Kyber) support:
+          - Linux: \`go-keychain-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-quantum.tar.gz\`
+          - macOS: \`go-keychain-${{ steps.get_version.outputs.version }}-darwin-arm64-quantum.tar.gz\`
+
           ### Docker Images
           \`\`\`bash
-          # Multi-protocol server (REST, gRPC, QUIC, MCP)
+          # Multi-protocol server (REST, gRPC, QUIC, MCP) - includes quantum support
           docker pull ghcr.io/jeremyhahn/keychain-server:${{ steps.get_version.outputs.version }}
 
-          # CLI tool
+          # CLI tool - includes quantum support
           docker pull ghcr.io/jeremyhahn/keychain-cli:${{ steps.get_version.outputs.version }}
           \`\`\`
 
@@ -87,16 +95,30 @@ jobs:
           generate_release_notes: false
 
   build-binaries:
-    name: Build Binaries (${{ matrix.platform }})
+    name: Build Binaries (${{ matrix.platform }}, ${{ matrix.variant }})
     needs: create-release
     runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
+          # Standard builds without quantum (for users without liboqs)
           - platform: linux/amd64
             arch: amd64
+            variant: standard
+            with_quantum: 0
           - platform: linux/arm64
             arch: arm64
+            variant: standard
+            with_quantum: 0
+          # Quantum-enabled builds (includes liboqs statically linked)
+          - platform: linux/amd64
+            arch: amd64
+            variant: quantum
+            with_quantum: 1
+          - platform: linux/arm64
+            arch: arm64
+            variant: quantum
+            with_quantum: 1
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -126,14 +148,47 @@ jobs:
             softhsm2 \
             libtss2-dev \
             ca-certificates \
-            file
+            file \
+            cmake \
+            ninja-build \
+            libssl-dev \
+            git
 
           # Build information
           VERSION="${VERSION}"
           GOARCH="${GOARCH}"
+          WITH_QUANTUM="${WITH_QUANTUM}"
 
-          # Enable ALL backends
-          BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault"
+          # Conditionally build liboqs for quantum-safe cryptography
+          if [ "$WITH_QUANTUM" = "1" ]; then
+            echo "Building liboqs for quantum-safe cryptography..."
+            git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
+            cd /tmp/liboqs
+            mkdir build && cd build
+            cmake -GNinja -DBUILD_SHARED_LIBS=OFF -DOQS_BUILD_ONLY_LIB=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
+            ninja
+            ninja install
+            ldconfig
+            cd /workspace
+            rm -rf /tmp/liboqs
+
+            # Create liboqs-go.pc for the Go bindings
+            mkdir -p /usr/local/lib/pkgconfig
+            printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: liboqs-go\nDescription: Open Quantum Safe liboqs library for Go bindings\nVersion: 0.9.0\nLibs: -L${libdir} -loqs\nCflags: -I${includedir}\n' > /usr/local/lib/pkgconfig/liboqs-go.pc
+
+            # Set library paths for liboqs
+            export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+            export CGO_LDFLAGS="-L/usr/local/lib"
+            export CGO_CFLAGS="-I/usr/local/include"
+
+            # Enable ALL backends including quantum-safe
+            BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,quantum"
+            echo "Building WITH quantum-safe cryptography support"
+          else
+            # Build without quantum support
+            BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault"
+            echo "Building WITHOUT quantum-safe cryptography support"
+          fi
 
           # Static linking flags
           LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w -linkmode external -extldflags '-static'"
@@ -180,6 +235,7 @@ jobs:
             -e COMMIT=${{ github.sha }} \
             -e DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -e GOARCH=${{ matrix.arch }} \
+            -e WITH_QUANTUM=${{ matrix.with_quantum }} \
             golang:1.25-bookworm \
             bash /workspace/build.sh
 
@@ -191,8 +247,12 @@ jobs:
         run: |
           cd dist
 
-          # Create archive name
-          ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}"
+          # Create archive name with variant suffix
+          if [ "${{ matrix.variant }}" = "quantum" ]; then
+            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}-quantum"
+          else
+            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}"
+          fi
 
           # Create tar.gz archive
           tar czf ../${ARCHIVE_NAME}.tar.gz *
@@ -209,16 +269,27 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.tar.gz
-            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.sha256
+            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.tar.gz
+            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
 
   build-darwin-binaries:
-    name: Build Darwin Binaries (${{ matrix.arch }})
+    name: Build Darwin Binaries (${{ matrix.arch }}, ${{ matrix.variant }})
     needs: create-release
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.variant == 'quantum' && 'macos-latest' || 'ubuntu-latest' }}
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        include:
+          # Standard builds without quantum (cross-compiled from Linux)
+          - arch: amd64
+            variant: standard
+            with_quantum: 0
+          - arch: arm64
+            variant: standard
+            with_quantum: 0
+          # Quantum builds (native macOS runners required for CGO)
+          - arch: arm64
+            variant: quantum
+            with_quantum: 1
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -229,20 +300,32 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Install liboqs (macOS native - quantum builds only)
+        if: matrix.variant == 'quantum'
+        run: |
+          brew install liboqs
+
       - name: Build darwin binaries
         env:
           GOOS: darwin
           GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
+          CGO_ENABLED: ${{ matrix.variant == 'quantum' && '1' || '0' }}
           VERSION: ${{ needs.create-release.outputs.version }}
         run: |
-          # Darwin builds without CGO - cloud backends only
-          BUILD_FLAGS="-tags=software,awskms,gcpkms,azurekv,vault"
+          if [ "${{ matrix.variant }}" = "quantum" ]; then
+            # Quantum build with CGO and liboqs
+            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,quantum"
+            echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=1 (quantum)"
+          else
+            # Standard build without CGO
+            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault"
+            echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0 (standard)"
+          fi
+
           LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
 
           mkdir -p dist
 
-          echo "Building for darwin/${{ matrix.arch }} with CGO_ENABLED=0"
           echo "Build flags: ${BUILD_FLAGS}"
 
           # Build CLI
@@ -266,7 +349,11 @@ jobs:
         run: |
           cd dist
 
-          ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}"
+          if [ "${{ matrix.variant }}" = "quantum" ]; then
+            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}-quantum"
+          else
+            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}"
+          fi
 
           # Create tar.gz archive
           tar czf ../${ARCHIVE_NAME}.tar.gz *
@@ -283,82 +370,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.tar.gz
-            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
-
-  build-windows-binaries:
-    name: Build Windows Binaries (${{ matrix.arch }})
-    needs: create-release
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [amd64, arm64]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Build windows binaries
-        env:
-          GOOS: windows
-          GOARCH: ${{ matrix.arch }}
-          CGO_ENABLED: 0
-          VERSION: ${{ needs.create-release.outputs.version }}
-        run: |
-          # Windows builds without CGO - cloud backends only
-          BUILD_FLAGS="-tags=software,awskms,gcpkms,azurekv,vault"
-          LDFLAGS="-X main.version=${VERSION} -X main.commit=${{ github.sha }} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ) -s -w"
-
-          mkdir -p dist
-
-          echo "Building for windows/${{ matrix.arch }} with CGO_ENABLED=0"
-          echo "Build flags: ${BUILD_FLAGS}"
-
-          # Build CLI
-          echo "Building keychain-cli.exe..."
-          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o dist/keychain-cli.exe \
-            ./cmd/cli
-
-          # Build Server
-          echo "Building keychain-server.exe..."
-          go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o dist/keychain-server.exe \
-            ./cmd/server
-
-          # Verify binaries
-          echo "Build artifacts:"
-          ls -lh dist/
-          file dist/*
-
-      - name: Create archive
-        run: |
-          cd dist
-
-          ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-windows-${{ matrix.arch }}"
-
-          # Create zip archive for Windows
-          zip ../${ARCHIVE_NAME}.zip *
-
-          cd ..
-
-          # Generate SHA256 checksum
-          sha256sum ${ARCHIVE_NAME}.zip > ${ARCHIVE_NAME}.sha256
-
-          echo "Created archive: ${ARCHIVE_NAME}.zip"
-          ls -lh ${ARCHIVE_NAME}.*
-
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            go-keychain-${{ needs.create-release.outputs.version }}-windows-${{ matrix.arch }}.zip
-            go-keychain-${{ needs.create-release.outputs.version }}-windows-${{ matrix.arch }}.sha256
+            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.tar.gz
+            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
 
   build-docker:
     name: Build Docker Server Image
@@ -409,7 +422,25 @@ jobs:
               libsofthsm2 \
               libtss2-dev \
               ca-certificates \
+              cmake \
+              ninja-build \
+              libssl-dev \
+              git \
               && rm -rf /var/lib/apt/lists/*
+
+          # Build and install liboqs for quantum-safe cryptography
+          RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs && \
+              cd /tmp/liboqs && \
+              mkdir build && cd build && \
+              cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
+              ninja && \
+              ninja install && \
+              ldconfig && \
+              rm -rf /tmp/liboqs
+
+          # Create liboqs-go.pc for the Go bindings
+          RUN mkdir -p /usr/local/lib/pkgconfig && \
+              printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: liboqs-go\nDescription: Open Quantum Safe liboqs library for Go bindings\nVersion: 0.9.0\nLibs: -L${libdir} -loqs\nCflags: -I${includedir}\n' > /usr/local/lib/pkgconfig/liboqs-go.pc
 
           WORKDIR /build
 
@@ -420,14 +451,19 @@ jobs:
           # Copy source code
           COPY . .
 
-          # Build the server with all backends enabled
+          # Build the server with all backends enabled (including quantum-safe)
           ARG VERSION
           ARG COMMIT
           ARG DATE
 
+          ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+          ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+          ENV CGO_LDFLAGS="-L/usr/local/lib"
+          ENV CGO_CFLAGS="-I/usr/local/include"
+
           RUN CGO_ENABLED=1 GOOS=linux go build \
               -buildvcs=false \
-              -tags="pkcs8 tpm2 pkcs11 awskms gcpkms azurekv vault" \
+              -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,quantum" \
               -ldflags="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
               -o /build/keychain-server \
               ./cmd/server
@@ -443,6 +479,10 @@ jobs:
               libtss2-esys-3.0.2-0 \
               libtss2-tcti-device0 \
               && rm -rf /var/lib/apt/lists/*
+
+          # Copy liboqs shared library from builder
+          COPY --from=builder /usr/local/lib/liboqs.so* /usr/local/lib/
+          RUN ldconfig
 
           # Create non-root user
           RUN useradd -m -u 1000 keychain
@@ -530,7 +570,7 @@ jobs:
 
   create-checksums:
     name: Create Master Checksums
-    needs: [create-release, build-binaries, build-darwin-binaries, build-windows-binaries]
+    needs: [create-release, build-binaries, build-darwin-binaries]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -566,7 +606,7 @@ jobs:
 
   announce-release:
     name: Announce Release
-    needs: [create-release, build-binaries, build-darwin-binaries, build-windows-binaries, build-docker, build-docker-cli]
+    needs: [create-release, build-binaries, build-darwin-binaries, build-docker, build-docker-cli]
     runs-on: ubuntu-latest
     if: success()
     steps:
@@ -598,11 +638,19 @@ jobs:
           echo "Version: **${{ needs.create-release.outputs.version }}**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Artifacts Published" >> $GITHUB_STEP_SUMMARY
-          echo "- Binaries for Linux (amd64, arm64) - all backends with CGO" >> $GITHUB_STEP_SUMMARY
-          echo "- Binaries for macOS/Darwin (amd64, arm64) - cloud backends" >> $GITHUB_STEP_SUMMARY
-          echo "- Binaries for Windows (amd64, arm64) - cloud backends" >> $GITHUB_STEP_SUMMARY
-          echo "- Docker images (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
-          echo "- SHA256 checksums" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Linux Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "- **Standard** (amd64, arm64) - PKCS8, TPM2, PKCS11, Cloud KMS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Quantum** (amd64, arm64) - All backends + ML-DSA/ML-KEM" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### macOS/Darwin Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "- **Standard** (amd64, arm64) - PKCS8, Cloud KMS" >> $GITHUB_STEP_SUMMARY
+          echo "- **Quantum** (arm64) - All backends + ML-DSA/ML-KEM" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo "- Multi-arch (amd64, arm64) with quantum-safe cryptography included" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All artifacts include SHA256 checksums for verification" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY

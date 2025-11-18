@@ -391,7 +391,7 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		}
 		err := attrs.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "either KeyAlgorithm or SymmetricAlgorithm must be set")
+		assert.Contains(t, err.Error(), "either KeyAlgorithm, SymmetricAlgorithm, or QuantumAttributes must be set")
 	})
 }
 
