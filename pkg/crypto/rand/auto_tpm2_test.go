@@ -42,7 +42,7 @@ func TestAutoResolver_TPM2InitializationPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver should not fail even if TPM2 init fails: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should still be available via software fallback
 	if !resolver.Available() {
@@ -78,7 +78,7 @@ func TestAutoResolver_TPM2CloseOnInitFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should fall back to software: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Verify fallback to software works
 	if !resolver.Available() {
@@ -108,7 +108,7 @@ func TestAutoResolver_TPM2PriorityWhenPKCS11Unavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Should fall back to software: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should be available via software fallback
 	if !resolver.Available() {

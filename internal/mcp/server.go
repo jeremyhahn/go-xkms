@@ -167,7 +167,7 @@ func (s *Server) acceptConnections() {
 // handleConnection handles a single client connection
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Authenticate the connection using TLS certificates if mTLS is configured
 	ctx := s.ctx

@@ -46,7 +46,7 @@ func createBenchmarkService(b *testing.B) *Service {
 	}
 
 	manager := NewBackendRegistry()
-	manager.Register("software", ks)
+	_ = manager.Register("software", ks)
 
 	return NewService(manager)
 }

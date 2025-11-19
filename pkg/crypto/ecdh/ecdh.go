@@ -153,7 +153,7 @@ func ecdsaPublicToECDH(key *ecdsa.PublicKey) (*ecdh.PublicKey, error) {
 	}
 
 	// Serialize public key in uncompressed form
-	keyBytes := elliptic.Marshal(key.Curve, key.X, key.Y)
+	keyBytes := elliptic.Marshal(key.Curve, key.X, key.Y) //nolint:staticcheck // SA1019: TODO refactor to crypto/ecdh
 
 	return curve.NewPublicKey(keyBytes)
 }

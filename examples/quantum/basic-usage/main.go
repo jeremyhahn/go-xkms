@@ -36,7 +36,7 @@ import (
 func main() {
 	// Create a temporary directory for the keychain
 	tmpDir := filepath.Join(os.TempDir(), "quantum-example")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize storage backend (same as any other backend)
 	storage, err := file.New(tmpDir)
@@ -49,7 +49,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create quantum backend: %v", err)
 	}
-	defer quantumBackend.Close()
+	defer func() { _ = quantumBackend.Close() }()
 
 	// Create keystore instance (optional, provides high-level API)
 	ks, err := keychain.New(&keychain.Config{
@@ -59,7 +59,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create keystore: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	fmt.Println("=== Quantum Cryptography Examples ===\n")
 

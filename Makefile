@@ -45,7 +45,13 @@ ifeq ($(WITH_AZURE),1)
 endif
 
 
-# Build tags based on backend flags
+# All available build tags for release builds
+# CLI doesn't include pkcs11 (requires CGO) for easier distribution
+CLI_BUILD_TAGS := pkcs8 tpm2 awskms gcpkms azurekv vault quantum
+# Server includes all tags including pkcs11
+SERVER_BUILD_TAGS := pkcs8 tpm2 awskms gcpkms azurekv vault pkcs11 quantum
+
+# Build tags based on backend flags (for development/testing)
 BUILD_TAGS :=
 ifeq ($(WITH_PKCS8),1)
 	BUILD_TAGS += pkcs8
@@ -273,6 +279,53 @@ build-mcp-server:
 ## build-servers: Build all server binaries (unified + protocol-specific)
 build-servers: build-server build-rest-server build-grpc-server build-quic-server build-mcp-server
 	@echo "$(GREEN)$(BOLD)✓ All server binaries built successfully!$(RESET)"
+
+# ==============================================================================
+# Cross-Compilation Targets (Release Builds with ALL Tags)
+# ==============================================================================
+
+.PHONY: release-binaries
+## release-binaries: Build release binaries for all platforms with ALL build tags enabled
+release-binaries: release-cli release-server
+	@echo "$(GREEN)$(BOLD)✓ All release binaries built successfully!$(RESET)"
+
+.PHONY: release-cli
+## release-cli: Build keychain-cli for all platforms with ALL build tags
+release-cli:
+	@echo "$(CYAN)$(BOLD)→ Building keychain-cli for all platforms (CGO-free)...$(RESET)"
+	@mkdir -p $(BIN_DIR)/release
+	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-linux-amd64 ./cmd/cli/main.go
+	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-linux-arm64 ./cmd/cli/main.go
+	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-darwin-amd64 ./cmd/cli/main.go
+	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-darwin-arm64 ./cmd/cli/main.go
+	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-windows-amd64.exe ./cmd/cli/main.go
+	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-windows-arm64.exe ./cmd/cli/main.go
+	@echo "$(GREEN)✓ keychain-cli binaries built for all platforms$(RESET)"
+
+.PHONY: release-server
+## release-server: Build keychain-server for all platforms with ALL build tags (including pkcs11)
+release-server:
+	@echo "$(CYAN)$(BOLD)→ Building keychain-server for all platforms (with all tags including pkcs11)...$(RESET)"
+	@mkdir -p $(BIN_DIR)/release
+	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-linux-amd64 ./cmd/server/main.go
+	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-linux-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for linux/arm64 requires aarch64-linux-gnu-gcc$(RESET)"
+	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-darwin-amd64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/amd64 may require macOS SDK$(RESET)"
+	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-darwin-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/arm64 may require macOS SDK$(RESET)"
+	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-windows-amd64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/amd64 requires mingw-w64$(RESET)"
+	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-windows-arm64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/arm64 requires appropriate cross-compiler$(RESET)"
+	@echo "$(GREEN)✓ keychain-server binaries built for all platforms$(RESET)"
 
 .PHONY: lib
 ## lib: Build shared library (libkeychain-VERSION.so)
@@ -1236,27 +1289,6 @@ release-version:
 		echo "$(GREEN)✓ Release version created: $$CURRENT -> $$BASE$(RESET)"; \
 	fi
 
-.PHONY: release-binaries
-## release-binaries: Build all binaries with proper versioning for release
-release-binaries: clean
-	@echo "$(CYAN)$(BOLD)→ Building release binaries (version $(VERSION))...$(RESET)"
-	@echo "$(CYAN)  Git Commit: $(GIT_COMMIT)$(RESET)"
-	@echo "$(CYAN)  Build Date: $(BUILD_DATE)$(RESET)"
-	@$(MAKE) --no-print-directory lib
-	@$(MAKE) --no-print-directory build-cli
-	@$(MAKE) --no-print-directory build-servers
-	@echo "$(GREEN)$(BOLD)✓ All release binaries built successfully!$(RESET)"
-	@echo "$(CYAN)Artifacts:$(RESET)"
-	@ls -lh $(BIN_DIR)/ $(LIB_DIR)/
-	@echo ""
-	@echo "$(CYAN)Binary versions:$(RESET)"
-	@for binary in $(BIN_DIR)/keychain-*; do \
-		if [ -f "$$binary" ]; then \
-			echo "$(CYAN)  $$(basename $$binary):$(RESET)"; \
-			$$binary -version 2>/dev/null || echo "    (version flag not supported)"; \
-		fi; \
-	done
-
 .PHONY: release-docker
 ## release-docker: Build and tag Docker images for release
 release-docker:
@@ -1270,7 +1302,7 @@ release-docker:
 
 .PHONY: release
 ## release: Create GitHub release with versioned shared library
-release: lib
+release: lib release-binaries
 	@echo "$(CYAN)$(BOLD)→ Creating GitHub release v$(VERSION)...$(RESET)"
 	@if ! command -v gh >/dev/null 2>&1; then \
 		echo "$(RED)✗ GitHub CLI (gh) not found. Install with:$(RESET)"; \
@@ -1297,15 +1329,20 @@ release: lib
 		echo "$(YELLOW)  Please add release notes to CHANGELOG.md first$(RESET)"; \
 		exit 1; \
 	fi
-	@echo "$(CYAN)  Creating release v$(VERSION)...$(RESET)"
+	@echo "$(CYAN)  Creating release v$(VERSION) with all platform binaries...$(RESET)"
 	@gh release create v$(VERSION) \
 		$(SHARED_LIB) \
+		$(BIN_DIR)/release/keychain-cli-* \
+		$(BIN_DIR)/release/keychain-server-* \
 		--title "go-keychain v$(VERSION)" \
 		--notes-file /tmp/release-notes-$(VERSION).md
 	@rm -f /tmp/release-notes-$(VERSION).md
 	@echo "$(GREEN)$(BOLD)✓ GitHub release v$(VERSION) created successfully!$(RESET)"
 	@echo "$(CYAN)  Release URL: $$(gh release view v$(VERSION) --json url -q .url)$(RESET)"
-	@echo "$(CYAN)  Attached: $(SHARED_LIB)$(RESET)"
+	@echo "$(CYAN)  Attached binaries:$(RESET)"
+	@echo "$(CYAN)    - $(SHARED_LIB)$(RESET)"
+	@echo "$(CYAN)    - keychain-cli (all platforms)$(RESET)"
+	@echo "$(CYAN)    - keychain-server (all platforms)$(RESET)"
 
 # ==============================================================================
 # Docker Targets
@@ -1604,8 +1641,12 @@ lint:
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
 	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
 	if [ -x "$$GOLANGCI_LINT_BIN" ]; then \
-		$$GOLANGCI_LINT_BIN run --timeout=5m ./...; \
-		echo "$(GREEN)✓ Linting complete$(RESET)"; \
+		if $$GOLANGCI_LINT_BIN run --timeout=5m ./...; then \
+			echo "$(GREEN)✓ Linting complete$(RESET)"; \
+		else \
+			echo "$(RED)$(BOLD)✗ Linting failed with errors$(RESET)"; \
+			exit 1; \
+		fi \
 	else \
 		echo "$(RED)✗ golangci-lint is required but not installed$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-tools$(RESET)"; \
@@ -1654,13 +1695,16 @@ install-gosec:
 ## install-tools: Install development tools (golangci-lint, gosec, etc.)
 install-tools: install-gosec
 	@echo "$(CYAN)$(BOLD)→ Installing development tools...$(RESET)"
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "$(CYAN)  Installing golangci-lint...$(RESET)"; \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
-		echo "$(GREEN)  ✓ golangci-lint installed$(RESET)"; \
-	else \
-		echo "$(GREEN)  ✓ golangci-lint already installed$(RESET)"; \
-	fi
+	@echo "$(CYAN)  Installing golangci-lint v2.6.2 (same as CI)...$(RESET)"
+	@cd /tmp && \
+		wget -q https://github.com/golangci/golangci-lint/releases/download/v2.6.2/golangci-lint-2.6.2-linux-amd64.tar.gz && \
+		tar -xzf golangci-lint-2.6.2-linux-amd64.tar.gz && \
+		sudo mkdir -p $(shell go env GOPATH)/bin && \
+		sudo cp golangci-lint-2.6.2-linux-amd64/golangci-lint $(shell go env GOPATH)/bin/ && \
+		sudo chmod +x $(shell go env GOPATH)/bin/golangci-lint && \
+		sudo chown $(shell whoami):$(shell whoami) $(shell go env GOPATH)/bin/golangci-lint && \
+		rm -rf golangci-lint-2.6.2-linux-amd64*
+	@echo "$(GREEN)  ✓ golangci-lint v2.6.2 installed$(RESET)"
 	@echo "$(GREEN)✓ Development tools installed$(RESET)"
 
 # ==============================================================================
@@ -1680,8 +1724,8 @@ verify: clean deps check test
 	@echo "$(GREEN)$(BOLD)✓ Verification complete! Ready to commit.$(RESET)"
 
 .PHONY: ci
-## ci: Run CI pipeline (format check, vet, build, test, integration-test)
-ci: deps fmt-check vet build test docker-test
+## ci: Run CI pipeline (format check, vet, lint, build, test, integration-test)
+ci: deps fmt-check vet lint build test docker-test
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 # ==============================================================================

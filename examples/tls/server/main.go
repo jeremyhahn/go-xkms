@@ -21,7 +21,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
-	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -39,7 +38,7 @@ import (
 func main() {
 	// Create a temporary directory
 	tmpDir := filepath.Join(os.TempDir(), "keystore-tls-server")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize storage backend
 	storage, err := file.New(tmpDir)
@@ -54,7 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#8 backend: %v", err)
 	}
-	defer pkcs8Backend.Close()
+	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
 	ks, err := keychain.New(&keychain.Config{
@@ -64,7 +63,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create keystore: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	fmt.Println("=== TLS Server Example ===")
 
@@ -117,26 +116,26 @@ func main() {
 
 	// Simple handler
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Hello from TLS server!\n")
-		fmt.Fprintf(w, "TLS Version: %s\n", tlsVersionString(r.TLS.Version))
-		fmt.Fprintf(w, "Cipher Suite: %s\n", tls.CipherSuiteName(r.TLS.CipherSuite))
-		fmt.Fprintf(w, "Server Name: %s\n", r.TLS.ServerName)
+		_, _ = fmt.Fprintf(w, "Hello from TLS server!\n")
+		_, _ = fmt.Fprintf(w, "TLS Version: %s\n", tlsVersionString(r.TLS.Version))
+		_, _ = fmt.Fprintf(w, "Cipher Suite: %s\n", tls.CipherSuiteName(r.TLS.CipherSuite))
+		_, _ = fmt.Fprintf(w, "Server Name: %s\n", r.TLS.ServerName)
 	})
 
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "OK\n")
+		_, _ = fmt.Fprintf(w, "OK\n")
 	})
 
 	// Certificate info endpoint
 	mux.HandleFunc("/cert-info", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Server Certificate Information:\n")
-		fmt.Fprintf(w, "  Subject: %s\n", serverCert.Subject.CommonName)
-		fmt.Fprintf(w, "  Issuer: %s\n", serverCert.Issuer.CommonName)
-		fmt.Fprintf(w, "  Valid From: %s\n", serverCert.NotBefore.Format(time.RFC3339))
-		fmt.Fprintf(w, "  Valid Until: %s\n", serverCert.NotAfter.Format(time.RFC3339))
-		fmt.Fprintf(w, "  Serial Number: %s\n", serverCert.SerialNumber.String())
+		_, _ = fmt.Fprintf(w, "Server Certificate Information:\n")
+		_, _ = fmt.Fprintf(w, "  Subject: %s\n", serverCert.Subject.CommonName)
+		_, _ = fmt.Fprintf(w, "  Issuer: %s\n", serverCert.Issuer.CommonName)
+		_, _ = fmt.Fprintf(w, "  Valid From: %s\n", serverCert.NotBefore.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(w, "  Valid Until: %s\n", serverCert.NotAfter.Format(time.RFC3339))
+		_, _ = fmt.Fprintf(w, "  Serial Number: %s\n", serverCert.SerialNumber.String())
 	})
 
 	fmt.Printf("   ✓ HTTP handlers configured\n\n")
@@ -217,7 +216,7 @@ func createCA(ks keychain.KeyStore) (*x509.Certificate, interface{}) {
 
 	caCert, _ := x509.ParseCertificate(caCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	ks.SaveCert(keyAttrs.CN, caCert)
+	_ = ks.SaveCert(keyAttrs.CN, caCert)
 
 	return caCert, caPrivKey
 }
@@ -269,7 +268,7 @@ func createServerCertificate(ks keychain.KeyStore, caCert *x509.Certificate, caP
 
 	serverCert, _ := x509.ParseCertificate(serverCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	ks.SaveCert("localhost", serverCert)
+	_ = ks.SaveCert("localhost", serverCert)
 
 	return serverCert
 }
@@ -291,27 +290,3 @@ func tlsVersionString(version uint16) string {
 }
 
 // testServer performs a simple test of the server
-func testServer() {
-	time.Sleep(2 * time.Second) // Wait for server to start
-
-	// Create HTTP client with insecure TLS (for testing only)
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				// #nosec G402 - InsecureSkipVerify is intentionally used in this example
-				// to demonstrate self-signed certificates. In production, always verify certificates!
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-
-	resp, err := client.Get("https://localhost:8443/")
-	if err != nil {
-		log.Printf("Test request failed: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	fmt.Printf("Test response:\n%s\n", body)
-}

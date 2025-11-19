@@ -1,227 +1,666 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
-//
-// This file is part of go-keychain.
-//
-// go-keychain is dual-licensed:
-//
-// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
-//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
-//
-// 2. Commercial License
-//    Contact licensing@automatethethings.com for commercial licensing options.
-
-//go:build tpm2
-
 package tpm2
 
 import (
+	"crypto"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"strings"
 
+	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-// Config contains configuration parameters for TPM 2.0 backend initialization.
-// It supports both hardware TPM devices and simulator connections.
+type PCRBankAlgo string
+
+var (
+	PCRBankSHA1   = "sha1"
+	PCRBankSHA256 = "sha256"
+	PCRBankSHA384 = "sha384"
+	PCRBankSHA512 = "sha512"
+
+	pcrBankAlgIDMap = map[string]tpm2.TPMAlgID{
+		PCRBankSHA1:   tpm2.TPMAlgSHA1,
+		PCRBankSHA256: tpm2.TPMAlgSHA256,
+		PCRBankSHA384: tpm2.TPMAlgSHA384,
+		PCRBankSHA512: tpm2.TPMAlgSHA512,
+	}
+
+	cryptoHashAlgIDMap = map[string]tpm2.TPMAlgID{
+		"SHA-1":    tpm2.TPMAlgSHA1,
+		"SHA-256":  tpm2.TPMAlgSHA256,
+		"SHA-384":  tpm2.TPMAlgSHA384,
+		"SHA-512":  tpm2.TPMAlgSHA512,
+		"SHA3-256": tpm2.TPMAlgSHA3256,
+		"SHA3-384": tpm2.TPMAlgSHA3384,
+		"SHA3-512": tpm2.TPMAlgSHA3512,
+	}
+
+	pcrBankCryptoHashMap = map[string]crypto.Hash{
+		PCRBankSHA1:   crypto.SHA1,
+		PCRBankSHA256: crypto.SHA256,
+		PCRBankSHA384: crypto.SHA3_384,
+		PCRBankSHA512: crypto.SHA512,
+	}
+)
+
+func (pcrBankAlgo PCRBankAlgo) String() string {
+	return string(pcrBankAlgo)
+}
+
+var (
+	ErrInvalidHierarchyType = errors.New("tpm2: invalid hierarchy type")
+	ErrInvalidPCRBankType   = errors.New("tpm2: invalid PCR bank")
+
+	DefaultConfig = Config{
+		EncryptSession:               false,
+		UseEntropy:                   false,
+		Device:                       "/dev/tpmrm0",
+		UseSimulator:                 true,
+		Hash:                         "SHA-256",
+		IdentityProvisioningStrategy: string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS),
+		EK: &EKConfig{
+			CertHandle:    0x01C00002,
+			Debug:         true,
+			Handle:        0x81010001,
+			HierarchyAuth: types.DEFAULT_PASSWORD,
+			KeyAlgorithm:  x509.RSA.String(),
+			RSAConfig: &store.RSAConfig{
+				KeySize: 2048,
+			},
+		},
+		FileIntegrity: []string{
+			"./",
+		},
+		IAK: &IAKConfig{
+			Debug:        true,
+			Hash:         crypto.SHA256.String(),
+			Handle:       0x81010002,
+			KeyAlgorithm: x509.RSA.String(),
+			RSAConfig: &store.RSAConfig{
+				KeySize: 2048,
+			},
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+		},
+		IDevID: &IDevIDConfig{
+			CertHandle:   0x01C90000,
+			Debug:        true,
+			Hash:         crypto.SHA256.String(),
+			Handle:       0x81020000,
+			KeyAlgorithm: x509.RSA.String(),
+			Model:        "edge",
+			// Password:           types.DEFAULT_PASSWORD,
+			Pad:                true,
+			PlatformPolicy:     true,
+			RSAConfig:          &store.RSAConfig{KeySize: 2048},
+			Serial:             "001",
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+		},
+		KeyStore: &KeyStoreConfig{
+			SRKAuth:        "platform",
+			SRKHandle:      0x81000002,
+			PlatformPolicy: true,
+		},
+		PlatformPCR:     16,
+		PlatformPCRBank: PCRBankSHA256,
+		SSRK: &SRKConfig{
+			Debug:  true,
+			Handle: 0x81000001,
+			// HierarchyAuth: types.DEFAULT_PASSWORD,
+			PlatformPolicy: true,
+			KeyAlgorithm:   x509.RSA.String(),
+			RSAConfig: &store.RSAConfig{
+				KeySize: 2048,
+			},
+		},
+	}
+)
+
 type Config struct {
-	// CN is the Common Name identifier for the Storage Root Key (SRK).
-	// This is required and typically identifies the keychain instance.
-	CN string `json:"cn" yaml:"cn"`
-
-	// DevicePath specifies the path to the TPM character device.
-	// Common values: /dev/tpmrm0 (resource manager), /dev/tpm0 (direct access)
-	// Required when UseSimulator is false.
-	DevicePath string `json:"device_path" yaml:"device_path"`
-
-	// UseSimulator indicates whether to use a TPM simulator instead of hardware.
-	// When true, SimulatorType, SimulatorHost and SimulatorPort must be specified.
-	UseSimulator bool `json:"use_simulator" yaml:"use_simulator"`
-
-	// SimulatorType specifies which TPM simulator to use.
-	// Valid values: "embedded" (go-tpm-tools stateless), "swtpm" (TCP-based stateful)
-	// Default: "swtpm" for production compatibility
-	SimulatorType string `json:"simulator_type,omitempty" yaml:"simulator_type,omitempty"`
-
-	// SimulatorHost is the hostname or IP address of the TPM simulator.
-	// Required when UseSimulator is true and SimulatorType is "swtpm". Common value: "localhost"
-	SimulatorHost string `json:"simulator_host,omitempty" yaml:"simulator_host,omitempty"`
-
-	// SimulatorPort is the port number of the TPM simulator.
-	// Required when UseSimulator is true and SimulatorType is "swtpm". Common value: 2321
-	SimulatorPort int `json:"simulator_port,omitempty" yaml:"simulator_port,omitempty"`
-
-	// SRKHandle is the persistent handle for the Storage Root Key.
-	// Must be in the persistent handle range: 0x81000000 - 0x81FFFFFF
-	// Common value: 0x81000001
-	SRKHandle uint32 `json:"srk_handle" yaml:"srk_handle"`
-
-	// Hierarchy specifies the TPM hierarchy for key operations.
-	// Valid values: "owner" (default), "endorsement", "platform"
-	// The owner hierarchy is most common for application keys.
-	Hierarchy string `json:"hierarchy,omitempty" yaml:"hierarchy,omitempty"`
-
-	// PlatformPolicy enables Platform Configuration Register (PCR) policy
-	// for keys. When enabled, keys are bound to specific PCR values,
-	// providing measured boot integration.
-	PlatformPolicy bool `json:"platform_policy" yaml:"platform_policy"`
-
-	// PCRSelection specifies which PCR banks to include in the platform policy.
-	// Example: [0, 1, 2, 3, 7] for secure boot PCRs
-	PCRSelection []int `json:"pcr_selection,omitempty" yaml:"pcr_selection,omitempty"`
-
-	// EncryptSession enables AES-128/256 CFB encryption for TPM sessions.
-	//
-	// Security (STRONGLY RECOMMENDED for Production):
-	//   - Encrypts all parameter data sent to/from the TPM
-	//   - Protects against man-in-the-middle attacks on TPM bus
-	//   - Prevents bus snooping of sensitive keys, PINs, and data
-	//   - Required for FIPS 140-2/3 and Common Criteria EAL4+ compliance
-	//   - Enabled by default in production configurations
-	//
-	// Performance Impact (Minimal):
-	//   - Session creation: +2-5ms per session
-	//   - Per-operation overhead: <1ms
-	//   - Negligible compared to TPM operation time (10-100ms)
-	//
-	// When to Disable (Debugging Only):
-	//   - Local development and testing
-	//   - TPM command troubleshooting and debugging
-	//   - Performance benchmarking and profiling
-	//   - NEVER disable in production environments
-	//
-	// Compliance Requirements:
-	//   - FIPS 140-2/3: Required for cryptographic module validation
-	//   - Common Criteria EAL4+: Required for high assurance
-	//   - PCI-DSS: Recommended for protecting cardholder data
-	//   - HIPAA: Recommended for protecting health information
-	//
-	// Technical Details:
-	//   - Uses AES-128/256 in CFB mode for symmetric encryption
-	//   - Default mode: EncryptInOut (bidirectional encryption)
-	//   - Sessions created via HMAC(), HMACSession(), HMACSaltedSession()
-	//   - Transparent to calling code - automatically applied
-	//   - Can be configured via SessionConfig for advanced control
-	//
-	// Default: true (recommended for all production use)
-	EncryptSession bool `json:"encrypt_session" yaml:"encrypt_session"`
-
-	// SessionConfig provides detailed configuration for TPM session encryption.
-	// If nil, default session configuration is used (bidirectional encryption, AES-128).
-	// Only used when EncryptSession is true.
-	//
-	// Recommended for production:
-	//   SessionConfig: &SessionConfig{
-	//       Encrypted:      true,
-	//       EncryptionMode: EncryptionModeInOut,  // Bidirectional encryption
-	//       AESKeySize:     128,                   // AES-128 (TPM standard)
-	//   }
-	//
-	// For high-security environments (with performance tradeoff):
-	//   SessionConfig: &SessionConfig{
-	//       Encrypted:      true,
-	//       EncryptionMode: EncryptionModeInOut,  // Bidirectional encryption
-	//       Salted:         true,                  // Enhanced key derivation
-	//       AESKeySize:     256,                   // AES-256
-	//   }
-	//
-	// For high-performance environments:
-	//   SessionConfig: &SessionConfig{
-	//       Encrypted:      true,
-	//       EncryptionMode: EncryptionModeInOut,
-	//       AESKeySize:     128,
-	//       PoolSize:       4,                     // Pre-allocate 4 sessions
-	//   }
-	SessionConfig *SessionConfig `json:"session_config,omitempty" yaml:"session_config,omitempty"`
-
-	// Tracker is the AEAD safety tracker for nonce/bytes tracking.
-	// If nil, a default memory-based tracker will be created.
-	// For production systems, provide a persistent tracker.
-	Tracker types.AEADSafetyTracker `yaml:"-" json:"-" mapstructure:"-"`
-
-	// Debug enables verbose logging of TPM operations.
-	Debug bool `json:"debug" yaml:"debug"`
+	CommandAddress               string                  `yaml:"command-address,omitempty" json:"command_address" mapstructure:"command-address"`
+	Device                       string                  `yaml:"device,omitempty" json:"device" mapstructure:"device"`
+	EncryptSession               bool                    `yaml:"encrypt-sessions" json:"encrypt_sessions" mapstructure:"encrypt-sessions"`
+	EK                           *EKConfig               `yaml:"ek" json:"ek" mapstructure:"ek"`
+	FileIntegrity                []string                `yaml:"file-integrity" json:"file_integrity" mapstructure:"file-integrity"`
+	Hash                         string                  `yaml:"hash" json:"hash" mapstructure:"hash"`
+	IAK                          *IAKConfig              `yaml:"iak" json:"iak" mapstructure:"iak"`
+	IdentityProvisioningStrategy string                  `yaml:"identity-provisioning" json:"identity_provisioning" mapstructure:"identity-provisioning"`
+	IDevID                       *IDevIDConfig           `yaml:"idevid" json:"idevid" mapstructure:"idevid"`
+	KeyStore                     *KeyStoreConfig         `yaml:"keystore" json:"keystore" mapstructure:"keystore"`
+	LockoutAuth                  string                  `yaml:"lockout-auth,omitempty" json:"lockout-auth" mapstructure:"lockout-auth"`
+	PlatformAddress              string                  `yaml:"platform-address,omitempty" json:"platform_address" mapstructure:"platform-address"`
+	PlatformPCR                  uint                    `yaml:"platform-pcr" json:"platform_pcr" mapstructure:"platform-pcr"`
+	PlatformPCRBank              string                  `yaml:"platform-pcr-bank" json:"platform_pcr_bank" mapstructure:"platform-pcr-bank"`
+	SSRK                         *SRKConfig              `yaml:"ssrk" json:"ssrk" mapstructure:"ssrk"`
+	Tracker                      types.AEADSafetyTracker `yaml:"-" json:"-" mapstructure:"-"`
+	UseEntropy                   bool                    `yaml:"entropy" json:"entropy" mapstructure:"entropyr"`
+	UseSimulator                 bool                    `yaml:"simulator" json:"simulator" mapstructure:"simulator"`
 }
 
-// DefaultConfig returns a Config with sensible defaults for hardware TPM usage.
-// The returned configuration:
-//   - Uses /dev/tpmrm0 (TPM resource manager)
-//   - Sets SRK handle to 0x81000001 (standard persistent handle)
-//   - Uses owner hierarchy (most common for applications)
-//   - Disables platform policy by default
-//   - Enables session encryption for security
-func DefaultConfig() *Config {
-	return &Config{
-		CN:             "keystore-srk",
-		DevicePath:     "/dev/tpmrm0",
-		UseSimulator:   false,
-		SRKHandle:      0x81000001,
-		Hierarchy:      "owner",
-		PlatformPolicy: false,
-		EncryptSession: true,
-		Debug:          false,
-	}
+type KeyStoreConfig struct {
+	CN             string `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	SRKAuth        string `yaml:"srk-auth,omitempty" json:"srk_auth" mapstructure:"srk-auth"`
+	SRKHandle      uint32 `yaml:"srk-handle" json:"srk-handle" mapstructure:"srk-handle"`
+	PlatformPolicy bool   `yaml:"platform-policy" json:"platform_policy" mapstructure:"platform-policy"`
 }
 
-// Validate checks the configuration for completeness and correctness.
-// It returns an error if any required fields are missing or invalid.
-func (c *Config) Validate() error {
-	if c.CN == "" {
-		return errors.New("tpm2: CN (Common Name) is required")
+type EKConfig struct {
+	CertHandle     uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN             string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug          bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig      *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle         uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	HierarchyAuth  string           `yaml:"hierarchy-auth,omitempty" json:"hierarchy_auth" mapstructure:"hierarchy-auth"`
+	KeyAlgorithm   string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password       string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig      *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+}
+
+type SRKConfig struct {
+	CN             string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug          bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig      *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle         uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	HierarchyAuth  string           `yaml:"hierarchy-auth,omitempty" json:"hierarchy-auth" mapstructure:"hierarchy-auth"`
+	KeyAlgorithm   string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password       string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig      *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+}
+
+type IDevIDConfig struct {
+	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Model              string           `yaml:"model,omitempty" json:"model" mapstructure:"model"`
+	Pad                bool             `yaml:"pad" json:"pad" mapstructure:"pad"`
+	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig `yaml:"rsa" json:"rsa" mapstructure:"rsa"`
+	Serial             string           `yaml:"serial,omitempty" json:"serial" mapstructure:"serial"`
+	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+}
+
+type IAKConfig struct {
+	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+}
+
+type LDevIDConfig struct {
+	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Model              string           `yaml:"model" json:"model" mapstructure:"model"`
+	Pad                bool             `yaml:"pad" json:"pad" mapstructure:"pad"`
+	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	Serial             string           `yaml:"serial,omitempty" json:"serial" mapstructure:"serial"`
+	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+}
+
+type LAKConfig struct {
+	CertHandle         uint32           `yaml:"cert-handle" json:"cert-handle" mapstructure:"cert-handle"`
+	CN                 string           `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
+	Debug              bool             `json:"debug" yaml:"debug" mapstructure:"debug"`
+	ECCConfig          *store.ECCConfig `yaml:"ecc,omitempty" json:"ecc" mapstructure:"ecc"`
+	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
+	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
+	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	PlatformPolicy     bool             `yaml:"platform-policy" json:"_platform_policy" mapstructure:"platform-policy"`
+	RSAConfig          *store.RSAConfig `yaml:"rsa,omitempty" json:"rsa" mapstructure:"rsa"`
+	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+}
+
+func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, idevidConfig *IDevIDConfig) (*types.KeyAttributes, error) {
+
+	if config.CN == "" {
+		if idevidConfig != nil {
+			config.CN = fmt.Sprintf("ek-%s-%s", idevidConfig.Model, idevidConfig.Serial)
+		} else {
+			config.CN = "ek"
+		}
 	}
 
-	if c.SRKHandle == 0 {
-		return errors.New("tpm2: SRKHandle is required")
+	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
+	if err != nil {
+		if config.RSAConfig != nil {
+			algorithm = x509.RSA
+		} else if config.ECCConfig != nil {
+			algorithm = x509.ECDSA
+		} else {
+			return nil, err
+		}
 	}
 
-	if !IsPersistentHandle(c.SRKHandle) {
-		return fmt.Errorf("tpm2: SRKHandle must be in persistent range (0x81000000-0x81FFFFFF), got %#x", c.SRKHandle)
-	}
-
-	if c.UseSimulator {
-		// Default to SWTPM for production compatibility
-		if c.SimulatorType == "" {
-			c.SimulatorType = "swtpm"
-		}
-
-		// Validate simulator type
-		switch c.SimulatorType {
-		case "embedded", "swtpm":
-			// Valid
-		default:
-			return fmt.Errorf("tpm2: invalid SimulatorType %q, must be 'embedded' or 'swtpm'", c.SimulatorType)
-		}
-
-		// SWTPM requires host and port
-		if c.SimulatorType == "swtpm" {
-			if c.SimulatorHost == "" {
-				return errors.New("tpm2: SimulatorHost is required when SimulatorType is 'swtpm'")
-			}
-			if c.SimulatorPort == 0 {
-				return errors.New("tpm2: SimulatorPort is required when SimulatorType is 'swtpm'")
-			}
-		}
+	var ekTemplate tpm2.TPMTPublic
+	if algorithm == x509.RSA {
+		ekTemplate = tpm2.RSAEKTemplate
 	} else {
-		if c.DevicePath == "" {
-			return errors.New("tpm2: DevicePath is required when UseSimulator is false")
+		ekTemplate = tpm2.ECCEKTemplate
+	}
+
+	if config.PlatformPolicy && policyDigest != nil {
+		ekTemplate.AuthPolicy = *policyDigest
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:             config.CN,
+		Debug:          config.Debug,
+		KeyAlgorithm:   algorithm,
+		KeyType:        types.KeyTypeEndorsement,
+		Password:       types.NewClearPassword([]byte(config.Password)),
+		PlatformPolicy: config.PlatformPolicy,
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			CertHandle:    tpm2.TPMHandle(config.CertHandle),
+			Handle:        tpm2.TPMHandle(config.Handle),
+			HandleType:    tpm2.TPMHTPersistent,
+			Hierarchy:     tpm2.TPMHandle(tpm2.TPMRHEndorsement),
+			HierarchyAuth: types.NewClearPassword([]byte(config.HierarchyAuth)),
+			Template:      ekTemplate,
+		},
+	}
+
+	if config.ECCConfig != nil {
+		if config.KeyAlgorithm == "" {
+			config.KeyAlgorithm = x509.ECDSA.String()
+		}
+		curve, err := types.ParseCurve(config.ECCConfig.Curve)
+		if err != nil {
+			return nil, err
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{
+			Curve: curve,
 		}
 	}
 
-	// Validate hierarchy if specified
-	if c.Hierarchy != "" {
-		switch c.Hierarchy {
-		case "owner", "endorsement", "platform":
-			// Valid hierarchy
-		default:
-			return fmt.Errorf("tpm2: invalid hierarchy %q, must be 'owner', 'endorsement', or 'platform'", c.Hierarchy)
+	if config.RSAConfig != nil {
+		if config.KeyAlgorithm == "" {
+			config.KeyAlgorithm = x509.RSA.String()
+		}
+		attrs.RSAAttributes = &types.RSAAttributes{
+			KeySize: config.RSAConfig.KeySize,
 		}
 	}
 
-	return nil
+	return attrs, nil
 }
 
-// IsPersistentHandle returns true if the handle is in the TPM persistent handle range.
-// TPM 2.0 persistent handles are in the range 0x81000000 to 0x81FFFFFF.
-func IsPersistentHandle(handle uint32) bool {
-	return handle >= 0x81000000 && handle <= 0x81FFFFFF
+func SRKAttributesFromConfig(config SRKConfig, policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+
+	if config.CN == "" {
+		config.CN = "srk"
+	}
+
+	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
+	if err != nil {
+		if config.RSAConfig != nil {
+			algorithm = x509.RSA
+		} else if config.ECCConfig != nil {
+			algorithm = x509.ECDSA
+		} else {
+			return nil, err
+		}
+	}
+
+	var srkTemplate tpm2.TPMTPublic
+	if algorithm == x509.RSA {
+		srkTemplate = tpm2.RSASRKTemplate
+	} else {
+		srkTemplate = tpm2.ECCSRKTemplate
+	}
+
+	if config.PlatformPolicy && policyDigest != nil {
+		srkTemplate.AuthPolicy = *policyDigest
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:             config.CN,
+		Debug:          config.Debug,
+		KeyAlgorithm:   algorithm,
+		KeyType:        types.KeyTypeStorage,
+		Password:       types.NewClearPassword([]byte(config.Password)),
+		PlatformPolicy: config.PlatformPolicy,
+		StoreType:      types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			Handle:        tpm2.TPMHandle(config.Handle),
+			HandleType:    tpm2.TPMHTPersistent,
+			Hierarchy:     tpm2.TPMHandle(tpm2.TPMRHOwner),
+			HierarchyAuth: types.NewClearPassword([]byte(config.HierarchyAuth)),
+			Template:      srkTemplate,
+		},
+	}
+
+	if config.ECCConfig != nil {
+		curve, err := types.ParseCurve(config.ECCConfig.Curve)
+		if err != nil {
+			return nil, err
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{
+			Curve: curve,
+		}
+	}
+
+	if config.RSAConfig != nil {
+		attrs.RSAAttributes = &types.RSAAttributes{
+			KeySize: config.RSAConfig.KeySize,
+		}
+	}
+
+	return attrs, nil
+}
+
+func IAKAttributesFromConfig(
+	soPIN types.Password,
+	config *IAKConfig,
+	policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+
+	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
+	if err != nil {
+		if config.RSAConfig != nil {
+			algorithm = x509.RSA
+		} else if config.ECCConfig != nil {
+			algorithm = x509.ECDSA
+		} else {
+			return nil, err
+		}
+	}
+
+	hash := ParseHash(config.Hash)
+
+	sigAlgo, err := types.ParseSignatureAlgorithm(config.SignatureAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	tpmHashAlg, err := ParseHashAlgFromString(config.Hash)
+	if err != nil {
+		return nil, ErrInvalidHashFunction
+	}
+
+	var ekTemplate tpm2.TPMTPublic
+	if algorithm == x509.RSA {
+		ekTemplate = tpm2.RSAEKTemplate
+	} else {
+		ekTemplate = tpm2.ECCEKTemplate
+	}
+
+	if config.PlatformPolicy && policyDigest != nil {
+		ekTemplate.AuthPolicy = *policyDigest
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:                 config.CN,
+		Debug:              config.Debug,
+		Hash:               hash,
+		KeyAlgorithm:       algorithm,
+		KeyType:            types.KeyTypeAttestation,
+		Password:           types.NewClearPassword([]byte(config.Password)),
+		PlatformPolicy:     config.PlatformPolicy,
+		SignatureAlgorithm: sigAlgo,
+		StoreType:          types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			CertHandle:    tpm2.TPMHandle(config.CertHandle),
+			Handle:        tpm2.TPMHandle(config.Handle),
+			HandleType:    tpm2.TPMHTPersistent,
+			HashAlg:       tpmHashAlg,
+			Hierarchy:     tpm2.TPMRHEndorsement,
+			HierarchyAuth: soPIN,
+			Template:      ekTemplate,
+		},
+	}
+
+	if config.ECCConfig != nil {
+		curve, err := types.ParseCurve(config.ECCConfig.Curve)
+		if err != nil {
+			return nil, err
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{
+			Curve: curve,
+		}
+	}
+
+	if config.RSAConfig != nil {
+		attrs.RSAAttributes = &types.RSAAttributes{
+			KeySize: config.RSAConfig.KeySize,
+		}
+	}
+
+	return attrs, nil
+}
+
+func IDevIDAttributesFromConfig(
+	config IDevIDConfig,
+	policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+
+	// Use the CN if specified, otherwise generate a default to model-serial
+	// naming convention.
+	if config.CN == "" {
+		if config.Model != "" && config.Serial != "" {
+			config.CN = fmt.Sprintf("%s-%s", config.Model, config.Serial)
+		}
+	}
+
+	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
+	if err != nil {
+		if config.RSAConfig != nil {
+			algorithm = x509.RSA
+		} else if config.ECCConfig != nil {
+			algorithm = x509.ECDSA
+		} else {
+			return nil, err
+		}
+	}
+
+	hash := ParseHash(config.Hash)
+
+	sigAlgo, err := types.ParseSignatureAlgorithm(config.SignatureAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	hashAlg, err := ParseHashAlgFromString(config.Hash)
+	if err != nil {
+		return nil, ErrInvalidHashFunction
+	}
+
+	var ekTemplate tpm2.TPMTPublic
+	if algorithm == x509.RSA {
+		ekTemplate = tpm2.RSAEKTemplate
+	} else {
+		ekTemplate = tpm2.ECCEKTemplate
+	}
+
+	if config.PlatformPolicy && policyDigest != nil {
+		ekTemplate.AuthPolicy = *policyDigest
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:                 config.CN,
+		Debug:              config.Debug,
+		Hash:               hash,
+		KeyAlgorithm:       algorithm,
+		KeyType:            types.KeyTypeIDevID,
+		Password:           types.NewClearPassword([]byte(config.Password)),
+		PlatformPolicy:     config.PlatformPolicy,
+		SignatureAlgorithm: sigAlgo,
+		StoreType:          types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			Handle:     tpm2.TPMHandle(config.Handle),
+			HandleType: tpm2.TPMHTPersistent,
+			HashAlg:    hashAlg,
+			Hierarchy:  tpm2.TPMRHEndorsement,
+			Template:   ekTemplate,
+		},
+	}
+
+	if config.ECCConfig != nil {
+		curve, err := types.ParseCurve(config.ECCConfig.Curve)
+		if err != nil {
+			return nil, err
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{
+			Curve: curve,
+		}
+	}
+
+	if config.RSAConfig != nil {
+		attrs.RSAAttributes = &types.RSAAttributes{
+			KeySize: config.RSAConfig.KeySize,
+		}
+	}
+
+	return attrs, nil
+}
+
+func LDevIDAttributesFromConfig(
+	config LDevIDConfig,
+	policyDigest *tpm2.TPM2BDigest) (*types.KeyAttributes, error) {
+
+	if config.CN == "" {
+		config.CN = "ldevid"
+	}
+
+	algorithm, err := types.ParseKeyAlgorithm(config.KeyAlgorithm)
+	if err != nil {
+		if config.RSAConfig != nil {
+			algorithm = x509.RSA
+		} else if config.ECCConfig != nil {
+			algorithm = x509.ECDSA
+		} else {
+			return nil, err
+		}
+	}
+
+	hash := ParseHash(config.Hash)
+
+	sigAlgo, err := types.ParseSignatureAlgorithm(config.SignatureAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	hashAlg, err := ParseHashAlgFromString(config.Hash)
+	if err != nil {
+		return nil, ErrInvalidHashFunction
+	}
+
+	var ekTemplate tpm2.TPMTPublic
+	if algorithm == x509.RSA {
+		ekTemplate = tpm2.RSAEKTemplate
+	} else {
+		ekTemplate = tpm2.ECCEKTemplate
+	}
+
+	if config.PlatformPolicy && policyDigest != nil {
+		ekTemplate.AuthPolicy = *policyDigest
+	}
+
+	attrs := &types.KeyAttributes{
+		CN:                 config.CN,
+		Debug:              config.Debug,
+		Hash:               hash,
+		KeyAlgorithm:       algorithm,
+		KeyType:            types.KeyTypeIDevID,
+		Password:           types.NewClearPassword([]byte(config.Password)),
+		PlatformPolicy:     config.PlatformPolicy,
+		SignatureAlgorithm: sigAlgo,
+		StoreType:          types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			Handle:     tpm2.TPMHandle(config.Handle),
+			HandleType: tpm2.TPMHTPersistent,
+			HashAlg:    hashAlg,
+			Hierarchy:  tpm2.TPMRHEndorsement,
+			Template:   ekTemplate,
+		},
+	}
+
+	if config.ECCConfig != nil {
+		curve, err := types.ParseCurve(config.ECCConfig.Curve)
+		if err != nil {
+			return nil, err
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{
+			Curve: curve,
+		}
+	}
+
+	if config.RSAConfig != nil {
+		attrs.RSAAttributes = &types.RSAAttributes{
+			KeySize: config.RSAConfig.KeySize,
+		}
+	}
+
+	return attrs, nil
+}
+
+func ParseHierarchy(hierarchyType string) (tpm2.TPMIRHHierarchy, error) {
+	switch hierarchyType {
+	case "ENDORSEMENT":
+		return tpm2.TPMRHEndorsement, nil
+	case "OWNER":
+		return tpm2.TPMRHOwner, nil
+	case "PLATFORM":
+		return tpm2.TPMRHPlatform, nil
+	}
+	return 0, ErrInvalidHierarchyType
+}
+
+// Parses the identity provisioning strategy, using one of the mentioned methods
+// in "TPM 2.0 Keys for Device Identity and Attestation", section 6 - Identity Provisioning.
+func ParseIdentityProvisioningStrategy(strategy string) EnrollmentStrategy {
+	switch strategy {
+	// 6.1 OEM Creation of an IAK Certificate
+	case string(EnrollmentStrategyIAK):
+		return EnrollmentStrategyIAK
+	// 6.2 OEM Installation of IAK and IDevID in a Single Pass
+	case string(EnrollmentStrategyIAK_IDEVID_SINGLE_PASS):
+		return EnrollmentStrategyIAK_IDEVID_SINGLE_PASS
+	default:
+		return EnrollmentStrategyIAK_IDEVID_SINGLE_PASS
+	}
+}
+
+func ParsePCRBankAlgID(pcrBank string) (tpm2.TPMAlgID, error) {
+	tpmAlgID, ok := pcrBankAlgIDMap[strings.ToLower(pcrBank)]
+	if !ok {
+		return 0, ErrInvalidPCRBankType
+	}
+	return tpmAlgID, nil
+}
+
+func ParsePCRBankCryptoHash(pcrBank string) (crypto.Hash, error) {
+	hash, ok := pcrBankCryptoHashMap[strings.ToLower(pcrBank)]
+	if !ok {
+		return 0, ErrInvalidPCRBankType
+	}
+	return hash, nil
+}
+
+func ParseCryptoHashAlgID(hash crypto.Hash) (tpm2.TPMAlgID, error) {
+	tpmAlgID, ok := cryptoHashAlgIDMap[hash.String()]
+	if !ok {
+		return 0, ErrInvalidCryptoHashAlgID
+	}
+	return tpmAlgID, nil
 }

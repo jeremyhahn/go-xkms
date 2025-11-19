@@ -185,8 +185,8 @@ func TestClearPassword_Zeroize(t *testing.T) {
 func TestClearPassword_Interface(t *testing.T) {
 	// Verify ClearPassword implements Password interface
 	var _ Password = (*ClearPassword)(nil)
-	var _ Password = NewClearPassword([]byte("test"))
-	var _ Password = NewClearPasswordFromString("test")
+	_ = NewClearPassword([]byte("test"))
+	_ = NewClearPasswordFromString("test")
 }
 
 func TestPassword_Lifecycle(t *testing.T) {

@@ -23,7 +23,7 @@ func TestNewResolver_SoftwareMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create software resolver: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Fatal("software resolver should be available")
@@ -36,7 +36,7 @@ func TestNewResolver_NilConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create resolver with nil config: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Fatal("resolver should be available")
@@ -48,7 +48,7 @@ func TestNewResolver_Mode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create resolver: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Fatal("resolver should be available")
@@ -61,7 +61,7 @@ func TestNewResolver_Config(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create resolver with config: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Fatal("resolver should be available")
@@ -78,7 +78,7 @@ func TestNewResolver_InvalidMode(t *testing.T) {
 
 func TestSoftwareResolver_Rand(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Test various sizes
 	sizes := []int{1, 16, 32, 64, 256, 1024}
@@ -95,7 +95,7 @@ func TestSoftwareResolver_Rand(t *testing.T) {
 
 func TestSoftwareResolver_RandZeroBytes(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	result, err := resolver.Rand(0)
 	if err != nil {
@@ -108,7 +108,7 @@ func TestSoftwareResolver_RandZeroBytes(t *testing.T) {
 
 func TestSoftwareResolver_RandRandomness(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate multiple random buffers and verify they're different
 	buf1, _ := resolver.Rand(32)
@@ -121,7 +121,7 @@ func TestSoftwareResolver_RandRandomness(t *testing.T) {
 
 func TestSoftwareResolver_RandEntropy(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate many bytes and verify they have good entropy
 	// (not all zeros or all ones)
@@ -129,9 +129,10 @@ func TestSoftwareResolver_RandEntropy(t *testing.T) {
 
 	var zeroCount, oneCount int
 	for _, b := range buf {
-		if b == 0 {
+		switch b {
+		case 0:
 			zeroCount++
-		} else if b == 255 {
+		case 255:
 			oneCount++
 		}
 	}
@@ -144,7 +145,7 @@ func TestSoftwareResolver_RandEntropy(t *testing.T) {
 
 func TestSoftwareResolver_Available(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Fatal("software resolver should always be available")
@@ -198,7 +199,7 @@ func TestNormalizeConfig_InvalidType(t *testing.T) {
 
 func TestResolver_Source(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	source := resolver.Source()
 	if source == nil {
@@ -217,7 +218,7 @@ func TestResolver_Source(t *testing.T) {
 
 func TestResolver_Available(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Fatal("software resolver should be available")
@@ -249,30 +250,30 @@ func TestConfig_PKCS11ConfigFields(t *testing.T) {
 
 func BenchmarkSoftwareResolver_Rand32(b *testing.B) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resolver.Rand(32)
+		_, _ = resolver.Rand(32)
 	}
 }
 
 func BenchmarkSoftwareResolver_Rand256(b *testing.B) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resolver.Rand(256)
+		_, _ = resolver.Rand(256)
 	}
 }
 
 func BenchmarkSoftwareResolver_Rand1024(b *testing.B) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resolver.Rand(1024)
+		_, _ = resolver.Rand(1024)
 	}
 }

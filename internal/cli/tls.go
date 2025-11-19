@@ -52,7 +52,7 @@ var tlsGetCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create backend: %w", err))
 			return
 		}
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		// Create certificate storage
 		certStorage, err := cfg.CreateCertStorage()

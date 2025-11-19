@@ -72,7 +72,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open TPM: %v", err)
 	}
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 	log.Println("✓ TPM device opened successfully")
 
 	// Step 2: Configure NV RAM certificate storage
@@ -95,7 +95,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create TPM cert storage: %v", err)
 	}
-	defer certStorage.Close()
+	defer func() { _ = certStorage.Close() }()
 	log.Println("✓ NV RAM certificate storage created")
 
 	// Step 4: Check NV RAM capacity

@@ -1,5 +1,4 @@
 //go:build with_quantum
-// +build with_quantum
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC

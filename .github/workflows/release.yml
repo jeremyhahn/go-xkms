@@ -59,15 +59,20 @@ jobs:
           ## Installation
 
           ### Binary Downloads
-          Download the appropriate binary for your platform from the assets below.
+          Download platform-specific binaries directly - ready to use immediately!
 
-          **Standard builds** - No quantum-safe cryptography (smaller, no liboqs dependency):
-          - Linux: \`go-keychain-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}.tar.gz\`
-          - macOS: \`go-keychain-${{ steps.get_version.outputs.version }}-darwin-{amd64,arm64}.tar.gz\`
+          **Available Binaries**:
+          - \`keychain-cli-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard CLI
+          - \`keychain-server-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Server
+          - \`keychain-{cli,server}-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}-quantum\` - Quantum builds
 
-          **Quantum builds** - Includes ML-DSA (Dilithium) and ML-KEM (Kyber) support:
-          - Linux: \`go-keychain-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-quantum.tar.gz\`
-          - macOS: \`go-keychain-${{ steps.get_version.outputs.version }}-darwin-arm64-quantum.tar.gz\`
+          **Quick Start**:
+          \`\`\`bash
+          # Download and run CLI directly (Linux amd64 example)
+          wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/keychain-cli-${{ steps.get_version.outputs.version }}-linux-amd64
+          chmod +x keychain-cli-${{ steps.get_version.outputs.version }}-linux-amd64
+          ./keychain-cli-${{ steps.get_version.outputs.version }}-linux-amd64 --help
+          \`\`\`
 
           ### Docker Images
           \`\`\`bash
@@ -245,34 +250,47 @@ jobs:
           echo "Build artifacts:"
           ls -lh dist/
 
-      - name: Create archive
+      - name: Prepare release assets
         run: |
-          cd dist
-
-          # Create archive name with variant suffix
+          # Set variant suffix
           if [ "${{ matrix.variant }}" = "quantum" ]; then
-            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}-quantum"
+            VARIANT_SUFFIX="-quantum"
           else
-            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}"
+            VARIANT_SUFFIX=""
           fi
 
-          # Create tar.gz archive
-          tar czf ../${ARCHIVE_NAME}.tar.gz *
+          VERSION="${{ needs.create-release.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+
+          # Create renamed binaries with platform/variant info
+          cd dist
+
+          for binary in keychain-cli keychain-server; do
+            if [ -f "$binary" ]; then
+              # Create binary with full name including platform/arch/variant
+              NEW_NAME="${binary}-${VERSION}-linux-${ARCH}${VARIANT_SUFFIX}"
+              cp "$binary" "../${NEW_NAME}"
+
+              # Generate SHA256 for individual binary
+              cd ..
+              sha256sum "${NEW_NAME}" > "${NEW_NAME}.sha256"
+              cd dist
+            fi
+          done
 
           cd ..
 
-          # Generate SHA256 checksum
-          sha256sum ${ARCHIVE_NAME}.tar.gz > ${ARCHIVE_NAME}.sha256
-
-          echo "Created archive: ${ARCHIVE_NAME}.tar.gz"
-          ls -lh ${ARCHIVE_NAME}.*
+          echo "Created release assets:"
+          ls -lh keychain-*
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.tar.gz
-            go-keychain-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
+            keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
+            keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
+            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
+            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
 
   build-darwin-binaries:
     name: Build Darwin Binaries (${{ matrix.arch }}, ${{ matrix.variant }})
@@ -347,33 +365,47 @@ jobs:
           ls -lh dist/
           file dist/*
 
-      - name: Create archive
+      - name: Prepare release assets
         run: |
-          cd dist
-
+          # Set variant suffix
           if [ "${{ matrix.variant }}" = "quantum" ]; then
-            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}-quantum"
+            VARIANT_SUFFIX="-quantum"
           else
-            ARCHIVE_NAME="go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}"
+            VARIANT_SUFFIX=""
           fi
 
-          # Create tar.gz archive
-          tar czf ../${ARCHIVE_NAME}.tar.gz *
+          VERSION="${{ needs.create-release.outputs.version }}"
+          ARCH="${{ matrix.arch }}"
+
+          # Create renamed binaries with platform/variant info
+          cd dist
+
+          for binary in keychain-cli keychain-server; do
+            if [ -f "$binary" ]; then
+              # Create binary with full name including platform/arch/variant
+              NEW_NAME="${binary}-${VERSION}-darwin-${ARCH}${VARIANT_SUFFIX}"
+              cp "$binary" "../${NEW_NAME}"
+
+              # Generate SHA256 for individual binary
+              cd ..
+              shasum -a 256 "${NEW_NAME}" > "${NEW_NAME}.sha256"
+              cd dist
+            fi
+          done
 
           cd ..
 
-          # Generate SHA256 checksum
-          sha256sum ${ARCHIVE_NAME}.tar.gz > ${ARCHIVE_NAME}.sha256
-
-          echo "Created archive: ${ARCHIVE_NAME}.tar.gz"
-          ls -lh ${ARCHIVE_NAME}.*
+          echo "Created release assets:"
+          ls -lh keychain-*
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.tar.gz
-            go-keychain-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
+            keychain-cli-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
+            keychain-cli-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
+            keychain-server-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
+            keychain-server-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
 
   build-docker:
     name: Build Docker Server Image

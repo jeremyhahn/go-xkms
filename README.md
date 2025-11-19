@@ -10,8 +10,7 @@
 [![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE-AGPL-3.txt)
 [![Commercial License](https://img.shields.io/badge/license-Commercial-green.svg)](LICENSE-COMMERCIAL.md)
 
-
-A clean, focused cryptographic key and certificate management library for Go.
+A secure cryptographic key and certificate management solution for on-prem, hybrid, and/or cloud.
 
 ## Features at a Glance
 

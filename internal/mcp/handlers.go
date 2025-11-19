@@ -82,13 +82,17 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 	case "ecdsa":
 		attrs.ECCAttributes = &types.ECCAttributes{}
 		if params.Curve != "" {
-			curve := types.ParseCurve(params.Curve)
-			if curve == nil {
+			curve, curveErr := types.ParseCurve(params.Curve)
+			if curveErr != nil {
 				return nil, fmt.Errorf("invalid curve: %s", params.Curve)
 			}
 			attrs.ECCAttributes.Curve = curve
 		} else {
-			attrs.ECCAttributes.Curve = types.ParseCurve("P-256") // Default
+			defaultCurve, curveErr := types.ParseCurve("P-256")
+			if curveErr != nil {
+				return nil, fmt.Errorf("invalid default curve: %v", curveErr)
+			}
+			attrs.ECCAttributes.Curve = defaultCurve
 		}
 		privKey, err = s.keystore.GenerateECDSA(attrs)
 
@@ -108,8 +112,8 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 			algorithm = "aes256-gcm" // Default
 		}
 
-		keyAlgorithm := types.ParseKeyAlgorithm(algorithm)
-		if keyAlgorithm == x509.UnknownPublicKeyAlgorithm {
+		keyAlgorithm, algErr := types.ParseKeyAlgorithm(algorithm)
+		if algErr != nil {
 			return nil, fmt.Errorf("invalid algorithm: %s", algorithm)
 		}
 

@@ -99,7 +99,7 @@ func TestMemoryVersioningAdapter_GetLatestVersion(t *testing.T) {
 	v2, _ := adapter.CreateVersion(ctx, "test-key", nil)
 
 	// Deprecate v1
-	adapter.UpdateStatus(ctx, "test-key", v1.Version, VersionStatusDeprecated)
+	_ = adapter.UpdateStatus(ctx, "test-key", v1.Version, VersionStatusDeprecated)
 
 	// Latest should be v2
 	latest, err := adapter.GetLatestVersion(ctx, "test-key")
@@ -127,9 +127,9 @@ func TestMemoryVersioningAdapter_ListVersions(t *testing.T) {
 	}
 
 	// Create some versions
-	adapter.CreateVersion(ctx, "test-key", nil)
-	adapter.CreateVersion(ctx, "test-key", nil)
-	adapter.CreateVersion(ctx, "test-key", nil)
+	_, _ = adapter.CreateVersion(ctx, "test-key", nil)
+	_, _ = adapter.CreateVersion(ctx, "test-key", nil)
+	_, _ = adapter.CreateVersion(ctx, "test-key", nil)
 
 	versions, err = adapter.ListVersions(ctx, "test-key")
 	if err != nil {
@@ -179,7 +179,7 @@ func TestMemoryVersioningAdapter_DeleteVersion(t *testing.T) {
 	}
 
 	// Deprecate first
-	adapter.UpdateStatus(ctx, "test-key", v1.Version, VersionStatusDeprecated)
+	_ = adapter.UpdateStatus(ctx, "test-key", v1.Version, VersionStatusDeprecated)
 
 	// Now delete should work
 	err = adapter.DeleteVersion(ctx, "test-key", v1.Version)
@@ -271,8 +271,8 @@ func TestMemoryVersioningAdapter_PruneVersions(t *testing.T) {
 	v3, _ := adapter.CreateVersion(ctx, "test-key", nil)
 
 	// Deprecate old versions
-	adapter.UpdateStatus(ctx, "test-key", v1.Version, VersionStatusDeprecated)
-	adapter.UpdateStatus(ctx, "test-key", v2.Version, VersionStatusDeprecated)
+	_ = adapter.UpdateStatus(ctx, "test-key", v1.Version, VersionStatusDeprecated)
+	_ = adapter.UpdateStatus(ctx, "test-key", v2.Version, VersionStatusDeprecated)
 
 	// Prune with retention period of 0 (should keep only minVersions)
 	err := adapter.PruneVersions(ctx, "test-key", 0, 2)
@@ -307,7 +307,7 @@ func TestMemoryVersioningAdapter_ConcurrentAccess(t *testing.T) {
 	done := make(chan bool)
 	for i := 0; i < 10; i++ {
 		go func() {
-			adapter.CreateVersion(ctx, "test-key", nil)
+			_, _ = adapter.CreateVersion(ctx, "test-key", nil)
 			done <- true
 		}()
 	}

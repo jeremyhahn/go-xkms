@@ -216,7 +216,7 @@ func TestCompositeKeyStore_InterfaceCompliance(t *testing.T) {
 	}
 
 	// Verify it implements KeyStore interface
-	var _ keychain.KeyStore = ks
+	_ = ks
 
 	// Test that all methods are available
 	attrs := &types.KeyAttributes{

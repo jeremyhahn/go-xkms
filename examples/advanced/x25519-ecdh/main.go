@@ -41,7 +41,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create backend: %v", err)
 	}
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	// Generate Alice's X25519 key pair
 	fmt.Println("1. Generating Alice's X25519 key pair...")

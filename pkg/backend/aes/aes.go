@@ -873,7 +873,7 @@ func (b *AESBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm b
 // WrapKey wraps AES key material for secure transport using the specified parameters.
 // Uses pkg/crypto/wrapping to wrap the key material.
 func (b *AESBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
-	if keyMaterial == nil || len(keyMaterial) == 0 {
+	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
 	}
 
@@ -935,14 +935,15 @@ func (b *AESBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *back
 		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
 	}
 
-	if wrapped.ImportToken == nil || len(wrapped.ImportToken) == 0 {
+	if len(wrapped.ImportToken) == 0 {
 		return nil, fmt.Errorf("%w: import token cannot be nil or empty", backend.ErrInvalidAttributes)
 	}
 
 	// Retrieve the private key using the import token
-	token := string(wrapped.ImportToken)
+	/* Convert to string for map key */
+
 	b.wrappingKeysMutex.RLock()
-	privateKey, exists := b.wrappingKeys[token]
+	privateKey, exists := b.wrappingKeys[string(wrapped.ImportToken)]
 	b.wrappingKeysMutex.RUnlock()
 
 	if !exists {

@@ -68,8 +68,6 @@ func TestPrivateKeyStorage_Public(t *testing.T) {
 		require.NotNil(t, publicKey)
 
 		// Should implement crypto.PublicKey
-		_, ok := publicKey.(crypto.PublicKey)
-		assert.True(t, ok)
 
 		// Should be PublicKeyStorage type
 		pubStorage, ok := publicKey.(*PublicKeyStorage)
@@ -189,7 +187,7 @@ func TestPrivateKeyStorage_CryptoInterface(t *testing.T) {
 
 	t.Run("Public method returns crypto.PublicKey", func(t *testing.T) {
 		publicKey := storage.Public()
-		var _ crypto.PublicKey = publicKey
+		_ = publicKey
 	})
 }
 

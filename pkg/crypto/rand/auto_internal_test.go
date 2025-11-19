@@ -72,7 +72,7 @@ func TestAutoResolver_InitWithSoftwareFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver should not fail with unavailable hardware: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Verify it fell back to software
 	if !resolver.Available() {
@@ -98,7 +98,7 @@ func TestAutoResolver_ManualConstruction(t *testing.T) {
 		resolver: swResolver,
 		fallback: nil,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Test basic operations
 	if !ar.Available() {
@@ -130,7 +130,7 @@ func TestAutoResolver_FallbackModeSoftware(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Cast to autoResolver to check internal state
 	ar, ok := resolver.(*autoResolver)
@@ -155,7 +155,7 @@ func TestAutoResolver_NoFallbackMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Cast to autoResolver to check internal state
 	ar, ok := resolver.(*autoResolver)
@@ -285,7 +285,7 @@ func TestAutoResolver_ThreadSafety(t *testing.T) {
 		resolver: resolver,
 		fallback: fallback,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Spawn multiple goroutines accessing all methods concurrently
 	done := make(chan bool)
@@ -296,7 +296,7 @@ func TestAutoResolver_ThreadSafety(t *testing.T) {
 			defer func() { done <- true }()
 			for j := 0; j < 100; j++ {
 				// Test all methods
-				ar.Rand(16)
+				_, _ = ar.Rand(16)
 				ar.Source()
 				ar.Available()
 			}
@@ -398,7 +398,7 @@ func TestNewResolver_DirectModeSelection(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newResolver(%s) failed: %v", tt.mode, err)
 			}
-			defer resolver.Close()
+			defer func() { _ = resolver.Close() }()
 
 			if !resolver.Available() {
 				t.Errorf("Resolver for mode %s should be available", tt.mode)
@@ -413,7 +413,7 @@ func TestSoftwareResolver_EdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newSoftwareResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Test zero bytes
 	data, err := resolver.Rand(0)
@@ -487,7 +487,7 @@ func TestAutoResolver_InitializationSequence(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newAutoResolver failed for config %d: %v", i, err)
 			}
-			defer resolver.Close()
+			defer func() { _ = resolver.Close() }()
 
 			// All should succeed by falling back to software
 			if !resolver.Available() {
@@ -525,7 +525,7 @@ func TestAutoResolver_MultipleFallbackLevels(t *testing.T) {
 		resolver: primary,
 		fallback: fallback,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Multiple calls should consistently use fallback
 	for i := 0; i < 10; i++ {

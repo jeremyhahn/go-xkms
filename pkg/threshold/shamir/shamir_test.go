@@ -410,7 +410,7 @@ func BenchmarkSplit_SmallSecret(b *testing.B) {
 
 func BenchmarkSplit_LargeSecret(b *testing.B) {
 	secret := make([]byte, 1024)
-	rand.Read(secret)
+	_, _ = rand.Read(secret)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = Split(secret, 5, 9)

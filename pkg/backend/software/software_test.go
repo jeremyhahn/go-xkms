@@ -63,13 +63,15 @@ func createRSAAttrs(cn string, keySize int) *types.KeyAttributes {
 
 // createECDSAAttrs creates ECDSA key attributes
 func createECDSAAttrs(cn, curve string) *types.KeyAttributes {
+	parsedCurve, _ := types.ParseCurve(curve)
+	// Note: parsedCurve may be nil for invalid curves - tests should handle this
 	return &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,
 		StoreType:    backend.STORE_SW,
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
-			Curve: types.ParseCurve(curve),
+			Curve: parsedCurve,
 		},
 	}
 }
@@ -112,7 +114,7 @@ func TestNewBackend_ValidConfig(t *testing.T) {
 		t.Fatal("NewBackend returned nil")
 	}
 
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Verify type
 	if be.Type() != backend.BackendTypeSoftware {
@@ -156,7 +158,7 @@ func TestNewBackend_InvalidConfig(t *testing.T) {
 			be, err := NewBackend(tt.config)
 			if err == nil {
 				if be != nil {
-					be.Close()
+					_ = be.Close()
 				}
 				t.Fatal("Expected error, got nil")
 			}
@@ -170,7 +172,7 @@ func TestNewBackend_InvalidConfig(t *testing.T) {
 // TestGenerateKey_RSA tests RSA key generation
 func TestGenerateKey_RSA(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-rsa", 2048)
 
@@ -192,7 +194,7 @@ func TestGenerateKey_RSA(t *testing.T) {
 // TestGenerateKey_ECDSA tests ECDSA key generation
 func TestGenerateKey_ECDSA(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createECDSAAttrs("test-ecdsa", "P-256")
 
@@ -214,7 +216,7 @@ func TestGenerateKey_ECDSA(t *testing.T) {
 // TestGenerateKey_Ed25519 tests Ed25519 key generation
 func TestGenerateKey_Ed25519(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createEd25519Attrs("test-ed25519")
 
@@ -236,7 +238,7 @@ func TestGenerateKey_Ed25519(t *testing.T) {
 // TestGetKey_Asymmetric tests retrieving asymmetric keys
 func TestGetKey_Asymmetric(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-get-rsa", 2048)
 
@@ -276,7 +278,7 @@ func TestGenerateSymmetricKey_AllSizes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			attrs := createAESAttrs("test-aes-"+tt.name, tt.keySize, tt.algorithm)
 
@@ -313,7 +315,7 @@ func TestGenerateSymmetricKey_AllSizes(t *testing.T) {
 // TestGetSymmetricKey tests retrieving symmetric keys
 func TestGetSymmetricKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test-get-aes", 256, types.SymmetricAES256GCM)
 
@@ -346,7 +348,7 @@ func TestGetSymmetricKey(t *testing.T) {
 // TestSymmetricEncrypter tests symmetric encryption and decryption
 func TestSymmetricEncrypter(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test-encrypt", 256, types.SymmetricAES256GCM)
 
@@ -395,7 +397,7 @@ func TestSymmetricEncrypter(t *testing.T) {
 // TestSymmetricEncrypter_WithAAD tests encryption with additional authenticated data
 func TestSymmetricEncrypter_WithAAD(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test-encrypt-aad", 256, types.SymmetricAES256GCM)
 
@@ -447,7 +449,7 @@ func TestSymmetricEncrypter_WithAAD(t *testing.T) {
 // TestSigner tests crypto.Signer interface
 func TestSigner(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-signer", 2048)
 
@@ -478,7 +480,7 @@ func TestSigner(t *testing.T) {
 // TestDecrypter tests crypto.Decrypter interface
 func TestDecrypter(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-decrypter", 2048)
 
@@ -518,7 +520,7 @@ func TestDecrypter(t *testing.T) {
 func TestDeleteKey(t *testing.T) {
 	t.Run("AsymmetricKey", func(t *testing.T) {
 		be, _ := createTestBackend(t)
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		attrs := createRSAAttrs("test-delete-rsa", 2048)
 
@@ -543,7 +545,7 @@ func TestDeleteKey(t *testing.T) {
 
 	t.Run("SymmetricKey", func(t *testing.T) {
 		be, _ := createTestBackend(t)
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		attrs := createAESAttrs("test-delete-aes", 256, types.SymmetricAES256GCM)
 
@@ -570,7 +572,7 @@ func TestDeleteKey(t *testing.T) {
 // TestListKeys tests listing all keys (both asymmetric and symmetric)
 func TestListKeys(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate some asymmetric keys
 	rsaAttrs := createRSAAttrs("test-list-rsa", 2048)
@@ -629,7 +631,7 @@ func TestListKeys(t *testing.T) {
 func TestRotateKey(t *testing.T) {
 	t.Run("AsymmetricKey", func(t *testing.T) {
 		be, _ := createTestBackend(t)
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		attrs := createRSAAttrs("test-rotate-rsa", 2048)
 
@@ -662,7 +664,7 @@ func TestRotateKey(t *testing.T) {
 
 	t.Run("SymmetricKey", func(t *testing.T) {
 		be, _ := createTestBackend(t)
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		attrs := createAESAttrs("test-rotate-aes", 256, types.SymmetricAES256GCM)
 
@@ -722,7 +724,7 @@ func TestClose(t *testing.T) {
 // TestConcurrency tests concurrent operations
 func TestConcurrency(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	const numGoroutines = 10
 	var wg sync.WaitGroup
@@ -792,7 +794,7 @@ func TestConcurrency(t *testing.T) {
 // TestBackendType tests the backend type identifier
 func TestBackendType(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	if be.Type() != backend.BackendTypeSoftware {
 		t.Errorf("Expected type %s, got %s", backend.BackendTypeSoftware, be.Type())
@@ -802,7 +804,7 @@ func TestBackendType(t *testing.T) {
 // TestCapabilities tests the backend capabilities
 func TestCapabilities(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	caps := be.Capabilities()
 
@@ -901,7 +903,7 @@ func TestClosedBackendOperations(t *testing.T) {
 // TestGetKey_SymmetricKeyError tests error handling when getting symmetric keys via GetKey
 func TestGetKey_SymmetricKeyError(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Create a symmetric key
 	aesAttrs := createAESAttrs("test-symmetric-error", 256, types.SymmetricAES256GCM)
@@ -920,7 +922,7 @@ func TestGetKey_SymmetricKeyError(t *testing.T) {
 // TestListKeys_Empty tests listing keys when no keys exist
 func TestListKeys_Empty(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	keys, err := be.ListKeys()
 	if err != nil {
@@ -935,7 +937,7 @@ func TestListKeys_Empty(t *testing.T) {
 // TestRotateKey_NonExistentKey tests rotating a key that doesn't exist
 func TestRotateKey_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Rotating a non-existent key succeeds by creating a new key
 	// (DeleteKey ignores ErrKeyNotFound, then GenerateKey creates the key)
@@ -955,7 +957,7 @@ func TestRotateKey_NonExistentKey(t *testing.T) {
 // TestDeleteKey_NonExistentKey tests deleting a key that doesn't exist
 func TestDeleteKey_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("non-existent-delete", 2048)
 	err := be.DeleteKey(attrs)
@@ -967,7 +969,7 @@ func TestDeleteKey_NonExistentKey(t *testing.T) {
 // TestSigner_NonExistentKey tests getting signer for non-existent key
 func TestSigner_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("non-existent-signer", 2048)
 	_, err := be.Signer(attrs)
@@ -979,7 +981,7 @@ func TestSigner_NonExistentKey(t *testing.T) {
 // TestDecrypter_NonExistentKey tests getting decrypter for non-existent key
 func TestDecrypter_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("non-existent-decrypter", 2048)
 	_, err := be.Decrypter(attrs)
@@ -991,7 +993,7 @@ func TestDecrypter_NonExistentKey(t *testing.T) {
 // TestSymmetricEncrypter_NonExistentKey tests getting encrypter for non-existent key
 func TestSymmetricEncrypter_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("non-existent-encrypter", 256, types.SymmetricAES256GCM)
 	_, err := be.SymmetricEncrypter(attrs)
@@ -1003,7 +1005,7 @@ func TestSymmetricEncrypter_NonExistentKey(t *testing.T) {
 // TestGetKey_NonExistentKey tests getting a non-existent asymmetric key
 func TestGetKey_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("non-existent-get", 2048)
 	_, err := be.GetKey(attrs)
@@ -1015,7 +1017,7 @@ func TestGetKey_NonExistentKey(t *testing.T) {
 // TestGetSymmetricKey_NonExistentKey tests getting a non-existent symmetric key
 func TestGetSymmetricKey_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("non-existent-get-sym", 256, types.SymmetricAES256GCM)
 	_, err := be.GetSymmetricKey(attrs)

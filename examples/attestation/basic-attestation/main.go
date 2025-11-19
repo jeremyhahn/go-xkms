@@ -137,7 +137,7 @@ func main() {
 	fmt.Print(`
 // Initialize hardware backend
 backend := tpm2.NewTPM2KeyStore(config, ...)
-defer backend.Close()
+defer func() { _ = backend.Close() }()
 
 // Generate key
 privKey, err := backend.GenerateKey(keyAttrs)

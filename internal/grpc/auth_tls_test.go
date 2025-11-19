@@ -12,7 +12,6 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 //go:build integration
-// +build integration
 
 package grpc
 
@@ -91,7 +90,7 @@ func waitForGRPCServer(t *testing.T, server *Server, timeout time.Duration) {
 func TestGRPCServer_NoOpAuthenticator_NoTLS(t *testing.T) {
 	// Create test backend registry
 	manager := createTestBackendRegistry(t)
-	defer manager.Close()
+	defer func() { _ = manager.Close() }()
 
 	// Create NoOp authenticator
 	authenticator := auth.NewNoOpAuthenticator()
@@ -136,7 +135,7 @@ func TestGRPCServer_NoOpAuthenticator_NoTLS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := pb.NewKeystoreServiceClient(conn)
 
@@ -174,7 +173,7 @@ func TestGRPCServer_NoOpAuthenticator_NoTLS(t *testing.T) {
 func TestGRPCServer_APIKeyAuthenticator_Metadata(t *testing.T) {
 	// Create test backend manager
 	manager := createTestBackendRegistry(t)
-	defer manager.Close()
+	defer func() { _ = manager.Close() }()
 
 	// Create API key authenticator with test keys
 	validAPIKey := "test-api-key-12345"
@@ -233,7 +232,7 @@ func TestGRPCServer_APIKeyAuthenticator_Metadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := pb.NewKeystoreServiceClient(conn)
 
@@ -332,7 +331,7 @@ func TestGRPCServer_TLS_NoClientCert(t *testing.T) {
 
 	// Create test backend manager
 	manager := createTestBackendRegistry(t)
-	defer manager.Close()
+	defer func() { _ = manager.Close() }()
 
 	// Create TLS config (no client cert required)
 	tlsConfig := &tls.Config{
@@ -392,7 +391,7 @@ func TestGRPCServer_TLS_NoClientCert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := pb.NewKeystoreServiceClient(conn)
 
@@ -446,7 +445,7 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 
 	// Create test backend manager
 	manager := createTestBackendRegistry(t)
-	defer manager.Close()
+	defer func() { _ = manager.Close() }()
 
 	// Create CA cert pool for client verification
 	caCertPool := x509.NewCertPool()
@@ -514,7 +513,7 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to connect with client cert: %v", err)
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		client := pb.NewKeystoreServiceClient(conn)
 
@@ -544,7 +543,7 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 			t.Logf("Connection failed as expected without client cert: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		client := pb.NewKeystoreServiceClient(conn)
 
@@ -621,7 +620,7 @@ func TestGRPCServer_AuthenticationFailureScenarios(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create test backend manager
 			manager := createTestBackendRegistry(t)
-			defer manager.Close()
+			defer func() { _ = manager.Close() }()
 
 			// Create server with the specified authenticator
 			cfg := &ServerConfig{
@@ -662,7 +661,7 @@ func TestGRPCServer_AuthenticationFailureScenarios(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to connect: %v", err)
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 
 			client := pb.NewKeystoreServiceClient(conn)
 

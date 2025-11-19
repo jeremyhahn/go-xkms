@@ -102,9 +102,10 @@ func (h *HandlerContext) ReadinessHandler(w http.ResponseWriter, r *http.Request
 
 	// Return appropriate HTTP status
 	statusCode := http.StatusOK
-	if overallStatus == health.StatusUnhealthy {
+	switch overallStatus {
+	case health.StatusUnhealthy:
 		statusCode = http.StatusServiceUnavailable
-	} else if overallStatus == health.StatusDegraded {
+	case health.StatusDegraded:
 		// Service is degraded but still serving traffic
 		statusCode = http.StatusOK
 	}

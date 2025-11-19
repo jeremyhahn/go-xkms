@@ -306,7 +306,7 @@ func setupMigrator(t *testing.T) (*defaultMigrator, *mockImportExportBackend, *m
 // TestMigrateKey_Success tests successful key migration
 func TestMigrateKey_Success(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Generate and store a key in source
 	attrs := &types.KeyAttributes{
@@ -340,7 +340,7 @@ func TestMigrateKey_Success(t *testing.T) {
 // TestMigrateKey_WithVerification tests migration with validation
 func TestMigrateKey_WithVerification(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-verify.example.com",
@@ -366,7 +366,7 @@ func TestMigrateKey_WithVerification(t *testing.T) {
 // TestMigrateKey_DeleteSourceAfterVerification tests source deletion after migration
 func TestMigrateKey_DeleteSourceAfterVerification(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-delete.example.com",
@@ -400,7 +400,7 @@ func TestMigrateKey_DeleteSourceAfterVerification(t *testing.T) {
 // TestMigrateKey_VerificationFailure tests migration with validation failure
 func TestMigrateKey_VerificationFailure(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-verify-fail.example.com",
@@ -431,7 +431,7 @@ func TestMigrateKey_VerificationFailure(t *testing.T) {
 // TestMigrateKey_ExportFailure tests migration when export fails
 func TestMigrateKey_ExportFailure(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-export-fail.example.com",
@@ -456,7 +456,7 @@ func TestMigrateKey_ExportFailure(t *testing.T) {
 // TestMigrateKey_ImportFailure tests migration when import fails
 func TestMigrateKey_ImportFailure(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-import-fail.example.com",
@@ -481,7 +481,7 @@ func TestMigrateKey_ImportFailure(t *testing.T) {
 // TestMigrateKey_CustomWrappingAlgorithm tests migration with custom wrapping algorithm
 func TestMigrateKey_CustomWrappingAlgorithm(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-custom-wrap.example.com",
@@ -510,7 +510,7 @@ func TestMigrateKey_CustomWrappingAlgorithm(t *testing.T) {
 // TestMigrateAll_Success tests migrating multiple keys
 func TestMigrateAll_Success(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add multiple keys to source
 	keys := []struct {
@@ -562,7 +562,7 @@ func TestMigrateAll_Success(t *testing.T) {
 // TestMigrateAll_WithFilter tests filtering keys during migration
 func TestMigrateAll_WithFilter(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add keys with different attributes
 	keys := []struct {
@@ -623,7 +623,7 @@ func TestMigrateAll_WithFilter(t *testing.T) {
 // TestMigrateAll_StopOnError tests stopping migration on first error
 func TestMigrateAll_StopOnError(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add multiple keys
 	for i := 1; i <= 5; i++ {
@@ -681,7 +681,7 @@ func TestMigrateAll_StopOnError(t *testing.T) {
 // TestMigrateAll_Parallel tests parallel migration
 func TestMigrateAll_Parallel(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add multiple keys
 	numKeys := 10
@@ -715,7 +715,7 @@ func TestMigrateAll_Parallel(t *testing.T) {
 // TestMigrateAll_WithFailures tests continuing despite failures
 func TestMigrateAll_WithFailures(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add multiple keys
 	for i := 1; i <= 5; i++ {
@@ -769,7 +769,7 @@ func TestMigrateAll_WithFailures(t *testing.T) {
 // TestMigrationPlan tests dry-run migration planning
 func TestMigrationPlan(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add keys to source
 	numKeys := 5
@@ -797,7 +797,7 @@ func TestMigrationPlan(t *testing.T) {
 // TestMigrationPlan_WithFilter tests planning with key filtering
 func TestMigrationPlan_WithFilter(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add keys with different algorithms
 	keys := []struct {
@@ -859,7 +859,7 @@ func TestMigrationPlan_CompatibilityWarnings(t *testing.T) {
 
 	migrator, err := NewMigrator(source, dest)
 	require.NoError(t, err)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add a key
 	attrs := &types.KeyAttributes{
@@ -879,7 +879,7 @@ func TestMigrationPlan_CompatibilityWarnings(t *testing.T) {
 // TestValidateMigration_Success tests successful validation
 func TestValidateMigration_Success(t *testing.T) {
 	migrator, _, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Use symmetric key which doesn't require signing validation
 	attrs := &types.KeyAttributes{
@@ -902,7 +902,7 @@ func TestValidateMigration_Success(t *testing.T) {
 // TestValidateMigration_KeyNotFound tests validation when key is missing
 func TestValidateMigration_KeyNotFound(t *testing.T) {
 	migrator, _, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "nonexistent.example.com",
@@ -921,7 +921,7 @@ func TestValidateMigration_KeyNotFound(t *testing.T) {
 // TestValidateMigration_SignerFailure tests validation when signer fails
 func TestValidateMigration_SignerFailure(t *testing.T) {
 	migrator, _, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-signer-fail.example.com",
@@ -949,7 +949,7 @@ func TestValidateMigration_SignerFailure(t *testing.T) {
 // TestValidateMigration_SignFailure tests validation when sign operation fails
 func TestValidateMigration_SignFailure(t *testing.T) {
 	migrator, _, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-sign-fail.example.com",
@@ -1419,7 +1419,7 @@ func TestImportKey_GetParametersFailure(t *testing.T) {
 // TestMigrateKeysSequential tests sequential migration
 func TestMigrateKeysSequential(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add keys
 	keys := make([]*types.KeyAttributes, 3)
@@ -1454,7 +1454,7 @@ func TestMigrateKeysSequential(t *testing.T) {
 // TestMigrateKeysSequential_WithStopOnError tests sequential migration stopping on error
 func TestMigrateKeysSequential_WithStopOnError(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add keys
 	keys := make([]*types.KeyAttributes, 3)
@@ -1508,7 +1508,7 @@ func TestMigrateKeysSequential_WithStopOnError(t *testing.T) {
 // TestMigrateKeysParallel tests parallel migration
 func TestMigrateKeysParallel(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add keys
 	keys := make([]*types.KeyAttributes, 10)
@@ -1544,7 +1544,7 @@ func TestMigrateKeysParallel(t *testing.T) {
 // TestMigrateKeysParallel_WithFailures tests parallel migration with some failures
 func TestMigrateKeysParallel_WithFailures(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add keys
 	keys := make([]*types.KeyAttributes, 5)
@@ -1606,7 +1606,7 @@ func TestMigrateKeysParallel_WithFailures(t *testing.T) {
 // TestMigrateAll_ListKeysError tests MigrateAll when ListKeys fails
 func TestMigrateAll_ListKeysError(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	source.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
 		return nil, fmt.Errorf("list keys failed")
@@ -1621,7 +1621,7 @@ func TestMigrateAll_ListKeysError(t *testing.T) {
 // TestMigrationPlan_ListKeysError tests MigrationPlan when ListKeys fails
 func TestMigrationPlan_ListKeysError(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	source.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
 		return nil, fmt.Errorf("list keys failed")
@@ -1700,7 +1700,7 @@ func TestMatchesFilter(t *testing.T) {
 // TestValidateMigration_SymmetricKey tests validation of symmetric keys (no signer)
 func TestValidateMigration_SymmetricKey(t *testing.T) {
 	migrator, _, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "symmetric.example.com",
@@ -1722,7 +1722,7 @@ func TestValidateMigration_SymmetricKey(t *testing.T) {
 // TestMigrateKey_DefaultOptions tests MigrateKey with nil options
 func TestMigrateKey_DefaultOptions(t *testing.T) {
 	migrator, source, dest := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-defaults.example.com",
@@ -1751,7 +1751,7 @@ func TestMigrateKey_DefaultOptions(t *testing.T) {
 // TestMigrateAll_DefaultOptions tests MigrateAll with nil options
 func TestMigrateAll_DefaultOptions(t *testing.T) {
 	migrator, source, _ := setupMigrator(t)
-	defer migrator.Close()
+	defer func() { _ = migrator.Close() }()
 
 	// Add a key
 	attrs := &types.KeyAttributes{

@@ -80,7 +80,7 @@ func TestMigratorSourceDestBackends(t *testing.T) {
 
 	m, err := NewMigrator(source, dest)
 	require.NoError(t, err)
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	assert.Equal(t, source, m.SourceBackend())
 	assert.Equal(t, dest, m.DestBackend())
@@ -93,7 +93,7 @@ func TestMigrateKeyNilAttributes(t *testing.T) {
 
 	m, err := NewMigrator(source, dest)
 	require.NoError(t, err)
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	err = m.MigrateKey(nil, nil)
 	assert.Error(t, err)
@@ -130,7 +130,7 @@ func TestMigrateKeyWithoutExportSupport(t *testing.T) {
 
 	m, err := NewMigrator(source, dest)
 	require.NoError(t, err)
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:        "test.example.com",
@@ -152,7 +152,7 @@ func TestMigrateKeyWithoutImportSupport(t *testing.T) {
 
 	m, err := NewMigrator(source, dest)
 	require.NoError(t, err)
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:        "test.example.com",

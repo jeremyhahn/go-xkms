@@ -195,7 +195,7 @@ func TestBackend_Initialize(t *testing.T) {
 
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	err = backend.Initialize()
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestBackend_GenerateRSA(t *testing.T) {
 
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	err = backend.Initialize()
 	require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestBackend_GenerateECDSA(t *testing.T) {
 
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	err = backend.Initialize()
 	require.NoError(t, err)
@@ -321,7 +321,7 @@ func TestBackend_AvailableSlots(t *testing.T) {
 
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	err = backend.Initialize()
 	require.NoError(t, err)

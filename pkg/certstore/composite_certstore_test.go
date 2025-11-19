@@ -61,7 +61,7 @@ func TestStoreCertificate_SaveError(t *testing.T) {
 	}
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 
@@ -77,7 +77,7 @@ func TestStoreCRL_EmptyIssuer(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Create a CRL with empty issuer CN directly
 	crl := &x509.RevocationList{
@@ -98,7 +98,7 @@ func TestIsRevoked_LegacyRevokedCertificates(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -137,7 +137,7 @@ func TestListCertificates_GetCertError(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert1, _ := generateTestCert(t, "test1.example.com", false, nil, nil)
 	cert2, _ := generateTestCert(t, "test2.example.com", false, nil, nil)
@@ -167,7 +167,7 @@ func TestListCertificates_ListError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Close storage to cause error
-	storage.Close()
+	_ = storage.Close()
 
 	_, err = cs.ListCertificates()
 	assert.Error(t, err)
@@ -199,7 +199,7 @@ func TestVerifyCertificate_WithDNSName(t *testing.T) {
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "test.example.com", false, caCert, caKey)
@@ -219,7 +219,7 @@ func TestConcurrentCRLOperations(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 
@@ -270,7 +270,7 @@ func TestConcurrentChainOperations(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -312,7 +312,7 @@ func TestNew_WithCustomVerifyOptions(t *testing.T) {
 		AllowRevoked:  true,
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Verify the store was created successfully
 	assert.NotNil(t, cs)
@@ -323,7 +323,7 @@ func TestStoreCertificateChain_NilCertAtIndex(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, rootCert, rootKey)
@@ -341,7 +341,7 @@ func TestGetCertificate_AfterDelete(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	err = cs.StoreCertificate(cert)
@@ -366,7 +366,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	var wg sync.WaitGroup
 	errors := make(chan error, 100)
@@ -433,7 +433,7 @@ func TestVerifyCertificate_AllOptions(t *testing.T) {
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, intermediateCert, intermediateKey)
 
@@ -449,7 +449,7 @@ func TestMultipleCRLsForDifferentIssuers(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Create CRLs for different issuers
 	ca1, ca1Key := generateTestCert(t, "ca1.example.com", true, nil, nil)
@@ -506,7 +506,7 @@ func TestStoreCertificate_CheckRevocationFailure(t *testing.T) {
 		AllowRevoked: false,
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// The current implementation doesn't have a way to make isRevokedLocked return
 	// an error for a valid cert, so this test documents the expected behavior
@@ -523,7 +523,7 @@ func TestNew_DefaultVerifyOptions(t *testing.T) {
 		// VerifyOptions intentionally nil to test defaults
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	assert.NotNil(t, cs)
 }
@@ -533,7 +533,7 @@ func TestIsRevoked_CertWithRevokedCertificateEntries(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -611,7 +611,7 @@ func TestStressTest(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	var wg sync.WaitGroup
 	numOperations := 100

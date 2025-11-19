@@ -55,7 +55,7 @@ func azureKVExample() error {
 	if err != nil {
 		return fmt.Errorf("failed to create Azure Key Vault backend: %w", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Azure Key Vault supports AES-128, AES-192, and AES-256
 	attrs := &types.KeyAttributes{

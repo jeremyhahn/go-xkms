@@ -310,8 +310,10 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set environment variables
 			for key, value := range tt.env {
-				os.Setenv(key, value)
-				defer os.Unsetenv(key)
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = os.Unsetenv(key) }()
 			}
 
 			cfg := tt.initial
@@ -420,8 +422,10 @@ func TestApplyEnvOverrides_InvalidPorts(t *testing.T) {
 			// Set environment variables
 			for key, value := range tt.env {
 				if value != "" {
-					os.Setenv(key, value)
-					defer os.Unsetenv(key)
+					if err := os.Setenv(key, value); err != nil {
+						t.Fatal(err)
+					}
+					defer func() { _ = os.Unsetenv(key) }()
 				}
 			}
 
@@ -482,8 +486,10 @@ func TestApplyEnvOverrides_Logging(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for key, value := range tt.env {
-				os.Setenv(key, value)
-				defer os.Unsetenv(key)
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = os.Unsetenv(key) }()
 			}
 
 			cfg := Config{Logging: tt.initial}
@@ -503,8 +509,8 @@ func TestApplyEnvOverrides_Logging(t *testing.T) {
 func TestApplyEnvOverrides_Storage(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	os.Setenv("KEYSTORE_DATA_DIR", tmpDir)
-	defer os.Unsetenv("KEYSTORE_DATA_DIR")
+	_ = os.Setenv("KEYSTORE_DATA_DIR", tmpDir)
+	defer func() { _ = os.Unsetenv("KEYSTORE_DATA_DIR") }()
 
 	cfg := Config{
 		Storage: StorageConfig{Path: "/old/path"},
@@ -530,8 +536,8 @@ func TestApplyEnvOverrides_Storage(t *testing.T) {
 
 // TestApplyEnvOverrides_TPM2 tests environment variable overrides for TPM2 settings
 func TestApplyEnvOverrides_TPM2(t *testing.T) {
-	os.Setenv("TPM_DEVICE_PATH", "/dev/tpmrm0")
-	defer os.Unsetenv("TPM_DEVICE_PATH")
+	_ = os.Setenv("TPM_DEVICE_PATH", "/dev/tpmrm0")
+	defer func() { _ = os.Unsetenv("TPM_DEVICE_PATH") }()
 
 	cfg := Config{
 		Backends: BackendsConfig{
@@ -551,8 +557,8 @@ func TestApplyEnvOverrides_TPM2(t *testing.T) {
 
 // TestApplyEnvOverrides_PKCS11 tests environment variable overrides for PKCS11 settings
 func TestApplyEnvOverrides_PKCS11(t *testing.T) {
-	os.Setenv("PKCS11_LIBRARY", "/usr/lib/libpkcs11.so")
-	defer os.Unsetenv("PKCS11_LIBRARY")
+	_ = os.Setenv("PKCS11_LIBRARY", "/usr/lib/libpkcs11.so")
+	defer func() { _ = os.Unsetenv("PKCS11_LIBRARY") }()
 
 	cfg := Config{
 		Backends: BackendsConfig{
@@ -580,8 +586,8 @@ func TestApplyEnvOverrides_AWSKMS(t *testing.T) {
 	}
 
 	for key, value := range envVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+		_ = os.Setenv(key, value)
+		defer func(k string) { _ = os.Unsetenv(k) }(key)
 	}
 
 	cfg := Config{
@@ -620,8 +626,8 @@ func TestApplyEnvOverrides_GCPKMS(t *testing.T) {
 	}
 
 	for key, value := range envVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+		_ = os.Setenv(key, value)
+		defer func(k string) { _ = os.Unsetenv(k) }(key)
 	}
 
 	cfg := Config{
@@ -654,8 +660,8 @@ func TestApplyEnvOverrides_AzureKV(t *testing.T) {
 	}
 
 	for key, value := range envVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+		_ = os.Setenv(key, value)
+		defer func(k string) { _ = os.Unsetenv(k) }(key)
 	}
 
 	cfg := Config{
@@ -695,8 +701,8 @@ func TestApplyEnvOverrides_Vault(t *testing.T) {
 	}
 
 	for key, value := range envVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+		_ = os.Setenv(key, value)
+		defer func(k string) { _ = os.Unsetenv(k) }(key)
 	}
 
 	cfg := Config{
@@ -733,8 +739,8 @@ func TestApplyEnvOverrides_NilBackends(t *testing.T) {
 	}
 
 	for key, value := range envVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+		_ = os.Setenv(key, value)
+		defer func(k string) { _ = os.Unsetenv(k) }(key)
 	}
 
 	cfg := Config{
@@ -1306,13 +1312,13 @@ backends:
 	}
 
 	// Set environment variables
-	os.Setenv("KEYSTORE_HOST", "0.0.0.0")
-	os.Setenv("KEYSTORE_REST_PORT", "9000")
-	os.Setenv("KEYSTORE_LOG_LEVEL", "debug")
+	_ = os.Setenv("KEYSTORE_HOST", "0.0.0.0")
+	_ = os.Setenv("KEYSTORE_REST_PORT", "9000")
+	_ = os.Setenv("KEYSTORE_LOG_LEVEL", "debug")
 	defer func() {
-		os.Unsetenv("KEYSTORE_HOST")
-		os.Unsetenv("KEYSTORE_REST_PORT")
-		os.Unsetenv("KEYSTORE_LOG_LEVEL")
+		_ = os.Unsetenv("KEYSTORE_HOST")
+		_ = os.Unsetenv("KEYSTORE_REST_PORT")
+		_ = os.Unsetenv("KEYSTORE_LOG_LEVEL")
 	}()
 
 	cfg, err := Load(configPath)
@@ -1336,8 +1342,8 @@ backends:
 func TestApplyEnvOverrides_StorageWithAbsolutePath(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	os.Setenv("KEYSTORE_DATA_DIR", tmpDir)
-	defer os.Unsetenv("KEYSTORE_DATA_DIR")
+	_ = os.Setenv("KEYSTORE_DATA_DIR", tmpDir)
+	defer func() { _ = os.Unsetenv("KEYSTORE_DATA_DIR") }()
 
 	absolutePath := "/absolute/path/to/pkcs8"
 	cfg := Config{

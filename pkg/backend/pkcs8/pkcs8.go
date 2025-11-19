@@ -352,7 +352,7 @@ func (b *PKCS8Backend) storeKey(keyID string, privateKey crypto.PrivateKey, pass
 	}
 
 	// Encode the key
-	if passwordBytes != nil && len(passwordBytes) > 0 {
+	if len(passwordBytes) > 0 {
 		// Encrypted PKCS#8
 		keyData, err = pkcs8.MarshalPrivateKey(actualPrivateKey, passwordBytes, nil)
 		if err != nil {
@@ -387,7 +387,7 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 	var privateKey crypto.PrivateKey
 
 	// Try encrypted PKCS#8 first if password provided
-	if passwordBytes != nil && len(passwordBytes) > 0 {
+	if len(passwordBytes) > 0 {
 		privateKey, err = pkcs8.ParsePKCS8PrivateKey(keyData, passwordBytes)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrKeyDecodingFailed, err)

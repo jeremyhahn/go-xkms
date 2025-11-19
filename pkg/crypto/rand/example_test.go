@@ -28,7 +28,7 @@ func ExampleNewResolver_auto() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate random bytes for key material
 	randomBytes, err := resolver.Rand(32)
@@ -48,7 +48,7 @@ func ExampleNewResolver_software() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate random bytes for nonce
 	nonce, err := resolver.Rand(12)
@@ -68,7 +68,7 @@ func ExampleNewResolver_mode() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	randomBytes, err := resolver.Rand(16)
 	if err != nil {
@@ -92,7 +92,7 @@ func ExampleNewResolver_fallback() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Will use best available, with fallback to software
 	randomBytes, err := resolver.Rand(32)
@@ -112,7 +112,7 @@ func ExampleNewResolver_keyGeneration() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate seed for asymmetric key
 	seed, err := resolver.Rand(32)
@@ -133,7 +133,7 @@ func ExampleNewResolver_nonceGeneration() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate 96-bit nonce for AES-GCM
 	nonce, err := resolver.Rand(12)
@@ -152,7 +152,7 @@ func ExampleNewResolver_bulkOperations() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate 256 bytes at once for multiple operations
 	randomPool, err := resolver.Rand(256)
@@ -177,7 +177,7 @@ func ExampleResolver_source() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Get underlying source for testing or debugging
 	source := resolver.Source()
@@ -198,7 +198,7 @@ func ExampleResolver_available() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if resolver.Available() {
 		randomBytes, _ := resolver.Rand(32)
@@ -225,7 +225,7 @@ func ExampleConfig_tpm2() {
 		// Hardware not available, fall back to software
 		resolver, _ = NewResolver(ModeSoftware)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	randomBytes, _ := resolver.Rand(64)
 	fmt.Printf("Generated %d bytes using available RNG\n", len(randomBytes))
@@ -250,7 +250,7 @@ func ExampleConfig_pkcs11() {
 		// Hardware not available, fall back to software
 		resolver, _ = NewResolver(ModeSoftware)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	randomBytes, _ := resolver.Rand(32)
 	fmt.Printf("Generated %d bytes using available RNG\n", len(randomBytes))
@@ -268,7 +268,7 @@ func ExampleNewResolver_securityBestPractices() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// 2. Verify RNG is available before critical operations
 	if !resolver.Available() {
@@ -298,7 +298,7 @@ func ExampleNewResolver_errorHandling() {
 		fmt.Printf("Failed to create resolver: %v\n", err)
 		return
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Check error for each Rand call
 	randomBytes, err := resolver.Rand(32)
@@ -328,7 +328,7 @@ func ExampleNewResolver_complianceConsiderations() {
 		// Hardware not available in test environment
 		resolver, _ = NewResolver(ModeSoftware)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Use available RNG (FIPS-certified in production)
 	randomBytes, _ := resolver.Rand(32)
@@ -340,7 +340,7 @@ func ExampleNewResolver_complianceConsiderations() {
 // Different operations require different amounts of randomness.
 func ExampleNewResolver_differentSizes() {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// AES-128 key
 	aes128, _ := resolver.Rand(16)
@@ -366,7 +366,7 @@ func ExampleNewResolver_differentSizes() {
 // Hash functions can act as KDFs (Key Derivation Functions) when given random salt.
 func ExampleNewResolver_cryptographicHashInput() {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate random salt for password hashing (bcrypt, scrypt, argon2)
 	salt, _ := resolver.Rand(16)
@@ -399,7 +399,7 @@ func ExampleNewResolver_documentedRNGBehavior() {
 	}
 
 	resolver, _ := NewResolver(cfg)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Document RNG source for audit trail
 	fmt.Printf("RNG Configuration:\n")
@@ -422,7 +422,7 @@ func ExampleNewResolver_documentedRNGBehavior() {
 // Demonstrates how to use RNG for different cryptographic needs.
 func ExampleNewResolver_verifyHashAlgorithmCompatibility() {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate random bytes for different algorithms
 	sha256Rand, _ := resolver.Rand(32)  // SHA-256 output size

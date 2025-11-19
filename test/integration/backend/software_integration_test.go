@@ -12,7 +12,6 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 //go:build integration
-// +build integration
 
 package backend
 

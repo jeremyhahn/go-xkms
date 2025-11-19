@@ -89,7 +89,7 @@ func ExampleBytesTracker_warning() {
 	tracker := aead.NewBytesTracker(true, 1000)
 
 	// Encrypt up to 85% - no warning
-	tracker.CheckAndIncrementBytes(850)
+	_ = tracker.CheckAndIncrementBytes(850)
 	if tracker.ShouldWarnUser() {
 		fmt.Println("Warning at 85%")
 	} else {
@@ -97,7 +97,7 @@ func ExampleBytesTracker_warning() {
 	}
 
 	// Encrypt to 92% - warning triggered
-	tracker.CheckAndIncrementBytes(70)
+	_ = tracker.CheckAndIncrementBytes(70)
 	if tracker.ShouldWarnUser() {
 		fmt.Println("Warning at 92%")
 	} else {
@@ -114,7 +114,7 @@ func ExampleBytesTracker_GetUsageStats() {
 	tracker := aead.NewBytesTracker(true, 1000)
 
 	// Encrypt some data
-	tracker.CheckAndIncrementBytes(750)
+	_ = tracker.CheckAndIncrementBytes(750)
 
 	// Get comprehensive stats
 	stats := tracker.GetUsageStats()
@@ -140,7 +140,7 @@ func ExampleBytesTracker_Reset() {
 	tracker := aead.NewBytesTracker(true, 1000)
 
 	// Encrypt some data
-	tracker.CheckAndIncrementBytes(500)
+	_ = tracker.CheckAndIncrementBytes(500)
 	fmt.Printf("Before reset: %d bytes\n", tracker.GetBytesEncrypted())
 
 	// Rotate key and reset counter
@@ -167,7 +167,7 @@ func ExampleBytesTracker_disabled() {
 	tracker := aead.NewBytesTracker(false, 1000)
 
 	// Can "encrypt" unlimited data
-	tracker.CheckAndIncrementBytes(1000000)
+	_ = tracker.CheckAndIncrementBytes(1000000)
 
 	// Getters return safe values
 	fmt.Printf("Bytes encrypted: %d\n", tracker.GetBytesEncrypted())

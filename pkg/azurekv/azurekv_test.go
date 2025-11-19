@@ -54,7 +54,7 @@ func newTestBackend(t *testing.T) *azurekvbackend.Backend {
 func TestNewKeyStore(t *testing.T) {
 	t.Run("ValidBackend", func(t *testing.T) {
 		be := newTestBackend(t)
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		ks, err := NewKeyStore(be, memory.New())
 		if err != nil {
@@ -83,13 +83,13 @@ func TestNewKeyStore(t *testing.T) {
 
 func TestKeyStore_Backend(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	b := ks.Backend()
 	if b == nil {
@@ -102,13 +102,13 @@ func TestKeyStore_Backend(t *testing.T) {
 
 func TestKeyStore_GenerateRSA(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	t.Run("Success", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -196,13 +196,13 @@ func TestKeyStore_GenerateRSA(t *testing.T) {
 
 func TestKeyStore_GenerateECDSA(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	t.Run("Success", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -290,13 +290,13 @@ func TestKeyStore_GenerateECDSA(t *testing.T) {
 
 func TestKeyStore_GenerateEd25519(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-ed25519-key",
@@ -315,13 +315,13 @@ func TestKeyStore_GenerateEd25519(t *testing.T) {
 
 func TestKeyStore_GenerateKey(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Type assert to concrete type to access GenerateKey method
 	azureKS, ok := ks.(*KeyStore)
@@ -407,13 +407,13 @@ func TestKeyStore_GenerateKey(t *testing.T) {
 
 func TestKeyStore_GenerateSecretKey(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Type assert to concrete type to access GenerateSecretKey method
 	azureKS, ok := ks.(*KeyStore)
@@ -508,13 +508,13 @@ func TestKeyStore_GenerateSecretKey(t *testing.T) {
 
 func TestKeyStore_Find(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	t.Run("ExistingKey", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -558,13 +558,13 @@ func TestKeyStore_Find(t *testing.T) {
 
 func TestKeyStore_Key(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-key-lookup",
@@ -593,13 +593,13 @@ func TestKeyStore_Key(t *testing.T) {
 
 func TestKeyStore_Delete(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	t.Run("Success", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -647,13 +647,13 @@ func TestKeyStore_Delete(t *testing.T) {
 
 func TestKeyStore_RotateKey(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	t.Run("Success", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -724,13 +724,13 @@ func TestKeyStore_RotateKey(t *testing.T) {
 
 func TestKeyStore_Equal(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Type assert to concrete type to access Equal method
 	azureKS, ok := ks.(*KeyStore)
@@ -915,13 +915,13 @@ func TestKeyStore_Equal(t *testing.T) {
 
 func TestKeyStore_Signer(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	t.Run("RSASigner", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -1018,13 +1018,13 @@ func TestKeyStore_Signer(t *testing.T) {
 
 func TestKeyStore_Decrypter(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-decrypter",
@@ -1067,13 +1067,13 @@ func TestKeyStore_Decrypter(t *testing.T) {
 
 func TestBackendWrapper(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	wrapper := ks.Backend()
 
@@ -1118,13 +1118,13 @@ func TestBackendWrapper(t *testing.T) {
 
 func TestKVSigner(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-kv-signer",
@@ -1177,13 +1177,13 @@ func TestKVSigner(t *testing.T) {
 // Test concurrent access
 func TestKeyStore_ConcurrentAccess(t *testing.T) {
 	be := newTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	ks, err := NewKeyStore(be, memory.New())
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Generate a key first
 	attrs := &types.KeyAttributes{
@@ -1230,7 +1230,7 @@ func TestKVSigner_ErrorHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Create a signer directly
 	signer := &kvSigner{

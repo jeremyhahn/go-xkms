@@ -84,7 +84,7 @@ func TestGenerateSymmetricKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b, _ := testBackend(t)
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
 			// Create key attributes
 			attrs := &types.KeyAttributes{
@@ -137,7 +137,7 @@ func TestGenerateSymmetricKey(t *testing.T) {
 func TestGenerateSymmetricKeyIdempotent(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-idempotent-key",
@@ -175,7 +175,7 @@ func TestGenerateSymmetricKeyIdempotent(t *testing.T) {
 func TestGetSymmetricKey(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-get-key",
@@ -215,7 +215,7 @@ func TestGetSymmetricKey(t *testing.T) {
 // TestGetSymmetricKeyNotFound tests error when key doesn't exist
 func TestGetSymmetricKeyNotFound(t *testing.T) {
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "non-existent-key",
@@ -238,7 +238,7 @@ func TestGetSymmetricKeyNotFound(t *testing.T) {
 func TestSymmetricEncryptDecrypt(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-encrypt-key",
@@ -306,7 +306,7 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 func TestSymmetricEncryptDecryptWithAAD(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-aad-key",
@@ -367,7 +367,7 @@ func TestSymmetricEncryptDecryptWithAAD(t *testing.T) {
 func TestSymmetricEncryptEmptyData(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-empty-key",
@@ -413,7 +413,7 @@ func TestSymmetricEncryptEmptyData(t *testing.T) {
 func TestSymmetricEncryptLargeData(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-large-key",
@@ -471,7 +471,7 @@ func TestSymmetricEncryptLargeData(t *testing.T) {
 // TestSymmetricInvalidAttributes tests error handling for invalid attributes
 func TestSymmetricInvalidAttributes(t *testing.T) {
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	tests := []struct {
 		name  string
@@ -515,7 +515,7 @@ func TestSymmetricInvalidAttributes(t *testing.T) {
 // TestCapabilitiesSymmetricEncryption verifies symmetric encryption capability is reported
 func TestCapabilitiesSymmetricEncryption(t *testing.T) {
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	caps := b.Capabilities()
 	if !caps.SymmetricEncryption {
@@ -531,7 +531,7 @@ func TestCapabilitiesSymmetricEncryption(t *testing.T) {
 func TestAzureKVBackend_NonceReuse(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key with nonce tracking enabled
 	attrs := &types.KeyAttributes{
@@ -591,7 +591,7 @@ func TestAzureKVBackend_NonceReuse(t *testing.T) {
 func TestAzureKVBackend_BytesLimit(t *testing.T) {
 	t.Skip("Skipping: Symmetric encryption requires Azure Secrets API (not mocked)")
 	b, _ := testBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key with small bytes limit for testing
 	smallLimit := int64(100) // 100 bytes

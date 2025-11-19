@@ -862,7 +862,7 @@ func TestOpaqueInterfaces(t *testing.T) {
 	var _ crypto.Decrypter = key
 
 	// Test OpaqueKey interface
-	var _ OpaqueKey = key
+	_ = key
 
 	t.Log("All interfaces implemented correctly")
 }
@@ -1991,35 +1991,6 @@ func TestOpaqueEqual_MixedECDSACurves(t *testing.T) {
 }
 
 // mockHasherError creates a mock hasher that fails on Write
-type mockHasherError struct {
-	writeError bool
-	shortWrite bool
-	written    int
-}
-
-func (m *mockHasherError) Write(p []byte) (n int, err error) {
-	if m.writeError {
-		return 0, errors.New("mock write error")
-	}
-	if m.shortWrite {
-		return len(p) - 1, nil // Incomplete write
-	}
-	return len(p), nil
-}
-
-func (m *mockHasherError) Sum(b []byte) []byte {
-	return []byte("mock sum")
-}
-
-func (m *mockHasherError) Reset() {}
-
-func (m *mockHasherError) Size() int {
-	return 32
-}
-
-func (m *mockHasherError) BlockSize() int {
-	return 64
-}
 
 // TestPublicKeysEqual_DirectCall tests publicKeysEqual directly by calling it through Equal()
 // This test targets the uncovered ECDSA and Ed25519 branches

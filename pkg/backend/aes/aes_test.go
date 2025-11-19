@@ -49,7 +49,7 @@ func TestGenerateSymmetricKey_AllSizes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
 			attrs := &types.KeyAttributes{
 				CN:                 "test-key-" + tt.name,
@@ -61,10 +61,7 @@ func TestGenerateSymmetricKey_AllSizes(t *testing.T) {
 				},
 			}
 
-			symBackend, ok := b.(types.SymmetricBackend)
-			if !ok {
-				t.Fatal("Backend does not implement SymmetricBackend")
-			}
+			symBackend := b
 
 			key, err := symBackend.GenerateSymmetricKey(attrs)
 			if err != nil {
@@ -104,9 +101,9 @@ func TestGenerateSymmetricKey_AlreadyExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "duplicate-key",
@@ -142,9 +139,9 @@ func TestGetSymmetricKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "retrieve-key",
@@ -199,9 +196,9 @@ func TestGetSymmetricKey_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "nonexistent-key",
@@ -230,9 +227,9 @@ func TestSymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "encrypt-key",
@@ -304,9 +301,9 @@ func TestSymmetricEncrypter_WithAAD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "aad-key",
@@ -369,9 +366,9 @@ func TestSymmetricEncrypter_CustomNonce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "nonce-key",
@@ -433,9 +430,9 @@ func TestSymmetricEncrypter_VariousDataSizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "size-test-key",
@@ -493,9 +490,9 @@ func TestPasswordProtection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	password := backend.StaticPassword([]byte("super-secret-password"))
 
@@ -557,9 +554,9 @@ func TestPasswordProtection_NoPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "unprotected-key",
@@ -605,9 +602,9 @@ func TestEncryptDecrypt_CorruptedData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "corrupt-test-key",
@@ -672,9 +669,9 @@ func TestThreadSafety(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	const numGoroutines = 10
 	var wg sync.WaitGroup
@@ -762,9 +759,9 @@ func TestInvalidAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	tests := []struct {
 		name  string
@@ -825,7 +822,7 @@ func TestClosedBackendSymmetric(t *testing.T) {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "closed-test-key",
@@ -862,9 +859,9 @@ func TestSymmetricEncrypter_NilEncryptedData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "nil-test-key",
@@ -900,9 +897,9 @@ func TestSymmetricEncrypter_InvalidNonceSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "nonce-size-test",
@@ -942,9 +939,9 @@ func TestPasswordProtection_EmptyPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	// Empty password should be treated as no password
 	emptyPassword := backend.StaticPassword([]byte(""))
@@ -1003,7 +1000,7 @@ func TestBackendType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	if b.Type() != backend.BackendTypeAES {
 		t.Errorf("Type() = %s, want %s", b.Type(), backend.BackendTypeAES)
@@ -1018,7 +1015,7 @@ func TestCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	caps := b.Capabilities()
 	if !caps.Keys {
@@ -1046,9 +1043,9 @@ func TestDeleteKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "delete-test-key",
@@ -1093,7 +1090,7 @@ func TestDeleteKey_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "nonexistent-delete-key",
@@ -1119,9 +1116,9 @@ func TestListKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	// Initially should be empty
 	keys, err := b.ListKeys()
@@ -1168,7 +1165,7 @@ func TestAsymmetricOperationsNotSupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1212,9 +1209,9 @@ func TestRotateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "rotate-test",
@@ -1340,7 +1337,7 @@ func TestRotateKey_ErrorOnDeleteFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Test with nil attributes
 	err = b.RotateKey(nil)
@@ -1359,7 +1356,7 @@ func TestDeleteKey_WithClosedBackend(t *testing.T) {
 	}
 
 	// Close the backend
-	b.Close()
+	_ = b.Close()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1385,9 +1382,9 @@ func TestSymmetricEncrypter_InvalidEncryptOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1429,9 +1426,9 @@ func TestGenerateSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:           "rsa-key",
@@ -1457,9 +1454,9 @@ func TestGetSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:           "rsa-key",
@@ -1485,9 +1482,9 @@ func TestSymmetricEncrypter_Errors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1516,7 +1513,7 @@ func TestEncryptWithPassword_ValidRoundTrip(t *testing.T) {
 		t.Fatalf("encryptWithPassword() failed: %v", err)
 	}
 
-	if encrypted == nil || len(encrypted) == 0 {
+	if len(encrypted) == 0 {
 		t.Error("Encrypted data should not be empty")
 	}
 
@@ -1557,9 +1554,9 @@ func TestStoreSymmetricKey_WithPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	password := backend.StaticPassword([]byte("secure-password"))
 
@@ -1602,7 +1599,7 @@ func TestDecodeSymmetricKey_NoPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -1629,7 +1626,7 @@ func TestDecodeSymmetricKey_WithPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -1665,7 +1662,7 @@ func TestListKeys_WithClosedBackend(t *testing.T) {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	b.Close()
+	_ = b.Close()
 
 	_, err = b.ListKeys()
 	if !errors.Is(err, ErrStorageClosed) {
@@ -1721,7 +1718,7 @@ func TestDeleteKey_StorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1750,9 +1747,9 @@ func TestGenerateSymmetricKey_StorageKeyExistsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1781,9 +1778,9 @@ func TestGenerateSymmetricKey_StorageSaveKeyError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1813,7 +1810,7 @@ func TestRotateKey_StorageError(t *testing.T) {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1832,7 +1829,7 @@ func TestRotateKey_StorageError(t *testing.T) {
 	}
 
 	// Close backend to cause error on rotation
-	b.Close()
+	_ = b.Close()
 
 	// Try to rotate - should fail because backend is closed
 	err = b.RotateKey(attrs)
@@ -1849,7 +1846,7 @@ func TestListKeys_StorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	_, err = b.ListKeys()
 	if err == nil {
@@ -1868,9 +1865,9 @@ func TestEncrypt_InvalidNonceSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -1925,7 +1922,7 @@ func TestExportKey_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2007,9 +2004,9 @@ func TestGetSymmetricKey_StorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -2038,7 +2035,7 @@ func TestStoreSymmetricKey_WithEmptyPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2073,7 +2070,7 @@ func TestDecodeSymmetricKey_WithEmptyPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2100,9 +2097,9 @@ func TestEncrypt_EmptyPlaintext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -2149,7 +2146,7 @@ func TestExportKey_WithPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2192,9 +2189,9 @@ func TestDecrypt_WithAADMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -2245,9 +2242,9 @@ func TestEncrypt_LargeData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -2298,9 +2295,9 @@ func TestEncrypt_DecryptOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -2347,9 +2344,9 @@ func TestEncrypt_MultipleRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -2398,7 +2395,7 @@ func TestExportKey_WithInvalidAttribute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2457,9 +2454,9 @@ func TestEncryptSymmetricEncrypter_VariousKeySizes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
-			symBackend := b.(types.SymmetricBackend)
+			symBackend := b
 
 			attrs := &types.KeyAttributes{
 				CN:                 fmt.Sprintf("key-%d", ks.size),
@@ -2507,7 +2504,7 @@ func TestGetRNG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2568,9 +2565,9 @@ func TestRotateKey_NonexistentKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "nonexistent-rotate-key",
@@ -2620,7 +2617,7 @@ func TestExportKey_WithClosedBackend(t *testing.T) {
 	}
 
 	// Close the backend
-	b.Close()
+	_ = b.Close()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2639,7 +2636,7 @@ func TestExportKey_NilAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 
@@ -2687,7 +2684,7 @@ func TestNewBackend_WithCustomTracker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend with custom tracker: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	aesBackend := b.(*AESBackend)
 	if aesBackend.GetTracker() != tracker {
@@ -2703,9 +2700,9 @@ func TestGenerateSymmetricKey_WithInvalidAttributes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	// Test with invalid CN (empty)
 	attrs := &types.KeyAttributes{
@@ -2732,9 +2729,9 @@ func TestGenerateSymmetricKey_WithCustomAEADOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	// Custom AEAD options
 	aeadOpts := &types.AEADOptions{
@@ -2783,7 +2780,7 @@ func TestGenerateSymmetricKey_ChaCha20Poly1305(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
 			attrs := &types.KeyAttributes{
 				CN:                 "test-chacha20-" + tt.name,
@@ -2792,10 +2789,7 @@ func TestGenerateSymmetricKey_ChaCha20Poly1305(t *testing.T) {
 				SymmetricAlgorithm: tt.algorithm,
 			}
 
-			symBackend, ok := b.(types.SymmetricBackend)
-			if !ok {
-				t.Fatal("Backend does not implement SymmetricBackend")
-			}
+			symBackend := b
 
 			key, err := symBackend.GenerateSymmetricKey(attrs)
 			if err != nil {
@@ -2835,9 +2829,9 @@ func TestGetSymmetricKey_ChaCha20Poly1305(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-chacha20-retrieve",
@@ -2895,9 +2889,9 @@ func TestSymmetricEncrypter_ChaCha20Poly1305(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
-			symBackend := b.(types.SymmetricBackend)
+			symBackend := b
 
 			attrs := &types.KeyAttributes{
 				CN:                 "test-" + tt.name,
@@ -2969,9 +2963,9 @@ func TestSymmetricEncrypter_ChaCha20_TamperingDetection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-tampering",
@@ -3020,9 +3014,9 @@ func TestSymmetricEncrypter_ChaCha20_WithAdditionalData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-aead",
@@ -3082,7 +3076,7 @@ func TestXChaCha20Poly1305_InvalidNonceSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-xchacha20-nonce",
@@ -3123,7 +3117,7 @@ func TestRotateKey_TrackerWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-rotate-tracker",
@@ -3155,7 +3149,7 @@ func TestGenerateSymmetricKey_MissingAESAttributesForAES(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-missing-aes-attrs",
@@ -3182,7 +3176,7 @@ func TestEncryptDecrypt_RecordNonceWarning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-nonce-record",
@@ -3251,7 +3245,7 @@ func TestEncrypt_ChaCha20_ErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-chacha20-errors",
@@ -3295,7 +3289,7 @@ func TestPasswordEncryption_ErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	password := backend.StaticPassword([]byte("test-password-123"))
 
@@ -3349,7 +3343,7 @@ func TestExportKey_WithPasswordAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	password := backend.StaticPassword([]byte("export-password"))
 
@@ -3404,7 +3398,7 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
 			aesBackend := b.(*AESBackend)
 
@@ -3481,7 +3475,7 @@ func TestEncryptDecrypt_AllCipherModes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create backend: %v", err)
 			}
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
 			var attrs *types.KeyAttributes
 			if alg == types.SymmetricChaCha20Poly1305 || alg == types.SymmetricXChaCha20Poly1305 {

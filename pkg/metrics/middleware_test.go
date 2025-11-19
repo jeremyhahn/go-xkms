@@ -36,7 +36,7 @@ func TestHTTPMiddleware(t *testing.T) {
 	// Create a test handler
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 
 	// Wrap with middleware
@@ -157,7 +157,7 @@ func TestResponseWriterDefaultStatus(t *testing.T) {
 	}
 
 	// Write without calling WriteHeader explicitly
-	wrapper.Write([]byte("test"))
+	_, _ = wrapper.Write([]byte("test"))
 
 	// Should default to 200 OK
 	if wrapper.statusCode != http.StatusOK {
@@ -397,6 +397,6 @@ func BenchmarkGRPCUnaryServerInterceptor(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		interceptor(context.Background(), "request", info, handler)
+		_, _ = interceptor(context.Background(), "request", info, handler)
 	}
 }

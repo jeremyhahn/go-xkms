@@ -64,7 +64,7 @@ func main() {
 	if err := os.MkdirAll(tmpDir, 0700); err != nil {
 		log.Fatalf("Failed to create directory: %v", err)
 	}
-	defer os.RemoveAll(tmpDir) // Clean up
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	fmt.Printf("Key storage location: %s\n\n", tmpDir)
 
@@ -81,7 +81,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create AES backend: %v", err)
 	}
-	defer symmetricBackend.Close()
+	defer func() { _ = symmetricBackend.Close() }()
 
 	// Example 1: Basic AES-256 encryption without password
 	fmt.Println("--- Example 1: Basic AES-256 Encryption ---")

@@ -41,7 +41,7 @@ func TestComprehensive_AllResolverTypes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewResolver failed: %v", err)
 			}
-			defer resolver.Close()
+			defer func() { _ = resolver.Close() }()
 
 			// Test all methods
 			if !resolver.Available() {
@@ -67,7 +67,7 @@ func TestComprehensive_AllResolverTypes(t *testing.T) {
 // TestComprehensive_RandomnessQuality tests the quality of generated random data
 func TestComprehensive_RandomnessQuality(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Generate multiple samples and verify they're all different
 	samples := make([][]byte, 100)
@@ -88,7 +88,7 @@ func TestComprehensive_RandomnessQuality(t *testing.T) {
 // TestComprehensive_ConcurrentAccess tests thread safety across all methods
 func TestComprehensive_ConcurrentAccess(t *testing.T) {
 	resolver, _ := NewResolver(ModeAuto)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	var wg sync.WaitGroup
 	numGoroutines := 50
@@ -123,7 +123,7 @@ func TestComprehensive_ConcurrentAccess(t *testing.T) {
 // TestComprehensive_VariableSizes tests a wide range of byte sizes
 func TestComprehensive_VariableSizes(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Test powers of 2
 	for size := 0; size <= 16384; size = max(1, size*2) {
@@ -152,7 +152,7 @@ func TestComprehensive_VariableSizes(t *testing.T) {
 // TestComprehensive_SourceInterface tests the Source interface thoroughly
 func TestComprehensive_SourceInterface(t *testing.T) {
 	resolver, _ := NewResolver(ModeSoftware)
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	source := resolver.Source()
 

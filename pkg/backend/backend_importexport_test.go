@@ -14,7 +14,6 @@
 package backend
 
 import (
-	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -305,7 +304,7 @@ func TestImportParametersPublicKeyType(t *testing.T) {
 		}
 
 		// Check that it can be asserted as crypto.PublicKey
-		var pubKey crypto.PublicKey = params.WrappingPublicKey
+		pubKey := params.WrappingPublicKey
 		assert.NotNil(t, pubKey)
 
 		// Check that it can be asserted as *rsa.PublicKey

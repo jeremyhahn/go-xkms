@@ -676,7 +676,7 @@ func BenchmarkSplit(b *testing.B) {
 			}
 
 			secret := make([]byte, bm.secretSize)
-			rand.Read(secret)
+			_, _ = rand.Read(secret)
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -715,7 +715,7 @@ func BenchmarkCombine(b *testing.B) {
 			}
 
 			secret := make([]byte, bm.secretSize)
-			rand.Read(secret)
+			_, _ = rand.Read(secret)
 
 			shares, err := shamir.Split(secret)
 			if err != nil {

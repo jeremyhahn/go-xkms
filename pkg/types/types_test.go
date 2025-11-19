@@ -1047,33 +1047,36 @@ func TestParseCurve(t *testing.T) {
 		name      string
 		curveName string
 		want      elliptic.Curve
+		wantErr   bool
 	}{
-		{"P224_Standard", "P-224", elliptic.P224()},
-		{"P224_NoHyphen", "P224", elliptic.P224()},
-		{"P224_LongName", "secp224r1", elliptic.P224()},
-		{"P256_Standard", "P-256", elliptic.P256()},
-		{"P256_NoHyphen", "P256", elliptic.P256()},
-		{"P256_SECP", "secp256r1", elliptic.P256()},
-		{"P256_Prime", "prime256v1", elliptic.P256()},
-		{"P384_Standard", "P-384", elliptic.P384()},
-		{"P384_NoHyphen", "P384", elliptic.P384()},
-		{"P384_SECP", "secp384r1", elliptic.P384()},
-		{"P521_Standard", "P-521", elliptic.P521()},
-		{"P521_NoHyphen", "P521", elliptic.P521()},
-		{"P521_SECP", "secp521r1", elliptic.P521()},
-		{"LowercaseP256", "p-256", elliptic.P256()},
-		{"WithWhitespace", "  P-256  ", elliptic.P256()},
-		{"Invalid", "P-192", nil},
-		{"Empty", "", nil},
-		{"Unknown", "invalid", nil},
+		{"P224_Standard", "P-224", elliptic.P224(), false},
+		{"P224_NoHyphen", "P224", elliptic.P224(), false},
+		{"P224_LongName", "secp224r1", elliptic.P224(), false},
+		{"P256_Standard", "P-256", elliptic.P256(), false},
+		{"P256_NoHyphen", "P256", elliptic.P256(), false},
+		{"P256_SECP", "secp256r1", elliptic.P256(), false},
+		{"P256_Prime", "prime256v1", elliptic.P256(), false},
+		{"P384_Standard", "P-384", elliptic.P384(), false},
+		{"P384_NoHyphen", "P384", elliptic.P384(), false},
+		{"P384_SECP", "secp384r1", elliptic.P384(), false},
+		{"P521_Standard", "P-521", elliptic.P521(), false},
+		{"P521_NoHyphen", "P521", elliptic.P521(), false},
+		{"P521_SECP", "secp521r1", elliptic.P521(), false},
+		{"LowercaseP256", "p-256", elliptic.P256(), false},
+		{"WithWhitespace", "  P-256  ", elliptic.P256(), false},
+		{"Invalid", "P-192", nil, true},
+		{"Empty", "", nil, true},
+		{"Unknown", "invalid", nil, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ParseCurve(tt.curveName)
-			if tt.want == nil {
+			got, err := ParseCurve(tt.curveName)
+			if tt.wantErr {
+				assert.Error(t, err)
 				assert.Nil(t, got)
 			} else {
+				assert.NoError(t, err)
 				assert.NotNil(t, got)
 				assert.Equal(t, tt.want.Params().Name, got.Params().Name)
 			}
@@ -1083,27 +1086,33 @@ func TestParseCurve(t *testing.T) {
 
 func TestParseKeyAlgorithm(t *testing.T) {
 	tests := []struct {
-		name string
-		s    string
-		want x509.PublicKeyAlgorithm
+		name    string
+		s       string
+		want    x509.PublicKeyAlgorithm
+		wantErr bool
 	}{
-		{"RSA", "rsa", x509.RSA},
-		{"RSA_2048", "rsa-2048", x509.RSA},
-		{"RSA_4096", "rsa-4096", x509.RSA},
-		{"RSA_Uppercase", "RSA", x509.RSA},
-		{"ECDSA", "ecdsa", x509.ECDSA},
-		{"EC", "ec", x509.ECDSA},
-		{"ECC", "ecc", x509.ECDSA},
-		{"Ed25519", "ed25519", x509.Ed25519},
-		{"Ed25519_Mixed", "Ed25519", x509.Ed25519},
-		{"WithWhitespace", "  rsa  ", x509.RSA},
-		{"Unknown", "unknown", x509.UnknownPublicKeyAlgorithm},
-		{"Empty", "", x509.UnknownPublicKeyAlgorithm},
+		{"RSA", "rsa", x509.RSA, false},
+		{"RSA_2048", "rsa-2048", x509.RSA, false},
+		{"RSA_4096", "rsa-4096", x509.RSA, false},
+		{"RSA_Uppercase", "RSA", x509.RSA, false},
+		{"ECDSA", "ecdsa", x509.ECDSA, false},
+		{"EC", "ec", x509.ECDSA, false},
+		{"ECC", "ecc", x509.ECDSA, false},
+		{"Ed25519", "ed25519", x509.Ed25519, false},
+		{"Ed25519_Mixed", "Ed25519", x509.Ed25519, false},
+		{"WithWhitespace", "  rsa  ", x509.RSA, false},
+		{"Unknown", "unknown", x509.UnknownPublicKeyAlgorithm, true},
+		{"Empty", "", x509.UnknownPublicKeyAlgorithm, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ParseKeyAlgorithm(tt.s)
+			got, err := ParseKeyAlgorithm(tt.s)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 			assert.Equal(t, tt.want, got)
 		})
 	}

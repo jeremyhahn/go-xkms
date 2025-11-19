@@ -1,5 +1,4 @@
 //go:build with_quantum
-// +build with_quantum
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
@@ -24,7 +23,7 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA44(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:        "test-mldsa44-key",
@@ -61,7 +60,7 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA65(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:        "test-mldsa65-key",
@@ -89,7 +88,7 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA87(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:        "test-mldsa87-key",
@@ -117,7 +116,7 @@ func TestThresholdSigner_Quantum_MLDSA44(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:        "test-quantum-signer",
@@ -165,7 +164,7 @@ func TestThresholdBackend_QuantumCapabilities(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	caps := backend.Capabilities()
 

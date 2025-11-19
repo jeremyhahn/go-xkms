@@ -81,7 +81,7 @@ func TestNewTPM2CertStorage_InvalidBaseIndex(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tpm := newMockTPM(t)
-			defer tpm.Close()
+			defer func() { _ = tpm.Close() }()
 
 			config := &TPM2CertStorageConfig{
 				BaseIndex:   tt.baseIndex,
@@ -114,7 +114,7 @@ func TestNewTPM2CertStorage_InvalidMaxCertSize(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tpm := newMockTPM(t)
-			defer tpm.Close()
+			defer func() { _ = tpm.Close() }()
 
 			config := &TPM2CertStorageConfig{
 				BaseIndex:   0x01800000,
@@ -132,13 +132,13 @@ func TestNewTPM2CertStorage_InvalidMaxCertSize(t *testing.T) {
 // TestTPM2CertStorage_SaveAndGetCert tests basic save/get operations
 func TestTPM2CertStorage_SaveAndGetCert(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	storage, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	// Generate test certificate
 	cert := generateTestCert(t)
@@ -164,13 +164,13 @@ func TestTPM2CertStorage_SaveAndGetCert(t *testing.T) {
 // TestTPM2CertStorage_SaveCert_EmptyID tests error handling for empty ID
 func TestTPM2CertStorage_SaveCert_EmptyID(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	storage, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	cert := generateTestCert(t)
 
@@ -183,13 +183,13 @@ func TestTPM2CertStorage_SaveCert_EmptyID(t *testing.T) {
 // TestTPM2CertStorage_SaveCert_NilCert tests error handling for nil certificate
 func TestTPM2CertStorage_SaveCert_NilCert(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	storage, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	err = storage.SaveCert("test-cert", nil)
 	if err == nil {
@@ -200,13 +200,13 @@ func TestTPM2CertStorage_SaveCert_NilCert(t *testing.T) {
 // TestTPM2CertStorage_GetCert_NotFound tests retrieval of non-existent certificate
 func TestTPM2CertStorage_GetCert_NotFound(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	storage, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer storage.Close()
+	defer func() { _ = storage.Close() }()
 
 	_, err = storage.GetCert("nonexistent")
 	if err == nil {
@@ -220,13 +220,13 @@ func TestTPM2CertStorage_GetCert_NotFound(t *testing.T) {
 // TestTPM2CertStorage_DeleteCert tests certificate deletion
 func TestTPM2CertStorage_DeleteCert(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	cert := generateTestCert(t)
 
@@ -264,13 +264,13 @@ func TestTPM2CertStorage_DeleteCert(t *testing.T) {
 // TestTPM2CertStorage_DeleteCert_Idempotent tests idempotent deletion
 func TestTPM2CertStorage_DeleteCert_Idempotent(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Delete non-existent certificate (should not error)
 	err = store.DeleteCert("nonexistent")
@@ -282,7 +282,7 @@ func TestTPM2CertStorage_DeleteCert_Idempotent(t *testing.T) {
 // TestTPM2CertStorage_SaveAndGetCertChain tests certificate chain operations
 func TestTPM2CertStorage_SaveAndGetCertChain(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	// Use default config (2048 bytes max - TPM limit)
 	config := DefaultTPM2CertStorageConfig()
@@ -291,7 +291,7 @@ func TestTPM2CertStorage_SaveAndGetCertChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Generate test certificate chain (single cert due to TPM NV 2KB limit)
 	// Note: In production, use external storage for multi-cert chains
@@ -327,13 +327,13 @@ func TestTPM2CertStorage_SaveAndGetCertChain(t *testing.T) {
 // TestTPM2CertStorage_SaveCertChain_Empty tests error handling for empty chain
 func TestTPM2CertStorage_SaveCertChain_Empty(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	err = store.SaveCertChain("test-chain", []*x509.Certificate{})
 	if err == nil {
@@ -344,13 +344,13 @@ func TestTPM2CertStorage_SaveCertChain_Empty(t *testing.T) {
 // TestTPM2CertStorage_CertExists tests certificate existence check
 func TestTPM2CertStorage_CertExists(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	cert := generateTestCert(t)
 
@@ -382,13 +382,13 @@ func TestTPM2CertStorage_CertExists(t *testing.T) {
 // TestTPM2CertStorage_ListCerts tests certificate listing
 func TestTPM2CertStorage_ListCerts(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// List empty storage
 	certs, err := store.ListCerts()
@@ -428,13 +428,13 @@ func TestTPM2CertStorage_ListCerts(t *testing.T) {
 // TestTPM2CertStorage_GetCapacity tests capacity reporting
 func TestTPM2CertStorage_GetCapacity(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	total, available, err := store.GetCapacity()
 	if err != nil {
@@ -458,13 +458,13 @@ func TestTPM2CertStorage_GetCapacity(t *testing.T) {
 // TestTPM2CertStorage_SupportsChains tests chain support reporting
 func TestTPM2CertStorage_SupportsChains(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if !store.SupportsChains() {
 		t.Error("SupportsChains() = false, want true")
@@ -474,13 +474,13 @@ func TestTPM2CertStorage_SupportsChains(t *testing.T) {
 // TestTPM2CertStorage_IsHardwareBacked tests hardware backing flag
 func TestTPM2CertStorage_IsHardwareBacked(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if !store.IsHardwareBacked() {
 		t.Error("IsHardwareBacked() = false, want true")
@@ -490,13 +490,13 @@ func TestTPM2CertStorage_IsHardwareBacked(t *testing.T) {
 // TestTPM2CertStorage_Compact tests compaction (should return ErrNotSupported)
 func TestTPM2CertStorage_Compact(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	err = store.Compact()
 	if !errors.Is(err, ErrNotSupported) {
@@ -507,7 +507,7 @@ func TestTPM2CertStorage_Compact(t *testing.T) {
 // TestTPM2CertStorage_Close tests storage closure
 func TestTPM2CertStorage_Close(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
@@ -537,13 +537,13 @@ func TestTPM2CertStorage_Close(t *testing.T) {
 // TestTPM2CertStorage_ConcurrentAccess tests thread safety
 func TestTPM2CertStorage_ConcurrentAccess(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Reduced numbers due to TPM simulator NV space limits
 	const numGoroutines = 3
@@ -588,13 +588,13 @@ func TestTPM2CertStorage_ConcurrentAccess(t *testing.T) {
 // TestTPM2CertStorage_CertIndexFromID tests hash-based index generation
 func TestTPM2CertStorage_CertIndexFromID(t *testing.T) {
 	tpm := newMockTPM(t)
-	defer tpm.Close()
+	defer func() { _ = tpm.Close() }()
 
 	store, err := NewTPM2CertStorage(tpm, DefaultTPM2CertStorageConfig())
 	if err != nil {
 		t.Fatalf("NewTPM2CertStorage() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	tpmStore := store.(*TPM2CertStorage)
 

@@ -382,7 +382,15 @@ func (b *ThresholdBackend) splitAndStoreKey(attrs *types.KeyAttributes, privateK
 
 	// Store key metadata
 	metadataKey := fmt.Sprintf("threshold/metadata/%s", keyID)
-	metadataBytes, err := json.Marshal(attrs)
+	// Clear SessionCloser before marshaling (cannot marshal func)
+	if attrs.TPMAttributes != nil {
+		attrsCopy := *attrs
+		attrsCopy.TPMAttributes = new(types.TPMAttributes)
+		*attrsCopy.TPMAttributes = *attrs.TPMAttributes
+		attrsCopy.TPMAttributes.SessionCloser = nil
+		attrs = &attrsCopy
+	}
+	metadataBytes, err := json.Marshal(attrs) //nolint:staticcheck // SA1026: SessionCloser is cleared in copy before marshaling
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}

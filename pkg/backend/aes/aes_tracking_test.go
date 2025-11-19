@@ -34,7 +34,7 @@ func TestAESBackend_TrackingEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key with default tracking options
 	attrs := &types.KeyAttributes{
@@ -115,7 +115,7 @@ func TestAESBackend_NonceReuse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key with nonce tracking enabled
 	attrs := &types.KeyAttributes{
@@ -184,7 +184,7 @@ func TestAESBackend_BytesLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key with small bytes limit for testing
 	smallLimit := int64(100) // 100 bytes
@@ -216,7 +216,7 @@ func TestAESBackend_BytesLimit(t *testing.T) {
 
 	// Encrypt up to the limit
 	plaintext := make([]byte, 50)
-	rand.Read(plaintext)
+	_, _ = rand.Read(plaintext)
 
 	// First 50 bytes - should succeed
 	_, err = encrypter.Encrypt(plaintext, nil)
@@ -253,7 +253,7 @@ func TestAESBackend_TrackingDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key with tracking disabled
 	attrs := &types.KeyAttributes{
@@ -284,7 +284,7 @@ func TestAESBackend_TrackingDisabled(t *testing.T) {
 
 	// Use same nonce multiple times - should succeed when tracking disabled
 	fixedNonce := make([]byte, 12)
-	rand.Read(fixedNonce)
+	_, _ = rand.Read(fixedNonce)
 
 	opts := &types.EncryptOptions{
 		Nonce: fixedNonce,
@@ -316,7 +316,7 @@ func TestAESBackend_KeyRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key
 	attrs := &types.KeyAttributes{
@@ -346,7 +346,7 @@ func TestAESBackend_KeyRotation(t *testing.T) {
 	}
 
 	plaintext := make([]byte, 500)
-	rand.Read(plaintext)
+	_, _ = rand.Read(plaintext)
 
 	_, err = encrypter.Encrypt(plaintext, nil)
 	if err != nil {
@@ -408,7 +408,7 @@ func TestAESBackend_CustomTracker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Verify backend uses custom tracker
 	aesBackend := b.(*AESBackend)
@@ -466,7 +466,7 @@ func BenchmarkAESBackend_EncryptWithTracking(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer aesBackend.Close()
+	defer func() { _ = aesBackend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "bench-tracking",
@@ -489,7 +489,7 @@ func BenchmarkAESBackend_EncryptWithTracking(b *testing.B) {
 	}
 
 	plaintext := make([]byte, 1024)
-	rand.Read(plaintext)
+	_, _ = rand.Read(plaintext)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -510,7 +510,7 @@ func BenchmarkAESBackend_EncryptWithoutTracking(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer aesBackend.Close()
+	defer func() { _ = aesBackend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "bench-no-tracking",
@@ -538,7 +538,7 @@ func BenchmarkAESBackend_EncryptWithoutTracking(b *testing.B) {
 	}
 
 	plaintext := make([]byte, 1024)
-	rand.Read(plaintext)
+	_, _ = rand.Read(plaintext)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

@@ -17,7 +17,7 @@ import (
 func main() {
 	// Create a temporary directory for the keychain
 	tmpDir := filepath.Join(os.TempDir(), "quantum-encryption")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize storage backend
 	storage, err := file.New(tmpDir)
@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create quantum backend: %v", err)
 	}
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	fmt.Println("=== Quantum-Safe Encryption Examples ===\n")
 	fmt.Println("Using ML-KEM (Key Encapsulation) + AES-256-GCM (Symmetric Encryption)")

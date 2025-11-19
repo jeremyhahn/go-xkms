@@ -22,5 +22,5 @@ import (
 )
 
 func createVaultBackend(config BackendConfig) (types.Backend, error) {
-	return nil, fmt.Errorf("Vault backend not compiled in (use -tags vault)")
+	return nil, fmt.Errorf("vault backend not compiled in (use -tags vault)")
 }

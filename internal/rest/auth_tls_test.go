@@ -12,7 +12,6 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 //go:build integration
-// +build integration
 
 package rest
 
@@ -83,7 +82,7 @@ func waitForServer(t *testing.T, url string, client *http.Client, timeout time.D
 func TestRESTServer_NoOpAuthenticator_HTTP(t *testing.T) {
 	// Create test keystore
 	ks := createTestKeyStore(t)
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Create NoOp authenticator
 	authenticator := auth.NewNoOpAuthenticator()
@@ -175,7 +174,7 @@ func TestRESTServer_NoOpAuthenticator_HTTP(t *testing.T) {
 func TestRESTServer_APIKeyAuthenticator_HTTP(t *testing.T) {
 	// Create test keystore
 	ks := createTestKeyStore(t)
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Create API key authenticator with test keys
 	validAPIKey := "test-api-key-12345"
@@ -325,7 +324,7 @@ func TestRESTServer_TLS_NoClientCert(t *testing.T) {
 
 	// Create test keystore
 	ks := createTestKeyStore(t)
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Create TLS config (no client cert required)
 	tlsConfig := &tls.Config{
@@ -446,7 +445,7 @@ func TestRESTServer_mTLS_ClientCertRequired(t *testing.T) {
 
 	// Create test keystore
 	ks := createTestKeyStore(t)
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Create CA cert pool for client verification
 	caCertPool := x509.NewCertPool()
@@ -567,7 +566,7 @@ func TestRESTServer_mTLS_ClientCertRequired(t *testing.T) {
 func TestRESTServer_AuthenticationFailureScenarios(t *testing.T) {
 	// Create test keystore
 	ks := createTestKeyStore(t)
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	tests := []struct {
 		name         string

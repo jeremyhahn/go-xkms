@@ -16,6 +16,7 @@
 package integration
 
 import (
+	"crypto/x509"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,8 +26,11 @@ import (
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/tcp"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
+	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
@@ -36,7 +40,7 @@ import (
 
 // TPM2TestSetup contains all components needed for TPM testing with capture
 type TPM2TestSetup struct {
-	KeyStore    *tpm2ks.TPM2KeyStore
+	TPM         tpm2ks.TrustedPlatformModule
 	Capture     *TPMCapture
 	TmpDir      string
 	KeyStorage  storage.Backend
@@ -66,7 +70,6 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 
 	// Open TPM transport
 	var baseTpm transport.TPMCloser
-	var tpmConfig *tpm2ks.Config
 
 	simHost := os.Getenv("TPM2_SIMULATOR_HOST")
 	simPort := os.Getenv("TPM2_SIMULATOR_PORT")
@@ -90,55 +93,96 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 
 		// Power cycle the TPM simulator to ensure clean state
 		powerCycleTPM(baseTpm)
-
-		// Configure for SWTPM
-		tpmConfig = &tpm2ks.Config{
-			CN:             fmt.Sprintf("test-capture-srk-%d", time.Now().UnixNano()),
-			SRKHandle:      0x81000001,
-			EncryptSession: encryptSession,
-			UseSimulator:   true,
-			SimulatorType:  "swtpm",
-			SimulatorHost:  simHost,
-			SimulatorPort:  0, // Will be parsed from simPort
-		}
-		// Parse port
-		if port := simPort; port != "" {
-			var portNum int
-			fmt.Sscanf(port, "%d", &portNum)
-			tpmConfig.SimulatorPort = portNum
-		}
 	} else {
 		// Use embedded simulator
 		t.Log("Using embedded TPM simulator")
 		sim, err := simulator.Get()
 		require.NoError(t, err, "Failed to open embedded simulator")
 		baseTpm = transport.FromReadWriteCloser(sim)
-
-		// Configure for embedded simulator
-		tpmConfig = &tpm2ks.Config{
-			CN:             fmt.Sprintf("test-capture-srk-%d", time.Now().UnixNano()),
-			SRKHandle:      0x81000001,
-			EncryptSession: encryptSession,
-			UseSimulator:   true,
-			SimulatorType:  "embedded",
-		}
 	}
 
 	// Wrap with capture
 	capture := NewTPMCapture(baseTpm)
 
-	// Create keystore
-	ks, err := tpm2ks.NewTPM2KeyStore(tpmConfig, pkcs8Backend, keyStorage, certStorage, capture)
-	require.NoError(t, err, "Failed to create TPM2KeyStore")
+	// Create logger
+	logger := logging.DefaultLogger()
 
-	// Initialize the TPM (this will use our capturing transport)
-	err = ks.Initialize(nil, nil)
-	if err != nil && err.Error() != "keystore: already initialized" && err.Error() != "keystore already initialized" {
-		require.NoError(t, err, "Failed to initialize TPM")
+	// Create temporary filesystem for test
+	fs := afero.NewMemMapFs()
+	testDir := fmt.Sprintf("/tmp/tpm-capture-test-%d", time.Now().UnixNano())
+
+	// Create blob store
+	blobStore, err := store.NewFSBlobStore(logger, fs, testDir, nil)
+	require.NoError(t, err, "Failed to create blob store")
+
+	// Create file backend
+	fileBackend := store.NewFileBackend(logger, fs, testDir)
+
+	// Create TPM configuration
+	tpmConfig := &tpm2ks.Config{
+		Device:          "", // Not using device, using custom transport
+		UseSimulator:    false,
+		EncryptSession:  encryptSession,
+		Hash:            "SHA-256",
+		PlatformPCR:     16,
+		PlatformPCRBank: "sha256",
+		EK: &tpm2ks.EKConfig{
+			CertHandle:    0x01C00002,
+			Handle:        0x81010001,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
+			KeyAlgorithm:  x509.RSA.String(),
+			RSAConfig: &store.RSAConfig{
+				KeySize: 2048,
+			},
+		},
+		IAK: &tpm2ks.IAKConfig{
+			Handle:             0x81010002,
+			Hash:               "SHA-256",
+			KeyAlgorithm:       x509.RSA.String(),
+			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
+			RSAConfig: &store.RSAConfig{
+				KeySize: 2048,
+			},
+		},
+		SSRK: &tpm2ks.SRKConfig{
+			Handle:        0x81000001,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
+			KeyAlgorithm:  x509.RSA.String(),
+			RSAConfig: &store.RSAConfig{
+				KeySize: 2048,
+			},
+		},
+	}
+
+	// Create TPM2 params with custom transport
+	params := &tpm2ks.Params{
+		Logger:       logger,
+		DebugSecrets: false, // Disable to reduce noise in capture
+		Config:       tpmConfig,
+		BlobStore:    blobStore,
+		Backend:      fileBackend,
+		FQDN:         fmt.Sprintf("capture-test-%d.example.com", time.Now().UnixNano()),
+		Transport:    capture, // Use capture transport
+	}
+
+	// Create TPM2 instance (allow ErrNotInitialized for fresh TPM)
+	tpmInstance, err := tpm2ks.NewTPM2(params)
+	if err != nil && err != tpm2ks.ErrNotInitialized {
+		capture.Close()
+		require.NoError(t, err, "Failed to create TPM2 instance")
+	}
+
+	// Provision if needed
+	if err == tpm2ks.ErrNotInitialized {
+		t.Log("TPM not initialized, provisioning...")
+		if provErr := tpmInstance.Provision(nil); provErr != nil {
+			capture.Close()
+			require.NoError(t, provErr, "Failed to provision TPM")
+		}
 	}
 
 	return &TPM2TestSetup{
-		KeyStore:    ks,
+		TPM:         tpmInstance,
 		Capture:     capture,
 		TmpDir:      tmpDir,
 		KeyStorage:  keyStorage,
@@ -149,12 +193,12 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 
 // Cleanup cleans up all resources
 func (setup *TPM2TestSetup) Cleanup() {
-	if setup.KeyStore != nil {
-		// KeyStore.Close() will close the TPM transport (capture wrapper),
+	if setup.TPM != nil {
+		// TPM.Close() will close the TPM transport (capture wrapper),
 		// which in turn closes the base TPM. So we don't need to close capture separately.
-		setup.KeyStore.Close()
+		setup.TPM.Close()
 	}
-	// Don't close Capture here - it's already closed by KeyStore.Close()
+	// Don't close Capture here - it's already closed by TPM.Close()
 	if setup.TmpDir != "" {
 		os.RemoveAll(setup.TmpDir)
 	}

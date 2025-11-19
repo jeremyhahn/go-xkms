@@ -188,7 +188,8 @@ func TestCorrelationIDPropagation(t *testing.T) {
 	parentCtx := WithCorrelationID(context.Background(), correlationID)
 
 	// Create child context with additional values
-	childCtx := context.WithValue(parentCtx, "test-key", "test-value")
+	type testKey string
+	childCtx := context.WithValue(parentCtx, testKey("test-key"), "test-value")
 
 	// Verify correlation ID is still accessible in child context
 	got := GetCorrelationID(childCtx)
@@ -198,11 +199,12 @@ func TestCorrelationIDPropagation(t *testing.T) {
 }
 
 func TestContextKeyIsolation(t *testing.T) {
+	type testContextKey2 string
 	// Verify that correlation ID doesn't conflict with other context values
 	correlationID := "test-correlation-id"
 
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, "correlation-id", "wrong-value") // String key collision test
+	ctx = context.WithValue(ctx, testContextKey2("correlation-id"), "wrong-value") // String key collision test
 	ctx = WithCorrelationID(ctx, correlationID)
 
 	got := GetCorrelationID(ctx)

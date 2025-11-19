@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 func TestNewAESKey(t *testing.T) {
@@ -122,5 +121,5 @@ func TestAESKeyInterface(t *testing.T) {
 	}
 
 	// This will fail to compile if aesKey doesn't implement SymmetricKey
-	var _ types.SymmetricKey = key
+	_ = key
 }

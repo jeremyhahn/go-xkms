@@ -58,7 +58,6 @@ func (cfg *TLSConfig) LoadTLSConfig() (*tls.Config, error) {
 	}
 
 	// Server cipher preference
-	tlsConfig.PreferServerCipherSuites = cfg.PreferServerCiphers
 
 	// Setup client certificate verification (mTLS)
 	if cfg.ClientAuth != "" && cfg.ClientAuth != "none" {

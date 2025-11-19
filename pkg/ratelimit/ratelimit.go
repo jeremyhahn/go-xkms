@@ -14,6 +14,7 @@
 package ratelimit
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -135,7 +136,7 @@ func (l *Limiter) Wait(clientID string) error {
 	}
 
 	limiter := l.getLimiter(clientID)
-	return limiter.Wait(nil)
+	return limiter.Wait(context.TODO())
 }
 
 // cleanupWorker periodically removes idle clients from memory.

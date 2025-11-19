@@ -71,7 +71,7 @@ func TestCompositeKeyStore_GenerateRSA(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			key, err := ks.GenerateRSA(tt.attrs)
 
@@ -127,7 +127,7 @@ func TestCompositeKeyStore_GenerateECDSA(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			key, err := ks.GenerateECDSA(tt.attrs)
 
@@ -180,7 +180,7 @@ func TestCompositeKeyStore_GenerateEd25519(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			key, err := ks.GenerateEd25519(tt.attrs)
 
@@ -275,7 +275,7 @@ func TestCompositeKeyStore_GetKey(t *testing.T) {
 				Backend:     mockBackend,
 				CertStorage: storagemocks.NewMockCertStorage(),
 			})
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			key, err := ks.GetKey(tt.attrs)
 
@@ -364,7 +364,7 @@ func TestCompositeKeyStore_DeleteKey(t *testing.T) {
 				Backend:     mockBackend,
 				CertStorage: storagemocks.NewMockCertStorage(),
 			})
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			err := ks.DeleteKey(tt.attrs)
 
@@ -384,7 +384,7 @@ func TestCompositeKeyStore_DeleteKey(t *testing.T) {
 
 func TestCompositeKeyStore_ListKeys(t *testing.T) {
 	ks, mockBackend, _ := setupKeyStore()
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Generate some keys
 	for i := 0; i < 3; i++ {
@@ -467,7 +467,7 @@ func TestCompositeKeyStore_RotateKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			// Generate initial key first
 			if tt.attrs != nil {
@@ -530,7 +530,7 @@ func TestCompositeKeyStore_GenerateRSA_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-backend-error",
@@ -561,7 +561,7 @@ func TestCompositeKeyStore_GenerateRSA_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-nil-key",
@@ -594,7 +594,7 @@ func TestCompositeKeyStore_GenerateRSA_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-invalid-key",
@@ -625,7 +625,7 @@ func TestCompositeKeyStore_GenerateECDSA_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-ecdsa-error",
@@ -656,7 +656,7 @@ func TestCompositeKeyStore_GenerateECDSA_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-ecdsa-nil",
@@ -690,7 +690,7 @@ func TestCompositeKeyStore_GenerateEd25519_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-ed25519-error",
@@ -718,7 +718,7 @@ func TestCompositeKeyStore_GenerateEd25519_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-ed25519-nil",
@@ -749,7 +749,7 @@ func TestCompositeKeyStore_GetKey_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-get-error",
@@ -777,7 +777,7 @@ func TestCompositeKeyStore_GetKey_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-get-nil",
@@ -808,7 +808,7 @@ func TestCompositeKeyStore_ListKeys_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		_, err := ks.ListKeys()
 		if err == nil {
@@ -821,7 +821,7 @@ func TestCompositeKeyStore_ListKeys_EdgeCases(t *testing.T) {
 
 	t.Run("empty list", func(t *testing.T) {
 		ks, _, _ := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		keys, err := ks.ListKeys()
 		if err != nil {
@@ -846,7 +846,7 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Create a key with unsupported algorithm for rotation
 		attrs := &types.KeyAttributes{
@@ -890,7 +890,7 @@ func TestCompositeKeyStore_RotateKey_EdgeCases(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-rotate-delete-error",
@@ -937,7 +937,7 @@ func TestCompositeKeyStore_PublicKeyHelper(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-nil-pub",
@@ -966,7 +966,7 @@ func TestCompositeKeyStore_PublicKeyHelper(t *testing.T) {
 			Backend:     mockBackend,
 			CertStorage: storagemocks.NewMockCertStorage(),
 		})
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		attrs := &types.KeyAttributes{
 			CN:           "test-bad-pub",
@@ -988,7 +988,7 @@ func TestCompositeKeyStore_PublicKeyHelper(t *testing.T) {
 // TestCompositeKeyStore_MultipleKeyTypes verifies all key types work correctly
 func TestCompositeKeyStore_MultipleKeyTypes(t *testing.T) {
 	ks, _, _ := setupKeyStore()
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	tests := []struct {
 		name      string

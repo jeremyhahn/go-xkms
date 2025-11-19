@@ -194,8 +194,8 @@ type mockChecksumStore struct {
 }
 
 func (m *mockChecksumStore) Checksum(opts *verification.VerifyOpts) ([]byte, error) {
-	blobName := string(opts.BlobCN)
-	checksum, exists := m.checksums[blobName]
+	/* Convert to string */
+	checksum, exists := m.checksums[string(opts.BlobCN)]
 	if !exists {
 		return nil, verification.ErrChecksumNotFound
 	}

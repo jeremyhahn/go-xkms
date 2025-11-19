@@ -40,7 +40,7 @@ import (
 func main() {
 	// Create a temporary directory
 	tmpDir := filepath.Join(os.TempDir(), "keystore-tls-client")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize storage backend
 	storage, err := file.New(tmpDir)
@@ -55,7 +55,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#8 backend: %v", err)
 	}
-	defer pkcs8Backend.Close()
+	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
 	ks, err := keychain.New(&keychain.Config{
@@ -65,7 +65,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create keystore: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	fmt.Println("=== TLS Client Example ===")
 
@@ -203,7 +203,7 @@ func createCA(ks keychain.KeyStore) (*x509.Certificate, crypto.Signer) {
 
 	caCert, _ := x509.ParseCertificate(caCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	ks.SaveCert(keyAttrs.CN, caCert)
+	_ = ks.SaveCert(keyAttrs.CN, caCert)
 
 	return caCert, caSigner
 }
@@ -261,7 +261,7 @@ func createClientCertificate(ks keychain.KeyStore, caCert *x509.Certificate, caS
 
 	clientCert, _ := x509.ParseCertificate(clientCertBytes)
 	// #nosec G104 - Example code, error handling omitted for clarity
-	ks.SaveCert("client@example.com", clientCert)
+	_ = ks.SaveCert("client@example.com", clientCert)
 
 	return clientCert
 }
@@ -275,7 +275,7 @@ func demoRequest(client *http.Client, url string) {
 		fmt.Printf("   Note: This is expected as we're using a self-signed CA\n")
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	fmt.Printf("   Request to %s:\n", url)

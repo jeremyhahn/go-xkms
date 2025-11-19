@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/internal/password"
+	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 // Test helpers
@@ -87,7 +88,7 @@ func TestEncodePrivateKey(t *testing.T) {
 	tests := []struct {
 		name       string
 		privateKey interface{}
-		password   password.Password
+		password   types.Password
 		wantErr    bool
 	}{
 		{
@@ -148,16 +149,17 @@ func TestEncodePrivateKey(t *testing.T) {
 	}
 }
 
-func TestEncodePrivateKey_PasswordError(t *testing.T) {
+func TestEncodePrivateKey_NilPasswordBytes(t *testing.T) {
 	rsaKey := generateRSAKey(t)
 	badPassword := &mockBadPassword{}
 
-	_, err := EncodePrivateKey(rsaKey, badPassword)
-	if err == nil {
-		t.Error("Expected error when password.Bytes() fails, got nil")
+	// With a cleared password (Bytes returns nil), encoding should succeed without encryption
+	got, err := EncodePrivateKey(rsaKey, badPassword)
+	if err != nil {
+		t.Errorf("EncodePrivateKey() with nil bytes should succeed, got error: %v", err)
 	}
-	if err != nil && err.Error() != "failed to get password bytes: mock password error" {
-		t.Errorf("Expected password bytes error, got: %v", err)
+	if len(got) == 0 {
+		t.Error("EncodePrivateKey() returned empty data")
 	}
 }
 
@@ -179,7 +181,7 @@ func TestEncodePrivateKeyPEM(t *testing.T) {
 	tests := []struct {
 		name          string
 		privateKey    interface{}
-		password      password.Password
+		password      types.Password
 		wantBlockType string
 		wantErr       bool
 	}{
@@ -280,7 +282,7 @@ func TestDecodePrivateKeyPEM(t *testing.T) {
 	tests := []struct {
 		name       string
 		privateKey interface{}
-		password   password.Password
+		password   types.Password
 		wantErr    bool
 	}{
 		{
@@ -350,7 +352,7 @@ func TestDecodePrivateKeyPEM_Errors(t *testing.T) {
 	tests := []struct {
 		name     string
 		pemData  []byte
-		password password.Password
+		password types.Password
 		wantErr  error
 	}{
 		{
@@ -390,7 +392,7 @@ func TestDecodePrivateKeyPEM_Errors(t *testing.T) {
 	}
 }
 
-func TestDecodePrivateKeyPEM_PasswordError(t *testing.T) {
+func TestDecodePrivateKeyPEM_NilPasswordBytes(t *testing.T) {
 	rsaKey := generateRSAKey(t)
 	pwd := mustCreatePassword(t, "test-password")
 
@@ -400,11 +402,12 @@ func TestDecodePrivateKeyPEM_PasswordError(t *testing.T) {
 		t.Fatalf("Failed to encode key: %v", err)
 	}
 
-	// Try to decode with bad password that fails on Bytes()
+	// Try to decode encrypted key with a cleared password (Bytes returns nil)
+	// This should fail because the key is encrypted but no password bytes are provided
 	badPassword := &mockBadPassword{}
 	_, err = DecodePrivateKeyPEM(pemData, badPassword)
 	if err == nil {
-		t.Error("Expected error when password.Bytes() fails, got nil")
+		t.Error("Expected error when decrypting with nil password bytes, got nil")
 	}
 }
 
@@ -817,7 +820,7 @@ func TestRoundTrip_PrivateKey(t *testing.T) {
 	tests := []struct {
 		name       string
 		privateKey interface{}
-		password   password.Password
+		password   types.Password
 	}{
 		{
 			name:       "RSA without password",
@@ -968,7 +971,7 @@ func TestPasswordSecurity(t *testing.T) {
 
 // Helper function
 
-func mustCreatePassword(t *testing.T, pwd string) password.Password {
+func mustCreatePassword(t *testing.T, pwd string) types.Password {
 	t.Helper()
 	p, err := password.NewClearPasswordFromString(pwd)
 	if err != nil {
@@ -977,18 +980,18 @@ func mustCreatePassword(t *testing.T, pwd string) password.Password {
 	return p
 }
 
-// Mock bad password for testing error paths
+// Mock bad password for testing error paths (simulates a cleared password)
 type mockBadPassword struct{}
 
-func (m *mockBadPassword) Bytes() ([]byte, error) {
-	return nil, errors.New("mock password error")
+func (m *mockBadPassword) Bytes() []byte {
+	return nil // Simulates a cleared password
 }
 
 func (m *mockBadPassword) String() (string, error) {
-	return "", errors.New("mock password error")
+	return "", errors.New("password has been cleared")
 }
 
-func (m *mockBadPassword) Zero() {
+func (m *mockBadPassword) Clear() {
 	// No-op for mock
 }
 

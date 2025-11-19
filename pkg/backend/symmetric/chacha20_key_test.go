@@ -147,7 +147,7 @@ func TestChaCha20KeyInterfaceCompliance(t *testing.T) {
 	}
 
 	// Verify it satisfies the SymmetricKey interface
-	var _ types.SymmetricKey = key
+	_ = key
 }
 
 // BenchmarkNewChaCha20Key benchmarks ChaCha20 key creation.

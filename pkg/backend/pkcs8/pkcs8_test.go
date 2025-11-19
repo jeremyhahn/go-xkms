@@ -65,13 +65,15 @@ func createRSAAttrs(cn string, keySize int) *types.KeyAttributes {
 
 // Helper function to create ECDSA attributes
 func createECDSAAttrs(cn, curve string) *types.KeyAttributes {
+	parsedCurve, _ := types.ParseCurve(curve)
+	// Note: parsedCurve may be nil for invalid curves - tests should handle this
 	return &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,
 		StoreType:    backend.STORE_SW,
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
-			Curve: types.ParseCurve(curve),
+			Curve: parsedCurve,
 		},
 		Hash: crypto.SHA256,
 	}
@@ -103,7 +105,7 @@ func TestNewBackend(t *testing.T) {
 			t.Fatal("NewBackend returned nil")
 		}
 
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		// Verify type
 		if be.Type() != backend.BackendTypePKCS8 {
@@ -133,7 +135,7 @@ func TestNewBackend(t *testing.T) {
 // TestType tests backend type identification
 func TestType(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	if be.Type() != backend.BackendTypePKCS8 {
 		t.Errorf("Expected type %s, got %s", backend.BackendTypePKCS8, be.Type())
@@ -143,7 +145,7 @@ func TestType(t *testing.T) {
 // TestCapabilities tests backend capabilities
 func TestCapabilities(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	caps := be.Capabilities()
 
@@ -194,7 +196,7 @@ func TestGenerateKey_RSA(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			attrs := createRSAAttrs("test-rsa.com", tt.keySize)
 
@@ -286,7 +288,7 @@ func TestGenerateKey_ECDSA(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			attrs := createECDSAAttrs("test-ecdsa.com", tt.curve)
 
@@ -329,7 +331,7 @@ func TestGenerateKey_ECDSA(t *testing.T) {
 // TestGenerateKey_Ed25519 tests Ed25519 key generation
 func TestGenerateKey_Ed25519(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createEd25519Attrs("test-ed25519.com")
 
@@ -384,7 +386,7 @@ func TestGenerateKey_WithPassword(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			attrs := createRSAAttrs("test-pwd.com", 2048)
 			attrs.Password = tt.password
@@ -413,7 +415,7 @@ func TestGenerateKey_WithPassword(t *testing.T) {
 // TestGenerateKey_DuplicateKey tests generating a key that already exists
 func TestGenerateKey_DuplicateKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("duplicate.com", 2048)
 
@@ -483,7 +485,7 @@ func TestGenerateKey_InvalidAttributes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			_, err := be.GenerateKey(tt.attrs)
 			if err == nil {
@@ -496,7 +498,7 @@ func TestGenerateKey_InvalidAttributes(t *testing.T) {
 // TestGetKey tests key retrieval
 func TestGetKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate a key
 	attrs := createRSAAttrs("test-get.com", 2048)
@@ -523,7 +525,7 @@ func TestGetKey(t *testing.T) {
 // TestGetKey_NotFound tests retrieving a non-existent key
 func TestGetKey_NotFound(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
@@ -540,7 +542,7 @@ func TestGetKey_NotFound(t *testing.T) {
 // TestGetKey_InvalidAttributes tests getting a key with invalid attributes
 func TestGetKey_InvalidAttributes(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		// Missing required fields
@@ -556,7 +558,7 @@ func TestGetKey_InvalidAttributes(t *testing.T) {
 // TestDeleteKey tests key deletion
 func TestDeleteKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate a key
 	attrs := createRSAAttrs("test-delete.com", 2048)
@@ -590,7 +592,7 @@ func TestDeleteKey(t *testing.T) {
 // TestDeleteKey_NotFound tests deleting a non-existent key
 func TestDeleteKey_NotFound(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
@@ -607,7 +609,7 @@ func TestDeleteKey_NotFound(t *testing.T) {
 // TestListKeys tests listing all keys
 func TestListKeys(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Initially empty
 	keys, err := be.ListKeys()
@@ -692,7 +694,7 @@ func TestSigner(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			// Generate key
 			_, err := be.GenerateKey(tt.attrs)
@@ -734,7 +736,7 @@ func TestSigner(t *testing.T) {
 // TestSigner_KeyNotFound tests Signer with non-existent key
 func TestSigner_KeyNotFound(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
@@ -751,7 +753,7 @@ func TestSigner_KeyNotFound(t *testing.T) {
 // TestDecrypter tests the Decrypter interface
 func TestDecrypter(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Only RSA supports decryption
 	attrs := createRSAAttrs("test-decrypt.com", 2048)
@@ -794,7 +796,7 @@ func TestDecrypter_NotSupported(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			// Generate key
 			_, err := be.GenerateKey(tt.attrs)
@@ -838,7 +840,7 @@ func TestPublic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			// Generate key
 			privateKey, err := be.GenerateKey(tt.attrs)
@@ -890,7 +892,7 @@ func TestPublic(t *testing.T) {
 // TestSign tests the Sign convenience method
 func TestSign(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-sign.com", 2048)
 
@@ -1007,7 +1009,7 @@ func TestClosedBackend(t *testing.T) {
 // TestConcurrentOperations tests thread safety
 func TestConcurrentOperations(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	const numGoroutines = 10
 	const opsPerGoroutine = 5
@@ -1131,7 +1133,7 @@ func TestConcurrentOperations(t *testing.T) {
 // TestConcurrentMixedOperations tests concurrent mixed operations
 func TestConcurrentMixedOperations(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	const numGoroutines = 20
 
@@ -1181,7 +1183,7 @@ func TestConcurrentMixedOperations(t *testing.T) {
 func TestPasswordEncryption(t *testing.T) {
 	t.Run("WrongPassword", func(t *testing.T) {
 		be, _ := createTestBackend(t)
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		// Generate with password
 		attrs := createRSAAttrs("test-pwd.com", 2048)
@@ -1204,7 +1206,7 @@ func TestPasswordEncryption(t *testing.T) {
 
 	t.Run("NoPasswordOnEncrypted", func(t *testing.T) {
 		be, _ := createTestBackend(t)
-		defer be.Close()
+		defer func() { _ = be.Close() }()
 
 		// Generate with password
 		attrs := createRSAAttrs("test-pwd2.com", 2048)
@@ -1229,7 +1231,7 @@ func TestPasswordEncryption(t *testing.T) {
 // TestKeyPartitions tests key partitioning
 func TestKeyPartitions(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	partitions := []types.Partition{
 		backend.PARTITION_TLS,
@@ -1273,7 +1275,7 @@ func BenchmarkGenerateRSA(b *testing.B) {
 	keyStorage := memory.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	b.ResetTimer()
 
@@ -1291,7 +1293,7 @@ func BenchmarkGenerateECDSA(b *testing.B) {
 	keyStorage := memory.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	b.ResetTimer()
 
@@ -1309,7 +1311,7 @@ func BenchmarkGetKey(b *testing.B) {
 	keyStorage := memory.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("benchmark.com", 2048)
 	_, err := be.GenerateKey(attrs)
@@ -1332,7 +1334,7 @@ func BenchmarkSign(b *testing.B) {
 	keyStorage := memory.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("benchmark.com", 2048)
 	_, err := be.GenerateKey(attrs)
@@ -1359,7 +1361,7 @@ func BenchmarkSign(b *testing.B) {
 // TestSign_ConvenienceMethod tests the Sign convenience method
 func TestSign_ConvenienceMethod(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-sign-method.com", 2048)
 
@@ -1384,7 +1386,7 @@ func TestSign_ConvenienceMethod(t *testing.T) {
 // TestGenerateKey_RSANilAttributes tests RSA generation with nil attributes
 func TestGenerateKey_RSANilAttributes(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:            "test.com",
@@ -1403,7 +1405,7 @@ func TestGenerateKey_RSANilAttributes(t *testing.T) {
 // TestGenerateKey_ECDSANilAttributes tests ECDSA generation with nil attributes
 func TestGenerateKey_ECDSANilAttributes(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:            "test.com",
@@ -1422,7 +1424,7 @@ func TestGenerateKey_ECDSANilAttributes(t *testing.T) {
 // TestPublic_UnsupportedKeyType tests Public with unsupported key type
 func TestPublic_UnsupportedKeyType(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Manually insert an unsupported key type into storage
 	attrs := createRSAAttrs("test-unsupported.com", 2048)
@@ -1444,7 +1446,7 @@ func TestPublic_UnsupportedKeyType(t *testing.T) {
 // TestGenerateKey_UnsupportedAlgorithm tests unsupported algorithm
 func TestGenerateKey_UnsupportedAlgorithm(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test.com",
@@ -1519,7 +1521,7 @@ func TestDeleteKey_StorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-delete-error.com", 2048)
 
@@ -1544,7 +1546,7 @@ func TestStoreKey_SaveKeyError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-save-error.com", 2048)
 
@@ -1577,7 +1579,7 @@ func TestSign_VerifySignature(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			// Generate key
 			_, err := be.GenerateKey(tt.attrs)
@@ -1611,7 +1613,7 @@ func TestSign_VerifySignature(t *testing.T) {
 // TestSign_KeyNotFound tests Sign with non-existent key
 func TestSign_KeyNotFound(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
@@ -1629,7 +1631,7 @@ func TestSign_KeyNotFound(t *testing.T) {
 // TestSigner_UnsupportedKeyType tests Signer with unsupported key type
 func TestSigner_UnsupportedKeyType(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate a key
 	attrs := createRSAAttrs("test-signer.com", 2048)
@@ -1653,7 +1655,7 @@ func TestSigner_UnsupportedKeyType(t *testing.T) {
 // TestDecrypter_GetKeyError tests Decrypter with GetKey error
 func TestDecrypter_GetKeyError(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
@@ -1670,7 +1672,7 @@ func TestDecrypter_GetKeyError(t *testing.T) {
 // TestPublic_GetKeyError tests Public with GetKey error
 func TestPublic_GetKeyError(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
@@ -1691,7 +1693,7 @@ func TestGenerateECDSAKey_AllCurves(t *testing.T) {
 	for _, curve := range curves {
 		t.Run(curve, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			attrs := createECDSAAttrs("test-"+curve+".com", curve)
 
@@ -1723,7 +1725,7 @@ func TestListKeys_StorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	_, err = be.ListKeys()
 	if err == nil {
@@ -1747,7 +1749,7 @@ func TestGenerateKey_StorageCheckError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-exists-error.com", 2048)
 
@@ -1800,7 +1802,7 @@ func TestGetKey_StorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-get-error.com", 2048)
 
@@ -1842,7 +1844,7 @@ func (m *mockStorageGetError) Close() error {
 // TestGenerateKey_RSAInvalidSize tests RSA generation with invalid key size
 func TestGenerateKey_RSAInvalidSize(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Test sizes that should fail validation
 	invalidSizes := []int{512, 1024, 1536}
@@ -1862,7 +1864,7 @@ func TestGenerateKey_RSAInvalidSize(t *testing.T) {
 // TestGenerateKey_ValidRSASizes tests various valid RSA key sizes
 func TestGenerateKey_ValidRSASizes(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Test multiple valid sizes to ensure generateRSAKey is thoroughly tested
 	validSizes := []int{2048, 3072, 4096}
@@ -1892,7 +1894,7 @@ func TestGenerateKey_ValidRSASizes(t *testing.T) {
 // This is a theoretical edge case that shouldn't happen with standard keys
 func TestSigner_InvalidKeyData(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate a valid key first
 	attrs := createRSAAttrs("test-signer-invalid.com", 2048)
@@ -1937,7 +1939,7 @@ func TestStoreKey_EncryptedPath(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			attrs := createRSAAttrs("test-store-"+tt.name+".com", tt.keySize)
 			attrs.Password = tt.password
@@ -1966,7 +1968,7 @@ func TestStoreKey_EncryptedPath(t *testing.T) {
 // TestGenerateRSAKey_ErrorPaths tests error paths in RSA key generation
 func TestGenerateRSAKey_ErrorPaths(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	t.Run("NilAttributes", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -2005,7 +2007,7 @@ func TestGenerateRSAKey_ErrorPaths(t *testing.T) {
 // TestGenerateECDSAKey_ErrorPaths tests error paths in ECDSA key generation
 func TestGenerateECDSAKey_ErrorPaths(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	t.Run("NilAttributes", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
@@ -2076,7 +2078,7 @@ func TestPublic_AllKeyTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			// Generate key
 			privateKey, err := be.GenerateKey(tt.attrs)
@@ -2119,7 +2121,7 @@ func TestPublic_AllKeyTypes(t *testing.T) {
 // TestDeleteKey_ValidateError tests DeleteKey with invalid attributes
 func TestDeleteKey_ValidateError(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		// Missing required CN field
@@ -2135,7 +2137,7 @@ func TestDeleteKey_ValidateError(t *testing.T) {
 // TestSigner_EnsureCoverage tests to ensure Signer error path is covered
 func TestSigner_EnsureCoverage(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Test all key types to ensure they implement crypto.Signer
 	tests := []struct {
@@ -2189,44 +2191,11 @@ func TestSigner_EnsureCoverage(t *testing.T) {
 }
 
 // mockNonSignerStorage stores a non-standard key type that doesn't implement crypto.Signer
-type mockNonSignerStorage struct {
-	storage.Backend
-	customKey []byte
-}
-
-func (m *mockNonSignerStorage) GetKey(id string) ([]byte, error) {
-	if m.customKey != nil {
-		return m.customKey, nil
-	}
-	return nil, storage.ErrNotFound
-}
-
-func (m *mockNonSignerStorage) KeyExists(id string) (bool, error) {
-	return m.customKey != nil, nil
-}
-
-func (m *mockNonSignerStorage) SaveKey(id string, data []byte) error {
-	m.customKey = data
-	return nil
-}
-
-func (m *mockNonSignerStorage) DeleteKey(id string) error {
-	m.customKey = nil
-	return nil
-}
-
-func (m *mockNonSignerStorage) ListKeys() ([]string, error) {
-	return nil, nil
-}
-
-func (m *mockNonSignerStorage) Close() error {
-	return nil
-}
 
 // TestStoreKey_EmptyPassword tests storeKey with empty password
 func TestStoreKey_EmptyPassword(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Create a password that returns empty bytes
 	emptyPassword := backend.StaticPassword("")
@@ -2256,7 +2225,7 @@ func TestStoreKey_EmptyPassword(t *testing.T) {
 // TestGenerateECDSAKey_P256Alias tests P-256 and prime256v1 aliases
 func TestGenerateECDSAKey_P256Alias(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Test that both P-256 and prime256v1 work
 	attrs1 := createECDSAAttrs("test-p256.com", "P-256")
@@ -2283,7 +2252,7 @@ func TestGenerateECDSAKey_P256Alias(t *testing.T) {
 // TestGenerateECDSAKey_AllAliases tests all curve aliases
 func TestGenerateECDSAKey_AllAliases(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	aliases := []struct {
 		curve string
@@ -2316,7 +2285,7 @@ func TestGenerateECDSAKey_AllAliases(t *testing.T) {
 // TestGenerateKey_ExhaustiveECDSA tests ECDSA generation exhaustively
 func TestGenerateKey_ExhaustiveECDSA(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Test all curve variations
 	curves := []string{
@@ -2361,7 +2330,7 @@ func TestGenerateKey_ExhaustiveECDSA(t *testing.T) {
 // TestStoreKey_BothPaths tests both encrypted and unencrypted storage paths
 func TestStoreKey_BothPaths(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	t.Run("Unencrypted", func(t *testing.T) {
 		attrs := createRSAAttrs("test-store-plain.com", 2048)
@@ -2455,7 +2424,7 @@ func TestStoreKey_BothPaths(t *testing.T) {
 // TestRotateKey tests key rotation functionality
 func TestRotateKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	t.Run("RotateExistingKey", func(t *testing.T) {
 		// Generate initial key
@@ -2597,7 +2566,7 @@ func TestRotateKey(t *testing.T) {
 // TestGenerateKey_X25519 tests X25519 key generation for key agreement
 func TestGenerateKey_X25519(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:               "test-x25519.com",
@@ -2630,7 +2599,7 @@ func TestGenerateKey_X25519(t *testing.T) {
 // TestDeriveSharedSecret_X25519 tests X25519 key agreement
 func TestDeriveSharedSecret_X25519(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate two X25519 key pairs
 	attrs1 := &types.KeyAttributes{
@@ -2710,7 +2679,7 @@ func TestDeriveSharedSecret_ECDSA(t *testing.T) {
 	for _, curve := range curves {
 		t.Run(curve, func(t *testing.T) {
 			be, _ := createTestBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			// Generate two ECDSA key pairs
 			attrs1 := createECDSAAttrs("test-ecdh-1.com", curve)
@@ -2770,7 +2739,7 @@ func TestDeriveSharedSecret_ECDSA(t *testing.T) {
 // TestDeriveSharedSecret_ErrorCases tests error handling in DeriveSharedSecret
 func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate keys
 	rsaAttrs := createRSAAttrs("test-rsa-ecdh.com", 2048)
@@ -2861,7 +2830,7 @@ func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 			t.Fatalf("Public failed: %v", err)
 		}
 
-		be2.Close()
+		_ = be2.Close()
 
 		_, err = be2.DeriveSharedSecret(attrs, pub)
 		if err == nil {
@@ -2876,7 +2845,7 @@ func TestDeriveSharedSecret_ErrorCases(t *testing.T) {
 // TestGenerateECDSAKey_NilCurve tests ECDSA generation with nil curve
 func TestGenerateECDSAKey_NilCurve(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-nil-curve.com",
@@ -2898,7 +2867,7 @@ func TestGenerateECDSAKey_NilCurve(t *testing.T) {
 // TestListKeys_EdgeCases tests edge cases in ListKeys key ID parsing
 func TestListKeys_EdgeCases(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	t.Run("ShortKeyID", func(t *testing.T) {
 		// Manually insert a key with a short ID
@@ -2958,7 +2927,7 @@ func TestListKeys_EdgeCases(t *testing.T) {
 // TestPublic_X25519 tests Public with X25519 keys
 func TestPublic_X25519(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:               "test-x25519-pub.com",
@@ -2986,7 +2955,7 @@ func TestPublic_X25519(t *testing.T) {
 // TestDecodeKey_X25519Wrapping tests decodeKey with X25519 key wrapping
 func TestDecodeKey_X25519Wrapping(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate and store an X25519 key
 	attrs := &types.KeyAttributes{
@@ -3016,7 +2985,7 @@ func TestDecodeKey_X25519Wrapping(t *testing.T) {
 // TestStoreKey_X25519Unwrapping tests storeKey with X25519 key unwrapping
 func TestStoreKey_X25519Unwrapping(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate X25519 key with password to test both paths
 	attrs := &types.KeyAttributes{
@@ -3051,7 +3020,7 @@ func TestStoreKey_X25519Unwrapping(t *testing.T) {
 // TestDeriveSharedSecret_X25519_WrongPublicKeyType tests X25519 with wrong public key type
 func TestDeriveSharedSecret_X25519_WrongPublicKeyType(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate X25519 key
 	x25519Attrs := &types.KeyAttributes{
@@ -3089,7 +3058,7 @@ func TestDeriveSharedSecret_X25519_WrongPublicKeyType(t *testing.T) {
 // TestDeriveSharedSecret_ECDSA_WrongPublicKeyType tests ECDSA with wrong public key type
 func TestDeriveSharedSecret_ECDSA_WrongPublicKeyType(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate ECDSA key
 	ecdsaAttrs := createECDSAAttrs("test-ecdsa-wrong.com", "P-256")
@@ -3120,7 +3089,7 @@ func TestDeriveSharedSecret_ECDSA_WrongPublicKeyType(t *testing.T) {
 // TestGenerateRSAKey_ErrorGeneration tests error in RSA key generation
 func TestGenerateRSAKey_ErrorGeneration(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Test with zero key size (should be caught by validation but tests the path)
 	attrs := &types.KeyAttributes{
@@ -3143,7 +3112,7 @@ func TestGenerateRSAKey_ErrorGeneration(t *testing.T) {
 // TestGenerateECDSAKey_EmptyCurve tests ECDSA with empty curve
 func TestGenerateECDSAKey_EmptyCurve(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Empty string for curve - will result in nil curve
 	attrs := createECDSAAttrs("test-empty-curve.com", "")

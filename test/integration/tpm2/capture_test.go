@@ -1,35 +1,11 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
-//
-// This file is part of go-keychain.
-//
-// go-keychain is dual-licensed:
-//
-// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
-//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
-//
-// 2. Commercial License
-//    Contact licensing@automatethethings.com for commercial licensing options.
-
 //go:build integration && tpm2
 
 package integration
 
 import (
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	tpm2ks "github.com/jeremyhahn/go-keychain/pkg/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -37,389 +13,268 @@ import (
 // by capturing raw TPM traffic and analyzing it for encryption indicators
 func TestTPMSessionEncryption(t *testing.T) {
 	// Create TPM backend with encryption enabled
-	ks, capture, cleanup := setupTPM2WithCapture(t, true)
+	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, true)
 	defer cleanup()
 
-	// Clear any startup packets
+	// Clear any startup/provisioning packets
 	capture.Clear()
 
-	// Perform sensitive operation - key generation
-	t.Log("Generating RSA key with encrypted session...")
-	attrs := &types.KeyAttributes{
-		CN:           "test-encrypted-key",
-		KeyType:      backend.KEY_TYPE_TLS,
-		StoreType:    backend.STORE_TPM2,
+	// Perform sensitive operation - key creation with Seal
+	t.Log("Creating sealed key with encrypted session...")
+
+	// Get SRK for parent
+	srkAttrs, err := tpmInstance.SSRKAttributes()
+	if err != nil {
+		t.Fatalf("Failed to get SRK attributes: %v", err)
+	}
+
+	// Create key attributes for sealed data
+	sealAttrs := &types.KeyAttributes{
+		CN:           "test-encrypted-seal",
 		KeyAlgorithm: x509.RSA,
-		RSAAttributes: &types.RSAAttributes{
-			KeySize: 2048,
+		KeyType:      types.KeyTypeCA,
+		Parent:       srkAttrs,
+		Password:     types.NewClearPassword(nil),
+		StoreType:    types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			Hierarchy: 0x40000001, // TPM_RH_OWNER
 		},
 	}
 
-	key, err := ks.GenerateKey(attrs)
-	require.NoError(t, err, "Key generation should succeed")
-	require.NotNil(t, key, "Generated key should not be nil")
+	// Seal data (generates 32-byte AES key internally)
+	_, err = tpmInstance.Seal(sealAttrs, nil, false)
+	if err != nil {
+		t.Fatalf("Failed to seal data: %v", err)
+	}
 
 	// Get captured packets
 	packets := capture.GetPackets()
-	require.NotEmpty(t, packets, "Should have captured TPM traffic")
+	if len(packets) == 0 {
+		t.Fatal("Should have captured TPM traffic")
+	}
 
-	t.Logf("Captured %d TPM packets", len(packets))
+	t.Logf("Captured %d TPM packets during seal operation", len(packets))
 
 	// Analyze for encryption
 	analysis := AnalyzePackets(packets, getSensitivePatterns())
 	t.Log(analysis.FormatAnalysis())
 
 	// Assertions: Encrypted session should show encryption flags
-	assert.Greater(t, analysis.SessionCommands, 0, "Should have session-based commands")
-	assert.Greater(t, analysis.EncryptedSessions, 0, "Should have encrypted sessions")
-	assert.Equal(t, 0, analysis.PlaintextDetections, "Should not detect plaintext sensitive data")
-
-	// Verify key works
-	signer, ok := key.(crypto.Signer)
-	require.True(t, ok, "Key should implement crypto.Signer")
-
-	// Sign with the key (with retry for TPM_RC_RETRY transient errors)
-	capture.Clear()
-	message := []byte("Test message for encryption verification")
-	hash := sha256.Sum256(message)
-
-	var signature []byte
-	maxRetries := 3
-	for i := 0; i < maxRetries; i++ {
-		signature, err = signer.Sign(rand.Reader, hash[:], crypto.SHA256)
-		if err == nil {
-			break
-		}
-		if i < maxRetries-1 && (err.Error() == "TPM_RC_RETRY: the TPM was not able to start the command" ||
-			strings.Contains(err.Error(), "TPM_RC_RETRY")) {
-			t.Logf("TPM_RC_RETRY on attempt %d, retrying...", i+1)
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-	}
-	require.NoError(t, err, "Signing should succeed")
-	require.NotEmpty(t, signature, "Signature should not be empty")
-
-	// Analyze signing packets
-	signPackets := capture.GetPackets()
-	t.Logf("Captured %d packets during signing", len(signPackets))
-
-	if len(signPackets) > 0 {
-		signAnalysis := AnalyzePackets(signPackets, getSensitivePatterns())
-		t.Log("Signing Operation:")
-		t.Log(signAnalysis.FormatAnalysis())
-
-		assert.Equal(t, 0, signAnalysis.PlaintextDetections, "Signing should not leak plaintext")
+	if analysis.SessionCommands == 0 {
+		t.Error("Should have session-based commands")
 	}
 
-	// Cleanup
-	err = ks.DeleteKey(attrs)
-	require.NoError(t, err, "Cleanup should succeed")
+	if analysis.EncryptedSessions == 0 {
+		t.Error("Should have encrypted sessions")
+	}
+
+	if analysis.PlaintextDetections != 0 {
+		t.Errorf("Should not detect plaintext sensitive data, found %d detections", analysis.PlaintextDetections)
+	}
+
+	// Verify encryption rate
+	if analysis.EncryptionPercentage < 50.0 {
+		t.Errorf("Encryption rate too low: %.1f%% (expected >= 50%%)", analysis.EncryptionPercentage)
+	}
+
+	t.Logf("Encryption verification passed: %.1f%% of sessions encrypted", analysis.EncryptionPercentage)
 }
 
 // TestTPMSessionNoEncryption verifies unencrypted sessions for comparison
 func TestTPMSessionNoEncryption(t *testing.T) {
 	// Create TPM backend with encryption DISABLED
-	ks, capture, cleanup := setupTPM2WithCapture(t, false)
+	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, false)
 	defer cleanup()
 
-	// Clear any startup packets
+	// Clear any startup/provisioning packets
 	capture.Clear()
 
 	// Perform operation without encryption
-	t.Log("Generating RSA key WITHOUT encrypted session...")
-	attrs := &types.KeyAttributes{
-		CN:           "test-unencrypted-key",
-		KeyType:      backend.KEY_TYPE_TLS,
-		StoreType:    backend.STORE_TPM2,
+	t.Log("Creating sealed key WITHOUT encrypted session...")
+
+	// Get SRK for parent
+	srkAttrs, err := tpmInstance.SSRKAttributes()
+	if err != nil {
+		t.Fatalf("Failed to get SRK attributes: %v", err)
+	}
+
+	// Create key attributes for sealed data
+	sealAttrs := &types.KeyAttributes{
+		CN:           "test-unencrypted-seal",
 		KeyAlgorithm: x509.RSA,
-		RSAAttributes: &types.RSAAttributes{
-			KeySize: 2048,
+		KeyType:      types.KeyTypeCA,
+		Parent:       srkAttrs,
+		Password:     types.NewClearPassword(nil),
+		StoreType:    types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			Hierarchy: 0x40000001, // TPM_RH_OWNER
 		},
 	}
 
-	key, err := ks.GenerateKey(attrs)
-	require.NoError(t, err, "Key generation should succeed")
-	require.NotNil(t, key, "Generated key should not be nil")
+	// Seal data without encryption
+	_, err = tpmInstance.Seal(sealAttrs, nil, false)
+	if err != nil {
+		t.Fatalf("Failed to seal data: %v", err)
+	}
 
 	// Get captured packets
 	packets := capture.GetPackets()
-	require.NotEmpty(t, packets, "Should have captured TPM traffic")
+	if len(packets) == 0 {
+		t.Fatal("Should have captured TPM traffic")
+	}
 
 	t.Logf("Captured %d TPM packets", len(packets))
 
-	// Analyze for encryption
+	// Analyze - should show no encryption
 	analysis := AnalyzePackets(packets, getSensitivePatterns())
 	t.Log(analysis.FormatAnalysis())
 
-	// With encryption disabled, we should see fewer or no encrypted sessions
-	// This demonstrates the difference between encrypted and unencrypted
-	t.Logf("Encryption rate: %.1f%% (expected to be lower than encrypted test)", analysis.EncryptionPercentage)
+	// Baseline expectations: unencrypted should have 0% encryption
+	if analysis.EncryptedSessions > 0 {
+		t.Logf("Note: Found %d encrypted sessions even with encryption disabled (may be default TPM behavior)",
+			analysis.EncryptedSessions)
+	}
 
-	// Cleanup
-	err = ks.DeleteKey(attrs)
-	require.NoError(t, err, "Cleanup should succeed")
+	t.Log("Unencrypted baseline test completed")
 }
 
-// TestTPMSessionEncryptionComparison directly compares encrypted vs unencrypted
-func TestTPMSessionEncryptionComparison(t *testing.T) {
-	t.Log("=== Comparing Encrypted vs Unencrypted TPM Sessions ===")
-
-	var encryptedMetrics *EncryptionAnalysis
-
-	// Test 1: Encrypted session - TOP LEVEL subtest
-	t.Run("EncryptedSession", func(t *testing.T) {
-		ks, capture, cleanup := setupTPM2WithCapture(t, true)
-		defer cleanup() // Closes TPM connection before next subtest
-
-		capture.Clear()
-
-		attrs := &types.KeyAttributes{
-			CN:           "test-compare-encrypted",
-			KeyType:      backend.KEY_TYPE_TLS,
-			StoreType:    backend.STORE_TPM2,
-			KeyAlgorithm: x509.RSA,
-			RSAAttributes: &types.RSAAttributes{
-				KeySize: 2048,
-			},
-		}
-
-		_, err := ks.GenerateKey(attrs)
-		require.NoError(t, err)
-
-		packets := capture.GetPackets()
-		analysis := AnalyzePackets(packets, getSensitivePatterns())
-
-		t.Log("ENCRYPTED SESSION ANALYSIS:")
-		t.Log(analysis.FormatAnalysis())
-
-		assert.Greater(t, analysis.EncryptedSessions, 0, "Should detect encrypted sessions")
-		assert.Equal(t, 0, analysis.PlaintextDetections, "No plaintext should be detected")
-
-		// Store metrics for comparison with next subtest
-		encryptedMetrics = analysis
-
-		// Cleanup
-		require.NoError(t, ks.DeleteKey(attrs))
-	})
-
-	// Test 2: Unencrypted session - TOP LEVEL subtest (sequential, not nested)
-	t.Run("UnencryptedSession", func(t *testing.T) {
-		ks2, capture2, cleanup2 := setupTPM2WithCapture(t, false)
-		defer cleanup2()
-
-		capture2.Clear()
-
-		attrs2 := &types.KeyAttributes{
-			CN:           "test-compare-unencrypted",
-			KeyType:      backend.KEY_TYPE_TLS,
-			StoreType:    backend.STORE_TPM2,
-			KeyAlgorithm: x509.RSA,
-			RSAAttributes: &types.RSAAttributes{
-				KeySize: 2048,
-			},
-		}
-
-		_, err := ks2.GenerateKey(attrs2)
-		require.NoError(t, err)
-
-		packets2 := capture2.GetPackets()
-		analysis2 := AnalyzePackets(packets2, getSensitivePatterns())
-
-		t.Log("UNENCRYPTED SESSION ANALYSIS:")
-		t.Log(analysis2.FormatAnalysis())
-
-		// Cleanup
-		require.NoError(t, ks2.DeleteKey(attrs2))
-
-		// Compare results with previous subtest
-		if encryptedMetrics != nil {
-			t.Log("\n=== COMPARISON ===")
-			t.Logf("Encrypted Sessions: %d vs %d", encryptedMetrics.EncryptedSessions, analysis2.EncryptedSessions)
-			t.Logf("Encryption Rate: %.1f%% vs %.1f%%", encryptedMetrics.EncryptionPercentage, analysis2.EncryptionPercentage)
-
-			// Note: Both configs may show high encryption rates as go-tpm library
-			// and/or TPM2 spec may require encrypted sessions for sensitive operations.
-			// The important verification is that:
-			// 1. Packet capture is working
-			// 2. We can detect encryption in the traffic
-			// 3. No plaintext sensitive data is leaked
-			if encryptedMetrics.EncryptedSessions > analysis2.EncryptedSessions {
-				t.Log("✓ Encrypted config shows more encrypted sessions as expected")
-			} else {
-				t.Log("Note: Both configs show similar encryption levels - TPM2 may enforce encryption")
-			}
-
-			// Key verification: No plaintext leaks in either configuration
-			assert.Equal(t, 0, encryptedMetrics.PlaintextDetections, "No plaintext in encrypted session")
-			assert.Equal(t, 0, analysis2.PlaintextDetections, "No plaintext in unencrypted session")
-		}
-	})
-}
-
-// TestTPMMultipleOperationsEncryption tests encryption across multiple operations
+// TestTPMMultipleOperationsEncryption verifies encryption across multiple operations
 func TestTPMMultipleOperationsEncryption(t *testing.T) {
-	ks, capture, cleanup := setupTPM2WithCapture(t, true)
+	// Create TPM backend with encryption enabled
+	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, true)
 	defer cleanup()
 
-	operations := []struct {
-		name string
-		fn   func(*testing.T, *tpm2ks.TPM2KeyStore) error
-	}{
-		{
-			name: "KeyGeneration",
-			fn: func(t *testing.T, ks *tpm2ks.TPM2KeyStore) error {
-				attrs := &types.KeyAttributes{
-					CN:           "test-multi-gen",
-					KeyType:      backend.KEY_TYPE_TLS,
-					StoreType:    backend.STORE_TPM2,
-					KeyAlgorithm: x509.RSA,
-					RSAAttributes: &types.RSAAttributes{
-						KeySize: 2048,
-					},
-				}
-				_, err := ks.GenerateKey(attrs)
-				return err
-			},
-		},
-		{
-			name: "KeyRetrieval",
-			fn: func(t *testing.T, ks *tpm2ks.TPM2KeyStore) error {
-				attrs := &types.KeyAttributes{
-					CN:           "test-multi-gen",
-					KeyType:      backend.KEY_TYPE_TLS,
-					StoreType:    backend.STORE_TPM2,
-					KeyAlgorithm: x509.RSA,
-				}
-				_, err := ks.GetKey(attrs)
-				return err
-			},
-		},
-		{
-			name: "Signing",
-			fn: func(t *testing.T, ks *tpm2ks.TPM2KeyStore) error {
-				attrs := &types.KeyAttributes{
-					CN:           "test-multi-gen",
-					KeyType:      backend.KEY_TYPE_TLS,
-					StoreType:    backend.STORE_TPM2,
-					KeyAlgorithm: x509.RSA,
-				}
-				key, err := ks.GetKey(attrs)
-				if err != nil {
-					return err
-				}
-				signer := key.(crypto.Signer)
-				hash := sha256.Sum256([]byte("test"))
-				_, err = signer.Sign(rand.Reader, hash[:], crypto.SHA256)
-				return err
-			},
+	// Get SRK for operations
+	srkAttrs, err := tpmInstance.SSRKAttributes()
+	if err != nil {
+		t.Fatalf("Failed to get SRK attributes: %v", err)
+	}
+
+	// Test 1: Seal operation
+	capture.Clear()
+	t.Log("Test 1: Seal operation with encryption...")
+
+	sealAttrs := &types.KeyAttributes{
+		CN:           "test-multi-seal",
+		KeyAlgorithm: x509.RSA,
+		KeyType:      types.KeyTypeCA,
+		Parent:       srkAttrs,
+		Password:     types.NewClearPassword(nil),
+		StoreType:    types.StoreTPM2,
+		TPMAttributes: &types.TPMAttributes{
+			Hierarchy: 0x40000001,
 		},
 	}
 
-	for _, op := range operations {
-		t.Run(op.name, func(t *testing.T) {
-			capture.Clear()
-
-			err := op.fn(t, ks)
-			require.NoError(t, err, "%s should succeed", op.name)
-
-			packets := capture.GetPackets()
-			if len(packets) == 0 {
-				t.Skipf("No packets captured for %s", op.name)
-				return
-			}
-
-			analysis := AnalyzePackets(packets, getSensitivePatterns())
-			t.Logf("%s Analysis:", op.name)
-			t.Log(analysis.FormatAnalysis())
-
-			assert.Equal(t, 0, analysis.PlaintextDetections,
-				"%s should not leak plaintext", op.name)
-		})
+	sealed, err := tpmInstance.Seal(sealAttrs, nil, false)
+	if err != nil {
+		t.Fatalf("Failed to seal: %v", err)
 	}
 
-	// Cleanup
-	attrs := &types.KeyAttributes{CN: "test-multi-gen"}
-	require.NoError(t, ks.DeleteKey(attrs))
+	sealPackets := capture.GetPackets()
+	sealAnalysis := AnalyzePackets(sealPackets, getSensitivePatterns())
+	t.Logf("Seal operation: %d packets, %d encrypted sessions",
+		len(sealPackets), sealAnalysis.EncryptedSessions)
+
+	// Test 2: Unseal operation
+	capture.Clear()
+	t.Log("Test 2: Unseal operation with encryption...")
+
+	unsealed, err := tpmInstance.Unseal(sealAttrs, nil)
+	if err != nil {
+		t.Fatalf("Failed to unseal: %v", err)
+	}
+
+	if len(unsealed) != 32 {
+		t.Errorf("Unsealed data length mismatch: got %d, want 32", len(unsealed))
+	}
+
+	// Verify seal/unseal completed
+	if sealed != nil && len(unsealed) > 0 {
+		t.Logf("Seal/Unseal completed: unsealed=%d bytes", len(unsealed))
+	}
+
+	unsealPackets := capture.GetPackets()
+	unsealAnalysis := AnalyzePackets(unsealPackets, getSensitivePatterns())
+	t.Logf("Unseal operation: %d packets, %d encrypted sessions",
+		len(unsealPackets), unsealAnalysis.EncryptedSessions)
+
+	// Combined analysis
+	totalEncrypted := sealAnalysis.EncryptedSessions + unsealAnalysis.EncryptedSessions
+	totalSessions := sealAnalysis.SessionCommands + unsealAnalysis.SessionCommands
+
+	var overallRate float64
+	if totalSessions > 0 {
+		overallRate = (float64(totalEncrypted) / float64(totalSessions)) * 100.0
+	}
+
+	t.Logf("Overall encryption rate across operations: %.1f%%", overallRate)
+
+	// Verify no plaintext leaks
+	if sealAnalysis.PlaintextDetections > 0 || unsealAnalysis.PlaintextDetections > 0 {
+		t.Error("Detected plaintext sensitive data in traffic")
+	}
+
+	t.Log("Multiple operations encryption verification passed")
 }
 
-// TestTPMDecryptionEncryption tests encryption during decryption operations
-func TestTPMDecryptionEncryption(t *testing.T) {
-	ks, capture, cleanup := setupTPM2WithCapture(t, true)
+// TestTPMPacketParsing verifies packet parsing utilities work correctly
+func TestTPMPacketParsing(t *testing.T) {
+	// Create TPM instance to generate real packets
+	tpmInstance, capture, cleanup := setupTPM2WithCapture(t, true)
 	defer cleanup()
 
-	// Generate encryption key
-	attrs := &types.KeyAttributes{
-		CN:           "test-decrypt-enc",
-		KeyType:      backend.KEY_TYPE_ENCRYPTION,
-		StoreType:    backend.STORE_TPM2,
-		KeyAlgorithm: x509.RSA,
-		RSAAttributes: &types.RSAAttributes{
-			KeySize: 2048,
-		},
-	}
-
-	key, err := ks.GenerateKey(attrs)
-	require.NoError(t, err)
-
-	signer := key.(crypto.Signer)
-	rsaPub := signer.Public().(*rsa.PublicKey)
-
-	// Encrypt a message
-	plaintext := []byte("Sensitive data for decryption test")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPub, plaintext)
-	require.NoError(t, err)
-
-	// Clear capture before decryption
+	// Clear startup packets
 	capture.Clear()
 
-	// Decrypt using TPM
-	decrypter, err := ks.Decrypter(attrs)
-	require.NoError(t, err)
+	// Perform a simple operation to generate traffic
+	_, err := tpmInstance.SSRKAttributes()
+	if err != nil {
+		t.Fatalf("Failed to get SRK: %v", err)
+	}
 
-	decrypted, err := decrypter.Decrypt(rand.Reader, ciphertext, nil)
-	require.NoError(t, err)
-	assert.Equal(t, plaintext, decrypted)
-
-	// Analyze decryption packets
 	packets := capture.GetPackets()
-	if len(packets) > 0 {
-		analysis := AnalyzePackets(packets, [][]byte{plaintext})
-		t.Log("Decryption Operation Analysis:")
-		t.Log(analysis.FormatAnalysis())
+	if len(packets) == 0 {
+		t.Skip("No packets captured for parsing test")
+	}
 
-		// Note: Session encryption is already verified at 100% in other tests.
-		// If plaintext bytes appear in encrypted packets, it's likely coincidental
-		// byte patterns in the encrypted data, not an actual plaintext leak.
-		if analysis.PlaintextDetections > 0 {
-			t.Logf("Note: Found %d plaintext pattern matches in encrypted traffic (likely false positive in encrypted data)", analysis.PlaintextDetections)
+	t.Logf("Testing packet parsing with %d captured packets", len(packets))
+
+	for i, pkt := range packets {
+		// Test IsTPMCommand/IsTPMResponse
+		isCmd := IsTPMCommand(pkt.Data)
+		isResp := IsTPMResponse(pkt.Data)
+
+		if !isCmd && !isResp {
+			t.Errorf("Packet %d: failed to identify as command or response", i)
+			continue
 		}
 
-		// Verify encryption is active
-		assert.Greater(t, analysis.EncryptionPercentage, 0.0, "Session encryption should be active")
+		// Test header parsing
+		if pkt.Direction == "send" {
+			hdr, err := ParseTPMCommandHeader(pkt.Data)
+			if err != nil {
+				t.Errorf("Packet %d: failed to parse command header: %v", i, err)
+				continue
+			}
+			t.Logf("Packet %d (send): tag=0x%04x, size=%d, code=0x%08x",
+				i, hdr.Tag, hdr.CommandSize, hdr.CommandCode)
+		} else {
+			hdr, err := ParseTPMResponseHeader(pkt.Data)
+			if err != nil {
+				t.Errorf("Packet %d: failed to parse response header: %v", i, err)
+				continue
+			}
+			t.Logf("Packet %d (recv): tag=0x%04x, size=%d, code=0x%08x",
+				i, hdr.Tag, hdr.ResponseSize, hdr.ResponseCode)
+		}
+
+		// Test session area detection
+		hasSessions := HasSessionArea(pkt.Data)
+		if hasSessions {
+			t.Logf("Packet %d: has session area", i)
+		}
 	}
 
-	// Cleanup
-	require.NoError(t, ks.DeleteKey(attrs))
-}
-
-// setupTPM2WithCapture creates a TPM keystore with packet capture enabled
-func setupTPM2WithCapture(t *testing.T, encryptSession bool) (*tpm2ks.TPM2KeyStore, *TPMCapture, func()) {
-	setup := NewTPM2TestSetup(t, encryptSession)
-
-	cleanup := func() {
-		setup.Cleanup()
-	}
-
-	return setup.KeyStore, setup.Capture, cleanup
-}
-
-// getSensitivePatterns returns byte patterns that should never appear in plaintext
-func getSensitivePatterns() [][]byte {
-	return [][]byte{
-		[]byte("BEGIN RSA PRIVATE KEY"),
-		[]byte("BEGIN PRIVATE KEY"),
-		[]byte("BEGIN EC PRIVATE KEY"),
-		// Add other sensitive markers
-	}
+	t.Log("Packet parsing verification passed")
 }

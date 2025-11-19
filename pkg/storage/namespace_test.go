@@ -198,7 +198,7 @@ func TestListKeys(t *testing.T) {
 			name: "single key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("key1"), []byte("data"), nil)
+				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"key1"},
@@ -207,9 +207,9 @@ func TestListKeys(t *testing.T) {
 			name: "multiple keys",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("key1"), []byte("data1"), nil)
-				b.Put(KeyPath("key2"), []byte("data2"), nil)
-				b.Put(KeyPath("key3"), []byte("data3"), nil)
+				_ = b.Put(KeyPath("key1"), []byte("data1"), nil)
+				_ = b.Put(KeyPath("key2"), []byte("data2"), nil)
+				_ = b.Put(KeyPath("key3"), []byte("data3"), nil)
 				return b
 			},
 			expect: []string{"key1", "key2", "key3"},
@@ -218,8 +218,8 @@ func TestListKeys(t *testing.T) {
 			name: "keys with special characters",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
-				b.Put(KeyPath("test_key_123"), []byte("data"), nil)
+				_ = b.Put(KeyPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
+				_ = b.Put(KeyPath("test_key_123"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"550e8400-e29b-41d4-a716-446655440000", "test_key_123"},
@@ -228,9 +228,9 @@ func TestListKeys(t *testing.T) {
 			name: "ignores non-key entries",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("key1"), []byte("data"), nil)
-				b.Put("other/entry", []byte("data"), nil)
-				b.Put(CertPath("cert1"), []byte("data"), nil)
+				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
+				_ = b.Put("other/entry", []byte("data"), nil)
+				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"key1"},
@@ -239,9 +239,9 @@ func TestListKeys(t *testing.T) {
 			name: "ignores malformed keys",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("key1"), []byte("data"), nil)
-				b.Put("keys/", []byte("data"), nil)     // Missing suffix
-				b.Put("keys/.key", []byte("data"), nil) // Empty ID
+				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
+				_ = b.Put("keys/", []byte("data"), nil)     // Missing suffix
+				_ = b.Put("keys/.key", []byte("data"), nil) // Empty ID
 				return b
 			},
 			expect: []string{"key1"},
@@ -276,7 +276,7 @@ func TestListCerts(t *testing.T) {
 			name: "single cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("cert1"), []byte("data"), nil)
+				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"cert1"},
@@ -285,9 +285,9 @@ func TestListCerts(t *testing.T) {
 			name: "multiple certs",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("cert1"), []byte("data1"), nil)
-				b.Put(CertPath("cert2"), []byte("data2"), nil)
-				b.Put(CertPath("cert3"), []byte("data3"), nil)
+				_ = b.Put(CertPath("cert1"), []byte("data1"), nil)
+				_ = b.Put(CertPath("cert2"), []byte("data2"), nil)
+				_ = b.Put(CertPath("cert3"), []byte("data3"), nil)
 				return b
 			},
 			expect: []string{"cert1", "cert2", "cert3"},
@@ -296,8 +296,8 @@ func TestListCerts(t *testing.T) {
 			name: "ignores cert chains",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("cert1"), []byte("data"), nil)
-				b.Put(CertChainPath("chain1"), []byte("data"), nil)
+				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
+				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"cert1"},
@@ -306,9 +306,9 @@ func TestListCerts(t *testing.T) {
 			name: "ignores non-cert entries",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("cert1"), []byte("data"), nil)
-				b.Put(KeyPath("key1"), []byte("data"), nil)
-				b.Put("other/entry", []byte("data"), nil)
+				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
+				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
+				_ = b.Put("other/entry", []byte("data"), nil)
 				return b
 			},
 			expect: []string{"cert1"},
@@ -317,8 +317,8 @@ func TestListCerts(t *testing.T) {
 			name: "handles certs with special characters",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("example.com"), []byte("data"), nil)
-				b.Put(CertPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
+				_ = b.Put(CertPath("example.com"), []byte("data"), nil)
+				_ = b.Put(CertPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"example.com", "550e8400-e29b-41d4-a716-446655440000"},
@@ -353,7 +353,7 @@ func TestListCertChains(t *testing.T) {
 			name: "single chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("chain1"), []byte("data"), nil)
+				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"chain1"},
@@ -362,9 +362,9 @@ func TestListCertChains(t *testing.T) {
 			name: "multiple chains",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("chain1"), []byte("data1"), nil)
-				b.Put(CertChainPath("chain2"), []byte("data2"), nil)
-				b.Put(CertChainPath("chain3"), []byte("data3"), nil)
+				_ = b.Put(CertChainPath("chain1"), []byte("data1"), nil)
+				_ = b.Put(CertChainPath("chain2"), []byte("data2"), nil)
+				_ = b.Put(CertChainPath("chain3"), []byte("data3"), nil)
 				return b
 			},
 			expect: []string{"chain1", "chain2", "chain3"},
@@ -373,8 +373,8 @@ func TestListCertChains(t *testing.T) {
 			name: "ignores individual certs",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("cert1"), []byte("data"), nil)
-				b.Put(CertChainPath("chain1"), []byte("data"), nil)
+				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
+				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"chain1"},
@@ -383,9 +383,9 @@ func TestListCertChains(t *testing.T) {
 			name: "ignores non-cert entries",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("chain1"), []byte("data"), nil)
-				b.Put(KeyPath("key1"), []byte("data"), nil)
-				b.Put("other/entry", []byte("data"), nil)
+				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
+				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
+				_ = b.Put("other/entry", []byte("data"), nil)
 				return b
 			},
 			expect: []string{"chain1"},
@@ -394,8 +394,8 @@ func TestListCertChains(t *testing.T) {
 			name: "handles chains with special characters",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("example.com"), []byte("data"), nil)
-				b.Put(CertChainPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
+				_ = b.Put(CertChainPath("example.com"), []byte("data"), nil)
+				_ = b.Put(CertChainPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
 				return b
 			},
 			expect: []string{"example.com", "550e8400-e29b-41d4-a716-446655440000"},

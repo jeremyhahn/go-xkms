@@ -51,9 +51,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create backend: %v", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
-	symBackend := b.(types.SymmetricBackend)
+	symBackend := b
 
 	// Example 1: ChaCha20-Poly1305 with standard 12-byte nonce
 	fmt.Println("Example 1: ChaCha20-Poly1305 Encryption")

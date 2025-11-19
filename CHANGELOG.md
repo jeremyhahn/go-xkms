@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5-alpha] - 2025-11-19
+
+### Changed
+- Replaced minimal TPM2 implementation with full production-grade TPM support
+- Complete TPM 2.0 integration with hierarchies, policies, and provisioning
+- Enhanced TPM attestation and cryptographic operations
+- Updated all security-critical dependencies to latest versions
+  - golang.org/x/crypto: v0.42.0 → v0.45.0
+  - google.golang.org/grpc: v1.76.0 → v1.77.0
+  - AWS SDK v2, Prometheus, OpenTelemetry, TPM libraries
+- Updated golangci-lint to v2.6.2 with action v7 for Go 1.25 compatibility
+- Fixed TPM2 backend API compatibility with new config structure
+- Removed redundant release tarballs (direct binary downloads only)
+
+### Fixed
+- Fixed TPM2 integration test build tags to properly include `tpm2` tag requirement
+- Fixed TPM2 event log parsing to use absolute paths
+- Resolved all 51 linting errors preventing CI builds (17 errcheck, 34 staticcheck)
+  - Added proper error handling for unchecked error returns
+  - Fixed JSON marshaling of function types (SessionCloser)
+  - Resolved duplicate package imports and syntax errors
+  - Suppressed false positive style warnings for embedded field accessors
+
+## [0.1.4-alpha] - 2025-11-18
+
+### Changed
+- Internal refactoring and optimizations
+
+## [0.1.3-alpha] - 2025-11-18
+
+### Changed
+- Refactored KeyAttributes to common library for better code reuse
+- Improved type organization and reduced import cycles
+
+## [0.1.2-alpha] - 2025-11-18
+
+### Added
+- Threshold cryptography package with Shamir Secret Sharing
+- Split and combine secrets with configurable threshold
+
+## [0.1.1-alpha] - 2025-11-17
+
+### Added
+- Quantum-safe signing support (post-quantum cryptography)
+- Key encapsulation mechanisms (KEM) for quantum resistance
+
 ## [0.1.0-alpha] - 2025-01-15
 
 ### Overview
@@ -166,4 +212,9 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - Commercial Licensing: licensing@automatethethings.com
 - AGPL-3.0 License: https://www.gnu.org/licenses/agpl-3.0.html
 
+[0.1.5-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.5-alpha
+[0.1.4-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.4-alpha
+[0.1.3-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.3-alpha
+[0.1.2-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.2-alpha
+[0.1.1-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.1-alpha
 [0.1.0-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.0-alpha

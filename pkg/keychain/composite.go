@@ -15,7 +15,6 @@ package keychain
 
 import (
 	"github.com/jeremyhahn/go-keychain/pkg/certstore"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -35,9 +34,6 @@ func (ks *compositeKeyStore) CertStorage() certstore.CertificateStorageAdapter {
 
 // Backend returns the raw storage backend (for testing and migration).
 // Deprecated: Use CertStorage() for certificate operations.
-func (ks *compositeKeyStore) certStorageBackend() storage.Backend {
-	return ks.certStorage.Backend()
-}
 
 // Close releases all resources held by the keychain.
 // This closes both the backend and certificate storage.

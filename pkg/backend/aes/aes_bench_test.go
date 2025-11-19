@@ -43,16 +43,9 @@ func BenchmarkAES_GenerateKey(b *testing.B) {
 			if err != nil {
 				b.Fatalf("Failed to create backend: %v", err)
 			}
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
-			symBackend, ok := be.(types.SymmetricBackend)
-			if !ok {
-				b.Fatalf("Backend does not implement SymmetricBackend")
-			}
-
-			if !ok {
-				b.Fatalf("Backend does not implement SymmetricBackend")
-			}
+			symBackend := be
 
 			b.ResetTimer()
 			b.ReportAllocs()
@@ -94,12 +87,9 @@ func BenchmarkAES_Encrypt(b *testing.B) {
 			if err != nil {
 				b.Fatalf("Failed to create backend: %v", err)
 			}
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
-			symBackend, ok := be.(types.SymmetricBackend)
-			if !ok {
-				b.Fatalf("Backend does not implement SymmetricBackend")
-			}
+			symBackend := be
 
 			attrs := &types.KeyAttributes{
 				CN:                 "bench-encrypt-key",
@@ -158,12 +148,9 @@ func BenchmarkAES_Decrypt(b *testing.B) {
 			if err != nil {
 				b.Fatalf("Failed to create backend: %v", err)
 			}
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
-			symBackend, ok := be.(types.SymmetricBackend)
-			if !ok {
-				b.Fatalf("Backend does not implement SymmetricBackend")
-			}
+			symBackend := be
 
 			attrs := &types.KeyAttributes{
 				CN:                 "bench-decrypt-key",
@@ -218,12 +205,9 @@ func BenchmarkAES_EncryptWithAAD(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
-	symBackend, ok := be.(types.SymmetricBackend)
-	if !ok {
-		b.Fatalf("Backend does not implement SymmetricBackend")
-	}
+	symBackend := be
 
 	attrs := &types.KeyAttributes{
 		CN:                 "bench-aad-key",
@@ -275,12 +259,9 @@ func BenchmarkAES_ConcurrentEncrypt(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
-	symBackend, ok := be.(types.SymmetricBackend)
-	if !ok {
-		b.Fatalf("Backend does not implement SymmetricBackend")
-	}
+	symBackend := be
 
 	attrs := &types.KeyAttributes{
 		CN:                 "bench-concurrent-key",
@@ -330,12 +311,9 @@ func BenchmarkAES_ConcurrentDecrypt(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
-	symBackend, ok := be.(types.SymmetricBackend)
-	if !ok {
-		b.Fatalf("Backend does not implement SymmetricBackend")
-	}
+	symBackend := be
 
 	attrs := &types.KeyAttributes{
 		CN:                 "bench-concurrent-decrypt-key",
@@ -398,12 +376,9 @@ func BenchmarkAES_EncryptDecryptRoundTrip(b *testing.B) {
 			if err != nil {
 				b.Fatalf("Failed to create backend: %v", err)
 			}
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
-			symBackend, ok := be.(types.SymmetricBackend)
-			if !ok {
-				b.Fatalf("Backend does not implement SymmetricBackend")
-			}
+			symBackend := be
 
 			attrs := &types.KeyAttributes{
 				CN:                 "bench-roundtrip-key",
@@ -458,12 +433,9 @@ func BenchmarkAES_PasswordProtectedKey(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
-	symBackend, ok := be.(types.SymmetricBackend)
-	if !ok {
-		b.Fatalf("Backend does not implement SymmetricBackend")
-	}
+	symBackend := be
 
 	password := backend.StaticPassword([]byte("benchmark-password"))
 

@@ -32,7 +32,7 @@ func setupTestDir(t *testing.T) string {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	t.Cleanup(func() {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	})
 	return dir
 }
@@ -50,7 +50,7 @@ func TestNew(t *testing.T) {
 		}
 
 		// Verify it implements Backend interface
-		var _ storage.Backend = store
+		_ = store
 
 		// Should start empty
 		keys, err := store.List("")
@@ -141,7 +141,7 @@ func TestPutGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -169,7 +169,7 @@ func TestGetNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	_, err = store.Get("nonexistent")
 	if err != storage.ErrNotFound {
@@ -183,7 +183,7 @@ func TestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "delete-me"
 	value := []byte("value")
@@ -229,7 +229,7 @@ func TestDeleteNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	err = store.Delete("nonexistent")
 	if err != storage.ErrNotFound {
@@ -243,7 +243,7 @@ func TestList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Put some test data
 	testData := map[string][]byte{
@@ -334,7 +334,7 @@ func TestExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "test-key"
 	value := []byte("test-value")
@@ -409,7 +409,7 @@ func TestFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -437,7 +437,7 @@ func TestFilePermissionsWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "keys/custom-perms"
 	value := []byte("data")
@@ -469,7 +469,7 @@ func TestDirectoryCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "deeply/nested/path/to/key"
 	value := []byte("nested-value")
@@ -509,7 +509,7 @@ func TestConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	numGoroutines := 100
 	numOperations := 100
@@ -561,7 +561,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Pre-populate with some data
 	for i := 0; i < 100; i++ {
@@ -608,7 +608,7 @@ func TestConcurrentDeleteList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Pre-populate with some data
 	for i := 0; i < 100; i++ {
@@ -676,7 +676,7 @@ func TestPutWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	opts := &storage.Options{
 		Metadata: map[string]string{
@@ -709,7 +709,7 @@ func TestEmptyList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// List on empty store should return empty slice
 	keys, err := store.List("")
@@ -732,7 +732,7 @@ func TestOverwriteKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "overwrite-test"
 	value1 := []byte("first-value")
@@ -874,7 +874,7 @@ func TestListSorting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Put keys in random order
 	keys := []string{"zebra", "apple", "mango", "banana"}
@@ -908,7 +908,7 @@ func TestExistsEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	t.Run("exists after delete returns false", func(t *testing.T) {
 		key := "temp-key"
@@ -955,8 +955,8 @@ func TestErrorConditions(t *testing.T) {
 			t.Fatalf("Failed to create temp file: %v", err)
 		}
 		tempPath := tempFile.Name()
-		tempFile.Close()
-		defer os.Remove(tempPath)
+		_ = tempFile.Close()
+		defer func() { _ = os.Remove(tempPath) }()
 
 		// Try to create storage with nested path under the file
 		invalidPath := filepath.Join(tempPath, "subdir")
@@ -972,7 +972,7 @@ func TestErrorConditions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 
 		key := "test-key"
 		// Put a key
@@ -985,7 +985,7 @@ func TestErrorConditions(t *testing.T) {
 		if err := os.Chmod(filePath, 0000); err != nil {
 			t.Fatalf("Failed to chmod file: %v", err)
 		}
-		defer os.Chmod(filePath, 0600) // Restore for cleanup
+		defer func() { _ = os.Chmod(filePath, 0600) }() // Restore for cleanup
 
 		// Try to read - should get error
 		_, err = store.Get(key)
@@ -1003,7 +1003,7 @@ func TestErrorConditions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 
 		// Create a read-only directory
 		roDir := filepath.Join(dir, "readonly")
@@ -1013,7 +1013,7 @@ func TestErrorConditions(t *testing.T) {
 		if err := os.Chmod(roDir, 0500); err != nil {
 			t.Fatalf("Failed to chmod dir: %v", err)
 		}
-		defer os.Chmod(roDir, 0700) // Restore for cleanup
+		defer func() { _ = os.Chmod(roDir, 0700) }() // Restore for cleanup
 
 		// Try to write to read-only directory
 		key := "readonly/file"
@@ -1029,7 +1029,7 @@ func TestErrorConditions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 
 		// Create a file in a read-only directory
 		subdir := filepath.Join(dir, "rodir")
@@ -1046,7 +1046,7 @@ func TestErrorConditions(t *testing.T) {
 		if err := os.Chmod(subdir, 0500); err != nil {
 			t.Fatalf("Failed to chmod dir: %v", err)
 		}
-		defer os.Chmod(subdir, 0700) // Restore for cleanup
+		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
 
 		// Try to delete - should get error
 		err = store.Delete(key)
@@ -1064,7 +1064,7 @@ func TestErrorConditions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 
 		// Create some test data
 		if err := store.Put("test-key", []byte("data"), nil); err != nil {
@@ -1079,7 +1079,7 @@ func TestErrorConditions(t *testing.T) {
 		if err := os.Chmod(badDir, 0000); err != nil {
 			t.Fatalf("Failed to chmod dir: %v", err)
 		}
-		defer os.Chmod(badDir, 0700) // Restore for cleanup
+		defer func() { _ = os.Chmod(badDir, 0700) }() // Restore for cleanup
 
 		// List should return error
 		_, err = store.List("")

@@ -98,7 +98,7 @@ func TestHTTPResponseHeaders(t *testing.T) {
 		// Middleware would set this
 		w.Header().Set(CorrelationIDHeader, correlationID)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 
 	// Create test request

@@ -30,7 +30,7 @@ import (
 func TestCertAdapter_Backend(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	// Verify Backend() returns the same backend
 	retrievedBackend := adapter.Backend()
@@ -42,7 +42,7 @@ func TestCertAdapter_Backend(t *testing.T) {
 func TestCertAdapter_SaveCert_InvalidID(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	cert := createTestCert(t, "test-cert")
 
@@ -54,7 +54,7 @@ func TestCertAdapter_SaveCert_InvalidID(t *testing.T) {
 func TestCertAdapter_SaveCert_EmptyRawData(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	// Create a certificate with no Raw data
 	cert := &x509.Certificate{
@@ -76,7 +76,7 @@ func TestCertAdapter_SaveCert_EmptyRawData(t *testing.T) {
 func TestCertAdapter_GetCert_InvalidID(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	_, err := adapter.GetCert("")
 	assert.ErrorIs(t, err, storage.ErrInvalidID)
@@ -86,7 +86,7 @@ func TestCertAdapter_GetCert_InvalidID(t *testing.T) {
 func TestCertAdapter_GetCert_InvalidData(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	// Save invalid certificate data directly to backend
 	certPath := storage.CertPath("test-id")
@@ -103,7 +103,7 @@ func TestCertAdapter_GetCert_InvalidData(t *testing.T) {
 func TestCertAdapter_DeleteCert_InvalidID(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	err := adapter.DeleteCert("")
 	assert.ErrorIs(t, err, storage.ErrInvalidID)
@@ -113,7 +113,7 @@ func TestCertAdapter_DeleteCert_InvalidID(t *testing.T) {
 func TestCertAdapter_SaveCertChain_InvalidID(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	cert := createTestCert(t, "test-cert")
 	chain := []*x509.Certificate{cert}
@@ -126,7 +126,7 @@ func TestCertAdapter_SaveCertChain_InvalidID(t *testing.T) {
 func TestCertAdapter_SaveCertChain_CertWithNoRawData(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	cert1 := createTestCert(t, "cert1")
 	cert2 := &x509.Certificate{
@@ -149,7 +149,7 @@ func TestCertAdapter_SaveCertChain_CertWithNoRawData(t *testing.T) {
 func TestCertAdapter_GetCertChain_InvalidID(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	_, err := adapter.GetCertChain("")
 	assert.ErrorIs(t, err, storage.ErrInvalidID)
@@ -159,7 +159,7 @@ func TestCertAdapter_GetCertChain_InvalidID(t *testing.T) {
 func TestCertAdapter_GetCertChain_InvalidData(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	// Save invalid certificate chain data directly to backend
 	chainPath := storage.CertChainPath("chain-id")
@@ -176,7 +176,7 @@ func TestCertAdapter_GetCertChain_InvalidData(t *testing.T) {
 func TestCertAdapter_CertExists_InvalidID(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	exists, err := adapter.CertExists("")
 	assert.ErrorIs(t, err, storage.ErrInvalidID)

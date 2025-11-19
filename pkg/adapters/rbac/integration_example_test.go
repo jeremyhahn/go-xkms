@@ -29,7 +29,7 @@ func Example_rbacWithAuth() {
 	rbacAdapter := rbac.NewMemoryRBACAdapter(true)
 
 	// Assign operator role to a user
-	rbacAdapter.AssignRole(ctx, "operations-team", rbac.RoleOperator)
+	_ = rbacAdapter.AssignRole(ctx, "operations-team", rbac.RoleOperator)
 
 	// Create an auth identity (simulating authenticated user)
 	identity := &auth.Identity{
@@ -89,12 +89,12 @@ func Example_multiTenantRBAC() {
 		},
 	}
 
-	rbacAdapter.CreateRole(ctx, tenantAAdminRole)
-	rbacAdapter.CreateRole(ctx, tenantBUserRole)
+	_ = rbacAdapter.CreateRole(ctx, tenantAAdminRole)
+	_ = rbacAdapter.CreateRole(ctx, tenantBUserRole)
 
 	// Assign roles to users
-	rbacAdapter.AssignRole(ctx, "alice@tenant-a.com", "tenant-a-admin")
-	rbacAdapter.AssignRole(ctx, "bob@tenant-b.com", "tenant-b-user")
+	_ = rbacAdapter.AssignRole(ctx, "alice@tenant-a.com", "tenant-a-admin")
+	_ = rbacAdapter.AssignRole(ctx, "bob@tenant-b.com", "tenant-b-user")
 
 	// Check tenant isolation
 	aliceTenantAPerm := rbac.NewPermission("tenant-a:keys", rbac.ActionCreate)
@@ -126,8 +126,8 @@ func Example_dynamicPermissionManagement() {
 		},
 	}
 
-	rbacAdapter.CreateRole(ctx, baseRole)
-	rbacAdapter.AssignRole(ctx, "service-account", "api-consumer")
+	_ = rbacAdapter.CreateRole(ctx, baseRole)
+	_ = rbacAdapter.AssignRole(ctx, "service-account", "api-consumer")
 
 	// Check initial permissions
 	updatePerm := rbac.NewPermission(rbac.ResourceKeys, rbac.ActionUpdate)
@@ -135,7 +135,7 @@ func Example_dynamicPermissionManagement() {
 	fmt.Printf("Service account can update keys (before): %v\n", canUpdate)
 
 	// Dynamically grant additional permission
-	rbacAdapter.GrantPermission(ctx, "api-consumer", updatePerm)
+	_ = rbacAdapter.GrantPermission(ctx, "api-consumer", updatePerm)
 
 	// Check updated permissions
 	canUpdate, _ = rbacAdapter.CheckPermission(ctx, "service-account", updatePerm)

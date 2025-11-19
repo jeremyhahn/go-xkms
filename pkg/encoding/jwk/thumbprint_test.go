@@ -350,7 +350,7 @@ func TestThumbprintRequiredFieldsOnly(t *testing.T) {
 func TestSymmetricKeyThumbprint(t *testing.T) {
 	// Create symmetric key
 	keyBytes := make([]byte, 32)
-	rand.Read(keyBytes)
+	_, _ = rand.Read(keyBytes)
 
 	jwk, err := FromSymmetricKey(keyBytes, "A256GCM")
 	if err != nil {

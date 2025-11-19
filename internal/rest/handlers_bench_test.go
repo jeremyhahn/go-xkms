@@ -419,7 +419,7 @@ func BenchmarkREST_EncryptDecryptRoundtrip(b *testing.B) {
 
 				// Decrypt
 				var encResp EncryptResponse
-				json.NewDecoder(w.Body).Decode(&encResp)
+				_ = json.NewDecoder(w.Body).Decode(&encResp)
 
 				decReq := DecryptRequest{
 					Ciphertext: encResp.Ciphertext,

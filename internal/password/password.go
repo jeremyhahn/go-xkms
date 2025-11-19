@@ -13,7 +13,7 @@
 
 // Package password provides secure password handling utilities for the keychain.
 //
-// This package implements the Password interface for managing sensitive password
+// This package implements the types.Password interface for managing sensitive password
 // data in memory, with support for secure string handling and memory zeroing when
 // appropriate.
 package password
@@ -21,28 +21,17 @@ package password
 import (
 	"crypto/subtle"
 	"errors"
+
+	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 var (
 	// ErrEmptyPassword is returned when an empty password is provided.
 	ErrEmptyPassword = errors.New("password cannot be empty")
+
+	// ErrPasswordZeroed is returned when the password has been zeroed.
+	ErrPasswordZeroed = errors.New("password has been zeroed")
 )
-
-// Password represents a secret used to protect or access data.
-//
-// Passwords can be used for various purposes including system-to-system
-// interactions, such as when a web application communicates with a database,
-// or for encrypting/decrypting private keys.
-type Password interface {
-	// String returns the password as a string.
-	String() (string, error)
-
-	// Bytes returns the password as a byte slice.
-	Bytes() ([]byte, error)
-
-	// Zero securely clears the password from memory.
-	Zero()
-}
 
 // ClearPassword stores a password in memory as cleartext.
 //
@@ -56,7 +45,7 @@ type ClearPassword struct {
 //
 // The provided byte slice is copied to prevent external modification.
 // Returns an error if the password is empty.
-func NewClearPassword(password []byte) (Password, error) {
+func NewClearPassword(password []byte) (types.Password, error) {
 	if len(password) == 0 {
 		return nil, ErrEmptyPassword
 	}
@@ -70,7 +59,7 @@ func NewClearPassword(password []byte) (Password, error) {
 //
 // The string is converted to bytes and stored securely in memory.
 // Returns an error if the password is empty.
-func NewClearPasswordFromString(password string) (Password, error) {
+func NewClearPasswordFromString(password string) (types.Password, error) {
 	if len(password) == 0 {
 		return nil, ErrEmptyPassword
 	}
@@ -83,7 +72,7 @@ func NewClearPasswordFromString(password string) (Password, error) {
 // less secure than working with byte slices. Use with caution.
 func (p *ClearPassword) String() (string, error) {
 	if p.password == nil {
-		return "", errors.New("password has been zeroed")
+		return "", ErrPasswordZeroed
 	}
 	return string(p.password), nil
 }
@@ -92,22 +81,22 @@ func (p *ClearPassword) String() (string, error) {
 //
 // The returned slice is a copy to prevent external modification
 // of the internal password data.
-func (p *ClearPassword) Bytes() ([]byte, error) {
+func (p *ClearPassword) Bytes() []byte {
 	if p.password == nil {
-		return nil, errors.New("password has been zeroed")
+		return nil
 	}
 	// Return a copy to prevent external modification
 	result := make([]byte, len(p.password))
 	copy(result, p.password)
-	return result, nil
+	return result
 }
 
-// Zero securely clears the password from memory.
+// Clear securely clears the password from memory.
 //
-// After calling Zero, the password cannot be retrieved and any
-// subsequent calls to String() or Bytes() will return an error.
+// After calling Clear, the password cannot be retrieved and any
+// subsequent calls to String() or Bytes() will return an error or nil.
 // This operation is irreversible.
-func (p *ClearPassword) Zero() {
+func (p *ClearPassword) Clear() {
 	if p.password != nil {
 		// Overwrite memory with zeros using constant-time operation
 		for i := range p.password {
@@ -122,10 +111,10 @@ func (p *ClearPassword) Zero() {
 // Equal compares two passwords in constant time to prevent timing attacks.
 //
 // Returns true if the passwords are equal, false otherwise.
-func Equal(a, b Password) (bool, error) {
-	aBytes, err := a.Bytes()
-	if err != nil {
-		return false, err
+func Equal(a, b types.Password) (bool, error) {
+	aBytes := a.Bytes()
+	if aBytes == nil {
+		return false, ErrPasswordZeroed
 	}
 	defer func() {
 		// Zero the copy after comparison
@@ -134,9 +123,9 @@ func Equal(a, b Password) (bool, error) {
 		}
 	}()
 
-	bBytes, err := b.Bytes()
-	if err != nil {
-		return false, err
+	bBytes := b.Bytes()
+	if bBytes == nil {
+		return false, ErrPasswordZeroed
 	}
 	defer func() {
 		// Zero the copy after comparison
@@ -147,3 +136,6 @@ func Equal(a, b Password) (bool, error) {
 
 	return subtle.ConstantTimeCompare(aBytes, bBytes) == 1, nil
 }
+
+// Verify interface compliance at compile time
+var _ types.Password = (*ClearPassword)(nil)

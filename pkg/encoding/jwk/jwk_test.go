@@ -361,7 +361,7 @@ func TestIsPrivate(t *testing.T) {
 
 	// Symmetric key JWK
 	symKey := make([]byte, 32)
-	rand.Read(symKey)
+	_, _ = rand.Read(symKey)
 	symJWK, _ := FromSymmetricKey(symKey, "A256GCM")
 	if !symJWK.IsPrivate() {
 		t.Error("Symmetric key JWK should be marked as private")

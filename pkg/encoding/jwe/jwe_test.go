@@ -455,7 +455,7 @@ func TestAESKeyWrap(t *testing.T) {
 
 	t.Run("A128KW_A128GCM", func(t *testing.T) {
 		kek128 := make([]byte, 16)
-		rand.Read(kek128)
+		_, _ = rand.Read(kek128)
 
 		encrypter, err := NewEncrypter("A128KW", "A128GCM", kek128)
 		if err != nil {
@@ -593,7 +593,7 @@ func TestAllAlgorithms(t *testing.T) {
 
 			// Generate random key data for symmetric keys
 			if keyBytes, ok := tc.key.([]byte); ok {
-				rand.Read(keyBytes)
+				_, _ = rand.Read(keyBytes)
 			}
 
 			encrypter, err := NewEncrypter(tc.keyAlg, tc.encAlg, tc.key)
@@ -754,7 +754,7 @@ func TestAutoDetection_AEADAlgorithm(t *testing.T) {
 	// Test that auto-detection works with direct encryption
 	t.Run("AutoDetect_DirectEncryption", func(t *testing.T) {
 		symmetricKey := make([]byte, 32)
-		rand.Read(symmetricKey)
+		_, _ = rand.Read(symmetricKey)
 
 		encrypter, err := NewEncrypter("dir", "", symmetricKey)
 		if err != nil {

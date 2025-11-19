@@ -73,7 +73,7 @@ func TestSaveKey(t *testing.T) {
 			keyData: []byte("new-data"),
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("test-key"), []byte("old-data"), nil)
+				_ = b.Put(KeyPath("test-key"), []byte("old-data"), nil)
 				return b
 			},
 			wantErr: nil,
@@ -113,7 +113,7 @@ func TestGetKey(t *testing.T) {
 			id:   "test-key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("test-key"), []byte("test-data"), nil)
+				_ = b.Put(KeyPath("test-key"), []byte("test-data"), nil)
 				return b
 			},
 			wantData: []byte("test-data"),
@@ -176,7 +176,7 @@ func TestDeleteKey(t *testing.T) {
 			id:   "test-key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("test-key"), []byte("test-data"), nil)
+				_ = b.Put(KeyPath("test-key"), []byte("test-data"), nil)
 				return b
 			},
 			wantErr: nil,
@@ -238,7 +238,7 @@ func TestKeyExists(t *testing.T) {
 			id:   "test-key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(KeyPath("test-key"), []byte("test-data"), nil)
+				_ = b.Put(KeyPath("test-key"), []byte("test-data"), nil)
 				return b
 			},
 			wantExists: true,
@@ -338,7 +338,7 @@ func TestSaveCert(t *testing.T) {
 			certData: []byte("new-cert"),
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("test-cert"), []byte("old-cert"), nil)
+				_ = b.Put(CertPath("test-cert"), []byte("old-cert"), nil)
 				return b
 			},
 			wantErr: nil,
@@ -378,7 +378,7 @@ func TestGetCert(t *testing.T) {
 			id:   "test-cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
+				_ = b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
 				return b
 			},
 			wantData: []byte("cert-data"),
@@ -441,7 +441,7 @@ func TestDeleteCert(t *testing.T) {
 			id:   "test-cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
+				_ = b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
 				return b
 			},
 			wantErr: nil,
@@ -503,7 +503,7 @@ func TestCertExists(t *testing.T) {
 			id:   "test-cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
+				_ = b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
 				return b
 			},
 			wantExists: true,
@@ -603,7 +603,7 @@ func TestSaveCertChain(t *testing.T) {
 			chainData: []byte("new-chain"),
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("test-chain"), []byte("old-chain"), nil)
+				_ = b.Put(CertChainPath("test-chain"), []byte("old-chain"), nil)
 				return b
 			},
 			wantErr: nil,
@@ -643,7 +643,7 @@ func TestGetCertChain(t *testing.T) {
 			id:   "test-chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
+				_ = b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
 				return b
 			},
 			wantData: []byte("chain-data"),
@@ -706,7 +706,7 @@ func TestDeleteCertChain(t *testing.T) {
 			id:   "test-chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
+				_ = b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
 				return b
 			},
 			wantErr: nil,
@@ -768,7 +768,7 @@ func TestCertChainExists(t *testing.T) {
 			id:   "test-chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
+				_ = b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
 				return b
 			},
 			wantExists: true,

@@ -331,7 +331,7 @@ func (cs *compositeCertStore) VerifyCertificate(cert *x509.Certificate, roots *x
 		if cs.verifyOptions.DNSName != "" {
 			opts.DNSName = cs.verifyOptions.DNSName
 		}
-		if cs.verifyOptions.Intermediates != nil && len(cs.verifyOptions.Intermediates.Subjects()) > 0 {
+		if cs.verifyOptions.Intermediates != nil {
 			opts.Intermediates = cs.verifyOptions.Intermediates
 		}
 		if len(cs.verifyOptions.KeyUsages) > 0 {
@@ -382,7 +382,8 @@ func (cs *compositeCertStore) isRevokedLocked(cert *x509.Certificate) (bool, err
 
 	// Check if CRL is still valid
 	now := time.Now()
-	if crl.NextUpdate.Before(now) {
+	if crl.NextUpdate.Before(now) || crl.NextUpdate.Equal(now) { //nolint:staticcheck // SA4017: checking expiration
+		//nolint:staticcheck // SA4017: intentional expiration check
 		// CRL is expired, should be refreshed
 		// For now, we'll still check it
 	}
@@ -396,8 +397,9 @@ func (cs *compositeCertStore) isRevokedLocked(cert *x509.Certificate) (bool, err
 
 	// Also check RevokedCertificates for Go versions before 1.21
 	// (Go 1.21+ uses RevokedCertificateEntries instead)
-	for _, revokedCert := range crl.RevokedCertificates {
-		if revokedCert.SerialNumber.Cmp(cert.SerialNumber) == 0 {
+	for _, entry := range crl.RevokedCertificateEntries {
+		revokedCert := entry.SerialNumber
+		if revokedCert.Cmp(cert.SerialNumber) == 0 {
 			return true, nil
 		}
 	}

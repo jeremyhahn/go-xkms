@@ -72,7 +72,7 @@ func TestCompositeKeyStore_SaveCert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			err := ks.SaveCert(tt.keyID, tt.cert)
 
@@ -132,7 +132,7 @@ func TestCompositeKeyStore_GetCert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			tt.setupStorage(&ks)
 
@@ -198,7 +198,7 @@ func TestCompositeKeyStore_DeleteCert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			tt.setupStorage(&ks)
 
@@ -257,7 +257,7 @@ func TestCompositeKeyStore_SaveCertChain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			err := ks.SaveCertChain(tt.keyID, tt.chain)
 
@@ -320,7 +320,7 @@ func TestCompositeKeyStore_GetCertChain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			tt.setupStorage(&ks)
 
@@ -351,7 +351,7 @@ func TestCompositeKeyStore_GetCertChain(t *testing.T) {
 
 func TestCompositeKeyStore_ListCerts(t *testing.T) {
 	ks, _, certStorage := setupKeyStore()
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Save some certificates
 	for i := 0; i < 3; i++ {
@@ -415,7 +415,7 @@ func TestCompositeKeyStore_CertExists(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, _, certStorage := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			tt.setupStorage(&ks)
 
@@ -451,7 +451,7 @@ func TestCompositeKeyStore_CertExists(t *testing.T) {
 func TestCompositeKeyStore_SaveCert_EdgeCases(t *testing.T) {
 	t.Run("storage error", func(t *testing.T) {
 		ks, _, certStorage := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Configure storage to return error
 		certStorage.SaveCertFunc = func(id string, cert *x509.Certificate) error {
@@ -473,7 +473,7 @@ func TestCompositeKeyStore_SaveCert_EdgeCases(t *testing.T) {
 func TestCompositeKeyStore_GetCert_EdgeCases(t *testing.T) {
 	t.Run("storage error", func(t *testing.T) {
 		ks, _, certStorage := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Configure storage to return error
 		certStorage.GetCertFunc = func(id string) (*x509.Certificate, error) {
@@ -494,7 +494,7 @@ func TestCompositeKeyStore_GetCert_EdgeCases(t *testing.T) {
 func TestCompositeKeyStore_DeleteCert_EdgeCases(t *testing.T) {
 	t.Run("storage error", func(t *testing.T) {
 		ks, _, certStorage := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Configure storage to return error
 		certStorage.DeleteCertFunc = func(id string) error {
@@ -515,7 +515,7 @@ func TestCompositeKeyStore_DeleteCert_EdgeCases(t *testing.T) {
 func TestCompositeKeyStore_SaveCertChain_EdgeCases(t *testing.T) {
 	t.Run("storage error", func(t *testing.T) {
 		ks, _, certStorage := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Configure storage to return error
 		certStorage.SaveCertChainFunc = func(id string, chain []*x509.Certificate) error {
@@ -539,7 +539,7 @@ func TestCompositeKeyStore_SaveCertChain_EdgeCases(t *testing.T) {
 
 	t.Run("nil chain", func(t *testing.T) {
 		ks, _, _ := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		err := ks.SaveCertChain("test-nil-chain", nil)
 
@@ -555,7 +555,7 @@ func TestCompositeKeyStore_SaveCertChain_EdgeCases(t *testing.T) {
 func TestCompositeKeyStore_GetCertChain_EdgeCases(t *testing.T) {
 	t.Run("storage error", func(t *testing.T) {
 		ks, _, certStorage := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Configure storage to return error
 		certStorage.GetCertChainFunc = func(id string) ([]*x509.Certificate, error) {
@@ -576,7 +576,7 @@ func TestCompositeKeyStore_GetCertChain_EdgeCases(t *testing.T) {
 func TestCompositeKeyStore_ListCerts_EdgeCases(t *testing.T) {
 	t.Run("storage error", func(t *testing.T) {
 		ks, _, certStorage := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Configure storage to return error
 		certStorage.ListCertsFunc = func() ([]string, error) {
@@ -595,7 +595,7 @@ func TestCompositeKeyStore_ListCerts_EdgeCases(t *testing.T) {
 
 	t.Run("empty list", func(t *testing.T) {
 		ks, _, _ := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		certs, err := ks.ListCerts()
 		if err != nil {
@@ -615,7 +615,7 @@ func TestCompositeKeyStore_ListCerts_EdgeCases(t *testing.T) {
 func TestCompositeKeyStore_CertExists_EdgeCases(t *testing.T) {
 	t.Run("storage error", func(t *testing.T) {
 		ks, _, certStorage := setupKeyStore()
-		defer ks.Close()
+		defer func() { _ = ks.Close() }()
 
 		// Configure storage to return error
 		certStorage.CertExistsFunc = func(id string) (bool, error) {
@@ -636,7 +636,7 @@ func TestCompositeKeyStore_CertExists_EdgeCases(t *testing.T) {
 // TestCompositeCertOperations_Integration tests comprehensive certificate workflows
 func TestCompositeCertOperations_Integration(t *testing.T) {
 	ks, _, _ := setupKeyStore()
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Test full lifecycle: save, get, exists, delete
 	t.Run("full lifecycle", func(t *testing.T) {

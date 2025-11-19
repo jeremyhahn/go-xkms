@@ -22,5 +22,5 @@ import (
 )
 
 func createAzureKVBackend(config BackendConfig) (types.Backend, error) {
-	return nil, fmt.Errorf("Azure Key Vault backend not compiled in (use -tags azurekv)")
+	return nil, fmt.Errorf("azure Key Vault backend not compiled in (use -tags azurekv)")
 }

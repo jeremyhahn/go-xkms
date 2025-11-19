@@ -41,7 +41,7 @@ import (
 //   - The wrapped (encrypted) key material
 //   - An error if wrapping fails or parameters are invalid
 func WrapRSAOAEP(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
-	if keyMaterial == nil || len(keyMaterial) == 0 {
+	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("key material cannot be nil or empty")
 	}
 	if publicKey == nil {
@@ -79,7 +79,7 @@ func WrapRSAOAEP(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend
 //   - The unwrapped (plaintext) key material
 //   - An error if unwrapping fails or parameters are invalid
 func UnwrapRSAOAEP(wrappedKey []byte, privateKey *rsa.PrivateKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
-	if wrappedKey == nil || len(wrappedKey) == 0 {
+	if len(wrappedKey) == 0 {
 		return nil, fmt.Errorf("wrapped key cannot be nil or empty")
 	}
 	if privateKey == nil {
@@ -126,7 +126,7 @@ func UnwrapRSAOAEP(wrappedKey []byte, privateKey *rsa.PrivateKey, algorithm back
 //   - The wrapped key material (length prefix + wrapped AES key + AES-wrapped data)
 //   - An error if wrapping fails or parameters are invalid
 func WrapRSAAES(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
-	if keyMaterial == nil || len(keyMaterial) == 0 {
+	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("key material cannot be nil or empty")
 	}
 	if publicKey == nil {
@@ -189,7 +189,7 @@ func WrapRSAAES(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend.
 //   - The unwrapped (plaintext) key material
 //   - An error if unwrapping fails or parameters are invalid
 func UnwrapRSAAES(wrappedKey []byte, privateKey *rsa.PrivateKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
-	if wrappedKey == nil || len(wrappedKey) < 4 {
+	if len(wrappedKey) < 4 {
 		return nil, fmt.Errorf("wrapped key is too short or nil")
 	}
 	if privateKey == nil {

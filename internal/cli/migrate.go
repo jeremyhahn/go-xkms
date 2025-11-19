@@ -68,7 +68,7 @@ var migratePlanCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create source backend: %w", err))
 			return
 		}
-		defer sourceBe.Close()
+		defer func() { _ = sourceBe.Close() }()
 
 		// Switch to destination backend
 		cfg.Backend = destBackend
@@ -80,7 +80,7 @@ var migratePlanCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create destination backend: %w", err))
 			return
 		}
-		defer destBe.Close()
+		defer func() { _ = destBe.Close() }()
 
 		// Create migrator
 		migrator, err := migration.NewMigrator(sourceBe, destBe)
@@ -90,7 +90,7 @@ var migratePlanCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create migrator: %w", err))
 			return
 		}
-		defer migrator.Close()
+		defer func() { _ = migrator.Close() }()
 
 		// Build filter from flags
 		filter := buildMigrationFilter(cmd)
@@ -148,7 +148,7 @@ var migrateExecuteCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create source backend: %w", err))
 			return
 		}
-		defer sourceBe.Close()
+		defer func() { _ = sourceBe.Close() }()
 
 		// Switch to destination backend
 		cfg.Backend = destBackend
@@ -159,7 +159,7 @@ var migrateExecuteCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create destination backend: %w", err))
 			return
 		}
-		defer destBe.Close()
+		defer func() { _ = destBe.Close() }()
 
 		// Create migrator
 		migrator, err := migration.NewMigrator(sourceBe, destBe)
@@ -168,7 +168,7 @@ var migrateExecuteCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create migrator: %w", err))
 			return
 		}
-		defer migrator.Close()
+		defer func() { _ = migrator.Close() }()
 
 		// Build filter from flags
 		filter := buildMigrationFilter(cmd)
@@ -218,7 +218,7 @@ var migrateExecuteCmd = &cobra.Command{
 		if !force {
 			fmt.Print("\nProceed with migration? (yes/no): ")
 			var response string
-			fmt.Scanln(&response)
+			_, _ = fmt.Scanln(&response)
 			if response != "yes" {
 				cfg.Backend = originalBackend
 				if err := printer.PrintSuccess("Migration cancelled"); err != nil {
@@ -278,7 +278,7 @@ var migrateValidateCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create source backend: %w", err))
 			return
 		}
-		defer sourceBe.Close()
+		defer func() { _ = sourceBe.Close() }()
 
 		// Switch to destination backend
 		cfg.Backend = destBackend
@@ -289,7 +289,7 @@ var migrateValidateCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create destination backend: %w", err))
 			return
 		}
-		defer destBe.Close()
+		defer func() { _ = destBe.Close() }()
 
 		// Create migrator
 		migrator, err := migration.NewMigrator(sourceBe, destBe)
@@ -298,7 +298,7 @@ var migrateValidateCmd = &cobra.Command{
 			handleError(fmt.Errorf("failed to create migrator: %w", err))
 			return
 		}
-		defer migrator.Close()
+		defer func() { _ = migrator.Close() }()
 
 		// Build key attributes from ID
 		attrs := &types.KeyAttributes{

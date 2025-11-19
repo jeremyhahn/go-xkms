@@ -22,7 +22,7 @@ func TestAEADTracking_NonceReusePrevention(t *testing.T) {
 
 	quantumBackend, err := NewWithConfig(store, config)
 	require.NoError(t, err)
-	defer quantumBackend.Close()
+	defer func() { _ = quantumBackend.Close() }()
 
 	// Generate ML-KEM-768 key
 	attrs := &types.KeyAttributes{
@@ -77,7 +77,7 @@ func TestAEADTracking_BytesLimitEnforcement(t *testing.T) {
 
 	quantumBackend, err := NewWithConfig(store, config)
 	require.NoError(t, err)
-	defer quantumBackend.Close()
+	defer func() { _ = quantumBackend.Close() }()
 
 	// Generate ML-KEM-768 key
 	attrs := &types.KeyAttributes{
@@ -156,7 +156,7 @@ func TestAEADTracking_KeyRotationResetsTracking(t *testing.T) {
 
 	quantumBackend, err := NewWithConfig(store, config)
 	require.NoError(t, err)
-	defer quantumBackend.Close()
+	defer func() { _ = quantumBackend.Close() }()
 
 	// Generate ML-KEM-768 key
 	attrs := &types.KeyAttributes{
@@ -227,7 +227,7 @@ func TestAEADTracking_DefaultOptions(t *testing.T) {
 
 	quantumBackend, err := NewWithConfig(store, config)
 	require.NoError(t, err)
-	defer quantumBackend.Close()
+	defer func() { _ = quantumBackend.Close() }()
 
 	// Generate ML-KEM-768 key
 	attrs := &types.KeyAttributes{
@@ -271,7 +271,7 @@ func TestAEADTracking_DisabledForMLDSA(t *testing.T) {
 
 	quantumBackend, err := NewWithConfig(store, config)
 	require.NoError(t, err)
-	defer quantumBackend.Close()
+	defer func() { _ = quantumBackend.Close() }()
 
 	// Generate ML-DSA-65 key (signing, not encryption)
 	attrs := &types.KeyAttributes{

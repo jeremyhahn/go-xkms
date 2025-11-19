@@ -39,7 +39,7 @@ func newAutoResolver(cfg *Config) (Resolver, error) {
 			if pkcs11Resolver.Available() {
 				resolver = pkcs11Resolver
 			} else {
-				pkcs11Resolver.Close()
+				_ = pkcs11Resolver.Close()
 			}
 		}
 	}
@@ -50,7 +50,7 @@ func newAutoResolver(cfg *Config) (Resolver, error) {
 			if tpm2Resolver.Available() {
 				resolver = tpm2Resolver
 			} else {
-				tpm2Resolver.Close()
+				_ = tpm2Resolver.Close()
 			}
 		}
 	}
@@ -105,10 +105,10 @@ func (a *autoResolver) Close() error {
 	defer a.mu.Unlock()
 
 	if a.resolver != nil {
-		a.resolver.Close()
+		_ = a.resolver.Close()
 	}
 	if a.fallback != nil {
-		a.fallback.Close()
+		_ = a.fallback.Close()
 	}
 	return nil
 }

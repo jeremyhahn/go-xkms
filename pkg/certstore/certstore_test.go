@@ -272,7 +272,7 @@ func TestStoreCertificate_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 
@@ -289,7 +289,7 @@ func TestStoreCertificate_NilCert(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	err = cs.StoreCertificate(nil)
 	assert.Error(t, err)
@@ -300,7 +300,7 @@ func TestStoreCertificate_EmptyCN(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	cert.Subject.CommonName = ""
@@ -314,7 +314,7 @@ func TestStoreCertificate_Expired(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert := generateExpiredCert(t, "expired.example.com")
 
@@ -327,7 +327,7 @@ func TestStoreCertificate_NotYetValid(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert := generateNotYetValidCert(t, "future.example.com")
 
@@ -340,7 +340,7 @@ func TestGetCertificate_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	err = cs.StoreCertificate(cert)
@@ -355,7 +355,7 @@ func TestGetCertificate_NotFound(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	_, err = cs.GetCertificate("nonexistent.example.com")
 	assert.Error(t, err)
@@ -365,7 +365,7 @@ func TestGetCertificate_EmptyCN(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	_, err = cs.GetCertificate("")
 	assert.Error(t, err)
@@ -376,7 +376,7 @@ func TestDeleteCertificate_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	err = cs.StoreCertificate(cert)
@@ -394,7 +394,7 @@ func TestDeleteCertificate_NotFound(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	err = cs.DeleteCertificate("nonexistent.example.com")
 	assert.Error(t, err)
@@ -404,7 +404,7 @@ func TestDeleteCertificate_EmptyCN(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	err = cs.DeleteCertificate("")
 	assert.Error(t, err)
@@ -415,7 +415,7 @@ func TestListCertificates_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert1, _ := generateTestCert(t, "test1.example.com", false, nil, nil)
 	cert2, _ := generateTestCert(t, "test2.example.com", false, nil, nil)
@@ -434,7 +434,7 @@ func TestListCertificates_Empty(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	certs, err := cs.ListCertificates()
 	assert.NoError(t, err)
@@ -449,7 +449,7 @@ func TestStoreCertificateChain_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Create a certificate chain: root -> intermediate -> leaf
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
@@ -471,7 +471,7 @@ func TestStoreCertificateChain_Empty(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	err = cs.StoreCertificateChain([]*x509.Certificate{})
 	assert.Error(t, err)
@@ -482,7 +482,7 @@ func TestStoreCertificateChain_NilCertInChain(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	chain := []*x509.Certificate{cert, nil}
@@ -495,7 +495,7 @@ func TestGetCertificateChain_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, rootCert, rootKey)
@@ -513,7 +513,7 @@ func TestGetCertificateChain_NotFound(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	_, err = cs.GetCertificateChain("nonexistent.example.com")
 	assert.Error(t, err)
@@ -523,7 +523,7 @@ func TestGetCertificateChain_EmptyCN(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	_, err = cs.GetCertificateChain("")
 	assert.Error(t, err)
@@ -538,7 +538,7 @@ func TestStoreCRL_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Create a CRL
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
@@ -564,7 +564,7 @@ func TestStoreCRL_Nil(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	err = cs.StoreCRL(nil)
 	assert.Error(t, err)
@@ -575,7 +575,7 @@ func TestStoreCRL_Expired(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 
@@ -601,7 +601,7 @@ func TestGetCRL_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 
@@ -630,7 +630,7 @@ func TestGetCRL_NotFound(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	_, err = cs.GetCRL("nonexistent.example.com")
 	assert.Error(t, err)
@@ -641,7 +641,7 @@ func TestGetCRL_EmptyIssuer(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	_, err = cs.GetCRL("")
 	assert.Error(t, err)
@@ -656,7 +656,7 @@ func TestVerifyCertificate_Success(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Create a CA and a certificate signed by it
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
@@ -674,7 +674,7 @@ func TestVerifyCertificate_NilCert(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	roots := x509.NewCertPool()
 	err = cs.VerifyCertificate(nil, roots)
@@ -686,7 +686,7 @@ func TestVerifyCertificate_NilRoots(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 
@@ -699,7 +699,7 @@ func TestVerifyCertificate_UntrustedRoot(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Create a CA and a certificate signed by it
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
@@ -722,7 +722,7 @@ func TestIsRevoked_NotRevoked(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -753,7 +753,7 @@ func TestIsRevoked_Revoked(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -790,7 +790,7 @@ func TestIsRevoked_NilCert(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	_, err = cs.IsRevoked(nil)
 	assert.Error(t, err)
@@ -801,7 +801,7 @@ func TestIsRevoked_NoCRL(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -819,7 +819,7 @@ func TestStoreCertificate_RevokedWithAllowRevoked(t *testing.T) {
 		AllowRevoked: true, // Allow storing revoked certs
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -859,7 +859,7 @@ func TestStoreCertificate_RevokedWithoutAllowRevoked(t *testing.T) {
 		AllowRevoked: false, // Don't allow storing revoked certs
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -932,7 +932,7 @@ func TestConcurrentAccess(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	// Test concurrent reads and writes
 	done := make(chan bool)
@@ -967,7 +967,7 @@ func TestListCertificates_ErrorLoadingCert(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	err = cs.StoreCertificate(cert)
@@ -986,7 +986,7 @@ func TestStoreCertificateChain_EmptyCNInFirstCert(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	cert.Subject.CommonName = ""
@@ -1017,7 +1017,7 @@ func TestVerifyCertificate_WithIntermediates(t *testing.T) {
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, intermediateCert, intermediateKey)
 
@@ -1038,7 +1038,7 @@ func TestVerifyCertificate_WithKeyUsages(t *testing.T) {
 		VerifyOptions: verifyOpts,
 	})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -1054,7 +1054,7 @@ func TestIsRevoked_ExpiredCRL(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	caCert, caKey := generateTestCert(t, "ca.example.com", true, nil, nil)
 	leafCert, _ := generateTestCert(t, "leaf.example.com", false, caCert, caKey)
@@ -1094,7 +1094,7 @@ func TestIsRevoked_CertWithoutIssuer(t *testing.T) {
 	storage := newMockCertStorage()
 	cs, err := New(&Config{CertStorage: storage})
 	require.NoError(t, err)
-	defer cs.Close()
+	defer func() { _ = cs.Close() }()
 
 	cert, _ := generateTestCert(t, "test.example.com", false, nil, nil)
 	cert.Issuer.CommonName = ""

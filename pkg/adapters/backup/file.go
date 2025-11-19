@@ -158,13 +158,32 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 		data.Metadata.KeyIDs[i] = key.ID
 	}
 
-	// Serialize the backup data
+	// Serialize the backup data with SessionCloser handling
 	var serialized []byte
 	var err error
 
 	switch opts.Format {
 	case BackupFormatJSON, BackupFormatEncrypted:
-		serialized, err = json.Marshal(data)
+		// Clear SessionCloser from all keys before marshaling (cannot marshal func)
+		var sessionClosers []func() error
+		for i := range data.Keys {
+			if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil {
+				sessionClosers = append(sessionClosers, data.Keys[i].Attributes.TPMAttributes.SessionCloser)
+				data.Keys[i].Attributes.TPMAttributes.SessionCloser = nil
+			}
+		}
+		// Restore SessionCloser after marshaling
+		defer func() {
+			closerIdx := 0
+			for i := range data.Keys {
+				if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil && closerIdx < len(sessionClosers) {
+					data.Keys[i].Attributes.TPMAttributes.SessionCloser = sessionClosers[closerIdx]
+					closerIdx++
+				}
+			}
+		}()
+
+		serialized, err = json.Marshal(data) //nolint:staticcheck // SA1026: SessionCloser is cleared before marshaling
 		if err != nil {
 			return nil, fmt.Errorf("failed to serialize backup: %w", err)
 		}
@@ -221,13 +240,13 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 	metadataBytes, err := json.MarshalIndent(data.Metadata, "", "  ")
 	if err != nil {
 		// Clean up backup file on error
-		os.Remove(backupPath)
+		_ = os.Remove(backupPath)
 		return nil, fmt.Errorf("failed to serialize metadata: %w", err)
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0600); err != nil {
 		// Clean up backup file on error
-		os.Remove(backupPath)
+		_ = os.Remove(backupPath)
 		return nil, fmt.Errorf("failed to write metadata file: %w", err)
 	}
 
@@ -589,12 +608,12 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 	metadataPath := f.getMetadataPath(backupID)
 	metadataBytes, err := json.MarshalIndent(data.Metadata, "", "  ")
 	if err != nil {
-		os.Remove(backupPath)
+		_ = os.Remove(backupPath)
 		return nil, fmt.Errorf("failed to serialize metadata: %w", err)
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0600); err != nil {
-		os.Remove(backupPath)
+		_ = os.Remove(backupPath)
 		return nil, fmt.Errorf("failed to write metadata file: %w", err)
 	}
 
@@ -763,7 +782,7 @@ func (f *FileBackupAdapter) decompressData(data []byte, algorithm string) ([]byt
 		if err != nil {
 			return nil, err
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 		return io.ReadAll(reader)
 	default:
 		return nil, fmt.Errorf("unsupported compression algorithm: %s", algorithm)

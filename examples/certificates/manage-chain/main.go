@@ -37,7 +37,7 @@ import (
 func main() {
 	// Create a temporary directory
 	tmpDir := filepath.Join(os.TempDir(), "keystore-cert-chain")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize storage backend
 	storage, err := file.New(tmpDir)
@@ -52,7 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#8 backend: %v", err)
 	}
-	defer pkcs8Backend.Close()
+	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
 	ks, err := keychain.New(&keychain.Config{
@@ -62,7 +62,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create keystore: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	fmt.Println("=== Certificate Chain Management ===")
 
@@ -178,8 +178,9 @@ func createRootCA(ks keychain.KeyStore, cn string) (*x509.Certificate, interface
 	}
 
 	cert, _ := x509.ParseCertificate(certBytes)
-	// #nosec G104 - Example code, error handling omitted for clarity
-	ks.SaveCert(cn, cert)
+	if err := ks.SaveCert(cn, cert); err != nil {
+		log.Fatalf("Failed to save certificate: %v", err)
+	}
 
 	return cert, privKey
 }
@@ -232,8 +233,9 @@ func createIntermediateCA(ks keychain.KeyStore, issuerCert *x509.Certificate, is
 	}
 
 	cert, _ := x509.ParseCertificate(certBytes)
-	// #nosec G104 - Example code, error handling omitted for clarity
-	ks.SaveCert(cn, cert)
+	if err := ks.SaveCert(cn, cert); err != nil {
+		log.Fatalf("Failed to save certificate: %v", err)
+	}
 
 	return cert, privKey
 }
@@ -284,8 +286,9 @@ func createLeafCertificate(ks keychain.KeyStore, issuerCert *x509.Certificate, i
 	}
 
 	cert, _ := x509.ParseCertificate(certBytes)
-	// #nosec G104 - Example code, error handling omitted for clarity
-	ks.SaveCert(cn, cert)
+	if err := ks.SaveCert(cn, cert); err != nil {
+		log.Fatalf("Failed to save certificate: %v", err)
+	}
 
 	return cert
 }
@@ -335,7 +338,7 @@ func exportChainToPEM(filename string, chain []*x509.Certificate) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	for _, cert := range chain {
 		pemBlock := &pem.Block{

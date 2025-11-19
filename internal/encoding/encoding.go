@@ -30,7 +30,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jeremyhahn/go-keychain/internal/password"
+	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/youmark/pkcs8"
 )
 
@@ -78,24 +78,22 @@ func (k KeyAlgorithm) String() string {
 //
 // If a password is provided, the key will be encrypted using PKCS#8.
 // If password is nil, the key will be encoded without encryption.
-func EncodePrivateKey(privateKey crypto.PrivateKey, pwd password.Password) ([]byte, error) {
+func EncodePrivateKey(privateKey crypto.PrivateKey, pwd types.Password) ([]byte, error) {
 	if privateKey == nil {
 		return nil, errors.New("private key cannot be nil")
 	}
 
 	var passwordBytes []byte
-	var err error
 	if pwd != nil {
-		passwordBytes, err = pwd.Bytes()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get password bytes: %w", err)
+		passwordBytes = pwd.Bytes()
+		if passwordBytes != nil {
+			defer func() {
+				// Zero the password bytes after use
+				for i := range passwordBytes {
+					passwordBytes[i] = 0
+				}
+			}()
 		}
-		defer func() {
-			// Zero the password bytes after use
-			for i := range passwordBytes {
-				passwordBytes[i] = 0
-			}
-		}()
 	}
 
 	pkcs8Data, err := pkcs8.MarshalPrivateKey(privateKey, passwordBytes, nil)
@@ -112,7 +110,7 @@ func EncodePrivateKey(privateKey crypto.PrivateKey, pwd password.Password) ([]by
 // - Encrypted keys use "ENCRYPTED PRIVATE KEY"
 // - Unencrypted RSA keys use "RSA PRIVATE KEY"
 // - Unencrypted ECDSA/Ed25519 keys use "PRIVATE KEY"
-func EncodePrivateKeyPEM(privateKey crypto.PrivateKey, pwd password.Password) ([]byte, error) {
+func EncodePrivateKeyPEM(privateKey crypto.PrivateKey, pwd types.Password) ([]byte, error) {
 	if privateKey == nil {
 		return nil, errors.New("private key cannot be nil")
 	}
@@ -161,7 +159,7 @@ func EncodePrivateKeyPEM(privateKey crypto.PrivateKey, pwd password.Password) ([
 // The password parameter is required for encrypted keys and should be nil
 // for unencrypted keys. Returns an error if the password is incorrect or
 // if the PEM data is invalid.
-func DecodePrivateKeyPEM(pemData []byte, pwd password.Password) (crypto.PrivateKey, error) {
+func DecodePrivateKeyPEM(pemData []byte, pwd types.Password) (crypto.PrivateKey, error) {
 	if len(pemData) == 0 {
 		return nil, errors.New("PEM data cannot be empty")
 	}
@@ -173,17 +171,15 @@ func DecodePrivateKeyPEM(pemData []byte, pwd password.Password) (crypto.PrivateK
 
 	var passwordBytes []byte
 	if pwd != nil {
-		var err error
-		passwordBytes, err = pwd.Bytes()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get password bytes: %w", err)
+		passwordBytes = pwd.Bytes()
+		if passwordBytes != nil {
+			defer func() {
+				// Zero the password bytes after use
+				for i := range passwordBytes {
+					passwordBytes[i] = 0
+				}
+			}()
 		}
-		defer func() {
-			// Zero the password bytes after use
-			for i := range passwordBytes {
-				passwordBytes[i] = 0
-			}
-		}()
 	}
 
 	key, err := pkcs8.ParsePKCS8PrivateKey(block.Bytes, passwordBytes)

@@ -26,10 +26,10 @@ func Example_noOp() {
 	ctx := context.Background()
 
 	// Record various metrics - they will all be no-ops
-	metrics.RecordCounter(ctx, "operations.total", nil)
-	metrics.RecordGauge(ctx, "keys.active", 42.0, nil)
-	metrics.RecordHistogram(ctx, "key.size.bytes", 256.0, nil)
-	metrics.RecordTimer(ctx, "operation.latency", 100*time.Millisecond, nil)
+	_ = metrics.RecordCounter(ctx, "operations.total", nil)
+	_ = metrics.RecordGauge(ctx, "keys.active", 42.0, nil)
+	_ = metrics.RecordHistogram(ctx, "key.size.bytes", 256.0, nil)
+	_ = metrics.RecordTimer(ctx, "operation.latency", 100*time.Millisecond, nil)
 
 	fmt.Printf("Adapter: %s\n", metrics.Name())
 	// Output: Adapter: noop
@@ -56,13 +56,13 @@ func Example_recordCounter() {
 	ctx := WithMetrics(context.Background(), NewNoOpMetrics())
 
 	// Record a simple counter increment
-	RecordCounter(ctx, MetricKeyGenerate, map[string]string{
+	_ = RecordCounter(ctx, MetricKeyGenerate, map[string]string{
 		"algorithm": "RSA",
 		"size":      "2048",
 	})
 
 	// Also works when no metrics are configured (silently ignored)
-	RecordCounter(context.Background(), MetricKeyGenerate, nil)
+	_ = RecordCounter(context.Background(), MetricKeyGenerate, nil)
 	// Output:
 }
 
@@ -71,7 +71,7 @@ func Example_recordCounterWithValue() {
 	ctx := WithMetrics(context.Background(), NewNoOpMetrics())
 
 	// Record multiple keys imported at once
-	RecordCounterWithValue(ctx, MetricKeyImport, 5, map[string]string{
+	_ = RecordCounterWithValue(ctx, MetricKeyImport, 5, map[string]string{
 		"backend": "pkcs11",
 	})
 
@@ -84,12 +84,12 @@ func Example_recordGauge() {
 	ctx := WithMetrics(context.Background(), NewNoOpMetrics())
 
 	// Record the number of active keys
-	RecordGauge(ctx, MetricKeyActiveCount, 128, map[string]string{
+	_ = RecordGauge(ctx, MetricKeyActiveCount, 128, map[string]string{
 		"backend": "software",
 	})
 
 	// Record memory usage
-	RecordGauge(ctx, "memory.usage.mb", 1024.5, nil)
+	_ = RecordGauge(ctx, "memory.usage.mb", 1024.5, nil)
 
 	fmt.Println("Gauge metrics recorded")
 	// Output: Gauge metrics recorded
@@ -101,11 +101,11 @@ func Example_recordHistogram() {
 
 	// Record key size distribution
 	for _, size := range []float64{256, 512, 1024, 2048} {
-		RecordHistogram(ctx, "key.size.bytes", size, nil)
+		_ = RecordHistogram(ctx, "key.size.bytes", size, nil)
 	}
 
 	// Record signature sizes
-	RecordHistogram(ctx, "signature.size.bytes", 384, map[string]string{
+	_ = RecordHistogram(ctx, "signature.size.bytes", 384, map[string]string{
 		"algorithm": "ECDSA",
 	})
 
@@ -119,11 +119,11 @@ func Example_recordTimer() {
 
 	// Record operation latency
 	duration := 150 * time.Millisecond
-	RecordTimer(ctx, MetricLatencyKeyGenerate, duration, map[string]string{
+	_ = RecordTimer(ctx, MetricLatencyKeyGenerate, duration, map[string]string{
 		"algorithm": "RSA",
 	})
 
-	RecordTimer(ctx, MetricLatencySign, 25*time.Millisecond, nil)
+	_ = RecordTimer(ctx, MetricLatencySign, 25*time.Millisecond, nil)
 
 	fmt.Println("Timer metrics recorded")
 	// Output: Timer metrics recorded
@@ -159,7 +159,7 @@ func Example_customAdapter() {
 	// Use the adapter
 	retrieved := GetMetrics(ctx)
 	if retrieved != nil {
-		retrieved.RecordCounter(ctx, "test.counter", nil)
+		_ = retrieved.RecordCounter(ctx, "test.counter", nil)
 	}
 
 	fmt.Println("Custom metrics adapter example")
@@ -209,16 +209,16 @@ func Example_contextUsage() {
 	ctx := WithMetrics(context.Background(), NewNoOpMetrics())
 
 	// Use convenience functions that automatically use the metrics from context
-	RecordCounter(ctx, MetricKeyGenerate, map[string]string{
+	_ = RecordCounter(ctx, MetricKeyGenerate, map[string]string{
 		"algorithm": "RSA",
 	})
 
-	RecordCounterWithValue(ctx, "batch.operations", 10, map[string]string{
+	_ = RecordCounterWithValue(ctx, "batch.operations", 10, map[string]string{
 		"operation": "import",
 	})
 
 	// If metrics adapter is not in context, these are silently ignored
-	RecordCounter(context.Background(), MetricKeyGenerate, nil)
+	_ = RecordCounter(context.Background(), MetricKeyGenerate, nil)
 
 	fmt.Println("Contextual metrics recorded")
 	// Output: Contextual metrics recorded

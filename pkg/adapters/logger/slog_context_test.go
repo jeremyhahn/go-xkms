@@ -166,7 +166,7 @@ func TestSlogAdapter_ContextAwareLoggingWithNilContext(t *testing.T) {
 	})
 
 	// Nil context should not cause panic
-	adapter.InfoContext(nil, "test message")
+	adapter.InfoContext(context.TODO(), "test message")
 	output := buf.String()
 
 	if output == "" {

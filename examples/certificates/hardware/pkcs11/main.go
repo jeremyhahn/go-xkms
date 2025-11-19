@@ -58,7 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#11 backend: %v", err)
 	}
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 	log.Println("✓ PKCS#11 backend created successfully")
 
 	// Step 2: Configure hardware certificate storage
@@ -82,7 +82,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create certificate storage: %v", err)
 	}
-	defer certStorage.Close()
+	defer func() { _ = certStorage.Close() }()
 	log.Println("✓ Hardware certificate storage created")
 
 	// Get the hardware storage interface

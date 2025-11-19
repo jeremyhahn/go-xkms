@@ -11,8 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build integration
-// +build integration
+//go:build integration && tpm2
 
 package integration
 

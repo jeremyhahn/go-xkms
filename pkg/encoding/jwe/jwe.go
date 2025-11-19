@@ -264,7 +264,7 @@ func (e *Encrypter) EncryptWithHeader(plaintext []byte, header map[string]interf
 	if plaintext == nil {
 		return "", fmt.Errorf("plaintext cannot be nil")
 	}
-	if header == nil || len(header) == 0 {
+	if len(header) == 0 {
 		return e.Encrypt(plaintext)
 	}
 
@@ -400,7 +400,7 @@ func (d *Decrypter) Decrypt(jweString string, privateKey interface{}) ([]byte, e
 		GetPrivateKey() *ecdsa.PrivateKey
 	}
 
-	var decryptKey interface{} = privateKey
+	decryptKey := privateKey
 	if wrapper, ok := privateKey.(ecdsaKeyer); ok {
 		decryptKey = wrapper.GetPrivateKey()
 	}

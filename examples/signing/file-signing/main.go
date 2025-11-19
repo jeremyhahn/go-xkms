@@ -38,7 +38,7 @@ import (
 func main() {
 	// Create a temporary directory for the keychain
 	tmpDir := filepath.Join(os.TempDir(), "keystore-file-signing")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize storage backend
 	storage, err := file.New(tmpDir)
@@ -53,7 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#8 backend: %v", err)
 	}
-	defer pkcs8Backend.Close()
+	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
 	ks, err := keychain.New(&keychain.Config{
@@ -63,14 +63,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create keystore: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	fmt.Println("=== File Signing Examples ===")
 
 	// Create a test file
 	testFile := filepath.Join(tmpDir, "test-document.txt")
 	testContent := []byte("This is a test document that needs to be signed.\nIt contains multiple lines.\nAnd some important data.\n")
-	err = os.WriteFile(testFile, testContent, 0644)
+	err = os.WriteFile(testFile, testContent, 0600)
 	if err != nil {
 		log.Fatalf("Failed to create test file: %v", err)
 	}
@@ -110,7 +110,7 @@ func main() {
 
 	// Save signature to file
 	sigFile := testFile + ".sig"
-	err = os.WriteFile(sigFile, signature, 0644)
+	err = os.WriteFile(sigFile, signature, 0600)
 	if err != nil {
 		log.Fatalf("Failed to save signature: %v", err)
 	}
@@ -120,7 +120,8 @@ func main() {
 
 	// Example 3: Verify the signature
 	fmt.Println("3. Verifying file signature...")
-	signatureBytes, err := os.ReadFile(sigFile)
+	cleanSigFile := filepath.Clean(sigFile)
+	signatureBytes, err := os.ReadFile(cleanSigFile)
 	if err != nil {
 		log.Fatalf("Failed to read signature file: %v", err)
 	}
@@ -136,7 +137,7 @@ func main() {
 	fmt.Println("4. Demonstrating tamper detection...")
 	tamperedFile := filepath.Join(tmpDir, "test-document-tampered.txt")
 	tamperedContent := []byte("This file has been tampered with!\nMalicious content added.\n")
-	err = os.WriteFile(tamperedFile, tamperedContent, 0644)
+	err = os.WriteFile(tamperedFile, tamperedContent, 0600)
 	if err != nil {
 		log.Fatalf("Failed to create tampered file: %v", err)
 	}
@@ -158,7 +159,7 @@ func main() {
 
 	for i, f := range files {
 		content := []byte(fmt.Sprintf("Document %d content\n", i+1))
-		err = os.WriteFile(f, content, 0644)
+		err = os.WriteFile(f, content, 0600)
 		if err != nil {
 			log.Fatalf("Failed to create file %s: %v", f, err)
 		}
@@ -168,7 +169,7 @@ func main() {
 			log.Fatalf("Failed to sign file %s: %v", f, err)
 		}
 
-		err = os.WriteFile(f+".sig", sig, 0644)
+		err = os.WriteFile(f+".sig", sig, 0600)
 		if err != nil {
 			log.Fatalf("Failed to save signature for %s: %v", f, err)
 		}
@@ -179,7 +180,8 @@ func main() {
 	// Verify all signatures
 	fmt.Println("\n6. Verifying all batch signatures...")
 	for _, f := range files {
-		sig, err := os.ReadFile(f + ".sig")
+		sigPath := filepath.Clean(f + ".sig")
+		sig, err := os.ReadFile(sigPath)
 		if err != nil {
 			log.Fatalf("Failed to read signature for %s: %v", f, err)
 		}
@@ -203,7 +205,7 @@ func signFile(ks keychain.KeyStore, attrs *types.KeyAttributes, filename string)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Calculate SHA-256 hash
 	hasher := sha256.New()
@@ -235,7 +237,7 @@ func verifyFileSignature(pubKey *ecdsa.PublicKey, filename string, signature []b
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Calculate SHA-256 hash
 	hasher := sha256.New()

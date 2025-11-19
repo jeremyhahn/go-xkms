@@ -37,7 +37,7 @@ import (
 func main() {
 	// Create a temporary directory for the CA
 	tmpDir := filepath.Join(os.TempDir(), "keystore-ca")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Initialize storage backend
 	storage, err := file.New(tmpDir)
@@ -52,7 +52,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#8 backend: %v", err)
 	}
-	defer pkcs8Backend.Close()
+	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
 	ks, err := keychain.New(&keychain.Config{
@@ -62,7 +62,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create keystore: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	fmt.Println("=== Certificate Authority Creation ===")
 
@@ -167,7 +167,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PEM file: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	err = pem.Encode(f, caPEMBlock)
 	if err != nil {
@@ -203,7 +203,8 @@ func main() {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 	fmt.Printf("   ✓ Trust pool created with CA certificate\n")
-	fmt.Printf("     Subjects: %v\n\n", roots.Subjects())
+	// Note: roots.Subjects() is deprecated since Go 1.18
+	fmt.Printf("     Certificate added to pool\n\n")
 
 	// Example 8: Display CA fingerprint
 	fmt.Println("8. CA certificate fingerprint:")

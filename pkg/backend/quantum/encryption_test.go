@@ -19,7 +19,7 @@ func TestMLKEMEncryptDecrypt(t *testing.T) {
 
 	backend, err := New(store)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	// Generate ML-KEM-768 key
 	attrs := &types.KeyAttributes{
@@ -199,7 +199,7 @@ func TestMLKEMEncryptDecryptAllAlgorithms(t *testing.T) {
 
 			backend, err := New(store)
 			require.NoError(t, err)
-			defer backend.Close()
+			defer func() { _ = backend.Close() }()
 
 			// Generate key
 			attrs := &types.KeyAttributes{

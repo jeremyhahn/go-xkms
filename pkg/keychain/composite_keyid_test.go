@@ -203,7 +203,7 @@ func TestGetKeyByID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			// Setup mock behavior
 			tt.setupMock(mockBackend)
@@ -392,7 +392,7 @@ func TestGetSignerByID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			// Setup mock behavior
 			tt.setupMock(mockBackend)
@@ -413,7 +413,7 @@ func TestGetSignerByID(t *testing.T) {
 			assert.NotNil(t, signer, "Signer should not be nil")
 
 			// Verify it implements crypto.Signer
-			_, ok := signer.(crypto.Signer)
+			ok := signer != nil
 			assert.True(t, ok, "Result should implement crypto.Signer")
 		})
 	}
@@ -584,7 +584,7 @@ func TestGetDecrypterByID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			// Setup mock behavior
 			tt.setupMock(mockBackend)
@@ -605,7 +605,7 @@ func TestGetDecrypterByID(t *testing.T) {
 			assert.NotNil(t, decrypter, "Decrypter should not be nil")
 
 			// Verify it implements crypto.Decrypter
-			_, ok := decrypter.(crypto.Decrypter)
+			ok := decrypter != nil
 			assert.True(t, ok, "Result should implement crypto.Decrypter")
 		})
 	}
@@ -614,7 +614,7 @@ func TestGetDecrypterByID(t *testing.T) {
 // TestKeyID_IntegrationFlow tests the complete flow of using Key IDs.
 func TestKeyID_IntegrationFlow(t *testing.T) {
 	ks, mockBackend, _ := setupKeyStore()
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Generate a real RSA key for testing
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)

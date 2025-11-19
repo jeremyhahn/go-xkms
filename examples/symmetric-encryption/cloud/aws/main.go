@@ -54,7 +54,7 @@ func awsKMSExample() error {
 	if err != nil {
 		return fmt.Errorf("failed to create AWS KMS backend: %w", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// AWS KMS only supports AES-256 symmetric keys
 	attrs := &types.KeyAttributes{

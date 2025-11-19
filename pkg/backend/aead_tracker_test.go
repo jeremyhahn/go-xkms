@@ -274,9 +274,13 @@ func TestMemoryAEADTracker_ResetTracking(t *testing.T) {
 
 	// Record some state
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
-	tracker.RecordNonce(keyID, nonce)
-	tracker.IncrementBytes(keyID, 1000)
+	_, _ = rand.Read(nonce)
+	if err := tracker.RecordNonce(keyID, nonce); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.IncrementBytes(keyID, 1000); err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify state exists
 	err = tracker.CheckNonce(keyID, nonce)
@@ -408,17 +412,23 @@ func TestMemoryAEADTracker_MultipleKeys(t *testing.T) {
 		NonceSize:          12,
 	}
 
-	tracker.SetAEADOptions(key1, opts1)
-	tracker.SetAEADOptions(key2, opts2)
+	if err := tracker.SetAEADOptions(key1, opts1); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.SetAEADOptions(key2, opts2); err != nil {
+		t.Fatal(err)
+	}
 
 	// Use different nonces for each key
 	nonce1 := make([]byte, 12)
 	nonce2 := make([]byte, 12)
-	rand.Read(nonce1)
-	rand.Read(nonce2)
+	_, _ = rand.Read(nonce1)
+	_, _ = rand.Read(nonce2)
 
 	// Record nonce for key1
-	tracker.RecordNonce(key1, nonce1)
+	if err := tracker.RecordNonce(key1, nonce1); err != nil {
+		t.Fatal(err)
+	}
 
 	// key1 should detect reuse
 	if err := tracker.CheckNonce(key1, nonce1); err != ErrNonceReused {
@@ -431,8 +441,12 @@ func TestMemoryAEADTracker_MultipleKeys(t *testing.T) {
 	}
 
 	// Encrypt bytes for each key
-	tracker.IncrementBytes(key1, 500)
-	tracker.IncrementBytes(key2, 1500)
+	if err := tracker.IncrementBytes(key1, 500); err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.IncrementBytes(key2, 1500); err != nil {
+		t.Fatal(err)
+	}
 
 	// Check totals
 	total1, _ := tracker.GetBytesEncrypted(key1)
@@ -467,22 +481,24 @@ func BenchmarkMemoryAEADTracker_CheckNonce(b *testing.B) {
 	keyID := "bench:key:1"
 
 	opts := types.DefaultAEADOptions()
-	tracker.SetAEADOptions(keyID, opts)
+	_ = tracker.SetAEADOptions(keyID, opts)
 
 	// Pre-record some nonces to simulate real-world scenario
 	for i := 0; i < 1000; i++ {
 		nonce := make([]byte, 12)
-		rand.Read(nonce)
-		tracker.RecordNonce(keyID, nonce)
+		_, _ = rand.Read(nonce)
+		if err := tracker.RecordNonce(keyID, nonce); err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	// Benchmark checking a new nonce
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tracker.CheckNonce(keyID, nonce)
+		_ = tracker.CheckNonce(keyID, nonce)
 	}
 }
 
@@ -491,13 +507,17 @@ func BenchmarkMemoryAEADTracker_RecordNonce(b *testing.B) {
 	keyID := "bench:key:2"
 
 	opts := types.DefaultAEADOptions()
-	tracker.SetAEADOptions(keyID, opts)
+	_ = tracker.SetAEADOptions(keyID, opts)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		nonce := make([]byte, 12)
-		rand.Read(nonce)
-		tracker.RecordNonce(keyID, nonce)
+		if _, err := rand.Read(nonce); err != nil {
+			b.Fatal(err)
+		}
+		if err := tracker.RecordNonce(keyID, nonce); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -511,10 +531,10 @@ func BenchmarkMemoryAEADTracker_IncrementBytes(b *testing.B) {
 		BytesTrackingLimit: 1024 * 1024 * 1024 * 1024, // 1TB for bench
 		NonceSize:          12,
 	}
-	tracker.SetAEADOptions(keyID, opts)
+	_ = tracker.SetAEADOptions(keyID, opts)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tracker.IncrementBytes(keyID, 1024)
+		_ = tracker.IncrementBytes(keyID, 1024)
 	}
 }

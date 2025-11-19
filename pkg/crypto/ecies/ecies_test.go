@@ -974,7 +974,9 @@ func BenchmarkEncrypt(b *testing.B) {
 	}
 
 	plaintext := make([]byte, 1024)
-	rand.Read(plaintext)
+	if _, err := rand.Read(plaintext); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -993,7 +995,9 @@ func BenchmarkDecrypt(b *testing.B) {
 	}
 
 	plaintext := make([]byte, 1024)
-	rand.Read(plaintext)
+	if _, err := rand.Read(plaintext); err != nil {
+		b.Fatal(err)
+	}
 
 	ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
 	if err != nil {
@@ -1017,7 +1021,9 @@ func BenchmarkEncryptDecryptCycle(b *testing.B) {
 	}
 
 	plaintext := make([]byte, 1024)
-	rand.Read(plaintext)
+	if _, err := rand.Read(plaintext); err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1052,7 +1058,9 @@ func BenchmarkEncryptAllCurves(b *testing.B) {
 			}
 
 			plaintext := make([]byte, 1024)
-			rand.Read(plaintext)
+			if _, err := rand.Read(plaintext); err != nil {
+				b.Fatal(err)
+			}
 
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -1084,7 +1092,9 @@ func BenchmarkDecryptAllCurves(b *testing.B) {
 			}
 
 			plaintext := make([]byte, 1024)
-			rand.Read(plaintext)
+			if _, err := rand.Read(plaintext); err != nil {
+				b.Fatal(err)
+			}
 
 			ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
 			if err != nil {
@@ -1110,7 +1120,9 @@ func BenchmarkEncryptWithAAD(b *testing.B) {
 	}
 
 	plaintext := make([]byte, 1024)
-	rand.Read(plaintext)
+	if _, err := rand.Read(plaintext); err != nil {
+		b.Fatal(err)
+	}
 
 	aad := []byte("benchmark-context-data")
 

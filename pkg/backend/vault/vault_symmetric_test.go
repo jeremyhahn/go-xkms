@@ -55,7 +55,7 @@ func TestVaultBackend_SymmetricCapabilities(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	caps := b.Capabilities()
 	assert.True(t, caps.SymmetricEncryption, "Vault should support symmetric encryption")
@@ -66,7 +66,7 @@ func TestVaultBackend_GenerateSymmetricKey(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-symmetric-key-gen",
@@ -103,7 +103,7 @@ func TestVaultBackend_GenerateSymmetricKey_InvalidKeySize(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Try to generate with unsupported key size (128 bits)
 	attrs := &types.KeyAttributes{
@@ -126,7 +126,7 @@ func TestVaultBackend_GenerateSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Try to generate with asymmetric algorithm
 	attrs := &types.KeyAttributes{
@@ -148,7 +148,7 @@ func TestVaultBackend_GetSymmetricKey(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-get-symmetric-key",
@@ -184,7 +184,7 @@ func TestVaultBackend_GetSymmetricKey_NotFound(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "non-existent-symmetric-key",
@@ -206,7 +206,7 @@ func TestVaultBackend_SymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-encrypt-decrypt-key",
@@ -259,7 +259,7 @@ func TestVaultBackend_SymmetricEncrypter_WithAAD(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-aad-encryption-key",
@@ -319,7 +319,7 @@ func TestVaultBackend_SymmetricEncrypter_EmptyPlaintext(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-empty-plaintext-key",
@@ -362,7 +362,7 @@ func TestVaultBackend_SymmetricEncrypter_LargePlaintext(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-large-plaintext-key",
@@ -408,7 +408,7 @@ func TestVaultBackend_SymmetricEncrypter_MultipleRoundTrips(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-multi-roundtrip-key",
@@ -465,7 +465,7 @@ func TestVaultBackend_SymmetricEncrypter_NotFound(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "non-existent-encrypter-key",
@@ -487,7 +487,7 @@ func TestVaultBackend_SymmetricKey_DuplicateGeneration(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-duplicate-key",
@@ -523,7 +523,7 @@ func TestVaultBackend_BytesLimit(t *testing.T) {
 	config := getTestVaultConfig(t)
 	b, err := NewBackend(config)
 	require.NoError(t, err)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate a key with small bytes limit for testing
 	smallLimit := int64(100) // 100 bytes

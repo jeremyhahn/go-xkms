@@ -45,7 +45,7 @@ func TestAutoResolver_WithFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Test that resolver works
 	data, err := resolver.Rand(32)
@@ -64,7 +64,7 @@ func TestAutoResolver_Available(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Error("autoResolver.Available() should return true with software mode")
@@ -96,7 +96,7 @@ func TestAutoResolver_Source(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	source := resolver.Source()
 	if source == nil {
@@ -109,6 +109,7 @@ func TestNormalizeConfig_EmptyString(t *testing.T) {
 	cfg := normalizeConfig("")
 	if cfg == nil {
 		t.Error("normalizeConfig(\"\") returned nil config")
+		return
 	}
 	// Empty string should default to auto mode
 	if cfg.Mode != ModeAuto {
@@ -130,6 +131,7 @@ func TestNormalizeConfig_AllModes(t *testing.T) {
 			cfg := normalizeConfig(mode)
 			if cfg == nil {
 				t.Errorf("normalizeConfig(%s) returned nil config", mode)
+				return
 			}
 			if cfg.Mode != mode {
 				t.Errorf("normalizeConfig(%s) returned mode %s", mode, cfg.Mode)
@@ -156,7 +158,7 @@ func TestNewResolver_AllModes(t *testing.T) {
 				t.Errorf("newResolver(mode=%s) returned nil resolver", mode)
 			}
 			if resolver != nil {
-				defer resolver.Close()
+				defer func() { _ = resolver.Close() }()
 
 				// Test basic functionality
 				if !resolver.Available() {
@@ -187,7 +189,7 @@ func TestAutoResolver_FallbackWithInvalidMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Verify it works
 	data, err := resolver.Rand(32)
@@ -253,6 +255,7 @@ func TestNormalizeConfig_WithInvalidType(t *testing.T) {
 	cfg := normalizeConfig(42)
 	if cfg == nil {
 		t.Error("normalizeConfig(int) should return default config, not nil")
+		return
 	}
 	// Should default to auto mode for invalid types
 	if cfg.Mode != ModeAuto {
@@ -276,7 +279,7 @@ func TestNewResolver_WithConfigStruct(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newResolver with config struct failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if resolver == nil {
 		t.Error("newResolver returned nil")
@@ -295,7 +298,7 @@ func TestAutoResolver_RandFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Normal operation should work
 	data, err := resolver.Rand(32)
@@ -335,7 +338,7 @@ func TestNewResolver_TPM2Mode(t *testing.T) {
 
 	// If TPM2 is available, resolver should work
 	if resolver != nil {
-		defer resolver.Close()
+		defer func() { _ = resolver.Close() }()
 	}
 }
 
@@ -355,7 +358,7 @@ func TestNewResolver_PKCS11Mode(t *testing.T) {
 
 	// If PKCS#11 is available, resolver should work
 	if resolver != nil {
-		defer resolver.Close()
+		defer func() { _ = resolver.Close() }()
 	}
 }
 
@@ -370,7 +373,7 @@ func TestAutoResolver_WithEmptyFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should still work with primary resolver
 	data, err := resolver.Rand(32)
@@ -393,7 +396,7 @@ func TestAutoResolver_WithTPM2Fallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should work even if TPM2 fallback fails to initialize
 	data, err := resolver.Rand(32)
@@ -416,7 +419,7 @@ func TestAutoResolver_WithPKCS11Fallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should work even if PKCS11 fallback fails to initialize
 	data, err := resolver.Rand(32)
@@ -435,7 +438,7 @@ func TestNewResolver_EmptyMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newResolver with empty mode failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Empty mode should default to auto, which uses software
 	if !resolver.Available() {
@@ -450,7 +453,7 @@ func TestAutoResolver_AutoModeSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver with ModeAuto failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Auto mode should select an available resolver
 	if !resolver.Available() {
@@ -486,7 +489,7 @@ func TestNewAutoResolver_WithTPM2Config(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver with TPM2Config failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should fallback to software when TPM2 not available
 	if !resolver.Available() {
@@ -507,7 +510,7 @@ func TestNewAutoResolver_WithPKCS11Config(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver with PKCS11Config failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should fallback to software when PKCS#11 not available
 	if !resolver.Available() {
@@ -534,7 +537,7 @@ func TestNewAutoResolver_WithAllConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver with all configs failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should work (will use software since hardware not available)
 	data, err := resolver.Rand(32)
@@ -557,7 +560,7 @@ func TestAutoResolver_FallbackToSoftware(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver fallback to software failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Verify software fallback works
 	if !resolver.Available() {
@@ -583,7 +586,7 @@ func TestAutoResolver_ConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Test concurrent access to Rand, Source, and Available
 	done := make(chan bool)
@@ -619,7 +622,7 @@ func TestAutoResolver_AvailableWithFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should be available (either primary or fallback)
 	if !resolver.Available() {
@@ -653,7 +656,7 @@ func TestAutoResolver_SourceConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Get source multiple times, should return same source
 	source1 := resolver.Source()
@@ -733,7 +736,7 @@ func TestNewAutoResolver_AllPriorities(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newAutoResolver failed: %v", err)
 			}
-			defer resolver.Close()
+			defer func() { _ = resolver.Close() }()
 
 			// Should still work (falls back to software)
 			if !resolver.Available() {
@@ -762,7 +765,7 @@ func TestAutoResolver_EdgeCase_NilFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should still work with nil fallback
 	data, err := resolver.Rand(32)
@@ -843,7 +846,7 @@ func TestAutoResolver_InitializationFallbacks(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newAutoResolver failed: %v", err)
 			}
-			defer resolver.Close()
+			defer func() { _ = resolver.Close() }()
 
 			// Should fallback to software and be available
 			if !resolver.Available() {
@@ -884,7 +887,7 @@ func TestAutoResolver_FallbackModeInvalidConfig(t *testing.T) {
 			if err != nil {
 				t.Fatalf("newAutoResolver failed: %v", err)
 			}
-			defer resolver.Close()
+			defer func() { _ = resolver.Close() }()
 
 			// Primary resolver (software) should work regardless of fallback failure
 			data, err := resolver.Rand(32)
@@ -908,7 +911,7 @@ func TestAutoResolver_AutoFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver with auto fallback failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Error("Auto resolver with auto fallback should be available")
@@ -941,7 +944,7 @@ func TestAutoResolver_PKCS11Priority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Should succeed with software fallback since neither hardware is available
 	if !resolver.Available() {
@@ -983,7 +986,7 @@ func TestAutoResolver_AvailableWithNilResolvers(t *testing.T) {
 	if !ar.Available() {
 		t.Error("Available() should return true with valid primary resolver")
 	}
-	ar.Close()
+	_ = ar.Close()
 
 	// Test with valid resolver and fallback
 	resolver1, _ := newSoftwareResolver()
@@ -995,7 +998,7 @@ func TestAutoResolver_AvailableWithNilResolvers(t *testing.T) {
 	if !ar.Available() {
 		t.Error("Available() should return true with both resolvers")
 	}
-	ar.Close()
+	_ = ar.Close()
 }
 
 // TestAutoResolver_SourceWithConcurrency tests Source method under concurrent access
@@ -1008,7 +1011,7 @@ func TestAutoResolver_SourceWithConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	// Concurrently access Source method
 	done := make(chan bool)
@@ -1053,7 +1056,7 @@ func TestNewResolver_WithStringMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewResolver with Mode failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Error("Resolver should be available")
@@ -1074,7 +1077,7 @@ func TestNewResolver_WithAutoMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewResolver with ModeAuto failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	if !resolver.Available() {
 		t.Error("Auto mode resolver should be available")
@@ -1096,7 +1099,7 @@ func TestAutoResolver_RandVariousSizes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newAutoResolver failed: %v", err)
 	}
-	defer resolver.Close()
+	defer func() { _ = resolver.Close() }()
 
 	sizes := []int{0, 1, 7, 15, 16, 31, 32, 63, 64, 127, 128, 255, 256, 512, 1024, 2048}
 	for _, size := range sizes {

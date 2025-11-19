@@ -56,7 +56,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create external storage: %v", err)
 	}
-	defer externalStorage.Close()
+	defer func() { _ = externalStorage.Close() }()
 	log.Println("✓ External storage created at /tmp/hybrid-certs")
 
 	// Step 2: Create PKCS#11 backend
@@ -70,7 +70,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create PKCS#11 backend: %v", err)
 	}
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 	log.Println("✓ PKCS#11 backend created")
 
 	// Step 3: Configure hybrid certificate storage
@@ -98,7 +98,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create hybrid storage: %v", err)
 	}
-	defer certStorage.Close()
+	defer func() { _ = certStorage.Close() }()
 	log.Println("✓ Hybrid storage created successfully")
 
 	// Get the hardware storage interface

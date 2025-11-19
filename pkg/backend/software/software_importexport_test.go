@@ -28,7 +28,7 @@ import (
 // TestGetImportParameters tests generating import parameters
 func TestGetImportParameters(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-import.com", 2048)
 
@@ -84,7 +84,7 @@ func TestGetImportParameters(t *testing.T) {
 				t.Error("wrapping public key is nil")
 			}
 
-			if params.ImportToken == nil || len(params.ImportToken) == 0 {
+			if len(params.ImportToken) == 0 {
 				t.Error("import token is nil or empty")
 			}
 
@@ -113,7 +113,7 @@ func TestGetImportParameters(t *testing.T) {
 // TestWrapKey tests key wrapping with different algorithms
 func TestWrapKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-wrap.com", 2048)
 
@@ -172,7 +172,7 @@ func TestWrapKey(t *testing.T) {
 			}
 
 			// Validate wrapped key material
-			if wrapped.WrappedKey == nil || len(wrapped.WrappedKey) == 0 {
+			if len(wrapped.WrappedKey) == 0 {
 				t.Error("wrapped key is nil or empty")
 			}
 
@@ -190,7 +190,7 @@ func TestWrapKey(t *testing.T) {
 // TestWrapKey_InvalidInputs tests error handling for invalid inputs
 func TestWrapKey_InvalidInputs(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test.com", 2048)
 	params, _ := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -237,7 +237,7 @@ func TestWrapKey_InvalidInputs(t *testing.T) {
 // TestUnwrapKey tests key unwrapping
 func TestUnwrapKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-unwrap.com", 2048)
 
@@ -306,7 +306,7 @@ func TestUnwrapKey(t *testing.T) {
 // TestUnwrapKey_InvalidToken tests unwrapping with invalid token
 func TestUnwrapKey_InvalidToken(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test.com", 2048)
 	params, _ := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -327,7 +327,7 @@ func TestUnwrapKey_InvalidToken(t *testing.T) {
 // TestImportKey tests importing various key types
 func TestImportKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	tests := []struct {
 		name      string
@@ -351,7 +351,7 @@ func TestImportKey(t *testing.T) {
 			algorithm: backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 			genKey: func() []byte {
 				key := make([]byte, 32)
-				rand.Read(key)
+				_, _ = rand.Read(key)
 				return key
 			},
 		},
@@ -397,14 +397,14 @@ func TestImportKey(t *testing.T) {
 // TestImportKey_InvalidInputs tests error handling for import
 func TestImportKey_InvalidInputs(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
 	params, _ := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 
 	// Create valid wrapped material
 	keyMaterial := make([]byte, 32)
-	rand.Read(keyMaterial)
+	_, _ = rand.Read(keyMaterial)
 	wrapped, _ := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
 
 	tests := []struct {
@@ -453,7 +453,7 @@ func TestImportKey_InvalidInputs(t *testing.T) {
 // TestExportKey tests exporting keys
 func TestExportKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	tests := []struct {
 		name      string
@@ -503,7 +503,7 @@ func TestExportKey(t *testing.T) {
 			}
 
 			// Validate exported key
-			if wrapped.WrappedKey == nil || len(wrapped.WrappedKey) == 0 {
+			if len(wrapped.WrappedKey) == 0 {
 				t.Error("wrapped key is nil or empty")
 			}
 
@@ -511,7 +511,7 @@ func TestExportKey(t *testing.T) {
 				t.Errorf("algorithm mismatch: got %s, want %s", wrapped.Algorithm, tt.algorithm)
 			}
 
-			if wrapped.ImportToken == nil || len(wrapped.ImportToken) == 0 {
+			if len(wrapped.ImportToken) == 0 {
 				t.Error("import token is nil or empty")
 			}
 		})
@@ -521,7 +521,7 @@ func TestExportKey(t *testing.T) {
 // TestImportExportRoundTrip tests full import/export workflow
 func TestImportExportRoundTrip(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	tests := []struct {
 		name      string
@@ -609,7 +609,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 // TestImportExportConcurrency tests concurrent import/export operations
 func TestImportExportConcurrency(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	const numGoroutines = 10
 
@@ -632,7 +632,7 @@ func TestImportExportConcurrency(t *testing.T) {
 
 			// Generate and wrap key
 			keyMaterial := make([]byte, 32)
-			rand.Read(keyMaterial)
+			_, _ = rand.Read(keyMaterial)
 
 			wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
 			if err != nil {
@@ -666,7 +666,7 @@ func TestImportTokenExpiration(t *testing.T) {
 	// This test is challenging without being able to manipulate time
 	// We'll just verify the expiration is set correctly
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test-expiry.com", 2048)
 	params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -694,7 +694,7 @@ func TestImportTokenExpiration(t *testing.T) {
 // TestCapabilities_ImportExport verifies ImportExport capability is set
 func TestCapabilities_ImportExport(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	caps := be.Capabilities()
 	if !caps.Import {
@@ -806,7 +806,7 @@ func TestValidateKeyType(t *testing.T) {
 // TestImportKey_WrongKeySize tests importing key with wrong size
 func TestImportKey_WrongKeySize(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Create attributes for 256-bit key
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
@@ -818,7 +818,7 @@ func TestImportKey_WrongKeySize(t *testing.T) {
 
 	// Try to import a 128-bit key instead
 	keyMaterial := make([]byte, 16) // 128-bit
-	rand.Read(keyMaterial)
+	_, _ = rand.Read(keyMaterial)
 
 	wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
 	if err != nil {
@@ -842,7 +842,7 @@ func TestBackendClosed(t *testing.T) {
 	}
 
 	// Close the backend
-	be.Close()
+	_ = be.Close()
 
 	attrs := createRSAAttrs("test.com", 2048)
 
@@ -877,7 +877,7 @@ func TestBackendClosed(t *testing.T) {
 // TestExportKey_NonExistentKey tests exporting a key that doesn't exist
 func TestExportKey_NonExistentKey(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("nonexistent.com", 2048)
 
@@ -890,7 +890,7 @@ func TestExportKey_NonExistentKey(t *testing.T) {
 // TestExportKey_InvalidAlgorithm tests exporting with invalid algorithm
 func TestExportKey_InvalidAlgorithm(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Generate a key
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
@@ -909,7 +909,7 @@ func TestExportKey_InvalidAlgorithm(t *testing.T) {
 // TestUnwrapKey_ExpiredToken tests unwrapping with expired token
 func TestUnwrapKey_ExpiredToken(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Cast to access internal structure
 	swBe := be.(*SoftwareBackend)
@@ -948,7 +948,7 @@ func TestUnwrapKey_ExpiredToken(t *testing.T) {
 // TestUnwrapKey_AlgorithmMismatch tests unwrapping with mismatched algorithm
 func TestUnwrapKey_AlgorithmMismatch(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
 
@@ -974,7 +974,7 @@ func TestUnwrapKey_AlgorithmMismatch(t *testing.T) {
 // TestUnwrapKey_EmptyToken tests unwrapping with empty token
 func TestUnwrapKey_EmptyToken(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	wrapped := &backend.WrappedKeyMaterial{
 		WrappedKey:  []byte{1, 2, 3},
@@ -995,7 +995,7 @@ func TestUnwrapKey_EmptyToken(t *testing.T) {
 // TestImportKey_ExpiredToken tests importing with expired token
 func TestImportKey_ExpiredToken(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Cast to access internal structure
 	swBe := be.(*SoftwareBackend)
@@ -1028,7 +1028,7 @@ func TestImportKey_ExpiredToken(t *testing.T) {
 // TestImportKey_EmptyToken tests importing with empty token
 func TestImportKey_EmptyToken(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test", 256, types.SymmetricAES256GCM)
 	wrapped := &backend.WrappedKeyMaterial{
@@ -1046,7 +1046,7 @@ func TestImportKey_EmptyToken(t *testing.T) {
 // TestImportAsymmetricKey_InvalidPKCS8 tests importing invalid PKCS8 data
 func TestImportAsymmetricKey_InvalidPKCS8(t *testing.T) {
 	be, _ := createTestBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createRSAAttrs("test.com", 2048)
 	params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)

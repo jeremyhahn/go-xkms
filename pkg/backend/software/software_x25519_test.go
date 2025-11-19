@@ -30,7 +30,7 @@ func TestSoftwareBackend_X25519_GenerateKey(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:               "test.x25519",
@@ -55,7 +55,7 @@ func TestSoftwareBackend_X25519_GetKey(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:               "test.x25519.get",
@@ -83,7 +83,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	// Cast to concrete type to access KeyAgreement methods
 	concreteBackend := backend.(*software.SoftwareBackend)
@@ -134,7 +134,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	concreteBackend := backend.(*software.SoftwareBackend)
 
@@ -180,7 +180,7 @@ func TestSoftwareBackend_X25519_PublicKeyFromPrivate(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:               "test.pubkey",
@@ -213,7 +213,7 @@ func TestSoftwareBackend_X25519_Capabilities(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	caps := backend.Capabilities()
 	assert.True(t, caps.Keys)
@@ -228,7 +228,7 @@ func TestSoftwareBackend_X25519_DeleteKey(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:               "test.delete",
@@ -259,7 +259,7 @@ func TestSoftwareBackend_X25519_ListKeys(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	// Generate an X25519 key
 	attrs := &types.KeyAttributes{
@@ -292,7 +292,7 @@ func TestSoftwareBackend_X25519_DeriveWithKDF(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	concreteBackend := backend.(*software.SoftwareBackend)
 
@@ -336,11 +336,11 @@ func TestSoftwareBackend_X25519_InterfaceCompliance(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	// Verify interface compliance
 	var _ types.Backend = backend
-	var _ types.SymmetricBackend = backend
+	_ = backend
 
 	// The concrete SoftwareBackend also implements KeyAgreement
 	// But this is not exposed in the public types.SymmetricBackend interface
@@ -353,7 +353,7 @@ func TestSoftwareBackend_X25519_InvalidPublicKey(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	concreteBackend := backend.(*software.SoftwareBackend)
 
@@ -377,7 +377,7 @@ func TestSoftwareBackend_X25519_InvalidAttributes(t *testing.T) {
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	concreteBackend := backend.(*software.SoftwareBackend)
 

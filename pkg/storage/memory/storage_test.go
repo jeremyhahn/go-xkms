@@ -30,7 +30,7 @@ func TestNew(t *testing.T) {
 	}
 
 	// Verify it implements Backend interface
-	var _ storage.Backend = store
+	_ = store
 
 	// Should start empty
 	keys, err := store.List("")
@@ -83,7 +83,7 @@ func TestPutGet(t *testing.T) {
 	}
 
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,7 +108,7 @@ func TestPutGet(t *testing.T) {
 // TestPutOverwrite verifies that Put overwrites existing values.
 func TestPutOverwrite(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "test-key"
 	value1 := []byte("value1")
@@ -146,7 +146,7 @@ func TestPutOverwrite(t *testing.T) {
 // TestGetNotFound verifies that Get returns ErrNotFound for non-existent keys.
 func TestGetNotFound(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	_, err := store.Get("nonexistent")
 	if err != storage.ErrNotFound {
@@ -157,7 +157,7 @@ func TestGetNotFound(t *testing.T) {
 // TestDelete verifies Delete operations.
 func TestDelete(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "delete-me"
 	value := []byte("value")
@@ -200,7 +200,7 @@ func TestDelete(t *testing.T) {
 // TestDeleteNotFound verifies that Delete returns ErrNotFound for non-existent keys.
 func TestDeleteNotFound(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	err := store.Delete("nonexistent")
 	if err != storage.ErrNotFound {
@@ -211,7 +211,7 @@ func TestDeleteNotFound(t *testing.T) {
 // TestList verifies List operations with various prefixes.
 func TestList(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Put some test data with different prefixes
 	testData := map[string][]byte{
@@ -316,7 +316,7 @@ func TestList(t *testing.T) {
 // TestExists verifies Exists operations.
 func TestExists(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "test-key"
 	value := []byte("test-value")
@@ -362,7 +362,7 @@ func TestExists(t *testing.T) {
 // TestDefensiveCopyPut verifies that Put makes defensive copies.
 func TestDefensiveCopyPut(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "test-key"
 	original := []byte("original-value")
@@ -394,7 +394,7 @@ func TestDefensiveCopyPut(t *testing.T) {
 // TestDefensiveCopyGet verifies that Get makes defensive copies.
 func TestDefensiveCopyGet(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "test-key"
 	original := []byte("original-value")
@@ -428,7 +428,7 @@ func TestDefensiveCopyGet(t *testing.T) {
 // TestConcurrentWrites verifies thread-safety for concurrent writes.
 func TestConcurrentWrites(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	numGoroutines := 100
 	numOperations := 100
@@ -480,7 +480,7 @@ func TestConcurrentWrites(t *testing.T) {
 // TestConcurrentReadWrite verifies thread-safety for concurrent reads and writes.
 func TestConcurrentReadWrite(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Pre-populate with some data
 	for i := 0; i < 100; i++ {
@@ -524,7 +524,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 // TestConcurrentOperations verifies thread-safety for all operations concurrently.
 func TestConcurrentOperations(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Pre-populate
 	for i := 0; i < 50; i++ {
@@ -667,7 +667,7 @@ func TestClosedStorage(t *testing.T) {
 // TestPutWithOptions verifies that Put accepts Options for interface compatibility.
 func TestPutWithOptions(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	opts := &storage.Options{
 		Metadata: map[string]string{
@@ -700,7 +700,7 @@ func TestPutWithOptions(t *testing.T) {
 // TestEmptyKey verifies behavior with empty keys.
 func TestEmptyKey(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Empty key should be valid
 	key := ""
@@ -735,7 +735,7 @@ func TestEmptyKey(t *testing.T) {
 // TestNilValue verifies behavior with nil values.
 func TestNilValue(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "nil-key"
 
@@ -758,7 +758,7 @@ func TestNilValue(t *testing.T) {
 // TestLargeValue verifies behavior with large values.
 func TestLargeValue(t *testing.T) {
 	store := New()
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	key := "large-key"
 	// Create a 10MB value

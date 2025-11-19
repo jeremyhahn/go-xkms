@@ -100,8 +100,8 @@ func ExampleMemoryRBACAdapter_multipleRoles() {
 	adapter := rbac.NewMemoryRBACAdapter(true)
 
 	// Assign multiple roles
-	adapter.AssignRole(ctx, "charlie", rbac.RoleUser)
-	adapter.AssignRole(ctx, "charlie", rbac.RoleAuditor)
+	_ = adapter.AssignRole(ctx, "charlie", rbac.RoleUser)
+	_ = adapter.AssignRole(ctx, "charlie", rbac.RoleAuditor)
 
 	// List user's permissions
 	perms, err := adapter.ListPermissions(ctx, "charlie")
@@ -128,8 +128,8 @@ func ExampleMemoryRBACAdapter_wildcardPermissions() {
 		},
 	}
 
-	adapter.CreateRole(ctx, superAdminRole)
-	adapter.AssignRole(ctx, "admin", "superadmin")
+	_ = adapter.CreateRole(ctx, superAdminRole)
+	_ = adapter.AssignRole(ctx, "admin", "superadmin")
 
 	// Check any permission
 	anyPerm := rbac.NewPermission("custom-resource", "custom-action")

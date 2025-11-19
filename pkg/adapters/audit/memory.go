@@ -100,11 +100,13 @@ func (m *MemoryAuditAdapter) GetEvents(ctx context.Context, query *EventQuery) (
 	}
 
 	// Sort by timestamp descending (newest first) unless otherwise specified
-	if query.OrderBy == "" || query.OrderBy == "timestamp_desc" {
+	// Sort by timestamp descending (newest first) unless otherwise specified
+	switch query.OrderBy {
+	case "", "timestamp_desc":
 		sort.Slice(results, func(i, j int) bool {
 			return results[i].Timestamp.After(results[j].Timestamp)
 		})
-	} else if query.OrderBy == "timestamp_asc" {
+	case "timestamp_asc":
 		sort.Slice(results, func(i, j int) bool {
 			return results[i].Timestamp.Before(results[j].Timestamp)
 		})

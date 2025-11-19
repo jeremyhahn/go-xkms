@@ -3622,6 +3622,7 @@ var (
 
 func file_keychain_proto_rawDescGZIP() []byte {
 	file_keychain_proto_rawDescOnce.Do(func() {
+		// #nosec G103 -- Auto-generated protobuf code, unsafe required by protoimpl
 		file_keychain_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_keychain_proto_rawDesc), len(file_keychain_proto_rawDesc)))
 	})
 	return file_keychain_proto_rawDescData
@@ -3770,7 +3771,8 @@ func file_keychain_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keychain_proto_rawDesc), len(file_keychain_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_keychain_proto_rawDesc), len(file_keychain_proto_rawDesc)), // #nosec G103 -- Auto-generated protobuf code
+			// #nosec G103 -- Auto-generated protobuf code, unsafe required by protoimpl
 			NumEnums:      0,
 			NumMessages:   58,
 			NumExtensions: 0,

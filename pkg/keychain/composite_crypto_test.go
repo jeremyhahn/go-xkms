@@ -82,7 +82,7 @@ func TestCompositeKeyStore_Signer(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			tt.setupBackend(&ks)
 
@@ -169,7 +169,7 @@ func TestCompositeKeyStore_Decrypter(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, mockBackend, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			tt.setupBackend(&ks)
 
@@ -354,7 +354,7 @@ func TestCompositeKeyStore_GetTLSCertificate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ks, _, _ := setupKeyStore()
-			defer ks.Close()
+			defer func() { _ = ks.Close() }()
 
 			tt.setupKeyStore(&ks)
 
@@ -426,7 +426,7 @@ func TestCompositeKeyStore_GetTLSCertificate_EmptyChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create keystore: %v", err)
 	}
-	defer ks.Close()
+	defer func() { _ = ks.Close() }()
 
 	// Call GetTLSCertificate - this should hit the len(chain) == 0 case
 	attrs := &types.KeyAttributes{

@@ -103,11 +103,14 @@ func (ks *compositeKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error)
 	case types.SymmetricAlgorithm:
 		attrs.SymmetricAlgorithm = a
 		// AES requires AESAttributes for validation
-		keySize := 256 // Default to AES-256
-		if a == types.SymmetricAES128GCM {
+		var keySize int
+		switch a {
+		case types.SymmetricAES128GCM:
 			keySize = 128
-		} else if a == types.SymmetricAES192GCM {
+		case types.SymmetricAES192GCM:
 			keySize = 192
+		default:
+			keySize = 256
 		}
 		attrs.AESAttributes = &types.AESAttributes{
 			KeySize:   keySize,
@@ -200,11 +203,14 @@ func (ks *compositeKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) 
 		}
 	case types.SymmetricAlgorithm:
 		attrs.SymmetricAlgorithm = a
-		keySize := 256
-		if a == types.SymmetricAES128GCM {
+		var keySize int
+		switch a {
+		case types.SymmetricAES128GCM:
 			keySize = 128
-		} else if a == types.SymmetricAES192GCM {
+		case types.SymmetricAES192GCM:
 			keySize = 192
+		default:
+			keySize = 256
 		}
 		attrs.AESAttributes = &types.AESAttributes{
 			KeySize:   keySize,
@@ -296,11 +302,14 @@ func (ks *compositeKeyStore) GetDecrypterByID(keyID string) (crypto.Decrypter, e
 		}
 	case types.SymmetricAlgorithm:
 		attrs.SymmetricAlgorithm = a
-		keySize := 256
-		if a == types.SymmetricAES128GCM {
+		var keySize int
+		switch a {
+		case types.SymmetricAES128GCM:
 			keySize = 128
-		} else if a == types.SymmetricAES192GCM {
+		case types.SymmetricAES192GCM:
 			keySize = 192
+		default:
+			keySize = 256
 		}
 		attrs.AESAttributes = &types.AESAttributes{
 			KeySize:   keySize,

@@ -73,7 +73,7 @@ func TestAES_EndToEnd_AllKeySizes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			be, _ := createAESBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			attrs := createAESAttrs("test-"+tt.name, tt.keySize, tt.algorithm)
 
@@ -112,13 +112,13 @@ func TestAES_EndToEnd_AllKeySizes(t *testing.T) {
 				t.Fatalf("Encrypt failed: %v", err)
 			}
 
-			if encrypted.Nonce == nil || len(encrypted.Nonce) == 0 {
+			if len(encrypted.Nonce) == 0 {
 				t.Error("Nonce is empty")
 			}
-			if encrypted.Tag == nil || len(encrypted.Tag) == 0 {
+			if len(encrypted.Tag) == 0 {
 				t.Error("Tag is empty")
 			}
-			if encrypted.Ciphertext == nil || len(encrypted.Ciphertext) == 0 {
+			if len(encrypted.Ciphertext) == 0 {
 				t.Error("Ciphertext is empty")
 			}
 
@@ -148,7 +148,7 @@ func TestAES_EndToEnd_AllKeySizes(t *testing.T) {
 // TestAES_Encryption_WithAdditionalData tests encryption with AAD
 func TestAES_Encryption_WithAdditionalData(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test-aad", 256, types.SymmetricAES256GCM)
 
@@ -197,7 +197,7 @@ func TestAES_Encryption_WithAdditionalData(t *testing.T) {
 // TestAES_Encryption_LargeData tests encryption of large data
 func TestAES_Encryption_LargeData(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test-large", 256, types.SymmetricAES256GCM)
 
@@ -234,7 +234,7 @@ func TestAES_Encryption_LargeData(t *testing.T) {
 // TestAES_PasswordProtection tests password-protected keys
 func TestAES_PasswordProtection(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	password := backend.StaticPassword("test-password-123")
 	attrs := createAESAttrs("test-password", 256, types.SymmetricAES256GCM)
@@ -272,7 +272,7 @@ func TestAES_PasswordProtection(t *testing.T) {
 // TestAES_KeyRotation tests key rotation functionality
 func TestAES_KeyRotation(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test-rotation", 256, types.SymmetricAES256GCM)
 
@@ -311,7 +311,7 @@ func TestAES_KeyRotation(t *testing.T) {
 // TestAES_ListKeys tests key listing functionality
 func TestAES_ListKeys(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Create multiple keys
 	keyNames := []string{"key1", "key2", "key3"}
@@ -343,7 +343,7 @@ func TestAES_ImportExport_RSA_OAEP(t *testing.T) {
 	for _, algorithm := range algorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
 			be, _ := createAESBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			exportBackend, ok := be.(backend.ImportExportBackend)
 			if !ok {
@@ -365,7 +365,7 @@ func TestAES_ImportExport_RSA_OAEP(t *testing.T) {
 				t.Fatalf("ExportKey failed: %v", err)
 			}
 
-			if wrapped.WrappedKey == nil || len(wrapped.WrappedKey) == 0 {
+			if len(wrapped.WrappedKey) == 0 {
 				t.Error("Wrapped key is empty")
 			}
 
@@ -404,7 +404,7 @@ func TestAES_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 	for _, algorithm := range algorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
 			be, _ := createAESBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			exportBackend, ok := be.(backend.ImportExportBackend)
 			if !ok {
@@ -465,7 +465,7 @@ func TestAES_ImportExport_AllKeySizes(t *testing.T) {
 	for _, ks := range keySizes {
 		t.Run(string(ks.algorithm), func(t *testing.T) {
 			be, _ := createAESBackend(t)
-			defer be.Close()
+			defer func() { _ = be.Close() }()
 
 			exportBackend := be.(backend.ImportExportBackend)
 
@@ -507,7 +507,7 @@ func TestAES_ImportExport_AllKeySizes(t *testing.T) {
 // TestAES_Capabilities tests backend capabilities
 func TestAES_Capabilities(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	caps := be.Capabilities()
 
@@ -534,7 +534,7 @@ func TestAES_Capabilities(t *testing.T) {
 // TestAES_ErrorHandling_InvalidAttributes tests error handling
 func TestAES_ErrorHandling_InvalidAttributes(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	// Test with asymmetric algorithm
 	invalidAttrs := &types.KeyAttributes{
@@ -556,7 +556,7 @@ func TestAES_ErrorHandling_InvalidAttributes(t *testing.T) {
 // TestAES_ErrorHandling_NonExistentKey tests error when key doesn't exist
 func TestAES_ErrorHandling_NonExistentKey(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("nonexistent", 256, types.SymmetricAES256GCM)
 
@@ -574,7 +574,7 @@ func TestAES_ErrorHandling_NonExistentKey(t *testing.T) {
 // TestAES_ErrorHandling_TamperedCiphertext tests authentication failure
 func TestAES_ErrorHandling_TamperedCiphertext(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	attrs := createAESAttrs("test-tamper", 256, types.SymmetricAES256GCM)
 
@@ -636,7 +636,7 @@ func TestAES_ErrorHandling_ClosedBackend(t *testing.T) {
 // TestAES_ConcurrentOperations tests thread-safety
 func TestAES_ConcurrentOperations(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	const numGoroutines = 10
 	done := make(chan bool, numGoroutines)
@@ -678,7 +678,7 @@ func TestAES_ConcurrentOperations(t *testing.T) {
 // TestAES_Type tests backend type
 func TestAES_Type(t *testing.T) {
 	be, _ := createAESBackend(t)
-	defer be.Close()
+	defer func() { _ = be.Close() }()
 
 	if be.Type() != types.BackendTypeAES {
 		t.Errorf("Expected backend type %s, got %s", types.BackendTypeAES, be.Type())

@@ -15,6 +15,7 @@ package kdf
 
 import (
 	"golang.org/x/crypto/argon2"
+	"math"
 )
 
 const (
@@ -87,7 +88,13 @@ func (a *Argon2Adapter) DeriveKey(ikm []byte, params *KDFParams) ([]byte, error)
 			params.Time,
 			params.Memory,
 			params.Threads,
-			uint32(params.KeyLength),
+			func() uint32 {
+				if params.KeyLength > math.MaxUint32 {
+					panic("KeyLength too large")
+				}
+				// #nosec G115 -- Bounds checked above
+				return uint32(params.KeyLength)
+			}(),
 		)
 	case AlgorithmArgon2id:
 		key = argon2.IDKey(
@@ -96,7 +103,13 @@ func (a *Argon2Adapter) DeriveKey(ikm []byte, params *KDFParams) ([]byte, error)
 			params.Time,
 			params.Memory,
 			params.Threads,
-			uint32(params.KeyLength),
+			func() uint32 {
+				if params.KeyLength > math.MaxUint32 {
+					panic("KeyLength too large")
+				}
+				// #nosec G115 -- Bounds checked above
+				return uint32(params.KeyLength)
+			}(),
 		)
 	default:
 		return nil, ErrUnsupportedAlgorithm

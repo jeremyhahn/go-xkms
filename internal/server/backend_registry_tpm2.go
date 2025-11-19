@@ -18,6 +18,7 @@ package server
 import (
 	"fmt"
 
+	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
@@ -32,11 +33,13 @@ func createTPM2Backend(config BackendConfig) (types.Backend, error) {
 		cn = "keychain"
 	}
 
-	devicePath, _ := config.Config["device"].(string)
+	device, _ := config.Config["device"].(string)
+	if device == "" {
+		device = "/dev/tpmrm0"
+	}
+
 	useSimulator, _ := config.Config["use_simulator"].(bool)
-	simulatorType, _ := config.Config["simulator_type"].(string)
-	simulatorHost, _ := config.Config["simulator_host"].(string)
-	simulatorPort, _ := config.Config["simulator_port"].(int)
+	encryptSession, _ := config.Config["encrypt_session"].(bool)
 
 	srkHandle, ok := config.Config["srk_handle"].(uint32)
 	if !ok {
@@ -47,19 +50,7 @@ func createTPM2Backend(config BackendConfig) (types.Backend, error) {
 		}
 	}
 
-	hierarchy, _ := config.Config["hierarchy"].(string)
 	platformPolicy, _ := config.Config["platform_policy"].(bool)
-	encryptSession, _ := config.Config["encrypt_session"].(bool)
-
-	// Handle PCR selection
-	var pcrSelection []int
-	if pcrSel, ok := config.Config["pcr_selection"].([]interface{}); ok {
-		for _, v := range pcrSel {
-			if pcr, ok := v.(int); ok {
-				pcrSelection = append(pcrSelection, pcr)
-			}
-		}
-	}
 
 	// Create storage
 	keyDir, ok := config.Config["key_dir"].(string)
@@ -92,33 +83,31 @@ func createTPM2Backend(config BackendConfig) (types.Backend, error) {
 		}
 	}
 
+	// Create TPM2 config with new structure
 	tpm2Config := &tpm2.Config{
-		CN:             cn,
-		DevicePath:     devicePath,
+		Device:         device,
 		UseSimulator:   useSimulator,
-		SimulatorType:  simulatorType,
-		SimulatorHost:  simulatorHost,
-		SimulatorPort:  simulatorPort,
-		SRKHandle:      srkHandle,
-		Hierarchy:      hierarchy,
-		PlatformPolicy: platformPolicy,
-		PCRSelection:   pcrSelection,
 		EncryptSession: encryptSession,
-		SessionConfig:  nil, // Use default session config
+		KeyStore: &tpm2.KeyStoreConfig{
+			CN:             cn,
+			SRKHandle:      srkHandle,
+			PlatformPolicy: platformPolicy,
+		},
 	}
 
-	// Create TPM2 keystore
-	keystore, err := tpm2.NewTPM2KeyStore(tpm2Config, nil, keyStorage, certStorage, nil)
+	// Create TPM2 params
+	params := &tpm2.Params{
+		Config:    tpm2Config,
+		BlobStore: keyStorage.(store.BlobStorer),
+		CertStore: certStorage.(store.CertificateStorer),
+	}
+
+	// Create TPM2 instance
+	tpmBackend, err := tpm2.NewTPM2(params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TPM2 keystore: %w", err)
+		return nil, fmt.Errorf("failed to create TPM2 instance: %w", err)
 	}
 
-	// Initialize the TPM (provision SRK)
-	// Pass nil for PINs - TPM2 backend will use defaults or handle as appropriate
-	if err := keystore.Initialize(nil, nil); err != nil {
-		return nil, fmt.Errorf("failed to initialize TPM2 keystore: %w", err)
-	}
-
-	// Return the keystore as a backend
-	return keystore, nil
+	// Return the TPM backend
+	return tpmBackend.(types.Backend), nil
 }

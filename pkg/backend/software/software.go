@@ -413,7 +413,7 @@ func (b *SoftwareBackend) GetImportParameters(attrs *types.KeyAttributes, algori
 // WrapKey wraps key material using the specified import parameters.
 // This uses the pkg/crypto/wrapping functions to wrap the key.
 func (b *SoftwareBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
-	if keyMaterial == nil || len(keyMaterial) == 0 {
+	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
 	}
 	if params == nil {

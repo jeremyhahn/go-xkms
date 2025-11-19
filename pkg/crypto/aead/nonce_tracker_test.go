@@ -60,7 +60,7 @@ func TestCheckAndRecordNonce_Enabled(t *testing.T) {
 
 	// First use should succeed
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
 	err := tracker.CheckAndRecordNonce(nonce)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestCheckAndRecordNonce_Enabled(t *testing.T) {
 
 	// Different nonce should succeed
 	nonce2 := make([]byte, 12)
-	rand.Read(nonce2)
+	_, _ = rand.Read(nonce2)
 
 	err = tracker.CheckAndRecordNonce(nonce2)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestCheckAndRecordNonce_Disabled(t *testing.T) {
 	tracker := NewNonceTracker(false)
 
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
 	// First use
 	err := tracker.CheckAndRecordNonce(nonce)
@@ -121,7 +121,7 @@ func TestContains(t *testing.T) {
 	tracker := NewNonceTracker(true)
 
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
 	// Should not contain before recording
 	if tracker.Contains(nonce) {
@@ -129,7 +129,7 @@ func TestContains(t *testing.T) {
 	}
 
 	// Record the nonce
-	tracker.CheckAndRecordNonce(nonce)
+	_ = tracker.CheckAndRecordNonce(nonce)
 
 	// Should contain after recording
 	if !tracker.Contains(nonce) {
@@ -138,7 +138,7 @@ func TestContains(t *testing.T) {
 
 	// Different nonce should not be contained
 	nonce2 := make([]byte, 12)
-	rand.Read(nonce2)
+	_, _ = rand.Read(nonce2)
 	if tracker.Contains(nonce2) {
 		t.Error("Contains() returned true for different nonce")
 	}
@@ -149,9 +149,9 @@ func TestContains_Disabled(t *testing.T) {
 	tracker := NewNonceTracker(false)
 
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
-	tracker.CheckAndRecordNonce(nonce)
+	_ = tracker.CheckAndRecordNonce(nonce)
 
 	// Should always return false when disabled
 	if tracker.Contains(nonce) {
@@ -170,8 +170,8 @@ func TestCount(t *testing.T) {
 	// Add multiple nonces
 	for i := 0; i < 5; i++ {
 		nonce := make([]byte, 12)
-		rand.Read(nonce)
-		tracker.CheckAndRecordNonce(nonce)
+		_, _ = rand.Read(nonce)
+		_ = tracker.CheckAndRecordNonce(nonce)
 	}
 
 	if tracker.Count() != 5 {
@@ -185,12 +185,12 @@ func TestClear(t *testing.T) {
 
 	// Add some nonces
 	nonce1 := make([]byte, 12)
-	rand.Read(nonce1)
-	tracker.CheckAndRecordNonce(nonce1)
+	_, _ = rand.Read(nonce1)
+	_ = tracker.CheckAndRecordNonce(nonce1)
 
 	nonce2 := make([]byte, 12)
-	rand.Read(nonce2)
-	tracker.CheckAndRecordNonce(nonce2)
+	_, _ = rand.Read(nonce2)
+	_ = tracker.CheckAndRecordNonce(nonce2)
 
 	if tracker.Count() != 2 {
 		t.Errorf("Count() = %d, want 2", tracker.Count())
@@ -228,10 +228,10 @@ func TestSetEnabled(t *testing.T) {
 	tracker := NewNonceTracker(true)
 
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
 	// Record a nonce while enabled
-	tracker.CheckAndRecordNonce(nonce)
+	_ = tracker.CheckAndRecordNonce(nonce)
 
 	// Disable tracking
 	tracker.SetEnabled(false)
@@ -273,8 +273,8 @@ func TestConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < noncesPerGoroutine; j++ {
 				nonce := make([]byte, 12)
-				rand.Read(nonce)
-				tracker.CheckAndRecordNonce(nonce)
+				_, _ = rand.Read(nonce)
+				_ = tracker.CheckAndRecordNonce(nonce)
 			}
 		}()
 	}
@@ -295,7 +295,7 @@ func TestConcurrentReuseDetection(t *testing.T) {
 
 	// Create a nonce that will be reused
 	sharedNonce := make([]byte, 12)
-	rand.Read(sharedNonce)
+	_, _ = rand.Read(sharedNonce)
 
 	const numGoroutines = 10
 	successCount := 0
@@ -338,7 +338,7 @@ func TestDifferentNonceSizes(t *testing.T) {
 
 	for _, size := range sizes {
 		nonce := make([]byte, size)
-		rand.Read(nonce)
+		_, _ = rand.Read(nonce)
 
 		err := tracker.CheckAndRecordNonce(nonce)
 		if err != nil {
@@ -384,13 +384,13 @@ func BenchmarkCheckAndRecordNonce(b *testing.B) {
 	// Pre-generate nonces to isolate tracking performance
 	for i := 0; i < b.N; i++ {
 		nonces[i] = make([]byte, 12)
-		rand.Read(nonces[i])
+		_, _ = rand.Read(nonces[i])
 	}
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		tracker.CheckAndRecordNonce(nonces[i])
+		_ = tracker.CheckAndRecordNonce(nonces[i])
 	}
 }
 
@@ -398,12 +398,12 @@ func BenchmarkCheckAndRecordNonce(b *testing.B) {
 func BenchmarkCheckAndRecordNonce_Disabled(b *testing.B) {
 	tracker := NewNonceTracker(false)
 	nonce := make([]byte, 12)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		tracker.CheckAndRecordNonce(nonce)
+		_ = tracker.CheckAndRecordNonce(nonce)
 	}
 }
 
@@ -415,8 +415,8 @@ func BenchmarkContains(b *testing.B) {
 	nonces := make([][]byte, 10000)
 	for i := 0; i < len(nonces); i++ {
 		nonces[i] = make([]byte, 12)
-		rand.Read(nonces[i])
-		tracker.CheckAndRecordNonce(nonces[i])
+		_, _ = rand.Read(nonces[i])
+		_ = tracker.CheckAndRecordNonce(nonces[i])
 	}
 
 	b.ResetTimer()
@@ -433,7 +433,7 @@ func BenchmarkConcurrentCheckAndRecord(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		nonces[i] = make([]byte, 12)
-		rand.Read(nonces[i])
+		_, _ = rand.Read(nonces[i])
 	}
 
 	b.ResetTimer()
@@ -441,7 +441,7 @@ func BenchmarkConcurrentCheckAndRecord(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			tracker.CheckAndRecordNonce(nonces[i])
+			_ = tracker.CheckAndRecordNonce(nonces[i])
 			i++
 		}
 	})

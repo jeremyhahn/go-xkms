@@ -345,14 +345,19 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 	case "ecdsa":
 		attrs.ECCAttributes = &types.ECCAttributes{}
 		if req.Curve != "" {
-			curve := types.ParseCurve(req.Curve)
-			if curve == nil {
+			curve, curveErr := types.ParseCurve(req.Curve)
+			if curveErr != nil {
 				s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid curve: %s", req.Curve))
 				return
 			}
 			attrs.ECCAttributes.Curve = curve
 		} else {
-			attrs.ECCAttributes.Curve = types.ParseCurve("P-256")
+			defaultCurve, curveErr := types.ParseCurve("P-256")
+			if curveErr != nil {
+				s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("invalid default curve: %v", curveErr))
+				return
+			}
+			attrs.ECCAttributes.Curve = defaultCurve
 		}
 		privKey, err = s.keystore.GenerateECDSA(attrs)
 

@@ -60,7 +60,7 @@ func createTestCert(t *testing.T, cn string) *x509.Certificate {
 func TestCertAdapter_SaveAndGetCert(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	cert := createTestCert(t, "test-cert")
 
@@ -79,7 +79,7 @@ func TestCertAdapter_SaveAndGetCert(t *testing.T) {
 func TestCertAdapter_DeleteCert(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	cert := createTestCert(t, "test-cert")
 
@@ -105,7 +105,7 @@ func TestCertAdapter_DeleteCert(t *testing.T) {
 func TestCertAdapter_SaveAndGetCertChain(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	// Create a chain of certificates
 	cert1 := createTestCert(t, "cert1")
@@ -129,7 +129,7 @@ func TestCertAdapter_SaveAndGetCertChain(t *testing.T) {
 func TestCertAdapter_ListCerts(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	// Save multiple certificates
 	cert1 := createTestCert(t, "cert1")
@@ -155,7 +155,7 @@ func TestCertAdapter_ListCerts(t *testing.T) {
 func TestCertAdapter_CertExists(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	cert := createTestCert(t, "test-cert")
 
@@ -177,7 +177,7 @@ func TestCertAdapter_CertExists(t *testing.T) {
 func TestCertAdapter_ErrorCases(t *testing.T) {
 	backend := memory.New()
 	adapter := storage.NewCertAdapter(backend)
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 
 	t.Run("SaveCert with nil certificate", func(t *testing.T) {
 		err := adapter.SaveCert("test-id", nil)

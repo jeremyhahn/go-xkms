@@ -22,7 +22,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
-	"io"
 	"sync"
 
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -303,27 +302,6 @@ func (m *MockBackend) Reset() {
 }
 
 // mockSigner wraps a key and implements crypto.Signer for testing.
-type mockSigner struct {
-	key crypto.PrivateKey
-	pub crypto.PublicKey
-}
-
-func (s *mockSigner) Public() crypto.PublicKey {
-	return s.pub
-}
-
-func (s *mockSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	switch key := s.key.(type) {
-	case *rsa.PrivateKey:
-		return rsa.SignPKCS1v15(rand.Reader, key, opts.HashFunc(), digest)
-	case *ecdsa.PrivateKey:
-		return ecdsa.SignASN1(rand.Reader, key, digest)
-	case ed25519.PrivateKey:
-		return ed25519.Sign(key, digest), nil
-	default:
-		return nil, fmt.Errorf("unsupported key type for signing")
-	}
-}
 
 // PublicKey returns the public key for a private key.
 func PublicKey(key crypto.PrivateKey) crypto.PublicKey {

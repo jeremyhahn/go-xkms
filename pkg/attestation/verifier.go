@@ -107,7 +107,7 @@ func (v *Verifier) Verify(stmt *AttestationStatement, opts *VerifyOptions) error
 
 // VerifyChain validates the certificate chain in the attestation statement.
 func (v *Verifier) VerifyChain(stmt *AttestationStatement, opts *VerifyOptions) error {
-	if stmt.CertificateChain == nil || len(stmt.CertificateChain) == 0 {
+	if len(stmt.CertificateChain) == 0 {
 		return errors.New("attestation: empty certificate chain")
 	}
 
@@ -271,7 +271,7 @@ func (v *Verifier) verifyFreshness(stmt *AttestationStatement, opts *VerifyOptio
 
 // verifyPCRs checks that TPM PCR values match expected values.
 func (v *Verifier) verifyPCRs(stmt *AttestationStatement, opts *VerifyOptions) error {
-	if stmt.PCRValues == nil || len(stmt.PCRValues) == 0 {
+	if len(stmt.PCRValues) == 0 {
 		if len(opts.ExpectedPCRs) > 0 {
 			return errors.New("attestation: expected PCRs but none provided in attestation")
 		}

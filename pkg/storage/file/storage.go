@@ -69,7 +69,11 @@ func (f *FileStorage) Get(key string) ([]byte, error) {
 
 	filePath := f.keyToPath(key)
 
-	data, err := os.ReadFile(filePath)
+	cleanPath := filepath.Clean(filePath)
+	if !filepath.IsAbs(cleanPath) {
+		return nil, fmt.Errorf("file path must be absolute: %s", filePath)
+	}
+	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, storage.ErrNotFound

@@ -137,7 +137,7 @@ func Encrypt(random io.Reader, publicKey *ecdsa.PublicKey, plaintext, aad []byte
 	tag := ciphertextWithTag[len(ciphertextWithTag)-tagSize:]
 
 	// Serialize ephemeral public key (uncompressed format)
-	ephemeralPubBytes := elliptic.Marshal(ephemeralPriv.Curve, ephemeralPriv.X, ephemeralPriv.Y)
+	ephemeralPubBytes := elliptic.Marshal(ephemeralPriv.Curve, ephemeralPriv.X, ephemeralPriv.Y) //nolint:staticcheck // SA1019: TODO refactor to crypto/ecdh
 
 	// Build final output: ephemeral_pub || nonce || tag || ciphertext
 	result := make([]byte, 0, len(ephemeralPubBytes)+nonceSize+tagSize+len(ciphertext))
@@ -188,7 +188,7 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 	encryptedData := ciphertext[pubKeySize+nonceSize+tagSize:]
 
 	// Deserialize ephemeral public key
-	ephemeralX, ephemeralY := elliptic.Unmarshal(privateKey.Curve, ephemeralPubBytes)
+	ephemeralX, ephemeralY := elliptic.Unmarshal(privateKey.Curve, ephemeralPubBytes) //nolint:staticcheck // SA1019: TODO refactor to crypto/ecdh
 	if ephemeralX == nil {
 		return nil, fmt.Errorf("failed to unmarshal ephemeral public key")
 	}

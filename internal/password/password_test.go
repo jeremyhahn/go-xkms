@@ -69,9 +69,9 @@ func TestNewClearPassword(t *testing.T) {
 					return
 				}
 				// Verify password is correctly stored
-				bytes, err := pwd.Bytes()
-				if err != nil {
-					t.Errorf("Bytes() error = %v", err)
+				bytes := pwd.Bytes()
+				if bytes == nil {
+					t.Error("Bytes() returned nil")
 					return
 				}
 				if string(bytes) != string(tt.input) {
@@ -80,7 +80,7 @@ func TestNewClearPassword(t *testing.T) {
 				// Test that returned bytes are a copy
 				if len(bytes) > 0 {
 					bytes[0] = 'X'
-					bytes2, _ := pwd.Bytes()
+					bytes2 := pwd.Bytes()
 					if bytes2[0] == 'X' {
 						t.Error("Bytes() did not return a copy, original was modified")
 					}
@@ -223,11 +223,7 @@ func TestClearPassword_Bytes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewClearPassword() error = %v", err)
 			}
-			got, err := pwd.Bytes()
-			if (err != nil) != tt.wantErr {
-				t.Errorf("Bytes() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+			got := pwd.Bytes()
 			if !tt.wantErr {
 				if string(got) != string(tt.input) {
 					t.Errorf("Bytes() = %v, want %v", got, tt.input)
@@ -237,59 +233,56 @@ func TestClearPassword_Bytes(t *testing.T) {
 	}
 }
 
-func TestClearPassword_Zero(t *testing.T) {
-	t.Run("password can be zeroed", func(t *testing.T) {
+func TestClearPassword_Clear(t *testing.T) {
+	t.Run("password can be cleared", func(t *testing.T) {
 		pwd, err := NewClearPasswordFromString("sensitive-password")
 		if err != nil {
 			t.Fatalf("NewClearPasswordFromString() error = %v", err)
 		}
 
-		// Verify password works before zeroing
+		// Verify password works before clearing
 		before, err := pwd.String()
 		if err != nil {
-			t.Errorf("String() before Zero error = %v", err)
+			t.Errorf("String() before Clear error = %v", err)
 		}
 		if before != "sensitive-password" {
-			t.Errorf("String() before Zero = %v, want %v", before, "sensitive-password")
+			t.Errorf("String() before Clear = %v, want %v", before, "sensitive-password")
 		}
 
-		// Zero the password
-		pwd.Zero()
+		// Clear the password
+		pwd.Clear()
 
-		// Verify password is zeroed
+		// Verify password is cleared
 		after, err := pwd.String()
 		if err == nil {
-			t.Error("String() after Zero should return error")
+			t.Error("String() after Clear should return error")
 		}
 		if after != "" {
-			t.Errorf("String() after Zero = %v, want empty", after)
+			t.Errorf("String() after Clear = %v, want empty", after)
 		}
 
-		// Verify Bytes also returns error
-		bytes, err := pwd.Bytes()
-		if err == nil {
-			t.Error("Bytes() after Zero should return error")
-		}
+		// Verify Bytes also returns nil
+		bytes := pwd.Bytes()
 		if bytes != nil {
-			t.Errorf("Bytes() after Zero = %v, want nil", bytes)
+			t.Errorf("Bytes() after Clear = %v, want nil", bytes)
 		}
 	})
 
-	t.Run("zero is idempotent", func(t *testing.T) {
+	t.Run("clear is idempotent", func(t *testing.T) {
 		pwd, err := NewClearPasswordFromString("test-password")
 		if err != nil {
 			t.Fatalf("NewClearPasswordFromString() error = %v", err)
 		}
 
-		// Zero multiple times should not panic
-		pwd.Zero()
-		pwd.Zero()
-		pwd.Zero()
+		// Clear multiple times should not panic
+		pwd.Clear()
+		pwd.Clear()
+		pwd.Clear()
 
 		// Verify still returns error
 		_, err = pwd.String()
 		if err == nil {
-			t.Error("String() after multiple Zero calls should return error")
+			t.Error("String() after multiple Clear calls should return error")
 		}
 	})
 }
@@ -322,13 +315,13 @@ func TestClearPassword_IsolationAndSecurity(t *testing.T) {
 		}
 
 		// Get two copies
-		bytes1, err := pwd.Bytes()
-		if err != nil {
-			t.Fatalf("Bytes() error = %v", err)
+		bytes1 := pwd.Bytes()
+		if bytes1 == nil {
+			t.Fatal("Bytes() returned nil")
 		}
-		bytes2, err := pwd.Bytes()
-		if err != nil {
-			t.Fatalf("Bytes() error = %v", err)
+		bytes2 := pwd.Bytes()
+		if bytes2 == nil {
+			t.Fatal("Bytes() returned nil")
 		}
 
 		// Modify first copy
@@ -340,9 +333,9 @@ func TestClearPassword_IsolationAndSecurity(t *testing.T) {
 		}
 
 		// Verify original is unaffected
-		bytes3, err := pwd.Bytes()
-		if err != nil {
-			t.Fatalf("Bytes() error = %v", err)
+		bytes3 := pwd.Bytes()
+		if bytes3 == nil {
+			t.Fatal("Bytes() returned nil")
 		}
 		if bytes3[0] == 'X' {
 			t.Error("Original password was modified through returned bytes")
@@ -424,23 +417,23 @@ func TestEqual(t *testing.T) {
 		})
 	}
 
-	t.Run("equal returns error for zeroed password", func(t *testing.T) {
+	t.Run("equal returns error for cleared password", func(t *testing.T) {
 		p1, _ := NewClearPasswordFromString("password1")
 		p2, _ := NewClearPasswordFromString("password2")
 
-		p1.Zero()
+		p1.Clear()
 
 		_, err := Equal(p1, p2)
 		if err == nil {
-			t.Error("Equal() should return error when first password is zeroed")
+			t.Error("Equal() should return error when first password is cleared")
 		}
 
 		p1, _ = NewClearPasswordFromString("password1")
-		p2.Zero()
+		p2.Clear()
 
 		_, err = Equal(p1, p2)
 		if err == nil {
-			t.Error("Equal() should return error when second password is zeroed")
+			t.Error("Equal() should return error when second password is cleared")
 		}
 	})
 }
@@ -453,10 +446,7 @@ func TestClearPassword_EdgeCases(t *testing.T) {
 			t.Fatalf("NewClearPassword() error = %v", err)
 		}
 
-		got, err := pwd.Bytes()
-		if err != nil {
-			t.Errorf("Bytes() error = %v", err)
-		}
+		got := pwd.Bytes()
 		if string(got) != string(input) {
 			t.Errorf("Bytes() = %v, want %v", got, input)
 		}
@@ -511,7 +501,7 @@ func BenchmarkClearPassword_Bytes(b *testing.B) {
 	pwd, _ := NewClearPassword(password)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = pwd.Bytes()
+		_ = pwd.Bytes()
 	}
 }
 
@@ -524,12 +514,12 @@ func BenchmarkClearPassword_String(b *testing.B) {
 	}
 }
 
-func BenchmarkClearPassword_Zero(b *testing.B) {
+func BenchmarkClearPassword_Clear(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		pwd, _ := NewClearPassword([]byte("benchmark-password-123"))
 		b.StartTimer()
-		pwd.Zero()
+		pwd.Clear()
 	}
 }
 

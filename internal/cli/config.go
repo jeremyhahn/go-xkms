@@ -64,9 +64,9 @@ func (c *Config) CreateBackend() (types.Backend, error) {
 	case "gcpkms":
 		return nil, fmt.Errorf("GCP KMS backend not yet supported in CLI")
 	case "azurekv":
-		return nil, fmt.Errorf("Azure Key Vault backend not yet supported in CLI")
+		return nil, fmt.Errorf("azure Key Vault backend not yet supported in CLI")
 	case "vault":
-		return nil, fmt.Errorf("Vault backend not yet supported in CLI")
+		return nil, fmt.Errorf("vault backend not yet supported in CLI")
 	default:
 		return nil, fmt.Errorf("unknown backend: %s", c.Backend)
 	}

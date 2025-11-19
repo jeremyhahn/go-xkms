@@ -78,7 +78,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, fmt.Errorf("config is required")
 	}
 
-	if cfg.Backends == nil || len(cfg.Backends) == 0 {
+	if len(cfg.Backends) == 0 {
 		return nil, fmt.Errorf("at least one backend is required")
 	}
 

@@ -49,7 +49,7 @@ func TestGetImportParameters(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
 
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Test attributes
 	attrs := &types.KeyAttributes{
@@ -280,7 +280,7 @@ func TestImportKey(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
 
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Test attributes
 	attrs := &types.KeyAttributes{
@@ -352,7 +352,7 @@ func TestExportKey(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
 
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Test with a non-extractable key (default behavior)
 	attrs := &types.KeyAttributes{
@@ -401,7 +401,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
 
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Test attributes for AES key (smaller and simpler for testing)
 	attrs := &types.KeyAttributes{
@@ -529,7 +529,7 @@ func TestGenerateWrappingKeyPairAttributes(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
 
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate wrapping key pair
 	keyID := []byte("test-wrapping-key-attrs")
@@ -690,7 +690,7 @@ func TestGenerateWrappingKeyPairPublicKeyAttributes(t *testing.T) {
 		t.Fatalf("Failed to initialize: %v", err)
 	}
 
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// Generate wrapping key pair
 	keyID := []byte("test-wrapping-key-pub-attrs")

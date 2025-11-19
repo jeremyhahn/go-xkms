@@ -50,7 +50,7 @@ func createTestBackend(t *testing.T) *testBackendWrapper {
 // TestGetImportParameters tests the GetImportParameters method.
 func TestGetImportParameters(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -110,7 +110,7 @@ func TestGetImportParameters(t *testing.T) {
 // TestGetImportParametersErrors tests error conditions in GetImportParameters.
 func TestGetImportParametersErrors(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -133,7 +133,7 @@ func TestGetImportParametersErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid algorithm")
 
 	// Test with closed backend
-	b.Close()
+	_ = b.Close()
 	_, err = b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
@@ -141,7 +141,7 @@ func TestGetImportParametersErrors(t *testing.T) {
 // TestWrapKey tests the WrapKey method with different algorithms.
 func TestWrapKey(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -183,7 +183,7 @@ func TestWrapKey(t *testing.T) {
 // TestWrapKeyErrors tests error conditions in WrapKey.
 func TestWrapKeyErrors(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -224,7 +224,7 @@ func TestWrapKeyErrors(t *testing.T) {
 // TestUnwrapKey tests the UnwrapKey method.
 func TestUnwrapKey(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -267,7 +267,7 @@ func TestUnwrapKey(t *testing.T) {
 // TestUnwrapKeyErrors tests error conditions in UnwrapKey.
 func TestUnwrapKeyErrors(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -335,7 +335,7 @@ func TestImportKey(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			b := createTestBackend(t)
-			defer b.Close()
+			defer func() { _ = b.Close() }()
 
 			attrs := &types.KeyAttributes{
 				CN:                 "test-import-key",
@@ -385,7 +385,7 @@ func TestImportKey(t *testing.T) {
 // TestImportKeyErrors tests error conditions in ImportKey.
 func TestImportKeyErrors(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -463,7 +463,7 @@ func TestImportKeyErrors(t *testing.T) {
 // TestExportKey tests the ExportKey method.
 func TestExportKey(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-export-key",
@@ -505,7 +505,7 @@ func TestExportKey(t *testing.T) {
 // TestExportKeyErrors tests error conditions in ExportKey.
 func TestExportKeyErrors(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -547,7 +547,7 @@ func TestExportKeyErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid algorithm")
 
 	// Test with closed backend
-	b.Close()
+	_ = b.Close()
 	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
@@ -556,11 +556,11 @@ func TestExportKeyErrors(t *testing.T) {
 func TestImportExportRoundTrip(t *testing.T) {
 	// Create source backend
 	sourceBackend := createTestBackend(t)
-	defer sourceBackend.Close()
+	defer func() { _ = sourceBackend.Close() }()
 
 	// Create destination backend
 	destBackend := createTestBackend(t)
-	defer destBackend.Close()
+	defer func() { _ = destBackend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "roundtrip-key",
@@ -621,7 +621,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 // TestImportExportWithPassword tests import/export with password-protected keys.
 func TestImportExportWithPassword(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	password := backend.StaticPassword("test-password")
 
@@ -661,7 +661,7 @@ func TestImportExportWithPassword(t *testing.T) {
 // TestCapabilitiesImportExport tests that the backend reports ImportExport capability.
 func TestCapabilitiesImportExport(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	caps := b.Capabilities()
 	assert.True(t, caps.Import)
@@ -672,7 +672,7 @@ func TestCapabilitiesImportExport(t *testing.T) {
 // TestGetImportParameters_AllWrappingAlgorithms tests all supported wrapping algorithms
 func TestGetImportParameters_AllWrappingAlgorithms(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -705,7 +705,7 @@ func TestGetImportParameters_AllWrappingAlgorithms(t *testing.T) {
 // TestWrapKey_AllKeySizes tests wrapping keys of different sizes
 func TestWrapKey_AllKeySizes(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -751,7 +751,7 @@ func TestWrapKey_AllKeySizes(t *testing.T) {
 // TestWrapKey_InvalidKeySizes tests wrapping with invalid key sizes
 func TestWrapKey_InvalidKeySizes(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -784,7 +784,7 @@ func TestWrapKey_InvalidKeySizes(t *testing.T) {
 // TestUnwrapKey_InvalidAlgorithm tests unwrap with unsupported algorithm
 func TestUnwrapKey_InvalidAlgorithm(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -817,7 +817,7 @@ func TestUnwrapKey_InvalidAlgorithm(t *testing.T) {
 // TestUnwrapKey_InvalidKeySize tests unwrap with invalid unwrapped key size
 func TestUnwrapKey_InvalidKeySize(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -848,7 +848,7 @@ func TestUnwrapKey_InvalidKeySize(t *testing.T) {
 // TestWrapKey_NonRSAPublicKey tests error handling for non-RSA public key
 func TestWrapKey_NonRSAPublicKey(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	keyMaterial := make([]byte, 32)
 	_, err := rand.Read(keyMaterial)
@@ -868,7 +868,7 @@ func TestWrapKey_NonRSAPublicKey(t *testing.T) {
 // TestWrapKey_UnsupportedAlgorithm tests error for unsupported wrapping algorithm
 func TestWrapKey_UnsupportedAlgorithm(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -898,7 +898,7 @@ func TestWrapKey_UnsupportedAlgorithm(t *testing.T) {
 // TestImportKey_ClosedBackend tests ImportKey on closed backend
 func TestImportKey_ClosedBackend(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -920,7 +920,7 @@ func TestImportKey_ClosedBackend(t *testing.T) {
 	wrapped, err := b.WrapKey(keyMaterial, params)
 	require.NoError(t, err)
 
-	b.Close()
+	_ = b.Close()
 
 	err = b.ImportKey(attrs, wrapped)
 	assert.ErrorIs(t, err, ErrStorageClosed)
@@ -929,7 +929,7 @@ func TestImportKey_ClosedBackend(t *testing.T) {
 // TestImportKey_InvalidAttributes tests ImportKey with invalid attributes
 func TestImportKey_InvalidAttributes(t *testing.T) {
 	b := createTestBackend(t)
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "test-key",
@@ -984,7 +984,7 @@ func TestExportKey_ClosedBackend(t *testing.T) {
 	_, err := b.GenerateSymmetricKey(attrs)
 	require.NoError(t, err)
 
-	b.Close()
+	_ = b.Close()
 
 	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)

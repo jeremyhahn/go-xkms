@@ -72,7 +72,7 @@ func TestAutoResolver_RandFallbackOnError(t *testing.T) {
 		resolver: primary,
 		fallback: fallback,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Should succeed using fallback
 	data, err := ar.Rand(32)
@@ -93,7 +93,7 @@ func TestAutoResolver_RandFailureWithoutFallback(t *testing.T) {
 		resolver: primary,
 		fallback: nil,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Should fail since there's no fallback
 	_, err := ar.Rand(32)
@@ -112,7 +112,7 @@ func TestAutoResolver_RandBothFail(t *testing.T) {
 		resolver: primary,
 		fallback: fallback,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Should fail since both fail
 	_, err := ar.Rand(32)
@@ -131,7 +131,7 @@ func TestAutoResolver_AvailableWithFailedPrimaryButWorkingFallback(t *testing.T)
 		resolver: primary,
 		fallback: fallback,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Should be available via fallback
 	if !ar.Available() {
@@ -149,7 +149,7 @@ func TestAutoResolver_AvailableBothUnavailable(t *testing.T) {
 		resolver: primary,
 		fallback: fallback,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Should not be available
 	if ar.Available() {
@@ -180,7 +180,7 @@ func TestAutoResolver_SourceReturnsUnderlyingSource(t *testing.T) {
 		resolver: resolver,
 		fallback: nil,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	source := ar.Source()
 	if source == nil {
@@ -207,7 +207,7 @@ func TestAutoResolver_ConcurrentRandWithFallback(t *testing.T) {
 		resolver: primary,
 		fallback: fallback,
 	}
-	defer ar.Close()
+	defer func() { _ = ar.Close() }()
 
 	// Concurrent Rand calls should all succeed via fallback
 	done := make(chan bool)

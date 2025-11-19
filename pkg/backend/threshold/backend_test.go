@@ -74,7 +74,7 @@ func TestNewBackend(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, backend)
 				assert.Equal(t, types.BackendTypeThreshold, backend.Type())
-				backend.Close()
+				_ = backend.Close()
 			}
 		})
 	}
@@ -85,7 +85,7 @@ func TestThresholdBackend_Capabilities(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	caps := backend.Capabilities()
 	assert.True(t, caps.Keys)
@@ -101,7 +101,7 @@ func TestThresholdBackend_GenerateRSAKey(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-rsa-key",
@@ -150,7 +150,7 @@ func TestThresholdBackend_GenerateECDSAKey(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-ecdsa-key",
@@ -185,7 +185,7 @@ func TestThresholdBackend_GenerateEd25519Key(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-ed25519-key",
@@ -216,7 +216,7 @@ func TestThresholdBackend_ListKeys(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	// Initially should be empty
 	keys, err := backend.ListKeys()
@@ -258,7 +258,7 @@ func TestThresholdBackend_DeleteKey(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "key-to-delete",
@@ -298,7 +298,7 @@ func TestThresholdSigner_RSA(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-rsa-signer",
@@ -346,7 +346,7 @@ func TestThresholdSigner_ECDSA(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-ecdsa-signer",
@@ -398,7 +398,7 @@ func TestThresholdSigner_Ed25519(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-ed25519-signer",
@@ -444,7 +444,7 @@ func TestThresholdBackend_InsufficientShares(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "insufficient-shares-test",
@@ -469,9 +469,9 @@ func TestThresholdBackend_InsufficientShares(t *testing.T) {
 	// Delete some shares to simulate insufficient shares
 	keyID := backend.getKeyID(attrs)
 	shareKey := "threshold/shares/" + keyID + "/share-2"
-	storage.Delete(shareKey)
+	_ = storage.Delete(shareKey)
 	shareKey = "threshold/shares/" + keyID + "/share-3"
-	storage.Delete(shareKey)
+	_ = storage.Delete(shareKey)
 
 	// Now we only have 3 shares, but need 4 - signing should fail
 	signer, err := backend.Signer(attrs)
@@ -516,7 +516,7 @@ func TestThresholdBackend_DifferentShareCombinations(t *testing.T) {
 	config := DefaultConfig(storage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:           "combination-test",
@@ -555,7 +555,7 @@ func TestThresholdBackend_DifferentShareCombinations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Regenerate key before each test (except first) to restore all shares
 			if i > 0 {
-				backend.DeleteKey(attrs)
+				_ = backend.DeleteKey(attrs)
 				privKey, err = backend.GenerateKey(attrs)
 				require.NoError(t, err)
 				ed25519Key = privKey.(ed25519.PrivateKey)
@@ -565,13 +565,13 @@ func TestThresholdBackend_DifferentShareCombinations(t *testing.T) {
 			// Create a fresh backend with same storage
 			testBackend, err := NewBackend(config)
 			require.NoError(t, err)
-			defer testBackend.Close()
+			defer func() { _ = testBackend.Close() }()
 
 			// Delete specified shares
 			keyID := testBackend.getKeyID(attrs)
 			for _, shareNum := range tc.sharesToDelete {
 				shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, shareNum)
-				storage.Delete(shareKey)
+				_ = storage.Delete(shareKey)
 			}
 
 			// Try to sign

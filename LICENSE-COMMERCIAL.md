@@ -1,6 +1,6 @@
 # COMMERCIAL SOFTWARE LICENSE AGREEMENT
 
-**go-objstore**
+**go-keychain**
 
 ---
 
@@ -10,7 +10,7 @@ THIS COMMERCIAL SOFTWARE LICENSE AGREEMENT (the "Agreement") IS A LEGAL AGREEMEN
 
 ### Why Choose the Commercial License?
 
-The go-objstore software is dual-licensed under AGPL-3.0 (free, open source) and this Commercial License (paid). The key difference is:
+The go-keychain software is dual-licensed under AGPL-3.0 (free, open source) and this Commercial License (paid). The key difference is:
 
 **AGPL-3.0 (Free)** requires you to:
 - Disclose your source code if you provide the software as a network service
@@ -27,13 +27,13 @@ The go-objstore software is dual-licensed under AGPL-3.0 (free, open source) and
 - **Professional support options** available
 - **Legal indemnification** and warranty provisions
 
-This commercial license is ideal for businesses that want to use go-objstore in proprietary software, SaaS platforms, or commercial products without the restrictions of the AGPL-3.0 license.
+This commercial license is ideal for businesses that want to use go-keychain in proprietary software, SaaS platforms, or commercial products without the restrictions of the AGPL-3.0 license.
 
 ---
 
 ## 1. DEFINITIONS
 
-**1.1 "Software"** means the go-objstore software program, including all source code, object code, documentation, and related materials provided by Licensor under this Agreement.
+**1.1 "Software"** means the go-keychain software program, including all source code, object code, documentation, and related materials provided by Licensor under this Agreement.
 
 **1.2 "Licensed Application"** means any application developed by Licensee that incorporates or uses the Software.
 

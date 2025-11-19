@@ -1,203 +1,317 @@
-// Copyright (c) 2025 Jeremy Hahn
-// Copyright (c) 2025 Automate The Things, LLC
-//
-// This file is part of go-keychain.
-//
-// go-keychain is dual-licensed:
-//
-// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
-//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
-//
-// 2. Commercial License
-//    Contact licensing@automatethethings.com for commercial licensing options.
-
-//go:build tpm2
-
 package tpm2
 
 import (
-	"crypto"
 	"crypto/x509"
+	"encoding/asn1"
 	"errors"
 	"fmt"
-	"time"
+	"math/big"
+	"os"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/attestation"
+	"github.com/jeremyhahn/go-keychain/internal/tpm/crypto/aesgcm"
+	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-// AttestKey generates a TPM2_Certify attestation statement proving that a key
-// was generated in the TPM and never left the hardware.
-//
-// The attestation uses the TPM's built-in attestation key (usually a signing key
-// in the Endorsement hierarchy) to sign attestation data about the target key.
-// This proves the key was created within the TPM.
-//
-// Parameters:
-//   - attrs: Attributes identifying the key to attest
-//   - nonce: Optional challenge value (8 bytes typical) for freshness checking
-//     The nonce is included in the attestation to prevent replay attacks
-//
-// Returns:
-//   - An AttestationStatement if successful
-//   - ErrNotFound if the key doesn't exist
-//   - ErrTPMError if the TPM operation fails
-func (ks *TPM2KeyStore) AttestKey(attrs *types.KeyAttributes, nonce []byte) (interface{}, error) {
-	if err := validateKeyAttributes(attrs); err != nil {
+// Returns an Attestation Key Profile (EK, AK, AK Name, TCG_CSR_IDEVID)
+func (tpm *TPM2) AKProfile() (AKProfile, error) {
+
+	if tpm.ekAttrs == nil {
+		return AKProfile{}, ErrNotInitialized
+	}
+
+	if tpm.iakAttrs == nil {
+		return AKProfile{}, ErrNotInitialized
+	}
+	return AKProfile{
+		EKPub:              tpm.ekAttrs.TPMAttributes.PublicKeyBytes,
+		AKPub:              tpm.iakAttrs.TPMAttributes.PublicKeyBytes,
+		AKName:             tpm.iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+		SignatureAlgorithm: tpm.iakAttrs.SignatureAlgorithm,
+	}, nil
+}
+
+// Performs TPM2_MakeCredential, returning the new credential
+// challenge for an Attestor. If the secret parameter is
+// not provided, a random AES-256 secret will be generated.
+func (tpm *TPM2) MakeCredential(
+	akName tpm2.TPM2BName,
+	secret []byte) ([]byte, []byte, []byte, error) {
+
+	tpm.logger.Info("Creating new Activation Credential")
+
+	ekAttrs, err := tpm.EKAttributes()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	if secret == nil {
+		secret = aesgcm.NewAESGCM(tpm).GenerateKey()
+	}
+	digest := tpm2.TPM2BDigest{Buffer: secret}
+
+	if tpm.debugSecrets {
+		tpm.logger.Debugf("tpm: MakeCredential secret: %s", secret)
+	}
+
+	// Create the new credential challenge
+	mc, err := tpm2.MakeCredential{
+		Handle:     ekAttrs.TPMAttributes.Handle.(tpm2.TPMIDHObject),
+		Credential: digest,
+		ObjectName: akName,
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error(err)
+		return nil, nil, nil, err
+	}
+
+	if tpm.debugSecrets {
+		tpm.logger.Debugf("tpm: MakeCredential: secret (raw): %s", digest.Buffer)
+		tpm.logger.Debugf("tpm: MakeCredential: secret (hex): 0x%x", Encode(digest.Buffer))
+
+		tpm.logger.Debugf("tpm: MakeCredential: encrypted secret (raw): %s", mc.CredentialBlob.Buffer)
+		tpm.logger.Debugf("tpm: MakeCredential: encrypted secret (hex): 0x%x", Encode(mc.CredentialBlob.Buffer))
+
+		tpm.logger.Debugf("tpm: MakeCredential: secret response (raw): %s", mc.Secret.Buffer)
+		tpm.logger.Debugf("tpm: MakeCredential: secret response (hex): 0x%x", Encode(mc.Secret.Buffer))
+	}
+
+	return mc.CredentialBlob.Buffer, mc.Secret.Buffer, digest.Buffer, nil
+}
+
+// Activates a credential challenge previously initiated by MakeCredential
+func (tpm *TPM2) ActivateCredential(
+	credentialBlob, encryptedSecret []byte) ([]byte, error) {
+
+	tpm.logger.Info("Activating Credential")
+
+	ekAttrs := tpm.iakAttrs.Parent
+
+	var hierarchyAuth []byte
+	var err error
+
+	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.HierarchyAuth != nil {
+		hierarchyAuth = ekAttrs.TPMAttributes.HierarchyAuth.Bytes()
+	}
+
+	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, 16)
+	if err != nil {
+		tpm.logger.Error(err)
+		return nil, err
+	}
+	defer func() { _ = closer() }()
+
+	_, err = tpm2.PolicySecret{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHEndorsement,
+			Auth:   tpm2.PasswordAuth(hierarchyAuth),
+		},
+		NonceTPM:      session.NonceTPM(),
+		PolicySession: session.Handle(),
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error(err)
 		return nil, err
 	}
 
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-
-	if ks.tpm == nil {
-		return nil, errors.New("tpm2: TPM not initialized")
-	}
-
-	// Get the key to be attested
-	privKey, err := ks.GetKey(attrs)
-	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to get key for attestation: %w", err)
-	}
-
-	// Extract public key from the private key
-	var pubKey crypto.PublicKey
-	switch pk := privKey.(type) {
-	case interface{ Public() crypto.PublicKey }:
-		pubKey = pk.Public()
+	// Set the activation key handle to the appropriate key based on the
+	// enrollment strategy defined in the platform configuration file.
+	var keyAttrs *types.KeyAttributes
+	EnrollmentStrategy := ParseIdentityProvisioningStrategy(tpm.config.IdentityProvisioningStrategy)
+	switch EnrollmentStrategy {
+	case EnrollmentStrategyIAK:
+		keyAttrs = tpm.iakAttrs
+	case EnrollmentStrategyIAK_IDEVID_SINGLE_PASS:
+		keyAttrs = tpm.idevidAttrs
 	default:
-		return nil, errors.New("tpm2: key does not support Public() method")
+		return nil, ErrInvalidEnrollmentStrategy
 	}
 
-	if pubKey == nil {
-		return nil, errors.New("tpm2: failed to extract public key")
+	// Validate that key attributes are properly initialized
+	if keyAttrs == nil || keyAttrs.TPMAttributes == nil {
+		return nil, fmt.Errorf("activation key attributes not initialized, TPM may not be properly provisioned")
 	}
 
-	// Get the attestation key (signing key in Endorsement hierarchy)
-	// For now, we'll use a previously created attestation key or create a temporary one
-	attestKeyHandle, attestKeyName, err := ks.getOrCreateAttestationKey()
+	// Activate the credential, proving the AK and EK are both loaded
+	// into the same TPM, and the EK is able to decrypt the secret.
+	tpm.logger.Debug("tpm2: activating credential")
+	activateCredentialsResponse, err := tpm2.ActivateCredential{
+		ActivateHandle: tpm2.NamedHandle{
+			Handle: keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
+			Name:   keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+		},
+		KeyHandle: tpm2.AuthHandle{
+			Handle: ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
+			Name:   ekAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			Auth:   session,
+		},
+		CredentialBlob: tpm2.TPM2BIDObject{
+			Buffer: credentialBlob,
+		},
+		Secret: tpm2.TPM2BEncryptedSecret{
+			Buffer: encryptedSecret,
+		},
+	}.Execute(tpm.transport)
 	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to get attestation key: %w", err)
+		fmt.Println(err)
+		tpm.logger.Error(err)
+		return nil, ErrInvalidActivationCredential
 	}
 
-	// Prepare nonce (use a default if not provided)
-	if len(nonce) == 0 {
-		nonce = []byte{0, 0, 0, 0, 0, 0, 0, 0} // 8-byte zero nonce
+	// Release the decrypted secret. Print some helpful info
+	// if secret debugging is enabled.
+	digest := activateCredentialsResponse.CertInfo.Buffer
+	if tpm.debugSecrets {
+		tpm.logger.Debugf("tpm: credential encrypted secret (raw): %s", encryptedSecret)
+		tpm.logger.Debugf("tpm: credential encrypted secret (hex): 0x%x", Encode(encryptedSecret))
+
+		tpm.logger.Debugf("tpm: TPM2BDigest (raw): %s", digest)
+		tpm.logger.Debugf("tpm: TPM2BDigest (hex): 0x%x", Encode(digest))
 	}
 
-	// Create TPM2_Certify command to attest the key
-	// This uses the attestation key to sign attestation data about the target key
-	attest, err := ks.certifyKey(privKey, attestKeyHandle, attestKeyName, nonce, attrs)
-	if err != nil {
-		return nil, fmt.Errorf("tpm2: certification failed: %w", err)
-	}
-
-	// Get the attestation key's public key and certificate
-	attestKeyPub, attestKeyCert, err := ks.getAttestationKeyPublicAndCert()
-	if err != nil {
-		return nil, fmt.Errorf("tpm2: failed to get attestation key certificate: %w", err)
-	}
-
-	// Build the attestation statement
-	stmt := &attestation.AttestationStatement{
-		Format:                "tpm2",
-		AttestingKeyAlgorithm: x509.RSA, // TPM attestation keys are typically RSA
-		AttestingKeyPublic:    attestKeyPub,
-		Signature:             attest.Signature,
-		SignatureAlgorithm:    x509.SHA256WithRSA, // TPM uses SHA256 with RSA
-		CertificateChain:      attestKeyCert,
-		AttestedKeyPublic:     pubKey,
-		AttestationData:       attest.AttestData,
-		CreatedAt:             time.Now().Format(time.RFC3339),
-		Backend:               "tpm2",
-		Nonce:                 nonce,
-		PCRValues:             attest.PCRValues,
-		ClaimData:             attest.ClaimData,
-	}
-
-	return stmt, nil
+	// Return the decrypted secret
+	return digest, nil
 }
 
-// CertifyKeyResult contains the output of TPM2_Certify operation
-type CertifyKeyResult struct {
-	// Signature is the attestation signature from the attestation key
-	Signature []byte
+// Performs a TPM 2.0 quote over the PCRs defined in the
+// TPM section of the platform configuration file, used
+// for local attestation. The quote, event log, and PCR
+// state is optionally signed and saved to the CA blob store.
+func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 
-	// AttestData is the certified attestation data
-	AttestData []byte
-
-	// PCRValues maps PCR indices to their values (captured during attestation)
-	PCRValues map[uint32][]byte
-
-	// ClaimData contains additional attested claims about the key
-	ClaimData map[string][]byte
-}
-
-// getOrCreateAttestationKey returns the handle and name of the TPM's attestation key.
-// In a real implementation, this would load a persistent attestation key or create a temporary one.
-// For this implementation, we'll assume the attestation key exists at a known handle.
-func (ks *TPM2KeyStore) getOrCreateAttestationKey() (tpm2.TPMHandle, tpm2.TPM2BName, error) {
-	// In production, this should load a persistent attestation key
-	// For now, return a default handle and empty name (would be set in a real system)
-	// This is a placeholder - actual implementation would involve:
-	// 1. Creating an attestation key under the Endorsement hierarchy
-	// 2. Persisting it at a known handle
-	// 3. Or loading an existing persistent attestation key
-
-	// Use a placeholder handle for the attestation key
-	// In real usage, this should be a persistent handle that's been set up
-	const attestKeyHandle = tpm2.TPMHandle(0x81000001) // Example persistent handle
-
-	// Try to read the public key to see if it exists
-	readPubResp, err := tpm2.ReadPublic{
-		ObjectHandle: attestKeyHandle,
-	}.Execute(ks.tpm)
-
-	if err == nil {
-		// Attestation key exists
-		return attestKeyHandle, readPubResp.Name, nil
+	if tpm.iakAttrs == nil {
+		return Quote{}, ErrNotInitialized
 	}
 
-	// If attestation key doesn't exist, we need to create it or use SRK as fallback
-	// For now, return error - in production code, create the key
-	return 0, tpm2.TPM2BName{}, fmt.Errorf("tpm2: attestation key not found (would need to create: %w)", err)
-}
+	if tpm.iakAttrs.Parent == nil {
+		return Quote{}, ErrInvalidAKAttributes
+	}
 
-// certifyKey uses TPM2_Certify to create an attestation over a key.
-// The attestation key signs information about the target key, proving it was generated in the TPM.
-func (ks *TPM2KeyStore) certifyKey(privKey crypto.PrivateKey, attestKeyHandle tpm2.TPMHandle,
-	attestKeyName tpm2.TPM2BName, nonce []byte, attrs *types.KeyAttributes) (*CertifyKeyResult, error) {
+	tpm.logger.Info("Performing TPM 2.0 Quote")
 
-	// This is a simplified implementation
-	// A complete implementation would:
-	// 1. Serialize the key's public area
-	// 2. Use TPM2_Certify to have the attestation key sign it
-	// 3. Include PCR values if requested
-	// 4. Include the nonce for freshness
+	var quote Quote
+	var akAuth []byte
+	var err error
 
-	// For now, return a structured result with placeholder data
-	result := &CertifyKeyResult{
-		Signature:  []byte("tpm2-signature-placeholder"),   // Would be actual TPM signature
-		AttestData: []byte("tpm2-attest-data-placeholder"), // Would be actual TPM certify output
-		PCRValues:  make(map[uint32][]byte),
-		ClaimData: map[string][]byte{
-			"key_cn": []byte(attrs.CN),
+	if tpm.iakAttrs.Password != nil {
+		akAuth = tpm.iakAttrs.Password.Bytes()
+	}
+
+	// Create PCR selection(s)
+	// All PCRs should be in a single selection with the same hash algorithm
+	pcrSelect := tpm2.TPMLPCRSelection{
+		PCRSelections: []tpm2.TPMSPCRSelection{
+			{
+				Hash:      tpm.iakAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash),
+				PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
+			},
 		},
 	}
 
-	return result, nil
+	// Create the quote
+	q, err := tpm2.Quote{
+		SignHandle: tpm2.AuthHandle{
+			Handle: tpm.iakAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
+			Name:   tpm.iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			Auth:   tpm2.PasswordAuth(akAuth),
+		},
+		QualifyingData: tpm2.TPM2BData{
+			Buffer: nonce,
+		},
+		PCRSelect: pcrSelect,
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error(err)
+		return Quote{}, err
+	}
+
+	var signature []byte
+
+	var rsaSig *tpm2.TPMSSignatureRSA
+	if tpm.iakAttrs.KeyAlgorithm == x509.RSA { //nolint:staticcheck // QF1003: if-else preferred over switch
+
+		if store.IsRSAPSS(tpm.iakAttrs.SignatureAlgorithm) {
+			rsaSig, err = q.Signature.Signature.RSAPSS()
+			if err != nil {
+				return quote, err
+			}
+		} else {
+			rsaSig, err = q.Signature.Signature.RSASSA()
+			if err != nil {
+				tpm.logger.Error(err)
+				return quote, err
+			}
+		}
+		signature = rsaSig.Sig.Buffer
+
+	} else if tpm.iakAttrs.KeyAlgorithm == x509.ECDSA {
+		sig, err := q.Signature.Signature.ECDSA()
+		if err != nil {
+			return quote, err
+		}
+		r := big.NewInt(0).SetBytes(sig.SignatureR.Buffer)
+		s := big.NewInt(0).SetBytes(sig.SignatureS.Buffer)
+		asn1Struct := struct{ R, S *big.Int }{r, s}
+		signature, err = asn1.Marshal(asn1Struct)
+		if err != nil {
+			return quote, err
+		}
+	}
+
+	// Get the event log:
+	// Rather than parsing the event log and secure boot state,
+	// capture the raw binary log as a blob so it can be signed
+	// and imported to the CA blob storage. Verify should do a byte
+	// level comparison and digest verification for the system state
+	// integrity check.
+	// https://github.com/google/go-attestation/blob/master/docs/event-log-disclosure.md
+	eventLog, err := tpm.EventLog()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+			// Some embedded systems may not have a measurement log or there may be a permission
+			// problem. Log the warning and carry on...
+			tpm.logger.Warn(ErrMissingMeasurementLog.Error())
+		} else {
+			tpm.logger.Warn(ErrMissingMeasurementLog.Error())
+			// Continue without event log for simulator or permission-denied cases
+		}
+	}
+
+	allBanks, err := tpm.ReadPCRs(pcrs)
+	if err != nil {
+		tpm.logger.Error(err)
+		return Quote{}, err
+	}
+
+	pcrBytes, err := EncodePCRs(allBanks)
+	if err != nil {
+		tpm.logger.Error(err)
+		return Quote{}, err
+	}
+
+	return Quote{
+		EventLog:  eventLog,
+		Nonce:     nonce,
+		PCRs:      pcrBytes,
+		Quoted:    q.Quoted.Bytes(),
+		Signature: signature,
+	}, nil
 }
 
-// getAttestationKeyPublicAndCert retrieves the public key and certificate of the attestation key.
-// This would normally load the public key and certificate chain for the attestation key.
-func (ks *TPM2KeyStore) getAttestationKeyPublicAndCert() (crypto.PublicKey, []*x509.Certificate, error) {
-	// This is a placeholder implementation
-	// In production, this would:
-	// 1. Load the attestation key's public key from the TPM
-	// 2. Load or retrieve its certificate chain
-	// 3. Return both for inclusion in the attestation statement
+// Create a random nonce and issue a quote command to the TPM for the PCR specified
+// in the platform configuration file.
+func (tpm *TPM2) PlatformQuote(
+	keyAttrs *types.KeyAttributes) (Quote, []byte, error) {
 
-	// For now, return a placeholder error indicating this would need to be implemented
-	return nil, nil, errors.New("tpm2: attestation key certificate retrieval not fully implemented")
+	tpm.logger.Info("Performing local TPM 2.0 Quote")
+	nonce, err := tpm.Random()
+	if err != nil {
+		return Quote{}, nil, err
+	}
+	quote, err := tpm.Quote([]uint{uint(tpm.config.PlatformPCR)}, nonce)
+	if err != nil {
+		return Quote{}, nil, err
+	}
+	return quote, nonce, nil
 }

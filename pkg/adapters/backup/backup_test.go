@@ -961,7 +961,7 @@ func TestFileBackupAdapter_VerifyBackup_CorruptedKeys(t *testing.T) {
 	data.Keys[0].ID = "" // Corrupt the key ID
 
 	// Manually serialize and save to bypass validation
-	serialized, err := json.Marshal(data)
+	serialized, err := marshalBackupDataSafe(data)
 	require.NoError(t, err)
 
 	backupID := uuid.New().String()
@@ -1044,7 +1044,7 @@ func TestFileBackupAdapter_ImportBackup_NoMetadata(t *testing.T) {
 		},
 	}
 
-	serialized, err := json.Marshal(data)
+	serialized, err := marshalBackupDataSafe(data)
 	require.NoError(t, err)
 
 	// Write to a file
@@ -1138,7 +1138,7 @@ func TestFileBackupAdapter_CreateBackup_MetadataWriteError(t *testing.T) {
 	metadataPath := adapter.getMetadataPath(metadata.ID)
 	err = os.Chmod(filepath.Dir(metadataPath), 0500)
 	if err == nil {
-		defer os.Chmod(filepath.Dir(metadataPath), 0700)
+		defer func() { _ = os.Chmod(filepath.Dir(metadataPath), 0700) }()
 	}
 }
 
@@ -1345,7 +1345,7 @@ func TestFileBackupAdapter_ImportBackup_FileWriteError(t *testing.T) {
 	// Make the import directory read-only
 	err = os.Chmod(tempDir, 0500)
 	require.NoError(t, err)
-	defer os.Chmod(tempDir, 0700)
+	defer func() { _ = os.Chmod(tempDir, 0700) }()
 
 	// Import should fail due to permission error
 	_, err = adapter.ImportBackup(ctx, exportPath)
@@ -1641,7 +1641,7 @@ func TestFileBackupAdapter_ImportBackup_EmptyID(t *testing.T) {
 	}
 
 	// Serialize and write to file
-	serialized, err := json.Marshal(data)
+	serialized, err := marshalBackupDataSafe(data)
 	require.NoError(t, err)
 
 	sourcePath := filepath.Join(t.TempDir(), "backup-no-id.json")
@@ -1655,6 +1655,30 @@ func TestFileBackupAdapter_ImportBackup_EmptyID(t *testing.T) {
 }
 
 // Helper functions
+
+// marshalBackupDataSafe safely marshals BackupData by temporarily clearing SessionCloser
+func marshalBackupDataSafe(data *BackupData) ([]byte, error) {
+	// Clear SessionCloser from all keys before marshaling (cannot marshal func)
+	var sessionClosers []func() error
+	for i := range data.Keys {
+		if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil {
+			sessionClosers = append(sessionClosers, data.Keys[i].Attributes.TPMAttributes.SessionCloser)
+			data.Keys[i].Attributes.TPMAttributes.SessionCloser = nil
+		}
+	}
+	// Restore SessionCloser after marshaling
+	defer func() {
+		closerIdx := 0
+		for i := range data.Keys {
+			if data.Keys[i].Attributes != nil && data.Keys[i].Attributes.TPMAttributes != nil && closerIdx < len(sessionClosers) {
+				data.Keys[i].Attributes.TPMAttributes.SessionCloser = sessionClosers[closerIdx]
+				closerIdx++
+			}
+		}
+	}()
+
+	return json.Marshal(data) //nolint:staticcheck // SA1026: SessionCloser is cleared before marshaling
+}
 
 func createTestBackupData(t *testing.T, keyCount int) *BackupData {
 	t.Helper()

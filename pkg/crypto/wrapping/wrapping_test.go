@@ -570,7 +570,7 @@ func BenchmarkWrapRSAOAEP(b *testing.B) {
 	}
 	publicKey := &privateKey.PublicKey
 	keyMaterial := make([]byte, 32) // AES-256 key
-	rand.Read(keyMaterial)
+	_, _ = rand.Read(keyMaterial)
 
 	b.Run("SHA256", func(b *testing.B) {
 		b.ReportAllocs()
@@ -602,7 +602,7 @@ func BenchmarkUnwrapRSAOAEP(b *testing.B) {
 	}
 	publicKey := &privateKey.PublicKey
 	keyMaterial := make([]byte, 32)
-	rand.Read(keyMaterial)
+	_, _ = rand.Read(keyMaterial)
 
 	wrapped, err := WrapRSAOAEP(keyMaterial, publicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	if err != nil {
@@ -628,7 +628,7 @@ func BenchmarkWrapRSAAES(b *testing.B) {
 
 	b.Run("32B_KeyMaterial", func(b *testing.B) {
 		keyMaterial := make([]byte, 32)
-		rand.Read(keyMaterial)
+		_, _ = rand.Read(keyMaterial)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -641,7 +641,7 @@ func BenchmarkWrapRSAAES(b *testing.B) {
 
 	b.Run("1KB_KeyMaterial", func(b *testing.B) {
 		keyMaterial := make([]byte, 1024)
-		rand.Read(keyMaterial)
+		_, _ = rand.Read(keyMaterial)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -654,7 +654,7 @@ func BenchmarkWrapRSAAES(b *testing.B) {
 
 	b.Run("4KB_KeyMaterial", func(b *testing.B) {
 		keyMaterial := make([]byte, 4096)
-		rand.Read(keyMaterial)
+		_, _ = rand.Read(keyMaterial)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -675,7 +675,7 @@ func BenchmarkUnwrapRSAAES(b *testing.B) {
 
 	b.Run("32B_KeyMaterial", func(b *testing.B) {
 		keyMaterial := make([]byte, 32)
-		rand.Read(keyMaterial)
+		_, _ = rand.Read(keyMaterial)
 		wrapped, err := WrapRSAAES(keyMaterial, publicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		if err != nil {
 			b.Fatal(err)
@@ -692,7 +692,7 @@ func BenchmarkUnwrapRSAAES(b *testing.B) {
 
 	b.Run("1KB_KeyMaterial", func(b *testing.B) {
 		keyMaterial := make([]byte, 1024)
-		rand.Read(keyMaterial)
+		_, _ = rand.Read(keyMaterial)
 		wrapped, err := WrapRSAAES(keyMaterial, publicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		if err != nil {
 			b.Fatal(err)
@@ -710,11 +710,11 @@ func BenchmarkUnwrapRSAAES(b *testing.B) {
 
 func BenchmarkAESKWP(b *testing.B) {
 	kek := make([]byte, 32) // AES-256 KEK
-	rand.Read(kek)
+	_, _ = rand.Read(kek)
 
 	b.Run("Wrap_32B", func(b *testing.B) {
 		plaintext := make([]byte, 32)
-		rand.Read(plaintext)
+		_, _ = rand.Read(plaintext)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -727,7 +727,7 @@ func BenchmarkAESKWP(b *testing.B) {
 
 	b.Run("Unwrap_32B", func(b *testing.B) {
 		plaintext := make([]byte, 32)
-		rand.Read(plaintext)
+		_, _ = rand.Read(plaintext)
 		wrapped, err := wrapKeyWithAESKWP(plaintext, kek)
 		if err != nil {
 			b.Fatal(err)
@@ -744,7 +744,7 @@ func BenchmarkAESKWP(b *testing.B) {
 
 	b.Run("Wrap_1KB", func(b *testing.B) {
 		plaintext := make([]byte, 1024)
-		rand.Read(plaintext)
+		_, _ = rand.Read(plaintext)
 		b.ReportAllocs()
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
@@ -757,7 +757,7 @@ func BenchmarkAESKWP(b *testing.B) {
 
 	b.Run("Unwrap_1KB", func(b *testing.B) {
 		plaintext := make([]byte, 1024)
-		rand.Read(plaintext)
+		_, _ = rand.Read(plaintext)
 		wrapped, err := wrapKeyWithAESKWP(plaintext, kek)
 		if err != nil {
 			b.Fatal(err)

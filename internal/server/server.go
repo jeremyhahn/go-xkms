@@ -623,7 +623,6 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	}
 
 	// Configure server cipher preference
-	tlsConfig.PreferServerCipherSuites = s.config.TLS.PreferServerCiphers
 
 	return tlsConfig, nil
 }
@@ -758,11 +757,6 @@ func (s *Server) startQUIC() {
 }
 
 // handleHealth handles health check requests
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"healthy"}`)
-}
 
 // Shutdown gracefully shuts down all servers
 func (s *Server) Shutdown() error {

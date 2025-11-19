@@ -155,8 +155,12 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 			curve = "P256" // Default
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
+		parsedCurve, curveErr := types.ParseCurve(curve)
+		if curveErr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid curve: %v", curveErr)
+		}
 		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: types.ParseCurve(curve),
+			Curve: parsedCurve,
 		}
 		privKey, err = ks.GenerateECDSA(attrs)
 
@@ -928,8 +932,12 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 			curve = "P256" // Default
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
+		parsedCurve, curveErr := types.ParseCurve(curve)
+		if curveErr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid curve: %v", curveErr)
+		}
 		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: types.ParseCurve(curve),
+			Curve: parsedCurve,
 		}
 	case "ed25519":
 		attrs.KeyAlgorithm = x509.Ed25519
@@ -1158,8 +1166,12 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 			curve = "P256" // Default
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
+		parsedCurve, curveErr := types.ParseCurve(curve)
+		if curveErr != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid curve: %v", curveErr)
+		}
 		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: types.ParseCurve(curve),
+			Curve: parsedCurve,
 		}
 	case "ed25519":
 		attrs.KeyAlgorithm = x509.Ed25519

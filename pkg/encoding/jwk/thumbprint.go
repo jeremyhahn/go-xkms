@@ -15,7 +15,8 @@ package jwk
 
 import (
 	"crypto"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- SHA-1 thumbprint for JWK RFC 7638 compatibility
+	// #nosec G505 -- SHA-1 thumbprint support required for JWK RFC 7638 compatibility
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -86,6 +87,7 @@ func (jwk *JWK) Thumbprint(hashFunc crypto.Hash) (string, error) {
 	var h hash.Hash
 	switch hashFunc {
 	case crypto.SHA1:
+		// #nosec G401 -- SHA-1 thumbprint support for legacy JWK systems, use SHA-256 for new systems
 		h = sha1.New()
 	case crypto.SHA256:
 		h = sha256.New()

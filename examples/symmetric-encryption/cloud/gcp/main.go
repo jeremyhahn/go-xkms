@@ -56,7 +56,7 @@ func gcpKMSExample() error {
 	if err != nil {
 		return fmt.Errorf("failed to create GCP KMS backend: %w", err)
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 
 	// GCP KMS supports AES-128, AES-192, and AES-256
 	attrs := &types.KeyAttributes{

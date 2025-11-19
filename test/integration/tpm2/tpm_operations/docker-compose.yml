@@ -1,0 +1,42 @@
+services:
+  tpm-simulator:
+    image: ghcr.io/stefanberger/swtpm:latest
+    command:
+      - socket
+      - --tpmstate
+      - dir=/tmp
+      - --tpm2
+      - --server
+      - type=tcp,port=2321,bindaddr=0.0.0.0
+      - --ctrl
+      - type=tcp,port=2322,bindaddr=0.0.0.0
+      - --flags
+      - startup-clear
+      - --log
+      - level=20
+    ports:
+      - "2321:2321"
+      - "2322:2322"
+    networks:
+      - tpm-ops-test-network
+
+  tpm-operations-test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/tpm_operations/Dockerfile
+    depends_on:
+      - tpm-simulator
+    environment:
+      - TPM2_SIMULATOR_HOST=tpm-simulator
+      - TPM2_SIMULATOR_PORT=2321
+      - TPM2_SIMULATOR_CTRL_PORT=2322
+      - CGO_ENABLED=1
+      - GOTOOLCHAIN=auto
+    volumes:
+      - ../../../test/integration/coverage:/app/coverage
+    networks:
+      - tpm-ops-test-network
+
+networks:
+  tpm-ops-test-network:
+    driver: bridge

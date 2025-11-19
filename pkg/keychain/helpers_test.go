@@ -356,8 +356,8 @@ func TestCompareOpaqueKeyEquality_RSADifferentExponent(t *testing.T) {
 
 	// Create public key with different exponent
 	differentPubKey := &rsa.PublicKey{
-		N: privKey1.PublicKey.N,     // Same modulus
-		E: privKey1.PublicKey.E + 2, // Different exponent
+		N: privKey1.N,     // Same modulus
+		E: privKey1.E + 2, // Different exponent
 	}
 
 	opaqueKey := &mockOpaqueKey{pub: differentPubKey}
@@ -369,8 +369,8 @@ func TestCompareOpaqueKeyEquality_RSADifferentExponent(t *testing.T) {
 
 	// Now test with different modulus but same exponent
 	differentModulusPubKey := &rsa.PublicKey{
-		N: privKey2.PublicKey.N, // Different modulus
-		E: privKey1.PublicKey.E, // Same exponent
+		N: privKey2.N, // Different modulus
+		E: privKey1.E, // Same exponent
 	}
 
 	opaqueKey2 := &mockOpaqueKey{pub: differentModulusPubKey}
@@ -418,9 +418,9 @@ func TestCompareOpaqueKeyEquality_ECDSADifferentPoints(t *testing.T) {
 
 	// Create public key with different X coordinate but same curve
 	differentPubKey := &ecdsa.PublicKey{
-		Curve: privKey1.PublicKey.Curve,
-		X:     privKey2.PublicKey.X, // Different X
-		Y:     privKey1.PublicKey.Y, // Same Y
+		Curve: privKey1.Curve,
+		X:     privKey2.X, // Different X
+		Y:     privKey1.Y, // Same Y
 	}
 
 	opaqueKey := &mockOpaqueKey{pub: differentPubKey}
@@ -432,9 +432,9 @@ func TestCompareOpaqueKeyEquality_ECDSADifferentPoints(t *testing.T) {
 
 	// Test with different Y coordinate but same X
 	differentPubKey2 := &ecdsa.PublicKey{
-		Curve: privKey1.PublicKey.Curve,
-		X:     privKey1.PublicKey.X, // Same X
-		Y:     privKey2.PublicKey.Y, // Different Y
+		Curve: privKey1.Curve,
+		X:     privKey1.X, // Same X
+		Y:     privKey2.Y, // Different Y
 	}
 
 	opaqueKey2 := &mockOpaqueKey{pub: differentPubKey2}

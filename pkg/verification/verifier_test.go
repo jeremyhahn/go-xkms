@@ -43,8 +43,8 @@ func (m *mockChecksumProvider) Checksum(opts *VerifyOpts) ([]byte, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	blobName := string(opts.BlobCN)
-	checksum, exists := m.checksums[blobName]
+	/* Convert to string */
+	checksum, exists := m.checksums[string(opts.BlobCN)]
 	if !exists {
 		return nil, ErrChecksumNotFound
 	}
