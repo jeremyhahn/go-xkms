@@ -36,6 +36,7 @@ import (
 	awskmsbackend "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/opaque"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -274,7 +275,9 @@ func (m *mockKMSClient) createAlias(ctx context.Context, params *kms.CreateAlias
 // Helper function to create a test backend with mock client
 func newTestBackend(t *testing.T) *awskmsbackend.Backend {
 	config := &awskmsbackend.Config{
-		Region: "us-east-1",
+		Region:      "us-east-1",
+		KeyStorage:  memory.New(),
+		CertStorage: memory.New(),
 	}
 
 	backend, err := awskmsbackend.NewBackendWithClient(config, newMockKMSClient())
@@ -291,7 +294,7 @@ func TestNewKeyStore(t *testing.T) {
 		defer func() { _ = be.Close() }()
 
 		certStorage := memory.New()
-		ks, err := NewKeyStore(be, certStorage)
+		ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 		if err != nil {
 			t.Fatalf("NewKeyStore failed: %v", err)
 		}
@@ -307,7 +310,7 @@ func TestNewKeyStore(t *testing.T) {
 
 	t.Run("NilBackend", func(t *testing.T) {
 		certStorage := memory.New()
-		_, err := NewKeyStore(nil, certStorage)
+		_, err := NewKeyStore(nil, storage.NewCertAdapter(certStorage))
 		if err == nil {
 			t.Fatal("Expected error for nil backend")
 		}
@@ -322,7 +325,7 @@ func TestKeyStore_Backend(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -342,7 +345,7 @@ func TestKeyStore_GenerateRSA(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -429,7 +432,7 @@ func TestKeyStore_GenerateECDSA(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -516,7 +519,7 @@ func TestKeyStore_GenerateEd25519(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -542,7 +545,7 @@ func TestKeyStore_GenerateKey(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -621,7 +624,7 @@ func TestKeyStore_GenerateSecretKey(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -669,7 +672,7 @@ func TestKeyStore_GenerateSecretKey(t *testing.T) {
 	t.Run("InvalidKeyType", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:      "test-invalid-symmetric",
-			KeyType: backend.KEY_TYPE_SIGNING,
+			KeyType: backend.KEY_TYPE_CA, // CA keys are not valid for symmetric operations
 		}
 
 		err := ks.(*KeyStore).GenerateSecretKey(attrs)
@@ -677,7 +680,7 @@ func TestKeyStore_GenerateSecretKey(t *testing.T) {
 			t.Fatal("Expected error for unsupported key type")
 		}
 		// This is a wrapper-level validation error, not a backend error, so string comparison is appropriate
-		expectedMsg := "awskms: unsupported key type for symmetric key generation: SIGNING (use KeyTypeEncryption or KeyTypeSigning)"
+		expectedMsg := "awskms: unsupported key type for symmetric key generation: CA (use KeyTypeEncryption or KeyTypeSigning)"
 		if err.Error() != expectedMsg {
 			t.Errorf("Expected error message %q, got: %v", expectedMsg, err)
 		}
@@ -686,7 +689,9 @@ func TestKeyStore_GenerateSecretKey(t *testing.T) {
 	t.Run("ErrorFromBackend", func(t *testing.T) {
 		// Create a backend with a mock client that returns errors
 		config := &awskmsbackend.Config{
-			Region: "us-east-1",
+			Region:      "us-east-1",
+			KeyStorage:  memory.New(),
+			CertStorage: memory.New(),
 		}
 
 		mockClient := &awskmsbackend.MockKMSClient{
@@ -702,7 +707,7 @@ func TestKeyStore_GenerateSecretKey(t *testing.T) {
 		defer func() { _ = errorBackend.Close() }()
 
 		certStorage := memory.New()
-		errorKS, err := NewKeyStore(errorBackend, certStorage)
+		errorKS, err := NewKeyStore(errorBackend, storage.NewCertAdapter(certStorage))
 		if err != nil {
 			t.Fatalf("NewKeyStore failed: %v", err)
 		}
@@ -725,7 +730,7 @@ func TestKeyStore_Find(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -776,7 +781,7 @@ func TestKeyStore_Key(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -812,7 +817,7 @@ func TestKeyStore_Delete(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -867,7 +872,7 @@ func TestKeyStore_RotateKey(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -937,7 +942,7 @@ func TestKeyStore_Equal(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1109,7 +1114,7 @@ func TestKeyStore_Signer(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1213,7 +1218,7 @@ func TestKeyStore_Decrypter(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1241,7 +1246,7 @@ func TestKeyStore_Verifier(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1337,7 +1342,7 @@ func TestBackendWrapper(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1367,7 +1372,7 @@ func TestKMSSigner(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1427,7 +1432,7 @@ func TestKeyStore_ConcurrentAccess(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	certStorage := memory.New()
-	ks, err := NewKeyStore(be, certStorage)
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(certStorage))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1468,7 +1473,9 @@ func TestKeyStore_ConcurrentAccess(t *testing.T) {
 func TestKMSSigner_ErrorHandling(t *testing.T) {
 	// Create a backend with a mock client that returns errors
 	config := &awskmsbackend.Config{
-		Region: "us-east-1",
+		Region:      "us-east-1",
+		KeyStorage:  memory.New(),
+		CertStorage: memory.New(),
 	}
 
 	mockClient := &awskmsbackend.MockKMSClient{

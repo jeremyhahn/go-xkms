@@ -217,7 +217,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 		Ciphertext: ciphertextOnly,
 		Nonce:      nonce,
 		Tag:        tag,
-		Algorithm:  e.attrs.KeyAlgorithm.String(),
+		Algorithm:  string(e.attrs.SymmetricAlgorithm),
 	}, nil
 }
 
@@ -482,7 +482,7 @@ func (e *softwareEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions
 		Ciphertext: ciphertextOnly,
 		Nonce:      nonce,
 		Tag:        tag,
-		Algorithm:  e.attrs.KeyAlgorithm.String(),
+		Algorithm:  string(e.attrs.SymmetricAlgorithm),
 	}, nil
 }
 

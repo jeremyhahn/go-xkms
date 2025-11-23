@@ -64,7 +64,9 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 
 	// Validate wrapping algorithm
 	switch algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
+	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
+		backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
+		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		// Supported algorithms
 	default:
@@ -127,11 +129,13 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 
 	// Wrap based on algorithm
 	switch params.Algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
+	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
+		backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
 		// Direct RSA-OAEP wrapping (for small keys like symmetric keys)
 		wrapped, err = wrapping.WrapRSAOAEP(keyMaterial, rsaPubKey, params.Algorithm)
 
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
+	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
+		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		// Hybrid wrapping (for large keys like RSA private keys)
 		wrapped, err = wrapping.WrapRSAAES(keyMaterial, rsaPubKey, params.Algorithm)
 
@@ -260,11 +264,15 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	if err := b.p11ctx.FindObjectsInit(session, wrappingKeyTemplate); err != nil {
 		return fmt.Errorf("failed to init wrapping key search: %w", err)
 	}
-	defer b.p11ctx.FindObjectsFinal(session)
 
 	wrappingKeyHandles, _, err := b.p11ctx.FindObjects(session, 1)
 	if err != nil {
+		b.p11ctx.FindObjectsFinal(session)
 		return fmt.Errorf("failed to find wrapping key: %w", err)
+	}
+
+	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
+		return fmt.Errorf("failed to finalize wrapping key search: %w", err)
 	}
 
 	if len(wrappingKeyHandles) == 0 {
@@ -287,12 +295,22 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 
 	// Determine the unwrapping mechanism based on the wrapping algorithm
 	switch wrapped.Algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
+	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
+		backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
 		// Direct RSA-OAEP unwrapping (for small keys)
 		// Note: This doesn't work with SoftHSM2 for secret keys - use hybrid wrapping instead
+		var hashMech, mgfMech uint
+		if wrapped.Algorithm == backend.WrappingAlgorithmRSAES_OAEP_SHA_1 {
+			hashMech = pkcs11.CKM_SHA_1
+			mgfMech = pkcs11.CKG_MGF1_SHA1
+		} else {
+			hashMech = pkcs11.CKM_SHA256
+			mgfMech = pkcs11.CKG_MGF1_SHA256
+		}
+
 		unwrapMechanism := pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_OAEP, pkcs11.NewOAEPParams(
-			pkcs11.CKM_SHA256,
-			pkcs11.CKG_MGF1_SHA256,
+			hashMech,
+			mgfMech,
 			pkcs11.CKZ_DATA_SPECIFIED,
 			[]byte{}, // Empty label to match wrapping.WrapRSAOAEP which uses nil label
 		))
@@ -302,7 +320,8 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 			return fmt.Errorf("failed to unwrap key with RSA-OAEP: %w", err)
 		}
 
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
+	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
+		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		// Hybrid unwrapping using two-step process (works with SoftHSM2):
 		// 1. Unwrap the AES key using RSA-OAEP
 		// 2. Unwrap the target key using the AES key
@@ -314,6 +333,17 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	default:
 		return fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
 	}
+
+	// Set label and ID attributes after unwrap (not allowed during C_UnwrapKey on SoftHSM2)
+	// These attributes are needed to find the key later
+	setAttrs := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
+		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
+	}
+
+	// Ignore errors here - SetAttributeValue may not be supported for all key types
+	// The key was imported successfully even if we can't set the label/ID
+	_ = b.p11ctx.SetAttributeValue(session, keyHandle, setAttrs)
 
 	// Store metadata about the imported key
 	metadata := map[string]interface{}{
@@ -340,11 +370,12 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 }
 
 // importKeyHybrid implements the two-step hybrid unwrapping process for PKCS#11.
-// This follows the pattern used by smallstep/pkcs11-key-wrap:
+// SoftHSM2 Compatibility Workaround:
 //  1. Parse the wrapped key material to extract wrapped AES key and wrapped target key
-//  2. Use C_UnwrapKey with CKM_RSA_PKCS_OAEP to unwrap the AES key into the HSM
-//  3. Use C_UnwrapKey with CKM_AES_KEY_WRAP_PAD to unwrap the target key using the AES key
-//  4. Destroy the temporary AES key
+//  2. Use C_Decrypt with CKM_RSA_PKCS_OAEP to decrypt the AES key (workaround for SoftHSM2)
+//  3. Use C_CreateObject to import the decrypted AES key as a temporary session object
+//  4. Use C_UnwrapKey with CKM_AES_KEY_WRAP_PAD to unwrap the target key using the AES key
+//  5. Destroy the temporary AES key
 func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial, wrappingKeyHandle pkcs11.ObjectHandle, keyID, keyLabel []byte, keyTemplate []*pkcs11.Attribute) (pkcs11.ObjectHandle, error) {
 	// Parse the hybrid wrapped format: [4-byte length][wrapped AES key][wrapped key material]
 	if len(wrapped.WrappedKey) < 4 {
@@ -375,24 +406,37 @@ func (b *Backend) importKeyHybrid(session pkcs11.SessionHandle, attrs *types.Key
 		return 0, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
 	}
 
-	aesUnwrapMech := pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_OAEP, pkcs11.NewOAEPParams(
+	// SoftHSM2 doesn't support C_UnwrapKey with CKM_RSA_PKCS_OAEP for secret keys.
+	// Workaround: Use C_Decrypt to decrypt the wrapped AES key, then C_CreateObject to import it.
+	decryptMech := pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_OAEP, pkcs11.NewOAEPParams(
 		hashMech,
 		mgfMech,
 		pkcs11.CKZ_DATA_SPECIFIED,
 		[]byte{},
 	))
 
+	// Decrypt the wrapped AES key using the wrapping private key
+	if err := b.p11ctx.DecryptInit(session, []*pkcs11.Mechanism{decryptMech}, wrappingKeyHandle); err != nil {
+		return 0, fmt.Errorf("failed to init decrypt for AES key: %w", err)
+	}
+
+	aesKeyBytes, err := b.p11ctx.Decrypt(session, wrappedAESKey)
+	if err != nil {
+		return 0, fmt.Errorf("failed to decrypt AES key: %w", err)
+	}
+
+	// Create the AES key as a session object
 	aesKeyTemplate := []*pkcs11.Attribute{
 		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
 		pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES),
 		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, false), // Temporary key
 		pkcs11.NewAttribute(pkcs11.CKA_UNWRAP, true),
-		pkcs11.NewAttribute(pkcs11.CKA_VALUE_LEN, 32), // 256-bit AES key
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, aesKeyBytes),
 	}
 
-	aesKeyHandle, err := b.p11ctx.UnwrapKey(session, []*pkcs11.Mechanism{aesUnwrapMech}, wrappingKeyHandle, wrappedAESKey, aesKeyTemplate)
+	aesKeyHandle, err := b.p11ctx.CreateObject(session, aesKeyTemplate)
 	if err != nil {
-		return 0, fmt.Errorf("failed to unwrap AES key: %w", err)
+		return 0, fmt.Errorf("failed to create AES key object: %w", err)
 	}
 
 	// Ensure we destroy the temporary AES key when done
@@ -446,28 +490,13 @@ func (b *Backend) buildImportKeyTemplate(attrs *types.KeyAttributes, keyID, keyL
 		// Check for symmetric algorithms
 		switch attrs.SymmetricAlgorithm {
 		case types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM:
-			// Determine key length in bytes
-			var keyLen int
-			switch attrs.SymmetricAlgorithm {
-			case types.SymmetricAES128GCM:
-				keyLen = 16 // 128 bits
-			case types.SymmetricAES192GCM:
-				keyLen = 24 // 192 bits
-			case types.SymmetricAES256GCM:
-				keyLen = 32 // 256 bits
-			}
-
 			// For secret keys being unwrapped, use minimal required attributes
 			// Some HSMs are strict about which attributes can be set during C_UnwrapKey
+			// SoftHSM2 requires minimal attributes: only class, type, and token flag
 			template = []*pkcs11.Attribute{
 				pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
 				pkcs11.NewAttribute(pkcs11.CKA_KEY_TYPE, pkcs11.CKK_AES),
-				pkcs11.NewAttribute(pkcs11.CKA_VALUE_LEN, keyLen), // Required for C_UnwrapKey
 				pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-				pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
-				pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
-				pkcs11.NewAttribute(pkcs11.CKA_ENCRYPT, true),
-				pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, true),
 			}
 		default:
 			return nil, fmt.Errorf("%w: unsupported key algorithm for import: %v (symmetric: %v)", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm, attrs.SymmetricAlgorithm)

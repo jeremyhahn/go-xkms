@@ -33,17 +33,37 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// getBackendDescription returns a human-readable description for a backend type
+func getBackendDescription(bt types.BackendType) string {
+	descriptions := map[types.BackendType]string{
+		types.BackendTypePKCS8:        "Software-based PKCS#8 key storage",
+		types.BackendTypePKCS11:       "Hardware Security Module (PKCS#11)",
+		types.BackendTypeTPM2:         "Trusted Platform Module 2.0",
+		types.BackendTypeAWSKMS:       "AWS Key Management Service",
+		types.BackendTypeGCPKMS:       "Google Cloud Key Management Service",
+		types.BackendTypeAzureKV:      "Azure Key Vault",
+		types.BackendTypeVault:        "HashiCorp Vault",
+		types.BackendTypeSoftware:     "Software-based key storage with AES encryption",
+		types.BackendTypeAES:          "AES-GCM encrypted key storage",
+		types.BackendTypeSmartCardHSM: "SmartCard-HSM (Nitrokey, CardContact)",
+	}
+
+	if desc, ok := descriptions[bt]; ok {
+		return desc
+	}
+
+	return string(bt)
+}
+
 // Service implements the KeystoreService gRPC interface
 type Service struct {
 	pb.UnimplementedKeystoreServiceServer
-	registry *BackendRegistry
 }
 
 // NewService creates a new gRPC service
-func NewService(registry *BackendRegistry) *Service {
-	return &Service{
-		registry: registry,
-	}
+// The service uses the global keychain facade for backend management
+func NewService() *Service {
+	return &Service{}
 }
 
 // Health returns the health status of the service
@@ -56,19 +76,27 @@ func (s *Service) Health(ctx context.Context, req *pb.HealthRequest) (*pb.Health
 
 // ListBackends returns all available backend providers
 func (s *Service) ListBackends(ctx context.Context, req *pb.ListBackendsRequest) (*pb.ListBackendsResponse, error) {
-	infos := s.registry.List()
+	backendNames := keychain.Backends()
 
-	backends := make([]*pb.BackendInfo, len(infos))
-	for i, info := range infos {
-		backends[i] = &pb.BackendInfo{
-			Name:               info.Name,
-			Type:               info.Type,
-			Description:        info.Description,
-			HardwareBacked:     info.HardwareBacked,
-			SupportsSigning:    info.SupportsSigning,
-			SupportsDecryption: info.SupportsDecryption,
-			SupportsRotation:   info.SupportsRotation,
+	backends := make([]*pb.BackendInfo, 0, len(backendNames))
+	for _, name := range backendNames {
+		ks, err := keychain.Backend(name)
+		if err != nil {
+			continue // Skip backends that can't be retrieved
 		}
+
+		backend := ks.Backend()
+		caps := backend.Capabilities()
+
+		backends = append(backends, &pb.BackendInfo{
+			Name:               name,
+			Type:               string(backend.Type()),
+			Description:        getBackendDescription(backend.Type()),
+			HardwareBacked:     caps.HardwareBacked,
+			SupportsSigning:    caps.Signing,
+			SupportsDecryption: caps.Decryption,
+			SupportsRotation:   caps.KeyRotation,
+		})
 	}
 
 	return &pb.ListBackendsResponse{
@@ -83,7 +111,7 @@ func (s *Service) GetBackendInfo(ctx context.Context, req *pb.GetBackendInfoRequ
 		return nil, status.Error(codes.InvalidArgument, "backend name is required")
 	}
 
-	ks, err := s.registry.Get(req.Name)
+	ks, err := keychain.Backend(req.Name)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -118,7 +146,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 	}
 
 	// Get keystore
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -197,7 +225,7 @@ func (s *Service) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.Li
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -260,7 +288,7 @@ func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKey
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -310,7 +338,7 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 		return nil, status.Error(codes.InvalidArgument, "data is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -362,7 +390,7 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 		return nil, status.Error(codes.InvalidArgument, "signature is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -433,7 +461,7 @@ func (s *Service) DeleteKey(ctx context.Context, req *pb.DeleteKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -465,7 +493,7 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -509,7 +537,7 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 		return nil, status.Error(codes.InvalidArgument, "plaintext is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -563,7 +591,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 		return nil, status.Error(codes.InvalidArgument, "ciphertext is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -607,12 +635,12 @@ func (s *Service) SaveCert(ctx context.Context, req *pb.SaveCertRequest) (*pb.Sa
 	}
 
 	// Get any backend's keystore for cert operations (they all share the same cert storage)
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := s.registry.Get(backends[0].Name)
+	ks, err := keychain.Backend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
@@ -636,12 +664,12 @@ func (s *Service) GetCert(ctx context.Context, req *pb.GetCertRequest) (*pb.GetC
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := s.registry.Get(backends[0].Name)
+	ks, err := keychain.Backend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
@@ -667,12 +695,12 @@ func (s *Service) DeleteCert(ctx context.Context, req *pb.DeleteCertRequest) (*p
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := s.registry.Get(backends[0].Name)
+	ks, err := keychain.Backend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
@@ -692,12 +720,12 @@ func (s *Service) DeleteCert(ctx context.Context, req *pb.DeleteCertRequest) (*p
 // ListCerts lists all certificates
 func (s *Service) ListCerts(ctx context.Context, req *pb.ListCertsRequest) (*pb.ListCertsResponse, error) {
 	// Get any backend's keystore for cert operations
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := s.registry.Get(backends[0].Name)
+	ks, err := keychain.Backend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
@@ -721,12 +749,12 @@ func (s *Service) CertExists(ctx context.Context, req *pb.CertExistsRequest) (*p
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := s.registry.Get(backends[0].Name)
+	ks, err := keychain.Backend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
@@ -762,12 +790,12 @@ func (s *Service) SaveCertChain(ctx context.Context, req *pb.SaveCertChainReques
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := s.registry.Get(backends[0].Name)
+	ks, err := keychain.Backend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
@@ -791,12 +819,12 @@ func (s *Service) GetCertChain(ctx context.Context, req *pb.GetCertChainRequest)
 	}
 
 	// Get any backend's keystore for cert operations
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
-	ks, err := s.registry.Get(backends[0].Name)
+	ks, err := keychain.Backend(backends[0])
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get backend: %v", err)
 	}
@@ -827,7 +855,7 @@ func (s *Service) GetTLSCertificate(ctx context.Context, req *pb.GetTLSCertifica
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -893,7 +921,7 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		return nil, status.Error(codes.InvalidArgument, "key_type is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1009,14 +1037,14 @@ func (s *Service) WrapKey(ctx context.Context, req *pb.WrapKeyRequest) (*pb.Wrap
 
 	// Get any backend to perform the wrapping operation
 	// Wrapping is typically done client-side, so we can use any backend that implements the interface
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
 	var wrapped *backend.WrappedKeyMaterial
-	for _, backendInfo := range backends {
-		ks, err := s.registry.Get(backendInfo.Name)
+	for _, backendName := range backends {
+		ks, err := keychain.Backend(backendName)
 		if err != nil {
 			continue
 		}
@@ -1078,14 +1106,14 @@ func (s *Service) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*pb.
 	}
 
 	// Get any backend to perform the unwrapping operation
-	backends := s.registry.List()
+	backends := keychain.Backends()
 	if len(backends) == 0 {
 		return nil, status.Error(codes.Internal, "no backends available")
 	}
 
 	var keyMaterial []byte
-	for _, backendInfo := range backends {
-		ks, err := s.registry.Get(backendInfo.Name)
+	for _, backendName := range backends {
+		ks, err := keychain.Backend(backendName)
 		if err != nil {
 			continue
 		}
@@ -1127,7 +1155,7 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "key_type is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1217,7 +1245,7 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "wrapping_algorithm is required")
 	}
 
-	ks, err := s.registry.Get(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
 	}
@@ -1271,13 +1299,13 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	}
 
 	// Get source keystore
-	sourceKs, err := s.registry.Get(req.SourceBackend)
+	sourceKs, err := keychain.Backend(req.SourceBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "source backend not found: %v", err)
 	}
 
 	// Get destination keystore
-	destKs, err := s.registry.Get(req.DestBackend)
+	destKs, err := keychain.Backend(req.DestBackend)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "destination backend not found: %v", err)
 	}

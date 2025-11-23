@@ -90,7 +90,7 @@ func TestVaultBackend_GenerateSymmetricKey(t *testing.T) {
 	assert.Equal(t, 256, symmetricKey.KeySize())
 
 	// Verify metadata was stored
-	exists, err := config.KeyStorage.KeyExists(attrs.CN)
+	exists, err := config.KeyStorage.Exists(attrs.CN)
 	require.NoError(t, err)
 	assert.True(t, exists)
 

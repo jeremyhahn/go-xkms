@@ -205,8 +205,45 @@ func (f *FileStorage) Close() error {
 }
 
 // keyToPath converts a storage key to a file path.
+// Validates key safety before constructing path.
 func (f *FileStorage) keyToPath(key string) string {
+	// Validate key safety (allows internal paths like "keys/alice" but blocks traversal)
+	if err := validateStorageKey(key); err != nil {
+		// Return a safe invalid path that will fail gracefully
+		return filepath.Join(f.rootDir, "invalid")
+	}
 	return filepath.Join(f.rootDir, key)
+}
+
+// validateStorageKey validates storage keys (more permissive than facade validation).
+// Storage is internal - allows path separators for organization but blocks traversal.
+func validateStorageKey(key string) error {
+	if key == "" {
+		return fmt.Errorf("key cannot be empty")
+	}
+
+	// Check for null bytes
+	if strings.Contains(key, "\x00") {
+		return fmt.Errorf("key contains null byte")
+	}
+
+	// Check for absolute paths
+	if filepath.IsAbs(key) {
+		return fmt.Errorf("key cannot be an absolute path")
+	}
+
+	// Check for path traversal - the key is that we don't allow starting with .. or containing /..
+	cleaned := filepath.Clean(key)
+	if strings.HasPrefix(cleaned, "..") {
+		return fmt.Errorf("key contains path traversal attempt")
+	}
+	// Check for /../ pattern (directory traversal in middle of path)
+	if strings.Contains(cleaned, string(filepath.Separator)+".."+string(filepath.Separator)) ||
+		strings.HasSuffix(cleaned, string(filepath.Separator)+"..") {
+		return fmt.Errorf("key contains path traversal attempt")
+	}
+
+	return nil
 }
 
 // pathToKey converts a file path to a storage key.

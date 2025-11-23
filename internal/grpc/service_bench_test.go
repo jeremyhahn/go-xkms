@@ -45,10 +45,18 @@ func createBenchmarkService(b *testing.B) *Service {
 		b.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	manager := NewBackendRegistry()
-	_ = manager.Register("software", ks)
+	// Initialize the global keychain facade
+	err = keychain.Initialize(&keychain.FacadeConfig{
+		Backends: map[string]keychain.KeyStore{
+			"software": ks,
+		},
+		DefaultBackend: "software",
+	})
+	if err != nil {
+		b.Fatalf("Failed to initialize keychain: %v", err)
+	}
 
-	return NewService(manager)
+	return NewService()
 }
 
 // BenchmarkGRPC_Health benchmarks the health check

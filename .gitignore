@@ -50,3 +50,7 @@ Thumbs.db
 # Claude Code
 CLAUDE.md
 .claude/
+
+# SoftHSM2 test files
+softhsm2.conf
+softhsm2/

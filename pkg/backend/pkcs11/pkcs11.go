@@ -24,6 +24,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/ThalesGroup/crypto11"
@@ -674,7 +675,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	case x509.Ed25519:
 		return b.GenerateEd25519(attrs)
 	default:
-		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, attrs.KeyAlgorithm)
+		return nil, ErrUnsupportedKeyAlgorithm
 	}
 }
 
@@ -1258,7 +1259,10 @@ func contextCacheKey(config *Config) string {
 // createKeyID generates a PKCS#11 object identifier for a key.
 // Format: {CN}.{algorithm}
 func createKeyID(attrs *types.KeyAttributes) string {
-	return fmt.Sprintf("%s.%s", attrs.CN, attrs.KeyAlgorithm)
+	if attrs.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
+		return fmt.Sprintf("%s.", attrs.CN)
+	}
+	return fmt.Sprintf("%s.%s", attrs.CN, strings.ToLower(attrs.KeyAlgorithm.String()))
 }
 
 // createSlotID generates a PKCS#11 CKA_ID from a YubiKey PIV slot number.

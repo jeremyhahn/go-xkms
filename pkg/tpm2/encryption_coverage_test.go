@@ -1,85 +1,148 @@
+//go:build tpm2
+
 package tpm2
 
 import (
-	"crypto/rand"
+	"crypto/x509"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Tests for Encrypt/Decrypt methods (currently 0% coverage)
+// Tests for TPM2 symmetric encryption methods
 
-func TestAESGCM_EncryptDecrypt_Success(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+func TestTPM2_SymmetricEncryptDecrypt_Success(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
 
-	aesgcm := NewAESGCM(tpm)
+	tpm, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
 
-	key := make([]byte, 32) // AES-256
-	_, err := rand.Read(key)
+	// Generate a symmetric key
+	attrs := &types.KeyAttributes{
+		CN:                 "test-symmetric-key",
+		KeyType:            types.KeyTypeEncryption,
+		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		AESAttributes: &types.AESAttributes{
+			KeySize: 256,
+		},
+	}
+
+	_, err := tpm.GenerateSymmetricKey(attrs)
+	require.NoError(t, err)
+
+	// Get encrypter for the key
+	encrypter, err := tpm.SymmetricEncrypter(attrs)
 	require.NoError(t, err)
 
 	plaintext := []byte("test message to encrypt")
 
-	ciphertext, err := aesgcm.Encrypt(key, plaintext)
+	// Encrypt
+	encryptedData, err := encrypter.Encrypt(plaintext, nil)
 	require.NoError(t, err)
-	assert.NotEqual(t, plaintext, ciphertext)
+	assert.NotNil(t, encryptedData.Ciphertext)
+	assert.NotNil(t, encryptedData.Nonce)
+	assert.NotNil(t, encryptedData.Tag)
 
-	decrypted, err := aesgcm.Decrypt(key, ciphertext)
+	// Decrypt
+	decrypted, err := encrypter.Decrypt(encryptedData, nil)
 	require.NoError(t, err)
 	assert.Equal(t, plaintext, decrypted)
 }
 
-func TestAESGCM_Encrypt_InvalidKey(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+func TestTPM2_SymmetricEncrypt_WithAdditionalData(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
 
-	aesgcm := NewAESGCM(tpm)
+	tpm, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
 
-	invalidKey := make([]byte, 15) //  Invalid key size
-	_, err := aesgcm.Encrypt(invalidKey, []byte("test"))
-	assert.Error(t, err)
+	attrs := &types.KeyAttributes{
+		CN:                 "test-aead-key",
+		KeyType:            types.KeyTypeEncryption,
+		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		AESAttributes: &types.AESAttributes{
+			KeySize: 256,
+		},
+	}
+
+	_, err := tpm.GenerateSymmetricKey(attrs)
+	require.NoError(t, err)
+
+	encrypter, err := tpm.SymmetricEncrypter(attrs)
+	require.NoError(t, err)
+
+	plaintext := []byte("secret message")
+	additionalData := []byte("authenticated but not encrypted")
+
+	// Encrypt with additional data
+	encryptedData, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
+		AdditionalData: additionalData,
+	})
+	require.NoError(t, err)
+
+	// Decrypt with correct additional data
+	decrypted, err := encrypter.Decrypt(encryptedData, &types.DecryptOptions{
+		AdditionalData: additionalData,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted)
+
+	// Decrypt with wrong additional data should fail
+	_, err = encrypter.Decrypt(encryptedData, &types.DecryptOptions{
+		AdditionalData: []byte("wrong data"),
+	})
+	assert.Error(t, err, "decryption should fail with wrong additional data")
 }
 
-func TestAESGCM_Decrypt_TooShort(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+func TestTPM2_SymmetricDecrypt_InvalidTag(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
 
-	aesgcm := NewAESGCM(tpm)
+	tpm, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
 
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
+	attrs := &types.KeyAttributes{
+		CN:                 "test-invalid-tag",
+		KeyType:            types.KeyTypeEncryption,
+		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		AESAttributes: &types.AESAttributes{
+			KeySize: 256,
+		},
+	}
+
+	_, err := tpm.GenerateSymmetricKey(attrs)
 	require.NoError(t, err)
 
-	_, err = aesgcm.Decrypt(key, []byte("short"))
-	assert.Equal(t, ErrCiphertextTooShort, err)
-}
-
-func TestAESGCM_Decrypt_InvalidCiphertext(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
-
-	aesgcm := NewAESGCM(tpm)
-
-	key := make([]byte, 32)
-	_, err := rand.Read(key)
+	encrypter, err := tpm.SymmetricEncrypter(attrs)
 	require.NoError(t, err)
 
-	corruptedCiphertext := make([]byte, 50)
-	_, err = rand.Read(corruptedCiphertext)
+	plaintext := []byte("test message")
+	encryptedData, err := encrypter.Encrypt(plaintext, nil)
 	require.NoError(t, err)
 
-	_, err = aesgcm.Decrypt(key, corruptedCiphertext)
-	assert.Error(t, err)
+	// Corrupt the authentication tag
+	encryptedData.Tag[0] ^= 0xFF
+
+	// Decryption should fail
+	_, err = encrypter.Decrypt(encryptedData, nil)
+	assert.Error(t, err, "decryption should fail with corrupted tag")
 }
 
 // Tests for RSAEncrypt (currently 0% coverage)
 
 func TestRSAEncrypt_Basic(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpm, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
 
 	ekAttrs, err := tpm.EKAttributes()
 	require.NoError(t, err)
@@ -101,8 +164,11 @@ func TestRSAEncrypt_Basic(t *testing.T) {
 }
 
 func TestRSAEncrypt_InvalidHandle(t *testing.T) {
-	_, tpm := createSim(false, false)
-	defer func() { _ = tpm.Close() }()
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpm, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
 
 	invalidHandle := tpm2.TPMHandle(0xFFFFFFFF)
 	invalidName := tpm2.TPM2BName{Buffer: []byte("invalid")}

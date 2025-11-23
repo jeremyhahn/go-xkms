@@ -141,7 +141,11 @@ func TestGenerateSecretKey(t *testing.T) {
 		Library:    "/test/lib.so",
 		TokenLabel: "test",
 	}
-	be, _ := pkcs11backend.NewBackend(config)
+	be, err := pkcs11backend.NewBackend(config)
+	if err != nil || be == nil {
+		t.Skipf("Backend creation failed (no real HSM): %v", err)
+		return
+	}
 	ks := &KeyStore{backend: be}
 
 	attrs := &types.KeyAttributes{
@@ -151,7 +155,7 @@ func TestGenerateSecretKey(t *testing.T) {
 	}
 
 	// Without a real HSM, this will fail - which is the expected behavior
-	err := ks.GenerateSecretKey(attrs)
+	err = ks.GenerateSecretKey(attrs)
 	if err == nil {
 		t.Error("Expected error without real HSM connection")
 	}
@@ -397,7 +401,11 @@ func TestGenerateSecretKey_InvalidSize(t *testing.T) {
 		Library:    "/test/lib.so",
 		TokenLabel: "test",
 	}
-	be, _ := pkcs11backend.NewBackend(config)
+	be, err := pkcs11backend.NewBackend(config)
+	if err != nil || be == nil {
+		t.Skipf("Backend creation failed (no real HSM): %v", err)
+		return
+	}
 	ks := &KeyStore{backend: be}
 
 	tests := []struct {

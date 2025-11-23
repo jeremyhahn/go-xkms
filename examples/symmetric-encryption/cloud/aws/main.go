@@ -38,7 +38,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== AWS KMS Symmetric Encryption Example ===\n")
+	fmt.Println("=== AWS KMS Symmetric Encryption Example ===")
 
 	if err := awsKMSExample(); err != nil {
 		log.Fatalf("AWS KMS example failed: %v\n", err)

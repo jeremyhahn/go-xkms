@@ -414,7 +414,11 @@ func (b *Backend) getKeyID(cn string) string {
 // getKeySpec converts types.KeyAttributes to AWS KMS KeySpec.
 func (b *Backend) getKeySpec(attrs *types.KeyAttributes) (awstypes.KeySpec, error) {
 	// Check if this is a symmetric key request
-	if attrs.KeyType == backend.KEY_TYPE_SECRET || attrs.KeyType == backend.KEY_TYPE_ENCRYPTION || attrs.KeyType == backend.KEY_TYPE_HMAC {
+	// KEY_TYPE_SIGNING can be used for HMAC symmetric keys
+	if attrs.KeyType == backend.KEY_TYPE_SECRET ||
+		attrs.KeyType == backend.KEY_TYPE_ENCRYPTION ||
+		attrs.KeyType == backend.KEY_TYPE_HMAC ||
+		(attrs.KeyType == backend.KEY_TYPE_SIGNING && attrs.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm) {
 		// For symmetric keys, use SYMMETRIC_DEFAULT (AES-256-GCM)
 		return awstypes.KeySpecSymmetricDefault, nil
 	}

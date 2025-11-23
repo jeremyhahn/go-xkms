@@ -39,7 +39,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Azure Key Vault Symmetric Encryption Example ===\n")
+	fmt.Println("=== Azure Key Vault Symmetric Encryption Example ===")
 
 	if err := azureKVExample(); err != nil {
 		log.Fatalf("Azure Key Vault example failed: %v\n", err)

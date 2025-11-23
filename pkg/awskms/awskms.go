@@ -200,6 +200,11 @@ func (ks *KeyStore) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, 
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
+	// Validate key algorithm
+	if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm && attrs.KeyAlgorithm != x509.RSA {
+		return nil, fmt.Errorf("%w: expected RSA, got %s", keychain.ErrInvalidKeyAlgorithm, attrs.KeyAlgorithm)
+	}
+
 	// Apply default key size if not specified
 	if attrs.RSAAttributes == nil {
 		attrs.RSAAttributes = &types.RSAAttributes{
@@ -306,10 +311,10 @@ func (ks *KeyStore) GenerateECDSA(attrs *types.KeyAttributes) (crypto.PrivateKey
 // Parameters:
 //   - attrs: Key configuration
 //
-// Returns ErrUnsupportedKeyType as Ed25519 is not supported by AWS KMS.
+// Returns ErrInvalidKeyType as Ed25519 is not supported by AWS KMS.
 func (ks *KeyStore) GenerateEd25519(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	// Ed25519 is not supported by AWS KMS
-	return nil, awskmsbackend.ErrUnsupportedKeyType
+	return nil, fmt.Errorf("%w: Ed25519 not supported by AWS KMS", backend.ErrInvalidKeyType)
 }
 
 // GenerateSecretKey generates a new secret key for symmetric operations.

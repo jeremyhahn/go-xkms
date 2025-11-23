@@ -2,7 +2,6 @@ package tpm2
 
 import (
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/crypto/aesgcm"
 	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -60,7 +59,10 @@ func (tpm *TPM2) Seal(
 
 	if keyAttrs.Secret == nil {
 		tpm.logger.Infof("Generating %s HMAC seal secret", keyAttrs.CN)
-		secretBytes = aesgcm.NewAESGCM(tpm).GenerateKey()
+		secretBytes = make([]byte, 32) // AES-256 key
+		if _, err := tpm.random.Read(secretBytes); err != nil {
+			return nil, err
+		}
 		if keyAttrs.PlatformPolicy {
 			// keyAttrs.Secret = NewPlatformSecret(tpm, keyAttrs)
 			keyAttrs.Secret = store.NewClearPassword(secretBytes)

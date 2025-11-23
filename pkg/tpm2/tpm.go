@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 	"math"
+
 	// #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 	"crypto/sha256"
 	"crypto/sha512"
@@ -223,6 +224,11 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		} else {
 			return nil, store.ErrInvalidKeyAttributes
 		}
+	}
+
+	// Create default logger if none provided
+	if params.Logger == nil {
+		params.Logger = logging.DefaultLogger()
 	}
 
 	var sim *simulator.Simulator

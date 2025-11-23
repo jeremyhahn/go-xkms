@@ -3,7 +3,6 @@ package tpm2
 import (
 	"errors"
 
-	"github.com/jeremyhahn/go-keychain/internal/tpm/crypto/aesgcm"
 	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
 	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -90,7 +89,11 @@ func (p *PlatformPassword) Create() error {
 		}
 		passwd = p.keyAttrs.Password.Bytes()
 		if string(passwd) == store.DEFAULT_PASSWORD {
-			passwd = aesgcm.NewAESGCM(p.tpm).GenerateKey()
+			passwd = make([]byte, 32) // AES-256 key
+			rng := p.tpm.RandomSource()
+			if _, err := rng.Read(passwd); err != nil {
+				return err
+			}
 			p.keyAttrs.Password = store.NewClearPassword(passwd)
 		}
 	}

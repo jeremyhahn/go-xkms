@@ -49,12 +49,18 @@ func createBenchmarkHandler(b *testing.B) *HandlerContext {
 		b.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	backends := map[string]keychain.KeyStore{
-		"software": ks,
+	// Initialize the global keychain facade
+	err = keychain.Initialize(&keychain.FacadeConfig{
+		Backends: map[string]keychain.KeyStore{
+			"software": ks,
+		},
+		DefaultBackend: "software",
+	})
+	if err != nil {
+		b.Fatalf("Failed to initialize keychain: %v", err)
 	}
 
-	registry := NewBackendRegistry(backends, "software")
-	return NewHandlerContext(registry, "v1.0.0")
+	return NewHandlerContext("v1.0.0")
 }
 
 // BenchmarkREST_HealthHandler benchmarks health check endpoint

@@ -35,62 +35,10 @@ import (
 
 // HandlerContext holds dependencies for REST handlers.
 type HandlerContext struct {
-	// BackendRegistry manages keystore backends
-	BackendRegistry *BackendRegistry
 	// Version is the API version
 	Version string
 	// HealthChecker manages health check probes
 	HealthChecker HealthChecker
-}
-
-// BackendRegistry manages multiple keystore backends for the REST API.
-type BackendRegistry struct {
-	keystores      map[string]keychain.KeyStore
-	defaultBackend string
-}
-
-// NewBackendRegistry creates a new backend registry.
-func NewBackendRegistry(keystores map[string]keychain.KeyStore, defaultBackend string) *BackendRegistry {
-	return &BackendRegistry{
-		keystores:      keystores,
-		defaultBackend: defaultBackend,
-	}
-}
-
-// GetBackend retrieves a keystore by backend name. If name is empty, returns the default backend.
-func (r *BackendRegistry) GetBackend(name string) (keychain.KeyStore, error) {
-	if name == "" {
-		name = r.defaultBackend
-	}
-
-	ks, exists := r.keystores[name]
-	if !exists {
-		return nil, fmt.Errorf("backend %s not found", name)
-	}
-
-	return ks, nil
-}
-
-// ListBackends returns information about all registered backends.
-func (r *BackendRegistry) ListBackends() []BackendInfo {
-	infos := make([]BackendInfo, 0, len(r.keystores))
-	for name, ks := range r.keystores {
-		backend := ks.Backend()
-		caps := backend.Capabilities()
-
-		infos = append(infos, BackendInfo{
-			ID:             name,
-			Type:           string(backend.Type()),
-			HardwareBacked: caps.HardwareBacked,
-			Capabilities:   caps,
-		})
-	}
-	return infos
-}
-
-// GetKeystores returns all registered keystores.
-func (r *BackendRegistry) GetKeystores() map[string]keychain.KeyStore {
-	return r.keystores
 }
 
 // HealthChecker defines the interface for health checking.
@@ -101,10 +49,10 @@ type HealthChecker interface {
 }
 
 // NewHandlerContext creates a new handler context.
-func NewHandlerContext(backendRegistry *BackendRegistry, version string) *HandlerContext {
+// The handlers use the global keychain facade for backend management.
+func NewHandlerContext(version string) *HandlerContext {
 	return &HandlerContext{
-		BackendRegistry: backendRegistry,
-		Version:         version,
+		Version: version,
 	}
 }
 
@@ -124,7 +72,25 @@ func (h *HandlerContext) HealthHandler(w http.ResponseWriter, r *http.Request) {
 
 // ListBackendsHandler handles GET /api/v1/backends requests.
 func (h *HandlerContext) ListBackendsHandler(w http.ResponseWriter, r *http.Request) {
-	backends := h.BackendRegistry.ListBackends()
+	backendNames := keychain.Backends()
+
+	backends := make([]BackendInfo, 0, len(backendNames))
+	for _, name := range backendNames {
+		ks, err := keychain.Backend(name)
+		if err != nil {
+			continue // Skip backends that can't be retrieved
+		}
+
+		backend := ks.Backend()
+		caps := backend.Capabilities()
+
+		backends = append(backends, BackendInfo{
+			ID:             name,
+			Type:           string(backend.Type()),
+			HardwareBacked: caps.HardwareBacked,
+			Capabilities:   caps,
+		})
+	}
 
 	resp := ListBackendsResponse{
 		Backends: backends,
@@ -140,7 +106,7 @@ func (h *HandlerContext) GetBackendHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -172,17 +138,31 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
 		return
 	}
+
+	// Validate KeyID for security (prevent path traversal, injection)
+	if err := ValidateKeyID(req.KeyID); err != nil {
+		writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+		return
+	}
+
 	if req.Backend == "" {
 		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
+
+	// Validate backend name
+	if err := ValidateBackendName(req.Backend); err != nil {
+		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		return
+	}
+
 	if req.KeyType == "" {
 		writeError(w, ErrInvalidKeyType, http.StatusBadRequest)
 		return
 	}
 
-	// Get the backend
-	ks, err := h.BackendRegistry.GetBackend(req.Backend)
+	// Get the backend (this also validates it exists)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -334,7 +314,7 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -393,7 +373,7 @@ func (h *HandlerContext) GetKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -471,7 +451,7 @@ func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -563,7 +543,7 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -662,7 +642,7 @@ func (h *HandlerContext) DeleteKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -717,7 +697,7 @@ func (h *HandlerContext) RotateKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -791,7 +771,7 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -889,7 +869,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1026,7 +1006,7 @@ func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1068,7 +1048,7 @@ func (h *HandlerContext) GetCertHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1111,7 +1091,7 @@ func (h *HandlerContext) DeleteCertHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1139,7 +1119,7 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1173,7 +1153,7 @@ func (h *HandlerContext) CertExistsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1214,7 +1194,7 @@ func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1260,7 +1240,7 @@ func (h *HandlerContext) GetCertChainHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1307,7 +1287,7 @@ func (h *HandlerContext) GetTLSCertificateHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1393,10 +1373,24 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
+
+	// Validate backend name
+	if err := ValidateBackendName(req.Backend); err != nil {
+		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		return
+	}
+
 	if req.KeyID == "" {
 		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
 		return
 	}
+
+	// Validate KeyID for security
+	if err := ValidateKeyID(req.KeyID); err != nil {
+		writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+		return
+	}
+
 	if req.KeyType == "" {
 		writeError(w, ErrInvalidKeyType, http.StatusBadRequest)
 		return
@@ -1407,7 +1401,7 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	}
 
 	// Get the backend
-	ks, err := h.BackendRegistry.GetBackend(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1518,7 +1512,11 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 	// Note: WrapKey is typically a utility function that can be called on any backend
 	// For now, we'll get a backend that supports import/export and use it
 	var importExportBackend backend.ImportExportBackend
-	for _, ks := range h.BackendRegistry.GetKeystores() {
+	for _, backendName := range keychain.Backends() {
+		ks, err := keychain.Backend(backendName)
+		if err != nil {
+			continue
+		}
 		if ieb, ok := ks.Backend().(backend.ImportExportBackend); ok {
 			importExportBackend = ieb
 			break
@@ -1621,7 +1619,11 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Unwrap the key material
 	var importExportBackend backend.ImportExportBackend
-	for _, ks := range h.BackendRegistry.GetKeystores() {
+	for _, backendName := range keychain.Backends() {
+		ks, err := keychain.Backend(backendName)
+		if err != nil {
+			continue
+		}
 		if ieb, ok := ks.Backend().(backend.ImportExportBackend); ok {
 			importExportBackend = ieb
 			break
@@ -1661,10 +1663,24 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, ErrMissingBackend, http.StatusBadRequest)
 		return
 	}
+
+	// Validate backend name
+	if err := ValidateBackendName(req.Backend); err != nil {
+		writeError(w, fmt.Errorf("invalid backend: %w", err), http.StatusBadRequest)
+		return
+	}
+
 	if req.KeyID == "" {
 		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
 		return
 	}
+
+	// Validate KeyID for security
+	if err := ValidateKeyID(req.KeyID); err != nil {
+		writeError(w, fmt.Errorf("invalid key ID: %w", err), http.StatusBadRequest)
+		return
+	}
+
 	if req.KeyType == "" {
 		writeError(w, ErrInvalidKeyType, http.StatusBadRequest)
 		return
@@ -1679,7 +1695,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Get the backend
-	ks, err := h.BackendRegistry.GetBackend(req.Backend)
+	ks, err := keychain.Backend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1775,7 +1791,7 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := h.BackendRegistry.GetBackend(backendID)
+	ks, err := keychain.Backend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1870,7 +1886,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get source backend
-	sourceKS, err := h.BackendRegistry.GetBackend(req.SourceBackend)
+	sourceKS, err := keychain.Backend(req.SourceBackend)
 	if err != nil {
 		writeError(w, fmt.Errorf("source backend not found: %w", err), http.StatusNotFound)
 		return
@@ -1884,7 +1900,7 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get destination backend
-	destKS, err := h.BackendRegistry.GetBackend(req.DestBackend)
+	destKS, err := keychain.Backend(req.DestBackend)
 	if err != nil {
 		writeError(w, fmt.Errorf("destination backend not found: %w", err), http.StatusNotFound)
 		return

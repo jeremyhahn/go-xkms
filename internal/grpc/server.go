@@ -23,6 +23,7 @@ import (
 	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
+	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/metrics"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,7 +34,6 @@ import (
 
 // Server wraps the gRPC server with lifecycle management
 type Server struct {
-	registry      *BackendRegistry
 	service       *Service
 	grpcSrv       *grpc.Server
 	listener      net.Listener
@@ -46,7 +46,6 @@ type Server struct {
 // ServerConfig contains configuration for the gRPC server
 type ServerConfig struct {
 	Port           int
-	Registry       *BackendRegistry
 	TLSConfig      *tls.Config
 	Authenticator  auth.Authenticator
 	Logger         logger.Logger
@@ -55,10 +54,8 @@ type ServerConfig struct {
 }
 
 // NewServer creates a new gRPC server
+// The server uses the global keychain facade for backend management
 func NewServer(cfg *ServerConfig) (*Server, error) {
-	if cfg.Registry == nil {
-		return nil, fmt.Errorf("backend registry is required")
-	}
 	// Don't set a default port here - let Port 0 remain 0 for ephemeral ports
 	// The port will be set in Start() after the listener is created
 
@@ -77,11 +74,10 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	}
 
 	// Create service
-	service := NewService(cfg.Registry)
+	service := NewService()
 
 	// Create server instance for interceptor access
 	server := &Server{
-		registry:      cfg.Registry,
 		service:       service,
 		port:          cfg.Port,
 		tlsConfig:     cfg.TLSConfig,
@@ -202,10 +198,10 @@ func (s *Server) Stop() error {
 		s.grpcSrv.Stop()
 	}
 
-	// Close backend registry
-	if err := s.registry.Close(); err != nil {
-		s.logger.Error("Failed to close backend registry", logger.Error(err))
-		return fmt.Errorf("failed to close backend registry: %w", err)
+	// Close the keychain facade
+	if err := keychain.Close(); err != nil {
+		s.logger.Error("Failed to close keychain facade", logger.Error(err))
+		return fmt.Errorf("failed to close keychain facade: %w", err)
 	}
 
 	return nil

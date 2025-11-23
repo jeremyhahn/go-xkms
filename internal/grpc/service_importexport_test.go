@@ -187,11 +187,8 @@ func TestGetImportParameters(t *testing.T) {
 			// Full integration tests would require a real backend manager
 			// For now, we test the validation logic and error handling
 
-			// Create a minimal backend manager for testing
-			registry := NewBackendRegistry()
-			service := &Service{
-				registry: registry,
-			}
+			// Create service using the global facade
+			service := NewService()
 
 			resp, err := service.GetImportParameters(context.Background(), tt.request)
 
@@ -272,10 +269,7 @@ func TestWrapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := NewBackendRegistry()
-			service := &Service{
-				registry: registry,
-			}
+			service := NewService()
 
 			resp, err := service.WrapKey(context.Background(), tt.request)
 
@@ -351,10 +345,7 @@ func TestUnwrapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := NewBackendRegistry()
-			service := &Service{
-				registry: registry,
-			}
+			service := NewService()
 
 			resp, err := service.UnwrapKey(context.Background(), tt.request)
 
@@ -498,10 +489,7 @@ func TestImportKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := NewBackendRegistry()
-			service := &Service{
-				registry: registry,
-			}
+			service := NewService()
 
 			resp, err := service.ImportKey(context.Background(), tt.request)
 
@@ -558,10 +546,7 @@ func TestExportKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			registry := NewBackendRegistry()
-			service := &Service{
-				registry: registry,
-			}
+			service := NewService()
 
 			resp, err := service.ExportKey(context.Background(), tt.request)
 

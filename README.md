@@ -3,9 +3,9 @@
 # go-keychain
 
 [![Go Version](https://img.shields.io/badge/Go-1.25.1-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-v0.1.0--alpha-green.svg)](https://github.com/jeremyhahn/go-keychain/releases)
+[![Version](https://img.shields.io/badge/version-v0.1.6--alpha-green.svg)](https://github.com/jeremyhahn/go-keychain/releases)
 [![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen.svg)](test/integration)
-[![Coverage](https://img.shields.io/badge/coverage-93.3%25-brightgreen.svg)](pkg)
+[![Coverage](https://img.shields.io/badge/coverage-92.5%25-brightgreen.svg)](pkg)
 [![Backends](https://img.shields.io/badge/backends-10-blue.svg)](#backend-support-)
 [![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE-AGPL-3.txt)
 [![Commercial License](https://img.shields.io/badge/license-Commercial-green.svg)](LICENSE-COMMERCIAL.md)
@@ -16,12 +16,13 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 
 - **10 Production-Ready Backends**: PKCS#8, AES, PKCS#11, SmartCard-HSM, TPM2, YubiKey, AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault
 - **Complete Key Management**: Generate, store, retrieve, rotate, and delete keys (RSA, ECDSA, Ed25519, AES)
-- **Symmetric Encryption**: AES-GCM (128/192/256-bit) with AEAD support across all backends
+- **Symmetric Encryption**: AES-GCM (128/192/256-bit) with AEAD safety support across all backends
 - **Certificate Operations**: Full X.509 certificate lifecycle including chains and CRL support
 - **Crypto Operations**: Sign, verify, encrypt, decrypt with standard Go interfaces
 - **Thread-Safe**: Safe for concurrent operations with proper synchronization
-- **Well-Tested**: 93.3% unit test coverage with 151 passing integration tests
+- **Well-Tested**: 92.5% unit test coverage with 151 passing integration tests
 - **Pluggable Architecture**: Easy to add custom backends and storage implementations
+- **Unified Facade**: Simple API that abstracts backend complexity
 
 ## Overview
 
@@ -38,9 +39,10 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 
 - **Clean Architecture**: Clear separation of concerns, interface-based design
 - **Pluggable Backends**: Easy to add new storage types
+- **Unified Facade**: Single API for all backends - no leaky abstractions
 - **Thread-Safe**: Safe for concurrent operations
-- **Well-Tested**: 93.3% unit test coverage, 151 passing integration tests
-- **Production-Ready**: v0.1.0-alpha with 10 fully working backends
+- **Well-Tested**: 92.5% unit test coverage, 151 passing integration tests
+- **Production-Ready**: v0.1.6-alpha with 10 fully working backends
 - **Focused Scope**: Just keys and certificates - no server/events/secrets
 
 ---
@@ -152,7 +154,7 @@ go get github.com/jeremyhahn/go-keychain
 
 ## Quick Start
 
-### Basic Key Generation
+### Simple Usage with Facade (Recommended)
 
 ```go
 package main
@@ -161,61 +163,47 @@ import (
     "crypto"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
+    "github.com/jeremyhahn/go-keychain/internal/server"
     "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 func main() {
-    // Create file-based storage
-    keyStorage, err := file.New("./keys")
+    // Initialize the keychain with auto-detected backends
+    // This sets up PKCS8, Software, and AES backends automatically
+    err := server.Initialize(nil)
     if err != nil {
         log.Fatal(err)
     }
+    defer keychain.Close()
 
-    certStorage, err := file.New("./certs")
+    // Generate RSA key using the default backend
+    key, err := keychain.KeyByID("my-signing-key")
     if err != nil {
-        log.Fatal(err)
-    }
+        // Key doesn't exist, generate it
+        ks, _ := keychain.DefaultBackend()
 
-    // Create PKCS#8 backend
-    pkcs8Backend, err := pkcs8.NewBackend(&pkcs8.Config{
-        KeyStorage: keyStorage,
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer pkcs8Backend.Close()
+        attrs := &types.KeyAttributes{
+            CN:        "my-signing-key",
+            KeyType:   types.KeyTypeTLS,
+            StoreType: types.StorePKCS8,
+            RSAAttributes: &types.RSAAttributes{
+                KeySize: 2048,
+            },
+        }
 
-    // Create keychain
-    ks, err := keychain.New(&keychain.Config{
-        Backend:     pkcs8Backend,
-        CertStorage: certStorage,
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer ks.Close()
-
-    // Generate RSA key
-    attrs := &backend.KeyAttributes{
-        CN:           "example-key",
-        KeyType:      backend.KEY_TYPE_TLS,
-        StoreType:    backend.STORE_SW,
-        KeyAlgorithm: backend.ALG_RSA,
-        RSAAttributes: &backend.RSAAttributes{
-            KeySize: 2048,
-        },
-    }
-
-    key, err := ks.GenerateRSA(attrs)
-    if err != nil {
-        log.Fatal(err)
+        key, err = ks.GenerateRSA(attrs)
+        if err != nil {
+            log.Fatal(err)
+        }
     }
 
     // Use the key for signing
-    signer := key.(crypto.Signer)
+    signer, err := keychain.Signer("my-signing-key")
+    if err != nil {
+        log.Fatal(err)
+    }
+
     signature, err := signer.Sign(nil, []byte("data to sign"), crypto.SHA256)
     if err != nil {
         log.Fatal(err)
@@ -225,7 +213,7 @@ func main() {
 }
 ```
 
-### Symmetric Encryption
+### Advanced: Using Specific Backends
 
 ```go
 package main
@@ -233,69 +221,122 @@ package main
 import (
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/aes"
+    "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
+    "github.com/jeremyhahn/go-keychain/pkg/keychain"
     "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 func main() {
-    // Create AES backend for symmetric encryption
-    keyStorage, err := file.New("./keys")
-    if err != nil {
-        log.Fatal(err)
-    }
+    // Create file-based storage
+    keyStorage, _ := file.New("./keys")
+    certStorage, _ := file.New("./certs")
 
-    aesBackend, err := aes.NewBackend(&aes.Config{
+    // Create PKCS#8 backend
+    pkcs8Backend, _ := pkcs8.NewBackend(&pkcs8.Config{
         KeyStorage: keyStorage,
     })
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer aesBackend.Close()
+    defer pkcs8Backend.Close()
 
-    // Generate AES-256-GCM key
-    attrs := &backend.KeyAttributes{
-        CN:           "my-encryption-key",
-        KeyType:      backend.KEY_TYPE_ENCRYPTION,
-        StoreType:    backend.STORE_SW,
-        KeyAlgorithm: backend.ALG_AES256_GCM,
-        AESAttributes: &backend.AESAttributes{KeySize: 256},
-    }
-
-    key, err := aesBackend.GenerateSymmetricKey(attrs)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Get encrypter for the key
-    encrypter, err := aesBackend.SymmetricEncrypter(attrs)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Encrypt data with additional authenticated data (AAD)
-    plaintext := []byte("secret data")
-    aad := []byte("context info")
-
-    encrypted, err := encrypter.Encrypt(plaintext, &backend.EncryptOptions{
-        AdditionalData: aad,
+    // Create keystore
+    ks, _ := keychain.New(&keychain.Config{
+        Backend:     pkcs8Backend,
+        CertStorage: certStorage,
     })
+    defer ks.Close()
+
+    // Generate RSA key
+    attrs := &types.KeyAttributes{
+        CN:        "example-key",
+        KeyType:   types.KeyTypeTLS,
+        StoreType: types.StorePKCS8,
+        RSAAttributes: &types.RSAAttributes{
+            KeySize: 2048,
+        },
+    }
+
+    key, err := ks.GenerateRSA(attrs)
     if err != nil {
         log.Fatal(err)
     }
 
-    log.Printf("Encrypted: ciphertext=%x nonce=%x tag=%x",
-        encrypted.Ciphertext[:16], encrypted.Nonce, encrypted.Tag)
+    log.Printf("Generated RSA key: %v", key.Public())
+}
+```
 
-    // Decrypt
-    decrypted, err := encrypter.Decrypt(encrypted, &backend.DecryptOptions{
-        AdditionalData: aad,
-    })
+### Multi-Backend Operations
+
+```go
+package main
+
+import (
+    "log"
+
+    "github.com/jeremyhahn/go-keychain/internal/server"
+    "github.com/jeremyhahn/go-keychain/pkg/keychain"
+    "github.com/jeremyhahn/go-keychain/pkg/types"
+)
+
+func main() {
+    // Initialize with multiple backends
+    config := &server.BackendFactoryConfig{
+        DefaultBackend: "pkcs8",
+        Backends: []server.BackendConfig{
+            {
+                Name:    "pkcs8",
+                Type:    "pkcs8",
+                Enabled: true,
+                Config: map[string]interface{}{
+                    "key_dir": "./keys/pkcs8",
+                },
+            },
+            {
+                Name:    "aes",
+                Type:    "aes",
+                Enabled: true,
+                Config: map[string]interface{}{
+                    "key_dir": "./keys/aes",
+                },
+            },
+        },
+    }
+
+    err := server.Initialize(config)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer keychain.Close()
+
+    // Get specific backend
+    aesBackend, err := keychain.Backend("aes")
     if err != nil {
         log.Fatal(err)
     }
 
-    log.Printf("Decrypted: %s", string(decrypted))
+    // Generate symmetric key
+    attrs := &types.KeyAttributes{
+        CN:                 "my-encryption-key",
+        KeyType:            types.KeyTypeEncryption,
+        StoreType:          types.StorePKCS8,
+        SymmetricAlgorithm: types.SymmetricAES256GCM,
+    }
+
+    _, err = aesBackend.GenerateSymmetricKey(attrs)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // List all keys across all backends
+    allKeys, err := keychain.ListKeys()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Total keys across all backends: %d", len(allKeys))
+
+    // List backends
+    backends := keychain.Backends()
+    log.Printf("Available backends: %v", backends)
 }
 ```
 

@@ -425,18 +425,8 @@ func (s *Server) startGRPC() {
 
 	s.grpcServer = grpc.NewServer()
 
-	// Create backend manager for gRPC
-	manager := grpcinternal.NewBackendRegistry()
-	for name, ks := range s.keystores {
-		if err := manager.Register(name, ks); err != nil {
-			s.logger.Error("Failed to register backend with gRPC manager",
-				slog.Any("error", err), "backend", name)
-			return
-		}
-	}
-
-	// Create and register gRPC service
-	service := grpcinternal.NewService(manager)
+	// Create and register gRPC service (uses keychain facade)
+	service := grpcinternal.NewService()
 	pb.RegisterKeystoreServiceServer(s.grpcServer, service)
 
 	s.logger.Info("gRPC services registered", "keystores", len(s.keystores))
@@ -516,13 +506,9 @@ func (s *Server) startMCP() {
 		Logger: s.logger.With("component", "mcp"),
 	})
 
-	// Create backend registry adapter for MCP
-	mcpRegistry := newKeystoreRegistry(s.keystores, string(s.config.Default))
-
 	mcpConfig := &mcp.Config{
-		Addr:            addr,
-		BackendRegistry: mcpRegistry,
-		Logger:          mcpLogger,
+		Addr:   addr,
+		Logger: mcpLogger,
 	}
 
 	var err error
@@ -627,42 +613,6 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// keystoreRegistry is an adapter that implements the BackendRegistry interface
-// expected by QUIC and MCP servers. It wraps a map of keystores.
-type keystoreRegistry struct {
-	keystores      map[string]keychain.KeyStore
-	defaultBackend string
-}
-
-// newKeystoreRegistry creates a new keystore registry adapter
-func newKeystoreRegistry(keystores map[string]keychain.KeyStore, defaultBackend string) *keystoreRegistry {
-	return &keystoreRegistry{
-		keystores:      keystores,
-		defaultBackend: defaultBackend,
-	}
-}
-
-// GetBackend retrieves a keystore by backend name
-func (r *keystoreRegistry) GetBackend(name string) (interface{}, error) {
-	if name == "" {
-		name = r.defaultBackend
-	}
-	ks, exists := r.keystores[name]
-	if !exists {
-		return nil, fmt.Errorf("backend %s not found", name)
-	}
-	return ks, nil
-}
-
-// ListBackends returns a list of all registered backend names
-func (r *keystoreRegistry) ListBackends() []string {
-	names := make([]string, 0, len(r.keystores))
-	for name := range r.keystores {
-		names = append(names, name)
-	}
-	return names
-}
-
 // parseTLSVersion converts a version string to a tls.uint16 version constant
 func parseTLSVersion(version string) uint16 {
 	switch version {
@@ -733,14 +683,10 @@ func (s *Server) startQUIC() {
 		return
 	}
 
-	// Create backend registry adapter for QUIC
-	quicRegistry := newKeystoreRegistry(s.keystores, string(s.config.Default))
-
 	quicConfig := &quic.Config{
-		Addr:            addr,
-		BackendRegistry: quicRegistry,
-		TLSConfig:       tlsConfig,
-		Logger:          quicLogger,
+		Addr:      addr,
+		TLSConfig: tlsConfig,
+		Logger:    quicLogger,
 	}
 
 	s.quicServer, err = quic.NewServer(quicConfig)

@@ -29,38 +29,31 @@ import (
 
 // Server represents a QUIC/HTTP3 server
 type Server struct {
-	addr            string
-	backendRegistry BackendRegistry
-	keystore        keychain.KeyStore // Default keystore for backward compatibility
-	tlsConfig       *tls.Config
-	authenticator   auth.Authenticator
-	logger          logger.Logger
-	server          *http3.Server
-	handler         http.Handler
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-}
-
-// BackendRegistry defines the interface for managing backends
-type BackendRegistry interface {
-	GetBackend(name string) (interface{}, error)
-	ListBackends() []string
+	addr          string
+	keystore      keychain.KeyStore // Default keystore for backward compatibility
+	tlsConfig     *tls.Config
+	authenticator auth.Authenticator
+	logger        logger.Logger
+	server        *http3.Server
+	handler       http.Handler
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 // Config holds the QUIC server configuration
 type Config struct {
-	Addr            string
-	BackendRegistry BackendRegistry
-	TLSConfig       *tls.Config
-	Authenticator   auth.Authenticator
-	Logger          logger.Logger
+	Addr          string
+	TLSConfig     *tls.Config
+	Authenticator auth.Authenticator
+	Logger        logger.Logger
 }
 
 // NewServer creates a new QUIC/HTTP3 server
+// The server uses the global keychain facade for backend management
 func NewServer(config *Config) (*Server, error) {
-	if config.BackendRegistry == nil {
-		return nil, fmt.Errorf("backend registry is required")
+	if !keychain.IsInitialized() {
+		return nil, fmt.Errorf("keychain facade must be initialized before creating QUIC server")
 	}
 
 	if config.Addr == "" {
@@ -94,17 +87,16 @@ func NewServer(config *Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{
-		addr:            config.Addr,
-		backendRegistry: config.BackendRegistry,
-		tlsConfig:       tlsConfig,
-		authenticator:   authenticator,
-		logger:          log,
-		ctx:             ctx,
-		cancel:          cancel,
+		addr:          config.Addr,
+		tlsConfig:     tlsConfig,
+		authenticator: authenticator,
+		logger:        log,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
-	// Set default keystore from first available backend for backward compatibility
-	keystore, err := s.getBackendKeyStore("")
+	// Set default keystore from default backend for backward compatibility
+	keystore, err := keychain.DefaultBackend()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to get default keystore: %w", err)
@@ -262,29 +254,4 @@ func (s *Server) authenticationMiddleware(next http.Handler) http.Handler {
 // Addr returns the server address
 func (s *Server) Addr() string {
 	return s.addr
-}
-
-// getBackendKeyStore returns a keystore for the specified backend
-// If backendName is empty, returns the first available backend's keystore
-func (s *Server) getBackendKeyStore(backendName string) (keychain.KeyStore, error) {
-	if backendName == "" {
-		// Get first available backend as default
-		backends := s.backendRegistry.ListBackends()
-		if len(backends) == 0 {
-			return nil, fmt.Errorf("no backends available")
-		}
-		backendName = backends[0]
-	}
-
-	backendRaw, err := s.backendRegistry.GetBackend(backendName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Try to cast to keychain.KeyStore
-	if ks, ok := backendRaw.(keychain.KeyStore); ok {
-		return ks, nil
-	}
-
-	return nil, fmt.Errorf("backend %s does not implement KeyStore interface", backendName)
 }

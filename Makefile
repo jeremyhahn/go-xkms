@@ -371,6 +371,14 @@ test:
 test-all: test test-importexport
 	@echo "$(GREEN)$(BOLD)✓ All unit tests (including hardware backends) complete!$(RESET)"
 
+.PHONY: race
+## race: Run tests with race detector on all backends (matches GitHub Actions)
+race:
+	@echo "$(CYAN)$(BOLD)→ Running race detector tests with all backends...$(RESET)"
+	@CGO_ENABLED=1 $(GO) test -race -short -tags="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault" ./... || \
+		(echo "$(RED)$(BOLD)✗ Race detector found issues$(RESET)" && exit 1)
+	@echo "$(GREEN)$(BOLD)✓ Race detector tests passed!$(RESET)"
+
 .PHONY: coverage
 ## coverage: Generate test coverage report
 coverage: test
@@ -1725,7 +1733,7 @@ verify: clean deps check test
 
 .PHONY: ci
 ## ci: Run CI pipeline (format check, vet, lint, build, test, integration-test)
-ci: deps fmt-check vet lint build test docker-test
+ci: deps fmt-check vet lint build test race docker-test
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 # ==============================================================================

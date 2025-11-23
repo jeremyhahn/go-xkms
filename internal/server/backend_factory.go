@@ -15,25 +15,16 @@ package server
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
+	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
-
-// BackendRegistry manages multiple backend instances for the server.
-// It allows the server to support multiple backends simultaneously,
-// enabling operations like key migration between backends.
-type BackendRegistry struct {
-	backends       map[string]types.Backend
-	defaultBackend string
-	mu             sync.RWMutex
-}
 
 // BackendConfig contains configuration for a single backend
 type BackendConfig struct {
@@ -43,28 +34,32 @@ type BackendConfig struct {
 	Config  map[string]interface{} // Backend-specific configuration
 }
 
-// BackendRegistryConfig contains configuration for all backends
-type BackendRegistryConfig struct {
+// BackendFactoryConfig contains configuration for backend initialization
+type BackendFactoryConfig struct {
 	DefaultBackend string          // Default backend to use if not specified
 	Backends       []BackendConfig // List of backend configurations
 }
 
-// NewBackendRegistry creates a new BackendRegistry.
+// Initialize creates backends from configuration and initializes the keychain.
 // If config is nil, it will initialize all compiled-in backends with defaults.
-func NewBackendRegistry(config *BackendRegistryConfig) (*BackendRegistry, error) {
-	bm := &BackendRegistry{
-		backends: make(map[string]types.Backend),
-	}
-
+// Returns error if no backends could be initialized.
+func Initialize(config *BackendFactoryConfig) error {
 	if config == nil {
 		// Auto-detect and initialize all compiled-in backends with defaults
-		config = &BackendRegistryConfig{
+		config = &BackendFactoryConfig{
 			DefaultBackend: "pkcs8",
 			Backends:       getDefaultBackendConfigs(),
 		}
 	}
 
-	bm.defaultBackend = config.DefaultBackend
+	// Create shared certificate storage (certs are always stored externally)
+	certDir := "/tmp/keystore/certs"
+	certStorage, err := createCertStorage(certDir)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate storage: %w", err)
+	}
+
+	keystores := make(map[string]keychain.KeyStore)
 
 	// Initialize each enabled backend
 	for _, bc := range config.Backends {
@@ -80,79 +75,40 @@ func NewBackendRegistry(config *BackendRegistryConfig) (*BackendRegistry, error)
 			continue
 		}
 
-		bm.backends[bc.Name] = backend
+		// Wrap backend in KeyStore with shared cert storage
+		ks, err := keychain.New(&keychain.Config{
+			Backend:     backend,
+			CertStorage: certStorage,
+		})
+		if err != nil {
+			fmt.Printf("Warning: Failed to create keystore for backend '%s': %v\n", bc.Name, err)
+			continue
+		}
+		keystores[bc.Name] = ks
 	}
 
 	// Ensure at least one backend is available
-	if len(bm.backends) == 0 {
-		return nil, fmt.Errorf("no backends available - at least one backend must be initialized")
+	if len(keystores) == 0 {
+		return fmt.Errorf("no backends available - at least one backend must be initialized")
 	}
 
-	// Ensure default backend exists
-	if _, ok := bm.backends[bm.defaultBackend]; !ok {
+	// Determine default backend
+	defaultBackend := config.DefaultBackend
+	if _, ok := keystores[defaultBackend]; !ok {
 		// Fall back to first available backend
-		for name := range bm.backends {
-			bm.defaultBackend = name
+		for name := range keystores {
+			defaultBackend = name
 			break
 		}
 	}
 
-	return bm, nil
-}
-
-// GetBackend returns a backend by name. If name is empty, returns the default backend.
-func (bm *BackendRegistry) GetBackend(name string) (types.Backend, error) {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-
-	if name == "" {
-		name = bm.defaultBackend
+	// Initialize the facade
+	facadeConfig := &keychain.FacadeConfig{
+		Backends:       keystores,
+		DefaultBackend: defaultBackend,
 	}
 
-	backend, ok := bm.backends[name]
-	if !ok {
-		return nil, fmt.Errorf("backend '%s' not found or not enabled", name)
-	}
-
-	return backend, nil
-}
-
-// GetDefaultBackend returns the default backend
-func (bm *BackendRegistry) GetDefaultBackend() types.Backend {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-	return bm.backends[bm.defaultBackend]
-}
-
-// ListBackends returns a list of available backend names
-func (bm *BackendRegistry) ListBackends() []string {
-	bm.mu.RLock()
-	defer bm.mu.RUnlock()
-
-	names := make([]string, 0, len(bm.backends))
-	for name := range bm.backends {
-		names = append(names, name)
-	}
-	return names
-}
-
-// Close closes all backends
-func (bm *BackendRegistry) Close() error {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-
-	var errs []error
-	for name, backend := range bm.backends {
-		if err := backend.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close backend '%s': %w", name, err))
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("errors closing backends: %v", errs)
-	}
-
-	return nil
+	return keychain.Initialize(facadeConfig)
 }
 
 // getDefaultBackendConfigs returns default configurations for all compiled-in backends.
@@ -349,4 +305,11 @@ func createKeyStorage(keyDir string) (storage.Backend, error) {
 		return memory.New(), nil
 	}
 	return file.New(keyDir)
+}
+
+func createCertStorage(certDir string) (storage.Backend, error) {
+	if certDir == "" || certDir == "memory" {
+		return memory.New(), nil
+	}
+	return file.New(certDir)
 }

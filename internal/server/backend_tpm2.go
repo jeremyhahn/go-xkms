@@ -15,69 +15,30 @@
 
 package server
 
-import (
-	"fmt"
-
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2"
-)
-
 // initTPM2Backend initializes the TPM2 backend if enabled in configuration
 func (s *Server) initTPM2Backend() error {
 	if s.config.Backends.TPM2 == nil || !s.config.Backends.TPM2.Enabled {
 		return nil
 	}
 
-	// Create storage for TPM2 metadata
-	keyStorage, err := file.New(s.config.Storage.Path + "/tpm2")
-	if err != nil {
-		return fmt.Errorf("failed to create TPM2 key storage: %w", err)
-	}
-
-	certStorage, err := file.New(s.config.Storage.Path + "/tpm2/certs")
-	if err != nil {
-		return fmt.Errorf("failed to create TPM2 cert storage: %w", err)
-	}
-
-	// Create TPM2 config with new structure
+	// Get device path for logging
 	devicePath := s.config.Backends.TPM2.DevicePath
 	if devicePath == "" {
 		devicePath = "/dev/tpmrm0"
 	}
 
-	tpm2Config := &tpm2.Config{
-		Device:         devicePath,
-		UseSimulator:   false,
-		EncryptSession: false,
-		KeyStore: &tpm2.KeyStoreConfig{
-			CN:             "tpm2-backend",
-			SRKHandle:      0x81000001,
-			PlatformPolicy: false,
-		},
-	}
-
-	// Create TPM2 params
-	params := &tpm2.Params{
-		Config:    tpm2Config,
-		BlobStore: keyStorage.(store.BlobStorer),
-		CertStore: certStorage.(store.CertificateStorer),
-	}
-
-	// Create TPM2 instance
-	tpm2Backend, err := tpm2.NewTPM2(params)
-	if err != nil {
-		return fmt.Errorf("failed to create TPM2 backend: %w", err)
-	}
-
-	// TODO: TPM2 needs a Backend wrapper to implement types.Backend interface
-	// The TrustedPlatformModule interface doesn't have all required methods:
-	// Type(), Capabilities(), GenerateKey(), GetKey(), ListKeys(), Signer(), Decrypter(), RotateKey()
-	// For now, TPM2 is initialized but not added to backends map.
+	// TODO: TPM2 backend not yet fully integrated
+	// The following issues need to be resolved:
+	// 1. Interface conflicts between storage.Backend and store.CertificateStorer
+	//    - Conflicting Delete method signatures prevent type assertions
+	//    - Requires adapter pattern for storage.Backend -> store.BlobStorer/CertificateStorer
+	// 2. Interface conflict between TrustedPlatformModule and types.Backend
+	//    - Missing Capabilities() (types.Capabilities, error) method
+	//    - Conflicting DeleteKey signature
+	//    - Requires adapter wrapper to implement types.Backend interface
+	// 3. TPM2.NewTPM2() panics with nil BlobStore/CertStore
+	//
 	// A proper pkg/backend/tpm2 wrapper should be created similar to awskms, azurekv, etc.
-	// s.backends["tpm2"] = tpm2Backend
-
-	_ = tpm2Backend // Prevent unused variable error
-	s.logger.Info("TPM2 backend initialized", "backend", "tpm2", "device", devicePath)
+	s.logger.Info("TPM2 backend not enabled (not yet integrated)", "backend", "tpm2", "device", devicePath)
 	return nil
 }

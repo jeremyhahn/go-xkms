@@ -9,7 +9,6 @@ import (
 	"os"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/crypto/aesgcm"
 	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -47,7 +46,10 @@ func (tpm *TPM2) MakeCredential(
 	}
 
 	if secret == nil {
-		secret = aesgcm.NewAESGCM(tpm).GenerateKey()
+		secret = make([]byte, 32) // AES-256 key
+		if _, err := tpm.random.Read(secret); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	digest := tpm2.TPM2BDigest{Buffer: secret}
 

@@ -113,21 +113,8 @@ func NewServer(cfg *Config) (*Server, error) {
 		})
 	}
 
-	// Determine default backend
-	defaultBackend := cfg.DefaultBackend
-	if defaultBackend == "" && len(cfg.Backends) > 0 {
-		// Use first backend as default if not specified
-		for name := range cfg.Backends {
-			defaultBackend = name
-			break
-		}
-	}
-
-	// Create backend registry
-	backendRegistry := NewBackendRegistry(cfg.Backends, defaultBackend)
-
-	// Create handler context
-	handlers := NewHandlerContext(backendRegistry, cfg.Version)
+	// Create handler context (uses keychain facade)
+	handlers := NewHandlerContext(cfg.Version)
 
 	// Create server instance
 	server := &Server{

@@ -463,34 +463,6 @@ func (tpm *TPM2) CreateSRK(
 		},
 	}
 
-	// // Add secret if provided, otherwise generate AES-256 key
-	// if srkAttrs.Secret == nil {
-	// 	tpm.logger.Info("Generating SRK seal secret")
-	// 	secretBytes = aesgcm.NewAESGCM(
-	// 		tpm.logger, tpm.debugSecrets, tpm).GenerateKey()
-
-	// 	if srkAttrs.PlatformPolicy {
-	// 		//  keyAttrs.Secret = NewPlatformSecret(tpm, keyAttrs)
-	// 		srkAttrs.Secret = store.NewClearPassword(secretBytes)
-	// 	} else {
-	// 		srkAttrs.Secret = store.NewClearPassword(secretBytes)
-	// 	}
-
-	// } else {
-	// 	secretBytes, err = srkAttrs.Secret.Bytes()
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	primaryKeyCMD.InSensitive.Sensitive.Data = tpm2.NewTPMUSensitiveCreate(
-	// 		&tpm2.TPM2BSensitiveData{
-	// 			Buffer: secretBytes,
-	// 		},
-	// 	)
-	// 	if tpm.debugSecrets {
-	// 		tpm.logger.Debugf("Sealing SRK secret: %s", secretBytes)
-	// 	}
-	// }
-
 	if tpm.config.EncryptSession && srkAttrs.Parent != nil {
 
 		session, closer, err := tpm.CreateSession(srkAttrs)

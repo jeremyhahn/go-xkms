@@ -33,8 +33,34 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
+      - name: Install and configure SoftHSM2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsofthsm2 softhsm2
+          # Create token directory
+          mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
+          # Create SoftHSM2 config
+          cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
+          directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
+          objectstore.backend = file
+          log.level = INFO
+          EOF
+          # Verify config file was created
+          echo "=== SoftHSM2 Config ==="
+          cat ${GITHUB_WORKSPACE}/softhsm2.conf
+          echo "=== Initializing token ==="
+          # Initialize test token
+          softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
+          # Verify token was created
+          echo "=== Token slots ==="
+          softhsm2-util --show-slots
+        env:
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
+
       - name: Run unit tests with coverage
         run: make coverage
+        env:
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
 
       - name: Calculate coverage
         id: coverage
@@ -217,7 +243,6 @@ jobs:
     needs: [test, lint]
     strategy:
       matrix:
-        backend: [software, pkcs8, tpm2, pkcs11, awskms, gcpkms, azurekv, vault]
         binary: [cli, server, rest-server, grpc-server, quic-server, mcp-server]
 
     steps:
@@ -235,21 +260,23 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev
 
-      - name: Build ${{ matrix.binary }} with ${{ matrix.backend }} backend
+      - name: Build ${{ matrix.binary }} with all backends
         env:
           CGO_ENABLED: 1
         run: |
-          TAGS="${{ matrix.backend }}"
+          # Build with ALL backend tags enabled to test full integration
+          TAGS="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault"
+          mkdir -p build
           if [ "${{ matrix.binary }}" = "cli" ]; then
-            go build -tags="${TAGS}" -o build/keychain-${{ matrix.backend }} ./cmd/cli/main.go
+            go build -tags="${TAGS}" -o build/keychain ./cmd/cli/main.go
           else
-            go build -tags="${TAGS}" -o build/keychain-${{ matrix.binary }}-${{ matrix.backend }} ./cmd/${{ matrix.binary }}/main.go
+            go build -tags="${TAGS}" -o build/keychain-${{ matrix.binary }} ./cmd/${{ matrix.binary }}/main.go
           fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.binary }}-${{ matrix.backend }}
+          name: binaries-${{ matrix.binary }}
           path: build/keychain-*
           retention-days: 7
 
@@ -373,5 +400,30 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Run tests with race detector
-        run: go test -race -short ./...
+      - name: Install dependencies for hardware backends
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsofthsm2 softhsm2 libtss2-dev
+
+      - name: Configure SoftHSM2
+        run: |
+          # Create token directory
+          mkdir -p ${GITHUB_WORKSPACE}/softhsm2/tokens
+          # Create SoftHSM2 config
+          cat > ${GITHUB_WORKSPACE}/softhsm2.conf << EOF
+          directories.tokendir = ${GITHUB_WORKSPACE}/softhsm2/tokens
+          objectstore.backend = file
+          log.level = INFO
+          EOF
+          # Initialize test token
+          softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
+          # Verify token was created
+          softhsm2-util --show-slots
+        env:
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
+
+      - name: Run tests with race detector (all backends)
+        env:
+          CGO_ENABLED: 1
+          SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
+        run: go test -race -short -tags="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault" ./...

@@ -18,7 +18,6 @@ package tpm2
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/rand"
 	"fmt"
 	"sync"
 
@@ -26,14 +25,6 @@ import (
 	kbackend "github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
-
-// SymmetricEncrypter provides symmetric encryption operations using TPM-protected keys.
-type SymmetricEncrypter interface {
-	// Encrypt encrypts plaintext using AES-GCM with a TPM-protected key.
-	Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error)
-	// Decrypt decrypts ciphertext using AES-GCM with a TPM-protected key.
-	Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error)
-}
 
 // tpm2SymmetricKey implements types.SymmetricKey for TPM-backed AES keys.
 // The actual key material is sealed in the TPM and never exposed.
@@ -116,10 +107,10 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 		return nil, kbackend.ErrKeyAlreadyExists
 	}
 
-	// Generate the AES key material using crypto/rand
+	// Generate the AES key material using the configured RNG
 	keyBytes := keySize / 8 // Convert bits to bytes
 	keyMaterial := make([]byte, keyBytes)
-	if _, err := rand.Read(keyMaterial); err != nil {
+	if _, err := tpm.random.Read(keyMaterial); err != nil {
 		return nil, fmt.Errorf("tpm2: failed to generate key material: %w", err)
 	}
 
@@ -271,9 +262,9 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 //   - attrs: Key attributes identifying the encryption key
 //
 // Returns:
-//   - SymmetricEncrypter for the key
+//   - types.SymmetricEncrypter for the key
 //   - Error if key doesn't exist or doesn't support symmetric operations
-func (tpm *TPM2) SymmetricEncrypter(attrs *types.KeyAttributes) (SymmetricEncrypter, error) {
+func (tpm *TPM2) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	// Verify the key exists
 	_, err := tpm.GetSymmetricKey(attrs)
 	if err != nil {
@@ -349,7 +340,7 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 		}
 	} else {
 		nonce = make([]byte, gcm.NonceSize())
-		if _, err := rand.Read(nonce); err != nil {
+		if _, err := e.tpm.random.Read(nonce); err != nil {
 			return nil, fmt.Errorf("tpm2: failed to generate nonce: %w", err)
 		}
 	}
@@ -538,4 +529,4 @@ func (tpm *TPM2) Tracker() types.AEADSafetyTracker {
 
 // Verify interface compliance at compile time
 var _ types.SymmetricKey = (*tpm2SymmetricKey)(nil)
-var _ SymmetricEncrypter = (*tpm2AESEncrypter)(nil)
+var _ types.SymmetricEncrypter = (*tpm2AESEncrypter)(nil)

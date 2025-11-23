@@ -1,7 +1,9 @@
 package tpm2
 
 import (
+	"crypto/rand"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -17,6 +19,7 @@ type mockTPMForPassword struct {
 	unsealErr    error
 	sealResponse *tpm2.CreateResponse
 	sealErr      error
+	randomSource io.Reader
 }
 
 func (m *mockTPMForPassword) Unseal(keyAttrs *types.KeyAttributes, backend store.KeyBackend) ([]byte, error) {
@@ -25,6 +28,13 @@ func (m *mockTPMForPassword) Unseal(keyAttrs *types.KeyAttributes, backend store
 
 func (m *mockTPMForPassword) Seal(keyAttrs *types.KeyAttributes, backend store.KeyBackend, overwrite bool) (*tpm2.CreateResponse, error) {
 	return m.sealResponse, m.sealErr
+}
+
+func (m *mockTPMForPassword) RandomSource() io.Reader {
+	if m.randomSource != nil {
+		return m.randomSource
+	}
+	return rand.Reader
 }
 
 // mockKeyBackendForPassword implements store.KeyBackend for testing

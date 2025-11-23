@@ -40,7 +40,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== GCP KMS Symmetric Encryption Example ===\n")
+	fmt.Println("=== GCP KMS Symmetric Encryption Example ===")
 
 	if err := gcpKMSExample(); err != nil {
 		log.Fatalf("GCP KMS example failed: %v\n", err)

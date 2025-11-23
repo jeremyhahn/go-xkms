@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6-alpha] - 2025-11-22
+
+### Added
+- Unified facade pattern for simplified multi-backend management
+- Backend factory pattern with auto-detection and configuration
+- Comprehensive test coverage for facade and factory (40+ test cases)
+- Input validation for all API endpoints to prevent injection attacks
+- Path traversal protection in file storage backend
+
+### Changed
+- Simplified API: `server.Initialize()` instead of `server.InitializeFacade()`
+- Refactored keychain initialization with auto-backend detection
+- Updated documentation and examples to reflect simplified API
+- Improved code coverage from 72.8% to 92.5% in keychain package
+
+### Security
+- Centralized validation at facade layer protects ALL public APIs (REST, gRPC, QUIC, CLI, MCP)
+- All user inputs validated before reaching any backend or storage layer
+- Created shared `pkg/validation` package for consistent validation across codebase
+- Facade layer validates all keyIDs, backend names, and key references
+- Defense in depth: Storage layer also validates (though facade should prevent bad input)
+- Rejects special characters, null bytes, and directory traversal attempts
+- Backend names: whitelist pattern `[a-z0-9\-]+` only (max 64 chars)
+- KeyIDs: whitelist pattern `[a-zA-Z0-9_\-\.]+` only (max 255 chars)
+- Key references support "backend:key-id" format with validation of both parts
+- File storage protected against path traversal attacks
+- Log injection prevention via sanitization of all logged user input
+
+### Fixed
+- Test coverage gaps in facade and backend factory code
+- Documentation examples now demonstrate clean, simple API usage
+- Potential path traversal vulnerability in file storage operations
+
 ## [0.1.5-alpha] - 2025-11-19
 
 ### Changed
@@ -212,6 +245,7 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - Commercial Licensing: licensing@automatethethings.com
 - AGPL-3.0 License: https://www.gnu.org/licenses/agpl-3.0.html
 
+[0.1.6-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.6-alpha
 [0.1.5-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.5-alpha
 [0.1.4-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.4-alpha
 [0.1.3-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.3-alpha

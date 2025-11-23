@@ -24,6 +24,7 @@ import (
 	"net"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
+	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -34,7 +35,7 @@ func (s *Server) handleHealth(req *JSONRPCRequest) (interface{}, error) {
 
 // handleListBackends handles the listBackends method
 func (s *Server) handleListBackends(req *JSONRPCRequest) (interface{}, error) {
-	backends := s.backendRegistry.ListBackends()
+	backends := keychain.Backends()
 	return ListBackendsResult{Backends: backends}, nil
 }
 
@@ -1223,20 +1224,20 @@ func (s *Server) handleCopyKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Get source and destination backends
-	sourceBackendRaw, err := s.backendRegistry.GetBackend(params.SourceBackend)
+	sourceKS, err := keychain.Backend(params.SourceBackend)
 	if err != nil {
 		return nil, fmt.Errorf("source backend not found: %w", err)
 	}
-	sourceBackend, ok := sourceBackendRaw.(backend.ImportExportBackend)
+	sourceBackend, ok := sourceKS.Backend().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("source backend does not support import/export operations")
 	}
 
-	destBackendRaw, err := s.backendRegistry.GetBackend(params.DestBackend)
+	destKS, err := keychain.Backend(params.DestBackend)
 	if err != nil {
 		return nil, fmt.Errorf("destination backend not found: %w", err)
 	}
-	destBackend, ok := destBackendRaw.(backend.ImportExportBackend)
+	destBackend, ok := destKS.Backend().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("destination backend does not support import/export operations")
 	}
