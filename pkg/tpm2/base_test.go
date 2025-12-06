@@ -11,10 +11,9 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
-	"github.com/spf13/afero"
 )
 
 var (
@@ -152,15 +151,18 @@ func createSim(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
 		logger.FatalError(err)
 	}
 	hexVal := hex.EncodeToString(buf)
-	tmp := fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
+	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	fs := afero.NewMemMapFs()
-	blobStore, err := store.NewFSBlobStore(logger, fs, tmp, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		logger.FatalError(err)
 	}
+	// Note: In a real test, we'd defer storageFactory.Close() but this helper
+	// doesn't return a cleanup function. The temp dir will be cleaned up on program exit.
 
-	fileBackend := store.NewFileBackend(logger, afero.NewMemMapFs(), tmp)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
 		EncryptSession: encrypt,

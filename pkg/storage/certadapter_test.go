@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,7 +57,7 @@ func createTestCert(t *testing.T, cn string) *x509.Certificate {
 }
 
 func TestCertAdapter_SaveAndGetCert(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -77,7 +76,7 @@ func TestCertAdapter_SaveAndGetCert(t *testing.T) {
 }
 
 func TestCertAdapter_DeleteCert(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -103,7 +102,7 @@ func TestCertAdapter_DeleteCert(t *testing.T) {
 }
 
 func TestCertAdapter_SaveAndGetCertChain(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -127,7 +126,7 @@ func TestCertAdapter_SaveAndGetCertChain(t *testing.T) {
 }
 
 func TestCertAdapter_ListCerts(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -153,7 +152,7 @@ func TestCertAdapter_ListCerts(t *testing.T) {
 }
 
 func TestCertAdapter_CertExists(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -175,7 +174,7 @@ func TestCertAdapter_CertExists(t *testing.T) {
 }
 
 func TestCertAdapter_ErrorCases(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 

@@ -94,7 +94,11 @@ func TestCreateWithExistingKey(t *testing.T) {
 	pubKey, err := k1.GenerateKeyPair()
 	require.NoError(t, err)
 
-	secretKey := k1.ExportSecretKey()
+	// ExportSecretKey returns a reference to internal memory that gets zeroed
+	// when Clean() is called, so we must copy it before cleaning
+	exportedKey := k1.ExportSecretKey()
+	secretKey := make([]byte, len(exportedKey))
+	copy(secretKey, exportedKey)
 	k1.Clean()
 
 	// Create new instance with existing secret key

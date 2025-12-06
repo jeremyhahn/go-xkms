@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +23,7 @@ func TestProvisioningWorkflow(t *testing.T) {
 	assert.NotNil(t, ekAttrs)
 	assert.Equal(t, types.KeyTypeEndorsement, ekAttrs.KeyType)
 	assert.NotNil(t, ekAttrs.TPMAttributes)
-	assert.NotEmpty(t, ekAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer)
+	assert.NotEmpty(t, ekAttrs.TPMAttributes.Name.Buffer)
 
 	// Verify SSRK was provisioned
 	ssrkAttrs, err := tpm.SSRKAttributes()

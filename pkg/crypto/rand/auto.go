@@ -35,7 +35,7 @@ func newAutoResolver(cfg *Config) (Resolver, error) {
 
 	// Try PKCS#11 first (highest priority)
 	if pkcs11Available() {
-		if pkcs11Resolver, pkcs11Err := newPKCS11Resolver(cfg.PKCS11Config); pkcs11Err == nil {
+		if pkcs11Resolver, pkcs11Err := newPKCS11Resolver(cfg.PKCS11Config); pkcs11Err == nil { //nolint:staticcheck // SA4023: build-tag conditional
 			if pkcs11Resolver.Available() {
 				resolver = pkcs11Resolver
 			} else {
@@ -46,7 +46,7 @@ func newAutoResolver(cfg *Config) (Resolver, error) {
 
 	// Try TPM2 if PKCS#11 not available
 	if resolver == nil && tpm2Available() {
-		if tpm2Resolver, tpm2Err := newTPM2Resolver(cfg.TPM2Config); tpm2Err == nil {
+		if tpm2Resolver, tpm2Err := newTPM2Resolver(cfg.TPM2Config); tpm2Err == nil { //nolint:staticcheck // SA4023: build-tag conditional
 			if tpm2Resolver.Available() {
 				resolver = tpm2Resolver
 			} else {

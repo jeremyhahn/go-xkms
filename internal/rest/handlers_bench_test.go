@@ -25,14 +25,14 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 )
 
 // createBenchmarkHandler creates a handler context for benchmarking
 func createBenchmarkHandler(b *testing.B) *HandlerContext {
 	b.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &software.Config{
 		KeyStorage: keyStorage,
 	}

@@ -73,7 +73,7 @@ type SoftwareBackendWithKeyAgreement interface {
 //
 // Example usage:
 //
-//	storage := memory.New()
+//	storage := storage.New()
 //	config := &software.Config{
 //	    KeyStorage: storage,
 //	}

@@ -27,7 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -151,8 +151,8 @@ func TestGenerateSymmetricKey(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -296,8 +296,8 @@ func TestGetSymmetricKey(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -389,8 +389,8 @@ func TestSymmetricEncrypter(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -495,8 +495,8 @@ func TestSymmetricEncrypt(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -636,8 +636,8 @@ func TestSymmetricDecrypt(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -728,8 +728,8 @@ func TestSymmetricEncryptDecryptRoundTrip(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -809,8 +809,8 @@ func TestBackendImplementsSymmetricBackend(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -831,8 +831,8 @@ func TestCapabilitiesSupportsSymmetricEncryption(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -866,8 +866,8 @@ func TestAWSKMSBackend_BytesLimit(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)

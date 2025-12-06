@@ -13,8 +13,8 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -723,7 +723,7 @@ func (m *mockTPMForSignatureTests) verifyTCGCSRSignature(
 	hash crypto.Hash,
 	keyAttrs *types.KeyAttributes) error {
 
-	pub := keyAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	pub := keyAttrs.TPMAttributes.Public
 
 	// Re-pack the CSR contents to get the digest
 	packedContents, err := PackIDevIDContent(&csr.CsrContents)

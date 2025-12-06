@@ -28,10 +28,20 @@ type MemoryBackend struct {
 }
 
 // NewMemoryBackend creates a new in-memory storage backend.
-func NewMemoryBackend() (*MemoryBackend, error) {
+func NewMemoryBackend() (Backend, error) {
 	return &MemoryBackend{
 		data: make(map[string][]byte),
 	}, nil
+}
+
+// NewMemory creates a new in-memory storage backend.
+// This is a convenience function that panics on error (which should never happen).
+func NewMemory() Backend {
+	backend, err := NewMemoryBackend()
+	if err != nil {
+		panic("failed to create memory backend: " + err.Error())
+	}
+	return backend
 }
 
 // Get retrieves the value for the given key.
@@ -130,4 +140,11 @@ func (m *MemoryBackend) Close() error {
 	m.closed = true
 	m.data = nil
 	return nil
+}
+
+// New creates a new in-memory storage backend.
+// This is a convenience function for testing and development.
+// For persistent storage, use file.New() with a directory path.
+func New() Backend {
+	return NewMemory()
 }

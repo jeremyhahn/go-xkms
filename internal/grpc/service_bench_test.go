@@ -21,14 +21,14 @@ import (
 	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 )
 
 // createBenchmarkService creates a gRPC service for benchmarking
 func createBenchmarkService(b *testing.B) *Service {
 	b.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &software.Config{
 		KeyStorage: keyStorage,
 	}

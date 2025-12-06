@@ -12,15 +12,15 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestThresholdBackend_GenerateQuantumKey_MLDSA44(t *testing.T) {
-	storage := memory.New()
-	config := DefaultConfig(storage)
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -56,8 +56,8 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA44(t *testing.T) {
 }
 
 func TestThresholdBackend_GenerateQuantumKey_MLDSA65(t *testing.T) {
-	storage := memory.New()
-	config := DefaultConfig(storage)
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -84,8 +84,8 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA65(t *testing.T) {
 }
 
 func TestThresholdBackend_GenerateQuantumKey_MLDSA87(t *testing.T) {
-	storage := memory.New()
-	config := DefaultConfig(storage)
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -112,8 +112,8 @@ func TestThresholdBackend_GenerateQuantumKey_MLDSA87(t *testing.T) {
 }
 
 func TestThresholdSigner_Quantum_MLDSA44(t *testing.T) {
-	storage := memory.New()
-	config := DefaultConfig(storage)
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -160,8 +160,8 @@ func TestSupportsQuantum(t *testing.T) {
 }
 
 func TestThresholdBackend_QuantumCapabilities(t *testing.T) {
-	storage := memory.New()
-	config := DefaultConfig(storage)
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
 	backend, err := NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()

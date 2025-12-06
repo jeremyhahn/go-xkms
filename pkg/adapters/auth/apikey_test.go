@@ -57,6 +57,7 @@ func TestNewAPIKeyAuthenticator(t *testing.T) {
 
 			if auth == nil {
 				t.Fatal("NewAPIKeyAuthenticator() returned nil")
+				return
 			}
 
 			if auth.headerName == "" {
@@ -103,6 +104,7 @@ func TestAPIKeyAuthenticator_AuthenticateHTTP_Header(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("AuthenticateHTTP() returned nil identity")
+		return
 	}
 
 	if result.Subject != "user1" {
@@ -149,6 +151,7 @@ func TestAPIKeyAuthenticator_AuthenticateHTTP_QueryParam(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("AuthenticateHTTP() returned nil identity")
+		return
 	}
 
 	if result.Subject != "user2" {
@@ -178,6 +181,7 @@ func TestAPIKeyAuthenticator_AuthenticateHTTP_BearerToken(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("AuthenticateHTTP() returned nil identity")
+		return
 	}
 
 	if result.Subject != "user3" {
@@ -261,6 +265,7 @@ func TestAPIKeyAuthenticator_AuthenticateHTTP_CustomHeaderName(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("AuthenticateHTTP() returned nil identity")
+		return
 	}
 
 	if result.Subject != "user4" {
@@ -295,6 +300,7 @@ func TestAPIKeyAuthenticator_AuthenticateHTTP_CustomQueryParam(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("AuthenticateHTTP() returned nil identity")
+		return
 	}
 
 	if result.Subject != "user5" {
@@ -328,6 +334,7 @@ func TestAPIKeyAuthenticator_AuthenticateGRPC_ValidKey(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("AuthenticateGRPC() returned nil identity")
+		return
 	}
 
 	if result.Subject != "grpc-user" {
@@ -362,6 +369,7 @@ func TestAPIKeyAuthenticator_AuthenticateGRPC_BearerToken(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("AuthenticateGRPC() returned nil identity")
+		return
 	}
 
 	if result.Subject != "bearer-user" {

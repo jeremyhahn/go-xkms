@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -90,7 +89,7 @@ func TestKeyStore_Close(t *testing.T) {
 // TestKeyStore_New_ErrorCases tests error handling in keystore creation
 func TestKeyStore_New_ErrorCases(t *testing.T) {
 	t.Run("NilBackend", func(t *testing.T) {
-		certStorage := memory.New()
+		certStorage := storage.New()
 		_, err := keychain.New(&keychain.Config{
 			Backend:     nil,
 			CertStorage: certStorage,

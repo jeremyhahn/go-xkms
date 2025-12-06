@@ -23,7 +23,7 @@ import (
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -126,8 +126,8 @@ func TestBackend_GenerateSymmetricKey(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -262,8 +262,8 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -360,8 +360,8 @@ func TestBackend_SymmetricEncrypter(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -480,8 +480,8 @@ func TestSymmetricEncrypter_Encrypt(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -646,8 +646,8 @@ func TestSymmetricEncrypter_Decrypt(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -719,8 +719,8 @@ func TestSymmetricEncrypter_RoundTrip(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -789,8 +789,8 @@ func TestBackend_Capabilities_SymmetricEncryption(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -817,8 +817,8 @@ func TestGCPKMSBackend_BytesLimit(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}

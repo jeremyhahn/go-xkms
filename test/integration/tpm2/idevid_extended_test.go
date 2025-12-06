@@ -73,7 +73,7 @@ func TestIntegration_CreateIDevID_Complete(t *testing.T) {
 			t.Error("IDevID handle not set")
 		}
 
-		if len(idevidAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer) == 0 {
+		if len(idevidAttrs.TPMAttributes.Name.Buffer) == 0 {
 			t.Error("IDevID name not set")
 		}
 
@@ -232,7 +232,7 @@ func TestIntegration_CreateIDevID_Persistence(t *testing.T) {
 
 		// Read the public area to verify persistence
 		readPub, err := tpm2.ReadPublic{
-			ObjectHandle: idevidHandle.(tpm2.TPMIDHObject),
+			ObjectHandle: idevidHandle,
 		}.Execute(tpmInstance.Transport())
 		if err != nil {
 			t.Fatalf("Failed to read persisted IDevID: %v", err)
@@ -244,7 +244,7 @@ func TestIntegration_CreateIDevID_Persistence(t *testing.T) {
 		}
 
 		// Names should match
-		if len(readPub.Name.Buffer) != len(idevidAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer) {
+		if len(readPub.Name.Buffer) != len(idevidAttrs.TPMAttributes.Name.Buffer) {
 			t.Error("Persisted IDevID name length mismatch")
 		}
 
@@ -292,7 +292,7 @@ func TestIntegration_CreateIDevID_Attributes(t *testing.T) {
 			msg   string
 		}{
 			{"Handle", func() bool { return idevidAttrs.TPMAttributes.Handle != 0 }, "Handle is zero"},
-			{"Name", func() bool { return len(idevidAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer) > 0 }, "Name is empty"},
+			{"Name", func() bool { return len(idevidAttrs.TPMAttributes.Name.Buffer) > 0 }, "Name is empty"},
 			{"PublicKey", func() bool { return len(idevidAttrs.TPMAttributes.PublicKeyBytes) > 0 }, "Public key bytes empty"},
 			{"Signature", func() bool { return len(idevidAttrs.TPMAttributes.Signature) > 0 }, "Signature is empty"},
 			{"CertifyInfo", func() bool { return len(idevidAttrs.TPMAttributes.CertifyInfo) > 0 }, "Certify info is empty"},

@@ -42,7 +42,7 @@ func TestTPMSessionEncryption(t *testing.T) {
 	}
 
 	// Seal data (generates 32-byte AES key internally)
-	_, err = tpmInstance.Seal(sealAttrs, nil, false)
+	_, err = tpmInstance.SealKey(sealAttrs, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to seal data: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestTPMSessionNoEncryption(t *testing.T) {
 	}
 
 	// Seal data without encryption
-	_, err = tpmInstance.Seal(sealAttrs, nil, false)
+	_, err = tpmInstance.SealKey(sealAttrs, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to seal data: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestTPMMultipleOperationsEncryption(t *testing.T) {
 		},
 	}
 
-	sealed, err := tpmInstance.Seal(sealAttrs, nil, false)
+	sealed, err := tpmInstance.SealKey(sealAttrs, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to seal: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestTPMMultipleOperationsEncryption(t *testing.T) {
 	capture.Clear()
 	t.Log("Test 2: Unseal operation with encryption...")
 
-	unsealed, err := tpmInstance.Unseal(sealAttrs, nil)
+	unsealed, err := tpmInstance.UnsealKey(sealAttrs, nil)
 	if err != nil {
 		t.Fatalf("Failed to unseal: %v", err)
 	}

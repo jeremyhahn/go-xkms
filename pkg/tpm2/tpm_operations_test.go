@@ -14,10 +14,9 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	blob "github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
-	"github.com/spf13/afero"
 )
 
 func TestTPMOperations(t *testing.T) {
@@ -35,15 +34,17 @@ func TestTPMOperations(t *testing.T) {
 		t.Fatalf("Failed to generate random bytes: %v", err)
 	}
 	hexVal := hex.EncodeToString(buf)
-	tmp := fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
+	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	fs := afero.NewMemMapFs()
-	blobStore, err := blob.NewFSBlobStore(logger, fs, tmp, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
-		t.Fatalf("Failed to create blob store: %v", err)
+		t.Fatalf("Failed to create storage factory: %v", err)
 	}
+	defer func() { _ = storageFactory.Close() }()
 
-	fileBackend := blob.NewFileBackend(logger, afero.NewMemMapFs(), tmp)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
 		EncryptSession: false,
@@ -54,9 +55,9 @@ func TestTPMOperations(t *testing.T) {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: blob.DEFAULT_PASSWORD,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		},
@@ -70,7 +71,7 @@ func TestTPMOperations(t *testing.T) {
 			Hash:         crypto.SHA256.String(),
 			Handle:       uint32(0x81010002),
 			KeyAlgorithm: x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 			SignatureAlgorithm: x509.SHA256WithRSA.String(),
@@ -84,7 +85,7 @@ func TestTPMOperations(t *testing.T) {
 			Model:              "test-model",
 			Pad:                true,
 			PlatformPolicy:     false,
-			RSAConfig:          &blob.RSAConfig{KeySize: 2048},
+			RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			Serial:             "test-serial",
 			SignatureAlgorithm: x509.SHA256WithRSA.String(),
 		},
@@ -92,9 +93,9 @@ func TestTPMOperations(t *testing.T) {
 		PlatformPCRBank: debugPCRBank,
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: blob.DEFAULT_PASSWORD,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		},
@@ -507,7 +508,7 @@ func TestTPMOperations(t *testing.T) {
 		}
 
 		credentialBlob, encryptedSecret, digest, err := tpmInstance.MakeCredential(
-			iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			iakAttrs.TPMAttributes.Name,
 			nil,
 		)
 		if err != nil {
@@ -533,7 +534,7 @@ func TestTPMOperations(t *testing.T) {
 
 		secret := []byte("test-secret-12345678901234567890")
 		credentialBlob, encryptedSecret, digest, err := tpmInstance.MakeCredential(
-			iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			iakAttrs.TPMAttributes.Name,
 			secret,
 		)
 		if err != nil {
@@ -686,8 +687,8 @@ func TestTPMOperations(t *testing.T) {
 	})
 
 	t.Run("SetHierarchyAuthAndRevert", func(t *testing.T) {
-		oldAuth := blob.NewClearPassword(nil)
-		newAuth := blob.NewClearPassword([]byte("test-auth"))
+		oldAuth := store.NewClearPassword(nil)
+		newAuth := store.NewClearPassword([]byte("test-auth"))
 
 		ownerHierarchy := tpm2.TPMRHOwner
 		err := tpmInstance.SetHierarchyAuth(oldAuth, newAuth, &ownerHierarchy)
@@ -890,8 +891,8 @@ func TestTPMOperations(t *testing.T) {
 		}
 
 		session, closer, err := tpmInstance.HMACSaltedSession(
-			ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-			ekAttrs.TPMAttributes.Public.(tpm2.TPMTPublic),
+			ekAttrs.TPMAttributes.Handle,
+			ekAttrs.TPMAttributes.Public,
 			nil,
 		)
 		if err != nil {
@@ -1056,7 +1057,7 @@ func TestTPMOperations(t *testing.T) {
 			Handle:        0x81010001,
 			HierarchyAuth: "test-auth",
 			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		}
@@ -1077,7 +1078,7 @@ func TestTPMOperations(t *testing.T) {
 			CN:           "test-srk",
 			Handle:       0x81000001,
 			KeyAlgorithm: x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		}
@@ -1100,7 +1101,7 @@ func TestTPMOperations(t *testing.T) {
 			Handle:             0x81010002,
 			KeyAlgorithm:       x509.RSA.String(),
 			SignatureAlgorithm: x509.SHA256WithRSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		}
@@ -1125,7 +1126,7 @@ func TestTPMOperations(t *testing.T) {
 			SignatureAlgorithm: x509.SHA256WithRSA.String(),
 			Model:              "test-model",
 			Serial:             "test-serial",
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		}
@@ -1153,7 +1154,7 @@ func TestTPMOperations(t *testing.T) {
 		testData := []byte("test data for signing")
 		hash := sha256.Sum256(testData)
 
-		signerOpts := &blob.SignerOpts{
+		signerOpts := &store.SignerOpts{
 			KeyAttributes: iakAttrs,
 		}
 
@@ -1235,8 +1236,8 @@ func TestTPMOperations(t *testing.T) {
 
 		// Encrypt
 		ciphertext, err := tpmInstance.RSAEncrypt(
-			ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-			ekAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			ekAttrs.TPMAttributes.Handle,
+			ekAttrs.TPMAttributes.Name,
 			message,
 		)
 		if err != nil {
@@ -1288,7 +1289,7 @@ func TestTPMOperations(t *testing.T) {
 	})
 
 	t.Run("NonceSession", func(t *testing.T) {
-		hierarchyAuth := blob.NewClearPassword(nil)
+		hierarchyAuth := store.NewClearPassword(nil)
 		session, closer, err := tpmInstance.NonceSession(hierarchyAuth)
 		if err != nil {
 			t.Fatalf("NonceSession failed: %v", err)
@@ -1467,15 +1468,17 @@ func TestTPMOperationsECC(t *testing.T) {
 		t.Fatalf("Failed to generate random bytes: %v", err)
 	}
 	hexVal := hex.EncodeToString(buf)
-	tmp := fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
+	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	fs := afero.NewMemMapFs()
-	blobStore, err := blob.NewFSBlobStore(logger, fs, tmp, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
-		t.Fatalf("Failed to create blob store: %v", err)
+		t.Fatalf("Failed to create storage factory: %v", err)
 	}
+	defer func() { _ = storageFactory.Close() }()
 
-	fileBackend := blob.NewFileBackend(logger, afero.NewMemMapFs(), tmp)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
 		EncryptSession: false,
@@ -1486,9 +1489,9 @@ func TestTPMOperationsECC(t *testing.T) {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: blob.DEFAULT_PASSWORD,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.ECDSA.String(),
-			ECCConfig: &blob.ECCConfig{
+			ECCConfig: &store.ECCConfig{
 				Curve: "P256",
 			},
 		},
@@ -1502,7 +1505,7 @@ func TestTPMOperationsECC(t *testing.T) {
 			Hash:         crypto.SHA256.String(),
 			Handle:       uint32(0x81010002),
 			KeyAlgorithm: x509.ECDSA.String(),
-			ECCConfig: &blob.ECCConfig{
+			ECCConfig: &store.ECCConfig{
 				Curve: "P256",
 			},
 			SignatureAlgorithm: x509.ECDSAWithSHA256.String(),
@@ -1511,9 +1514,9 @@ func TestTPMOperationsECC(t *testing.T) {
 		PlatformPCRBank: debugPCRBank,
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: blob.DEFAULT_PASSWORD,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.ECDSA.String(),
-			ECCConfig: &blob.ECCConfig{
+			ECCConfig: &store.ECCConfig{
 				Curve: "P256",
 			},
 		},
@@ -1614,15 +1617,17 @@ func TestTPMOperationsMultipleRandomReads(t *testing.T) {
 		t.Fatalf("Failed to generate random bytes: %v", err)
 	}
 	hexVal := hex.EncodeToString(buf)
-	tmp := fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
+	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	fs := afero.NewMemMapFs()
-	blobStore, err := blob.NewFSBlobStore(logger, fs, tmp, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
-		t.Fatalf("Failed to create blob store: %v", err)
+		t.Fatalf("Failed to create storage factory: %v", err)
 	}
+	defer func() { _ = storageFactory.Close() }()
 
-	fileBackend := blob.NewFileBackend(logger, afero.NewMemMapFs(), tmp)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
 		EncryptSession: false,
@@ -1633,9 +1638,9 @@ func TestTPMOperationsMultipleRandomReads(t *testing.T) {
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
-			HierarchyAuth: blob.DEFAULT_PASSWORD,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		},
@@ -1649,7 +1654,7 @@ func TestTPMOperationsMultipleRandomReads(t *testing.T) {
 			Hash:         crypto.SHA256.String(),
 			Handle:       uint32(0x81010002),
 			KeyAlgorithm: x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 			SignatureAlgorithm: x509.SHA256WithRSA.String(),
@@ -1658,9 +1663,9 @@ func TestTPMOperationsMultipleRandomReads(t *testing.T) {
 		PlatformPCRBank: debugPCRBank,
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: blob.DEFAULT_PASSWORD,
+			HierarchyAuth: store.DEFAULT_PASSWORD,
 			KeyAlgorithm:  x509.RSA.String(),
-			RSAConfig: &blob.RSAConfig{
+			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
 			},
 		},

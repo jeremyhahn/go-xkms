@@ -27,7 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,8 +115,8 @@ func TestDecrypter(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
@@ -236,8 +236,8 @@ func TestRSADecrypt_PKCS1v15(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
@@ -415,8 +415,8 @@ func TestRSADecrypt_OAEP(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
@@ -558,8 +558,8 @@ func TestDecrypterRoundTrip(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")

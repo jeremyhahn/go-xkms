@@ -8,14 +8,14 @@ package threshold
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConfig_Validate(t *testing.T) {
-	storage := memory.New()
+	keyStorage := storage.New()
 
 	tests := []struct {
 		name    string
@@ -26,8 +26,8 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "valid config",
 			config: &Config{
-				KeyStorage:       storage,
-				ShareStorage:     storage,
+				KeyStorage:       keyStorage,
+				ShareStorage:     keyStorage,
 				LocalShareID:     1,
 				DefaultThreshold: 3,
 				DefaultTotal:     5,
@@ -48,7 +48,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "threshold too low",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 1,
 				DefaultTotal:     5,
 			},
@@ -58,7 +58,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "total less than threshold",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 5,
 				DefaultTotal:     3,
 			},
@@ -68,7 +68,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "threshold exceeds maximum",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 256,
 				DefaultTotal:     300,
 			},
@@ -78,7 +78,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "total exceeds maximum",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 3,
 				DefaultTotal:     256,
 			},
@@ -88,7 +88,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "participants mismatch",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 3,
 				DefaultTotal:     5,
 				Participants:     []string{"n1", "n2", "n3"}, // Only 3, should be 5
@@ -99,7 +99,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "invalid local share ID (too high)",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				LocalShareID:     10,
 				DefaultThreshold: 3,
 				DefaultTotal:     5,
@@ -110,7 +110,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "invalid local share ID (zero is allowed)",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				LocalShareID:     0,
 				DefaultThreshold: 3,
 				DefaultTotal:     5,
@@ -120,7 +120,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "no participants (allowed)",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 3,
 				DefaultTotal:     5,
 				Participants:     nil,
@@ -130,7 +130,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "defaults to Shamir algorithm",
 			config: &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 3,
 				DefaultTotal:     5,
 			},
@@ -162,12 +162,12 @@ func TestConfig_Validate(t *testing.T) {
 }
 
 func TestDefaultConfig(t *testing.T) {
-	storage := memory.New()
-	config := DefaultConfig(storage)
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
 
 	require.NotNil(t, config)
-	assert.Equal(t, storage, config.KeyStorage)
-	assert.Equal(t, storage, config.ShareStorage)
+	assert.Equal(t, keyStorage, config.KeyStorage)
+	assert.Equal(t, keyStorage, config.ShareStorage)
 	assert.Equal(t, 1, config.LocalShareID)
 	assert.Equal(t, 3, config.DefaultThreshold)
 	assert.Equal(t, 5, config.DefaultTotal)
@@ -180,7 +180,7 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestConfig_AlgorithmTypes(t *testing.T) {
-	storage := memory.New()
+	keyStorage := storage.New()
 
 	algorithms := []types.ThresholdAlgorithm{
 		types.ThresholdAlgorithmShamir,
@@ -189,7 +189,7 @@ func TestConfig_AlgorithmTypes(t *testing.T) {
 	for _, algo := range algorithms {
 		t.Run(string(algo), func(t *testing.T) {
 			config := &Config{
-				KeyStorage:       storage,
+				KeyStorage:       keyStorage,
 				DefaultThreshold: 3,
 				DefaultTotal:     5,
 				DefaultAlgorithm: algo,

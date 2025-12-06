@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/stretchr/testify/assert"
 )
 

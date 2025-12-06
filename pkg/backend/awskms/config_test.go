@@ -19,7 +19,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 )
 
 // TestConfigValidate tests the Config.Validate method.
@@ -34,8 +34,8 @@ func TestConfigValidate(t *testing.T) {
 			name: "valid minimal config",
 			config: &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -45,8 +45,8 @@ func TestConfigValidate(t *testing.T) {
 				Region:          "us-west-2",
 				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-				KeyStorage:      memory.New(),
-				CertStorage:     memory.New(),
+				KeyStorage:      storage.New(),
+				CertStorage:     storage.New(),
 			},
 			wantErr: false,
 		},
@@ -57,8 +57,8 @@ func TestConfigValidate(t *testing.T) {
 				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 				SessionToken:    "FwoGZXIvYXdzEBYaDCAMPLE",
-				KeyStorage:      memory.New(),
-				CertStorage:     memory.New(),
+				KeyStorage:      storage.New(),
+				CertStorage:     storage.New(),
 			},
 			wantErr: false,
 		},
@@ -67,8 +67,8 @@ func TestConfigValidate(t *testing.T) {
 			config: &Config{
 				Region:      "local",
 				Endpoint:    "http://localhost:4566",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -77,8 +77,8 @@ func TestConfigValidate(t *testing.T) {
 			config: &Config{
 				Region:      "ap-southeast-1",
 				KeyID:       "arn:aws:kms:ap-southeast-1:123456789012:key/12345678-1234-1234-1234-123456789012",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -101,8 +101,8 @@ func TestConfigValidate(t *testing.T) {
 			name: "invalid region format",
 			config: &Config{
 				Region:      "invalid_region",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidRegion,
@@ -111,8 +111,8 @@ func TestConfigValidate(t *testing.T) {
 			name: "region with uppercase",
 			config: &Config{
 				Region:      "US-EAST-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidRegion,
@@ -122,8 +122,8 @@ func TestConfigValidate(t *testing.T) {
 			config: &Config{
 				Region:      "us-east-1",
 				AccessKeyID: "AKIAIOSFODNN7EXAMPLE",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidConfig,
@@ -133,8 +133,8 @@ func TestConfigValidate(t *testing.T) {
 			config: &Config{
 				Region:          "us-east-1",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-				KeyStorage:      memory.New(),
-				CertStorage:     memory.New(),
+				KeyStorage:      storage.New(),
+				CertStorage:     storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidConfig,
@@ -143,8 +143,8 @@ func TestConfigValidate(t *testing.T) {
 			name: "valid LocalStack region",
 			config: &Config{
 				Region:      "us-east-1-local",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -173,8 +173,8 @@ func TestConfigString(t *testing.T) {
 			name: "minimal config",
 			config: &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantSubstrings: []string{
 				"us-east-1",
@@ -188,8 +188,8 @@ func TestConfigString(t *testing.T) {
 				Region:          "us-west-2",
 				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-				KeyStorage:      memory.New(),
-				CertStorage:     memory.New(),
+				KeyStorage:      storage.New(),
+				CertStorage:     storage.New(),
 			},
 			wantSubstrings: []string{
 				"us-west-2",
@@ -207,8 +207,8 @@ func TestConfigString(t *testing.T) {
 				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 				SessionToken:    "FwoGZXIvYXdzEBYaDCAMPLE",
-				KeyStorage:      memory.New(),
-				CertStorage:     memory.New(),
+				KeyStorage:      storage.New(),
+				CertStorage:     storage.New(),
 			},
 			wantSubstrings: []string{
 				"eu-west-1",
@@ -223,8 +223,8 @@ func TestConfigString(t *testing.T) {
 			config: &Config{
 				Region:      "local",
 				Endpoint:    "http://localhost:4566",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantSubstrings: []string{
 				"local",
@@ -237,8 +237,8 @@ func TestConfigString(t *testing.T) {
 			config: &Config{
 				Region:      "ap-southeast-1",
 				KeyID:       "arn:aws:kms:ap-southeast-1:123456789012:key/12345678-1234-1234-1234-123456789012",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantSubstrings: []string{
 				"ap-southeast-1",
@@ -251,8 +251,8 @@ func TestConfigString(t *testing.T) {
 			config: &Config{
 				Region:      "us-east-1",
 				Debug:       true,
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantSubstrings: []string{
 				"us-east-1",

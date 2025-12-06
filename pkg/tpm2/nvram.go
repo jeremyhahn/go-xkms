@@ -2,7 +2,7 @@ package tpm2
 
 import (
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"math"
 )
@@ -24,7 +24,7 @@ func (tpm *TPM2) NVWrite(
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	secretBytes = keyAttrs.Secret.Bytes()
+	secretBytes = keyAttrs.SealData.Bytes()
 
 	var policyDigest tpm2.TPM2BDigest
 	var policyRead bool
@@ -33,9 +33,9 @@ func (tpm *TPM2) NVWrite(
 		policyRead = true
 	}
 
-	hierarchy := keyAttrs.TPMAttributes.Hierarchy.(tpm2.TPMHandle)
-	handle := keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
-	hashAlg := keyAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash)
+	hierarchy := keyAttrs.TPMAttributes.Hierarchy
+	handle := keyAttrs.TPMAttributes.Handle
+	hashAlg := keyAttrs.TPMAttributes.HashAlg
 
 	defs := tpm2.NVDefineSpace{
 		AuthHandle: tpm2.AuthHandle{
@@ -141,8 +141,8 @@ func (tpm *TPM2) NVRead(
 	}
 	defer func() { _ = closer() }()
 
-	hierarchy := keyAttrs.TPMAttributes.Hierarchy.(tpm2.TPMHandle)
-	handle := keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
+	hierarchy := keyAttrs.TPMAttributes.Hierarchy
+	handle := keyAttrs.TPMAttributes.Handle
 
 	// Read the NV RAM bytes
 	readPubRsp, err := tpm2.NVReadPublic{

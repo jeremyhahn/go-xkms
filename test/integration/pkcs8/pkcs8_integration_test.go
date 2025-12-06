@@ -26,7 +26,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -34,7 +33,7 @@ import (
 func createTestBackend(t *testing.T) (*pkcs8.PKCS8Backend, storage.Backend) {
 	t.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &pkcs8.Config{
 		KeyStorage: keyStorage,
 	}

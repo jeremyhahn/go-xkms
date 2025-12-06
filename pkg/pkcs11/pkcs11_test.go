@@ -30,14 +30,14 @@ import (
 	pkcs11backend "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/opaque"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 // TestNewKeyStore tests creating a new PKCS#11 keychain.
 func TestNewKeyStore(t *testing.T) {
 	t.Run("nil backend", func(t *testing.T) {
-		ks, err := NewKeyStore(nil, memory.New())
+		ks, err := NewKeyStore(nil, storage.New())
 		if err == nil {
 			t.Fatal("Expected error but got none")
 		}

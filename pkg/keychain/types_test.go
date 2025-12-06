@@ -31,8 +31,12 @@ type (
 	RSAAttributes = types.RSAAttributes
 	ECCAttributes = types.ECCAttributes
 	AESAttributes = types.AESAttributes
+	TPMAttributes = types.TPMAttributes
 	FSExtension   = types.FSExtension
 )
+
+// Function aliases for backward compatibility in tests
+var NewSealData = types.NewSealData
 
 // Constant aliases for backward compatibility in tests
 const (
@@ -254,7 +258,8 @@ func TestKeyAttributes_String(t *testing.T) {
 				SignatureAlgorithm: x509.SHA256WithRSA,
 				StoreType:          StorePKCS8,
 				Password:           wrapPassword(NewClearPassword([]byte("test-password"))),
-				Secret:             wrapPassword(NewClearPassword([]byte("test-secret"))),
+				SealData:           NewSealData([]byte("test-seal-data")),
+				TPMAttributes:      &TPMAttributes{},
 				RSAAttributes: &RSAAttributes{
 					KeySize: 4096,
 				},
@@ -263,7 +268,7 @@ func TestKeyAttributes_String(t *testing.T) {
 				return strings.Contains(s, "Debug: true") &&
 					strings.Contains(s, "Secrets") &&
 					strings.Contains(s, "Password: test-password") &&
-					strings.Contains(s, "Secret: test-secret")
+					strings.Contains(s, "SealData: test-seal-data")
 			},
 		},
 	}

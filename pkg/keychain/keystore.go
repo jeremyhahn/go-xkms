@@ -14,6 +14,7 @@
 package keychain
 
 import (
+	"context"
 	"crypto"
 	"crypto/tls"
 	"crypto/x509"
@@ -147,6 +148,25 @@ type KeyStore interface {
 	//   decrypter, err := keystore.GetDecrypterByID("awskms:rsa-key")
 	//   plaintext, _ := decrypter.Decrypt(rand.Reader, ciphertext, opts)
 	GetDecrypterByID(keyID string) (crypto.Decrypter, error)
+
+	// ========================================================================
+	// Sealing Operations (delegated to backend)
+	// ========================================================================
+
+	// Seal encrypts/protects data using the backend's native sealing mechanism.
+	// Different backends provide different security guarantees:
+	//   - TPM2: PCR-bound hardware sealing
+	//   - PKCS#11: HSM-backed AES-GCM encryption
+	//   - AWS/Azure/GCP KMS: Cloud-managed envelope encryption
+	//   - PKCS#8: Software-based HKDF + AES-GCM
+	Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error)
+
+	// Unseal decrypts/recovers data that was previously sealed.
+	// The sealed data must have been created by the same backend type.
+	Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error)
+
+	// CanSeal returns true if the backend supports sealing operations.
+	CanSeal() bool
 
 	// ========================================================================
 	// Lifecycle

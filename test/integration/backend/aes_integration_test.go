@@ -22,7 +22,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -30,7 +29,7 @@ import (
 func createAESBackend(t *testing.T) (types.SymmetricBackend, storage.Backend) {
 	t.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &aes.Config{
 		KeyStorage: keyStorage,
 		Tracker:    backend.NewMemoryAEADTracker(),

@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-tpm/tpm2"
 	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -437,7 +436,7 @@ func TestIntegration_IDevIDCertificate_Generation(t *testing.T) {
 			t.Error("IDevID TPM handle is zero")
 		}
 
-		if len(idevidAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer) == 0 {
+		if len(idevidAttrs.TPMAttributes.Name.Buffer) == 0 {
 			t.Error("IDevID TPM name is empty")
 		}
 
@@ -479,7 +478,7 @@ func TestIntegration_IDevIDCertificate_Generation(t *testing.T) {
 		}
 
 		// Handle should be in the persistent range
-		handle := idevidAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
+		handle := idevidAttrs.TPMAttributes.Handle
 		if handle < 0x81000000 || handle > 0x81FFFFFF {
 			t.Errorf("IDevID handle not in persistent range: 0x%08x", handle)
 		}

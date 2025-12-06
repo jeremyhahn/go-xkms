@@ -30,7 +30,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -38,7 +37,7 @@ import (
 func createSoftwareBackend(t *testing.T) (types.SymmetricBackend, storage.Backend) {
 	t.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &software.Config{
 		KeyStorage: keyStorage,
 		Tracker:    backend.NewMemoryAEADTracker(),

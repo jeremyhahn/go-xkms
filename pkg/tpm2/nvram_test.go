@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -45,13 +45,13 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 				Parent:         ekAttrs,
 				Password:       store.NewClearPassword([]byte("test")),
 				PlatformPolicy: policyOpt,
+				SealData:       types.NewSealData(secret),
 				TPMAttributes: &types.TPMAttributes{
 					Handle:        tpm2.TPMHandle(nvramOwnerIndex),
 					HashAlg:       tpm2.TPMAlgSHA256,
 					Hierarchy:     tpm2.TPMRHOwner,
 					HierarchyAuth: userPIN,
 				},
-				Secret: store.NewClearPassword(secret),
 			}
 
 			// providing valid auth - should work

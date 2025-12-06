@@ -8,7 +8,7 @@ import (
 	"os"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v2"
@@ -275,7 +275,7 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 
 	defs := tpm2.NVDefineSpace{
 		AuthHandle: tpm2.AuthHandle{
-			Handle: ekAttrs.TPMAttributes.Hierarchy.(tpm2.TPMHandle),
+			Handle: ekAttrs.TPMAttributes.Hierarchy,
 			Auth:   tpm2.PasswordAuth(hierarchyAuth),
 		},
 		PublicInfo: tpm2.New2B(
@@ -315,7 +315,7 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 
 	write := tpm2.NVWrite{
 		AuthHandle: tpm2.AuthHandle{
-			Handle: ekAttrs.TPMAttributes.Hierarchy.(tpm2.TPMHandle),
+			Handle: ekAttrs.TPMAttributes.Hierarchy,
 			Auth:   tpm2.PasswordAuth(hierarchyAuth),
 		},
 		NVIndex: tpm2.NamedHandle{

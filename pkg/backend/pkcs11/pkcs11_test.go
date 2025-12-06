@@ -30,7 +30,7 @@ import (
 
 	"github.com/ThalesGroup/crypto11"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/miekg/pkcs11"
 )
@@ -41,8 +41,8 @@ func testConfig(library, tokenLabel string) *Config {
 	return &Config{
 		Library:     library,
 		TokenLabel:  tokenLabel,
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 }
 
@@ -120,8 +120,8 @@ func TestNewBackend(t *testing.T) {
 			name: "invalid config - missing library",
 			config: &Config{
 				TokenLabel:  "test",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 		},
@@ -129,8 +129,8 @@ func TestNewBackend(t *testing.T) {
 			name: "invalid config - missing token label",
 			config: &Config{
 				Library:     tempLib,
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 		},
@@ -628,8 +628,8 @@ func TestBackend_Login(t *testing.T) {
 			Library:     tempLib,
 			TokenLabel:  "test",
 			PIN:         "", // Empty PIN
-			KeyStorage:  memory.New(),
-			CertStorage: memory.New(),
+			KeyStorage:  storage.New(),
+			CertStorage: storage.New(),
 		}
 
 		b, err := NewBackend(config)
@@ -648,8 +648,8 @@ func TestBackend_Login(t *testing.T) {
 			Library:     tempLib,
 			TokenLabel:  "test",
 			PIN:         "1234",
-			KeyStorage:  memory.New(),
-			CertStorage: memory.New(),
+			KeyStorage:  storage.New(),
+			CertStorage: storage.New(),
 		}
 
 		b, err := NewBackend(config)
@@ -1133,8 +1133,8 @@ func TestBackend_ContextCache(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test-cache",
 		PIN:         "1234",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	// Verify cache is empty
@@ -1333,8 +1333,8 @@ func TestBackend_Close_WithContextCache(t *testing.T) {
 			Library:     tempLib,
 			TokenLabel:  "test-cache-1",
 			PIN:         "1234",
-			KeyStorage:  memory.New(),
-			CertStorage: memory.New(),
+			KeyStorage:  storage.New(),
+			CertStorage: storage.New(),
 		}
 
 		b, err := NewBackend(config)
@@ -1353,8 +1353,8 @@ func TestBackend_Close_WithContextCache(t *testing.T) {
 			Library:     tempLib,
 			TokenLabel:  "test-cache-2",
 			PIN:         "5678",
-			KeyStorage:  memory.New(),
-			CertStorage: memory.New(),
+			KeyStorage:  storage.New(),
+			CertStorage: storage.New(),
 		}
 
 		b, err := NewBackend(config)
@@ -1387,8 +1387,8 @@ func TestBackend_Initialize_CacheHit(t *testing.T) {
 		TokenLabel:  "test-init",
 		PIN:         "1234",
 		SOPIN:       "5678",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	// Manually add a cache entry to simulate already initialized context
@@ -1950,8 +1950,8 @@ func TestBackend_LoginUser_CachePath(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test-login",
 		PIN:         "1234",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	// Create a cache entry
@@ -2103,8 +2103,8 @@ func TestBackend_InitializeToken_GetSlotListError(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test",
 		Slot:        func() *int { v := int(999); return &v }(), // Non-existent slot
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -2317,8 +2317,8 @@ func TestContextCache_ConcurrentAccess(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test-concurrent-cache",
 		PIN:         "1234",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	// Prepopulate cache

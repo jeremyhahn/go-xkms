@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	tpm2pkg "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
 )
 

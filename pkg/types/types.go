@@ -18,13 +18,20 @@
 package types
 
 import (
+	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/google/go-tpm/tpm2"
 )
 
 // =============================================================================
@@ -48,6 +55,30 @@ var (
 
 	// ErrUnknownSignatureAlgorithm is returned when a signature algorithm string is not recognized.
 	ErrUnknownSignatureAlgorithm = errors.New("unknown signature algorithm")
+
+	// ErrAlreadyInitialized is returned when the system is already initialized.
+	ErrAlreadyInitialized = errors.New("already initialized")
+
+	// ErrNotInitialized is returned when the system is not initialized.
+	ErrNotInitialized = errors.New("not initialized")
+
+	// ErrInvalidPassword is returned when an invalid password is provided.
+	ErrInvalidPassword = errors.New("invalid password")
+
+	// ErrFileNotFound is returned when a required file cannot be found.
+	ErrFileNotFound = errors.New("file not found")
+
+	// ErrInvalidKeyStore is returned when an invalid keystore type is specified.
+	ErrInvalidKeyStore = errors.New("invalid keystore")
+
+	// ErrInvalidEncodingPEM is returned when PEM encoding/decoding fails.
+	ErrInvalidEncodingPEM = errors.New("invalid PEM encoding")
+
+	// ErrInvalidKeyAlgorithm is returned when an invalid key algorithm is specified.
+	ErrInvalidKeyAlgorithm = errors.New("invalid key algorithm")
+
+	// ErrInvalidPermanentIdentifier is returned when an invalid permanent identifier is provided.
+	ErrInvalidPermanentIdentifier = errors.New("invalid permanent identifier")
 )
 
 // =============================================================================
@@ -501,16 +532,15 @@ func (ta *ThresholdAttributes) Validate() error {
 
 // TPMAttributes contains Trusted Platform Module specific configuration.
 // This struct intentionally uses interface{} for TPM-specific types to avoid
-// requiring TPM dependencies in the core keystore package.
 type TPMAttributes struct {
 	// Handle is the TPM handle for the key
-	Handle interface{}
+	Handle tpm2.TPMHandle
 
 	// HandleType specifies the type of TPM handle
-	HandleType interface{}
+	HandleType tpm2.TPMHT
 
 	// Hierarchy specifies the TPM hierarchy (owner, endorsement, platform)
-	Hierarchy interface{}
+	Hierarchy tpm2.TPMHandle
 
 	// HierarchyAuth provides authentication for the hierarchy
 	HierarchyAuth Password
@@ -522,13 +552,13 @@ type TPMAttributes struct {
 	PrivateKeyBlob []byte
 
 	// HashAlg specifies the TPM hash algorithm
-	HashAlg interface{}
+	HashAlg tpm2.TPMIAlgHash
 
 	// PCRSelection specifies Platform Configuration Registers to include
-	PCRSelection interface{}
+	PCRSelection tpm2.TPMLPCRSelection
 
 	// CertHandle is the handle for certificate storage
-	CertHandle interface{}
+	CertHandle tpm2.TPMHandle
 
 	// CertifyInfo contains attestation information
 	CertifyInfo []byte
@@ -537,16 +567,16 @@ type TPMAttributes struct {
 	CreationTicketDigest []byte
 
 	// Name is the TPM name for the object
-	Name interface{}
+	Name tpm2.TPM2BName
 
 	// Public contains the TPM public structure
-	Public interface{}
+	Public tpm2.TPMTPublic
 
 	// BPublic contains the TPM2B_PUBLIC structure
-	BPublic interface{}
+	BPublic tpm2.TPM2BPublic
 
 	// Template contains the key template used for creation
-	Template interface{}
+	Template tpm2.TPMTPublic
 
 	// Signature contains the signature from attestation
 	Signature []byte
@@ -555,7 +585,19 @@ type TPMAttributes struct {
 	SessionCloser func() error
 }
 
-// Password is an interface for accessing sensitive password data.
+// Password is an interface for accessing key authentication credentials.
+//
+// Password represents the authentication value (UserAuth) used to authorize
+// TPM key operations. When a key is created with a password, that password
+// must be provided for signing, decryption, or other key operations.
+//
+// Key characteristics of Password:
+//   - Used for TPM UserAuth (key authentication/authorization)
+//   - Supports String() for human-readable passwords
+//   - Can be cached via PlatformPassword for performance (see PasswordCacheConfig)
+//   - Typically used with KeyAttributes.Password field
+//
+// For sealed arbitrary data (not key auth), use Secret instead.
 type Password interface {
 	// Bytes returns the password as a byte slice
 	Bytes() []byte
@@ -575,20 +617,33 @@ type ClearPassword struct {
 	password []byte
 }
 
-// NewClearPassword creates a new clear text password stored in memory.
-// The password is stored as-is without any encryption or obfuscation.
-// If password is nil or empty, an empty password is created.
-func NewClearPassword(password []byte) Password {
-	// Make a defensive copy to prevent external modification
+// NewPassword creates a new clear text password stored in memory.
+// The password is copied to prevent external modification.
+//
+// Use this for key authentication values that will be passed to TPM
+// operations as UserAuth. For sealed arbitrary data, use NewSealData instead.
+func NewPassword(password []byte) Password {
 	p := make([]byte, len(password))
 	copy(p, password)
 	return &ClearPassword{password: p}
 }
 
-// NewClearPasswordFromString creates a new clear text password from a string.
+// NewPasswordFromString creates a new clear text password from a string.
 // The string is converted to bytes and stored in memory.
-func NewClearPasswordFromString(password string) Password {
+func NewPasswordFromString(password string) Password {
 	return &ClearPassword{password: []byte(password)}
+}
+
+// NewClearPassword is an alias for NewPassword for backward compatibility.
+// Deprecated: Use NewPassword instead.
+func NewClearPassword(password []byte) Password {
+	return NewPassword(password)
+}
+
+// NewClearPasswordFromString is an alias for NewPasswordFromString for backward compatibility.
+// Deprecated: Use NewPasswordFromString instead.
+func NewClearPasswordFromString(password string) Password {
+	return NewPasswordFromString(password)
 }
 
 // String returns the password as a string.
@@ -612,6 +667,96 @@ func (p *ClearPassword) Clear() {
 	for i := range p.password {
 		p.password[i] = 0
 	}
+}
+
+// SealData provides access to arbitrary data for sealing operations.
+//
+// SealData represents the actual payload being sealed - application
+// secrets, encryption keys, random bytes, or any arbitrary data.
+// This is used across all backends that support sealing:
+//   - TPM2: Stored in TPM2B_SENSITIVE_DATA during seal operations
+//   - PKCS#11: Encrypted with HSM-resident AES key
+//   - Cloud KMS: Protected via envelope encryption
+//   - PKCS#8: Encrypted with HKDF-derived key
+//
+// Key characteristics of SealData:
+//   - Backend-agnostic sealed payload interface
+//   - No String() method - seal data is often binary
+//   - Used with KeyAttributes.SealData field
+//
+// Password vs SealData:
+//   - Password: Key/object authentication - "the credential to access the key"
+//   - SealData: Sealed payload - "the data being protected"
+//
+// Example: When sealing a database password:
+//   - SealData holds the actual database password being sealed
+//   - Password (optional) is the auth value to later unseal it
+//
+// Note: This data will exist in system memory until sealed. For secrets
+// that should never touch system memory, use backend-generated keys
+// (e.g., TPM keys with SensitiveDataOrigin=true).
+type SealData interface {
+	// Bytes returns the data as a byte slice.
+	// Returns nil if the data cannot be retrieved.
+	Bytes() []byte
+
+	// Clear zeros out the data from memory.
+	// This should be called when the data is no longer needed.
+	Clear()
+}
+
+// sealData is an in-memory implementation of the SealData interface.
+// The data is stored in memory temporarily before being sealed.
+type sealData struct {
+	data []byte
+}
+
+// NewSealData creates a new SealData instance for data to be sealed.
+// The data is copied to prevent external modification.
+//
+// Use this for arbitrary data being sealed (the payload).
+// For key/object authentication values, use NewPassword instead.
+//
+// Note: This data will exist in system memory until sealed. For secrets
+// that should never touch system memory, use backend-generated keys
+// (e.g., TPM keys with SensitiveDataOrigin=true).
+func NewSealData(data []byte) SealData {
+	d := make([]byte, len(data))
+	copy(d, data)
+	return &sealData{data: d}
+}
+
+// Bytes returns the data as a byte slice.
+// A copy is returned to prevent external modification.
+func (s *sealData) Bytes() []byte {
+	if s.data == nil {
+		return nil
+	}
+	b := make([]byte, len(s.data))
+	copy(b, s.data)
+	return b
+}
+
+// Clear overwrites the data memory with zeros.
+func (s *sealData) Clear() {
+	for i := range s.data {
+		s.data[i] = 0
+	}
+}
+
+// PasswordCacheConfig holds configuration for platform password caching.
+// When caching is enabled, the unsealed password is stored in memory
+// to avoid repeated TPM unsealing operations.
+type PasswordCacheConfig struct {
+	// Enabled determines whether password caching is active.
+	// When false, every password access will unseal from the TPM.
+	Enabled bool
+
+	// TTL is the time-to-live for cached passwords in seconds.
+	// After this duration, the cache is invalidated and the password
+	// will be unsealed again on the next access.
+	// If zero and Enabled is true, defaults to 300 (5 minutes).
+	TTL int
 }
 
 // KeyAttributes contains all configuration parameters for a cryptographic key,
@@ -647,6 +792,11 @@ type KeyAttributes struct {
 
 	// PlatformPolicy indicates if platform-specific policies apply
 	PlatformPolicy bool
+
+	// PasswordCache contains configuration for platform password caching.
+	// When PlatformPolicy is true and PasswordCache is set with Enabled=true,
+	// the unsealed password is cached in memory to avoid repeated TPM operations.
+	PasswordCache *PasswordCacheConfig
 
 	// SignatureAlgorithm specifies the signature algorithm to use
 	SignatureAlgorithm x509.SignatureAlgorithm
@@ -684,26 +834,40 @@ type KeyAttributes struct {
 	// TPMAttributes contains TPM-specific configuration
 	TPMAttributes *TPMAttributes
 
-	// Secret provides additional secret material for specific key types
-	Secret Password
-
 	// WrapAttributes specifies key wrapping configuration
 	WrapAttributes *KeyAttributes
+
+	// SealData holds the payload data to be sealed (backend-agnostic).
+	// This is the actual data being protected - application secrets,
+	// user credentials, encryption keys, or arbitrary data.
+	//
+	// Unlike Password (which authenticates access to the key/sealed object),
+	// SealData is the payload being sealed/unsealed.
+	//
+	// Sealing mechanism depends on the backend:
+	//   - TPM2: PCR-bound seal/unseal
+	//   - PKCS#11: AES-GCM with HSM-resident key
+	//   - Cloud KMS: Envelope encryption
+	//   - PKCS#8: HKDF + AES-GCM
+	//
+	// Note: This data will exist in system memory until sealed. For secrets
+	// that should never touch system memory, use backend-generated keys.
+	SealData SealData
 }
 
 // String returns a human-readable representation of the key attributes.
 func (attrs KeyAttributes) String() string {
 	var sb strings.Builder
 
-	var password, secret string
+	var password, sealDataStr string
 	if attrs.Debug && attrs.Password != nil {
 		if p, err := attrs.Password.String(); err == nil {
 			password = p
 		}
-		if attrs.Secret != nil {
-			if s, err := attrs.Secret.String(); err == nil {
-				secret = s
-			}
+	}
+	if attrs.Debug && attrs.SealData != nil {
+		if s := attrs.SealData.Bytes(); s != nil {
+			sealDataStr = string(s)
 		}
 	}
 
@@ -731,7 +895,7 @@ func (attrs KeyAttributes) String() string {
 	if attrs.Debug {
 		sb.WriteString("Secrets\n")
 		sb.WriteString(fmt.Sprintf("  Password: %s\n", password))
-		sb.WriteString(fmt.Sprintf("  Secret: %s\n", secret))
+		sb.WriteString(fmt.Sprintf("  SealData: %s\n", sealDataStr))
 	}
 
 	return sb.String()
@@ -884,6 +1048,14 @@ type Capabilities struct {
 	// SymmetricEncryption indicates if the backend supports symmetric encrypt/decrypt operations.
 	SymmetricEncryption bool
 
+	// Sealing indicates if the backend supports seal/unseal operations.
+	// Sealing protects data using the backend's native mechanism:
+	//   - TPM2: PCR-bound sealing
+	//   - PKCS#11: HSM-resident key encryption
+	//   - Cloud KMS: Envelope encryption
+	//   - PKCS#8: HKDF + AES-GCM
+	Sealing bool
+
 	// Import indicates if the backend supports importing keys via wrapping.
 	// This allows secure transfer of key material into the backend.
 	Import bool
@@ -938,6 +1110,11 @@ func (c Capabilities) SupportsSign() bool {
 // SupportsDecrypt returns true if the backend supports decryption operations.
 func (c Capabilities) SupportsDecrypt() bool {
 	return c.Decryption
+}
+
+// SupportsSealing returns true if the backend supports seal/unseal operations.
+func (c Capabilities) SupportsSealing() bool {
+	return c.Sealing
 }
 
 // SupportsKeyRotation returns true if the backend supports key rotation.
@@ -1281,6 +1458,150 @@ type SymmetricBackendWithTracking interface {
 }
 
 // =============================================================================
+// Sealer Interface - Unified Sealing Across Backends
+// =============================================================================
+
+// Sealer provides a unified interface for sealing/unsealing data across backends.
+// Each backend implements sealing using its native mechanism:
+//   - TPM2: PCR-bound seal/unseal with platform policy
+//   - PKCS#11: AES-GCM encryption with HSM-resident key
+//   - AWS KMS: Envelope encryption with GenerateDataKey
+//   - Azure KV: Wrap/Unwrap with managed keys
+//   - GCP KMS: Encrypt/Decrypt with KEK
+//   - PKCS#8: HKDF-derived key + AES-GCM (software fallback)
+//
+// The Sealer interface provides consistent API while allowing each backend
+// to use its optimal protection mechanism.
+type Sealer interface {
+	// Seal encrypts/protects data using the backend's native sealing mechanism.
+	// The sealed data can only be unsealed by the same backend (and for TPM,
+	// only when the same PCR state is present).
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeouts
+	//   - data: The plaintext data to seal
+	//   - opts: Backend-specific sealing options (may be nil for defaults)
+	//
+	// Returns SealedData containing encrypted payload and metadata, or error.
+	Seal(ctx context.Context, data []byte, opts *SealOptions) (*SealedData, error)
+
+	// Unseal decrypts/recovers data using the backend's native unsealing mechanism.
+	// For TPM backends, this requires the same PCR state as when the data was sealed.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeouts
+	//   - sealed: The sealed data from a previous Seal operation
+	//   - opts: Backend-specific unsealing options (may be nil for defaults)
+	//
+	// Returns the original plaintext data, or error if unsealing fails.
+	Unseal(ctx context.Context, sealed *SealedData, opts *UnsealOptions) ([]byte, error)
+
+	// CanSeal returns true if this backend supports sealing operations.
+	// Some backends may not support sealing (e.g., read-only key stores).
+	CanSeal() bool
+}
+
+// SealOptions configures seal operations with backend-specific options.
+type SealOptions struct {
+	// KeyAttributes identifies the key to use for sealing (required for most backends).
+	// For TPM, this identifies the SRK or sealing key.
+	// For PKCS#11/Cloud KMS, this identifies the encryption key.
+	KeyAttributes *KeyAttributes
+
+	// TPMPolicy contains TPM-specific sealing policy (PCR selection, etc).
+	// Only used by TPM2 backend; ignored by other backends.
+	TPMPolicy *TPMSealPolicy
+
+	// AAD is Additional Authenticated Data for AEAD encryption.
+	// This data is authenticated but not encrypted.
+	// Supported by PKCS#11, Cloud KMS, and PKCS#8 backends.
+	AAD []byte
+
+	// Backend specifies the storage backend for sealed data.
+	// For TPM2, this should be a store.KeyBackend implementation.
+	// If nil, the backend configured on the sealer instance is used.
+	Backend any
+}
+
+// UnsealOptions configures unseal operations with backend-specific options.
+type UnsealOptions struct {
+	// KeyAttributes identifies the key to use for unsealing (required for most backends).
+	KeyAttributes *KeyAttributes
+
+	// AAD is Additional Authenticated Data that must match what was used during sealing.
+	AAD []byte
+
+	// Password provides authentication for the sealed object (TPM-specific).
+	// This is the UserAuth value, not the sealed data itself.
+	Password Password
+
+	// Backend specifies the storage backend for sealed data.
+	// For TPM2, this should be a store.KeyBackend implementation.
+	// If nil, the backend configured on the sealer instance is used.
+	Backend any
+}
+
+// TPMSealPolicy contains TPM-specific sealing policy configuration.
+type TPMSealPolicy struct {
+	// PCRSelection specifies which PCRs to bind the sealed data to.
+	// The data can only be unsealed when these PCRs have the same values.
+	PCRSelection tpm2.TPMLPCRSelection
+
+	// HashAlg specifies the hash algorithm for PCR policy.
+	HashAlg tpm2.TPMIAlgHash
+
+	// AuthPolicy contains a pre-computed authorization policy digest.
+	// If set, this is used instead of computing from PCRSelection.
+	AuthPolicy []byte
+}
+
+// SealedData represents the result of a seal operation.
+// This structure is serializable and can be stored/transmitted.
+type SealedData struct {
+	// Backend identifies which backend created this sealed data.
+	// Required for proper unsealing - data must be unsealed by the same backend type.
+	Backend BackendType `json:"backend"`
+
+	// Ciphertext is the encrypted payload.
+	Ciphertext []byte `json:"ciphertext"`
+
+	// Nonce is the IV/nonce used for encryption (for AEAD modes).
+	// Not used by TPM backend (TPM handles nonce internally).
+	Nonce []byte `json:"nonce,omitempty"`
+
+	// Tag is the authentication tag for AEAD modes.
+	// May be appended to Ciphertext depending on backend.
+	Tag []byte `json:"tag,omitempty"`
+
+	// WrappedDEK contains a wrapped Data Encryption Key (for envelope encryption).
+	// Used by cloud KMS backends (AWS, Azure, GCP).
+	WrappedDEK []byte `json:"wrapped_dek,omitempty"`
+
+	// KeyID identifies the key used for sealing.
+	// Format is backend-specific (e.g., ARN for AWS, key path for GCP).
+	KeyID string `json:"key_id,omitempty"`
+
+	// TPMPublic contains the TPM public area for sealed objects.
+	// Only used by TPM2 backend.
+	TPMPublic []byte `json:"tpm_public,omitempty"`
+
+	// TPMPrivate contains the TPM private area (encrypted) for sealed objects.
+	// Only used by TPM2 backend.
+	TPMPrivate []byte `json:"tpm_private,omitempty"`
+
+	// Metadata contains additional backend-specific data.
+	// Keys should be namespaced (e.g., "tpm:creation_ticket", "aws:encryption_context").
+	Metadata map[string][]byte `json:"metadata,omitempty"`
+}
+
+// SealingBackend extends Backend with sealing capabilities.
+// Backends that support data sealing should implement this interface.
+type SealingBackend interface {
+	Backend
+	Sealer
+}
+
+// =============================================================================
 // Helper Functions
 // =============================================================================
 
@@ -1584,4 +1905,330 @@ func CurveName(curve elliptic.Curve) string {
 	}
 
 	return params.Name
+}
+
+// =============================================================================
+// Keystore Interfaces
+// =============================================================================
+
+// OpaqueKey represents a cryptographic key that may be hardware-backed
+// and implements both crypto.Signer and crypto.Decrypter interfaces.
+// The underlying private key material may not be exportable.
+type OpaqueKey interface {
+	crypto.Signer
+	crypto.Decrypter
+
+	// Public returns the public key portion of this key
+	Public() crypto.PublicKey
+
+	// Attributes returns the key attributes
+	Attributes() *KeyAttributes
+
+	// Type returns the backend type that owns this key
+	Type() BackendType
+}
+
+// VerifyOpts provides options for signature verification operations.
+type VerifyOpts struct {
+	// KeyAttributes specifies the key to use for verification
+	KeyAttributes *KeyAttributes
+
+	// Hash specifies the hash function to use
+	Hash crypto.Hash
+
+	// PSSSaltLength for RSA-PSS signatures (-1 for auto)
+	PSSSaltLength int
+
+	// PublicKey can be provided directly if not using KeyAttributes
+	PublicKey crypto.PublicKey
+
+	// PSSOptions for RSA-PSS signatures
+	PSSOptions *rsa.PSSOptions
+}
+
+// Verifier provides signature verification capabilities.
+type Verifier interface {
+	// Verify verifies a signature against a digest
+	Verify(publicKey crypto.PublicKey, digest, signature []byte) error
+}
+
+// KeyStorer is an alias for Backend for backward compatibility.
+// New code should use Backend directly.
+type KeyStorer = Backend
+
+// ParseHashFromSignatureAlgorithm returns the hash function for a signature algorithm.
+func ParseHashFromSignatureAlgorithm(sigAlgo *x509.SignatureAlgorithm) (crypto.Hash, error) {
+	if sigAlgo == nil {
+		return 0, fmt.Errorf("signature algorithm is nil")
+	}
+	hashes := SignatureAlgorithmHashes()
+	if hash, ok := hashes[*sigAlgo]; ok {
+		return hash, nil
+	}
+	return 0, fmt.Errorf("unknown signature algorithm: %v", *sigAlgo)
+}
+
+// PublicKeyToString returns a string representation of a public key.
+func PublicKeyToString(pub crypto.PublicKey) string {
+	if pub == nil {
+		return "<nil>"
+	}
+	switch key := pub.(type) {
+	case *ecdsa.PublicKey:
+		return fmt.Sprintf("ECDSA %s", key.Params().Name)
+	case *rsa.PublicKey:
+		return fmt.Sprintf("RSA %d bits", key.Size()*8)
+	case ed25519.PublicKey:
+		return "Ed25519"
+	default:
+		return fmt.Sprintf("%T", pub)
+	}
+}
+
+// SimpleVerifier is a basic signature verifier implementation
+type SimpleVerifier struct {
+	opts *VerifyOpts
+}
+
+// NewVerifier creates a new signature verifier
+func NewVerifier(opts *VerifyOpts) Verifier {
+	if opts == nil {
+		opts = &VerifyOpts{}
+	}
+	return &SimpleVerifier{opts: opts}
+}
+
+// Verify verifies a signature against a digest
+func (v *SimpleVerifier) Verify(publicKey crypto.PublicKey, digest, signature []byte) error {
+	if publicKey == nil {
+		return fmt.Errorf("public key is nil")
+	}
+	switch pub := publicKey.(type) {
+	case *rsa.PublicKey:
+		if v.opts.PSSOptions != nil {
+			return rsa.VerifyPSS(pub, v.opts.PSSOptions.Hash, digest, signature, v.opts.PSSOptions)
+		}
+		return rsa.VerifyPKCS1v15(pub, v.opts.Hash, digest, signature)
+	case *ecdsa.PublicKey:
+		if !ecdsa.VerifyASN1(pub, digest, signature) {
+			return fmt.Errorf("ECDSA signature verification failed")
+		}
+		return nil
+	case ed25519.PublicKey:
+		if !ed25519.Verify(pub, digest, signature) {
+			return fmt.Errorf("Ed25519 signature verification failed")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported public key type: %T", publicKey)
+	}
+}
+
+// KeyConfig represents key configuration for external systems like ACME
+type KeyConfig struct {
+	CN                 string `yaml:"cn" json:"cn" mapstructure:"cn"`
+	Algorithm          string `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Hash               string `yaml:"hash" json:"hash" mapstructure:"hash"`
+	RSAKeySize         int    `yaml:"rsa_key_size" json:"rsa_key_size" mapstructure:"rsa_key_size"`
+	ECCCurve           string `yaml:"ecc_curve" json:"ecc_curve" mapstructure:"ecc_curve"`
+	SignatureAlgorithm string `yaml:"signature_algorithm" json:"signature_algorithm" mapstructure:"signature_algorithm"`
+	StoreType          string `yaml:"store_type" json:"store_type" mapstructure:"store_type"`
+	KeyType            string `yaml:"key_type" json:"key_type" mapstructure:"key_type"`
+	PlatformPolicy     bool   `yaml:"platform_policy" json:"platform_policy" mapstructure:"platform_policy"`
+}
+
+// KeySerializer provides key serialization capabilities
+type KeySerializer interface {
+	Serialize(key crypto.PublicKey) ([]byte, error)
+	Deserialize(data []byte) (crypto.PublicKey, error)
+	Type() SerializerType
+}
+
+// KeyAttributesFromConfig creates KeyAttributes from a KeyConfig
+func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
+	if config == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+
+	keyAlgo, err := ParseKeyAlgorithm(config.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	hash := ParseHash(config.Hash)
+
+	sigAlgo, err := ParseSignatureAlgorithm(config.SignatureAlgorithm)
+	if err != nil {
+		sigAlgo = x509.UnknownSignatureAlgorithm
+	}
+
+	attrs := &KeyAttributes{
+		CN:                 config.CN,
+		KeyAlgorithm:       keyAlgo,
+		Hash:               hash,
+		SignatureAlgorithm: sigAlgo,
+		StoreType:          ParseStoreType(config.StoreType),
+		KeyType:            ParseKeyType(config.KeyType),
+		PlatformPolicy:     config.PlatformPolicy,
+	}
+
+	switch keyAlgo {
+	case x509.RSA:
+		keySize := config.RSAKeySize
+		if keySize == 0 {
+			keySize = 2048
+		}
+		attrs.RSAAttributes = &RSAAttributes{
+			KeySize: keySize,
+		}
+	case x509.ECDSA:
+		curve, err := ParseCurve(config.ECCCurve)
+		if err != nil {
+			curve = elliptic.P256()
+		}
+		attrs.ECCAttributes = &ECCAttributes{
+			Curve: curve,
+		}
+	}
+
+	return attrs, nil
+}
+
+// EncodePubKeyPEM encodes a public key to PEM format
+func EncodePubKeyPEM(pub crypto.PublicKey) ([]byte, error) {
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: der,
+	}), nil
+}
+
+// SerializerType represents the type of serializer
+type SerializerType int
+
+const (
+	SerializerJSON SerializerType = iota
+	SerializerYAML
+)
+
+// jsonKeySerializer implements KeySerializer using JSON encoding
+type jsonKeySerializer struct{}
+
+func (s *jsonKeySerializer) Serialize(key crypto.PublicKey) ([]byte, error) {
+	return json.Marshal(key)
+}
+
+func (s *jsonKeySerializer) Deserialize(data []byte) (crypto.PublicKey, error) {
+	var key crypto.PublicKey
+	if err := json.Unmarshal(data, &key); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func (s *jsonKeySerializer) Type() SerializerType {
+	return SerializerJSON
+}
+
+// NewKeySerializer creates a new KeySerializer for the given type
+func NewKeySerializer(serializerType SerializerType) (KeySerializer, error) {
+	switch serializerType {
+	case SerializerJSON:
+		return &jsonKeySerializer{}, nil
+	case SerializerYAML:
+		return &jsonKeySerializer{}, nil // Use JSON for both since YAML is JSON-compatible
+	default:
+		return nil, fmt.Errorf("unsupported serializer type: %d", serializerType)
+	}
+}
+
+// NewSerializer is an alias for NewKeySerializer for backward compatibility
+func NewSerializer(serializerType SerializerType) (KeySerializer, error) {
+	return NewKeySerializer(serializerType)
+}
+
+// KeyMap represents a JWK-like map for ACME key operations
+type KeyMap map[string]interface{}
+
+// ParseKeyMap parses a JSON string into a KeyMap
+func ParseKeyMap(data string) (KeyMap, error) {
+	var km KeyMap
+	if err := json.Unmarshal([]byte(data), &km); err != nil {
+		return nil, err
+	}
+	return km, nil
+}
+
+// JOSESignatureAlgorithm returns the JOSE signature algorithm name for this key as a string
+func (km KeyMap) JOSESignatureAlgorithm() (string, error) {
+	kty, ok := km["kty"].(string)
+	if !ok {
+		return "", fmt.Errorf("missing or invalid kty field")
+	}
+	switch kty {
+	case "RSA":
+		return "RS256", nil
+	case "EC":
+		crv, _ := km["crv"].(string)
+		switch crv {
+		case "P-256":
+			return "ES256", nil
+		case "P-384":
+			return "ES384", nil
+		case "P-521":
+			return "ES512", nil
+		default:
+			return "ES256", nil
+		}
+	case "OKP":
+		return "EdDSA", nil
+	default:
+		return "", fmt.Errorf("unsupported key type: %s", kty)
+	}
+}
+
+// Equal compares two KeyMaps for equality
+func (km KeyMap) Equal(other KeyMap) bool {
+	if len(km) != len(other) {
+		return false
+	}
+	for k, v := range km {
+		otherV, ok := other[k]
+		if !ok {
+			return false
+		}
+		// Compare as strings for simple comparison
+		if fmt.Sprintf("%v", v) != fmt.Sprintf("%v", otherV) {
+			return false
+		}
+	}
+	return true
+}
+
+// Deserialize deserializes a public key from a string using JSON encoding
+func Deserialize(data string) (crypto.PublicKey, error) {
+	serializer := &jsonKeySerializer{}
+	return serializer.Deserialize([]byte(data))
+}
+
+// PublicKeyID generates a unique ID from a public key
+func PublicKeyID(pub crypto.PublicKey, serializerType SerializerType) uint64 {
+	serializer, err := NewKeySerializer(serializerType)
+	if err != nil {
+		return 0
+	}
+	data, err := serializer.Serialize(pub)
+	if err != nil {
+		return 0
+	}
+	// Use FNV-1a hash for a quick, stable ID
+	var h uint64 = 14695981039346656037 // FNV offset basis
+	for _, b := range data {
+		h ^= uint64(b)
+		h *= 1099511628211 // FNV prime
+	}
+	return h
 }

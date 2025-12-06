@@ -22,12 +22,12 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -35,7 +35,7 @@ import (
 func createTestBackend(t *testing.T) (types.SymmetricBackend, storage.Backend) {
 	t.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{
 		KeyStorage: keyStorage,
 	}
@@ -101,7 +101,7 @@ func createAESAttrs(cn string, keySize int, algorithm types.SymmetricAlgorithm) 
 
 // TestNewBackend_ValidConfig tests backend creation with valid configuration
 func TestNewBackend_ValidConfig(t *testing.T) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{
 		KeyStorage: keyStorage,
 	}
@@ -735,7 +735,7 @@ func TestConcurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 
-			attrs := createRSAAttrs("concurrent-rsa-"+string(rune(id)), 2048)
+			attrs := createRSAAttrs(fmt.Sprintf("concurrent-rsa-%d", id), 2048)
 
 			// Generate
 			_, err := be.GenerateKey(attrs)
@@ -764,7 +764,7 @@ func TestConcurrency(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 
-			attrs := createAESAttrs("concurrent-aes-"+string(rune(id)), 256, types.SymmetricAES256GCM)
+			attrs := createAESAttrs(fmt.Sprintf("concurrent-aes-%d", id), 256, types.SymmetricAES256GCM)
 
 			// Generate
 			_, err := be.GenerateSymmetricKey(attrs)

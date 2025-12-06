@@ -22,7 +22,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -302,14 +301,14 @@ func createAESBackend(config BackendConfig) (types.Backend, error) {
 // Helper function to create key storage
 func createKeyStorage(keyDir string) (storage.Backend, error) {
 	if keyDir == "" || keyDir == "memory" {
-		return memory.New(), nil
+		return storage.New(), nil
 	}
 	return file.New(keyDir)
 }
 
 func createCertStorage(certDir string) (storage.Backend, error) {
 	if certDir == "" || certDir == "memory" {
-		return memory.New(), nil
+		return storage.New(), nil
 	}
 	return file.New(certDir)
 }

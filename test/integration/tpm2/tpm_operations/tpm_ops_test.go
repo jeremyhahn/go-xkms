@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	tpm2pkg "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -989,7 +989,7 @@ func TestTPMOps_SealUnseal(t *testing.T) {
 	}
 
 	// SEAL: Create a sealed key (will generate AES-256 secret internally)
-	createResp, err := sharedTPM.Seal(keyAttrs, backend, false)
+	createResp, err := sharedTPM.SealKey(keyAttrs, backend, false)
 	if err != nil {
 		t.Logf("Seal error: %v", err)
 	} else {
@@ -1001,7 +1001,7 @@ func TestTPMOps_SealUnseal(t *testing.T) {
 		t.Logf("Seal saved %d items to backend", len(backend.savedData))
 
 		// UNSEAL: Retrieve the sealed secret
-		secret, err := sharedTPM.Unseal(keyAttrs, backend)
+		secret, err := sharedTPM.UnsealKey(keyAttrs, backend)
 		if err != nil {
 			t.Logf("Unseal error: %v", err)
 		} else {
@@ -1462,7 +1462,7 @@ func TestTPMOps_LoadKeyPair(t *testing.T) {
 		},
 	}
 
-	_, err = sharedTPM.Seal(keyAttrs, backend, false)
+	_, err = sharedTPM.SealKey(keyAttrs, backend, false)
 	if err != nil {
 		t.Logf("Seal error: %v", err)
 		t.Skip("Cannot seal key for load test")
@@ -1795,7 +1795,7 @@ func TestTPMOps_UnsealWithNonExistentKey(t *testing.T) {
 	}
 
 	// Try to unseal non-existent key
-	_, err = sharedTPM.Unseal(keyAttrs, backend)
+	_, err = sharedTPM.UnsealKey(keyAttrs, backend)
 	require.Error(t, err, "Unseal with non-existent key should fail")
 	t.Logf("Unseal with non-existent key correctly failed: %v", err)
 }
@@ -2226,7 +2226,7 @@ func TestTPMOps_DeleteKeyPersistent(t *testing.T) {
 		},
 	}
 
-	_, err = sharedTPM.Seal(keyAttrs, backend, false)
+	_, err = sharedTPM.SealKey(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
 			t.Skip("TPM out of memory")
@@ -2590,7 +2590,7 @@ func TestTPMOps_SealWithPlatformPolicy(t *testing.T) {
 		},
 	}
 
-	createResp, err := sharedTPM.Seal(keyAttrs, backend, false)
+	createResp, err := sharedTPM.SealKey(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
 			t.Skip("TPM out of memory")

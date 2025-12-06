@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -82,12 +82,12 @@ func TestSealUnseal(t *testing.T) {
 							Hierarchy: tpm2.TPMRHOwner,
 						}}
 
-					_, err = tpm.Seal(keyAttrs, nil, false)
+					_, err = tpm.SealKey(keyAttrs, nil, false)
 					assert.Nil(t, err)
 
 					// Retrieve the AES-256 key protected
 					// by the platform PCR session policy
-					secret, err := tpm.Unseal(keyAttrs, nil)
+					secret, err := tpm.UnsealKey(keyAttrs, nil)
 					assert.Nil(t, err)
 					assert.NotNil(t, secret)
 					assert.Equal(t, 32, len(secret))
@@ -98,7 +98,7 @@ func TestSealUnseal(t *testing.T) {
 					if policyOpt {
 						// Extend the PCR and read again - policy check should fail
 						extendRandomBytes(tpm.Transport())
-						secret2, err := tpm.Unseal(keyAttrs, nil)
+						secret2, err := tpm.UnsealKey(keyAttrs, nil)
 						assert.NotNil(t, err)
 						assert.Nil(t, secret2)
 						assert.Equal(t, ErrPolicyCheckFailed, err)
@@ -180,7 +180,7 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 
 			// Flush the handle after successful creation
 			if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-				tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+				tpm.Flush(keyAttrs.TPMAttributes.Handle)
 			}
 
 			// nil password with policy auth - should succeed
@@ -192,7 +192,7 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 
 			// Flush the handle after successful creation
 			if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-				tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+				tpm.Flush(keyAttrs.TPMAttributes.Handle)
 			}
 
 			// incorrect password with policy auth - should work
@@ -204,7 +204,7 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 
 			// Flush the handle after successful creation
 			if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-				tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+				tpm.Flush(keyAttrs.TPMAttributes.Handle)
 			}
 
 			// correct password with policy auth - should work
@@ -216,12 +216,12 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 
 			// Flush the handle after successful creation
 			if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-				tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+				tpm.Flush(keyAttrs.TPMAttributes.Handle)
 			}
 
 			// Extend the PCR and read again - policy check should fail
 			extendRandomBytes(tpm.Transport())
-			secret2, err := tpm.Unseal(keyAttrs, nil)
+			secret2, err := tpm.UnsealKey(keyAttrs, nil)
 			assert.NotNil(t, err)
 			assert.Nil(t, secret2)
 			assert.Equal(t, ErrPolicyCheckFailed, err)
@@ -298,7 +298,7 @@ func TestCreateKeyWithoutPolicy(t *testing.T) {
 
 			// Flush the handle after successful creation
 			if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-				tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+				tpm.Flush(keyAttrs.TPMAttributes.Handle)
 			}
 
 			if passwdOpt {
@@ -319,7 +319,7 @@ func TestCreateKeyWithoutPolicy(t *testing.T) {
 
 				// Flush the handle after successful creation
 				if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-					tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+					tpm.Flush(keyAttrs.TPMAttributes.Handle)
 				}
 			}
 

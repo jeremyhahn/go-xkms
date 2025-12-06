@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,8 +39,8 @@ func setupFacadeIntegration(t *testing.T) {
 	keychain.Reset()
 
 	// Create first software backend
-	software1KeyStorage := memory.New()
-	software1CertStorage := memory.New()
+	software1KeyStorage := storage.New()
+	software1CertStorage := storage.New()
 	software1BackendConfig := &software.Config{
 		KeyStorage: software1KeyStorage,
 	}
@@ -55,8 +54,8 @@ func setupFacadeIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create second software backend (to test multi-backend routing)
-	software2KeyStorage := memory.New()
-	software2CertStorage := memory.New()
+	software2KeyStorage := storage.New()
+	software2CertStorage := storage.New()
 	software2BackendConfig := &software.Config{
 		KeyStorage: software2KeyStorage,
 	}

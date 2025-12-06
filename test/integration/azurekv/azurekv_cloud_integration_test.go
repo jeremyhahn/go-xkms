@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/azurekv"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,8 +66,8 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 	}
 
 	// Create storage backends
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	// Create backend
 	backendCfg := &azurekv.Config{

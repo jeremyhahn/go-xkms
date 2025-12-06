@@ -30,7 +30,7 @@ import (
 
 	"github.com/ThalesGroup/crypto11"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/miekg/pkcs11"
 )
@@ -67,8 +67,8 @@ func TestBackend_Get_SuccessPath(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -110,8 +110,8 @@ func TestBackend_Delete_SuccessPath(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -142,8 +142,8 @@ func TestBackend_Close_PanicRecovery(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	// Create backend with a context that will cause panic on Close
@@ -181,8 +181,8 @@ func TestBackend_Close_CacheRefCountDecrement(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test-refcount",
 		PIN:         "1234",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	cacheKey := contextCacheKey(config)
@@ -248,8 +248,8 @@ func TestBackend_Initialize_CacheHitMock(t *testing.T) {
 		TokenLabel:  "test-init-cache",
 		PIN:         "1234",
 		SOPIN:       "5678",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	// Add cache entry
@@ -304,8 +304,8 @@ func TestBackend_loginUser_CacheHit(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test-login-cache",
 		PIN:         "1234",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	// Add cache entry
@@ -369,8 +369,8 @@ func TestBackend_loginUser_NewContext(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test-login-new",
 		PIN:         "5678",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -408,8 +408,8 @@ func TestBackend_initializeToken_LibraryPath(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test-init-token",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -443,8 +443,8 @@ func TestBackend_initializeToken_WithSlot(t *testing.T) {
 		Library:     tempLib,
 		TokenLabel:  "test-slot",
 		Slot:        &slot,
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -473,8 +473,8 @@ func TestBackend_Close_WithP11Ctx(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	t.Run("close with p11ctx", func(t *testing.T) {
@@ -508,8 +508,8 @@ func TestBackend_Save_WithContextMock(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -623,8 +623,8 @@ func TestBackend_GenerateRSAWithSize_KeySizes(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -671,8 +671,8 @@ func TestBackend_GenerateECDSAWithCurve_Curves(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -718,8 +718,8 @@ func TestBackend_Context_WithContext(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -760,8 +760,8 @@ func TestBackend_Initialize_ValidationPaths(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -799,8 +799,8 @@ func TestBackend_AllBranches(t *testing.T) {
 	config := &Config{
 		Library:     tempLib,
 		TokenLabel:  "test-branches",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)

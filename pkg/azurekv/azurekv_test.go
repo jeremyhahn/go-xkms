@@ -33,7 +33,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/opaque"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -41,8 +40,8 @@ import (
 func newTestBackend(t *testing.T) *azurekvbackend.Backend {
 	config := &azurekvbackend.Config{
 		VaultURL:    "https://test-vault.vault.azure.net",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := azurekvbackend.NewMockKeyVaultClient()
@@ -59,7 +58,7 @@ func TestNewKeyStore(t *testing.T) {
 		be := newTestBackend(t)
 		defer func() { _ = be.Close() }()
 
-		ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+		ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 		if err != nil {
 			t.Fatalf("NewKeyStore failed: %v", err)
 		}
@@ -74,7 +73,7 @@ func TestNewKeyStore(t *testing.T) {
 	})
 
 	t.Run("NilBackend", func(t *testing.T) {
-		_, err := NewKeyStore(nil, storage.NewCertAdapter(memory.New()))
+		_, err := NewKeyStore(nil, storage.NewCertAdapter(storage.New()))
 		if err == nil {
 			t.Fatal("Expected error for nil backend")
 		}
@@ -88,7 +87,7 @@ func TestKeyStore_Backend(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -107,7 +106,7 @@ func TestKeyStore_GenerateRSA(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -201,7 +200,7 @@ func TestKeyStore_GenerateECDSA(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -295,7 +294,7 @@ func TestKeyStore_GenerateEd25519(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -320,7 +319,7 @@ func TestKeyStore_GenerateKey(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -412,7 +411,7 @@ func TestKeyStore_GenerateSecretKey(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -513,7 +512,7 @@ func TestKeyStore_Find(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -563,7 +562,7 @@ func TestKeyStore_Key(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -598,7 +597,7 @@ func TestKeyStore_Delete(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -652,7 +651,7 @@ func TestKeyStore_RotateKey(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -729,7 +728,7 @@ func TestKeyStore_Equal(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -920,7 +919,7 @@ func TestKeyStore_Signer(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1023,7 +1022,7 @@ func TestKeyStore_Decrypter(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1050,7 +1049,7 @@ func TestKeyStore_Decrypter(t *testing.T) {
 // 	be := newTestBackend(t)
 // 	defer be.Close()
 //
-// 	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+// 	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 // 	if err != nil {
 // 		t.Fatalf("NewKeyStore failed: %v", err)
 // 	}
@@ -1072,7 +1071,7 @@ func TestBackendWrapper(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1123,7 +1122,7 @@ func TestKVSigner(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1182,7 +1181,7 @@ func TestKeyStore_ConcurrentAccess(t *testing.T) {
 	be := newTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	ks, err := NewKeyStore(be, storage.NewCertAdapter(memory.New()))
+	ks, err := NewKeyStore(be, storage.NewCertAdapter(storage.New()))
 	if err != nil {
 		t.Fatalf("NewKeyStore failed: %v", err)
 	}
@@ -1224,8 +1223,8 @@ func TestKVSigner_ErrorHandling(t *testing.T) {
 	// Create a backend with a mock client that returns errors
 	config := &azurekvbackend.Config{
 		VaultURL:    "https://test-vault.vault.azure.net",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := azurekvbackend.NewMockKeyVaultClient()

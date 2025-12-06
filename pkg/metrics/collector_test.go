@@ -30,6 +30,7 @@ func TestNewResourceCollector(t *testing.T) {
 
 	if collector == nil {
 		t.Fatal("Expected collector to be created")
+		return
 	}
 
 	if collector.interval != interval {

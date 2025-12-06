@@ -158,6 +158,7 @@ func TestCSR_UnpackIDevIDCSR_Success(t *testing.T) {
 
 	if unpacked == nil {
 		t.Fatal("UnpackIDevIDCSR() returned nil")
+		return
 	}
 
 	if unpacked.StructVer != 0x00000100 {
@@ -223,6 +224,7 @@ func TestCSR_UnmarshalIDevIDCSR_Valid(t *testing.T) {
 
 	if csr == nil {
 		t.Fatal("UnmarshalIDevIDCSR() returned nil")
+		return
 	}
 
 	if bytesToUint32(csr.StructVer) != 0x00000100 {

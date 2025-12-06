@@ -28,7 +28,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -36,7 +35,7 @@ import (
 func createTestBackend(t *testing.T) (*PKCS8Backend, storage.Backend) {
 	t.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{
 		KeyStorage: keyStorage,
 	}
@@ -92,7 +91,7 @@ func createEd25519Attrs(cn string) *types.KeyAttributes {
 // TestNewBackend tests backend creation and configuration
 func TestNewBackend(t *testing.T) {
 	t.Run("ValidConfig", func(t *testing.T) {
-		keyStorage := memory.New()
+		keyStorage := storage.New()
 		config := &Config{
 			KeyStorage: keyStorage,
 		}
@@ -1272,7 +1271,7 @@ func TestInterfaceCompliance(t *testing.T) {
 
 // BenchmarkGenerateRSA benchmarks RSA key generation
 func BenchmarkGenerateRSA(b *testing.B) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
 	defer func() { _ = be.Close() }()
@@ -1290,7 +1289,7 @@ func BenchmarkGenerateRSA(b *testing.B) {
 
 // BenchmarkGenerateECDSA benchmarks ECDSA key generation
 func BenchmarkGenerateECDSA(b *testing.B) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
 	defer func() { _ = be.Close() }()
@@ -1308,7 +1307,7 @@ func BenchmarkGenerateECDSA(b *testing.B) {
 
 // BenchmarkGetKey benchmarks key retrieval
 func BenchmarkGetKey(b *testing.B) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
 	defer func() { _ = be.Close() }()
@@ -1331,7 +1330,7 @@ func BenchmarkGetKey(b *testing.B) {
 
 // BenchmarkSign benchmarks signing operations
 func BenchmarkSign(b *testing.B) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, _ := NewBackend(config)
 	defer func() { _ = be.Close() }()
@@ -1509,7 +1508,7 @@ func (m *mockStorageError) Close() error {
 // TestDeleteKey_StorageError tests DeleteKey with storage errors
 func TestDeleteKey_StorageError(t *testing.T) {
 	mockStorage := &mockStorageError{
-		Backend:     memory.New(),
+		Backend:     storage.New(),
 		deleteError: true,
 	}
 
@@ -1534,7 +1533,7 @@ func TestDeleteKey_StorageError(t *testing.T) {
 // TestStoreKey_SaveKeyError tests storeKey with SaveKey errors
 func TestStoreKey_SaveKeyError(t *testing.T) {
 	mockStorage := &mockStorageError{
-		Backend:   memory.New(),
+		Backend:   storage.New(),
 		saveError: true,
 	}
 
@@ -1713,7 +1712,7 @@ func TestGenerateECDSAKey_AllCurves(t *testing.T) {
 // TestListKeys_StorageError tests ListKeys with storage error
 func TestListKeys_StorageError(t *testing.T) {
 	mockStorage := &mockStorageError{
-		Backend:   memory.New(),
+		Backend:   storage.New(),
 		listError: true,
 	}
 
@@ -1738,7 +1737,7 @@ func TestGenerateKey_StorageCheckError(t *testing.T) {
 	// This test ensures that if KeyExists returns an error during GenerateKey,
 	// the error is properly propagated
 	mockStorage := &mockStorageErrorOnExists{
-		Backend: memory.New(),
+		Backend: storage.New(),
 	}
 
 	config := &Config{
@@ -1791,7 +1790,7 @@ func (m *mockStorageErrorOnExists) Close() error {
 // TestGetKey_StorageError tests GetKey with storage error
 func TestGetKey_StorageError(t *testing.T) {
 	mockStorage := &mockStorageGetError{
-		Backend: memory.New(),
+		Backend: storage.New(),
 	}
 
 	config := &Config{

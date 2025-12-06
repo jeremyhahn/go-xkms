@@ -85,6 +85,7 @@ backends:
 
 	if cfg == nil {
 		t.Fatal("Load() returned nil config")
+		return
 	}
 
 	// Validate server config

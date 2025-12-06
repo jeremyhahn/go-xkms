@@ -25,7 +25,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -41,8 +41,8 @@ func TestNewBackend(t *testing.T) {
 			name: "valid config",
 			config: &Config{
 				VaultURL:    "https://test-vault.vault.azure.net/",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -56,8 +56,8 @@ func TestNewBackend(t *testing.T) {
 			name: "missing vault URL",
 			config: &Config{
 				VaultURL:    "",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidConfig,
@@ -66,8 +66,8 @@ func TestNewBackend(t *testing.T) {
 			name: "invalid vault URL",
 			config: &Config{
 				VaultURL:    "http://invalid-url",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidVaultURL,
@@ -77,8 +77,8 @@ func TestNewBackend(t *testing.T) {
 			config: &Config{
 				VaultURL:    "https://test-vault.vault.azure.net/",
 				ClientID:    "client-id",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 				// Missing ClientSecret and TenantID
 			},
 			wantErr: true,
@@ -91,8 +91,8 @@ func TestNewBackend(t *testing.T) {
 				TenantID:     "tenant-id",
 				ClientID:     "client-id",
 				ClientSecret: "client-secret",
-				KeyStorage:   memory.New(),
-				CertStorage:  memory.New(),
+				KeyStorage:   storage.New(),
+				CertStorage:  storage.New(),
 			},
 			wantErr: false,
 		},
@@ -134,8 +134,8 @@ func TestNewBackendWithClient(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -199,8 +199,8 @@ func TestCreateKey(t *testing.T) {
 			mockClient := NewMockKeyVaultClient()
 			config := &Config{
 				VaultURL:    "https://test-vault.vault.azure.net/",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -239,8 +239,8 @@ func TestCreateKeyIdempotent(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -296,8 +296,8 @@ func TestSignAndVerify(t *testing.T) {
 			mockClient := NewMockKeyVaultClient()
 			config := &Config{
 				VaultURL:    "https://test-vault.vault.azure.net/",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -362,8 +362,8 @@ func TestGet(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -441,8 +441,8 @@ func TestSave(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -493,8 +493,8 @@ func TestDelete(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -549,8 +549,8 @@ func TestClose(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -582,8 +582,8 @@ func TestGetSigningAlgorithm(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -646,8 +646,8 @@ func TestConcurrentAccess(t *testing.T) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://test-vault.vault.azure.net/",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)

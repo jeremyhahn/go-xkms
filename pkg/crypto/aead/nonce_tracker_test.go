@@ -40,6 +40,7 @@ func TestNewNonceTracker(t *testing.T) {
 			tracker := NewNonceTracker(tt.enabled)
 			if tracker == nil {
 				t.Fatal("NewNonceTracker() returned nil")
+				return
 			}
 			if tracker.enabled != tt.enabled {
 				t.Errorf("enabled = %v, want %v", tracker.enabled, tt.enabled)

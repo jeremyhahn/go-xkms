@@ -17,8 +17,8 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,14 +90,14 @@ func TestCreateIDevIDContent_ValidInput(t *testing.T) {
 	assert.Equal(t, uint32(len(ekCert.Raw)), content.EkCertSZ)
 
 	// Verify AK attributes
-	akPublic := akAttrs.TPMAttributes.BPublic.(tpm2.TPM2BPublic)
+	akPublic := akAttrs.TPMAttributes.BPublic
 	assert.Equal(t, (&akPublic).Bytes(), content.AttestPub)
 	assert.Equal(t, akAttrs.TPMAttributes.CreationTicketDigest, content.AtCreateTkt)
 	assert.Equal(t, akAttrs.TPMAttributes.CertifyInfo, content.AtCertifyInfo)
 	assert.Equal(t, akAttrs.TPMAttributes.Signature, content.AtCertifyInfoSig)
 
 	// Verify IDevID attributes
-	idevidPublic := idevidAttrs.TPMAttributes.BPublic.(tpm2.TPM2BPublic)
+	idevidPublic := idevidAttrs.TPMAttributes.BPublic
 	assert.Equal(t, (&idevidPublic).Bytes(), content.SigningPub)
 	assert.Equal(t, idevidAttrs.TPMAttributes.CertifyInfo, content.SgnCertifyInfo)
 	assert.Equal(t, idevidAttrs.TPMAttributes.Signature, content.SgnCertifyInfoSig)

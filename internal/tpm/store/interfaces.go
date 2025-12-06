@@ -1,92 +1,49 @@
-// Package store provides storage interfaces and implementations for TPM operations
+// Package store provides storage interfaces and implementations for TPM operations.
+// This internal package re-exports the public store package for internal use.
 package store
 
 import (
-	"crypto"
-	"crypto/x509"
-	"errors"
-
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 )
 
-// SignerOpts provides TPM-specific signer options
-type SignerOpts struct {
-	// KeyAttributes specifies the key to use for signing
-	KeyAttributes *types.KeyAttributes
+// Re-export types from the public package
+type (
+	SignerOpts        = store.SignerOpts
+	FSExtension       = store.FSExtension
+	BlobStorer        = store.BlobStorer
+	CertificateStorer = store.CertificateStorer
+	KeyBackend        = store.KeyBackend
+	SignerStorer      = store.SignerStorer
+	Logger            = store.Logger
+)
 
-	// Backend specifies the key backend (optional)
-	Backend KeyBackend
-
-	// PSSOptions specifies RSA-PSS options (optional)
-	PSSOptions interface{}
-}
-
-// HashFunc implements crypto.SignerOpts
-func (opts *SignerOpts) HashFunc() crypto.Hash {
-	if opts.KeyAttributes != nil {
-		return opts.KeyAttributes.Hash
-	}
-	return 0
-}
-
-// File extension constants for TPM key storage
+// Re-export constants
 const (
-	FSEXT_PRIVATE_BLOB = ".blob"
-	FSEXT_PUBLIC_BLOB  = ".pub"
-	FSEXT_TPM_CONTEXT  = ".ctx"
+	FSEXT_PRIVATE_BLOB = store.FSEXT_PRIVATE_BLOB
+	FSEXT_PUBLIC_BLOB  = store.FSEXT_PUBLIC_BLOB
+	FSEXT_TPM_CONTEXT  = store.FSEXT_TPM_CONTEXT
 )
 
-// FSExtension is a type alias for file system extensions
-type FSExtension = string
-
+// Re-export errors
 var (
-	// ErrCertNotFound indicates a certificate was not found
-	ErrCertNotFound = errors.New("certificate not found")
-
-	// ErrCorruptCopy indicates a corrupt copy operation
-	ErrCorruptCopy = errors.New("corrupt copy")
-
-	// ErrInvalidParentAttributes indicates invalid parent key attributes
-	ErrInvalidParentAttributes = errors.New("invalid parent key attributes")
-
-	// ErrAlreadyInitialized indicates the store is already initialized
-	ErrAlreadyInitialized = errors.New("already initialized")
-
-	// ErrInvalidKeyedHashSecret indicates an invalid keyed hash secret
-	ErrInvalidKeyedHashSecret = errors.New("invalid keyed hash secret")
-
-	// ErrInvalidHashFunction indicates an invalid hash function
-	ErrInvalidHashFunction = errors.New("invalid hash function")
-
-	// ErrInvalidSignerOpts indicates invalid signer options
-	ErrInvalidSignerOpts = errors.New("invalid signer options")
+	ErrCertNotFound            = store.ErrCertNotFound
+	ErrCorruptCopy             = store.ErrCorruptCopy
+	ErrInvalidParentAttributes = store.ErrInvalidParentAttributes
+	ErrAlreadyInitialized      = store.ErrAlreadyInitialized
+	ErrInvalidKeyedHashSecret  = store.ErrInvalidKeyedHashSecret
+	ErrInvalidHashFunction     = store.ErrInvalidHashFunction
+	ErrInvalidSignerOpts       = store.ErrInvalidSignerOpts
+	ErrInvalidKeyAttributes    = store.ErrInvalidKeyAttributes
+	ErrInvalidKeyAlgorithm     = store.ErrInvalidKeyAlgorithm
+	ErrUnsupportedKeyAlgorithm = store.ErrUnsupportedKeyAlgorithm
+	ErrPasswordRequired        = store.ErrPasswordRequired
 )
 
-// BlobStorer provides binary blob storage
-type BlobStorer interface {
-	Read(name string) ([]byte, error)
-	Write(name string, data []byte) error
-	Delete(name string) error
-}
+// Re-export factory type
+type StorageFactory = store.StorageFactory
 
-// CertificateStorer provides certificate storage operations
-type CertificateStorer interface {
-	Get(attrs *types.KeyAttributes) (*x509.Certificate, error)
-	Save(attrs *types.KeyAttributes, cert *x509.Certificate) error
-	Delete(attrs *types.KeyAttributes) error
-	ImportCertificate(attrs *types.KeyAttributes, certPEM []byte) (*x509.Certificate, error)
-}
+// NewStorageFactory creates a new storage factory
+var NewStorageFactory = store.NewStorageFactory
 
-// KeyBackend provides key storage operations for TPM keys
-type KeyBackend interface {
-	Get(attrs *types.KeyAttributes, fsext string) ([]byte, error)
-	Save(attrs *types.KeyAttributes, data []byte, fsext string, overwrite bool) error
-	Delete(attrs *types.KeyAttributes) error
-}
-
-// SignerStorer provides crypto.Signer storage operations
-type SignerStorer interface {
-	Get(attrs *types.KeyAttributes) (interface{}, error)
-	Save(attrs *types.KeyAttributes, signer interface{}) error
-	Delete(attrs *types.KeyAttributes) error
-}
+// NewMemoryStorageFactory creates a storage factory using in-memory storage
+var NewMemoryStorageFactory = store.NewMemoryStorageFactory

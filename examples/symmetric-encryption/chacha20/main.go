@@ -35,13 +35,13 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 func main() {
 	// Create an in-memory storage backend
-	storage := memory.New()
+	storage := storage.New()
 
 	// Create an AES backend (which supports both AES and ChaCha20)
 	config := &aes.Config{

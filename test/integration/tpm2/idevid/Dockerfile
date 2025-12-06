@@ -1,4 +1,4 @@
-FROM golang:1.23
+FROM golang:1.25.5
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \

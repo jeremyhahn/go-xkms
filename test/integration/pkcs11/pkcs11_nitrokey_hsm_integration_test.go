@@ -32,7 +32,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,8 +57,8 @@ func TestNitrokeyHSM(t *testing.T) {
 	}
 
 	// Create storage backends
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	// Create PKCS11 backend configuration for Nitrokey HSM
 	// The Nitrokey HSM uses the "SmartCard-HSM" token label by default

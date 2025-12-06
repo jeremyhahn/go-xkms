@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +20,7 @@ func TestEKAttributes(t *testing.T) {
 	ekAttrs, err := tpm.EKAttributes()
 	assert.Nil(t, err)
 
-	assert.Equal(t, tpm.Config().EK.Handle, uint32(ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)))
+	assert.Equal(t, tpm.Config().EK.Handle, uint32(ekAttrs.TPMAttributes.Handle))
 }
 
 func TestSRKAttributes(t *testing.T) {
@@ -31,7 +31,7 @@ func TestSRKAttributes(t *testing.T) {
 	ssrkAttrs, err := tpm.SSRKAttributes()
 	assert.Nil(t, err)
 
-	assert.Equal(t, tpm.Config().SSRK.Handle, uint32(ssrkAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)))
+	assert.Equal(t, tpm.Config().SSRK.Handle, uint32(ssrkAttrs.TPMAttributes.Handle))
 }
 
 func TestRSA(t *testing.T) {
@@ -234,7 +234,7 @@ func TestEKAttributesFromConfig_PlatformPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, attrs.PlatformPolicy)
 	// Verify policy digest was applied to template
-	template := attrs.TPMAttributes.Template.(tpm2.TPMTPublic)
+	template := attrs.TPMAttributes.Template
 	assert.Equal(t, policyDigest.Buffer, template.AuthPolicy.Buffer)
 }
 

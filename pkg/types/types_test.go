@@ -1436,7 +1436,7 @@ func (p *TestPassword) Clear() {
 
 func TestKeyAttributes_String_WithDebugAndPassword(t *testing.T) {
 	password := &TestPassword{value: "test-password"}
-	secret := &TestPassword{value: "test-secret"}
+	sealData := NewSealData([]byte("test-seal-data"))
 
 	attrs := &KeyAttributes{
 		CN:           "test-key-debug",
@@ -1446,7 +1446,7 @@ func TestKeyAttributes_String_WithDebugAndPassword(t *testing.T) {
 		Hash:         crypto.SHA256,
 		Debug:        true,
 		Password:     password,
-		Secret:       secret,
+		SealData:     sealData,
 		RSAAttributes: &RSAAttributes{
 			KeySize: 2048,
 		},
@@ -1457,7 +1457,7 @@ func TestKeyAttributes_String_WithDebugAndPassword(t *testing.T) {
 	assert.Contains(t, str, "Debug: true")
 	assert.Contains(t, str, "Secrets")
 	assert.Contains(t, str, "test-password")
-	assert.Contains(t, str, "test-secret")
+	assert.Contains(t, str, "test-seal-data")
 }
 
 func TestKeyAttributes_String_WithDebugNoPassword(t *testing.T) {
@@ -1500,4 +1500,146 @@ func TestKeyAttributes_String_WithPasswordError(t *testing.T) {
 	assert.Contains(t, str, "Debug: true")
 	// Password error should result in empty string for password
 	assert.Contains(t, str, "Secrets")
+}
+
+// =============================================================================
+// SealData Interface Tests
+// =============================================================================
+
+func TestSealData_NewSealData(t *testing.T) {
+	data := []byte("test-secret-data")
+	sealData := NewSealData(data)
+	require.NotNil(t, sealData)
+
+	// Verify data was copied
+	result := sealData.Bytes()
+	assert.Equal(t, data, result)
+
+	// Verify modification of original doesn't affect sealData
+	data[0] = 'X'
+	assert.NotEqual(t, data[0], sealData.Bytes()[0])
+}
+
+func TestSealData_NewSealData_Empty(t *testing.T) {
+	sealData := NewSealData([]byte{})
+	require.NotNil(t, sealData)
+	assert.Empty(t, sealData.Bytes())
+}
+
+func TestSealData_NewSealData_Nil(t *testing.T) {
+	sealData := NewSealData(nil)
+	require.NotNil(t, sealData)
+	assert.Empty(t, sealData.Bytes())
+}
+
+func TestSealData_Bytes(t *testing.T) {
+	data := []byte("secret-bytes-test")
+	sealData := NewSealData(data)
+
+	result := sealData.Bytes()
+	assert.Equal(t, data, result)
+
+	// Calling Bytes() multiple times should return same data
+	result2 := sealData.Bytes()
+	assert.Equal(t, result, result2)
+}
+
+func TestSealData_Clear(t *testing.T) {
+	data := []byte("sensitive-data-to-clear")
+	sealData := NewSealData(data)
+
+	// Verify data is present before Clear
+	assert.Equal(t, data, sealData.Bytes())
+
+	// Clear the sealData
+	sealData.Clear()
+
+	// Verify data is zeroed
+	for _, b := range sealData.Bytes() {
+		assert.Equal(t, byte(0), b, "Expected all bytes to be zeroed after Clear()")
+	}
+}
+
+func TestSealData_Clear_AlreadyEmpty(t *testing.T) {
+	sealData := NewSealData([]byte{})
+
+	// Clear should not panic on empty sealData
+	sealData.Clear()
+	assert.Empty(t, sealData.Bytes())
+}
+
+func TestSealData_Clear_MultipleTimes(t *testing.T) {
+	sealData := NewSealData([]byte("test-data"))
+
+	// Clear multiple times should not panic
+	sealData.Clear()
+	sealData.Clear()
+	sealData.Clear()
+
+	// Data should remain zeroed
+	for _, b := range sealData.Bytes() {
+		assert.Equal(t, byte(0), b)
+	}
+}
+
+func TestSealData_Interface(t *testing.T) {
+	// Verify sealData implements SealData interface
+	var _ SealData = (*sealData)(nil)
+	_ = NewSealData([]byte("test"))
+}
+
+func TestSealData_SecureMemoryZeroing(t *testing.T) {
+	// Create sealData with known pattern
+	data := make([]byte, 32)
+	for i := range data {
+		data[i] = byte(i + 1) // Non-zero values 1-32
+	}
+
+	sealData := NewSealData(data)
+
+	// Verify pattern is stored
+	stored := sealData.Bytes()
+	for i := range stored {
+		assert.Equal(t, byte(i+1), stored[i])
+	}
+
+	// Clear the sealData
+	sealData.Clear()
+
+	// Verify all bytes are zeroed
+	cleared := sealData.Bytes()
+	for i, b := range cleared {
+		assert.Equal(t, byte(0), b, "Byte at index %d should be zeroed", i)
+	}
+}
+
+func TestSealData_LargeData(t *testing.T) {
+	// Test with larger data (simulate real secret like AES key)
+	largeData := make([]byte, 1024)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
+	}
+
+	sealData := NewSealData(largeData)
+	assert.Equal(t, largeData, sealData.Bytes())
+
+	sealData.Clear()
+	for _, b := range sealData.Bytes() {
+		assert.Equal(t, byte(0), b)
+	}
+}
+
+func TestClearPassword_BackwardCompatibility(t *testing.T) {
+	// Test that deprecated NewClearPassword still works
+	data := []byte("backward-compat-password")
+	password := NewClearPassword(data)
+	require.NotNil(t, password)
+	assert.Equal(t, data, password.Bytes())
+
+	// Test NewClearPasswordFromString
+	password2 := NewClearPasswordFromString("test-string")
+	require.NotNil(t, password2)
+	str, err := password2.String()
+	assert.NoError(t, err)
+	assert.Equal(t, "test-string", str)
 }

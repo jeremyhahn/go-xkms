@@ -203,6 +203,7 @@ func TestComprehensive_NormalizeConfigVariants(t *testing.T) {
 			cfg := normalizeConfig(tt.input)
 			if cfg == nil {
 				t.Fatal("normalizeConfig returned nil")
+				return
 			}
 			if cfg.Mode != tt.expected {
 				t.Errorf("Expected mode %s, got %s", tt.expected, cfg.Mode)

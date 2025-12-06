@@ -41,29 +41,40 @@ type ClearPassword struct {
 	password []byte
 }
 
-// NewClearPassword creates a new cleartext password stored in memory.
+// NewPassword creates a new cleartext password stored in memory.
 //
 // The provided byte slice is copied to prevent external modification.
 // Returns an error if the password is empty.
-func NewClearPassword(password []byte) (types.Password, error) {
+func NewPassword(password []byte) (types.Password, error) {
 	if len(password) == 0 {
 		return nil, ErrEmptyPassword
 	}
-	// Copy the password to prevent external modification
 	p := make([]byte, len(password))
 	copy(p, password)
 	return &ClearPassword{password: p}, nil
 }
 
-// NewClearPasswordFromString creates a new cleartext password from a string.
+// NewPasswordFromString creates a new cleartext password from a string.
 //
 // The string is converted to bytes and stored securely in memory.
 // Returns an error if the password is empty.
-func NewClearPasswordFromString(password string) (types.Password, error) {
+func NewPasswordFromString(password string) (types.Password, error) {
 	if len(password) == 0 {
 		return nil, ErrEmptyPassword
 	}
 	return &ClearPassword{password: []byte(password)}, nil
+}
+
+// NewClearPassword is an alias for NewPassword for backward compatibility.
+// Deprecated: Use NewPassword instead.
+func NewClearPassword(password []byte) (types.Password, error) {
+	return NewPassword(password)
+}
+
+// NewClearPasswordFromString is an alias for NewPasswordFromString for backward compatibility.
+// Deprecated: Use NewPasswordFromString instead.
+func NewClearPasswordFromString(password string) (types.Password, error) {
+	return NewPasswordFromString(password)
 }
 
 // String returns the password as a string.

@@ -25,7 +25,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -43,7 +42,7 @@ func TestGenerateSymmetricKey_AllSizes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			b, err := NewBackend(config)
 			if err != nil {
@@ -95,7 +94,7 @@ func TestGenerateSymmetricKey_AllSizes(t *testing.T) {
 
 // TestGenerateSymmetricKey_AlreadyExists tests error when key already exists
 func TestGenerateSymmetricKey_AlreadyExists(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -133,7 +132,7 @@ func TestGenerateSymmetricKey_AlreadyExists(t *testing.T) {
 
 // TestGetSymmetricKey tests retrieving an existing key
 func TestGetSymmetricKey(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -190,7 +189,7 @@ func TestGetSymmetricKey(t *testing.T) {
 
 // TestGetSymmetricKey_NotFound tests error when key doesn't exist
 func TestGetSymmetricKey_NotFound(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -221,7 +220,7 @@ func TestGetSymmetricKey_NotFound(t *testing.T) {
 
 // TestSymmetricEncrypter_EncryptDecrypt tests round-trip encryption/decryption
 func TestSymmetricEncrypter_EncryptDecrypt(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -295,7 +294,7 @@ func TestSymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 
 // TestSymmetricEncrypter_WithAAD tests encryption with additional authenticated data
 func TestSymmetricEncrypter_WithAAD(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -360,7 +359,7 @@ func TestSymmetricEncrypter_WithAAD(t *testing.T) {
 
 // TestSymmetricEncrypter_CustomNonce tests encryption with a provided nonce
 func TestSymmetricEncrypter_CustomNonce(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -424,7 +423,7 @@ func TestSymmetricEncrypter_CustomNonce(t *testing.T) {
 
 // TestSymmetricEncrypter_VariousDataSizes tests encryption with different data sizes
 func TestSymmetricEncrypter_VariousDataSizes(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -484,7 +483,7 @@ func TestSymmetricEncrypter_VariousDataSizes(t *testing.T) {
 
 // TestPasswordProtection tests key storage with password encryption
 func TestPasswordProtection(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -548,7 +547,7 @@ func TestPasswordProtection(t *testing.T) {
 
 // TestPasswordProtection_NoPassword tests key storage without password
 func TestPasswordProtection_NoPassword(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -596,7 +595,7 @@ func TestPasswordProtection_NoPassword(t *testing.T) {
 
 // TestEncryptDecrypt_CorruptedData tests error handling for corrupted data
 func TestEncryptDecrypt_CorruptedData(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -663,7 +662,7 @@ func TestEncryptDecrypt_CorruptedData(t *testing.T) {
 
 // TestThreadSafety tests concurrent key generation and operations
 func TestThreadSafety(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -753,7 +752,7 @@ func TestThreadSafety(t *testing.T) {
 
 // TestInvalidAttributes tests error handling for invalid attributes
 func TestInvalidAttributes(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -815,7 +814,7 @@ func TestInvalidAttributes(t *testing.T) {
 
 // TestClosedBackendSymmetric tests operations on a closed backend
 func TestClosedBackendSymmetric(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -853,7 +852,7 @@ func TestClosedBackendSymmetric(t *testing.T) {
 
 // TestSymmetricEncrypter_NilEncryptedData tests error handling for nil encrypted data
 func TestSymmetricEncrypter_NilEncryptedData(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -891,7 +890,7 @@ func TestSymmetricEncrypter_NilEncryptedData(t *testing.T) {
 
 // TestSymmetricEncrypter_InvalidNonceSize tests error handling for invalid nonce size
 func TestSymmetricEncrypter_InvalidNonceSize(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -933,7 +932,7 @@ func TestSymmetricEncrypter_InvalidNonceSize(t *testing.T) {
 
 // TestPasswordProtection_EmptyPassword tests key with empty password
 func TestPasswordProtection_EmptyPassword(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -994,7 +993,7 @@ func TestDecryptWithPassword_InvalidData(t *testing.T) {
 
 // TestBackendType tests the backend type identifier
 func TestBackendType(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1009,7 +1008,7 @@ func TestBackendType(t *testing.T) {
 
 // TestCapabilities tests the capabilities reporting
 func TestCapabilities(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1037,7 +1036,7 @@ func TestCapabilities(t *testing.T) {
 
 // TestDeleteKey tests key deletion
 func TestDeleteKey(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1084,7 +1083,7 @@ func TestDeleteKey(t *testing.T) {
 
 // TestDeleteKey_NotFound tests error when deleting non-existent key
 func TestDeleteKey_NotFound(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1110,7 +1109,7 @@ func TestDeleteKey_NotFound(t *testing.T) {
 
 // TestListKeys tests listing all keys
 func TestListKeys(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1159,7 +1158,7 @@ func TestListKeys(t *testing.T) {
 
 // TestAsymmetricOperationsNotSupported tests that asymmetric operations return errors
 func TestAsymmetricOperationsNotSupported(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1203,7 +1202,7 @@ func TestAsymmetricOperationsNotSupported(t *testing.T) {
 
 // TestRotateKey tests key rotation for symmetric keys
 func TestRotateKey(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1296,7 +1295,7 @@ func TestConfig_Validate(t *testing.T) {
 		},
 		{
 			name:    "ValidConfig",
-			config:  &Config{KeyStorage: memory.New()},
+			config:  &Config{KeyStorage: storage.New()},
 			wantErr: false,
 		},
 	}
@@ -1331,7 +1330,7 @@ func TestNewBackend_InvalidConfig(t *testing.T) {
 
 // TestRotateKey_ErrorOnDeleteFails tests RotateKey when delete fails
 func TestRotateKey_ErrorOnDeleteFails(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1348,7 +1347,7 @@ func TestRotateKey_ErrorOnDeleteFails(t *testing.T) {
 
 // TestDeleteKey_WithClosedBackend tests DeleteKey on closed backend
 func TestDeleteKey_WithClosedBackend(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1376,7 +1375,7 @@ func TestDeleteKey_WithClosedBackend(t *testing.T) {
 
 // TestSymmetricEncrypter_InvalidEncryptOptions tests with nil options
 func TestSymmetricEncrypter_InvalidEncryptOptions(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1420,7 +1419,7 @@ func TestSymmetricEncrypter_InvalidEncryptOptions(t *testing.T) {
 
 // TestGenerateSymmetricKey_AsymmetricAlgorithm tests error when using asymmetric algorithm
 func TestGenerateSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1448,7 +1447,7 @@ func TestGenerateSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 
 // TestGetSymmetricKey_AsymmetricAlgorithm tests error when using asymmetric algorithm
 func TestGetSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1476,7 +1475,7 @@ func TestGetSymmetricKey_AsymmetricAlgorithm(t *testing.T) {
 
 // TestSymmetricEncrypter_Errors tests error conditions in SymmetricEncrypter
 func TestSymmetricEncrypter_Errors(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1548,7 +1547,7 @@ func TestEncryptWithPassword_WrongPassword(t *testing.T) {
 
 // TestStoreSymmetricKey_WithPassword tests storing key with password
 func TestStoreSymmetricKey_WithPassword(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1593,7 +1592,7 @@ func TestStoreSymmetricKey_WithPassword(t *testing.T) {
 
 // TestDecodeSymmetricKey_NoPassword tests decoding unencrypted key
 func TestDecodeSymmetricKey_NoPassword(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1620,7 +1619,7 @@ func TestDecodeSymmetricKey_NoPassword(t *testing.T) {
 
 // TestDecodeSymmetricKey_WithPassword tests decoding encrypted key
 func TestDecodeSymmetricKey_WithPassword(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1655,7 +1654,7 @@ func TestDecodeSymmetricKey_WithPassword(t *testing.T) {
 
 // TestListKeys_WithClosedBackend tests ListKeys on closed backend
 func TestListKeys_WithClosedBackend(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1803,7 +1802,7 @@ func TestGenerateSymmetricKey_StorageSaveKeyError(t *testing.T) {
 
 // TestRotateKey_StorageError tests RotateKey when storage delete returns error
 func TestRotateKey_StorageError(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1859,7 +1858,7 @@ func TestListKeys_StorageError(t *testing.T) {
 
 // TestEncrypt_InvalidNonceSize tests Encrypt with provided nonce of wrong size
 func TestEncrypt_InvalidNonceSize(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -1916,7 +1915,7 @@ func TestEncrypt_InvalidNonceSize(t *testing.T) {
 
 // TestExportKey_NotFound tests ExportKey for non-existent key
 func TestExportKey_NotFound(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2029,7 +2028,7 @@ func TestGetSymmetricKey_StorageError(t *testing.T) {
 
 // TestStoreSymmetricKey_WithEmptyPassword tests storing with empty password
 func TestStoreSymmetricKey_WithEmptyPassword(t *testing.T) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{KeyStorage: keyStorage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2064,7 +2063,7 @@ func TestStoreSymmetricKey_WithEmptyPassword(t *testing.T) {
 
 // TestDecodeSymmetricKey_WithEmptyPassword tests decoding with empty password
 func TestDecodeSymmetricKey_WithEmptyPassword(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2091,7 +2090,7 @@ func TestDecodeSymmetricKey_WithEmptyPassword(t *testing.T) {
 
 // TestEncrypt_EmptyPlaintext tests encryption with empty plaintext
 func TestEncrypt_EmptyPlaintext(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2140,7 +2139,7 @@ func TestEncrypt_EmptyPlaintext(t *testing.T) {
 
 // TestExportKey_WithPassword tests ExportKey with password-protected key
 func TestExportKey_WithPassword(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2183,7 +2182,7 @@ func TestExportKey_WithPassword(t *testing.T) {
 
 // TestDecrypt_WithAADMismatch tests decryption fails with wrong AAD
 func TestDecrypt_WithAADMismatch(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2236,7 +2235,7 @@ func TestDecrypt_WithAADMismatch(t *testing.T) {
 
 // TestEncrypt_LargeData tests encryption with large plaintext
 func TestEncrypt_LargeData(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2289,7 +2288,7 @@ func TestEncrypt_LargeData(t *testing.T) {
 
 // TestEncrypt_DecryptOptions tests Decrypt with nil options
 func TestEncrypt_DecryptOptions(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2338,7 +2337,7 @@ func TestEncrypt_DecryptOptions(t *testing.T) {
 
 // TestEncrypt_MultipleRoundTrips tests multiple encrypt/decrypt cycles
 func TestEncrypt_MultipleRoundTrips(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2389,7 +2388,7 @@ func TestEncrypt_MultipleRoundTrips(t *testing.T) {
 
 // TestExportKey_WithInvalidAttribute tests ExportKey error handling
 func TestExportKey_WithInvalidAttribute(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2448,7 +2447,7 @@ func TestEncryptSymmetricEncrypter_VariousKeySizes(t *testing.T) {
 
 	for _, ks := range keySizes {
 		t.Run(fmt.Sprintf("AES_%d", ks.size), func(t *testing.T) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			b, err := NewBackend(config)
 			if err != nil {
@@ -2498,7 +2497,7 @@ func TestEncryptSymmetricEncrypter_VariousKeySizes(t *testing.T) {
 
 // TestGetRNG tests the GetRNG method
 func TestGetRNG(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2559,7 +2558,7 @@ func TestEncryptWithPassword_EmptyPassword(t *testing.T) {
 // TestRotateKey_NonexistentKey tests RotateKey for a key that doesn't exist
 // Note: RotateKey treats missing keys as valid (creates a new key)
 func TestRotateKey_NonexistentKey(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2598,7 +2597,7 @@ func TestRotateKey_NonexistentKey(t *testing.T) {
 
 // TestExportKey_WithClosedBackend tests ExportKey on a closed backend
 func TestExportKey_WithClosedBackend(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2630,7 +2629,7 @@ func TestExportKey_WithClosedBackend(t *testing.T) {
 
 // TestExportKey_NilAttributes tests ExportKey with nil attributes
 func TestExportKey_NilAttributes(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2673,7 +2672,7 @@ func TestDecryptWithPassword_TooShort(t *testing.T) {
 
 // TestNewBackend_WithCustomTracker tests backend creation with custom tracker
 func TestNewBackend_WithCustomTracker(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	tracker := backend.NewMemoryAEADTracker()
 	config := &Config{
 		KeyStorage: storage,
@@ -2694,7 +2693,7 @@ func TestNewBackend_WithCustomTracker(t *testing.T) {
 
 // TestGenerateSymmetricKey_WithInvalidAttributes tests key generation with invalid attributes
 func TestGenerateSymmetricKey_WithInvalidAttributes(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2723,7 +2722,7 @@ func TestGenerateSymmetricKey_WithInvalidAttributes(t *testing.T) {
 
 // TestGenerateSymmetricKey_WithCustomAEADOptions tests key generation with custom AEAD options
 func TestGenerateSymmetricKey_WithCustomAEADOptions(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2774,7 +2773,7 @@ func TestGenerateSymmetricKey_ChaCha20Poly1305(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			b, err := NewBackend(config)
 			if err != nil {
@@ -2823,7 +2822,7 @@ func TestGenerateSymmetricKey_ChaCha20Poly1305(t *testing.T) {
 
 // TestGetSymmetricKey_ChaCha20Poly1305 tests ChaCha20-Poly1305 key retrieval
 func TestGetSymmetricKey_ChaCha20Poly1305(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -2883,7 +2882,7 @@ func TestSymmetricEncrypter_ChaCha20Poly1305(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			b, err := NewBackend(config)
 			if err != nil {
@@ -2921,6 +2920,7 @@ func TestSymmetricEncrypter_ChaCha20Poly1305(t *testing.T) {
 
 			if encrypted == nil {
 				t.Fatal("Encrypted data is nil")
+				return
 			}
 
 			if encrypted.Algorithm != string(tt.algorithm) {
@@ -2957,7 +2957,7 @@ func TestSymmetricEncrypter_ChaCha20Poly1305(t *testing.T) {
 
 // TestSymmetricEncrypter_ChaCha20_TamperingDetection tests that ChaCha20-Poly1305 detects tampering
 func TestSymmetricEncrypter_ChaCha20_TamperingDetection(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3008,7 +3008,7 @@ func TestSymmetricEncrypter_ChaCha20_TamperingDetection(t *testing.T) {
 
 // TestSymmetricEncrypter_ChaCha20_WithAdditionalData tests ChaCha20-Poly1305 with additional data
 func TestSymmetricEncrypter_ChaCha20_WithAdditionalData(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3070,7 +3070,7 @@ func TestSymmetricEncrypter_ChaCha20_WithAdditionalData(t *testing.T) {
 
 // TestXChaCha20Poly1305_InvalidNonceSize tests XChaCha20-Poly1305 with invalid nonce size
 func TestXChaCha20Poly1305_InvalidNonceSize(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3111,7 +3111,7 @@ func TestXChaCha20Poly1305_InvalidNonceSize(t *testing.T) {
 
 // TestRotateKey_WithNilTracker tests key rotation with tracker failure
 func TestRotateKey_TrackerWarning(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3143,7 +3143,7 @@ func TestRotateKey_TrackerWarning(t *testing.T) {
 
 // TestGenerateSymmetricKey_MissingAESAttributesForAES tests generation without AES attributes
 func TestGenerateSymmetricKey_MissingAESAttributesForAES(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3170,7 +3170,7 @@ func TestGenerateSymmetricKey_MissingAESAttributesForAES(t *testing.T) {
 
 // TestEncryptDecrypt_RecordNonceWarning tests that nonce recording warnings don't fail encryption
 func TestEncryptDecrypt_RecordNonceWarning(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3217,7 +3217,7 @@ func TestEncryptDecrypt_RecordNonceWarning(t *testing.T) {
 
 // TestClose_RNGCloseWarning tests that RNG close warnings don't fail backend close
 func TestClose_RNGCloseWarning(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3239,7 +3239,7 @@ func TestClose_RNGCloseWarning(t *testing.T) {
 
 // TestEncrypt_ChaCha20_ErrorPaths tests ChaCha20 encryption error handling
 func TestEncrypt_ChaCha20_ErrorPaths(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3283,7 +3283,7 @@ func TestEncrypt_ChaCha20_ErrorPaths(t *testing.T) {
 
 // TestPasswordEncryption_ErrorPaths tests password encryption error handling
 func TestPasswordEncryption_ErrorPaths(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3337,7 +3337,7 @@ func TestPasswordEncryption_ErrorPaths(t *testing.T) {
 
 // TestExportKey_WithPasswordAndValidation tests export with password-protected keys
 func TestExportKey_WithPasswordAndValidation(t *testing.T) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	b, err := NewBackend(config)
 	if err != nil {
@@ -3374,6 +3374,7 @@ func TestExportKey_WithPasswordAndValidation(t *testing.T) {
 
 	if wrapped == nil {
 		t.Fatal("Wrapped key is nil")
+		return
 	}
 
 	if len(wrapped.WrappedKey) == 0 {
@@ -3392,7 +3393,7 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 
 	for _, alg := range algorithms {
 		t.Run(string(alg), func(t *testing.T) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			b, err := NewBackend(config)
 			if err != nil {
@@ -3469,7 +3470,7 @@ func TestEncryptDecrypt_AllCipherModes(t *testing.T) {
 
 	for _, alg := range algorithms {
 		t.Run(string(alg), func(t *testing.T) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			b, err := NewBackend(config)
 			if err != nil {

@@ -2,7 +2,7 @@ package tpm2
 
 import (
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -16,7 +16,7 @@ func (tpm *TPM2) CreateSecretKey(
 	}
 
 	// Get the persisted SRK
-	srkHandle := keyAttrs.Parent.TPMAttributes.Handle.(tpm2.TPMHandle)
+	srkHandle := keyAttrs.Parent.TPMAttributes.Handle
 	srkName, _, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
 		return err

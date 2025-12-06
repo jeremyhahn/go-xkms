@@ -316,6 +316,7 @@ func TestNormalizeConfig_EmptyMode(t *testing.T) {
 	result := normalizeConfig(cfg)
 	if result == nil {
 		t.Fatal("normalizeConfig returned nil")
+		return
 	}
 	if result.Mode != ModeAuto {
 		t.Errorf("Expected ModeAuto for empty mode, got %s", result.Mode)

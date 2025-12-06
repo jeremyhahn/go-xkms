@@ -17,11 +17,12 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -620,8 +621,7 @@ func TestImportExportConcurrency(t *testing.T) {
 		go func(id int) {
 			defer func() { doneCh <- true }()
 
-			attrs := createAESAttrs("concurrent-key", 256, types.SymmetricAES256GCM)
-			attrs.CN = attrs.CN + string(rune(id)) // Make unique
+			attrs := createAESAttrs(fmt.Sprintf("concurrent-key-%d", id), 256, types.SymmetricAES256GCM)
 
 			// Get import parameters
 			params, err := be.(backend.ImportExportBackend).GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -834,7 +834,7 @@ func TestImportKey_WrongKeySize(t *testing.T) {
 
 // TestBackendClosed tests operations on closed backend
 func TestBackendClosed(t *testing.T) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	config := &Config{KeyStorage: keyStorage}
 	be, err := NewBackend(config)
 	if err != nil {

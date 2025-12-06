@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -344,7 +344,7 @@ func TestTPMAttributesCreation(t *testing.T) {
 			Handle:       tpm2.TPMHandle(0x81000001),
 			PCRSelection: pcrSelection,
 		}
-		pcrSel := tpmAttrs.PCRSelection.(tpm2.TPMLPCRSelection)
+		pcrSel := tpmAttrs.PCRSelection
 		assert.Equal(t, 1, len(pcrSel.PCRSelections))
 		assert.Equal(t, tpm2.TPMAlgSHA256, pcrSel.PCRSelections[0].Hash)
 	})
@@ -357,7 +357,7 @@ func TestTPMAttributesCreation(t *testing.T) {
 			},
 			PublicKeyBytes: []byte{0x04, 0x05, 0x06},
 		}
-		n := tpmAttrs.Name.(tpm2.TPM2BName)
+		n := tpmAttrs.Name
 		assert.Equal(t, []byte{0x01, 0x02, 0x03}, n.Buffer)
 		assert.Equal(t, []byte{0x04, 0x05, 0x06}, tpmAttrs.PublicKeyBytes)
 	})

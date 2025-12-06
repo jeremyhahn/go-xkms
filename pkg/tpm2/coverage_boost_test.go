@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -150,7 +150,7 @@ func TestCreateECDSA_Enhanced(t *testing.T) {
 
 	// Flush the handle
 	if keyAttrs.TPMAttributes != nil && keyAttrs.TPMAttributes.Handle != 0 {
-		tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+		tpm.Flush(keyAttrs.TPMAttributes.Handle)
 	}
 
 	// Test ECDSA with different key
@@ -207,7 +207,7 @@ func TestCreateRSA_Enhanced(t *testing.T) {
 
 	// Flush the handle
 	if encKeyAttrs.TPMAttributes != nil && encKeyAttrs.TPMAttributes.Handle != 0 {
-		tpm.Flush(encKeyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+		tpm.Flush(encKeyAttrs.TPMAttributes.Handle)
 	}
 
 	// Test RSA PSS signing key

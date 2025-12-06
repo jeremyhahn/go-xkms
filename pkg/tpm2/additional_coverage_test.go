@@ -682,7 +682,7 @@ func TestDefaultConfigValues(t *testing.T) {
 	t.Run("verify KeyStore config defaults", func(t *testing.T) {
 		assert.NotNil(t, DefaultConfig.KeyStore)
 		assert.Equal(t, "platform", DefaultConfig.KeyStore.SRKAuth)
-		assert.Equal(t, uint32(0x81000002), DefaultConfig.KeyStore.SRKHandle)
+		assert.Equal(t, uint32(0x81000001), DefaultConfig.KeyStore.SRKHandle)
 		assert.True(t, DefaultConfig.KeyStore.PlatformPolicy)
 	})
 }

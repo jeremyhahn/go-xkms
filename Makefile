@@ -354,7 +354,7 @@ test:
 	@bash -c 'set -o pipefail; \
 	export WITH_TPM2=0; \
 	$(GOTEST) $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/...  2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|yubikey|/mocks|/quantum)") \
+		$$(go list -e ./pkg/...  2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -1678,14 +1678,40 @@ gosec:
 		exit 1; \
 	fi
 
+.PHONY: vuln
+## vuln: Run govulncheck to scan for known vulnerabilities
+vuln:
+	@echo "$(CYAN)$(BOLD)→ Running vulnerability scan with govulncheck...$(RESET)"
+	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
+	if [ -x "$$GOVULNCHECK_BIN" ]; then \
+		$$GOVULNCHECK_BIN ./...; \
+		echo "$(GREEN)✓ Vulnerability scan complete$(RESET)"; \
+	else \
+		echo "$(YELLOW)⚠ govulncheck not found$(RESET)"; \
+		echo "$(YELLOW)  Install with: make install-govulncheck$(RESET)"; \
+		exit 1; \
+	fi
+
 .PHONY: check
-## check: Run all code quality checks (fmt, vet, lint, gosec)
-check: fmt vet lint gosec
+## check: Run all code quality checks (fmt, vet, lint, gosec, vuln)
+check: fmt vet lint gosec vuln
 	@echo "$(GREEN)$(BOLD)✓ All quality checks passed!$(RESET)"
 
 # ==============================================================================
 # Tool Installation
 # ==============================================================================
+
+.PHONY: install-govulncheck
+## install-govulncheck: Install govulncheck vulnerability scanner
+install-govulncheck:
+	@echo "$(CYAN)$(BOLD)→ Installing govulncheck...$(RESET)"
+	@if ! command -v govulncheck >/dev/null 2>&1; then \
+		echo "$(CYAN)  Installing govulncheck vulnerability scanner...$(RESET)"; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest; \
+		echo "$(GREEN)  ✓ govulncheck installed$(RESET)"; \
+	else \
+		echo "$(GREEN)  ✓ govulncheck already installed$(RESET)"; \
+	fi
 
 .PHONY: install-gosec
 ## install-gosec: Install gosec security scanner
@@ -1700,8 +1726,8 @@ install-gosec:
 	fi
 
 .PHONY: install-tools
-## install-tools: Install development tools (golangci-lint, gosec, etc.)
-install-tools: install-gosec
+## install-tools: Install development tools (golangci-lint, gosec, govulncheck, etc.)
+install-tools: install-gosec install-govulncheck
 	@echo "$(CYAN)$(BOLD)→ Installing development tools...$(RESET)"
 	@echo "$(CYAN)  Installing golangci-lint v2.6.2 (same as CI)...$(RESET)"
 	@cd /tmp && \
@@ -1732,8 +1758,8 @@ verify: clean deps check test
 	@echo "$(GREEN)$(BOLD)✓ Verification complete! Ready to commit.$(RESET)"
 
 .PHONY: ci
-## ci: Run CI pipeline (format check, vet, lint, build, test, integration-test)
-ci: deps fmt-check vet lint build test race docker-test
+## ci: Run CI pipeline (format check, vet, lint, vuln, build, test, docker-test)
+ci: deps fmt-check vet lint vuln build test race docker-test
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 # ==============================================================================

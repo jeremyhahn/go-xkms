@@ -273,6 +273,7 @@ func TestWithIdentity_GetIdentity(t *testing.T) {
 
 			if retrieved == nil {
 				t.Fatal("GetIdentity() returned nil")
+				return
 			}
 
 			if retrieved.Subject != tt.identity.Subject {
@@ -313,6 +314,7 @@ func TestNoOpAuthenticator_AuthenticateHTTP(t *testing.T) {
 
 	if identity == nil {
 		t.Fatal("AuthenticateHTTP() returned nil identity")
+		return
 	}
 
 	if identity.Subject != "anonymous" {
@@ -343,6 +345,7 @@ func TestNoOpAuthenticator_AuthenticateGRPC(t *testing.T) {
 
 	if identity == nil {
 		t.Fatal("AuthenticateGRPC() returned nil identity")
+		return
 	}
 
 	if identity.Subject != "anonymous" {

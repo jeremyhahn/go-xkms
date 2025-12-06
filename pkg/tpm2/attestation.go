@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -26,7 +26,7 @@ func (tpm *TPM2) AKProfile() (AKProfile, error) {
 	return AKProfile{
 		EKPub:              tpm.ekAttrs.TPMAttributes.PublicKeyBytes,
 		AKPub:              tpm.iakAttrs.TPMAttributes.PublicKeyBytes,
-		AKName:             tpm.iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+		AKName:             tpm.iakAttrs.TPMAttributes.Name,
 		SignatureAlgorithm: tpm.iakAttrs.SignatureAlgorithm,
 	}, nil
 }
@@ -59,7 +59,7 @@ func (tpm *TPM2) MakeCredential(
 
 	// Create the new credential challenge
 	mc, err := tpm2.MakeCredential{
-		Handle:     ekAttrs.TPMAttributes.Handle.(tpm2.TPMIDHObject),
+		Handle:     ekAttrs.TPMAttributes.Handle,
 		Credential: digest,
 		ObjectName: akName,
 	}.Execute(tpm.transport)
@@ -80,6 +80,101 @@ func (tpm *TPM2) MakeCredential(
 	}
 
 	return mc.CredentialBlob.Buffer, mc.Secret.Buffer, digest.Buffer, nil
+}
+
+// MakeCredentialWithExternalEK performs TPM2_MakeCredential using an external EK certificate.
+// This is used by CA servers to create credential challenges for clients whose EK certificate
+// comes from a CSR (TCG-CSR-IDEVID), not from the server's own TPM.
+//
+// Parameters:
+//   - ekCert: The client's EK certificate (from CSR)
+//   - iakPubBytes: The client's IAK public area bytes (from CSR's AttestPub)
+//   - secret: Optional secret to use (if nil, a random 32-byte secret is generated)
+//
+// Returns:
+//   - credentialBlob: The encrypted credential blob
+//   - encryptedSecret: The encrypted secret
+//   - secret: The plaintext secret (for verification)
+//   - error: Any error encountered
+func (tpm *TPM2) MakeCredentialWithExternalEK(
+	ekCert *x509.Certificate,
+	iakPubBytes []byte,
+	secret []byte) ([]byte, []byte, []byte, error) {
+
+	tpm.logger.Info("Creating Activation Credential with external EK certificate")
+
+	if ekCert == nil {
+		return nil, nil, nil, fmt.Errorf("EK certificate is required")
+	}
+
+	if len(iakPubBytes) == 0 {
+		return nil, nil, nil, fmt.Errorf("IAK public area bytes are required")
+	}
+
+	// Generate secret if not provided
+	if secret == nil {
+		secret = make([]byte, 32) // AES-256 key
+		if _, err := tpm.random.Read(secret); err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to generate secret: %w", err)
+		}
+	}
+
+	// Load the IAK public key onto the TPM to get the TPM-computed name
+	iakLoadRsp, err := tpm2.LoadExternal{
+		Hierarchy: tpm2.TPMRHEndorsement,
+		InPublic:  tpm2.BytesAs2B[tpm2.TPMTPublic](iakPubBytes),
+	}.Execute(tpm.transport)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load IAK public key: %w", err)
+	}
+	defer tpm.Flush(iakLoadRsp.ObjectHandle)
+
+	// Read the IAK name from the TPM (Name is computed by the TPM based on the public area)
+	readPubRsp, err := tpm2.ReadPublic{
+		ObjectHandle: iakLoadRsp.ObjectHandle,
+	}.Execute(tpm.transport)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to read IAK public: %w", err)
+	}
+
+	// Convert EK certificate public key to TPM public structure
+	ekPublic, err := CertificateToTPMPublic(ekCert)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to convert EK certificate: %w", err)
+	}
+
+	// Load the client's EK public key onto the TPM
+	ekLoadRsp, err := tpm2.LoadExternal{
+		Hierarchy: tpm2.TPMRHEndorsement,
+		InPublic:  tpm2.New2B(*ekPublic),
+	}.Execute(tpm.transport)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load EK public key: %w", err)
+	}
+	defer tpm.Flush(ekLoadRsp.ObjectHandle)
+
+	if tpm.debugSecrets {
+		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: IAK name: 0x%x", readPubRsp.Name.Buffer)
+		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: secret: 0x%x", secret)
+	}
+
+	// Perform TPM2_MakeCredential
+	digest := tpm2.TPM2BDigest{Buffer: secret}
+	mc, err := tpm2.MakeCredential{
+		Handle:     ekLoadRsp.ObjectHandle,
+		Credential: digest,
+		ObjectName: readPubRsp.Name,
+	}.Execute(tpm.transport)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("TPM2_MakeCredential failed: %w", err)
+	}
+
+	if tpm.debugSecrets {
+		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: credential blob: 0x%x", mc.CredentialBlob.Buffer)
+		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: encrypted secret: 0x%x", mc.Secret.Buffer)
+	}
+
+	return mc.CredentialBlob.Buffer, mc.Secret.Buffer, secret, nil
 }
 
 // Activates a credential challenge previously initiated by MakeCredential
@@ -117,22 +212,15 @@ func (tpm *TPM2) ActivateCredential(
 		return nil, err
 	}
 
-	// Set the activation key handle to the appropriate key based on the
-	// enrollment strategy defined in the platform configuration file.
-	var keyAttrs *types.KeyAttributes
-	EnrollmentStrategy := ParseIdentityProvisioningStrategy(tpm.config.IdentityProvisioningStrategy)
-	switch EnrollmentStrategy {
-	case EnrollmentStrategyIAK:
-		keyAttrs = tpm.iakAttrs
-	case EnrollmentStrategyIAK_IDEVID_SINGLE_PASS:
-		keyAttrs = tpm.idevidAttrs
-	default:
-		return nil, ErrInvalidEnrollmentStrategy
-	}
+	// Always use IAK for credential activation. The credential was made using
+	// the IAK Name (from AttestPub in the CSR), so activation must use the IAK
+	// regardless of the enrollment strategy. The strategy affects how the CSR
+	// is signed, but TPM2_MakeCredential always binds to the IAK.
+	keyAttrs := tpm.iakAttrs
 
 	// Validate that key attributes are properly initialized
 	if keyAttrs == nil || keyAttrs.TPMAttributes == nil {
-		return nil, fmt.Errorf("activation key attributes not initialized, TPM may not be properly provisioned")
+		return nil, fmt.Errorf("IAK attributes not initialized, TPM may not be properly provisioned")
 	}
 
 	// Activate the credential, proving the AK and EK are both loaded
@@ -140,12 +228,12 @@ func (tpm *TPM2) ActivateCredential(
 	tpm.logger.Debug("tpm2: activating credential")
 	activateCredentialsResponse, err := tpm2.ActivateCredential{
 		ActivateHandle: tpm2.NamedHandle{
-			Handle: keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-			Name:   keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			Handle: keyAttrs.TPMAttributes.Handle,
+			Name:   keyAttrs.TPMAttributes.Name,
 		},
 		KeyHandle: tpm2.AuthHandle{
-			Handle: ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-			Name:   ekAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			Handle: ekAttrs.TPMAttributes.Handle,
+			Name:   ekAttrs.TPMAttributes.Name,
 			Auth:   session,
 		},
 		CredentialBlob: tpm2.TPM2BIDObject{
@@ -205,7 +293,7 @@ func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 	pcrSelect := tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{
-				Hash:      tpm.iakAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash),
+				Hash:      tpm.iakAttrs.TPMAttributes.HashAlg,
 				PCRSelect: tpm2.PCClientCompatible.PCRs(pcrs...),
 			},
 		},
@@ -214,8 +302,8 @@ func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 	// Create the quote
 	q, err := tpm2.Quote{
 		SignHandle: tpm2.AuthHandle{
-			Handle: tpm.iakAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-			Name:   tpm.iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			Handle: tpm.iakAttrs.TPMAttributes.Handle,
+			Name:   tpm.iakAttrs.TPMAttributes.Name,
 			Auth:   tpm2.PasswordAuth(akAuth),
 		},
 		QualifyingData: tpm2.TPM2BData{

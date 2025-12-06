@@ -28,7 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -149,8 +149,8 @@ func TestGetImportParameters(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -254,8 +254,8 @@ func TestWrapKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackend(config)
@@ -280,8 +280,8 @@ func TestWrapKey(t *testing.T) {
 func TestUnwrapKey(t *testing.T) {
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -411,8 +411,8 @@ func TestImportKey(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			b, err := NewBackendWithClient(config, mockClient)
@@ -432,8 +432,8 @@ func TestImportKey(t *testing.T) {
 func TestExportKey(t *testing.T) {
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)
@@ -499,8 +499,8 @@ func TestImportKeyRoundTrip(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -556,8 +556,8 @@ func TestImportKeyRoundTrip(t *testing.T) {
 func TestMapWrappingAlgorithm(t *testing.T) {
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackend(config)

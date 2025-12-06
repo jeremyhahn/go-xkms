@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +39,7 @@ func TestHardwareStorageIntegration_HybridMode(t *testing.T) {
 	defer hwStorage.Close()
 
 	// Create external storage - wrap with adapter to provide HardwareCertStorage interface
-	extStorage := hardware.NewBackendCertStorageAdapter(memory.New())
+	extStorage := hardware.NewBackendCertStorageAdapter(storage.New())
 	defer extStorage.Close()
 
 	// Create hybrid storage
@@ -83,7 +83,7 @@ func TestHardwareStorageIntegration_HybridFallback(t *testing.T) {
 	}
 	defer hwStorage.Close()
 
-	extStorage := hardware.NewBackendCertStorageAdapter(memory.New())
+	extStorage := hardware.NewBackendCertStorageAdapter(storage.New())
 	defer extStorage.Close()
 
 	hybridStorage, err := hardware.NewHybridCertStorage(hwStorage, extStorage)
@@ -425,7 +425,7 @@ func TestHardwareStorageIntegration_HybridListMerge(t *testing.T) {
 		t.Skip("TPM2 storage capacity issues - skipping hybrid test")
 	}
 
-	extStorage := hardware.NewBackendCertStorageAdapter(memory.New())
+	extStorage := hardware.NewBackendCertStorageAdapter(storage.New())
 	defer extStorage.Close()
 
 	hybridStorage, err := hardware.NewHybridCertStorage(hwStorage, extStorage)
@@ -481,7 +481,7 @@ func TestHardwareStorageIntegration_HybridDeleteBoth(t *testing.T) {
 		t.Skip("TPM2 storage capacity issues - skipping hybrid test")
 	}
 
-	extStorage := hardware.NewBackendCertStorageAdapter(memory.New())
+	extStorage := hardware.NewBackendCertStorageAdapter(storage.New())
 	defer extStorage.Close()
 
 	hybridStorage, err := hardware.NewHybridCertStorage(hwStorage, extStorage)

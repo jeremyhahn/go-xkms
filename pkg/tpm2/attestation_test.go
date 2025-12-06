@@ -131,7 +131,7 @@ func TestMakeActivateCredentialWithGeneratedSecret(t *testing.T) {
 	assert.Nil(t, err)
 
 	credentialBlob, secret, digest, err := tpm.MakeCredential(
-		iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName), nil)
+		iakAttrs.TPMAttributes.Name, nil)
 	assert.Nil(t, err)
 	assert.NotNil(t, credentialBlob)
 	assert.NotNil(t, secret)
@@ -159,7 +159,7 @@ func TestMakeActivateCredential(t *testing.T) {
 	secret := []byte("secret")
 
 	credentialBlob, secret, digest, err := tpm.MakeCredential(
-		iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName), secret)
+		iakAttrs.TPMAttributes.Name, secret)
 	assert.Nil(t, err)
 	assert.NotNil(t, credentialBlob)
 	assert.NotNil(t, secret)

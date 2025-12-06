@@ -15,10 +15,9 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,13 +32,14 @@ func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 	_, err := rand.Reader.Read(buf)
 	require.NoError(t, err)
 	hexVal := hex.EncodeToString(buf)
-	tmp := fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
+	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	fs := afero.NewMemMapFs()
-	blobStore, err := store.NewFSBlobStore(logger, fs, tmp, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	require.NoError(t, err)
 
-	fileBackend := store.NewFileBackend(logger, afero.NewMemMapFs(), tmp)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
 		EncryptSession: false,
@@ -118,6 +118,7 @@ func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 
 	cleanup := func() {
 		_ = tpm.Close()
+		_ = storageFactory.Close()
 	}
 
 	return tpm, cleanup

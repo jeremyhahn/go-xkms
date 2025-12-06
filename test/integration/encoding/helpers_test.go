@@ -25,7 +25,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +40,7 @@ type testBackendSetup struct {
 func createTestBackend(t *testing.T) *testBackendSetup {
 	t.Helper()
 
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	backendCfg := &software.Config{
 		KeyStorage: keyStorage,
 		Tracker:    backend.NewMemoryAEADTracker(),

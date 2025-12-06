@@ -45,7 +45,7 @@ type ThresholdBackend struct {
 //
 // Example usage:
 //
-//	storage := memory.New()
+//	storage := storage.New()
 //	config := &threshold.Config{
 //	    KeyStorage:       storage,
 //	    LocalShareID:     1,

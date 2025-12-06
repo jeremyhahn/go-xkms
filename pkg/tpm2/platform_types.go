@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"errors"
 
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -23,6 +24,16 @@ type CertificateStorer interface {
 	Get(cn string) (*x509.Certificate, error)
 	Save(cn string, cert *x509.Certificate) error
 	Delete(cn string) error
+}
+
+// PlatformKeyStorer defines the interface for a TPM-backed platform key store
+// that provides access to Storage Root Key (SRK) attributes and key backend.
+type PlatformKeyStorer interface {
+	// SRKAttributes returns the Storage Root Key attributes
+	SRKAttributes() *types.KeyAttributes
+
+	// Backend returns the key backend used by this store
+	Backend() store.KeyBackend
 }
 
 // Errors

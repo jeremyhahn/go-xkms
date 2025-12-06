@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/rand"
@@ -32,10 +33,10 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	kbackend "github.com/jeremyhahn/go-keychain/pkg/backend"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/threshold/shamir"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -95,6 +96,7 @@ type TrustedPlatformModule interface {
 	IDevIDAttributes() (*types.KeyAttributes, error)
 	Info() (string, error)
 	IsFIPS140_2() (bool, error)
+	IsPlatformPCRExtended() (bool, error)
 	Install(soPIN types.Password) error
 	KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, error)
 	LoadKeyPair(
@@ -103,6 +105,10 @@ type TrustedPlatformModule interface {
 		backend store.KeyBackend) (*tpm2.LoadResponse, error)
 	MakeCredential(
 		akName tpm2.TPM2BName,
+		secret []byte) ([]byte, []byte, []byte, error)
+	MakeCredentialWithExternalEK(
+		ekCert *x509.Certificate,
+		iakPubBytes []byte,
 		secret []byte) ([]byte, []byte, []byte, error)
 	NonceSession(secret types.Password) (tpm2.Session, func() error, error)
 	NVRead(keyAttrs *types.KeyAttributes, dataSize uint16) ([]byte, error)
@@ -134,7 +140,10 @@ type TrustedPlatformModule interface {
 		outPublic tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic],
 		backend store.KeyBackend,
 		overwrite bool) error
-	Seal(
+	// Seal implements types.Sealer - seals data using the TPM
+	Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error)
+	// SealKey creates a sealed keyed hash key (legacy API)
+	SealKey(
 		keyAttrs *types.KeyAttributes,
 		backend store.KeyBackend,
 		overwrite bool) (*tpm2.CreateResponse, error)
@@ -145,7 +154,12 @@ type TrustedPlatformModule interface {
 	SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic)
 	SSRKAttributes() (*types.KeyAttributes, error)
 	Transport() transport.TPM
-	Unseal(keyAttrs *types.KeyAttributes, backend store.KeyBackend) ([]byte, error)
+	// Unseal implements types.Sealer - unseals data from the TPM
+	Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error)
+	// UnsealKey unseals a keyed hash key (legacy API)
+	UnsealKey(keyAttrs *types.KeyAttributes, backend store.KeyBackend) ([]byte, error)
+	// CanSeal implements types.Sealer - returns true if sealing is supported
+	CanSeal() bool
 	WriteEKCert(ekCert []byte) error
 
 	VerifyTCGCSR(
@@ -640,9 +654,9 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 	// Load the EK cert
 	var ekCertIndex tpm2.TPMHandle
 	var usedTPMAttrsCertHandle bool
-	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.CertHandle != nil {
+	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.CertHandle != 0 {
 		// ... using EK cert index provided by TPM attributes
-		certHandle := ekAttrs.TPMAttributes.CertHandle.(tpm2.TPMHandle)
+		certHandle := ekAttrs.TPMAttributes.CertHandle
 		if certHandle > 0 {
 			ekCertIndex = certHandle
 			usedTPMAttrsCertHandle = true
@@ -795,7 +809,7 @@ func (tpm *TPM2) Sign(
 			Tag: tpm2.TPMSTHashCheck,
 		}
 
-		handle = keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
+		handle = keyAttrs.TPMAttributes.Handle
 
 		pub, err := tpm2.ReadPublic{
 			ObjectHandle: handle,
@@ -1057,7 +1071,7 @@ func (tpm *TPM2) Hash(
 	}
 	h, err := tpm2.Hash{
 		Hierarchy: tpm2.TPMRHEndorsement,
-		HashAlg:   keyAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash),
+		HashAlg:   keyAttrs.TPMAttributes.HashAlg,
 		Data: tpm2.TPM2BMaxBuffer{
 			Buffer: data,
 		},
@@ -1104,7 +1118,7 @@ func (tpm *TPM2) HashSequence(
 		Auth: tpm2.TPM2BAuth{
 			Buffer: auth,
 		},
-		HashAlg: keyAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash),
+		HashAlg: keyAttrs.TPMAttributes.HashAlg,
 	}
 	rspHSS, err := hashSequenceStart.Execute(tpm.transport)
 	if err != nil {
@@ -1167,13 +1181,13 @@ func (tpm *TPM2) SignValidate(
 
 	// Sign the digest
 	var hashSig []byte
-	if keyAttrs.TPMAttributes == nil || keyAttrs.TPMAttributes.Public == nil {
+	if keyAttrs.TPMAttributes == nil || keyAttrs.TPMAttributes.Public.Type == 0 {
 		return nil, errors.New("TPMAttributes.Public is required for SignValidate")
 	}
-	if keyAttrs.TPMAttributes.HashAlg == nil {
+	if keyAttrs.TPMAttributes.HashAlg == 0 {
 		return nil, errors.New("TPMAttributes.HashAlg is required for SignValidate")
 	}
-	public := keyAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	public := keyAttrs.TPMAttributes.Public
 	if public.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
 
 		// rsaDetails, err := keyAttrs.TPMAttributes.Public.Parameters.RSADetail()
@@ -1185,8 +1199,8 @@ func (tpm *TPM2) SignValidate(
 
 		signResponse, err := tpm2.Sign{
 			KeyHandle: tpm2.AuthHandle{
-				Handle: keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-				Name:   keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+				Handle: keyAttrs.TPMAttributes.Handle,
+				Name:   keyAttrs.TPMAttributes.Name,
 				Auth:   tpm2.PasswordAuth(akAuth),
 			},
 			Digest: tpm2.TPM2BDigest{
@@ -1196,7 +1210,7 @@ func (tpm *TPM2) SignValidate(
 				Scheme: rsaDetails.Scheme.Scheme,
 				Details: tpm2.NewTPMUSigScheme(
 					rsaDetails.Scheme.Scheme, &tpm2.TPMSSchemeHash{
-						HashAlg: keyAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash),
+						HashAlg: keyAttrs.TPMAttributes.HashAlg,
 					}),
 			},
 			Validation: tpm2.TPMTTKHashCheck{
@@ -1265,8 +1279,8 @@ func (tpm *TPM2) SignValidate(
 
 		signResponse, err := tpm2.Sign{
 			KeyHandle: tpm2.AuthHandle{
-				Handle: keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-				Name:   keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+				Handle: keyAttrs.TPMAttributes.Handle,
+				Name:   keyAttrs.TPMAttributes.Name,
 				Auth:   tpm2.PasswordAuth(akAuth),
 			},
 			Digest: tpm2.TPM2BDigest{
@@ -1277,7 +1291,7 @@ func (tpm *TPM2) SignValidate(
 				Details: tpm2.NewTPMUSigScheme(
 					tpm2.TPMAlgECDSA,
 					&tpm2.TPMSSchemeHash{
-						HashAlg: keyAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash),
+						HashAlg: keyAttrs.TPMAttributes.HashAlg,
 					},
 				),
 			},
@@ -1457,7 +1471,7 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 		return nil, err
 	}
 
-	ekPub := attrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	ekPub := attrs.TPMAttributes.Public
 
 	if ekPub.Type != tpm2.TPMAlgRSA {
 		return nil, errors.New("ECC EK certificates unsupported at this time")

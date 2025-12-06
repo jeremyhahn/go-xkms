@@ -117,8 +117,8 @@ func TestHMACSaltedSession(t *testing.T) {
 	require.NotNil(t, ekAttrs)
 	require.NotNil(t, ekAttrs.TPMAttributes)
 
-	ekHandle := ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
-	ekPublic := ekAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	ekHandle := ekAttrs.TPMAttributes.Handle
+	ekPublic := ekAttrs.TPMAttributes.Public
 
 	t.Run("WithNilAuth", func(t *testing.T) {
 		session, closer, err := tpmInstance.HMACSaltedSession(ekHandle, ekPublic, nil)

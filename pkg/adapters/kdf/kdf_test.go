@@ -85,6 +85,7 @@ func TestDefaultParams(t *testing.T) {
 			validate: func(t *testing.T, p *KDFParams) {
 				if p == nil {
 					t.Fatal("DefaultParams returned nil")
+					return
 				}
 				if p.Algorithm != AlgorithmHKDF {
 					t.Errorf("Algorithm = %v, want %v", p.Algorithm, AlgorithmHKDF)
@@ -103,6 +104,7 @@ func TestDefaultParams(t *testing.T) {
 			validate: func(t *testing.T, p *KDFParams) {
 				if p == nil {
 					t.Fatal("DefaultParams returned nil")
+					return
 				}
 				if p.Algorithm != AlgorithmPBKDF2 {
 					t.Errorf("Algorithm = %v, want %v", p.Algorithm, AlgorithmPBKDF2)
@@ -124,6 +126,7 @@ func TestDefaultParams(t *testing.T) {
 			validate: func(t *testing.T, p *KDFParams) {
 				if p == nil {
 					t.Fatal("DefaultParams returned nil")
+					return
 				}
 				if p.Algorithm != AlgorithmArgon2id {
 					t.Errorf("Algorithm = %v, want %v", p.Algorithm, AlgorithmArgon2id)
@@ -148,6 +151,7 @@ func TestDefaultParams(t *testing.T) {
 			validate: func(t *testing.T, p *KDFParams) {
 				if p == nil {
 					t.Fatal("DefaultParams returned nil")
+					return
 				}
 				if p.Algorithm != AlgorithmArgon2i {
 					t.Errorf("Algorithm = %v, want %v", p.Algorithm, AlgorithmArgon2i)
@@ -160,6 +164,7 @@ func TestDefaultParams(t *testing.T) {
 			validate: func(t *testing.T, p *KDFParams) {
 				if p == nil {
 					t.Fatal("DefaultParams returned nil")
+					return
 				}
 				if p.Algorithm != AlgorithmArgon2id {
 					t.Errorf("Algorithm = %v, want %v", p.Algorithm, AlgorithmArgon2id)

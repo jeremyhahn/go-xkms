@@ -19,15 +19,15 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/crypto/x25519"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSoftwareBackend_X25519_GenerateKey(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -51,8 +51,8 @@ func TestSoftwareBackend_X25519_GenerateKey(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_GetKey(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -79,8 +79,8 @@ func TestSoftwareBackend_X25519_GetKey(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -130,8 +130,8 @@ func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -176,8 +176,8 @@ func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_PublicKeyFromPrivate(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -209,8 +209,8 @@ func TestSoftwareBackend_X25519_PublicKeyFromPrivate(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_Capabilities(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -224,8 +224,8 @@ func TestSoftwareBackend_X25519_Capabilities(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_DeleteKey(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -255,8 +255,8 @@ func TestSoftwareBackend_X25519_DeleteKey(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_ListKeys(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -288,8 +288,8 @@ func TestSoftwareBackend_X25519_ListKeys(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_DeriveWithKDF(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -332,8 +332,8 @@ func TestSoftwareBackend_X25519_DeriveWithKDF(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_InterfaceCompliance(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -349,8 +349,8 @@ func TestSoftwareBackend_X25519_InterfaceCompliance(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_InvalidPublicKey(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()
@@ -373,8 +373,8 @@ func TestSoftwareBackend_X25519_InvalidPublicKey(t *testing.T) {
 }
 
 func TestSoftwareBackend_X25519_InvalidAttributes(t *testing.T) {
-	storage := memory.New()
-	config := &software.Config{KeyStorage: storage}
+	keyStorage := storage.New()
+	config := &software.Config{KeyStorage: keyStorage}
 	backend, err := software.NewBackend(config)
 	require.NoError(t, err)
 	defer func() { _ = backend.Close() }()

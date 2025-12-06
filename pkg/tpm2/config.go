@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -99,7 +99,7 @@ var (
 		},
 		KeyStore: &KeyStoreConfig{
 			SRKAuth:        "platform",
-			SRKHandle:      0x81000002,
+			SRKHandle:      0x81000001,
 			PlatformPolicy: true,
 		},
 		PlatformPCR:     16,

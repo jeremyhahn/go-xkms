@@ -189,6 +189,7 @@ func TestDefaultVerifyOptionsValues(t *testing.T) {
 
 	if opts == nil {
 		t.Fatalf("DefaultVerifyOptions() returned nil")
+		return
 	}
 
 	if opts.CheckFreshness != true {
@@ -230,6 +231,7 @@ func TestInsecureVerifyOptionsValues(t *testing.T) {
 
 	if opts == nil {
 		t.Fatalf("InsecureVerifyOptions() returned nil")
+		return
 	}
 
 	if opts.CheckFreshness != false {

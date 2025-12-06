@@ -3,7 +3,7 @@ package tpm2
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/stretchr/testify/assert"
 )
 

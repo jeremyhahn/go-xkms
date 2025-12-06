@@ -65,6 +65,7 @@
 package azurekv
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -862,4 +863,40 @@ func (s *kvSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (
 		return nil, fmt.Errorf("Azure Key Vault signing failed: %w", err)
 	}
 	return signature, nil
+}
+
+// CanSeal returns true if the underlying backend supports sealing operations.
+func (ks *KeyStore) CanSeal() bool {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	if ks.closed {
+		return false
+	}
+	return ks.backend.CanSeal()
+}
+
+// Seal encrypts data using the backend's sealing mechanism.
+func (ks *KeyStore) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	if ks.closed {
+		return nil, keychain.ErrStorageClosed
+	}
+	if !ks.backend.CanSeal() {
+		return nil, keychain.ErrSealingNotSupported
+	}
+	return ks.backend.Seal(ctx, data, opts)
+}
+
+// Unseal decrypts data using the backend's unsealing mechanism.
+func (ks *KeyStore) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	if ks.closed {
+		return nil, keychain.ErrStorageClosed
+	}
+	if sealed == nil {
+		return nil, keychain.ErrInvalidSealedData
+	}
+	return ks.backend.Unseal(ctx, sealed, opts)
 }

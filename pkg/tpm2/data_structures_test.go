@@ -472,6 +472,7 @@ func TestUnpackIDevIDContentUnit(t *testing.T) {
 
 			if result == nil {
 				t.Fatal("UnpackIDevIDContent() returned nil")
+				return
 			}
 
 			// Verify parsed values

@@ -21,14 +21,13 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestCertAdapter_Backend tests the Backend() accessor method.
 func TestCertAdapter_Backend(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -40,7 +39,7 @@ func TestCertAdapter_Backend(t *testing.T) {
 
 // TestCertAdapter_SaveCert_InvalidID tests SaveCert with empty ID.
 func TestCertAdapter_SaveCert_InvalidID(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -52,7 +51,7 @@ func TestCertAdapter_SaveCert_InvalidID(t *testing.T) {
 
 // TestCertAdapter_SaveCert_EmptyRawData tests SaveCert with certificate missing raw data.
 func TestCertAdapter_SaveCert_EmptyRawData(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -74,7 +73,7 @@ func TestCertAdapter_SaveCert_EmptyRawData(t *testing.T) {
 
 // TestCertAdapter_GetCert_InvalidID tests GetCert with empty ID.
 func TestCertAdapter_GetCert_InvalidID(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -84,7 +83,7 @@ func TestCertAdapter_GetCert_InvalidID(t *testing.T) {
 
 // TestCertAdapter_GetCert_InvalidData tests GetCert with invalid certificate data.
 func TestCertAdapter_GetCert_InvalidData(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -101,7 +100,7 @@ func TestCertAdapter_GetCert_InvalidData(t *testing.T) {
 
 // TestCertAdapter_DeleteCert_InvalidID tests DeleteCert with empty ID.
 func TestCertAdapter_DeleteCert_InvalidID(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -111,7 +110,7 @@ func TestCertAdapter_DeleteCert_InvalidID(t *testing.T) {
 
 // TestCertAdapter_SaveCertChain_InvalidID tests SaveCertChain with empty ID.
 func TestCertAdapter_SaveCertChain_InvalidID(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -124,7 +123,7 @@ func TestCertAdapter_SaveCertChain_InvalidID(t *testing.T) {
 
 // TestCertAdapter_SaveCertChain_CertWithNoRawData tests SaveCertChain with cert missing raw data.
 func TestCertAdapter_SaveCertChain_CertWithNoRawData(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -147,7 +146,7 @@ func TestCertAdapter_SaveCertChain_CertWithNoRawData(t *testing.T) {
 
 // TestCertAdapter_GetCertChain_InvalidID tests GetCertChain with empty ID.
 func TestCertAdapter_GetCertChain_InvalidID(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -157,7 +156,7 @@ func TestCertAdapter_GetCertChain_InvalidID(t *testing.T) {
 
 // TestCertAdapter_GetCertChain_InvalidData tests GetCertChain with invalid data.
 func TestCertAdapter_GetCertChain_InvalidData(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 
@@ -174,7 +173,7 @@ func TestCertAdapter_GetCertChain_InvalidData(t *testing.T) {
 
 // TestCertAdapter_CertExists_InvalidID tests CertExists with empty ID.
 func TestCertAdapter_CertExists_InvalidID(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	adapter := storage.NewCertAdapter(backend)
 	defer func() { _ = adapter.Close() }()
 

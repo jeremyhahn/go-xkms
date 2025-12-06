@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8-alpha] - 2025-12-06
+
+### Changed
+- **Storage Independence**: Removed go-objstore dependency, go-keychain now has its own storage implementations
+  - Local `pkg/storage/memory.go` provides in-memory storage backend
+  - Local `pkg/storage/file/` provides file-based storage backend
+  - Storage interface remains compatible with go-objstore for higher-level app integration
+- **Docker Cleanup**: Removed all GOPRIVATE workarounds from integration test Dockerfiles
+  - Cleaned up main Dockerfile (removed sed/GOPRIVATE/GOPROXY hacks)
+  - All integration tests now use standard Go module proxy
+
+### Removed
+- `pkg/storage/objstore_adapter.go` - go-objstore adapter (no longer needed)
+- `pkg/tpm2/store/objstore_*.go` - All go-objstore adapters for TPM store
+- `pkg/tpm2/store/factory.go` - go-objstore factory (replaced with local implementations)
+- `pkg/tpm2/store/testing.go` - go-objstore test helpers
+- GOPRIVATE environment variables from all Dockerfiles
+
+### Dependencies
+- Removed go-objstore dependency entirely (go-keychain is now self-contained for storage)
+
+## [0.1.7-alpha] - 2025-12-05
+
+### Added
+- **Unified Sealer Interface**: Backend-agnostic sealing abstraction across all backends
+  - `pkg/tpm2/sealer.go` - TPM2 sealer with PCR policy support
+  - `pkg/backend/pkcs8/sealer.go` - Software sealer using HKDF + AES-256-GCM
+  - `pkg/backend/pkcs11/sealer.go` - HSM hardware-backed AES-GCM sealing
+  - `pkg/backend/awskms/sealer.go` - AWS KMS cloud-managed encryption
+  - `pkg/backend/azurekv/sealer.go` - Azure Key Vault symmetric key sealing
+  - `pkg/backend/gcpkms/sealer.go` - GCP KMS cloud-managed encryption
+  - `pkg/backend/vault/sealer.go` - HashiCorp Vault Transit engine encryption
+- **JWT SigningMethodSigner**: Hardware-backed JWT signing via `crypto.Signer` interface
+  - Supports RS256/384/512, PS256/384/512, ES256/384/512, EdDSA
+  - `SignWithSigner()` and `SignWithSignerAndKID()` convenience methods
+- **Certificate Display Functions**: `pkg/certstore/types.go` with OID parsing, key usage display
+- **Composite Sealing**: `pkg/keychain/composite_seal.go` for multi-backend seal operations
+- **TPM2 Enhancements**: Certificate conversion, type re-exports, store abstraction
+- **Logging Package**: Structured logging infrastructure (`pkg/logging/`)
+- **Architecture Documentation**: Storage interfaces and BlobStorer refactoring guides
+
+### Changed
+- Extended `pkg/types/types.go` with Password, SealData, and Sealer interfaces
+- Refactored internal TPM store with cleaner interfaces and helpers
+- Improved overall test coverage from 85.8% to 91.2%
+
+### Fixed
+- Test coverage gaps across multiple packages:
+  - `pkg/certstore`: 46.1% → 90.2%
+  - `pkg/encoding/jwt`: 59.5% → 94.3%
+  - `pkg/types`: 62.0% → 96.1%
+  - `pkg/backend/threshold`: 72.5% → 81.7%
+  - `pkg/storage/file`: 86.8% → 92.3%
+
 ## [0.1.6-alpha] - 2025-11-22
 
 ### Added

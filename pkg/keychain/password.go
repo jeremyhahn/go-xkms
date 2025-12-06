@@ -38,19 +38,30 @@ type ClearPassword struct {
 	password []byte
 }
 
-// NewClearPassword creates a new clear text password stored in memory.
-// The password is stored as-is without any encryption or obfuscation.
-func NewClearPassword(password []byte) Password {
-	// Make a defensive copy to prevent external modification
+// NewPassword creates a new clear text password stored in memory.
+// The password is copied to prevent external modification.
+func NewPassword(password []byte) Password {
 	p := make([]byte, len(password))
 	copy(p, password)
 	return &ClearPassword{password: p}
 }
 
-// NewClearPasswordFromString creates a new clear text password from a string.
+// NewPasswordFromString creates a new clear text password from a string.
 // The string is converted to bytes and stored in memory.
-func NewClearPasswordFromString(password string) Password {
+func NewPasswordFromString(password string) Password {
 	return &ClearPassword{password: []byte(password)}
+}
+
+// NewClearPassword is an alias for NewPassword for backward compatibility.
+// Deprecated: Use NewPassword instead.
+func NewClearPassword(password []byte) Password {
+	return NewPassword(password)
+}
+
+// NewClearPasswordFromString is an alias for NewPasswordFromString for backward compatibility.
+// Deprecated: Use NewPasswordFromString instead.
+func NewClearPasswordFromString(password string) Password {
+	return NewPasswordFromString(password)
 }
 
 // String returns the password as a string.

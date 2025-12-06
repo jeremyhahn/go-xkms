@@ -34,7 +34,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -1179,8 +1178,8 @@ func createTestKeyStore(t *testing.T) keychain.KeyStore {
 	t.Helper()
 
 	// Create in-memory storage backends
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	// Create software backend
 	backendConfig := &software.Config{

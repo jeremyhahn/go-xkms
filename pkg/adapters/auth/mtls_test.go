@@ -34,6 +34,7 @@ func TestNewMTLSAuthenticator_NilConfig(t *testing.T) {
 
 	if auth == nil {
 		t.Fatal("NewMTLSAuthenticator() returned nil")
+		return
 	}
 
 	if auth.extractClaims == nil {
@@ -56,6 +57,7 @@ func TestNewMTLSAuthenticator_CustomExtractSubject(t *testing.T) {
 
 	if auth == nil {
 		t.Fatal("NewMTLSAuthenticator() returned nil")
+		return
 	}
 
 	// Test that custom function is used
@@ -89,6 +91,7 @@ func TestNewMTLSAuthenticator_CustomExtractClaims(t *testing.T) {
 
 	if auth == nil {
 		t.Fatal("NewMTLSAuthenticator() returned nil")
+		return
 	}
 
 	// Test that custom function is used
@@ -137,6 +140,7 @@ func TestMTLSAuthenticator_AuthenticateHTTP_ValidCert(t *testing.T) {
 
 	if identity == nil {
 		t.Fatal("AuthenticateHTTP() returned nil identity")
+		return
 	}
 
 	if identity.Subject != "test-client" {
@@ -243,6 +247,7 @@ func TestMTLSAuthenticator_AuthenticateGRPC_ValidCert(t *testing.T) {
 
 	if identity == nil {
 		t.Fatal("AuthenticateGRPC() returned nil identity")
+		return
 	}
 
 	if identity.Subject != "grpc-client" {

@@ -2,66 +2,31 @@
 package store
 
 import (
-	"errors"
-
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-const (
-	// DEFAULT_PASSWORD is the default password for TPM hierarchies
-	DEFAULT_PASSWORD = "changeme"
+// Re-export password constant
+const DEFAULT_PASSWORD = store.DEFAULT_PASSWORD
+
+// Re-export password types
+type (
+	ClearPassword    = store.ClearPassword
+	RequiredPassword = store.RequiredPassword
 )
 
-var (
-	// ErrPasswordRequired indicates a password is required but not provided
-	ErrPasswordRequired = errors.New("password required")
-)
-
-// ClearPassword implements types.Password for clear text passwords
-type ClearPassword struct {
-	password []byte
+// NewPassword creates a new clear text password for TPM key authentication.
+func NewPassword(password []byte) types.Password {
+	return store.NewPassword(password)
 }
 
-// NewClearPassword creates a new clear text password
+// NewClearPassword is an alias for NewPassword for backward compatibility.
+// Deprecated: Use NewPassword instead.
 func NewClearPassword(password []byte) types.Password {
-	return &ClearPassword{password: password}
+	return NewPassword(password)
 }
-
-// Bytes returns the password as bytes
-func (p *ClearPassword) Bytes() []byte {
-	return p.password
-}
-
-// String returns the password as a string
-func (p *ClearPassword) String() (string, error) {
-	return string(p.password), nil
-}
-
-// Clear zeros out the password from memory
-func (p *ClearPassword) Clear() {
-	for i := range p.password {
-		p.password[i] = 0
-	}
-}
-
-// RequiredPassword implements types.Password but returns an error
-// Used when a password is required but not stored
-type RequiredPassword struct{}
 
 // NewRequiredPassword creates a password placeholder that returns ErrPasswordRequired
 func NewRequiredPassword() types.Password {
-	return &RequiredPassword{}
+	return store.NewRequiredPassword()
 }
-
-// Bytes returns ErrPasswordRequired
-func (p *RequiredPassword) Bytes() []byte {
-	return nil
-}
-
-// String returns ErrPasswordRequired
-func (p *RequiredPassword) String() (string, error) {
-	return "", ErrPasswordRequired
-}
-
-// Clear is a no-op
-func (p *RequiredPassword) Clear() {}

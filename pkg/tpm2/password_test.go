@@ -1,14 +1,17 @@
 package tpm2
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"io"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -20,14 +23,40 @@ type mockTPMForPassword struct {
 	sealResponse *tpm2.CreateResponse
 	sealErr      error
 	randomSource io.Reader
+	unsealCount  atomic.Int32 // Track number of Unseal calls for cache testing
 }
 
-func (m *mockTPMForPassword) Unseal(keyAttrs *types.KeyAttributes, backend store.KeyBackend) ([]byte, error) {
+// UnsealKey implements the legacy unseal method
+func (m *mockTPMForPassword) UnsealKey(keyAttrs *types.KeyAttributes, backend store.KeyBackend) ([]byte, error) {
+	m.unsealCount.Add(1)
 	return m.unsealData, m.unsealErr
 }
 
-func (m *mockTPMForPassword) Seal(keyAttrs *types.KeyAttributes, backend store.KeyBackend, overwrite bool) (*tpm2.CreateResponse, error) {
+// SealKey implements the legacy seal method
+func (m *mockTPMForPassword) SealKey(keyAttrs *types.KeyAttributes, backend store.KeyBackend, overwrite bool) (*tpm2.CreateResponse, error) {
 	return m.sealResponse, m.sealErr
+}
+
+// Seal implements types.Sealer interface
+func (m *mockTPMForPassword) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	if m.sealErr != nil {
+		return nil, m.sealErr
+	}
+	return &types.SealedData{
+		Backend:    types.BackendTypeTPM2,
+		Ciphertext: data,
+	}, nil
+}
+
+// Unseal implements types.Sealer interface
+func (m *mockTPMForPassword) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	m.unsealCount.Add(1)
+	return m.unsealData, m.unsealErr
+}
+
+// CanSeal implements types.Sealer interface
+func (m *mockTPMForPassword) CanSeal() bool {
+	return true
 }
 
 func (m *mockTPMForPassword) RandomSource() io.Reader {
@@ -465,5 +494,434 @@ func TestPlatformPasswordCreate_WithoutPlatformPolicy(t *testing.T) {
 	// (which returns ErrPasswordRequired when invoked)
 	if keyAttrs.Password == nil {
 		t.Error("keyAttrs.Password should not be nil")
+	}
+}
+
+// ========== Password Caching Tests ==========
+
+func TestPlatformPassword_CacheDisabled(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN:            "test-key",
+		PasswordCache: nil, // Cache disabled (nil)
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
+
+	// Call Bytes() multiple times
+	for i := 0; i < 3; i++ {
+		result := pp.Bytes()
+		if string(result) != "test-password" {
+			t.Errorf("Bytes() call %d returned unexpected value", i+1)
+		}
+	}
+
+	// With cache disabled, Unseal should be called every time
+	if tpmMock.unsealCount.Load() != 3 {
+		t.Errorf("Expected 3 Unseal calls with cache disabled, got %d", tpmMock.unsealCount.Load())
+	}
+}
+
+func TestPlatformPassword_CacheDisabledExplicit(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: false, // Cache explicitly disabled
+			TTL:     300,
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
+
+	// Call Bytes() multiple times
+	for i := 0; i < 3; i++ {
+		result := pp.Bytes()
+		if string(result) != "test-password" {
+			t.Errorf("Bytes() call %d returned unexpected value", i+1)
+		}
+	}
+
+	// With cache disabled, Unseal should be called every time
+	if tpmMock.unsealCount.Load() != 3 {
+		t.Errorf("Expected 3 Unseal calls with cache disabled, got %d", tpmMock.unsealCount.Load())
+	}
+}
+
+func TestPlatformPassword_CacheEnabled(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     300, // 5 minutes
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
+
+	// Call Bytes() multiple times
+	for i := 0; i < 5; i++ {
+		result := pp.Bytes()
+		if string(result) != "test-password" {
+			t.Errorf("Bytes() call %d returned unexpected value", i+1)
+		}
+	}
+
+	// With cache enabled, Unseal should only be called once
+	if tpmMock.unsealCount.Load() != 1 {
+		t.Errorf("Expected 1 Unseal call with cache enabled, got %d", tpmMock.unsealCount.Load())
+	}
+}
+
+func TestPlatformPassword_CacheDefaultTTL(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     0, // Should use default TTL
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	// Trigger cache
+	pp.Bytes()
+
+	// Verify default TTL is used
+	expectedTTL := time.Duration(DefaultCacheTTLSeconds) * time.Second
+	if pp.cacheTTL() != expectedTTL {
+		t.Errorf("Expected default TTL %v, got %v", expectedTTL, pp.cacheTTL())
+	}
+}
+
+func TestPlatformPassword_CacheExpiry(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     1, // 1 second TTL for testing
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
+
+	// First call - unseals from TPM
+	result1 := pp.Bytes()
+	if string(result1) != "test-password" {
+		t.Error("First Bytes() returned unexpected value")
+	}
+
+	// Second call immediately - should use cache
+	result2 := pp.Bytes()
+	if string(result2) != "test-password" {
+		t.Error("Second Bytes() returned unexpected value")
+	}
+
+	if tpmMock.unsealCount.Load() != 1 {
+		t.Errorf("Expected 1 Unseal call before expiry, got %d", tpmMock.unsealCount.Load())
+	}
+
+	// Wait for cache to expire
+	time.Sleep(1100 * time.Millisecond)
+
+	// Third call - cache expired, should unseal again
+	result3 := pp.Bytes()
+	if string(result3) != "test-password" {
+		t.Error("Third Bytes() returned unexpected value")
+	}
+
+	if tpmMock.unsealCount.Load() != 2 {
+		t.Errorf("Expected 2 Unseal calls after expiry, got %d", tpmMock.unsealCount.Load())
+	}
+}
+
+func TestPlatformPassword_IsCached(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     300,
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	// Before Bytes() - not cached
+	if pp.IsCached() {
+		t.Error("IsCached() should return false before Bytes() is called")
+	}
+
+	// After Bytes() - should be cached
+	pp.Bytes()
+	if !pp.IsCached() {
+		t.Error("IsCached() should return true after Bytes() is called")
+	}
+}
+
+func TestPlatformPassword_IsCached_Disabled(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN:            "test-key",
+		PasswordCache: nil, // Cache disabled
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	// Call Bytes()
+	pp.Bytes()
+
+	// With cache disabled, IsCached should always return false
+	if pp.IsCached() {
+		t.Error("IsCached() should return false when cache is disabled")
+	}
+}
+
+func TestPlatformPassword_Clear(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     300,
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	// Populate cache
+	pp.Bytes()
+	if !pp.IsCached() {
+		t.Error("Cache should be populated after Bytes()")
+	}
+
+	// Clear cache
+	pp.Clear()
+	if pp.IsCached() {
+		t.Error("IsCached() should return false after Clear()")
+	}
+
+	// Next Bytes() should unseal again
+	pp.Bytes()
+	if tpmMock.unsealCount.Load() != 2 {
+		t.Errorf("Expected 2 Unseal calls after Clear(), got %d", tpmMock.unsealCount.Load())
+	}
+}
+
+func TestPlatformPassword_CacheExpiry_Time(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     60, // 60 seconds
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	// Before cache - should return zero time
+	expiry := pp.CacheExpiry()
+	if !expiry.IsZero() {
+		t.Error("CacheExpiry() should return zero time before cache is populated")
+	}
+
+	// Populate cache
+	beforeBytes := time.Now()
+	pp.Bytes()
+	afterBytes := time.Now()
+
+	// Check expiry is in the future
+	expiry = pp.CacheExpiry()
+	if expiry.IsZero() {
+		t.Error("CacheExpiry() should return non-zero time after cache is populated")
+	}
+
+	expectedExpiry := beforeBytes.Add(60 * time.Second)
+	maxExpiry := afterBytes.Add(60 * time.Second)
+
+	if expiry.Before(expectedExpiry) || expiry.After(maxExpiry) {
+		t.Errorf("CacheExpiry() = %v, expected between %v and %v", expiry, expectedExpiry, maxExpiry)
+	}
+}
+
+func TestPlatformPassword_CacheExpiry_Disabled(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("test-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN:            "test-key",
+		PasswordCache: nil, // Cache disabled
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	pp.Bytes()
+
+	// With cache disabled, should return zero time
+	expiry := pp.CacheExpiry()
+	if !expiry.IsZero() {
+		t.Error("CacheExpiry() should return zero time when cache is disabled")
+	}
+}
+
+func TestPlatformPassword_RefreshCache(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("password-v1"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     300,
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	// Populate cache
+	result1 := pp.Bytes()
+	if string(result1) != "password-v1" {
+		t.Error("First Bytes() returned unexpected value")
+	}
+
+	// Change the mock's password (simulating TPM data change)
+	tpmMock.unsealData = []byte("password-v2")
+
+	// Regular Bytes() should still return cached value
+	result2 := pp.Bytes()
+	if string(result2) != "password-v1" {
+		t.Error("Cached Bytes() should return old value")
+	}
+
+	// RefreshCache should get the new value
+	result3 := pp.RefreshCache()
+	if string(result3) != "password-v2" {
+		t.Error("RefreshCache() should return new value")
+	}
+
+	// Verify Unseal was called for refresh
+	if tpmMock.unsealCount.Load() != 2 {
+		t.Errorf("Expected 2 Unseal calls (initial + refresh), got %d", tpmMock.unsealCount.Load())
+	}
+}
+
+func TestPlatformPassword_CacheConcurrency(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("concurrent-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     300,
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend)
+
+	// Launch concurrent goroutines
+	const numGoroutines = 100
+	done := make(chan bool, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			result := pp.Bytes()
+			if string(result) != "concurrent-password" {
+				t.Error("Concurrent Bytes() returned unexpected value")
+			}
+			done <- true
+		}()
+	}
+
+	// Wait for all goroutines
+	for i := 0; i < numGoroutines; i++ {
+		<-done
+	}
+
+	// With caching, Unseal should only be called a small number of times
+	// (ideally 1, but race conditions might cause a few more)
+	if tpmMock.unsealCount.Load() > 5 {
+		t.Errorf("Expected minimal Unseal calls with caching, got %d", tpmMock.unsealCount.Load())
+	}
+}
+
+func TestPlatformPassword_CacheSecureMemory(t *testing.T) {
+	logger := logging.DefaultLogger()
+	tpmMock := &mockTPMForPassword{
+		unsealData: []byte("sensitive-password"),
+	}
+	backend := &mockKeyBackendForPassword{}
+	keyAttrs := &types.KeyAttributes{
+		CN: "test-key",
+		PasswordCache: &types.PasswordCacheConfig{
+			Enabled: true,
+			TTL:     300,
+		},
+	}
+
+	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
+
+	// Populate cache
+	pp.Bytes()
+
+	// Get reference to cached data before clear
+	pp.mu.RLock()
+	cachedRef := pp.cachedData
+	pp.mu.RUnlock()
+
+	// Clear cache
+	pp.Clear()
+
+	// Verify cached data was zeroed (not just set to nil)
+	for i, b := range cachedRef {
+		if b != 0 {
+			t.Errorf("Cached data byte %d not zeroed after Clear(): %d", i, b)
+		}
 	}
 }

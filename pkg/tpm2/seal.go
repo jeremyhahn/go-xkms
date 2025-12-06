@@ -2,18 +2,20 @@ package tpm2
 
 import (
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-// Creates a new key under the provided Storage Root Key (SRK),
+// sealKeyInternal creates a new key under the provided Storage Root Key (SRK),
 // optionally sealing a provided secret to the current Platform
 // Golden Integrity Measurements. If a secret is not provided, a
 // random AES-256 key will be generated. If the
 // HandleType is marked as TPMHTTransient, the created objects handles
 // are left unflushed and the caller is responsible for flushing it when
 // done.
-func (tpm *TPM2) Seal(
+//
+// This is an internal method. Use Seal() for the public types.Sealer interface.
+func (tpm *TPM2) sealKeyInternal(
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend,
 	overwrite bool) (*tpm2.CreateResponse, error) {
@@ -27,7 +29,7 @@ func (tpm *TPM2) Seal(
 	var err error
 	var keyUserAuth, secretBytes []byte
 
-	srkHandle := keyAttrs.Parent.TPMAttributes.Handle.(tpm2.TPMHandle)
+	srkHandle := keyAttrs.Parent.TPMAttributes.Handle
 	srkName, _, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
 		return nil, err
@@ -46,31 +48,26 @@ func (tpm *TPM2) Seal(
 			Template: template,
 		}
 	}
-	if keyAttrs.TPMAttributes.Template == nil || keyAttrs.TPMAttributes.Template.(tpm2.TPMTPublic).Type == 0 {
+	if keyAttrs.TPMAttributes.Template.Type == 0 {
 		keyAttrs.TPMAttributes.Template = template
 	}
 
 	if keyAttrs.PlatformPolicy {
 		// Attach platform PCR policy digest if configured
-		tpl := keyAttrs.TPMAttributes.Template.(tpm2.TPMTPublic)
+		tpl := keyAttrs.TPMAttributes.Template
 		tpl.AuthPolicy = tpm.PlatformPolicyDigest()
 		keyAttrs.TPMAttributes.Template = tpl
 	}
 
-	if keyAttrs.Secret == nil {
-		tpm.logger.Infof("Generating %s HMAC seal secret", keyAttrs.CN)
+	if keyAttrs.SealData == nil {
+		tpm.logger.Infof("Generating %s HMAC seal data", keyAttrs.CN)
 		secretBytes = make([]byte, 32) // AES-256 key
 		if _, err := tpm.random.Read(secretBytes); err != nil {
 			return nil, err
 		}
-		if keyAttrs.PlatformPolicy {
-			// keyAttrs.Secret = NewPlatformSecret(tpm, keyAttrs)
-			keyAttrs.Secret = store.NewClearPassword(secretBytes)
-		} else {
-			keyAttrs.Secret = store.NewClearPassword(secretBytes)
-		}
+		keyAttrs.SealData = types.NewSealData(secretBytes)
 	} else {
-		secretBytes = keyAttrs.Secret.Bytes()
+		secretBytes = keyAttrs.SealData.Bytes()
 		if secretBytes == nil {
 			return nil, store.ErrInvalidKeyedHashSecret
 		}
@@ -95,7 +92,7 @@ func (tpm *TPM2) Seal(
 			Name:   srkName,
 			Auth:   session,
 		},
-		InPublic: tpm2.New2B(keyAttrs.TPMAttributes.Template.(tpm2.TPMTPublic)),
+		InPublic: tpm2.New2B(keyAttrs.TPMAttributes.Template),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
 				UserAuth: tpm2.TPM2BAuth{
@@ -173,9 +170,11 @@ func (tpm *TPM2) Seal(
 	return sealKeyResponse, nil
 }
 
-// Returns sealed data for a keyed hash using the platform
+// unsealKeyInternal returns sealed data for a keyed hash using the platform
 // PCR Policy Session to satisfy the TPM to release the secret.
-func (tpm *TPM2) Unseal(
+//
+// This is an internal method. Use Unseal() for the public types.Sealer interface.
+func (tpm *TPM2) unsealKeyInternal(
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend) ([]byte, error) {
 
@@ -256,6 +255,99 @@ func (tpm *TPM2) Unseal(
 	if tpm.debugSecrets {
 		tpm.logger.Debugf(
 			"Retrieved sealed HMAC secret: %s:%s",
+			keyAttrs.CN, secret)
+	}
+
+	return secret, nil
+}
+
+// unsealFromBlobs unseals data using provided TPMPublic and TPMPrivate blobs directly,
+// without reading from backend storage. This is used when the sealed data blobs are
+// provided in-memory (e.g., loaded from EFI partition files during boot).
+//
+// This follows the same workflow as unsealKeyInternal but uses LoadKeyPairFromBlobs
+// instead of LoadKeyPair.
+func (tpm *TPM2) unsealFromBlobs(
+	keyAttrs *types.KeyAttributes,
+	tpmPublic, tpmPrivate []byte) ([]byte, error) {
+
+	if keyAttrs.Parent == nil {
+		return nil, store.ErrInvalidParentAttributes
+	}
+
+	var session tpm2.Session
+	var closer func() error
+	var err error
+
+	// Create session from parent key attributes
+	session, closer, err = tpm.CreateSession(keyAttrs)
+	if err != nil {
+		if closer != nil {
+			if err := closer(); err != nil {
+				tpm.logger.Errorf("failed to close: %v", err)
+			}
+		}
+		tpm.logger.Error(err)
+		return nil, err
+	}
+
+	// Not using defer closer() here because the session needs
+	// to be flushed as soon as possible to prevent too many
+	// sessions open at one time causing TPM_RC_SESSION_MEMORY
+
+	// Load the key pair from provided blobs
+	sealKey, err := tpm.LoadKeyPairFromBlobs(keyAttrs, &session, tpmPublic, tpmPrivate)
+	if err != nil {
+		if closer != nil {
+			if err := closer(); err != nil {
+				tpm.logger.Errorf("failed to close: %v", err)
+			}
+		}
+		tpm.logger.Error(err)
+		return nil, err
+	}
+	if err := closer(); err != nil {
+		tpm.logger.Errorf("failed to close: %v", err)
+	}
+	defer tpm.Flush(sealKey.ObjectHandle)
+
+	// Create key session
+	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
+	defer func() { _ = closer2() }()
+	if err2 != nil {
+		tpm.logger.Error(err)
+		return nil, err
+	}
+
+	// Unseal the data using the key session
+	unseal, err := tpm2.Unseal{
+		ItemHandle: tpm2.AuthHandle{
+			Handle: sealKey.ObjectHandle,
+			Name:   sealKey.Name,
+			Auth:   session2,
+		},
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error(err)
+		return nil, err
+	}
+
+	// Set TPM attributes
+	if keyAttrs.TPMAttributes == nil {
+		keyAttrs.TPMAttributes = &types.TPMAttributes{
+			Handle: sealKey.ObjectHandle,
+			Name:   sealKey.Name,
+		}
+	} else {
+		keyAttrs.TPMAttributes.Name = sealKey.Name
+		keyAttrs.TPMAttributes.Handle = sealKey.ObjectHandle
+	}
+
+	secret := unseal.OutData.Buffer
+
+	if tpm.debugSecrets {
+		tpm.logger.Debugf(
+			"Retrieved sealed HMAC secret from blobs: %s:%s",
 			keyAttrs.CN, secret)
 	}
 

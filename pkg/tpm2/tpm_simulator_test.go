@@ -10,9 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
-	"github.com/spf13/afero"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -312,6 +311,26 @@ func TestPCRExtend_Simulator(t *testing.T) {
 	assert.NotEqual(t, initialValue, finalValue)
 }
 
+// Test IsPlatformPCRExtended method
+// Note: createSim() provisions the TPM which calls CreatePlatformPolicy(),
+// so PCR 16 is already extended when this test runs.
+// This test verifies the method correctly detects the extended state.
+func TestIsPlatformPCRExtended_Simulator(t *testing.T) {
+	_, tpm := createSim(false, false)
+	defer func() { _ = tpm.Close() }()
+
+	// After provisioning, PCR 16 should be extended (provisioning calls CreatePlatformPolicy)
+	extended, err := tpm.IsPlatformPCRExtended()
+	require.NoError(t, err)
+	assert.True(t, extended, "PCR should be extended after provisioning")
+
+	// Verify the method returns no errors and consistent results
+	extended2, err := tpm.IsPlatformPCRExtended()
+	require.NoError(t, err)
+	assert.True(t, extended2, "PCR extended state should be consistent")
+	assert.Equal(t, extended, extended2, "Multiple calls should return same result")
+}
+
 // Test Random Number Generation
 func TestRandomBytes_Simulator(t *testing.T) {
 	_, tpm := createSim(false, false)
@@ -580,15 +599,17 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 		b.Fatal(err)
 	}
 	hexVal := hex.EncodeToString(buf)
-	tmp := fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
+	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	fs := afero.NewMemMapFs()
-	blobStore, err := store.NewFSBlobStore(logger, fs, tmp, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		b.Fatal(err)
 	}
+	defer func() { _ = storageFactory.Close() }()
 
-	fileBackend := store.NewFileBackend(logger, afero.NewMemMapFs(), tmp)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	config := &Config{
 		EncryptSession: false,

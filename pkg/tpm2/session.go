@@ -2,7 +2,7 @@ package tpm2
 
 import (
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -240,7 +240,7 @@ func (tpm *TPM2) CreateSession(
 		parentAuth = keyAttrs.Parent.Password.Bytes()
 	}
 
-	parentHandle := keyAttrs.Parent.TPMAttributes.Handle.(tpm2.TPMHandle)
+	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	_, parentPub, err := tpm.ReadHandle(parentHandle)
 	if err != nil {
 		return session, closer, err
@@ -386,8 +386,8 @@ func (tpm *TPM2) LoadKeyPair(
 		session = &hmac
 	}
 
-	parentHandle := keyAttrs.Parent.TPMAttributes.Handle.(tpm2.TPMHandle)
-	parentName := keyAttrs.Parent.TPMAttributes.Name.(tpm2.TPM2BName)
+	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
+	parentName := keyAttrs.Parent.TPMAttributes.Name
 
 	tpm.logger.Debugf(
 		"tpm: loading key pair, parent handle: 0x%x",
@@ -416,6 +416,61 @@ func (tpm *TPM2) LoadKeyPair(
 	// defer tpm.Flush(loadResponse.ObjectHandle)
 
 	tpm.logger.Debugf("tpm: loaded key pair 0x%x", loadResponse.ObjectHandle)
+
+	return loadResponse, nil
+}
+
+// LoadKeyPairFromBlobs loads a key pair from provided public and private blobs
+// instead of reading from backend storage. This enables loading keys from in-memory
+// data (e.g., blobs loaded from EFI partition files during boot).
+//
+// This is similar to LoadKeyPair but uses provided blobs instead of reading from storage.
+func (tpm *TPM2) LoadKeyPairFromBlobs(
+	keyAttrs *types.KeyAttributes,
+	session *tpm2.Session,
+	tpmPublic, tpmPrivate []byte) (*tpm2.LoadResponse, error) {
+
+	var auth []byte
+
+	if keyAttrs.Password != nil && !keyAttrs.PlatformPolicy {
+		auth = keyAttrs.Password.Bytes()
+	}
+
+	// Create basic session if not provided
+	if session == nil {
+		hmac := tpm.HMAC(auth)
+		session = &hmac
+	}
+
+	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
+	parentName := keyAttrs.Parent.TPMAttributes.Name
+
+	tpm.logger.Debugf(
+		"tpm: loading key pair from blobs, parent handle: 0x%x",
+		parentHandle)
+
+	tpm.logger.Debugf(
+		"tpm: loading key pair from blobs, parent name: 0x%s",
+		Encode(parentName.Buffer))
+
+	// Load the public and private areas into the TPM
+	loadResponse, err := tpm2.Load{
+		ParentHandle: tpm2.AuthHandle{
+			Handle: parentHandle,
+			Name:   parentName,
+			Auth:   *session,
+		},
+		InPrivate: tpm2.TPM2BPrivate{
+			Buffer: tpmPrivate,
+		},
+		InPublic: tpm2.BytesAs2B[tpm2.TPMTPublic](tpmPublic),
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Errorf("failed to load key pair from blobs: %s: %v", keyAttrs.CN, err)
+		return nil, err
+	}
+
+	tpm.logger.Debugf("tpm: loaded key pair from blobs 0x%x", loadResponse.ObjectHandle)
 
 	return loadResponse, nil
 }

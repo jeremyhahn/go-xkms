@@ -1,13 +1,13 @@
 # Multi-stage Dockerfile for go-keychain integration testing
-# Supports PKCS#11 (SoftHSM2) and TPM 2.0 (SWTPM) testing
+# Supports PKCS#11 (SoftHSM2), TPM 2.0 (SWTPM), and Quantum-Safe Cryptography (liboqs)
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
-FROM golang:1.23-bookworm AS builder
+FROM golang:1.25.5-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
-# Install build essentials and required packages for PKCS#11 and TPM testing
+# Install build essentials and required packages for PKCS#11, TPM testing, and liboqs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls28-dev \
     libtasn1-6-dev \
     libssl-dev \
+    cmake \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 # Build libtpms v0.10.1 from source to fix TPM_RC_RETRY issue
@@ -40,8 +42,16 @@ RUN git clone https://github.com/stefanberger/libtpms.git && \
     make -j$(nproc) && \
     make install DESTDIR=/build/libtpms-install
 
+# Build and install liboqs from source for quantum-safe cryptography
+RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /build/liboqs && \
+    cd /build/liboqs && \
+    mkdir build && cd build && \
+    cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
+    ninja && \
+    DESTDIR=/build/liboqs-install ninja install
+
 # Stage 2: Test runtime environment
-FROM golang:1.23-bookworm
+FROM golang:1.25.5-bookworm
 
 LABEL maintainer="go-keychain"
 LABEL description="Integration testing environment for go-keychain with PKCS#11 and TPM 2.0 support"
@@ -93,8 +103,30 @@ RUN DPKG_ARCH=$(dpkg --print-architecture) && \
     ln -sf /lib/${ARCH}-linux-gnu/libtpms.so.0.10.1 /lib/${ARCH}-linux-gnu/libtpms.so.0 && \
     ln -sf /lib/${ARCH}-linux-gnu/libtpms.so.0.10.1 /lib/${ARCH}-linux-gnu/libtpms.so
 
-# Update library cache to recognize new libtpms
+# Copy built liboqs from builder stage
+COPY --from=builder /build/liboqs-install/usr/local /usr/local
+
+# Create liboqs-go.pc for the Go bindings (liboqs-go expects this name)
+RUN mkdir -p /usr/local/lib/pkgconfig && \
+    echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'exec_prefix=${prefix}' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'libdir=${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'includedir=${prefix}/include' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo '' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Name: liboqs-go' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Description: Open Quantum Safe liboqs library for Go bindings' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Version: 0.9.0' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Libs: -L${libdir} -loqs' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Cflags: -I${includedir}' >> /usr/local/lib/pkgconfig/liboqs-go.pc
+
+# Update library cache to recognize new libtpms and liboqs
 RUN ldconfig
+
+# Set library paths for CGO (quantum-safe cryptography)
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV CGO_LDFLAGS="-L/usr/local/lib"
+ENV CGO_CFLAGS="-I/usr/local/include"
 
 # Create non-root user for security best practices
 RUN groupadd -r testuser -g 1000 && \
@@ -146,7 +178,7 @@ RUN mkdir -p ${SWTPM_STATE_DIR}/state
 COPY --chown=testuser:testuser go.mod go.sum ./
 
 # Download dependencies (cached if go.mod/go.sum unchanged)
-RUN go mod download && go mod verify
+RUN go mod download
 
 # Copy the entire source code
 COPY --chown=testuser:testuser . .
@@ -196,16 +228,16 @@ fi\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 # Switch back to non-root user for security
 USER testuser
 
-# Build the server binary with all backends enabled
+# Build the server binary with all backends enabled (including quantum-safe cryptography)
 RUN mkdir -p /app && \
-    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11" \
+    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum" \
     -o /app/keychain-server ./cmd/server/main.go
 
 # Validate that the server binary exists
 RUN test -f /app/keychain-server || (echo "ERROR: Server binary not built" && exit 1)
 
-# Build the application with all backends enabled (optional, for validation)
-RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
+# Build the application with all backends enabled (including quantum-safe cryptography)
+RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
 
 # Health check to verify SoftHSM is accessible
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -230,5 +262,5 @@ ENV GOFLAGS="-buildvcs=false"
 
 # Labels for documentation and metadata
 LABEL org.opencontainers.image.source="https://github.com/jeremyhahn/go-keychain"
-LABEL org.opencontainers.image.description="Integration testing environment with SoftHSM2 and SWTPM"
+LABEL org.opencontainers.image.description="Integration testing environment with SoftHSM2, SWTPM, and quantum-safe cryptography (liboqs)"
 LABEL org.opencontainers.image.vendor="go-keychain"

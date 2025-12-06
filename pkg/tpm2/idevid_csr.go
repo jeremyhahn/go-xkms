@@ -13,7 +13,7 @@ import (
 
 	"fmt"
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"math"
 )
@@ -177,8 +177,9 @@ func (tpm *TPM2) createIDevIDContent(
 
 	bootEventLog, err := tpm.EventLog()
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || os.IsPermission(err) {
 			// /sys/kernel/security/tpm0/binary_bios_measurements: no such file or directory
+			// or permission denied
 			// return nil, ErrMissingMeasurementLog
 
 			// Some embedded systems may not have a measurement log or there may be a permission
@@ -189,14 +190,14 @@ func (tpm *TPM2) createIDevIDContent(
 		}
 	}
 
-	akBPublic := akAttrs.TPMAttributes.BPublic.(tpm2.TPM2BPublic)
+	akBPublic := akAttrs.TPMAttributes.BPublic
 	akPublicBytes := akBPublic.Bytes()
 	atCreateTktBytes := akAttrs.TPMAttributes.CreationTicketDigest
 	akCertifyInfoBytes := akAttrs.TPMAttributes.CertifyInfo
 	akCertifyInfoSignature := akAttrs.TPMAttributes.Signature
 
 	sgnCertifyInfoBytes := idevidAttrs.TPMAttributes.CertifyInfo
-	idevidBPublic := idevidAttrs.TPMAttributes.BPublic.(tpm2.TPM2BPublic)
+	idevidBPublic := idevidAttrs.TPMAttributes.BPublic
 	signingPubBytes := idevidBPublic.Bytes()
 	sgnCertifyInfoSig := idevidAttrs.TPMAttributes.Signature
 
@@ -205,7 +206,7 @@ func (tpm *TPM2) createIDevIDContent(
 	// during the packing operation.
 	return &UNPACKED_TCG_IDEVID_CONTENT{
 		StructVer:  uint32(0x00000100),
-		HashAlgoId: uint32(akAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash)),
+		HashAlgoId: uint32(akAttrs.TPMAttributes.HashAlg),
 		HashSz:     uint32(hashSz),
 		// Hash of all that follows is placed here
 		ProdModelSz: func() uint32 {
@@ -961,7 +962,7 @@ func (tpm *TPM2) VerifyTCG_CSR_IAK(
 		keyAttrs.KeyAlgorithm = x509.RSA
 	}
 
-	pub := keyAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	pub := keyAttrs.TPMAttributes.Public
 
 	// Ensure the AK is a Restricted, fixedTPM, fixedParent signing key
 	if !pub.ObjectAttributes.Restricted {
@@ -1049,7 +1050,7 @@ func (tpm *TPM2) VerifyTCG_CSR_IDevID(
 
 	tpm.Flush(iakLoadRsp.ObjectHandle)
 
-	iakPub := iakAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	iakPub := iakAttrs.TPMAttributes.Public
 
 	// Ensure the AK is a Restricted, fixedTPM, fixedParent signing key
 	if !iakPub.ObjectAttributes.Restricted {
@@ -1088,7 +1089,7 @@ func (tpm *TPM2) VerifyTCG_CSR_IDevID(
 	idevidAttrs.StoreType = types.StoreTPM2
 	idevidAttrs.TPMAttributes.HashAlg = hashAlgo
 
-	idevidPub := idevidAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	idevidPub := idevidAttrs.TPMAttributes.Public
 
 	// Ensure the IDevID is an Unrestricted, fixedTPM, fixedParent signing key
 	if idevidPub.ObjectAttributes.Restricted {
@@ -1125,7 +1126,7 @@ func (tpm *TPM2) verifyTCGCSRSignature(
 	hash crypto.Hash,
 	keyAttrs *types.KeyAttributes) error {
 
-	pub := keyAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+	pub := keyAttrs.TPMAttributes.Public
 
 	// Re-pack the CSR contents to get the digest
 	packedContents, err := PackIDevIDContent(&csr.CsrContents)

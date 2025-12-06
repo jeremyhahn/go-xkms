@@ -36,7 +36,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -60,8 +59,8 @@ func TestPKCS11Integration(t *testing.T) {
 	}
 
 	// Create storage backends
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	// Create a temporary directory for token storage
 	tmpDir, err := os.MkdirTemp("", "pkcs11-test-*")

@@ -4,16 +4,14 @@ package integration
 
 import (
 	"crypto/x509"
-	"fmt"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/spf13/afero"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 )
 
 // setupTPM2WithCapture creates a TPM2 instance with traffic capture enabled
@@ -41,19 +39,14 @@ func setupTPM2WithCapture(t *testing.T, encryptSession bool) (tpm2lib.TrustedPla
 	// Create logger
 	logger := logging.DefaultLogger()
 
-	// Create temporary filesystem for test
-	fs := afero.NewMemMapFs()
-	testDir := fmt.Sprintf("/tmp/tpm-capture-test-%d", time.Now().UnixNano())
-
-	// Create blob store
-	blobStore, err := store.NewFSBlobStore(logger, fs, testDir, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
-		captureTransport.Close()
-		t.Fatalf("Failed to create blob store: %v", err)
+		t.Fatalf("Failed to create storage factory: %v", err)
 	}
 
-	// Create file backend
-	fileBackend := store.NewFileBackend(logger, fs, testDir)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	// Create TPM configuration with session encryption option
 	config := &tpm2lib.Config{
@@ -123,6 +116,7 @@ func setupTPM2WithCapture(t *testing.T, encryptSession bool) (tpm2lib.TrustedPla
 			tpmInstance.Close()
 		}
 		captureTransport.Close()
+		storageFactory.Close()
 	}
 
 	return tpmInstance, captureTransport, cleanup

@@ -28,14 +28,14 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/crypto/x25519"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"golang.org/x/crypto/hkdf"
 )
 
 func main() {
 	// Create a software backend with in-memory storage
-	storage := memory.New()
+	storage := storage.New()
 	config := &software.Config{KeyStorage: storage}
 	backend, err := software.NewBackend(config)
 	if err != nil {

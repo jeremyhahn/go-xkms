@@ -21,7 +21,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,8 +60,8 @@ func getTestConfig(t *testing.T) (*Config, bool) {
 		pin = DefaultPIN
 	}
 
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	config := &Config{
 		PIN:           pin,
@@ -342,8 +341,8 @@ func TestBackend_AvailableSlots(t *testing.T) {
 
 // TestConfig_Validate tests configuration validation
 func TestConfig_Validate(t *testing.T) {
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	tests := []struct {
 		name      string

@@ -98,6 +98,7 @@ var (
 	ErrInvalidEnrollmentStrategy    = errors.New("tpm: invalid enrollment strategy")
 	ErrInvalidCryptoHashAlgID       = errors.New("tpm: crypto.Hash doesn't map to a supported TPMAlgID")
 	ErrCurveNotSupported            = errors.New("tpm: ECC curve not supported by TPM")
+	ErrInvalidKeySize               = errors.New("tpm: invalid key size")
 
 	// TPM_RC errors
 	ErrCommandNotSupported = tpm2.TPMRC(0xb0143)

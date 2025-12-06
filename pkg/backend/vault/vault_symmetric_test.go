@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,8 +45,8 @@ func getTestVaultConfig(t *testing.T) *Config {
 		Address:       addr,
 		Token:         token,
 		TransitPath:   "transit",
-		KeyStorage:    memory.New(),
-		CertStorage:   memory.New(),
+		KeyStorage:    storage.New(),
+		CertStorage:   storage.New(),
 		TLSSkipVerify: true,
 	}
 }

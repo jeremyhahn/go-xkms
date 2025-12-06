@@ -91,7 +91,7 @@ func (tpm *TPM2) readChunk(data []byte, requestSize int) (int, error) {
 				tpm2.AESEncryption(
 					128,
 					tpm2.EncryptOut),
-				tpm2.Salted(ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle), ekAttrs.TPMAttributes.Public.(tpm2.TPMTPublic)))
+				tpm2.Salted(ekAttrs.TPMAttributes.Handle, ekAttrs.TPMAttributes.Public))
 
 		} else {
 

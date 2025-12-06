@@ -34,7 +34,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/azurekv"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,8 +58,8 @@ func TestAzureKVImportExport(t *testing.T) {
 		t.Logf("Using Azure Key Vault emulator at %s", endpoint)
 
 		// Create storage backends
-		keyStorage := memory.New()
-		certStorage := memory.New()
+		keyStorage := storage.New()
+		certStorage := storage.New()
 
 		cfg := &azurekv.Config{
 			VaultURL:    endpoint,
@@ -102,8 +102,8 @@ func TestAzureKVImportExport(t *testing.T) {
 		t.Logf("Using mock Azure Key Vault client")
 
 		// Create storage backends
-		keyStorage := memory.New()
-		certStorage := memory.New()
+		keyStorage := storage.New()
+		certStorage := storage.New()
 
 		mockClient := azurekv.NewMockKeyVaultClient()
 		cfg := &azurekv.Config{

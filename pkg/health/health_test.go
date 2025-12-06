@@ -24,6 +24,7 @@ func TestNewChecker(t *testing.T) {
 	checker := NewChecker()
 	if checker == nil {
 		t.Fatal("NewChecker returned nil")
+		return
 	}
 	if len(checker.checks) != 0 {
 		t.Errorf("expected 0 checks, got %d", len(checker.checks))

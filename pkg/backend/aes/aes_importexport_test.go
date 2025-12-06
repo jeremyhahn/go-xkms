@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ type testBackendWrapper struct {
 
 // createTestBackend is a helper function to create a test backend.
 func createTestBackend(t *testing.T) *testBackendWrapper {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}

@@ -26,6 +26,7 @@ func TestNewSlogAdapter_NilConfig(t *testing.T) {
 
 	if adapter == nil {
 		t.Fatal("NewSlogAdapter() returned nil")
+		return
 	}
 
 	if adapter.logger == nil {

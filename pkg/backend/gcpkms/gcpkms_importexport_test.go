@@ -25,7 +25,7 @@ import (
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -90,8 +90,8 @@ func TestGetImportParameters(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{
@@ -132,8 +132,8 @@ func TestWrapKey(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -167,8 +167,8 @@ func TestUnwrapKey(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -198,8 +198,8 @@ func TestImportKey(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{
@@ -240,8 +240,8 @@ func TestExportKey(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{

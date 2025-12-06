@@ -29,7 +29,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -43,8 +43,8 @@ func createTestBackendRegistry(t *testing.T) *BackendRegistry {
 	t.Helper()
 
 	// Create in-memory storage
-	keyStorage := memory.NewKeyStorage()
-	certStorage := memory.NewCertStorage()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	// Create PKCS8 backend
 	backend, err := pkcs8.NewBackend(&pkcs8.Config{

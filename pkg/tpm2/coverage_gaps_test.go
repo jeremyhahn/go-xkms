@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +67,7 @@ func TestCreateIDevIDWorkflow(t *testing.T) {
 	// Verify IDevID attributes
 	assert.Equal(t, types.KeyTypeTPM, idevidAttrs.KeyType)
 	assert.NotNil(t, idevidAttrs.TPMAttributes)
-	assert.NotEmpty(t, idevidAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer)
+	assert.NotEmpty(t, idevidAttrs.TPMAttributes.Name.Buffer)
 	assert.NotEmpty(t, idevidAttrs.TPMAttributes.PublicKeyBytes)
 	assert.NotEmpty(t, idevidAttrs.TPMAttributes.Signature)
 
@@ -316,7 +316,7 @@ func TestCreateIAKOperations(t *testing.T) {
 	// Verify IAK attributes
 	assert.Equal(t, types.KeyTypeAttestation, iakAttrs.KeyType)
 	assert.NotNil(t, iakAttrs.TPMAttributes)
-	assert.NotEmpty(t, iakAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer)
+	assert.NotEmpty(t, iakAttrs.TPMAttributes.Name.Buffer)
 	assert.NotEmpty(t, iakAttrs.TPMAttributes.PublicKeyBytes)
 	assert.NotEmpty(t, iakAttrs.TPMAttributes.Signature)
 	assert.Equal(t, ekAttrs, iakAttrs.Parent)
@@ -476,9 +476,9 @@ func TestCreateSecretKeyOperations(t *testing.T) {
 	require.NoError(t, err, "CreateSecretKey should succeed")
 
 	// Verify we can unseal the secret
-	unsealed, err := tpm.Unseal(secretAttrs, nil)
+	unsealed, err := tpm.UnsealKey(secretAttrs, nil)
 	if err != nil {
-		t.Logf("Unseal failed: %v", err)
+		t.Logf("UnsealKey failed: %v", err)
 	} else {
 		assert.NotEmpty(t, unsealed, "Unsealed data should not be empty")
 	}
@@ -620,7 +620,7 @@ func TestHMACSaltedSessionCreation(t *testing.T) {
 	ekPub := ekAttrs.TPMAttributes.Public
 
 	// Create salted session
-	session, closer, err := tpm.HMACSaltedSession(ekHandle.(tpm2.TPMHandle), ekPub.(tpm2.TPMTPublic), nil)
+	session, closer, err := tpm.HMACSaltedSession(ekHandle, ekPub, nil)
 
 	if err != nil {
 		t.Logf("HMACSaltedSession creation failed: %v", err)

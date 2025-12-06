@@ -24,7 +24,7 @@ import (
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -41,8 +41,8 @@ func TestNewBackend(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -51,8 +51,8 @@ func TestNewBackend(t *testing.T) {
 			config: &Config{
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidProjectID,
@@ -62,8 +62,8 @@ func TestNewBackend(t *testing.T) {
 			config: &Config{
 				ProjectID:   "test-project",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidLocationID,
@@ -73,8 +73,8 @@ func TestNewBackend(t *testing.T) {
 			config: &Config{
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidKeyRingID,
@@ -142,8 +142,8 @@ func TestBackend_Type(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -233,8 +233,8 @@ func TestBackend_GenerateRSA(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -339,8 +339,8 @@ C18ScRb4Z6poMBgJtYlVtd9ly63URv57ZW0Ncs1LiZB7WATb3svu+1c7HQ==
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -424,8 +424,8 @@ func TestBackend_GenerateKey(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -490,8 +490,8 @@ func TestBackend_Get(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -534,8 +534,8 @@ func TestBackend_Save(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -590,8 +590,8 @@ func TestBackend_Delete(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -645,8 +645,8 @@ func TestBackend_Close(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -742,8 +742,8 @@ func TestBackend_Sign(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -819,8 +819,8 @@ func TestBackend_Verify(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -889,8 +889,8 @@ func TestBackend_Signer(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 
 			mockClient := &MockKMSClient{}
@@ -940,8 +940,8 @@ func TestBackend_Client(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -965,8 +965,8 @@ func TestBackend_NotInitialized(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b := &Backend{
@@ -1026,8 +1026,8 @@ func TestBackend_ConcurrentAccess(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -1074,8 +1074,8 @@ func TestKMSSigner(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}
@@ -1207,8 +1207,8 @@ func TestBackend_CryptoKeyNames(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	mockClient := &MockKMSClient{}

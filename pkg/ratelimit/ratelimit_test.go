@@ -30,6 +30,7 @@ func TestNew(t *testing.T) {
 	limiter := New(config)
 	if limiter == nil {
 		t.Fatal("Expected limiter to be created")
+		return
 	}
 
 	if !limiter.enabled {

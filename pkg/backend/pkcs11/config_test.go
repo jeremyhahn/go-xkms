@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 )
 
 func TestConfig_Validate(t *testing.T) {
@@ -53,8 +53,8 @@ func TestConfig_Validate(t *testing.T) {
 				TokenLabel:  "test-token",
 				PIN:         "1234",
 				SOPIN:       "5678",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -117,8 +117,8 @@ func TestConfig_Validate(t *testing.T) {
 				Library:     tempLib,
 				TokenLabel:  "test-token",
 				PIN:         "",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},

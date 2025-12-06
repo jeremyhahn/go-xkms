@@ -26,15 +26,14 @@ import (
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/tcp"
-	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	tpm2ks "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -107,16 +106,14 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 	// Create logger
 	logger := logging.DefaultLogger()
 
-	// Create temporary filesystem for test
-	fs := afero.NewMemMapFs()
-	testDir := fmt.Sprintf("/tmp/tpm-capture-test-%d", time.Now().UnixNano())
+	// Create in-memory storage backend for blob store and file backend
+	memStorage := storage.New()
 
 	// Create blob store
-	blobStore, err := store.NewFSBlobStore(logger, fs, testDir, nil)
-	require.NoError(t, err, "Failed to create blob store")
+	blobStore := store.NewFSBlobStore(logger, memStorage)
 
 	// Create file backend
-	fileBackend := store.NewFileBackend(logger, fs, testDir)
+	fileBackend := store.NewFileBackend(logger, memStorage)
 
 	// Create TPM configuration
 	tpmConfig := &tpm2ks.Config{

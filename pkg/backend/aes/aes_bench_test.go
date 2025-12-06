@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -37,7 +37,7 @@ func BenchmarkAES_GenerateKey(b *testing.B) {
 
 	for _, ks := range keySizes {
 		b.Run(ks.name, func(b *testing.B) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			be, err := NewBackend(config)
 			if err != nil {
@@ -81,7 +81,7 @@ func BenchmarkAES_Encrypt(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("AES256-%dKB", size/1024), func(b *testing.B) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			be, err := NewBackend(config)
 			if err != nil {
@@ -142,7 +142,7 @@ func BenchmarkAES_Decrypt(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("AES256-%dKB", size/1024), func(b *testing.B) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			be, err := NewBackend(config)
 			if err != nil {
@@ -199,7 +199,7 @@ func BenchmarkAES_Decrypt(b *testing.B) {
 
 // BenchmarkAES_EncryptWithAAD benchmarks encryption with additional authenticated data
 func BenchmarkAES_EncryptWithAAD(b *testing.B) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	be, err := NewBackend(config)
 	if err != nil {
@@ -253,7 +253,7 @@ func BenchmarkAES_EncryptWithAAD(b *testing.B) {
 
 // BenchmarkAES_ConcurrentEncrypt benchmarks concurrent encryption operations
 func BenchmarkAES_ConcurrentEncrypt(b *testing.B) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	be, err := NewBackend(config)
 	if err != nil {
@@ -305,7 +305,7 @@ func BenchmarkAES_ConcurrentEncrypt(b *testing.B) {
 
 // BenchmarkAES_ConcurrentDecrypt benchmarks concurrent decryption operations
 func BenchmarkAES_ConcurrentDecrypt(b *testing.B) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	be, err := NewBackend(config)
 	if err != nil {
@@ -370,7 +370,7 @@ func BenchmarkAES_EncryptDecryptRoundTrip(b *testing.B) {
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("%dKB", size/1024), func(b *testing.B) {
-			storage := memory.New()
+			storage := storage.New()
 			config := &Config{KeyStorage: storage}
 			be, err := NewBackend(config)
 			if err != nil {
@@ -427,7 +427,7 @@ func BenchmarkAES_EncryptDecryptRoundTrip(b *testing.B) {
 
 // BenchmarkAES_PasswordProtectedKey benchmarks operations with password-protected keys
 func BenchmarkAES_PasswordProtectedKey(b *testing.B) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{KeyStorage: storage}
 	be, err := NewBackend(config)
 	if err != nil {

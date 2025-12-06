@@ -4,7 +4,7 @@ import (
 	"crypto/rsa"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -26,7 +26,7 @@ func (tpm *TPM2) CreateRSA(
 	var public tpm2.TPM2BPublic
 
 	// Get the persisted SRK
-	srkHandle := keyAttrs.Parent.TPMAttributes.Handle.(tpm2.TPMHandle)
+	srkHandle := keyAttrs.Parent.TPMAttributes.Handle
 	srkName, _, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
 		return nil, err
@@ -124,8 +124,8 @@ func (tpm *TPM2) CreateRSA(
 
 			loadResponse, err := tpm2.Load{
 				ParentHandle: tpm2.AuthHandle{
-					Handle: keyAttrs.Parent.TPMAttributes.Handle.(tpm2.TPMHandle),
-					Name:   keyAttrs.Parent.TPMAttributes.Name.(tpm2.TPM2BName),
+					Handle: keyAttrs.Parent.TPMAttributes.Handle,
+					Name:   keyAttrs.Parent.TPMAttributes.Name,
 					Auth:   session2,
 				},
 				InPrivate: tpm2.TPM2BPrivate{

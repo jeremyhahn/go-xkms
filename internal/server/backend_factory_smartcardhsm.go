@@ -22,7 +22,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/backend/smartcardhsm"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -80,7 +79,7 @@ func createSmartCardHSMBackend(config BackendConfig) (types.Backend, error) {
 	var keyStorage storage.Backend
 	var err error
 	if keyDir == "memory" {
-		keyStorage = memory.New()
+		keyStorage = storage.New()
 	} else {
 		keyStorage, err = file.New(keyDir)
 		if err != nil {
@@ -90,7 +89,7 @@ func createSmartCardHSMBackend(config BackendConfig) (types.Backend, error) {
 
 	var certStorage storage.Backend
 	if certDir == "memory" {
-		certStorage = memory.New()
+		certStorage = storage.New()
 	} else {
 		certStorage, err = file.New(certDir)
 		if err != nil {
@@ -101,7 +100,7 @@ func createSmartCardHSMBackend(config BackendConfig) (types.Backend, error) {
 	// DKEK storage
 	var dkekStorage storage.Backend
 	if dkekDir == "memory" {
-		dkekStorage = memory.New()
+		dkekStorage = storage.New()
 	} else {
 		dkekStorage, err = file.New(dkekDir)
 		if err != nil {

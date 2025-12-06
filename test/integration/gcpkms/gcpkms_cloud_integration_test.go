@@ -32,7 +32,6 @@ import (
 	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,8 +92,8 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 	t.Logf("✓ GCP KMS resources ready (project=%s, location=%s, keyring=%s)", projectID, location, keyring)
 
 	// Create storage backends
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	// Create backend
 	backendCfg := &gcpkms.Config{

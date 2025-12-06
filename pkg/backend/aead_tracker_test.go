@@ -344,6 +344,7 @@ func TestMemoryAEADTracker_GetSetOptions(t *testing.T) {
 
 	if retrieved == nil {
 		t.Fatal("Expected options, got nil")
+		return
 	}
 
 	if retrieved.NonceTracking != testOpts.NonceTracking {

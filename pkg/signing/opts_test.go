@@ -26,6 +26,7 @@ func TestNewSignerOpts(t *testing.T) {
 	opts := NewSignerOpts(crypto.SHA256)
 	if opts == nil {
 		t.Fatal("NewSignerOpts returned nil")
+		return
 	}
 	if opts.Hash != crypto.SHA256 {
 		t.Errorf("Hash mismatch: got %v, want %v", opts.Hash, crypto.SHA256)

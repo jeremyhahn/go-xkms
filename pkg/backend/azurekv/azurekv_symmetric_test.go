@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -29,8 +29,8 @@ func testBackend(t *testing.T) (*Backend, *MockKeyVaultClient) {
 	mockClient := NewMockKeyVaultClient()
 	config := &Config{
 		VaultURL:    "https://mock-vault.vault.azure.net",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, err := NewBackendWithClient(config, mockClient)
 	if err != nil {

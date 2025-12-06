@@ -15,11 +15,10 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
-	"github.com/spf13/afero"
 )
 
 // memCertStore is a simple in-memory certificate store for testing
@@ -184,18 +183,15 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 	// Create logger
 	logger := logging.DefaultLogger()
 
-	// Create temporary filesystem for test
-	fs := afero.NewMemMapFs()
-	testDir := fmt.Sprintf("/tmp/tpm-test-%d", time.Now().UnixNano())
-
-	// Create blob store
-	blobStore, err := store.NewFSBlobStore(logger, fs, testDir, nil)
+	// Create go-objstore backed storage using the factory
+	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
-		t.Fatalf("Failed to create blob store: %v", err)
+		conn.Close()
+		t.Fatalf("Failed to create storage factory: %v", err)
 	}
 
-	// Create file backend
-	fileBackend := store.NewFileBackend(logger, fs, testDir)
+	blobStore := storageFactory.BlobStore()
+	fileBackend := storageFactory.KeyBackend()
 
 	// Create certificate store for testing
 	certStore := newMemCertStore()
@@ -272,6 +268,7 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 			tpmInstance.Close()
 		}
 		conn.Close()
+		storageFactory.Close()
 	}
 
 	return tpmInstance, cleanup
@@ -562,13 +559,13 @@ func TestIntegration_SealUnseal(t *testing.T) {
 	}
 
 	// Seal the secret (tpm2 package will generate a 32-byte AES key)
-	_, err = tpmInstance.Seal(sealAttrs, nil, false)
+	_, err = tpmInstance.SealKey(sealAttrs, nil, false)
 	if err != nil {
 		t.Fatalf("Failed to seal data: %v", err)
 	}
 
 	// Unseal the secret
-	unsealed, err := tpmInstance.Unseal(sealAttrs, nil)
+	unsealed, err := tpmInstance.UnsealKey(sealAttrs, nil)
 	if err != nil {
 		t.Fatalf("Failed to unseal data: %v", err)
 	}

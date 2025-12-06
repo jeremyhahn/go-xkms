@@ -24,14 +24,13 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestMemoryStorageIntegration_BasicCRUD tests basic Create, Read, Update, Delete operations
 func TestMemoryStorageIntegration_BasicCRUD(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Create - Put a value
@@ -65,7 +64,7 @@ func TestMemoryStorageIntegration_BasicCRUD(t *testing.T) {
 
 // TestMemoryStorageIntegration_MultipleKeys tests storing and retrieving multiple keys
 func TestMemoryStorageIntegration_MultipleKeys(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Create multiple keys
@@ -105,7 +104,7 @@ func TestMemoryStorageIntegration_MultipleKeys(t *testing.T) {
 
 // TestMemoryStorageIntegration_PrefixFiltering tests List operation with prefixes
 func TestMemoryStorageIntegration_PrefixFiltering(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Create keys with different prefixes
@@ -143,7 +142,7 @@ func TestMemoryStorageIntegration_PrefixFiltering(t *testing.T) {
 
 // TestMemoryStorageIntegration_ConcurrentAccess tests thread-safe concurrent operations
 func TestMemoryStorageIntegration_ConcurrentAccess(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Number of concurrent goroutines and operations
@@ -203,7 +202,7 @@ func TestMemoryStorageIntegration_ConcurrentAccess(t *testing.T) {
 
 // TestMemoryStorageIntegration_ConcurrentReadWrite tests concurrent reads and writes
 func TestMemoryStorageIntegration_ConcurrentReadWrite(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Pre-populate with some keys
@@ -281,7 +280,7 @@ func TestMemoryStorageIntegration_ConcurrentReadWrite(t *testing.T) {
 
 // TestMemoryStorageIntegration_LargeValues tests storing large values in memory
 func TestMemoryStorageIntegration_LargeValues(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Create a large value (50MB)
@@ -315,7 +314,7 @@ func TestMemoryStorageIntegration_LargeValues(t *testing.T) {
 
 // TestMemoryStorageIntegration_DataIsolation tests data immutability
 func TestMemoryStorageIntegration_DataIsolation(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	testKey := "isolation-test"
@@ -345,7 +344,7 @@ func TestMemoryStorageIntegration_DataIsolation(t *testing.T) {
 
 // TestMemoryStorageIntegration_ErrorHandling tests error cases
 func TestMemoryStorageIntegration_ErrorHandling(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Test Get on non-existent key
@@ -364,7 +363,7 @@ func TestMemoryStorageIntegration_ErrorHandling(t *testing.T) {
 
 // TestMemoryStorageIntegration_KeyStorage tests KeyStorage interface operations
 func TestMemoryStorageIntegration_KeyStorage(t *testing.T) {
-	keyStorage := memory.New()
+	keyStorage := storage.New()
 	defer keyStorage.Close()
 
 	// Save multiple keys
@@ -410,7 +409,7 @@ func TestMemoryStorageIntegration_KeyStorage(t *testing.T) {
 
 // TestMemoryStorageIntegration_CertStorage tests CertificateStorage interface operations
 func TestMemoryStorageIntegration_CertStorage(t *testing.T) {
-	certStorage := memory.New()
+	certStorage := storage.New()
 	defer certStorage.Close()
 
 	// Create test certificates
@@ -454,7 +453,7 @@ func TestMemoryStorageIntegration_CertStorage(t *testing.T) {
 
 // TestMemoryStorageIntegration_MemoryLeaks tests that memory is properly released
 func TestMemoryStorageIntegration_MemoryLeaks(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	defer backend.Close()
 
 	// Create many keys, then delete them

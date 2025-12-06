@@ -103,8 +103,8 @@ func TestIntegration_RSAEncryptDecrypt(t *testing.T) {
 			t.Logf("Created %d-bit RSA key", keySize)
 
 			// Get the key handle and name from attributes
-			keyHandle := keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
-			keyName := keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName)
+			keyHandle := keyAttrs.TPMAttributes.Handle
+			keyName := keyAttrs.TPMAttributes.Name
 
 			// Encrypt the message using TPM
 			plaintext := []byte(tc.message)
@@ -259,7 +259,7 @@ func TestIntegration_CreateRSA(t *testing.T) {
 				if keyAttrs.TPMAttributes.Handle == 0 {
 					t.Error("Key handle not set")
 				}
-				if len(keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer) == 0 {
+				if len(keyAttrs.TPMAttributes.Name.Buffer) == 0 {
 					t.Error("Key name not set")
 				}
 			}
@@ -267,7 +267,7 @@ func TestIntegration_CreateRSA(t *testing.T) {
 			t.Logf("Successfully created %d-bit RSA key with %s signature algorithm",
 				actualSize, tc.sigAlg.String())
 
-			tpmInstance.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+			tpmInstance.Flush(keyAttrs.TPMAttributes.Handle)
 		})
 	}
 }
@@ -404,14 +404,14 @@ func TestIntegration_CreateECDSA(t *testing.T) {
 				if keyAttrs.TPMAttributes.Handle == 0 {
 					t.Error("Key handle not set")
 				}
-				if len(keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName).Buffer) == 0 {
+				if len(keyAttrs.TPMAttributes.Name.Buffer) == 0 {
 					t.Error("Key name not set")
 				}
 			}
 
 			t.Logf("Successfully created ECDSA key on curve %s", actualCurveName)
 
-			tpmInstance.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+			tpmInstance.Flush(keyAttrs.TPMAttributes.Handle)
 		})
 	}
 }
@@ -601,8 +601,8 @@ func TestIntegration_RSAEncryptDecrypt_LargeData(t *testing.T) {
 		t.Fatalf("Failed to create RSA key: %v", err)
 	}
 
-	keyHandle := keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
-	keyName := keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName)
+	keyHandle := keyAttrs.TPMAttributes.Handle
+	keyName := keyAttrs.TPMAttributes.Name
 
 	// Test with data sizes approaching the limit
 	// For RSA-OAEP with SHA-256 on a 2048-bit key:

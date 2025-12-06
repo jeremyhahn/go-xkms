@@ -24,7 +24,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/miekg/pkcs11"
 )
@@ -146,8 +146,8 @@ func TestWrapKey(t *testing.T) {
 	config := &Config{
 		Library:     "/usr/lib/test.so",
 		TokenLabel:  "test-token",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b := &Backend{config: config}
 
@@ -237,8 +237,8 @@ func TestUnwrapKey(t *testing.T) {
 	config := &Config{
 		Library:     "/usr/lib/test.so",
 		TokenLabel:  "test-token",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b := &Backend{config: config}
 
@@ -443,8 +443,8 @@ func TestCapabilities(t *testing.T) {
 	config := &Config{
 		Library:     "/usr/lib/test.so",
 		TokenLabel:  "test-token",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b := &Backend{config: config}

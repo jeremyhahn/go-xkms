@@ -12,7 +12,7 @@ import (
 	"math/big"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -319,7 +319,7 @@ func (tpm *TPM2) CreateEK(
 
 	var err error
 
-	hierarchy := ekAttrs.TPMAttributes.Hierarchy.(tpm2.TPMHandle)
+	hierarchy := ekAttrs.TPMAttributes.Hierarchy
 
 	var hierarchyAuth, userAuth []byte
 	if ekAttrs.TPMAttributes.HierarchyAuth != nil {
@@ -331,7 +331,7 @@ func (tpm *TPM2) CreateEK(
 	}
 
 	if ekAttrs.PlatformPolicy {
-		template := ekAttrs.TPMAttributes.Template.(tpm2.TPMTPublic)
+		template := ekAttrs.TPMAttributes.Template
 		template.AuthPolicy = tpm.PlatformPolicyDigest()
 		ekAttrs.TPMAttributes.Template = template
 	}
@@ -344,7 +344,7 @@ func (tpm *TPM2) CreateEK(
 			Handle: tpm2.TPMRHEndorsement,
 			Auth:   tpm2.PasswordAuth(hierarchyAuth),
 		},
-		InPublic: tpm2.New2B(ekAttrs.TPMAttributes.Template.(tpm2.TPMTPublic)),
+		InPublic: tpm2.New2B(ekAttrs.TPMAttributes.Template),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
 				UserAuth: tpm2.TPM2BAuth{
@@ -362,8 +362,8 @@ func (tpm *TPM2) CreateEK(
 		ekAttrs.KeyAlgorithm.String(), primaryKey.ObjectHandle)
 
 	ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
-	if ekAttrs.TPMAttributes.Handle != nil && ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle) != 0 {
-		ekHandle = ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
+	if ekAttrs.TPMAttributes.Handle != 0 {
+		ekHandle = ekAttrs.TPMAttributes.Handle
 	}
 
 	// Make the EK persistent
@@ -427,7 +427,7 @@ func (tpm *TPM2) CreateEK(
 func (tpm *TPM2) CreateSRK(
 	srkAttrs *types.KeyAttributes) error {
 
-	hierarchy := srkAttrs.TPMAttributes.Hierarchy.(tpm2.TPMHandle)
+	hierarchy := srkAttrs.TPMAttributes.Hierarchy
 
 	var primaryKey *tpm2.CreatePrimaryResponse
 	var err error
@@ -442,7 +442,7 @@ func (tpm *TPM2) CreateSRK(
 	}
 
 	if srkAttrs.PlatformPolicy {
-		template := srkAttrs.TPMAttributes.Template.(tpm2.TPMTPublic)
+		template := srkAttrs.TPMAttributes.Template
 		template.AuthPolicy = tpm.PlatformPolicyDigest()
 		srkAttrs.TPMAttributes.Template = template
 	}
@@ -453,7 +453,7 @@ func (tpm *TPM2) CreateSRK(
 			Handle: hierarchy,
 			Auth:   tpm2.PasswordAuth(hierarchyAuth),
 		},
-		InPublic: tpm2.New2B(srkAttrs.TPMAttributes.Template.(tpm2.TPMTPublic)),
+		InPublic: tpm2.New2B(srkAttrs.TPMAttributes.Template),
 		InSensitive: tpm2.TPM2BSensitiveCreate{
 			Sensitive: &tpm2.TPMSSensitiveCreate{
 				UserAuth: tpm2.TPM2BAuth{
@@ -484,7 +484,7 @@ func (tpm *TPM2) CreateSRK(
 
 	tpm.logger.Debugf("tpm: Created SRK: 0x%x", primaryKey.ObjectHandle)
 
-	if srkAttrs.TPMAttributes.HandleType.(tpm2.TPMHT) == tpm2.TPMHTPersistent {
+	if srkAttrs.TPMAttributes.HandleType == tpm2.TPMHTPersistent {
 
 		// Make the SRK persistent
 		_, err = tpm2.EvictControl{
@@ -497,7 +497,7 @@ func (tpm *TPM2) CreateSRK(
 				Name:   primaryKey.Name,
 				Auth:   tpm2.PasswordAuth(hierarchyAuth),
 			},
-			PersistentHandle: srkAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
+			PersistentHandle: srkAttrs.TPMAttributes.Handle,
 		}.Execute(tpm.transport)
 
 		tpm.Flush(primaryKey.ObjectHandle)
@@ -507,7 +507,7 @@ func (tpm *TPM2) CreateSRK(
 			return err
 		}
 		tpm.logger.Debugf("tpm: SRK persisted to 0x%x",
-			srkAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+			srkAttrs.TPMAttributes.Handle)
 
 	} else {
 		srkAttrs.TPMAttributes.Handle = primaryKey.ObjectHandle
@@ -589,16 +589,23 @@ func (tpm *TPM2) CreateIAK(
 		iakAuth = iakAttrs.Password.Bytes()
 	}
 
+	// Get the platform PCR bank hash algorithm
+	// This must match the bank used in CreatePlatformPolicy for consistency
+	pcrBankHashAlg, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return nil, err
+	}
+
 	// Build signing scheme based on key algorithm
+	// Use platform PCR bank hash algorithm for consistency with TPM PCR banks
 	var inScheme tpm2.TPMTSigScheme
-	hashAlg := iakAttrs.TPMAttributes.HashAlg.(tpm2.TPMIAlgHash)
 	if iakAttrs.KeyAlgorithm == x509.RSA {
 
 		inScheme = tpm2.TPMTSigScheme{
 			Scheme: tpm2.TPMAlgRSASSA,
 			Details: tpm2.NewTPMUSigScheme(
 				tpm2.TPMAlgRSASSA, &tpm2.TPMSSchemeHash{
-					HashAlg: hashAlg,
+					HashAlg: pcrBankHashAlg,
 				}),
 		}
 
@@ -610,86 +617,174 @@ func (tpm *TPM2) CreateIAK(
 			Details: tpm2.NewTPMUSigScheme(
 				tpm2.TPMAlgECDSA,
 				&tpm2.TPMSSchemeHash{
-					HashAlg: hashAlg,
+					HashAlg: pcrBankHashAlg,
 				},
 			),
 		}
 	}
 
 	// Define the AK template
+	// Build template from scratch to ensure all fields are properly initialized
+	// and avoid issues with shared slices from template constants
 	var template tpm2.TPMTPublic
+	var keyBits tpm2.TPMKeyBits
+	if iakAttrs.RSAAttributes != nil && iakAttrs.RSAAttributes.KeySize > 0 {
+		if iakAttrs.RSAAttributes.KeySize > math.MaxUint16 {
+			return nil, ErrInvalidKeySize
+		}
+		keyBits = tpm2.TPMKeyBits(iakAttrs.RSAAttributes.KeySize) // #nosec G115 -- Bounds checked above
+	} else {
+		keyBits = 2048 // Default RSA key size
+	}
+
 	if iakAttrs.KeyAlgorithm == x509.RSA { //nolint:staticcheck // QF1003: if-else preferred over switch
 		if types.IsRSAPSS(iakAttrs.SignatureAlgorithm) {
-
-			template = RSAPSSAKTemplate
-			template.Parameters = tpm2.NewTPMUPublicParms(
-				tpm2.TPMAlgRSA,
-				&tpm2.TPMSRSAParms{
-					Scheme: tpm2.TPMTRSAScheme{
-						Scheme: tpm2.TPMAlgRSAPSS,
-						Details: tpm2.NewTPMUAsymScheme(
-							tpm2.TPMAlgRSAPSS,
-							&tpm2.TPMSSigSchemeRSAPSS{
-								HashAlg: hashAlg,
-							},
-						),
-					},
-					KeyBits: func() tpm2.TPMKeyBits {
-						if iakAttrs.RSAAttributes.KeySize > math.MaxUint16 {
-							panic("KeySize too large")
-						}
-						return tpm2.TPMKeyBits(iakAttrs.RSAAttributes.KeySize) // #nosec G115 -- Bounds checked above
-					}(),
+			template = tpm2.TPMTPublic{
+				Type:    tpm2.TPMAlgRSA,
+				NameAlg: pcrBankHashAlg,
+				ObjectAttributes: tpm2.TPMAObject{
+					FixedTPM:            true,
+					FixedParent:         true,
+					SensitiveDataOrigin: true,
+					UserWithAuth:        true,
+					Restricted:          true,
+					SignEncrypt:         true,
 				},
-			)
+				Parameters: tpm2.NewTPMUPublicParms(
+					tpm2.TPMAlgRSA,
+					&tpm2.TPMSRSAParms{
+						Symmetric: tpm2.TPMTSymDefObject{
+							Algorithm: tpm2.TPMAlgNull,
+						},
+						Scheme: tpm2.TPMTRSAScheme{
+							Scheme: tpm2.TPMAlgRSAPSS,
+							Details: tpm2.NewTPMUAsymScheme(
+								tpm2.TPMAlgRSAPSS,
+								&tpm2.TPMSSigSchemeRSAPSS{
+									HashAlg: pcrBankHashAlg,
+								},
+							),
+						},
+						KeyBits:  keyBits,
+						Exponent: 0, // Use default exponent (65537)
+					},
+				),
+				Unique: tpm2.NewTPMUPublicID(
+					tpm2.TPMAlgRSA,
+					&tpm2.TPM2BPublicKeyRSA{
+						Buffer: make([]byte, keyBits/8),
+					},
+				),
+			}
 			inScheme = tpm2.TPMTSigScheme{
 				Scheme: tpm2.TPMAlgRSAPSS,
 				Details: tpm2.NewTPMUSigScheme(
 					tpm2.TPMAlgRSAPSS, &tpm2.TPMSSchemeHash{
-						HashAlg: hashAlg,
+						HashAlg: pcrBankHashAlg,
 					}),
 			}
 			isRSAPSS = true
 		} else {
-			template = RSASSAAKTemplate
-			template.Parameters = tpm2.NewTPMUPublicParms(
-				tpm2.TPMAlgRSA,
-				&tpm2.TPMSRSAParms{
-					Scheme: tpm2.TPMTRSAScheme{
-						Scheme: tpm2.TPMAlgRSASSA,
-						Details: tpm2.NewTPMUAsymScheme(
-							tpm2.TPMAlgRSASSA,
-							&tpm2.TPMSSigSchemeRSASSA{
-								HashAlg: hashAlg,
-							},
-						),
-					},
-					KeyBits: func() tpm2.TPMKeyBits {
-						if iakAttrs.RSAAttributes.KeySize > math.MaxUint16 {
-							panic("KeySize too large")
-						}
-						return tpm2.TPMKeyBits(iakAttrs.RSAAttributes.KeySize) // #nosec G115 -- Bounds checked above
-					}(),
+			template = tpm2.TPMTPublic{
+				Type:    tpm2.TPMAlgRSA,
+				NameAlg: pcrBankHashAlg,
+				ObjectAttributes: tpm2.TPMAObject{
+					FixedTPM:            true,
+					FixedParent:         true,
+					SensitiveDataOrigin: true,
+					UserWithAuth:        true,
+					Restricted:          true,
+					SignEncrypt:         true,
 				},
-			)
+				Parameters: tpm2.NewTPMUPublicParms(
+					tpm2.TPMAlgRSA,
+					&tpm2.TPMSRSAParms{
+						Symmetric: tpm2.TPMTSymDefObject{
+							Algorithm: tpm2.TPMAlgNull,
+						},
+						Scheme: tpm2.TPMTRSAScheme{
+							Scheme: tpm2.TPMAlgRSASSA,
+							Details: tpm2.NewTPMUAsymScheme(
+								tpm2.TPMAlgRSASSA,
+								&tpm2.TPMSSigSchemeRSASSA{
+									HashAlg: pcrBankHashAlg,
+								},
+							),
+						},
+						KeyBits:  keyBits,
+						Exponent: 0, // Use default exponent (65537)
+					},
+				),
+				Unique: tpm2.NewTPMUPublicID(
+					tpm2.TPMAlgRSA,
+					&tpm2.TPM2BPublicKeyRSA{
+						Buffer: make([]byte, keyBits/8),
+					},
+				),
+			}
 			inScheme = tpm2.TPMTSigScheme{
 				Scheme: tpm2.TPMAlgRSASSA,
 				Details: tpm2.NewTPMUSigScheme(
 					tpm2.TPMAlgRSASSA, &tpm2.TPMSSchemeHash{
-						HashAlg: hashAlg,
+						HashAlg: pcrBankHashAlg,
 					}),
 			}
 		}
 
 	} else if iakAttrs.KeyAlgorithm == x509.ECDSA {
-		template = ECCAKP256Template
+		template = tpm2.TPMTPublic{
+			Type:    tpm2.TPMAlgECC,
+			NameAlg: pcrBankHashAlg,
+			ObjectAttributes: tpm2.TPMAObject{
+				FixedTPM:            true,
+				FixedParent:         true,
+				SensitiveDataOrigin: true,
+				UserWithAuth:        true,
+				Restricted:          true,
+				SignEncrypt:         true,
+			},
+			Parameters: tpm2.NewTPMUPublicParms(
+				tpm2.TPMAlgECC,
+				&tpm2.TPMSECCParms{
+					Symmetric: tpm2.TPMTSymDefObject{
+						Algorithm: tpm2.TPMAlgNull,
+					},
+					Scheme: tpm2.TPMTECCScheme{
+						Scheme: tpm2.TPMAlgECDSA,
+						Details: tpm2.NewTPMUAsymScheme(
+							tpm2.TPMAlgECDSA,
+							&tpm2.TPMSSigSchemeECDSA{
+								HashAlg: pcrBankHashAlg,
+							},
+						),
+					},
+					CurveID: tpm2.TPMECCNistP256,
+				},
+			),
+			Unique: tpm2.NewTPMUPublicID(
+				tpm2.TPMAlgECC,
+				&tpm2.TPMSECCPoint{
+					X: tpm2.TPM2BECCParameter{Buffer: make([]byte, 32)},
+					Y: tpm2.TPM2BECCParameter{Buffer: make([]byte, 32)},
+				},
+			),
+		}
+		inScheme = tpm2.TPMTSigScheme{
+			Scheme: tpm2.TPMAlgECDSA,
+			Details: tpm2.NewTPMUSigScheme(
+				tpm2.TPMAlgECDSA,
+				&tpm2.TPMSSchemeHash{
+					HashAlg: pcrBankHashAlg,
+				},
+			),
+		}
 	}
 
-	// Create PCR selection for creation data
+	// Create PCR selection for creation data using the platform PCR bank
 	pcrSelection := tpm2.TPMLPCRSelection{
 		PCRSelections: []tpm2.TPMSPCRSelection{
 			{
-				Hash:      hashAlg,
+				Hash:      pcrBankHashAlg,
 				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
 			},
 		},
@@ -719,7 +814,7 @@ func (tpm *TPM2) CreateIAK(
 	defer tpm.Flush(iakPrimary.ObjectHandle)
 
 	// Make the AK persistent
-	iakHandle := iakAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
+	iakHandle := iakAttrs.TPMAttributes.Handle
 	_, err = tpm2.EvictControl{
 		Auth: tpm2.AuthHandle{
 			Handle: tpm2.TPMRHOwner,
@@ -956,10 +1051,9 @@ func (tpm *TPM2) CreateIDevID(
 		},
 	}
 	// Set PCR selection if available
-	if akAttrs.TPMAttributes != nil && akAttrs.TPMAttributes.PCRSelection != nil {
-		if pcrSelection, ok := akAttrs.TPMAttributes.PCRSelection.(tpm2.TPMLPCRSelection); ok {
-			primaryKeyCMD.CreationPCR = pcrSelection
-		}
+	// Set PCR selection if available
+	if akAttrs.TPMAttributes != nil && len(akAttrs.TPMAttributes.PCRSelection.PCRSelections) > 0 {
+		primaryKeyCMD.CreationPCR = akAttrs.TPMAttributes.PCRSelection
 	}
 	// unique := tpm2.NewTPMUPublicID(
 	// 	tpm2.TPMAlgRSA,
@@ -981,7 +1075,7 @@ func (tpm *TPM2) CreateIDevID(
 	defer tpm.Flush(primaryKey.ObjectHandle)
 
 	// Evict existing key at this handle if it exists
-	persistentHandle := idevidAttrs.TPMAttributes.Handle.(tpm2.TPMHandle)
+	persistentHandle := idevidAttrs.TPMAttributes.Handle
 
 	// Try to read existing object to get its name for eviction
 	readPubResp, readErr := tpm2.ReadPublic{
@@ -1040,8 +1134,8 @@ func (tpm *TPM2) CreateIDevID(
 			Auth:   tpm2.PasswordAuth(idevidAuth),
 		},
 		SignHandle: tpm2.AuthHandle{
-			Handle: akAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-			Name:   akAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+			Handle: akAttrs.TPMAttributes.Handle,
+			Name:   akAttrs.TPMAttributes.Name,
 			Auth:   tpm2.PasswordAuth(akAuth),
 		},
 		QualifyingData: tpm2.TPM2BData{
@@ -1183,8 +1277,8 @@ func (tpm *TPM2) DeleteKey(
 	backend store.KeyBackend) error {
 
 	if keyAttrs.TPMAttributes != nil &&
-		keyAttrs.TPMAttributes.HandleType != nil &&
-		keyAttrs.TPMAttributes.HandleType.(tpm2.TPMHT) == tpm2.TPMHTPersistent {
+		keyAttrs.TPMAttributes.HandleType != 0 &&
+		keyAttrs.TPMAttributes.HandleType == tpm2.TPMHTPersistent {
 
 		if tpm.transport == nil {
 			return errors.New("TPM transport not initialized")
@@ -1201,10 +1295,10 @@ func (tpm *TPM2) DeleteKey(
 				Auth:   tpm2.PasswordAuth(hierarchyAuth),
 			},
 			ObjectHandle: &tpm2.NamedHandle{
-				Handle: keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-				Name:   keyAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+				Handle: keyAttrs.TPMAttributes.Handle,
+				Name:   keyAttrs.TPMAttributes.Name,
 			},
-			PersistentHandle: keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
+			PersistentHandle: keyAttrs.TPMAttributes.Handle,
 		}.Execute(tpm.transport)
 		if err != nil {
 			tpm.logger.Error(err)
@@ -1213,9 +1307,21 @@ func (tpm *TPM2) DeleteKey(
 		return nil
 	}
 
-	// Perform an unseal operation to ensure the caller owns the key
-	if _, err := tpm.Unseal(keyAttrs, backend); err != nil {
-		return err
+	// For signing keys (RSA/ECDSA), skip the unseal check since they cannot be unsealed.
+	// Unseal only works for sealed objects (KEYEDHASH).
+	// For signing keys, we just verify the key can be loaded and then delete the files.
+	if keyAttrs.KeyAlgorithm == x509.RSA || keyAttrs.KeyAlgorithm == x509.ECDSA {
+		// Load the key to verify ownership/authorization
+		loadResp, err := tpm.LoadKeyPair(keyAttrs, nil, backend)
+		if err != nil {
+			return err
+		}
+		tpm.Flush(loadResp.ObjectHandle)
+	} else {
+		// For sealed objects (KEYEDHASH), perform an unseal operation to ensure the caller owns the key
+		if _, err := tpm.UnsealKey(keyAttrs, backend); err != nil {
+			return err
+		}
 	}
 
 	// Delete the key pair from the backend

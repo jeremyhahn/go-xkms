@@ -318,6 +318,7 @@ func TestConnectionTracker(t *testing.T) {
 	// Verify tracker was created
 	if tracker == nil {
 		t.Fatal("Expected tracker to be created")
+		return
 	}
 
 	if tracker.protocol != ProtocolQUIC {

@@ -31,7 +31,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	pkcs11lib "github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/assert"
@@ -119,8 +118,8 @@ func getYubiKeyConfig(t *testing.T) (*pkcs11.Config, bool) {
 	t.Logf("Discovered YubiKey token label: %s", tokenLabel)
 
 	// Create storage backends
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	config := &pkcs11.Config{
 		Library:     yubikeyLib,

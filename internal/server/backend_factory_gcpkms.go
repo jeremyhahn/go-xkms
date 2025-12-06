@@ -22,7 +22,6 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -58,7 +57,7 @@ func createGCPKMSBackend(config BackendConfig) (types.Backend, error) {
 	var keyStorage storage.Backend
 	var err error
 	if keyDir == "memory" {
-		keyStorage = memory.New()
+		keyStorage = storage.New()
 	} else {
 		keyStorage, err = file.New(keyDir)
 		if err != nil {
@@ -68,7 +67,7 @@ func createGCPKMSBackend(config BackendConfig) (types.Backend, error) {
 
 	var certStorage storage.Backend
 	if certDir == "memory" {
-		certStorage = memory.New()
+		certStorage = storage.New()
 	} else {
 		certStorage, err = file.New(certDir)
 		if err != nil {

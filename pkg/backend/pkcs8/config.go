@@ -43,7 +43,7 @@ func (c *Config) Validate() error {
 //
 // Example usage:
 //
-//	storage := memory.New()
+//	storage := storage.New()
 //	config := &pkcs8.Config{
 //	    KeyStorage: storage,
 //	}

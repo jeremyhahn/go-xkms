@@ -78,6 +78,7 @@ func TestLoadTLSConfig_ValidConfig(t *testing.T) {
 
 	if tlsConfig == nil {
 		t.Fatal("LoadTLSConfig() returned nil config")
+		return
 	}
 
 	if len(tlsConfig.Certificates) != 1 {

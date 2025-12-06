@@ -244,6 +244,7 @@ func TestMemoryVersioningAdapter_ScheduleRotation(t *testing.T) {
 
 	if schedule == nil {
 		t.Fatal("Expected schedule, got nil")
+		return
 	}
 
 	if !schedule.Equal(rotateAt) {

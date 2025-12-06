@@ -197,3 +197,18 @@ var (
 	// ErrVerificationFailed indicates verification operation failed.
 	ErrVerificationFailed = errors.New("keystore: verification failed")
 )
+
+// Sealing errors
+var (
+	// ErrSealingNotSupported indicates the backend does not support sealing operations.
+	ErrSealingNotSupported = errors.New("keystore: sealing not supported")
+
+	// ErrSealingFailed indicates sealing operation failed.
+	ErrSealingFailed = errors.New("keystore: sealing failed")
+
+	// ErrUnsealingFailed indicates unsealing operation failed.
+	ErrUnsealingFailed = errors.New("keystore: unsealing failed")
+
+	// ErrInvalidSealedData indicates the sealed data is invalid or malformed.
+	ErrInvalidSealedData = errors.New("keystore: invalid sealed data")
+)

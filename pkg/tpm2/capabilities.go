@@ -56,6 +56,48 @@ func (tpm *TPM2) IsFIPS140_2() (bool, error) {
 	return modes.TPMProperty[0].Value == 1, nil
 }
 
+// IsPlatformPCRExtended checks if the platform PCR (typically PCR 16) has been
+// extended with golden measurements. This is used to determine if CreatePlatformPolicy()
+// has already been called during the current boot cycle.
+//
+// Returns true if the PCR contains non-zero values (already extended),
+// false if the PCR is all zeros (initial boot state).
+func (tpm *TPM2) IsPlatformPCRExtended() (bool, error) {
+	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return false, err
+	}
+
+	pcrRead := tpm2.PCRRead{
+		PCRSelectionIn: tpm2.TPMLPCRSelection{
+			PCRSelections: []tpm2.TPMSPCRSelection{
+				{
+					Hash:      hashAlgID,
+					PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
+				},
+			},
+		},
+	}
+	response, err := pcrRead.Execute(tpm.transport)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if any digests were returned
+	if len(response.PCRValues.Digests) == 0 {
+		return false, nil
+	}
+
+	// Check if the PCR value is all zeros (initial state)
+	pcrValue := response.PCRValues.Digests[0].Buffer
+	for _, b := range pcrValue {
+		if b != 0 {
+			return true, nil // PCR has been extended
+		}
+	}
+	return false, nil // PCR is at initial state (all zeros)
+}
+
 func (tpm *TPM2) FixedProperties() (*PropertiesFixed, error) {
 	activeSessionsMax, err := activeSessionsMax(tpm.transport)
 	if err != nil {

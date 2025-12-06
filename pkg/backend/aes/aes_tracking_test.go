@@ -19,13 +19,13 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 func TestAESBackend_TrackingEnabled(t *testing.T) {
 	// Create backend with default tracker (memory-based)
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
@@ -106,7 +106,7 @@ func TestAESBackend_TrackingEnabled(t *testing.T) {
 
 func TestAESBackend_NonceReuse(t *testing.T) {
 	// Create backend
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
@@ -175,7 +175,7 @@ func TestAESBackend_NonceReuse(t *testing.T) {
 
 func TestAESBackend_BytesLimit(t *testing.T) {
 	// Create backend
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
@@ -244,7 +244,7 @@ func TestAESBackend_BytesLimit(t *testing.T) {
 
 func TestAESBackend_TrackingDisabled(t *testing.T) {
 	// Create backend
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
@@ -307,7 +307,7 @@ func TestAESBackend_TrackingDisabled(t *testing.T) {
 
 func TestAESBackend_KeyRotation(t *testing.T) {
 	// Create backend
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
@@ -398,7 +398,7 @@ func TestAESBackend_CustomTracker(t *testing.T) {
 	customTracker := backend.NewMemoryAEADTracker()
 
 	// Create backend with custom tracker
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 		Tracker:    customTracker,
@@ -457,7 +457,7 @@ func TestAESBackend_CustomTracker(t *testing.T) {
 }
 
 func BenchmarkAESBackend_EncryptWithTracking(b *testing.B) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
@@ -501,7 +501,7 @@ func BenchmarkAESBackend_EncryptWithTracking(b *testing.B) {
 }
 
 func BenchmarkAESBackend_EncryptWithoutTracking(b *testing.B) {
-	storage := memory.New()
+	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}

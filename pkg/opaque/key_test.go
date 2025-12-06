@@ -819,6 +819,7 @@ func TestOpaqueKeyAttributes(t *testing.T) {
 	gotAttrs := key.KeyAttributes()
 	if gotAttrs == nil {
 		t.Fatal("KeyAttributes() returned nil")
+		return
 	}
 	if gotAttrs.CN != attrs.CN {
 		t.Errorf("CN mismatch: got %q, want %q", gotAttrs.CN, attrs.CN)

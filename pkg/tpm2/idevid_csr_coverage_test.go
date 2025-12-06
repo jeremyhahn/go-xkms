@@ -372,6 +372,7 @@ func TestUnpackIDevIDCSRCoverage(t *testing.T) {
 			}
 			if unpacked == nil {
 				t.Fatal("unpacked CSR should not be nil")
+				return
 			}
 			if unpacked.StructVer != 0x00000100 {
 				t.Errorf("unexpected struct version: got %x, want %x", unpacked.StructVer, 0x00000100)

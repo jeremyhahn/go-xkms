@@ -1,5 +1,5 @@
 # Dockerfile for quantum-safe cryptography integration tests
-FROM golang:1.25-bookworm
+FROM golang:1.25.5-bookworm
 
 ENV GOTOOLCHAIN=auto
 

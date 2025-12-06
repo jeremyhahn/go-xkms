@@ -32,7 +32,6 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/certstore"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -220,7 +219,7 @@ func generateCRL(t *testing.T, caCert *x509.Certificate, caKey interface{}, revo
 // ========================================================================
 
 func TestCertStore_StoreCertificate(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -240,7 +239,7 @@ func TestCertStore_StoreCertificate(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_MultipleTypes(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -271,7 +270,7 @@ func TestCertStore_StoreCertificate_MultipleTypes(t *testing.T) {
 }
 
 func TestCertStore_GetCertificate_NotFound(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -283,7 +282,7 @@ func TestCertStore_GetCertificate_NotFound(t *testing.T) {
 }
 
 func TestCertStore_DeleteCertificate(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -303,7 +302,7 @@ func TestCertStore_DeleteCertificate(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -328,7 +327,7 @@ func TestCertStore_ListCertificates(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates_Empty(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -345,7 +344,7 @@ func TestCertStore_ListCertificates_Empty(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_CertificateChain_ThreeTier(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -372,7 +371,7 @@ func TestCertStore_CertificateChain_ThreeTier(t *testing.T) {
 }
 
 func TestCertStore_CertificateChain_TwoTier(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -397,7 +396,7 @@ func TestCertStore_CertificateChain_TwoTier(t *testing.T) {
 }
 
 func TestCertStore_CertificateChain_NotFound(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -413,7 +412,7 @@ func TestCertStore_CertificateChain_NotFound(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_CRL_StoreAndRetrieve(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -435,7 +434,7 @@ func TestCertStore_CRL_StoreAndRetrieve(t *testing.T) {
 }
 
 func TestCertStore_CRL_MultipleCAs(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -465,7 +464,7 @@ func TestCertStore_CRL_MultipleCAs(t *testing.T) {
 }
 
 func TestCertStore_CRL_NotFound(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -482,7 +481,7 @@ func TestCertStore_CRL_NotFound(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_VerifyCertificate_ValidChain(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -502,7 +501,7 @@ func TestCertStore_VerifyCertificate_ValidChain(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_WithIntermediates(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 
 	// Create certificate chain
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
@@ -531,7 +530,7 @@ func TestCertStore_VerifyCertificate_WithIntermediates(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_UntrustedRoot(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -556,7 +555,7 @@ func TestCertStore_VerifyCertificate_UntrustedRoot(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_IsRevoked_NotRevoked(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -577,7 +576,7 @@ func TestCertStore_IsRevoked_NotRevoked(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_Revoked(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -598,7 +597,7 @@ func TestCertStore_IsRevoked_Revoked(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_NoCRL(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -615,7 +614,7 @@ func TestCertStore_IsRevoked_NoCRL(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_Revoked_WithoutAllowRevoked(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage:  storage.NewCertAdapter(backend),
 		AllowRevoked: false,
@@ -638,7 +637,7 @@ func TestCertStore_StoreCertificate_Revoked_WithoutAllowRevoked(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_Revoked_WithAllowRevoked(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage:  storage.NewCertAdapter(backend),
 		AllowRevoked: true,
@@ -664,7 +663,7 @@ func TestCertStore_StoreCertificate_Revoked_WithAllowRevoked(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_StoreCertificate_Expired(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -679,7 +678,7 @@ func TestCertStore_StoreCertificate_Expired(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_NotYetValid(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -694,7 +693,7 @@ func TestCertStore_StoreCertificate_NotYetValid(t *testing.T) {
 }
 
 func TestCertStore_CRL_Expired(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -736,7 +735,7 @@ func TestCertStore_CRL_Expired(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_TLSWorkflow(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -796,7 +795,7 @@ func TestCertStore_TLSWorkflow(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_CAManagement_MultipleRoots(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -837,7 +836,7 @@ func TestCertStore_CAManagement_MultipleRoots(t *testing.T) {
 }
 
 func TestCertStore_CAManagement_IntermediateChains(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -865,7 +864,7 @@ func TestCertStore_CAManagement_IntermediateChains(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_Search_ByCN(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -891,7 +890,7 @@ func TestCertStore_Search_ByCN(t *testing.T) {
 }
 
 func TestCertStore_Filter_CACerts(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -934,8 +933,8 @@ func TestCertStore_Filter_CACerts(t *testing.T) {
 
 func TestCertStore_Composite_MultipleStorages(t *testing.T) {
 	// Create multiple in-memory storages
-	backend1 := memory.New()
-	backend2 := memory.New()
+	backend1 := storage.New()
+	backend2 := storage.New()
 
 	cs1, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend1),
@@ -972,7 +971,7 @@ func TestCertStore_Composite_MultipleStorages(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_ErrorHandling_NilCertificate(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -985,7 +984,7 @@ func TestCertStore_ErrorHandling_NilCertificate(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_EmptyCN(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1001,7 +1000,7 @@ func TestCertStore_ErrorHandling_EmptyCN(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_EmptyChain(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1014,7 +1013,7 @@ func TestCertStore_ErrorHandling_EmptyChain(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_NilInChain(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1029,7 +1028,7 @@ func TestCertStore_ErrorHandling_NilInChain(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_NilCRL(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1042,7 +1041,7 @@ func TestCertStore_ErrorHandling_NilCRL(t *testing.T) {
 }
 
 func TestCertStore_ErrorHandling_ClosedStore(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1079,7 +1078,7 @@ func TestCertStore_ErrorHandling_ClosedStore(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_Concurrent_ReadWrite(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1117,7 +1116,7 @@ func TestCertStore_Concurrent_ReadWrite(t *testing.T) {
 }
 
 func TestCertStore_Concurrent_ChainOperations(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1152,7 +1151,7 @@ func TestCertStore_Concurrent_ChainOperations(t *testing.T) {
 }
 
 func TestCertStore_Concurrent_CRLOperations(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1188,7 +1187,7 @@ func TestCertStore_Concurrent_CRLOperations(t *testing.T) {
 // ========================================================================
 
 func TestCertStore_Config_WithVerifyOptions(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 
 	verifyOpts := &x509.VerifyOptions{
 		DNSName:   "test.example.com",
@@ -1209,7 +1208,7 @@ func TestCertStore_Config_WithVerifyOptions(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_WithDNSName(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 
 	verifyOpts := &x509.VerifyOptions{
 		DNSName: "",
@@ -1236,7 +1235,7 @@ func TestCertStore_VerifyCertificate_WithDNSName(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_EmptyIntermediates(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 
 	intermediates := x509.NewCertPool()
 
@@ -1264,7 +1263,7 @@ func TestCertStore_VerifyCertificate_EmptyIntermediates(t *testing.T) {
 }
 
 func TestCertStore_GetCRL_EmptyIssuer(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1278,7 +1277,7 @@ func TestCertStore_GetCRL_EmptyIssuer(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates_WithGetError(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1300,7 +1299,7 @@ func TestCertStore_ListCertificates_WithGetError(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_WithRevokedCertificateEntries(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1345,7 +1344,7 @@ func TestCertStore_IsRevoked_WithRevokedCertificateEntries(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_StorageError(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1363,7 +1362,7 @@ func TestCertStore_StoreCertificate_StorageError(t *testing.T) {
 }
 
 func TestCertStore_GetCertificate_StorageError(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1383,7 +1382,7 @@ func TestCertStore_GetCertificate_StorageError(t *testing.T) {
 }
 
 func TestCertStore_DeleteCertificate_StorageError(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1403,7 +1402,7 @@ func TestCertStore_DeleteCertificate_StorageError(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificateChain_StorageError(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1424,7 +1423,7 @@ func TestCertStore_StoreCertificateChain_StorageError(t *testing.T) {
 }
 
 func TestCertStore_GetCertificateChain_StorageError(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1447,7 +1446,7 @@ func TestCertStore_GetCertificateChain_StorageError(t *testing.T) {
 }
 
 func TestCertStore_Config_NilVerifyOptions(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 
 	// Create certstore with nil verify options
 	cs, err := certstore.New(&certstore.Config{
@@ -1482,7 +1481,7 @@ func TestCertStore_New_NilStorage(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificateChain_EmptyCNInLeaf(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1501,7 +1500,7 @@ func TestCertStore_StoreCertificateChain_EmptyCNInLeaf(t *testing.T) {
 }
 
 func TestCertStore_Close_Multiple(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1519,7 +1518,7 @@ func TestCertStore_Close_Multiple(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_WithEmptyKeyUsages(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 
 	// Test with empty key usages (should be skipped)
 	verifyOpts := &x509.VerifyOptions{
@@ -1544,7 +1543,7 @@ func TestCertStore_VerifyCertificate_WithEmptyKeyUsages(t *testing.T) {
 }
 
 func TestCertStore_StoreCertificate_InvalidFutureRevocationCheck(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage:  storage.NewCertAdapter(backend),
 		AllowRevoked: false,
@@ -1562,7 +1561,7 @@ func TestCertStore_StoreCertificate_InvalidFutureRevocationCheck(t *testing.T) {
 }
 
 func TestCertStore_IsRevoked_MultipleCRLEntries(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1596,7 +1595,7 @@ func TestCertStore_IsRevoked_MultipleCRLEntries(t *testing.T) {
 }
 
 func TestCertStore_ListCertificates_MixedValidAndInvalid(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1619,7 +1618,7 @@ func TestCertStore_ListCertificates_MixedValidAndInvalid(t *testing.T) {
 }
 
 func TestCertStore_VerifyCertificate_AllOptions(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 
 	// Create certificate chain
 	rootCert, rootKey := generateTestCert(t, "root.example.com", true, nil, nil)
@@ -1654,7 +1653,7 @@ func TestCertStore_VerifyCertificate_AllOptions(t *testing.T) {
 }
 
 func TestCertStore_GetCertificateChain_WithEmptyCN(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1668,7 +1667,7 @@ func TestCertStore_GetCertificateChain_WithEmptyCN(t *testing.T) {
 }
 
 func TestCertStore_DeleteCertificate_WithEmptyCN(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1682,7 +1681,7 @@ func TestCertStore_DeleteCertificate_WithEmptyCN(t *testing.T) {
 }
 
 func TestCertStore_GetCertificate_WithEmptyCN(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1696,7 +1695,7 @@ func TestCertStore_GetCertificate_WithEmptyCN(t *testing.T) {
 }
 
 func TestCertStore_StoreCRL_UpdateExisting(t *testing.T) {
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1731,7 +1730,7 @@ func TestCertStore_Performance_LargeNumberOfCerts(t *testing.T) {
 		t.Skip("Skipping performance test in short mode")
 	}
 
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})
@@ -1768,7 +1767,7 @@ func TestCertStore_Performance_LargeChains(t *testing.T) {
 		t.Skip("Skipping performance test in short mode")
 	}
 
-	backend := memory.New()
+	backend := storage.New()
 	cs, err := certstore.New(&certstore.Config{
 		CertStorage: storage.NewCertAdapter(backend),
 	})

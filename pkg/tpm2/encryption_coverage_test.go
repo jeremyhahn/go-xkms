@@ -150,8 +150,8 @@ func TestRSAEncrypt_Basic(t *testing.T) {
 	message := []byte("test message")
 
 	ciphertext, err := tpm.RSAEncrypt(
-		ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-		ekAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+		ekAttrs.TPMAttributes.Handle,
+		ekAttrs.TPMAttributes.Name,
 		message,
 	)
 

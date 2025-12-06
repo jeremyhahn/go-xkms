@@ -28,7 +28,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	kmstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -44,8 +44,8 @@ func TestNewBackend(t *testing.T) {
 			name: "valid config",
 			config: &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: false,
 		},
@@ -55,8 +55,8 @@ func TestNewBackend(t *testing.T) {
 				Region:          "us-west-2",
 				AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
 				SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-				KeyStorage:      memory.New(),
-				CertStorage:     memory.New(),
+				KeyStorage:      storage.New(),
+				CertStorage:     storage.New(),
 			},
 			wantErr: false,
 		},
@@ -79,8 +79,8 @@ func TestNewBackend(t *testing.T) {
 			name: "invalid region format",
 			config: &Config{
 				Region:      "invalid_region",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			},
 			wantErr: true,
 			errType: ErrInvalidConfig,
@@ -112,8 +112,8 @@ func TestNewBackendWithClient(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 
 	b, err := NewBackendWithClient(config, mockClient)
@@ -133,8 +133,8 @@ func TestSave(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -209,8 +209,8 @@ func TestGet(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -291,8 +291,8 @@ func TestGetPublicKeyError(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -321,8 +321,8 @@ func TestDelete(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -357,8 +357,8 @@ func TestDeleteNilAttributes(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -378,8 +378,8 @@ func TestDeleteKMSError(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -401,8 +401,8 @@ func TestClose(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -544,8 +544,8 @@ func TestCreateKey(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, _ := NewBackendWithClient(config, mockClient)
 
@@ -659,8 +659,8 @@ func TestSign(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, _ := NewBackendWithClient(config, mockClient)
 
@@ -760,8 +760,8 @@ func TestVerify(t *testing.T) {
 
 			config := &Config{
 				Region:      "us-east-1",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, _ := NewBackendWithClient(config, mockClient)
 
@@ -788,8 +788,8 @@ func TestConcurrentAccess(t *testing.T) {
 
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -849,8 +849,8 @@ func TestGetKeyID(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -879,8 +879,8 @@ func TestGetKeySpec(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -934,8 +934,8 @@ func TestGetKeyUsage(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 
@@ -976,8 +976,8 @@ func TestGetSigningAlgorithm(t *testing.T) {
 	mockClient := &MockKMSClient{}
 	config := &Config{
 		Region:      "us-east-1",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, _ := NewBackendWithClient(config, mockClient)
 

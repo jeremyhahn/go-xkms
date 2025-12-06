@@ -131,6 +131,76 @@ Access via: `keystore.Backend().(backend.SymmetricBackend)`
 - Health check endpoint
 - Backend listing
 
+## KeychainFacade API
+
+The `KeychainFacade` in `pkg/keychain/` provides a unified, singleton API for all keychain operations. All client interfaces (REST, gRPC, CLI, MCP, QUIC) use the facade as their backend.
+
+### Initialization
+
+```go
+import "github.com/jeremyhahn/go-keychain/pkg/keychain"
+
+// Initialize with backends
+err := keychain.Initialize(&keychain.FacadeConfig{
+    Backends: map[string]keychain.KeyStore{
+        "pkcs8":   pkcs8Backend,
+        "pkcs11":  pkcs11Backend,
+        "tpm2":    tpm2Backend,
+    },
+    DefaultBackend: "pkcs8",
+})
+```
+
+### Key Reference Format
+
+All facade methods accept key references in two formats:
+- `"backend:key-id"` - Specifies which backend to use
+- `"key-id"` - Uses the default backend
+
+### Facade Methods
+
+| Category | Method | Description |
+|----------|--------|-------------|
+| **Backends** | `Backend(name)` | Get a specific backend |
+| | `DefaultBackend()` | Get the default backend |
+| | `Backends()` | List all backend names |
+| | `GetBackendInfo(name)` | Get backend type and capabilities |
+| | `GetBackendCapabilities(name)` | Get detailed capabilities |
+| **Keys** | `KeyByID(keyRef)` | Get key by reference |
+| | `GenerateKeyWithBackend(backend, attrs)` | Generate key on specific backend |
+| | `RotateKey(keyRef)` | Rotate (replace) a key |
+| | `DeleteKey(keyRef)` | Delete a key |
+| | `ListKeys(backends...)` | List all keys |
+| **Signing** | `Signer(keyRef)` | Get crypto.Signer |
+| | `Sign(keyRef, data, opts)` | Sign data |
+| | `Verify(keyRef, data, sig, opts)` | Verify signature |
+| **Encryption** | `Decrypter(keyRef)` | Get crypto.Decrypter |
+| | `Encrypt(keyRef, data, opts)` | Symmetric encryption |
+| | `Decrypt(keyRef, encrypted, opts)` | Symmetric decryption |
+| **Certificates** | `SaveCertificate(keyID, cert)` | Save certificate |
+| | `Certificate(keyID)` | Get certificate |
+| | `DeleteCertificate(keyID)` | Delete certificate |
+| | `ListCertificates(backends...)` | List certificates |
+| | `CertificateExists(keyID)` | Check if certificate exists |
+| | `SaveCertificateChain(keyID, chain)` | Save certificate chain |
+| | `CertificateChain(keyID)` | Get certificate chain |
+| **TLS** | `GetTLSCertificate(keyRef)` | Get tls.Certificate |
+| **Import/Export** | `GetImportParameters(backend, attrs, alg)` | Get wrapping key |
+| | `WrapKey(backend, material, params)` | Wrap key material |
+| | `UnwrapKey(backend, wrapped, params)` | Unwrap key material |
+| | `ImportKey(backend, attrs, wrapped)` | Import wrapped key |
+| | `ExportKey(keyRef, alg)` | Export key wrapped |
+| | `CopyKey(srcRef, destBackend, attrs)` | Copy key between backends |
+| **Symmetric** | `GenerateSymmetricKey(backend, attrs)` | Generate AES key |
+| | `GetSymmetricKey(keyRef)` | Get symmetric key |
+| **Sealing** | `CanSeal(backends...)` | Check sealing support |
+| | `Seal(ctx, data, opts)` | Seal data |
+| | `Unseal(ctx, sealed, opts)` | Unseal data |
+| **Lifecycle** | `Initialize(config)` | Initialize facade |
+| | `IsInitialized()` | Check initialization |
+| | `Close()` | Close all backends |
+| | `Reset()` | Reset facade (testing) |
+
 ## Testing Status
 
 All implemented methods have:

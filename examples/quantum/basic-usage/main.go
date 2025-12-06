@@ -193,7 +193,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to retrieve key: %v", err)
 	}
-	fmt.Printf("   ✓ Retrieved key: %s\n", mldsaAttrs.CN)
+	fmt.Printf("   ✓ Retrieved key: %s\n", retrievedKey)
 
 	// Use retrieved key to sign
 	retrievedSigner, err := quantumBackend.Signer(mldsaAttrs)

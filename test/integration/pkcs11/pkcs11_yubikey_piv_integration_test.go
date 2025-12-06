@@ -27,7 +27,6 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/yubikey"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	pkcs11lib "github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/assert"
@@ -132,8 +131,8 @@ func getYubiKeyPIVConfig(t *testing.T) (*yubikey.Config, bool) {
 	tokenLabel := tokenInfo.Label
 	t.Logf("Discovered YubiKey token label: %s", tokenLabel)
 
-	keyStorage := memory.New()
-	certStorage := memory.New()
+	keyStorage := storage.New()
+	certStorage := storage.New()
 
 	// Use slot 0x9a (PIV Authentication) for YubiKey PIV operations
 	slot := uint(0x9a)

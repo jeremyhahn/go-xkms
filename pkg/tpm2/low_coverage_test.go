@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -253,7 +253,7 @@ func TestCreateRSA_PasswordError(t *testing.T) {
 	// Cleanup the SRK we created
 	defer func() {
 		// Only attempt cleanup if SRK was successfully created
-		if srkAttrs == nil || srkAttrs.TPMAttributes == nil || srkAttrs.TPMAttributes.Handle == nil {
+		if srkAttrs == nil || srkAttrs.TPMAttributes == nil || srkAttrs.TPMAttributes.Handle == 0 {
 			return
 		}
 		_, err := tpm2.EvictControl{
@@ -262,10 +262,10 @@ func TestCreateRSA_PasswordError(t *testing.T) {
 				Auth:   tpm2.PasswordAuth(nil),
 			},
 			ObjectHandle: &tpm2.NamedHandle{
-				Handle: srkAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-				Name:   srkAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+				Handle: srkAttrs.TPMAttributes.Handle,
+				Name:   srkAttrs.TPMAttributes.Name,
 			},
-			PersistentHandle: srkAttrs.TPMAttributes.Handle.(tpm2.TPMIDHPersistent),
+			PersistentHandle: srkAttrs.TPMAttributes.Handle,
 		}.Execute(tpm.Transport())
 		if err != nil {
 			t.Logf("Failed to clean up SRK: %v", err)
@@ -301,7 +301,7 @@ func TestCreateRSA_EncryptionKey(t *testing.T) {
 	// Cleanup the SRK
 	defer func() {
 		// Only attempt cleanup if SRK was successfully created
-		if srkAttrs == nil || srkAttrs.TPMAttributes == nil || srkAttrs.TPMAttributes.Handle == nil {
+		if srkAttrs == nil || srkAttrs.TPMAttributes == nil || srkAttrs.TPMAttributes.Handle == 0 {
 			return
 		}
 		_, _ = tpm2.EvictControl{
@@ -310,10 +310,10 @@ func TestCreateRSA_EncryptionKey(t *testing.T) {
 				Auth:   tpm2.PasswordAuth(nil),
 			},
 			ObjectHandle: &tpm2.NamedHandle{
-				Handle: srkAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-				Name:   srkAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+				Handle: srkAttrs.TPMAttributes.Handle,
+				Name:   srkAttrs.TPMAttributes.Name,
 			},
-			PersistentHandle: srkAttrs.TPMAttributes.Handle.(tpm2.TPMIDHPersistent),
+			PersistentHandle: srkAttrs.TPMAttributes.Handle,
 		}.Execute(tpm.Transport())
 	}()
 
@@ -327,7 +327,7 @@ func TestCreateRSA_EncryptionKey(t *testing.T) {
 	assert.NotNil(t, pubKey)
 	assert.NotNil(t, keyAttrs.TPMAttributes)
 	// Cleanup the created key
-	tpm.Flush(keyAttrs.TPMAttributes.Handle.(tpm2.TPMHandle))
+	tpm.Flush(keyAttrs.TPMAttributes.Handle)
 }
 
 // ========================================
@@ -607,8 +607,8 @@ func TestRSADecrypt_EmptyBlob(t *testing.T) {
 
 	// RSADecrypt with empty blob should fail
 	_, err = tpm.RSADecrypt(
-		ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-		ekAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+		ekAttrs.TPMAttributes.Handle,
+		ekAttrs.TPMAttributes.Name,
 		[]byte{},
 	)
 	assert.NotNil(t, err)
@@ -639,8 +639,8 @@ func TestRSADecrypt_TooLargeBlob(t *testing.T) {
 	require.Nil(t, err)
 
 	_, err = tpm.RSADecrypt(
-		ekAttrs.TPMAttributes.Handle.(tpm2.TPMHandle),
-		ekAttrs.TPMAttributes.Name.(tpm2.TPM2BName),
+		ekAttrs.TPMAttributes.Handle,
+		ekAttrs.TPMAttributes.Name,
 		largeBlob,
 	)
 	assert.NotNil(t, err)

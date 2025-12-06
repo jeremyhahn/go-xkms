@@ -26,7 +26,7 @@ import (
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,8 +155,8 @@ func TestDecrypter(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
@@ -341,8 +341,8 @@ func TestRSADecrypt_OAEP(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
@@ -468,8 +468,8 @@ func TestDecrypterRoundTrip(t *testing.T) {
 				ProjectID:   "test-project",
 				LocationID:  "us-central1",
 				KeyRingID:   "test-keyring",
-				KeyStorage:  memory.New(),
-				CertStorage: memory.New(),
+				KeyStorage:  storage.New(),
+				CertStorage: storage.New(),
 			}
 			b, err := NewBackendWithClient(config, mockClient)
 			require.NoError(t, err, "Failed to create backend")
@@ -544,8 +544,8 @@ func TestDecrypterWithInvalidChecksum(t *testing.T) {
 		ProjectID:   "test-project",
 		LocationID:  "us-central1",
 		KeyRingID:   "test-keyring",
-		KeyStorage:  memory.New(),
-		CertStorage: memory.New(),
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
 	}
 	b, err := NewBackendWithClient(config, mockClient)
 	require.NoError(t, err, "Failed to create backend")

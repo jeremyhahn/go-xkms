@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/logging"
-	"github.com/jeremyhahn/go-keychain/internal/tpm/store"
+	"github.com/jeremyhahn/go-keychain/pkg/logging"
+	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1130,7 +1130,7 @@ func TestMockCertificateValidation(t *testing.T) {
 
 		assert.NotNil(t, attrs.TPMAttributes)
 		assert.NotNil(t, attrs.TPMAttributes.BPublic)
-		pub := attrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+		pub := attrs.TPMAttributes.Public
 		assert.Equal(t, tpm2.TPMAlgRSA, pub.Type)
 		assert.True(t, pub.ObjectAttributes.Restricted)
 		assert.True(t, pub.ObjectAttributes.FixedTPM)
@@ -1144,7 +1144,7 @@ func TestMockCertificateValidation(t *testing.T) {
 
 		assert.NotNil(t, attrs.TPMAttributes)
 		assert.NotNil(t, attrs.TPMAttributes.BPublic)
-		pub := attrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+		pub := attrs.TPMAttributes.Public
 		assert.Equal(t, tpm2.TPMAlgRSA, pub.Type)
 		assert.False(t, pub.ObjectAttributes.Restricted) // IDevID is NOT restricted
 		assert.True(t, pub.ObjectAttributes.FixedTPM)
@@ -1568,7 +1568,7 @@ func TestVerifyTCGCSRSignature_ECCKeyAttributes(t *testing.T) {
 		}
 
 		require.NotNil(t, attrs)
-		pub := attrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+		pub := attrs.TPMAttributes.Public
 		assert.Equal(t, tpm2.TPMAlgECC, pub.Type)
 		assert.True(t, pub.ObjectAttributes.Restricted)
 	})
@@ -1634,7 +1634,7 @@ func TestVerifyTCGCSRSignature_ECCKeyAttributes(t *testing.T) {
 		}
 
 		require.NotNil(t, attrs)
-		pub := attrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+		pub := attrs.TPMAttributes.Public
 		assert.Equal(t, tpm2.TPMAlgECC, pub.Type)
 		assert.False(t, pub.ObjectAttributes.Restricted)
 	})
@@ -1803,7 +1803,7 @@ func TestCSRContentBinaryPackingEdgeCases(t *testing.T) {
 func TestTPMPublicKeyTypeDetection(t *testing.T) {
 	t.Run("RSA public key type detection", func(t *testing.T) {
 		attrs := createMockIAKAttributes()
-		pub := attrs.TPMAttributes.Public.(tpm2.TPMTPublic)
+		pub := attrs.TPMAttributes.Public
 		assert.Equal(t, tpm2.TPMAlgRSA, pub.Type)
 	})
 
