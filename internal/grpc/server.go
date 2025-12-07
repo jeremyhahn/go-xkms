@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/metrics"
+	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -41,6 +42,7 @@ type Server struct {
 	tlsConfig     *tls.Config
 	authenticator auth.Authenticator
 	logger        logger.Logger
+	rateLimiter   *ratelimit.Limiter
 }
 
 // ServerConfig contains configuration for the gRPC server
@@ -51,6 +53,7 @@ type ServerConfig struct {
 	Logger         logger.Logger
 	EnableLogging  bool
 	EnableRecovery bool
+	RateLimiter    *ratelimit.Limiter
 }
 
 // NewServer creates a new gRPC server
@@ -83,6 +86,7 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 		tlsConfig:     cfg.TLSConfig,
 		authenticator: authenticator,
 		logger:        log,
+		rateLimiter:   cfg.RateLimiter,
 	}
 
 	// Build interceptors
@@ -92,6 +96,13 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	// Correlation interceptor (first to establish correlation ID for tracing)
 	unaryInterceptors = append(unaryInterceptors, server.correlationUnaryInterceptor)
 	streamInterceptors = append(streamInterceptors, server.correlationStreamInterceptor)
+
+	// Rate limiting interceptor (early to prevent abuse before other processing)
+	if cfg.RateLimiter != nil && cfg.RateLimiter.IsEnabled() {
+		unaryInterceptors = append(unaryInterceptors, ratelimit.UnaryServerInterceptor(cfg.RateLimiter))
+		streamInterceptors = append(streamInterceptors, ratelimit.StreamServerInterceptor(cfg.RateLimiter))
+		log.Info("Rate limiting enabled for gRPC")
+	}
 
 	// Metrics interceptor (second to track all requests)
 	unaryInterceptors = append(unaryInterceptors, metrics.GRPCUnaryServerInterceptor())

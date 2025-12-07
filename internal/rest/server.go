@@ -25,16 +25,22 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/metrics"
+	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
+	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-keychain/pkg/webauthn/http"
 )
 
 // Server represents the REST API server.
 type Server struct {
-	server        *http.Server
-	handlers      *HandlerContext
-	port          int
-	tlsConfig     *tls.Config
-	authenticator auth.Authenticator
-	logger        logger.Logger
+	server          *http.Server
+	handlers        *HandlerContext
+	port            int
+	tlsConfig       *tls.Config
+	authenticator   auth.Authenticator
+	logger          logger.Logger
+	rateLimiter     *ratelimit.Limiter
+	webauthnHandler *webauthnhttp.Handler
+	webauthnStores  *WebAuthnStores
 }
 
 // BackendRegistry is defined in handlers.go
@@ -70,6 +76,12 @@ type Config struct {
 
 	// IdleTimeout is the maximum amount of time to wait for the next request
 	IdleTimeout time.Duration
+
+	// WebAuthnConfig is the WebAuthn configuration (optional, enables WebAuthn if provided)
+	WebAuthnConfig *webauthn.Config
+
+	// RateLimiter is the rate limiter instance (optional, disables rate limiting if not provided)
+	RateLimiter *ratelimit.Limiter
 }
 
 // NewServer creates a new REST API server.
@@ -123,6 +135,30 @@ func NewServer(cfg *Config) (*Server, error) {
 		tlsConfig:     cfg.TLSConfig,
 		authenticator: authenticator,
 		logger:        log,
+		rateLimiter:   cfg.RateLimiter,
+	}
+
+	// Set up WebAuthn if configured
+	if cfg.WebAuthnConfig != nil {
+		stores := NewWebAuthnStores(&WebAuthnStoresConfig{
+			SessionTTL: 5 * time.Minute,
+		})
+
+		svc, err := webauthn.NewService(webauthn.ServiceParams{
+			Config:          cfg.WebAuthnConfig,
+			UserStore:       stores.UserStore(),
+			SessionStore:    stores.SessionStore(),
+			CredentialStore: stores.CredentialStore(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create webauthn service: %w", err)
+		}
+
+		server.webauthnHandler = webauthnhttp.NewHandler(svc)
+		server.webauthnStores = stores
+
+		log.Info("WebAuthn enabled",
+			logger.String("rpid", cfg.WebAuthnConfig.RPID))
 	}
 
 	// Create router with middleware
@@ -153,6 +189,12 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Use(s.LoggingMiddleware())
 	r.Use(metrics.HTTPMiddleware) // Metrics middleware
 	r.Use(CORSMiddleware)
+
+	// Rate limiting middleware (if configured)
+	if s.rateLimiter != nil && s.rateLimiter.IsEnabled() {
+		r.Use(ratelimit.Middleware(s.rateLimiter))
+		s.logger.Info("Rate limiting enabled for REST API")
+	}
 
 	// Legacy health endpoint (backwards compatibility)
 	r.Get("/health", s.handlers.HealthHandler)
@@ -205,6 +247,13 @@ func (s *Server) setupRouter() *chi.Mux {
 		// TLS helper endpoint
 		r.Get("/tls/{id}", s.handlers.GetTLSCertificateHandler)
 	})
+
+	// WebAuthn routes (no auth required - WebAuthn IS the auth mechanism)
+	if s.webauthnHandler != nil {
+		r.Route("/api/v1/webauthn", func(r chi.Router) {
+			webauthnhttp.MountChi(r, s.webauthnHandler)
+		})
+	}
 
 	return r
 }

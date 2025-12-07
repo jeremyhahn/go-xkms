@@ -15,11 +15,16 @@ package ratelimit
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // Limiter implements a token bucket rate limiter with per-client tracking.
@@ -228,4 +233,100 @@ func getClientIP(r *http.Request) string {
 
 	// Fall back to RemoteAddr
 	return r.RemoteAddr
+}
+
+// UnaryServerInterceptor returns a gRPC unary server interceptor that enforces rate limiting.
+func UnaryServerInterceptor(limiter *Limiter) grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		// Extract client IP from peer info
+		clientIP := getClientIPFromContext(ctx)
+
+		// Check rate limit
+		if !limiter.Allow(clientIP) {
+			return nil, status.Errorf(codes.ResourceExhausted, "rate limit exceeded")
+		}
+
+		return handler(ctx, req)
+	}
+}
+
+// StreamServerInterceptor returns a gRPC stream server interceptor that enforces rate limiting.
+func StreamServerInterceptor(limiter *Limiter) grpc.StreamServerInterceptor {
+	return func(
+		srv interface{},
+		ss grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		// Extract client IP from peer info
+		clientIP := getClientIPFromContext(ss.Context())
+
+		// Check rate limit
+		if !limiter.Allow(clientIP) {
+			return status.Errorf(codes.ResourceExhausted, "rate limit exceeded")
+		}
+
+		return handler(srv, ss)
+	}
+}
+
+// getClientIPFromContext extracts the client IP from a gRPC context.
+func getClientIPFromContext(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "unknown"
+	}
+
+	if p.Addr == nil {
+		return "unknown"
+	}
+
+	// Extract IP from address (may be "ip:port" format)
+	addr := p.Addr.String()
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		// If splitting fails, return the whole address
+		return addr
+	}
+	return host
+}
+
+// AllowConn checks if a request from the given network connection should be allowed.
+// This is useful for TCP-based protocols like MCP.
+func (l *Limiter) AllowConn(conn net.Conn) bool {
+	if !l.enabled {
+		return true
+	}
+
+	clientIP := getClientIPFromConn(conn)
+	return l.Allow(clientIP)
+}
+
+// getClientIPFromConn extracts the client IP from a net.Conn.
+func getClientIPFromConn(conn net.Conn) string {
+	if conn == nil {
+		return "unknown"
+	}
+
+	addr := conn.RemoteAddr()
+	if addr == nil {
+		return "unknown"
+	}
+
+	// Extract IP from address (may be "ip:port" format)
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return addr.String()
+	}
+	return host
+}
+
+// IsEnabled returns whether rate limiting is enabled.
+func (l *Limiter) IsEnabled() bool {
+	return l.enabled
 }

@@ -16,6 +16,7 @@ examples/
 ├── certificates/           # Certificate management
 ├── tls/                   # TLS server and client setup
 ├── symmetric-encryption/  # Symmetric encryption (AES-GCM)
+├── webauthn/              # WebAuthn/FIDO2 passwordless authentication
 └── advanced/              # Advanced features and patterns
 ```
 
@@ -472,6 +473,58 @@ go run examples/symmetric-encryption/cloud/cloud-kms.go -backend=azure
 - Unified API across clouds
 - Cloud HSM integration
 - Managed key rotation
+
+---
+
+### WebAuthn Examples
+
+#### 14. WebAuthn Server (`webauthn/`)
+
+Demonstrates passwordless authentication using WebAuthn/FIDO2:
+- Complete WebAuthn server with REST API
+- User registration with passkeys
+- Authentication with security keys
+- Discoverable credentials support
+- Session management
+
+**Run:**
+```bash
+cd examples/webauthn/server
+go run main.go
+```
+
+Then open `https://localhost:8443` in your browser.
+
+**Expected Output:**
+```
+=== WebAuthn Server Example ===
+
+Configuration:
+  RP ID:      localhost
+  RP Name:    go-keychain Example
+  RP Origins: [https://localhost:8443]
+  Port:       8443
+
+1. Initializing WebAuthn stores...
+   ✓ Memory stores initialized
+   ✓ Session cleanup routine started
+
+2. Configuring WebAuthn service...
+   ✓ WebAuthn service created
+
+3. Setting up HTTP handlers...
+   ✓ WebAuthn API mounted at /api/v1/webauthn
+   ✓ Static files mounted at /
+   ✓ Health endpoint at /health
+
+[...]
+```
+
+**Key Concepts:**
+- WebAuthn registration and authentication flows
+- Relying Party configuration
+- Session-based ceremony tracking
+- Credential management
 
 ---
 

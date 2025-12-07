@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
   # Integration test runner for storage packages
   test:
-    image: golang:1.25-alpine
+    image: golang:1.25.5-alpine
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -21,7 +19,7 @@ services:
 
   # File storage tests (no special requirements, run standalone)
   test-file:
-    image: golang:1.25-alpine
+    image: golang:1.25.5-alpine
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -39,7 +37,7 @@ services:
 
   # Memory storage tests (no special requirements, run standalone)
   test-memory:
-    image: golang:1.25-alpine
+    image: golang:1.25.5-alpine
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -57,7 +55,7 @@ services:
 
   # Hardware storage tests with PKCS#11 (SoftHSM)
   test-hardware-pkcs11:
-    image: golang:1.25-alpine
+    image: golang:1.25.5-alpine
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -81,7 +79,7 @@ services:
 
   # Hardware storage tests with TPM2
   test-hardware-tpm2:
-    image: golang:1.25-alpine
+    image: golang:1.25.5-alpine
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -106,7 +104,7 @@ services:
 
   # SoftHSM initialization service
   softhsm-init:
-    image: golang:1.25-alpine
+    image: golang:1.25.5-alpine
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
       - ../../..:/app

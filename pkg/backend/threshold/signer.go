@@ -83,9 +83,11 @@ func (s *ThresholdSigner) Sign(rand io.Reader, digest []byte, opts crypto.Signer
 }
 
 // reconstructKey collects M shares from storage and reconstructs the private key.
-// This is used for local testing and development.
+// This implementation is suitable for development, testing, and single-node deployments.
 //
-// TODO: Replace with distributed signing protocol for production use.
+// NOTE: For production distributed CA deployments requiring true threshold signing
+// without key reconstruction, implement a multi-party computation (MPC) protocol
+// such as threshold ECDSA (e.g., GG18, GG20) or threshold EdDSA (e.g., FROST).
 func (s *ThresholdSigner) reconstructKey() (crypto.PrivateKey, error) {
 	threshold := s.attrs.ThresholdAttributes.Threshold
 

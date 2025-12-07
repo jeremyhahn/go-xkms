@@ -315,10 +315,22 @@ func DeleteKey(keyRef string) error {
 		return err
 	}
 
-	// Convert keyID back to attributes
-	// TODO: Implement proper key ID to attributes conversion
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	// Look up full key attributes from the backend
+	keys, err := ks.ListKeys()
+	if err != nil {
+		return fmt.Errorf("failed to list keys: %w", err)
+	}
+
+	var attrs *types.KeyAttributes
+	for _, k := range keys {
+		if k.CN == keyID {
+			attrs = k
+			break
+		}
+	}
+
+	if attrs == nil {
+		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	return ks.DeleteKey(attrs)

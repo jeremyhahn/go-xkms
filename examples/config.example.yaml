@@ -28,10 +28,14 @@ auth:
   enabled: true
   type: "apikey"  # apikey, oauth2, custom, none
 
+# Rate limiting configuration
+# Applied uniformly across all APIs (REST, gRPC, QUIC, MCP)
 ratelimit:
   enabled: true
-  requests_per_sec: 100
-  burst: 200
+  requests_per_min: 600    # Sustained rate: 600 requests per minute (10/sec)
+  burst: 100               # Allow bursts up to 100 requests
+  cleanup_interval_sec: 600  # Clean up idle clients every 10 minutes
+  max_idle_sec: 1800       # Remove clients idle for 30 minutes
 
 metrics:
   enabled: true

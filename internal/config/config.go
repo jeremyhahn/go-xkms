@@ -117,8 +117,23 @@ type JWTConfig struct {
 
 // RateLimitConfig controls rate limiting
 type RateLimitConfig struct {
-	Enabled        bool `yaml:"enabled"`
-	RequestsPerMin int  `yaml:"requests_per_min"`
+	// Enabled controls whether rate limiting is active
+	Enabled bool `yaml:"enabled"`
+
+	// RequestsPerMin sets the sustained rate limit (requests per minute)
+	RequestsPerMin int `yaml:"requests_per_min"`
+
+	// Burst allows short bursts above the sustained rate
+	// If not set, defaults to RequestsPerMin
+	Burst int `yaml:"burst"`
+
+	// CleanupIntervalSec controls how often to remove idle clients (in seconds)
+	// Defaults to 600 (10 minutes)
+	CleanupIntervalSec int `yaml:"cleanup_interval_sec"`
+
+	// MaxIdleSec is how long a client can be idle before cleanup (in seconds)
+	// Defaults to 1800 (30 minutes)
+	MaxIdleSec int `yaml:"max_idle_sec"`
 }
 
 // MetricsConfig controls metrics endpoint
@@ -374,6 +389,21 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Backends.Vault.Namespace = namespace
 		}
 	}
+
+	// Rate limiting settings
+	if enabled := os.Getenv("KEYSTORE_RATELIMIT_ENABLED"); enabled != "" {
+		cfg.RateLimit.Enabled = strings.ToLower(enabled) == "true"
+	}
+	if rpm := os.Getenv("KEYSTORE_RATELIMIT_REQUESTS_PER_MIN"); rpm != "" {
+		if val, err := strconv.Atoi(rpm); err == nil && val > 0 {
+			cfg.RateLimit.RequestsPerMin = val
+		}
+	}
+	if burst := os.Getenv("KEYSTORE_RATELIMIT_BURST"); burst != "" {
+		if val, err := strconv.Atoi(burst); err == nil && val > 0 {
+			cfg.RateLimit.Burst = val
+		}
+	}
 }
 
 // Validate checks if the configuration is valid
@@ -474,6 +504,12 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// GetRateLimitConfig returns a ratelimit.Config from the configuration
+// This provides a convenient way to create a rate limiter from config
+func (c *Config) GetRateLimitConfig() *RateLimitConfig {
+	return &c.RateLimit
 }
 
 // GetEnabledBackends returns a list of enabled backend names

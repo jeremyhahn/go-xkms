@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/correlation"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
+	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
 )
 
 // Server represents an MCP JSON-RPC 2.0 server
@@ -39,6 +40,7 @@ type Server struct {
 	tlsConfig     *tls.Config
 	authenticator auth.Authenticator
 	logger        logger.Logger
+	rateLimiter   *ratelimit.Limiter
 
 	// Event subscribers
 	subscribers map[net.Conn]*Subscriber
@@ -58,6 +60,7 @@ type Config struct {
 	TLSConfig     *tls.Config
 	Authenticator auth.Authenticator
 	Logger        logger.Logger
+	RateLimiter   *ratelimit.Limiter
 }
 
 // NewServer creates a new MCP JSON-RPC server
@@ -94,7 +97,13 @@ func NewServer(config *Config) (*Server, error) {
 		tlsConfig:     config.TLSConfig,
 		authenticator: authenticator,
 		logger:        log,
+		rateLimiter:   config.RateLimiter,
 		subscribers:   make(map[net.Conn]*Subscriber),
+	}
+
+	// Log if rate limiting is enabled
+	if config.RateLimiter != nil && config.RateLimiter.IsEnabled() {
+		log.Info("Rate limiting enabled for MCP")
 	}
 
 	// Set default keystore from default backend for backward compatibility
@@ -160,6 +169,13 @@ func (s *Server) acceptConnections() {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
 	defer func() { _ = conn.Close() }()
+
+	// Check rate limit at connection level
+	if s.rateLimiter != nil && !s.rateLimiter.AllowConn(conn) {
+		s.logger.Warn("Connection rejected due to rate limit",
+			logger.String("remote_addr", conn.RemoteAddr().String()))
+		return
+	}
 
 	// Authenticate the connection using TLS certificates if mTLS is configured
 	ctx := s.ctx

@@ -1,0 +1,92 @@
+# Dependabot configuration for go-keychain
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+
+version: 2
+updates:
+  # Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "jeremyhahn"
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      # Group all AWS SDK updates together
+      aws-sdk:
+        patterns:
+          - "github.com/aws/aws-sdk-go-v2*"
+      # Group all Google Cloud updates together
+      google-cloud:
+        patterns:
+          - "cloud.google.com/go*"
+          - "google.golang.org/*"
+      # Group all Azure updates together
+      azure:
+        patterns:
+          - "github.com/Azure/*"
+      # Group crypto-related updates
+      crypto:
+        patterns:
+          - "golang.org/x/crypto"
+          - "github.com/go-jose/*"
+          - "github.com/golang-jwt/*"
+      # Group testing dependencies
+      testing:
+        patterns:
+          - "github.com/stretchr/testify"
+      # Group gRPC and protobuf
+      grpc:
+        patterns:
+          - "google.golang.org/grpc*"
+          - "google.golang.org/protobuf"
+      # Group observability
+      observability:
+        patterns:
+          - "github.com/prometheus/*"
+          - "go.opentelemetry.io/*"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "jeremyhahn"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+
+  # Docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "jeremyhahn"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+      include: "scope"

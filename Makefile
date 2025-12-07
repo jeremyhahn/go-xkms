@@ -589,7 +589,7 @@ coverage-migration:
 
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends)
-integration-test: clean-test-containers integration-test-software integration-test-aes integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum
+integration-test: clean-test-containers integration-test-software integration-test-aes integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-webauthn
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -886,6 +886,13 @@ else
 	@echo "$(YELLOW)⚠ Skipping quantum-safe integration tests (WITH_QUANTUM=0)$(RESET)"
 	@echo "$(YELLOW)  To enable, run: make integration-test-quantum WITH_QUANTUM=1$(RESET)"
 endif
+
+.PHONY: integration-test-webauthn
+## integration-test-webauthn: Run WebAuthn integration tests with virtual authenticator
+integration-test-webauthn:
+	@echo "$(CYAN)$(BOLD)→ Running WebAuthn integration tests...$(RESET)"
+	@$(GOTEST) -v -tags=integration ./pkg/webauthn/...
+	@echo "$(GREEN)✓ WebAuthn integration tests complete$(RESET)"
 
 .PHONY: integration-test-signing
 ## integration-test-signing: Run signing package integration tests
@@ -1662,16 +1669,29 @@ lint:
 		exit 1; \
 	fi
 
+# gosec exclusions (documented):
+#   G115: Integer overflow conversions - values are bounded by crypto/TPM specs
+#   G304: File path inclusion - internal paths validated at API boundaries
+#   G401: sha1.New() - required for OAEP-SHA1 and RSA-AES-KEY-WRAP-SHA1 (legacy compat)
+#   G407: False positive - gcm.Seal nonce is random (io.ReadFull), not hardcoded
+#   G505: crypto/sha1 import - required for PKCS standards, cert thumbprints, WebAuthn
+GOSEC_EXCLUDE := G115,G304,G401,G407,G505
+
 .PHONY: gosec
-## gosec: Run gosec security scanner
+## gosec: Run gosec security scanner (fails on HIGH/MEDIUM severity issues)
 gosec:
 	@echo "$(CYAN)$(BOLD)→ Running security analysis with gosec...$(RESET)"
 	@mkdir -p $(BUILD_DIR)
 	@GOSEC_BIN=$$(command -v gosec 2>/dev/null || echo "$$HOME/go/bin/gosec"); \
 	if [ -x "$$GOSEC_BIN" ]; then \
-		$$GOSEC_BIN -fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./...; \
-		echo "$(GREEN)✓ Security scan complete$(RESET)"; \
-		echo "$(CYAN)Report saved to: $(BUILD_DIR)/gosec-report.txt$(RESET)"; \
+		$$GOSEC_BIN -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
+			-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor \
+			-exclude-generated \
+			-fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./... && \
+		echo "$(GREEN)✓ Security scan complete - no issues found$(RESET)" && \
+		echo "$(CYAN)Report saved to: $(BUILD_DIR)/gosec-report.txt$(RESET)" || \
+		(echo "$(RED)✗ Security issues found! See $(BUILD_DIR)/gosec-report.txt$(RESET)" && \
+		cat $(BUILD_DIR)/gosec-report.txt && exit 1); \
 	else \
 		echo "$(YELLOW)⚠ gosec not found$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-gosec$(RESET)"; \
@@ -1758,8 +1778,8 @@ verify: clean deps check test
 	@echo "$(GREEN)$(BOLD)✓ Verification complete! Ready to commit.$(RESET)"
 
 .PHONY: ci
-## ci: Run CI pipeline (format check, vet, lint, vuln, build, test, docker-test)
-ci: deps fmt-check vet lint vuln build test race docker-test
+## ci: Run CI pipeline (format check, vet, lint, gosec, vuln, build, test, docker-test)
+ci: deps fmt-check vet lint gosec vuln build test race docker-test
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 # ==============================================================================

@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/correlation"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
+	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -34,6 +35,7 @@ type Server struct {
 	tlsConfig     *tls.Config
 	authenticator auth.Authenticator
 	logger        logger.Logger
+	rateLimiter   *ratelimit.Limiter
 	server        *http3.Server
 	handler       http.Handler
 	ctx           context.Context
@@ -47,6 +49,7 @@ type Config struct {
 	TLSConfig     *tls.Config
 	Authenticator auth.Authenticator
 	Logger        logger.Logger
+	RateLimiter   *ratelimit.Limiter
 }
 
 // NewServer creates a new QUIC/HTTP3 server
@@ -91,6 +94,7 @@ func NewServer(config *Config) (*Server, error) {
 		tlsConfig:     tlsConfig,
 		authenticator: authenticator,
 		logger:        log,
+		rateLimiter:   config.RateLimiter,
 		ctx:           ctx,
 		cancel:        cancel,
 	}
@@ -107,8 +111,19 @@ func NewServer(config *Config) (*Server, error) {
 	mux := http.NewServeMux()
 	s.setupRoutes(mux)
 
-	// Wrap with middleware (correlation first, then auth, then logging)
-	s.handler = s.correlationMiddleware(s.authenticationMiddleware(s.loggingMiddleware(mux)))
+	// Wrap with middleware (correlation first, then rate limit, then auth, then logging)
+	var handler http.Handler = mux
+	handler = s.loggingMiddleware(handler)
+	handler = s.authenticationMiddleware(handler)
+
+	// Rate limiting middleware (if configured)
+	if s.rateLimiter != nil && s.rateLimiter.IsEnabled() {
+		handler = ratelimit.Middleware(s.rateLimiter)(handler)
+		log.Info("Rate limiting enabled for QUIC")
+	}
+
+	handler = s.correlationMiddleware(handler)
+	s.handler = handler
 
 	return s, nil
 }

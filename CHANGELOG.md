@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9-alpha] - 2025-12-07
+
+### Added
+- **WebAuthn/FIDO2 Server Support**: Complete server-side passwordless authentication
+  - `pkg/webauthn/` - Core WebAuthn service with user, session, and credential management
+  - `pkg/webauthn/http/` - HTTP handlers for REST API integration
+  - Registration flow: begin/finish ceremonies with session management
+  - Authentication flow: discoverable credentials and user-specific login
+  - Pluggable store interfaces for UserStore, SessionStore, CredentialStore
+  - Memory-based stores for development and testing
+  - Full test coverage with testify mocks
+- **WebAuthn REST API Endpoints**:
+  - `GET /api/v1/webauthn/registration/status` - Check registration status
+  - `POST /api/v1/webauthn/registration/begin` - Start registration ceremony
+  - `POST /api/v1/webauthn/registration/finish` - Complete registration
+  - `POST /api/v1/webauthn/login/begin` - Start authentication ceremony
+  - `POST /api/v1/webauthn/login/finish` - Complete authentication
+- **Shared Mock Infrastructure**: `pkg/keychain/mocks/mock_keystore.go` for unit testing
+- **WebAuthn Integration Tests**: Docker-based tests in `test/integration/api/`
+- **WebAuthn Documentation**: `docs/usage/webauthn.md`
+- **Unified Rate Limiting**: Consistent rate limiting across all public APIs
+  - Integrated rate limiting into REST server via middleware
+  - Added gRPC unary and stream server interceptors for rate limiting
+  - QUIC/HTTP3 server rate limiting via HTTP middleware
+  - MCP JSON-RPC server connection-level rate limiting
+  - New configuration options: `burst`, `cleanup_interval_sec`, `max_idle_sec`
+  - Environment variable overrides: `KEYSTORE_RATELIMIT_ENABLED`, `KEYSTORE_RATELIMIT_REQUESTS_PER_MIN`, `KEYSTORE_RATELIMIT_BURST`
+
+### Changed
+- Refactored REST server tests to use shared mock infrastructure
+- Improved test organization with centralized mocks
+- Extended `RateLimitConfig` with additional options for burst and cleanup intervals
+
 ## [0.1.8-alpha] - 2025-12-06
 
 ### Changed
@@ -299,6 +332,9 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - Commercial Licensing: licensing@automatethethings.com
 - AGPL-3.0 License: https://www.gnu.org/licenses/agpl-3.0.html
 
+[0.1.9-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.9-alpha
+[0.1.8-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.8-alpha
+[0.1.7-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.7-alpha
 [0.1.6-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.6-alpha
 [0.1.5-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.5-alpha
 [0.1.4-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.4-alpha

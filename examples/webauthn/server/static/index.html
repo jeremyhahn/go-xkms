@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAuthn Example - go-keychain</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 480px;
+            width: 100%;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 8px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            color: #555;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+        .buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        button {
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        .btn-primary:hover {
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        .status {
+            margin-top: 24px;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        .status.success {
+            display: block;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #a5d6a7;
+        }
+        .status.error {
+            display: block;
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef9a9a;
+        }
+        .status.info {
+            display: block;
+            background: #e3f2fd;
+            color: #1565c0;
+            border: 1px solid #90caf9;
+        }
+        .user-info {
+            margin-top: 24px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 8px;
+            display: none;
+        }
+        .user-info.show {
+            display: block;
+        }
+        .user-info h3 {
+            color: #333;
+            margin-bottom: 12px;
+            font-size: 18px;
+        }
+        .user-info p {
+            color: #666;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        .user-info strong {
+            color: #333;
+        }
+        .logout-btn {
+            margin-top: 16px;
+            padding: 10px 20px;
+            background: #ff5252;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .logout-btn:hover {
+            background: #ff1744;
+        }
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 24px 0;
+            color: #999;
+            font-size: 14px;
+        }
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #e0e0e0;
+        }
+        .divider::before {
+            margin-right: 16px;
+        }
+        .divider::after {
+            margin-left: 16px;
+        }
+        .discoverable-login {
+            text-align: center;
+        }
+        .discoverable-login button {
+            background: none;
+            color: #667eea;
+            border: 2px solid #667eea;
+            padding: 12px 24px;
+        }
+        .discoverable-login button:hover {
+            background: #667eea;
+            color: white;
+        }
+        .footer {
+            margin-top: 32px;
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+        }
+        .footer a {
+            color: #667eea;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid transparent;
+            border-top-color: currentColor;
+            border-radius: 50%;
+            margin-left: 8px;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 WebAuthn Demo</h1>
+        <p class="subtitle">Passwordless authentication with go-keychain</p>
+
+        <div class="form-group">
+            <label for="email">Email Address</label>
+            <input type="email" id="email" placeholder="user@example.com" autocomplete="email webauthn">
+        </div>
+
+        <div class="form-group">
+            <label for="displayName">Display Name (for registration)</label>
+            <input type="text" id="displayName" placeholder="John Doe">
+        </div>
+
+        <div class="buttons">
+            <button class="btn-primary" id="registerBtn" onclick="register()">Register</button>
+            <button class="btn-secondary" id="loginBtn" onclick="login()">Login</button>
+        </div>
+
+        <div class="divider">or</div>
+
+        <div class="discoverable-login">
+            <button id="discoverableBtn" onclick="discoverableLogin()">
+                🔑 Login with Passkey
+            </button>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div class="user-info" id="userInfo">
+            <h3>✅ Authenticated</h3>
+            <p><strong>Email:</strong> <span id="userEmail"></span></p>
+            <p><strong>User ID:</strong> <span id="userId"></span></p>
+            <button class="logout-btn" onclick="logout()">Logout</button>
+        </div>
+
+        <div class="footer">
+            Powered by <a href="https://github.com/jeremyhahn/go-keychain" target="_blank">go-keychain</a>
+        </div>
+    </div>
+
+    <script>
+        // Base64URL encoding/decoding utilities
+        function base64URLEncode(buffer) {
+            return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=/g, '');
+        }
+
+        function base64URLDecode(str) {
+            str = str.replace(/-/g, '+').replace(/_/g, '/');
+            while (str.length % 4) str += '=';
+            return Uint8Array.from(atob(str), c => c.charCodeAt(0));
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + type;
+        }
+
+        function setLoading(buttonId, loading) {
+            const btn = document.getElementById(buttonId);
+            if (loading) {
+                btn.classList.add('loading');
+                btn.disabled = true;
+            } else {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+            }
+        }
+
+        function showUserInfo(email, userId) {
+            document.getElementById('userEmail').textContent = email;
+            document.getElementById('userId').textContent = userId;
+            document.getElementById('userInfo').classList.add('show');
+        }
+
+        function logout() {
+            document.getElementById('userInfo').classList.remove('show');
+            document.getElementById('status').className = 'status';
+            document.getElementById('email').value = '';
+            document.getElementById('displayName').value = '';
+        }
+
+        async function register() {
+            const email = document.getElementById('email').value;
+            const displayName = document.getElementById('displayName').value || email.split('@')[0];
+
+            if (!email) {
+                showStatus('Please enter an email address', 'error');
+                return;
+            }
+
+            setLoading('registerBtn', true);
+            showStatus('Starting registration...', 'info');
+
+            try {
+                // Step 1: Begin registration
+                const beginResponse = await fetch('/api/v1/webauthn/registration/begin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, display_name: displayName })
+                });
+
+                if (!beginResponse.ok) {
+                    const error = await beginResponse.json();
+                    throw new Error(error.error || 'Failed to begin registration');
+                }
+
+                const sessionId = beginResponse.headers.get('X-Session-Id');
+                const options = await beginResponse.json();
+
+                // Convert base64url to ArrayBuffer
+                options.publicKey.challenge = base64URLDecode(options.publicKey.challenge);
+                options.publicKey.user.id = base64URLDecode(options.publicKey.user.id);
+
+                if (options.publicKey.excludeCredentials) {
+                    options.publicKey.excludeCredentials = options.publicKey.excludeCredentials.map(cred => ({
+                        ...cred,
+                        id: base64URLDecode(cred.id)
+                    }));
+                }
+
+                showStatus('Please interact with your authenticator...', 'info');
+
+                // Step 2: Create credential
+                const credential = await navigator.credentials.create(options);
+
+                // Step 3: Finish registration
+                const attestationResponse = {
+                    id: credential.id,
+                    rawId: base64URLEncode(credential.rawId),
+                    type: credential.type,
+                    response: {
+                        attestationObject: base64URLEncode(credential.response.attestationObject),
+                        clientDataJSON: base64URLEncode(credential.response.clientDataJSON)
+                    }
+                };
+
+                // Add transports if available
+                if (credential.response.getTransports) {
+                    attestationResponse.response.transports = credential.response.getTransports();
+                }
+
+                const finishResponse = await fetch('/api/v1/webauthn/registration/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-Id': sessionId
+                    },
+                    body: JSON.stringify(attestationResponse)
+                });
+
+                if (!finishResponse.ok) {
+                    const error = await finishResponse.json();
+                    throw new Error(error.error || 'Failed to finish registration');
+                }
+
+                const result = await finishResponse.json();
+                showStatus('✅ Registration successful! You can now login with your passkey.', 'success');
+
+            } catch (error) {
+                console.error('Registration error:', error);
+                showStatus('Registration failed: ' + error.message, 'error');
+            } finally {
+                setLoading('registerBtn', false);
+            }
+        }
+
+        async function login() {
+            const email = document.getElementById('email').value;
+
+            if (!email) {
+                showStatus('Please enter an email address', 'error');
+                return;
+            }
+
+            setLoading('loginBtn', true);
+            showStatus('Starting login...', 'info');
+
+            try {
+                // Step 1: Begin login
+                const beginResponse = await fetch('/api/v1/webauthn/login/begin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+
+                if (!beginResponse.ok) {
+                    const error = await beginResponse.json();
+                    throw new Error(error.error || 'Failed to begin login');
+                }
+
+                const sessionId = beginResponse.headers.get('X-Session-Id');
+                const options = await beginResponse.json();
+
+                // Convert base64url to ArrayBuffer
+                options.publicKey.challenge = base64URLDecode(options.publicKey.challenge);
+
+                if (options.publicKey.allowCredentials) {
+                    options.publicKey.allowCredentials = options.publicKey.allowCredentials.map(cred => ({
+                        ...cred,
+                        id: base64URLDecode(cred.id)
+                    }));
+                }
+
+                showStatus('Please interact with your authenticator...', 'info');
+
+                // Step 2: Get assertion
+                const assertion = await navigator.credentials.get(options);
+
+                // Step 3: Finish login
+                const assertionResponse = {
+                    id: assertion.id,
+                    rawId: base64URLEncode(assertion.rawId),
+                    type: assertion.type,
+                    response: {
+                        authenticatorData: base64URLEncode(assertion.response.authenticatorData),
+                        clientDataJSON: base64URLEncode(assertion.response.clientDataJSON),
+                        signature: base64URLEncode(assertion.response.signature)
+                    }
+                };
+
+                if (assertion.response.userHandle) {
+                    assertionResponse.response.userHandle = base64URLEncode(assertion.response.userHandle);
+                }
+
+                const finishResponse = await fetch('/api/v1/webauthn/login/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-Id': sessionId
+                    },
+                    body: JSON.stringify(assertionResponse)
+                });
+
+                if (!finishResponse.ok) {
+                    const error = await finishResponse.json();
+                    throw new Error(error.error || 'Failed to finish login');
+                }
+
+                const result = await finishResponse.json();
+                showStatus('✅ Login successful!', 'success');
+                showUserInfo(email, result.user_id || 'N/A');
+
+            } catch (error) {
+                console.error('Login error:', error);
+                showStatus('Login failed: ' + error.message, 'error');
+            } finally {
+                setLoading('loginBtn', false);
+            }
+        }
+
+        async function discoverableLogin() {
+            setLoading('discoverableBtn', true);
+            showStatus('Starting discoverable login...', 'info');
+
+            try {
+                // Step 1: Begin login without email (discoverable)
+                const beginResponse = await fetch('/api/v1/webauthn/login/begin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+
+                if (!beginResponse.ok) {
+                    const error = await beginResponse.json();
+                    throw new Error(error.error || 'Failed to begin login');
+                }
+
+                const sessionId = beginResponse.headers.get('X-Session-Id');
+                const options = await beginResponse.json();
+
+                // Convert base64url to ArrayBuffer
+                options.publicKey.challenge = base64URLDecode(options.publicKey.challenge);
+
+                showStatus('Please select a passkey...', 'info');
+
+                // Step 2: Get assertion (browser will show available passkeys)
+                const assertion = await navigator.credentials.get(options);
+
+                // Step 3: Finish login
+                const assertionResponse = {
+                    id: assertion.id,
+                    rawId: base64URLEncode(assertion.rawId),
+                    type: assertion.type,
+                    response: {
+                        authenticatorData: base64URLEncode(assertion.response.authenticatorData),
+                        clientDataJSON: base64URLEncode(assertion.response.clientDataJSON),
+                        signature: base64URLEncode(assertion.response.signature)
+                    }
+                };
+
+                if (assertion.response.userHandle) {
+                    assertionResponse.response.userHandle = base64URLEncode(assertion.response.userHandle);
+                }
+
+                const finishResponse = await fetch('/api/v1/webauthn/login/finish', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-Id': sessionId
+                    },
+                    body: JSON.stringify(assertionResponse)
+                });
+
+                if (!finishResponse.ok) {
+                    const error = await finishResponse.json();
+                    throw new Error(error.error || 'Failed to finish login');
+                }
+
+                const result = await finishResponse.json();
+                showStatus('✅ Login successful!', 'success');
+                showUserInfo(result.email || 'Unknown', result.user_id || 'N/A');
+
+            } catch (error) {
+                console.error('Discoverable login error:', error);
+                showStatus('Login failed: ' + error.message, 'error');
+            } finally {
+                setLoading('discoverableBtn', false);
+            }
+        }
+
+        // Check WebAuthn support
+        if (!window.PublicKeyCredential) {
+            showStatus('WebAuthn is not supported in this browser', 'error');
+            document.querySelectorAll('button').forEach(btn => btn.disabled = true);
+        }
+    </script>
+</body>
+</html>
