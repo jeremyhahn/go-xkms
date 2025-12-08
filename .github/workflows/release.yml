@@ -64,6 +64,7 @@ jobs:
           **Available Binaries**:
           - \`keychain-cli-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard CLI
           - \`keychain-server-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Server
+          - \`keychain-{cli,server}-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant builds
           - \`keychain-{cli,server}-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}-quantum\` - Quantum builds
 
           **Quick Start**:
@@ -113,19 +114,34 @@ jobs:
             arch: amd64
             variant: standard
             with_quantum: 0
+            fips: false
           - platform: linux/arm64
             arch: arm64
             variant: standard
             with_quantum: 0
+            fips: false
+          # FIPS 140-3 compliant builds (Linux only, uses Go's GOFIPS140 mode)
+          - platform: linux/amd64
+            arch: amd64
+            variant: fips
+            with_quantum: 0
+            fips: true
+          - platform: linux/arm64
+            arch: arm64
+            variant: fips
+            with_quantum: 0
+            fips: true
           # Quantum-enabled builds (includes liboqs statically linked)
           - platform: linux/amd64
             arch: amd64
             variant: quantum
             with_quantum: 1
+            fips: false
           - platform: linux/arm64
             arch: arm64
             variant: quantum
             with_quantum: 1
+            fips: false
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -165,9 +181,19 @@ jobs:
           VERSION="${VERSION}"
           GOARCH="${GOARCH}"
           WITH_QUANTUM="${WITH_QUANTUM}"
+          WITH_FIPS="${WITH_FIPS}"
+          CGO_MODE="1"
 
-          # Conditionally build liboqs for quantum-safe cryptography
-          if [ "$WITH_QUANTUM" = "1" ]; then
+          # Handle FIPS builds (uses Go's built-in FIPS 140-3 mode)
+          if [ "$WITH_FIPS" = "true" ]; then
+            export GOFIPS140=v1.0.0
+            # FIPS builds use CGO_ENABLED=0 for pure Go crypto
+            CGO_MODE="0"
+            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault"
+            echo "Building FIPS 140-3 compliant binary with GOFIPS140=v1.0.0"
+            echo "Note: FIPS builds exclude TPM2/PKCS11 backends (require CGO)"
+          # Handle quantum builds
+          elif [ "$WITH_QUANTUM" = "1" ]; then
             echo "Building liboqs for quantum-safe cryptography..."
             git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs
             cd /tmp/liboqs
@@ -192,28 +218,32 @@ jobs:
             BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,quantum"
             echo "Building WITH quantum-safe cryptography support"
           else
-            # Build without quantum support
+            # Standard build without quantum support
             BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault"
-            echo "Building WITHOUT quantum-safe cryptography support"
+            echo "Building standard binary (no FIPS, no quantum)"
           fi
 
-          # Static linking flags
-          LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w -linkmode external -extldflags '-static'"
+          # Static linking flags (adjust for FIPS builds which don't use CGO)
+          if [ "$CGO_MODE" = "0" ]; then
+            LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w"
+          else
+            LDFLAGS="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w -linkmode external -extldflags '-static'"
+          fi
 
-          echo "Building for linux/${GOARCH} with CGO_ENABLED=1 (native)"
+          echo "Building for linux/${GOARCH} with CGO_ENABLED=${CGO_MODE}"
           echo "Build flags: ${BUILD_FLAGS}"
 
           mkdir -p /workspace/dist
 
           # Build CLI
           echo "Building keychain CLI..."
-          CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+          CGO_ENABLED=${CGO_MODE} go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
             -o /workspace/dist/keychain-cli \
             ./cmd/cli
 
           # Build multi-protocol Server (supports REST, gRPC, QUIC, MCP)
           echo "Building keychain-server..."
-          CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
+          CGO_ENABLED=${CGO_MODE} go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
             -o /workspace/dist/keychain-server \
             ./cmd/server
 
@@ -243,6 +273,7 @@ jobs:
             -e DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
             -e GOARCH=${{ matrix.arch }} \
             -e WITH_QUANTUM=${{ matrix.with_quantum }} \
+            -e WITH_FIPS=${{ matrix.fips }} \
             golang:1.25-bookworm \
             bash /workspace/build.sh
 
@@ -252,12 +283,18 @@ jobs:
 
       - name: Prepare release assets
         run: |
-          # Set variant suffix
-          if [ "${{ matrix.variant }}" = "quantum" ]; then
-            VARIANT_SUFFIX="-quantum"
-          else
-            VARIANT_SUFFIX=""
-          fi
+          # Set variant suffix based on build type
+          case "${{ matrix.variant }}" in
+            quantum)
+              VARIANT_SUFFIX="-quantum"
+              ;;
+            fips)
+              VARIANT_SUFFIX="-fips"
+              ;;
+            *)
+              VARIANT_SUFFIX=""
+              ;;
+          esac
 
           VERSION="${{ needs.create-release.outputs.version }}"
           ARCH="${{ matrix.arch }}"
@@ -287,10 +324,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
-            keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
-            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
-            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
+            keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}
+            keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}.sha256
+            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}
+            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}.sha256
 
   build-darwin-binaries:
     name: Build Darwin Binaries (${{ matrix.arch }}, ${{ matrix.variant }})
@@ -675,6 +712,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Linux Binaries" >> $GITHUB_STEP_SUMMARY
           echo "- **Standard** (amd64, arm64) - PKCS8, TPM2, PKCS11, Cloud KMS" >> $GITHUB_STEP_SUMMARY
+          echo "- **FIPS 140-3** (amd64, arm64) - PKCS8, Cloud KMS (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
           echo "- **Quantum** (amd64, arm64) - All backends + ML-DSA/ML-KEM" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### macOS/Darwin Binaries" >> $GITHUB_STEP_SUMMARY
