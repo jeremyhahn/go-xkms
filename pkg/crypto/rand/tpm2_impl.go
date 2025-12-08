@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2
-
 package rand
 
 import (
@@ -133,6 +131,19 @@ func (t *tpm2Resolver) Rand(n int) ([]byte, error) {
 	}
 
 	return result, nil
+}
+
+// Read implements io.Reader for compatibility with crypto/rand.Reader.
+// This allows the TPM2 resolver to be used with standard library
+// functions that expect an io.Reader for randomness, such as
+// rsa.GenerateKey, ecdsa.GenerateKey, and x509.CreateCertificate.
+func (t *tpm2Resolver) Read(p []byte) (n int, err error) {
+	data, err := t.Rand(len(p))
+	if err != nil {
+		return 0, err
+	}
+	copy(p, data)
+	return len(data), nil
 }
 
 func (t *tpm2Resolver) Source() Source {

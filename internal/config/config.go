@@ -28,6 +28,7 @@ import (
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Protocols ProtocolsConfig `yaml:"protocols"`
+	Unix      UnixConfig      `yaml:"unix"`
 	Logging   LoggingConfig   `yaml:"logging"`
 	TLS       TLSConfig       `yaml:"tls"`
 	Auth      AuthConfig      `yaml:"auth"`
@@ -35,6 +36,7 @@ type Config struct {
 	Metrics   MetricsConfig   `yaml:"metrics"`
 	Health    HealthConfig    `yaml:"health"`
 	Storage   StorageConfig   `yaml:"storage"`
+	RNG       RNGConfig       `yaml:"rng"`
 	Default   DefaultConfig   `yaml:"default_backend"`
 	Backends  BackendsConfig  `yaml:"backends"`
 }
@@ -50,10 +52,26 @@ type ServerConfig struct {
 
 // ProtocolsConfig controls which protocols are enabled
 type ProtocolsConfig struct {
+	// Unix enables the Unix domain socket for local IPC (default: true)
+	Unix bool `yaml:"unix"`
 	REST bool `yaml:"rest"`
 	GRPC bool `yaml:"grpc"`
 	QUIC bool `yaml:"quic"`
 	MCP  bool `yaml:"mcp"`
+}
+
+// UnixConfig contains Unix domain socket server settings
+type UnixConfig struct {
+	// Enabled controls whether Unix socket is active (default: true)
+	Enabled bool `yaml:"enabled"`
+	// SocketPath is the path to the Unix socket file
+	SocketPath string `yaml:"socket_path"`
+	// SocketMode is the file permissions for the socket (default: 0660)
+	SocketMode string `yaml:"socket_mode"`
+	// Protocol specifies the protocol to use over the Unix socket
+	// Valid values: "grpc", "http"
+	// Default: "grpc"
+	Protocol string `yaml:"protocol"`
 }
 
 // LoggingConfig controls logging behavior
@@ -155,18 +173,75 @@ type StorageConfig struct {
 	Path    string `yaml:"path"`
 }
 
+// RNGConfig controls random number generation settings
+type RNGConfig struct {
+	// Mode specifies the RNG source to use.
+	// Valid values: "auto", "software", "tpm2", "pkcs11"
+	// Default: "auto" (automatically selects best available hardware RNG)
+	Mode string `yaml:"mode"`
+
+	// FallbackMode specifies the RNG source to use if primary mode fails.
+	// Valid values: "software", "tpm2", "pkcs11", "" (empty means no fallback)
+	// Default: "software"
+	FallbackMode string `yaml:"fallback_mode"`
+
+	// TPM2 contains TPM2-specific RNG settings (used when mode is "tpm2" or "auto")
+	TPM2 *RNGTPM2Config `yaml:"tpm2,omitempty"`
+
+	// PKCS11 contains PKCS#11-specific RNG settings (used when mode is "pkcs11" or "auto")
+	PKCS11 *RNGPKCS11Config `yaml:"pkcs11,omitempty"`
+}
+
+// RNGTPM2Config contains TPM2-specific RNG settings
+type RNGTPM2Config struct {
+	// Device path to the TPM device (default: "/dev/tpm0")
+	Device string `yaml:"device"`
+
+	// UseSimulator indicates whether to connect to a TPM simulator
+	UseSimulator bool `yaml:"use_simulator"`
+
+	// SimulatorHost is the hostname of the TPM simulator (default: "localhost")
+	SimulatorHost string `yaml:"simulator_host"`
+
+	// SimulatorPort is the TCP port of the TPM simulator (default: 2321)
+	SimulatorPort int `yaml:"simulator_port"`
+}
+
+// RNGPKCS11Config contains PKCS#11-specific RNG settings
+type RNGPKCS11Config struct {
+	// Module path to the PKCS#11 library
+	Module string `yaml:"module"`
+
+	// SlotID specifies the PKCS#11 slot containing the RNG
+	SlotID uint `yaml:"slot_id"`
+
+	// PINRequired indicates if the slot requires PIN authentication
+	PINRequired bool `yaml:"pin_required"`
+
+	// PIN is the authentication PIN (if PINRequired is true)
+	// Note: Consider using environment variable KEYCHAIN_RNG_PKCS11_PIN instead
+	PIN string `yaml:"pin,omitempty"`
+}
+
 // DefaultConfig specifies the default backend for key operations
 type DefaultConfig string
 
 // BackendsConfig contains configuration for all backend types
 type BackendsConfig struct {
-	PKCS8   *PKCS8Config   `yaml:"pkcs8,omitempty"`
-	TPM2    *TPM2Config    `yaml:"tpm2,omitempty"`
-	PKCS11  *PKCS11Config  `yaml:"pkcs11,omitempty"`
-	AWSKMS  *AWSKMSConfig  `yaml:"awskms,omitempty"`
-	GCPKMS  *GCPKMSConfig  `yaml:"gcpkms,omitempty"`
-	AzureKV *AzureKVConfig `yaml:"azurekv,omitempty"`
-	Vault   *VaultConfig   `yaml:"vault,omitempty"`
+	Software *SoftwareConfig `yaml:"software,omitempty"`
+	PKCS8    *PKCS8Config    `yaml:"pkcs8,omitempty"`
+	TPM2     *TPM2Config     `yaml:"tpm2,omitempty"`
+	PKCS11   *PKCS11Config   `yaml:"pkcs11,omitempty"`
+	AWSKMS   *AWSKMSConfig   `yaml:"awskms,omitempty"`
+	GCPKMS   *GCPKMSConfig   `yaml:"gcpkms,omitempty"`
+	AzureKV  *AzureKVConfig  `yaml:"azurekv,omitempty"`
+	Vault    *VaultConfig    `yaml:"vault,omitempty"`
+}
+
+// SoftwareConfig contains software backend settings (uses PKCS#8 internally)
+type SoftwareConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
 }
 
 // PKCS8Config contains PKCS#8 backend settings
@@ -254,9 +329,20 @@ func Load(path string) (*Config, error) {
 // applyEnvOverrides applies environment variable overrides to the configuration
 func applyEnvOverrides(cfg *Config) {
 	// Server settings
+	if host := os.Getenv("KEYCHAIN_HOST"); host != "" {
+		cfg.Server.Host = host
+	}
+	// Support legacy KEYSTORE_HOST
 	if host := os.Getenv("KEYSTORE_HOST"); host != "" {
 		cfg.Server.Host = host
 	}
+
+	if restPort := os.Getenv("KEYCHAIN_REST_PORT"); restPort != "" {
+		if port, err := strconv.Atoi(restPort); err == nil && port >= 1 && port <= 65535 {
+			cfg.Server.RESTPort = port
+		}
+	}
+	// Support legacy KEYSTORE_REST_PORT
 	if restPort := os.Getenv("KEYSTORE_REST_PORT"); restPort != "" {
 		port, err := strconv.Atoi(restPort)
 		if err != nil {
@@ -269,6 +355,13 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Server.RESTPort = port
 		}
 	}
+
+	if grpcPort := os.Getenv("KEYCHAIN_GRPC_PORT"); grpcPort != "" {
+		if port, err := strconv.Atoi(grpcPort); err == nil && port >= 1 && port <= 65535 {
+			cfg.Server.GRPCPort = port
+		}
+	}
+	// Support legacy KEYSTORE_GRPC_PORT
 	if grpcPort := os.Getenv("KEYSTORE_GRPC_PORT"); grpcPort != "" {
 		port, err := strconv.Atoi(grpcPort)
 		if err != nil {
@@ -281,6 +374,13 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Server.GRPCPort = port
 		}
 	}
+
+	if quicPort := os.Getenv("KEYCHAIN_QUIC_PORT"); quicPort != "" {
+		if port, err := strconv.Atoi(quicPort); err == nil && port >= 1 && port <= 65535 {
+			cfg.Server.QUICPort = port
+		}
+	}
+	// Support legacy KEYSTORE_QUIC_PORT
 	if quicPort := os.Getenv("KEYSTORE_QUIC_PORT"); quicPort != "" {
 		port, err := strconv.Atoi(quicPort)
 		if err != nil {
@@ -293,6 +393,13 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Server.QUICPort = port
 		}
 	}
+
+	if mcpPort := os.Getenv("KEYCHAIN_MCP_PORT"); mcpPort != "" {
+		if port, err := strconv.Atoi(mcpPort); err == nil && port >= 1 && port <= 65535 {
+			cfg.Server.MCPPort = port
+		}
+	}
+	// Support legacy KEYSTORE_MCP_PORT
 	if mcpPort := os.Getenv("KEYSTORE_MCP_PORT"); mcpPort != "" {
 		port, err := strconv.Atoi(mcpPort)
 		if err != nil {
@@ -306,15 +413,45 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 
+	// Unix socket settings
+	if socketPath := os.Getenv("KEYCHAIN_SOCKET_PATH"); socketPath != "" {
+		cfg.Unix.SocketPath = socketPath
+	}
+	if socketMode := os.Getenv("KEYCHAIN_SOCKET_MODE"); socketMode != "" {
+		cfg.Unix.SocketMode = socketMode
+	}
+	if protocol := os.Getenv("KEYCHAIN_UNIX_PROTOCOL"); protocol != "" {
+		cfg.Unix.Protocol = protocol
+	}
+
 	// Logging
+	if level := os.Getenv("KEYCHAIN_LOG_LEVEL"); level != "" {
+		cfg.Logging.Level = level
+	}
+	// Support legacy KEYSTORE_LOG_LEVEL
 	if level := os.Getenv("KEYSTORE_LOG_LEVEL"); level != "" {
 		cfg.Logging.Level = level
 	}
+
+	if format := os.Getenv("KEYCHAIN_LOG_FORMAT"); format != "" {
+		cfg.Logging.Format = format
+	}
+	// Support legacy KEYSTORE_LOG_FORMAT
 	if format := os.Getenv("KEYSTORE_LOG_FORMAT"); format != "" {
 		cfg.Logging.Format = format
 	}
 
 	// Storage
+	if dataDir := os.Getenv("KEYCHAIN_DATA_DIR"); dataDir != "" {
+		cfg.Storage.Path = dataDir
+		// Also update backend paths relative to data dir
+		if cfg.Backends.PKCS8 != nil && cfg.Backends.PKCS8.Path != "" {
+			if !filepath.IsAbs(cfg.Backends.PKCS8.Path) {
+				cfg.Backends.PKCS8.Path = filepath.Join(dataDir, "pkcs8")
+			}
+		}
+	}
+	// Support legacy KEYSTORE_DATA_DIR
 	if dataDir := os.Getenv("KEYSTORE_DATA_DIR"); dataDir != "" {
 		cfg.Storage.Path = dataDir
 		// Also update backend paths relative to data dir
@@ -391,18 +528,89 @@ func applyEnvOverrides(cfg *Config) {
 	}
 
 	// Rate limiting settings
+	if enabled := os.Getenv("KEYCHAIN_RATELIMIT_ENABLED"); enabled != "" {
+		cfg.RateLimit.Enabled = strings.ToLower(enabled) == "true"
+	}
+	// Support legacy KEYSTORE_RATELIMIT_ENABLED
 	if enabled := os.Getenv("KEYSTORE_RATELIMIT_ENABLED"); enabled != "" {
 		cfg.RateLimit.Enabled = strings.ToLower(enabled) == "true"
 	}
+
+	if rpm := os.Getenv("KEYCHAIN_RATELIMIT_REQUESTS_PER_MIN"); rpm != "" {
+		if val, err := strconv.Atoi(rpm); err == nil && val > 0 {
+			cfg.RateLimit.RequestsPerMin = val
+		}
+	}
+	// Support legacy KEYSTORE_RATELIMIT_REQUESTS_PER_MIN
 	if rpm := os.Getenv("KEYSTORE_RATELIMIT_REQUESTS_PER_MIN"); rpm != "" {
 		if val, err := strconv.Atoi(rpm); err == nil && val > 0 {
 			cfg.RateLimit.RequestsPerMin = val
 		}
 	}
+
+	if burst := os.Getenv("KEYCHAIN_RATELIMIT_BURST"); burst != "" {
+		if val, err := strconv.Atoi(burst); err == nil && val > 0 {
+			cfg.RateLimit.Burst = val
+		}
+	}
+	// Support legacy KEYSTORE_RATELIMIT_BURST
 	if burst := os.Getenv("KEYSTORE_RATELIMIT_BURST"); burst != "" {
 		if val, err := strconv.Atoi(burst); err == nil && val > 0 {
 			cfg.RateLimit.Burst = val
 		}
+	}
+
+	// RNG settings
+	if mode := os.Getenv("KEYCHAIN_RNG_MODE"); mode != "" {
+		cfg.RNG.Mode = mode
+	}
+	if fallback := os.Getenv("KEYCHAIN_RNG_FALLBACK"); fallback != "" {
+		cfg.RNG.FallbackMode = fallback
+	}
+	// TPM2 RNG settings
+	if tpmDevice := os.Getenv("KEYCHAIN_RNG_TPM2_DEVICE"); tpmDevice != "" {
+		if cfg.RNG.TPM2 == nil {
+			cfg.RNG.TPM2 = &RNGTPM2Config{}
+		}
+		cfg.RNG.TPM2.Device = tpmDevice
+	}
+	if simHost := os.Getenv("KEYCHAIN_RNG_TPM2_SIMULATOR_HOST"); simHost != "" {
+		if cfg.RNG.TPM2 == nil {
+			cfg.RNG.TPM2 = &RNGTPM2Config{}
+		}
+		cfg.RNG.TPM2.SimulatorHost = simHost
+		cfg.RNG.TPM2.UseSimulator = true
+	}
+	if simPort := os.Getenv("KEYCHAIN_RNG_TPM2_SIMULATOR_PORT"); simPort != "" {
+		if val, err := strconv.Atoi(simPort); err == nil && val > 0 {
+			if cfg.RNG.TPM2 == nil {
+				cfg.RNG.TPM2 = &RNGTPM2Config{}
+			}
+			cfg.RNG.TPM2.SimulatorPort = val
+			cfg.RNG.TPM2.UseSimulator = true
+		}
+	}
+	// PKCS#11 RNG settings
+	if pkcs11Module := os.Getenv("KEYCHAIN_RNG_PKCS11_MODULE"); pkcs11Module != "" {
+		if cfg.RNG.PKCS11 == nil {
+			cfg.RNG.PKCS11 = &RNGPKCS11Config{}
+		}
+		cfg.RNG.PKCS11.Module = pkcs11Module
+	}
+	if slotID := os.Getenv("KEYCHAIN_RNG_PKCS11_SLOT"); slotID != "" {
+		if val, err := strconv.ParseUint(slotID, 10, 32); err == nil {
+			if cfg.RNG.PKCS11 == nil {
+				cfg.RNG.PKCS11 = &RNGPKCS11Config{}
+			}
+			cfg.RNG.PKCS11.SlotID = uint(val)
+		}
+	}
+	if pin := os.Getenv("KEYCHAIN_RNG_PKCS11_PIN"); pin != "" {
+		if cfg.RNG.PKCS11 == nil {
+			cfg.RNG.PKCS11 = &RNGPKCS11Config{}
+		}
+		cfg.RNG.PKCS11.PIN = pin
+		cfg.RNG.PKCS11.PINRequired = true
 	}
 }
 
@@ -422,9 +630,20 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid MCP port: %d", c.Server.MCPPort)
 	}
 
-	// Validate at least one protocol is enabled
-	if !c.Protocols.REST && !c.Protocols.GRPC && !c.Protocols.QUIC && !c.Protocols.MCP {
+	// Validate at least one protocol is enabled (Unix socket counts as a protocol)
+	if !c.Protocols.Unix && !c.Protocols.REST && !c.Protocols.GRPC && !c.Protocols.QUIC && !c.Protocols.MCP {
 		return fmt.Errorf("at least one protocol must be enabled")
+	}
+
+	// Validate Unix socket protocol
+	if c.Unix.Enabled && c.Unix.Protocol != "" {
+		validProtocols := map[string]bool{
+			"grpc": true,
+			"http": true,
+		}
+		if !validProtocols[strings.ToLower(c.Unix.Protocol)] {
+			return fmt.Errorf("invalid Unix socket protocol: %s (must be grpc or http)", c.Unix.Protocol)
+		}
 	}
 
 	// Validate logging level
@@ -461,6 +680,24 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("storage path must be specified")
 	}
 
+	// Validate RNG mode
+	if c.RNG.Mode != "" {
+		validModes := map[string]bool{
+			"auto": true, "software": true, "tpm2": true, "pkcs11": true,
+		}
+		if !validModes[strings.ToLower(c.RNG.Mode)] {
+			return fmt.Errorf("invalid RNG mode: %s (must be auto, software, tpm2, or pkcs11)", c.RNG.Mode)
+		}
+	}
+	if c.RNG.FallbackMode != "" {
+		validModes := map[string]bool{
+			"software": true, "tpm2": true, "pkcs11": true,
+		}
+		if !validModes[strings.ToLower(c.RNG.FallbackMode)] {
+			return fmt.Errorf("invalid RNG fallback mode: %s (must be software, tpm2, or pkcs11)", c.RNG.FallbackMode)
+		}
+	}
+
 	// Validate default backend
 	if string(c.Default) == "" {
 		return fmt.Errorf("default_backend must be specified")
@@ -468,6 +705,12 @@ func (c *Config) Validate() error {
 
 	// Validate at least one backend is enabled
 	hasEnabledBackend := false
+	if c.Backends.Software != nil && c.Backends.Software.Enabled {
+		hasEnabledBackend = true
+		if c.Backends.Software.Path == "" {
+			return fmt.Errorf("software backend path is required when enabled")
+		}
+	}
 	if c.Backends.PKCS8 != nil && c.Backends.PKCS8.Enabled {
 		hasEnabledBackend = true
 		if c.Backends.PKCS8.Path == "" {
@@ -515,6 +758,9 @@ func (c *Config) GetRateLimitConfig() *RateLimitConfig {
 // GetEnabledBackends returns a list of enabled backend names
 func (c *Config) GetEnabledBackends() []string {
 	var backends []string
+	if c.Backends.Software != nil && c.Backends.Software.Enabled {
+		backends = append(backends, "software")
+	}
 	if c.Backends.PKCS8 != nil && c.Backends.PKCS8.Enabled {
 		backends = append(backends, "pkcs8")
 	}
@@ -537,4 +783,20 @@ func (c *Config) GetEnabledBackends() []string {
 		backends = append(backends, "vault")
 	}
 	return backends
+}
+
+// GetRNGConfig returns the RNG configuration with defaults applied.
+// The returned RNGConfig can be converted to pkg/crypto/rand.Config.
+func (c *Config) GetRNGConfig() *RNGConfig {
+	cfg := c.RNG
+
+	// Apply defaults
+	if cfg.Mode == "" {
+		cfg.Mode = "auto"
+	}
+	if cfg.FallbackMode == "" {
+		cfg.FallbackMode = "software"
+	}
+
+	return &cfg
 }

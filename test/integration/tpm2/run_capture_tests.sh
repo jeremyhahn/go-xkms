@@ -11,7 +11,7 @@ echo ""
 
 # Wait for TPM simulator to be ready
 echo "Waiting for TPM simulator to be ready..."
-while ! nc -z ${TPM2_SIMULATOR_HOST:-localhost} ${TPM2_SIMULATOR_PORT:-2321}; do
+while ! nc -z ${TPM2_SIMULATOR_HOST:-localhost} ${TPM2_SIMULATOR_PORT:-2421}; do
     sleep 1
 done
 echo "✓ TPM simulator is ready"

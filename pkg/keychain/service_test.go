@@ -234,14 +234,14 @@ func (m *mockKeyStore) CanSeal() bool {
 
 // Test helpers
 
-func setupFacade(t *testing.T) (*mockKeyStore, *mockKeyStore) {
+func setupService(t *testing.T) (*mockKeyStore, *mockKeyStore) {
 	t.Helper()
 	Reset() // Ensure clean state
 
 	backend1 := newMockKeyStore("backend1")
 	backend2 := newMockKeyStore("backend2")
 
-	config := &FacadeConfig{
+	config := &ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend1": backend1,
 			"backend2": backend2,
@@ -285,7 +285,7 @@ func TestInitialize_Success(t *testing.T) {
 	Reset()
 
 	backend1 := newMockKeyStore("backend1")
-	config := &FacadeConfig{
+	config := &ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend1": backend1,
 		},
@@ -308,7 +308,7 @@ func TestInitialize_NilConfig(t *testing.T) {
 func TestInitialize_EmptyBackends(t *testing.T) {
 	Reset()
 
-	config := &FacadeConfig{
+	config := &ServiceConfig{
 		Backends:       map[string]KeyStore{},
 		DefaultBackend: "backend1",
 	}
@@ -322,7 +322,7 @@ func TestInitialize_InvalidDefaultBackend(t *testing.T) {
 	Reset()
 
 	backend1 := newMockKeyStore("backend1")
-	config := &FacadeConfig{
+	config := &ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend1": backend1,
 		},
@@ -338,7 +338,7 @@ func TestInitialize_DefaultToFirstBackend(t *testing.T) {
 	Reset()
 
 	backend1 := newMockKeyStore("backend1")
-	config := &FacadeConfig{
+	config := &ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend1": backend1,
 		},
@@ -358,7 +358,7 @@ func TestInitialize_OnlyOnce(t *testing.T) {
 	Reset()
 
 	backend1 := newMockKeyStore("backend1")
-	config1 := &FacadeConfig{
+	config1 := &ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend1": backend1,
 		},
@@ -370,7 +370,7 @@ func TestInitialize_OnlyOnce(t *testing.T) {
 
 	// Second initialization should succeed (idempotent)
 	backend2 := newMockKeyStore("backend2")
-	config2 := &FacadeConfig{
+	config2 := &ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend2": backend2,
 		},
@@ -389,7 +389,7 @@ func TestInitialize_OnlyOnce(t *testing.T) {
 // Test Backend
 
 func TestBackend_Success(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	ks, err := Backend("backend1")
 	assert.NoError(t, err)
@@ -397,7 +397,7 @@ func TestBackend_Success(t *testing.T) {
 }
 
 func TestBackend_NotFound(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	_, err := Backend("nonexistent")
 	assert.Error(t, err)
@@ -415,7 +415,7 @@ func TestBackend_NotInitialized(t *testing.T) {
 // Test DefaultBackend
 
 func TestDefaultBackend_Success(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	ks, err := DefaultBackend()
 	assert.NoError(t, err)
@@ -433,7 +433,7 @@ func TestDefaultBackend_NotInitialized(t *testing.T) {
 // Test Backends
 
 func TestBackends_Success(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	backends := Backends()
 	assert.Len(t, backends, 2)
@@ -451,7 +451,7 @@ func TestBackends_NotInitialized(t *testing.T) {
 // Test KeyByID
 
 func TestKeyByID_WithBackendPrefix(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	// Generate a key in backend1
 	attrs := &types.KeyAttributes{CN: "test-key"}
@@ -465,7 +465,7 @@ func TestKeyByID_WithBackendPrefix(t *testing.T) {
 }
 
 func TestKeyByID_WithoutBackendPrefix(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	// Generate a key in default backend
 	attrs := &types.KeyAttributes{CN: "test-key"}
@@ -479,7 +479,7 @@ func TestKeyByID_WithoutBackendPrefix(t *testing.T) {
 }
 
 func TestKeyByID_InvalidBackend(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	_, err := KeyByID("nonexistent:test-key")
 	assert.Error(t, err)
@@ -487,7 +487,7 @@ func TestKeyByID_InvalidBackend(t *testing.T) {
 }
 
 func TestKeyByID_KeyNotFound(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	_, err := KeyByID("backend1:nonexistent-key")
 	assert.Error(t, err)
@@ -504,7 +504,7 @@ func TestKeyByID_NotInitialized(t *testing.T) {
 // Test Signer
 
 func TestSigner_Success(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
 	_, err := backend1.GenerateRSA(attrs)
@@ -518,7 +518,7 @@ func TestSigner_Success(t *testing.T) {
 // Test Decrypter
 
 func TestDecrypter_Success(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
 	_, err := backend1.GenerateRSA(attrs)
@@ -532,7 +532,7 @@ func TestDecrypter_Success(t *testing.T) {
 // Test DeleteKey
 
 func TestDeleteKey_WithBackendPrefix(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
 	_, err := backend1.GenerateRSA(attrs)
@@ -547,7 +547,7 @@ func TestDeleteKey_WithBackendPrefix(t *testing.T) {
 }
 
 func TestDeleteKey_WithoutBackendPrefix(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	attrs := &types.KeyAttributes{CN: "test-key"}
 	_, err := backend1.GenerateRSA(attrs)
@@ -564,7 +564,7 @@ func TestDeleteKey_WithoutBackendPrefix(t *testing.T) {
 // Test ListKeys
 
 func TestListKeys_AllBackends(t *testing.T) {
-	backend1, backend2 := setupFacade(t)
+	backend1, backend2 := setupService(t)
 
 	// Create keys in both backends
 	_, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "key1"})
@@ -578,7 +578,7 @@ func TestListKeys_AllBackends(t *testing.T) {
 }
 
 func TestListKeys_SpecificBackend(t *testing.T) {
-	backend1, backend2 := setupFacade(t)
+	backend1, backend2 := setupService(t)
 
 	// Create keys in both backends
 	_, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "key1"})
@@ -593,7 +593,7 @@ func TestListKeys_SpecificBackend(t *testing.T) {
 }
 
 func TestListKeys_NonexistentBackend(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	_, err := ListKeys("nonexistent")
 	assert.Error(t, err)
@@ -601,7 +601,7 @@ func TestListKeys_NonexistentBackend(t *testing.T) {
 }
 
 func TestListKeys_ContinueOnError(t *testing.T) {
-	backend1, backend2 := setupFacade(t)
+	backend1, backend2 := setupService(t)
 
 	// Make backend1 return an error
 	backend1.listKeysErr = errors.New("backend error")
@@ -620,7 +620,7 @@ func TestListKeys_ContinueOnError(t *testing.T) {
 // Test SaveCertificate and Certificate
 
 func TestSaveCertificate_Success(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	// Generate a key and create a cert
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
@@ -637,7 +637,7 @@ func TestSaveCertificate_Success(t *testing.T) {
 }
 
 func TestCertificate_Success(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	// Generate a key and create a cert
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
@@ -647,7 +647,7 @@ func TestCertificate_Success(t *testing.T) {
 	err = backend1.SaveCert("test-key", cert)
 	require.NoError(t, err)
 
-	// Retrieve via facade
+	// Retrieve via service
 	retrievedCert, err := Certificate("test-key")
 	assert.NoError(t, err)
 	assert.Equal(t, cert, retrievedCert)
@@ -656,7 +656,7 @@ func TestCertificate_Success(t *testing.T) {
 // Test DeleteCertificate
 
 func TestDeleteCertificate_WithBackendPrefix(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	// Generate a key and create a cert
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
@@ -675,7 +675,7 @@ func TestDeleteCertificate_WithBackendPrefix(t *testing.T) {
 }
 
 func TestDeleteCertificate_WithoutBackendPrefix(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	// Generate a key and create a cert
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "test-key"})
@@ -696,7 +696,7 @@ func TestDeleteCertificate_WithoutBackendPrefix(t *testing.T) {
 // Test ListCertificates
 
 func TestListCertificates_AllBackends(t *testing.T) {
-	backend1, backend2 := setupFacade(t)
+	backend1, backend2 := setupService(t)
 
 	// Create certs in both backends
 	key1, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "cert1"})
@@ -719,7 +719,7 @@ func TestListCertificates_AllBackends(t *testing.T) {
 }
 
 func TestListCertificates_SpecificBackend(t *testing.T) {
-	backend1, backend2 := setupFacade(t)
+	backend1, backend2 := setupService(t)
 
 	// Create certs in both backends
 	key1, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "cert1"})
@@ -741,7 +741,7 @@ func TestListCertificates_SpecificBackend(t *testing.T) {
 }
 
 func TestListCertificates_NonexistentBackend(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	_, err := ListCertificates("nonexistent")
 	assert.Error(t, err)
@@ -759,17 +759,17 @@ func TestListCertificates_NotInitialized(t *testing.T) {
 // Test Close
 
 func TestClose_Success(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	err := Close()
 	assert.NoError(t, err)
 
-	// Note: Close() doesn't reset the facade, so it's still considered initialized
-	// Reset() is used for testing to completely clear the facade
+	// Note: Close() doesn't reset the service, so it's still considered initialized
+	// Reset() is used for testing to completely clear the service
 }
 
 func TestClose_PropagatesErrors(t *testing.T) {
-	backend1, _ := setupFacade(t)
+	backend1, _ := setupService(t)
 
 	// Make backend1 return an error on close
 	backend1.closeError = errors.New("close error")
@@ -791,7 +791,7 @@ func TestClose_NotInitialized(t *testing.T) {
 // Test Reset
 
 func TestReset_Success(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	assert.True(t, IsInitialized())
 	Reset()
@@ -806,14 +806,14 @@ func TestIsInitialized_BeforeInit(t *testing.T) {
 }
 
 func TestIsInitialized_AfterInit(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 	assert.True(t, IsInitialized())
 }
 
 // Test concurrent access
 
 func TestConcurrentAccess(t *testing.T) {
-	setupFacade(t)
+	setupService(t)
 
 	done := make(chan bool)
 	for i := 0; i < 10; i++ {
@@ -923,15 +923,15 @@ func newMockKeyStoreWithSealer(name string, backendType types.BackendType) *mock
 	return ms
 }
 
-// setupSealerFacade creates a facade with sealer-enabled backends
-func setupSealerFacade(t *testing.T) (*mockKeyStore, *mockKeyStore) {
+// setupSealerService creates a service with sealer-enabled backends
+func setupSealerService(t *testing.T) (*mockKeyStore, *mockKeyStore) {
 	t.Helper()
 	Reset()
 
 	backend1 := newMockKeyStoreWithSealer("backend1", types.BackendTypePKCS8)
 	backend2 := newMockKeyStoreWithSealer("backend2", types.BackendTypePKCS11)
 
-	err := Initialize(&FacadeConfig{
+	err := Initialize(&ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend1": backend1,
 			"backend2": backend2,
@@ -950,7 +950,7 @@ func setupSealerFacade(t *testing.T) (*mockKeyStore, *mockKeyStore) {
 // Test Seal
 
 func TestSeal_Success(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	data := []byte("secret data")
@@ -976,7 +976,7 @@ func TestSeal_NotInitialized(t *testing.T) {
 // Test SealWithBackend
 
 func TestSealWithBackend_Success(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	data := []byte("secret data")
@@ -991,7 +991,7 @@ func TestSealWithBackend_Success(t *testing.T) {
 }
 
 func TestSealWithBackend_InvalidBackend(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	_, err := SealWithBackend(ctx, "nonexistent", []byte("data"), nil)
@@ -1002,7 +1002,7 @@ func TestSealWithBackend_InvalidBackend(t *testing.T) {
 // Test Unseal
 
 func TestUnseal_Success(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	originalData := []byte("secret data")
@@ -1024,7 +1024,7 @@ func TestUnseal_Success(t *testing.T) {
 }
 
 func TestUnseal_NilSealedData(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	_, err := Unseal(ctx, nil, nil)
@@ -1033,11 +1033,11 @@ func TestUnseal_NilSealedData(t *testing.T) {
 }
 
 func TestUnseal_BackendNotFound(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	sealed := &types.SealedData{
-		Backend:    types.BackendTypeTPM2, // Not registered in our facade
+		Backend:    types.BackendTypeTPM2, // Not registered in our service
 		Ciphertext: []byte("encrypted"),
 	}
 
@@ -1049,7 +1049,7 @@ func TestUnseal_BackendNotFound(t *testing.T) {
 // Test UnsealWithBackend
 
 func TestUnsealWithBackend_Success(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	originalData := []byte("secret data")
@@ -1071,7 +1071,7 @@ func TestUnsealWithBackend_Success(t *testing.T) {
 }
 
 func TestUnsealWithBackend_InvalidBackend(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	ctx := context.Background()
 	sealed := &types.SealedData{
@@ -1087,21 +1087,21 @@ func TestUnsealWithBackend_InvalidBackend(t *testing.T) {
 // Test CanSeal
 
 func TestCanSeal_WithSealerBackend(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	// Default backend should support sealing
 	assert.True(t, CanSeal())
 }
 
 func TestCanSeal_WithSpecificBackend(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	assert.True(t, CanSeal("backend1"))
 	assert.True(t, CanSeal("backend2"))
 }
 
 func TestCanSeal_InvalidBackend(t *testing.T) {
-	setupSealerFacade(t)
+	setupSealerService(t)
 
 	assert.False(t, CanSeal("nonexistent"))
 }
@@ -1482,15 +1482,15 @@ func (m *mockExtendedKeyStore) Unseal(ctx context.Context, sealed *types.SealedD
 	return nil, errors.New("unsealing not supported")
 }
 
-// setupExtendedFacade creates a facade with extended mock backends
-func setupExtendedFacade(t *testing.T) (*mockExtendedKeyStore, *mockExtendedKeyStore) {
+// setupExtendedService creates a service with extended mock backends
+func setupExtendedService(t *testing.T) (*mockExtendedKeyStore, *mockExtendedKeyStore) {
 	t.Helper()
 	Reset()
 
 	backend1 := newMockExtendedKeyStore("backend1", types.BackendTypePKCS8)
 	backend2 := newMockExtendedKeyStore("backend2", types.BackendTypePKCS11)
 
-	err := Initialize(&FacadeConfig{
+	err := Initialize(&ServiceConfig{
 		Backends: map[string]KeyStore{
 			"backend1": backend1,
 			"backend2": backend2,
@@ -1511,7 +1511,7 @@ func setupExtendedFacade(t *testing.T) (*mockExtendedKeyStore, *mockExtendedKeyS
 // ========================================================================
 
 func TestGetBackendInfo_Success(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	info, err := GetBackendInfo("backend1")
 	assert.NoError(t, err)
@@ -1522,7 +1522,7 @@ func TestGetBackendInfo_Success(t *testing.T) {
 }
 
 func TestGetBackendInfo_HardwareBacked(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	info, err := GetBackendInfo("backend2")
 	assert.NoError(t, err)
@@ -1532,7 +1532,7 @@ func TestGetBackendInfo_HardwareBacked(t *testing.T) {
 }
 
 func TestGetBackendInfo_InvalidBackend(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := GetBackendInfo("nonexistent")
 	assert.Error(t, err)
@@ -1552,7 +1552,7 @@ func TestGetBackendInfo_NotInitialized(t *testing.T) {
 // ========================================================================
 
 func TestGetBackendCapabilities_Success(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	caps, err := GetBackendCapabilities("backend1")
 	assert.NoError(t, err)
@@ -1561,7 +1561,7 @@ func TestGetBackendCapabilities_Success(t *testing.T) {
 }
 
 func TestGetBackendCapabilities_InvalidBackend(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := GetBackendCapabilities("nonexistent")
 	assert.Error(t, err)
@@ -1573,7 +1573,7 @@ func TestGetBackendCapabilities_InvalidBackend(t *testing.T) {
 // ========================================================================
 
 func TestGenerateKeyWithBackend_RSA(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-rsa-key",
@@ -1589,7 +1589,7 @@ func TestGenerateKeyWithBackend_RSA(t *testing.T) {
 }
 
 func TestGenerateKeyWithBackend_ECDSA(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-ecdsa-key",
@@ -1605,7 +1605,7 @@ func TestGenerateKeyWithBackend_ECDSA(t *testing.T) {
 }
 
 func TestGenerateKeyWithBackend_InvalidBackend(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-key",
@@ -1618,7 +1618,7 @@ func TestGenerateKeyWithBackend_InvalidBackend(t *testing.T) {
 }
 
 func TestGenerateKeyWithBackend_UnsupportedAlgorithm(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{
 		CN:           "test-key",
@@ -1635,7 +1635,7 @@ func TestGenerateKeyWithBackend_UnsupportedAlgorithm(t *testing.T) {
 // ========================================================================
 
 func TestRotateKey_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate initial key
 	attrs := &types.KeyAttributes{CN: "rotate-test-key"}
@@ -1649,7 +1649,7 @@ func TestRotateKey_Success(t *testing.T) {
 }
 
 func TestRotateKey_WithoutBackendPrefix(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate initial key
 	attrs := &types.KeyAttributes{CN: "rotate-test-key"}
@@ -1663,7 +1663,7 @@ func TestRotateKey_WithoutBackendPrefix(t *testing.T) {
 }
 
 func TestRotateKey_KeyNotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := RotateKey("nonexistent-key")
 	assert.Error(t, err)
@@ -1675,7 +1675,7 @@ func TestRotateKey_KeyNotFound(t *testing.T) {
 // ========================================================================
 
 func TestSign_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a key
 	attrs := &types.KeyAttributes{CN: "sign-test-key"}
@@ -1690,7 +1690,7 @@ func TestSign_Success(t *testing.T) {
 }
 
 func TestSign_WithOptions(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a key
 	attrs := &types.KeyAttributes{CN: "sign-test-key"}
@@ -1706,7 +1706,7 @@ func TestSign_WithOptions(t *testing.T) {
 }
 
 func TestSign_KeyNotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := Sign("nonexistent-key", []byte("data"), nil)
 	assert.Error(t, err)
@@ -1714,7 +1714,7 @@ func TestSign_KeyNotFound(t *testing.T) {
 }
 
 func TestVerify_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate an ECDSA key for easier verification
 	attrs := &types.KeyAttributes{CN: "verify-test-key"}
@@ -1732,13 +1732,13 @@ func TestVerify_Success(t *testing.T) {
 	signature, err := ecdsa.SignASN1(rand.Reader, ecdsaKey, digest)
 	require.NoError(t, err)
 
-	// Verify via facade
+	// Verify via service
 	err = Verify("backend1:verify-test-key", data, signature, &types.VerifyOpts{Hash: crypto.SHA256})
 	assert.NoError(t, err)
 }
 
 func TestVerify_KeyNotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	err := Verify("nonexistent-key", []byte("data"), []byte("sig"), nil)
 	assert.Error(t, err)
@@ -1750,7 +1750,7 @@ func TestVerify_KeyNotFound(t *testing.T) {
 // ========================================================================
 
 func TestEncrypt_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a symmetric key
 	attrs := &types.KeyAttributes{CN: "encrypt-test-key"}
@@ -1766,7 +1766,7 @@ func TestEncrypt_Success(t *testing.T) {
 }
 
 func TestDecrypt_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a symmetric key
 	attrs := &types.KeyAttributes{CN: "decrypt-test-key"}
@@ -1784,7 +1784,7 @@ func TestDecrypt_Success(t *testing.T) {
 }
 
 func TestEncrypt_KeyNotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := Encrypt("nonexistent-key", []byte("data"), nil)
 	assert.Error(t, err)
@@ -1796,7 +1796,7 @@ func TestEncrypt_KeyNotFound(t *testing.T) {
 // ========================================================================
 
 func TestSaveCertificateChain_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a key and certificate
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "cert-chain-key"})
@@ -1816,7 +1816,7 @@ func TestSaveCertificateChain_Success(t *testing.T) {
 }
 
 func TestCertificateChain_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a key and certificate
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "cert-chain-key"})
@@ -1833,7 +1833,7 @@ func TestCertificateChain_Success(t *testing.T) {
 }
 
 func TestCertificateChain_NotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := CertificateChain("nonexistent-key")
 	assert.Error(t, err)
@@ -1844,7 +1844,7 @@ func TestCertificateChain_NotFound(t *testing.T) {
 // ========================================================================
 
 func TestCertificateExists_True(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a key and certificate
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "exists-test-key"})
@@ -1859,7 +1859,7 @@ func TestCertificateExists_True(t *testing.T) {
 }
 
 func TestCertificateExists_False(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	exists, err := CertificateExists("nonexistent-key")
 	assert.NoError(t, err)
@@ -1871,7 +1871,7 @@ func TestCertificateExists_False(t *testing.T) {
 // ========================================================================
 
 func TestGetTLSCertificate_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Setup TLS certificate in mock
 	key, err := backend1.GenerateRSA(&types.KeyAttributes{CN: "tls-test-key"})
@@ -1885,7 +1885,7 @@ func TestGetTLSCertificate_Success(t *testing.T) {
 	}
 	backend1.tlsCerts["tls-test-key"] = tlsCert
 
-	// Retrieve via facade
+	// Retrieve via service
 	result, err := GetTLSCertificate("backend1:tls-test-key")
 	assert.NoError(t, err)
 	assert.NotNil(t, result.PrivateKey)
@@ -1893,7 +1893,7 @@ func TestGetTLSCertificate_Success(t *testing.T) {
 }
 
 func TestGetTLSCertificate_NotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := GetTLSCertificate("nonexistent-key")
 	assert.Error(t, err)
@@ -1904,7 +1904,7 @@ func TestGetTLSCertificate_NotFound(t *testing.T) {
 // ========================================================================
 
 func TestGetImportParameters_Success(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "import-test-key"}
 	params, err := GetImportParameters("backend1", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -1915,7 +1915,7 @@ func TestGetImportParameters_Success(t *testing.T) {
 }
 
 func TestGetImportParameters_InvalidBackend(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "import-test-key"}
 	_, err := GetImportParameters("nonexistent", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -1924,7 +1924,7 @@ func TestGetImportParameters_InvalidBackend(t *testing.T) {
 }
 
 func TestWrapKey_Success(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	params := &backend.ImportParameters{
 		Algorithm:   backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
@@ -1938,7 +1938,7 @@ func TestWrapKey_Success(t *testing.T) {
 }
 
 func TestUnwrapKey_Success(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	params := &backend.ImportParameters{
 		Algorithm:   backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
@@ -1956,7 +1956,7 @@ func TestUnwrapKey_Success(t *testing.T) {
 }
 
 func TestImportKey_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "imported-key"}
 	wrapped := &backend.WrappedKeyMaterial{
@@ -1973,7 +1973,7 @@ func TestImportKey_Success(t *testing.T) {
 }
 
 func TestExportKey_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a key to export
 	attrs := &types.KeyAttributes{CN: "export-test-key"}
@@ -1988,7 +1988,7 @@ func TestExportKey_Success(t *testing.T) {
 }
 
 func TestExportKey_KeyNotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := ExportKey("nonexistent-key", backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.Error(t, err)
@@ -2000,7 +2000,7 @@ func TestExportKey_KeyNotFound(t *testing.T) {
 // ========================================================================
 
 func TestCopyKey_Success(t *testing.T) {
-	backend1, backend2 := setupExtendedFacade(t)
+	backend1, backend2 := setupExtendedService(t)
 
 	// Generate source key
 	attrs := &types.KeyAttributes{CN: "copy-source-key"}
@@ -2017,7 +2017,7 @@ func TestCopyKey_Success(t *testing.T) {
 }
 
 func TestCopyKey_SourceNotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	err := CopyKey("nonexistent-key", "backend2", nil)
 	assert.Error(t, err)
@@ -2025,7 +2025,7 @@ func TestCopyKey_SourceNotFound(t *testing.T) {
 }
 
 func TestCopyKey_InvalidDestBackend(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate source key
 	attrs := &types.KeyAttributes{CN: "copy-source-key"}
@@ -2041,7 +2041,7 @@ func TestCopyKey_InvalidDestBackend(t *testing.T) {
 // ========================================================================
 
 func TestGenerateSymmetricKey_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "sym-key-test"}
 	symKey, err := GenerateSymmetricKey("backend1", attrs)
@@ -2056,7 +2056,7 @@ func TestGenerateSymmetricKey_Success(t *testing.T) {
 }
 
 func TestGenerateSymmetricKey_InvalidBackend(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	attrs := &types.KeyAttributes{CN: "sym-key-test"}
 	_, err := GenerateSymmetricKey("nonexistent", attrs)
@@ -2065,14 +2065,14 @@ func TestGenerateSymmetricKey_InvalidBackend(t *testing.T) {
 }
 
 func TestGetSymmetricKey_Success(t *testing.T) {
-	backend1, _ := setupExtendedFacade(t)
+	backend1, _ := setupExtendedService(t)
 
 	// Generate a key first
 	attrs := &types.KeyAttributes{CN: "get-sym-key-test"}
 	_, err := backend1.backendImpl.GenerateSymmetricKey(attrs)
 	require.NoError(t, err)
 
-	// Get it via facade
+	// Get it via service
 	symKey, err := GetSymmetricKey("backend1:get-sym-key-test")
 	assert.NoError(t, err)
 	assert.NotNil(t, symKey)
@@ -2080,7 +2080,7 @@ func TestGetSymmetricKey_Success(t *testing.T) {
 }
 
 func TestGetSymmetricKey_NotFound(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	_, err := GetSymmetricKey("nonexistent-key")
 	assert.Error(t, err)
@@ -2092,7 +2092,7 @@ func TestGetSymmetricKey_NotFound(t *testing.T) {
 // ========================================================================
 
 func TestInputValidation_InvalidBackendName(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	// Test various functions with invalid backend names
 	_, err := GetBackendInfo("../../../etc/passwd")
@@ -2105,7 +2105,7 @@ func TestInputValidation_InvalidBackendName(t *testing.T) {
 }
 
 func TestInputValidation_InvalidKeyReference(t *testing.T) {
-	setupExtendedFacade(t)
+	setupExtendedService(t)
 
 	// Test various functions with invalid key references
 	_, err := RotateKey("")
@@ -2113,6 +2113,356 @@ func TestInputValidation_InvalidKeyReference(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid key reference")
 
 	_, err = Sign("", []byte("data"), nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+
+	// Test Signer with invalid key reference
+	_, err = Signer("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+
+	// Test Decrypter with invalid key reference
+	_, err = Decrypter("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+
+	// Test SaveCertificate with invalid key reference
+	err = SaveCertificate("", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
+
+	// Test Certificate with invalid key reference
+	_, err = Certificate("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
+
+	// Test DeleteCertificate with invalid key reference
+	err = DeleteCertificate("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
+
+	// Test KeyByID with invalid key reference
+	_, err = KeyByID("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
+
+	// Test SaveCertificateChain with invalid key reference
+	err = SaveCertificateChain("", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
+
+	// Test CertificateChain with invalid key reference
+	_, err = CertificateChain("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
+
+	// Test CertificateExists with invalid key reference
+	_, err = CertificateExists("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
+
+	// Test WrapKey with invalid backend name
+	_, err = WrapKey("", nil, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid backend name")
+
+	// Test UnwrapKey with invalid backend name
+	_, err = UnwrapKey("", nil, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid backend name")
+
+	// Test ImportKey with invalid backend name
+	err = ImportKey("", nil, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid backend name")
+
+	// Test DeleteKey with invalid key reference
+	err = DeleteKey("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+}
+
+// ========================================================================
+// Test GenerateKey simplified API
+// ========================================================================
+
+func TestGenerateKey_RSA(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-rsa-key",
+		KeyAlgorithm: x509.RSA,
+		RSAAttributes: &types.RSAAttributes{
+			KeySize: 2048,
+		},
+	}
+
+	key, err := GenerateKey(attrs)
+	require.NoError(t, err)
+	require.NotNil(t, key)
+
+	_, ok := key.(*rsa.PrivateKey)
+	assert.True(t, ok, "expected RSA private key")
+}
+
+func TestGenerateKey_ECDSA(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-ecdsa-key",
+		KeyAlgorithm: x509.ECDSA,
+		ECCAttributes: &types.ECCAttributes{
+			Curve: elliptic.P256(),
+		},
+	}
+
+	key, err := GenerateKey(attrs)
+	require.NoError(t, err)
+	require.NotNil(t, key)
+
+	_, ok := key.(*ecdsa.PrivateKey)
+	assert.True(t, ok, "expected ECDSA private key")
+}
+
+func TestGenerateKey_Ed25519(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-ed25519-key",
+		KeyAlgorithm: x509.Ed25519,
+	}
+
+	// The mock returns not implemented error for Ed25519
+	_, err := GenerateKey(attrs)
+	assert.Error(t, err)
+}
+
+func TestGenerateKey_UnsupportedAlgorithm(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-unknown-key",
+		KeyAlgorithm: x509.PublicKeyAlgorithm(999), // Unknown algorithm
+	}
+
+	_, err := GenerateKey(attrs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported key algorithm")
+}
+
+func TestGenerateKey_NotInitialized(t *testing.T) {
+	Reset()
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-key",
+		KeyAlgorithm: x509.RSA,
+	}
+
+	_, err := GenerateKey(attrs)
+	assert.Error(t, err)
+}
+
+// ========================================================================
+// Test Key simplified API
+// ========================================================================
+
+func TestKey_Success(t *testing.T) {
+	backend1, _ := setupExtendedService(t)
+
+	// First generate a key
+	attrs := &types.KeyAttributes{
+		CN:           "test-key-retrieve",
+		KeyAlgorithm: x509.RSA,
+		RSAAttributes: &types.RSAAttributes{
+			KeySize: 2048,
+		},
+	}
+
+	_, err := GenerateKey(attrs)
+	require.NoError(t, err)
+
+	// Now retrieve it
+	key, err := Key(attrs)
+	require.NoError(t, err)
+	require.NotNil(t, key)
+
+	// Should be the same key
+	_, ok := key.(*rsa.PrivateKey)
+	assert.True(t, ok)
+
+	_ = backend1 // suppress unused warning
+}
+
+func TestKey_NotFound(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{
+		CN: "non-existent-key",
+	}
+
+	_, err := Key(attrs)
+	assert.Error(t, err)
+}
+
+func TestKey_NotInitialized(t *testing.T) {
+	Reset()
+
+	attrs := &types.KeyAttributes{
+		CN: "test-key",
+	}
+
+	_, err := Key(attrs)
+	assert.Error(t, err)
+}
+
+// ========================================================================
+// Additional Error Path Tests
+// ========================================================================
+
+func TestVerify_InvalidKeyReference(t *testing.T) {
+	setupExtendedService(t)
+
+	err := Verify("", []byte("data"), []byte("sig"), nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+}
+
+func TestVerify_WithNilOpts(t *testing.T) {
+	backend1, _ := setupExtendedService(t)
+
+	// Generate an ECDSA key
+	attrs := &types.KeyAttributes{CN: "verify-nil-opts-key"}
+	key, err := backend1.GenerateECDSA(attrs)
+	require.NoError(t, err)
+
+	ecdsaKey := key.(*ecdsa.PrivateKey)
+
+	// Create signature manually with SHA256
+	data := []byte("test data")
+	hasher := sha256.New()
+	hasher.Write(data)
+	digest := hasher.Sum(nil)
+
+	signature, err := ecdsa.SignASN1(rand.Reader, ecdsaKey, digest)
+	require.NoError(t, err)
+
+	// Verify with nil opts (should use default SHA256)
+	err = Verify("backend1:verify-nil-opts-key", data, signature, nil)
+	assert.NoError(t, err)
+}
+
+func TestVerify_WithZeroHash(t *testing.T) {
+	backend1, _ := setupExtendedService(t)
+
+	// Generate an ECDSA key
+	attrs := &types.KeyAttributes{CN: "verify-zero-hash-key"}
+	key, err := backend1.GenerateECDSA(attrs)
+	require.NoError(t, err)
+
+	ecdsaKey := key.(*ecdsa.PrivateKey)
+
+	// Create signature manually with SHA256
+	data := []byte("test data")
+	hasher := sha256.New()
+	hasher.Write(data)
+	digest := hasher.Sum(nil)
+
+	signature, err := ecdsa.SignASN1(rand.Reader, ecdsaKey, digest)
+	require.NoError(t, err)
+
+	// Verify with zero Hash (should use default SHA256)
+	err = Verify("backend1:verify-zero-hash-key", data, signature, &types.VerifyOpts{Hash: 0})
+	assert.NoError(t, err)
+}
+
+func TestEncrypt_InvalidKeyReference(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := Encrypt("", []byte("data"), nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+}
+
+func TestDecrypt_InvalidKeyReference(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := Decrypt("", nil, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+}
+
+func TestDecrypt_KeyNotFound(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := Decrypt("nonexistent-key", nil, nil)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, backend.ErrKeyNotFound)
+}
+
+func TestSign_WithNilOpts(t *testing.T) {
+	backend1, _ := setupExtendedService(t)
+
+	// Generate an ECDSA key
+	attrs := &types.KeyAttributes{CN: "sign-nil-opts-key"}
+	_, err := backend1.GenerateECDSA(attrs)
+	require.NoError(t, err)
+
+	data := []byte("test data")
+	signature, err := Sign("backend1:sign-nil-opts-key", data, nil)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, signature)
+}
+
+func TestSign_WithZeroHash(t *testing.T) {
+	backend1, _ := setupExtendedService(t)
+
+	// Generate an ECDSA key
+	attrs := &types.KeyAttributes{CN: "sign-zero-hash-key"}
+	_, err := backend1.GenerateECDSA(attrs)
+	require.NoError(t, err)
+
+	data := []byte("test data")
+	signature, err := Sign("backend1:sign-zero-hash-key", data, &SignOptions{Hash: 0})
+	assert.NoError(t, err)
+	assert.NotEmpty(t, signature)
+}
+
+func TestCopyKey_InvalidSourceKeyRef(t *testing.T) {
+	setupExtendedService(t)
+
+	err := CopyKey("", "backend2", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid source key reference")
+}
+
+func TestGetImportParameters_InvalidBackendName(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := GetImportParameters("", nil, "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid backend name")
+}
+
+func TestGenerateSymmetricKey_InvalidBackendName(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := GenerateSymmetricKey("", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid backend name")
+}
+
+func TestGetSymmetricKey_InvalidKeyRef(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := GetSymmetricKey("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key reference")
+}
+
+func TestExportKey_InvalidKeyRef(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := ExportKey("", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key reference")
 }

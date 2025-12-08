@@ -119,11 +119,14 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 
 	// Create an alias for easier reference
 	aliasName := fmt.Sprintf("alias/%s", attrs.CN)
-	_, _ = b.client.CreateAlias(ctx, &kms.CreateAliasInput{
+	if _, err := b.client.CreateAlias(ctx, &kms.CreateAliasInput{
 		AliasName:   aws.String(aliasName),
 		TargetKeyId: aws.String(keyID),
-	})
-	// Note: We ignore alias creation errors and continue to store metadata
+	}); err != nil {
+		// Log warning but continue - alias is optional for key functionality
+		// Alias might already exist or there may be permission issues
+		fmt.Printf("warning: failed to create alias %s for key %s: %v\n", aliasName, keyID, err)
+	}
 
 	// Store metadata mapping CN -> KMS key information
 	metadata := map[string]interface{}{

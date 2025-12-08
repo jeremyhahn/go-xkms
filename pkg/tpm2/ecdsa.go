@@ -43,7 +43,11 @@ func (tpm *TPM2) CreateECDSA(
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close session: %v", err)
+		}
+	}()
 
 	// Select the appropriate ECC template based on the curve
 	eccTemplate := ECCP256Template
@@ -111,7 +115,11 @@ func (tpm *TPM2) CreateECDSA(
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = closer() }()
+			defer func() {
+				if err := closer(); err != nil {
+					tpm.logger.Errorf("failed to close key session: %v", err)
+				}
+			}()
 
 			loadResponse, err := tpm2.Load{
 				ParentHandle: tpm2.AuthHandle{

@@ -371,29 +371,67 @@ func (tpm *TPM2) GoldenMeasurements() []byte {
 	}
 	digest := hash.New()
 	digest.Reset()
-	// Read all available banks and their PCR values
-	banks, err := tpm.ReadPCRs(tpm2SupportedPCRs)
-	if err != nil {
-		tpm.logger.FatalError(err)
-	}
-	// Create golden PCR that stores the final sum of
-	// all PCR values across all banks.
-	for _, bank := range banks {
-		for _, pcr := range bank.PCRs {
-			extend = append(extend, pcr.Value...)
-			digest.Write(extend)
-			gold = digest.Sum(nil)
-			extend = gold
-			digest.Reset()
+
+	// Read only the PCRs specified in the platform configuration.
+	// This allows stable golden measurements that don't change between
+	// boot environments (e.g., ISO installer vs installed system).
+	if len(tpm.config.GoldenPCRs) > 0 {
+		banks, err := tpm.ReadPCRs(tpm.config.GoldenPCRs)
+		if err != nil {
+			tpm.logger.FatalError(err)
 		}
+		// Create golden PCR that stores the final sum of
+		// configured PCR values across all banks.
+		for _, bank := range banks {
+			for _, pcr := range bank.PCRs {
+				extend = append(extend, pcr.Value...)
+				digest.Write(extend)
+				gold = digest.Sum(nil)
+				extend = gold
+				digest.Reset()
+			}
+		}
+		tpm.logger.Debugf("tpm: golden measurement from PCRs %v", tpm.config.GoldenPCRs)
+	} else {
+		// No PCRs configured - use a deterministic seed based on platform identity.
+		// This provides stable golden measurements across different boot environments
+		// without depending on volatile PCR values that differ between ISO and
+		// installed system boots.
+		platformSeed := fmt.Sprintf("trusted-platform:%s:pcr%d:%s",
+			tpm.fqdn,
+			tpm.config.PlatformPCR,
+			tpm.config.PlatformPCRBank)
+		digest.Write([]byte(platformSeed))
+		gold = digest.Sum(nil)
+		digest.Reset()
+		tpm.logger.Debugf("tpm: golden measurement using platform seed (no PCRs configured)")
 	}
+
 	// Recursively walk each directory configured for
 	// file integrity monitoring and sum each file for
 	// inclusion in the golden measurements.
-	for _, dir := range tpm.config.FileIntegrity {
-		dirSum := tpm.fileIntegritySum(dir)
-		digest.Write(dirSum)
-		gold = digest.Sum(nil)
+	//
+	// DEPRECATED: This custom file integrity monitoring is deprecated in favor of
+	// Linux IMA (Integrity Measurement Architecture) which uses PCR 10.
+	// To use IMA instead:
+	//   1. Enable IMA in the kernel (ima=on ima_policy=tcb ima_hash=sha256)
+	//   2. Configure golden-pcrs to include PCR 10: [0, 7, 9, 10]
+	//   3. Leave file-integrity empty: []
+	//
+	// IMA provides hardware-backed file integrity monitoring with:
+	//   - Automatic measurement of executables, libraries, and kernel modules
+	//   - TPM PCR 10 extended on each measured file access
+	//   - Policy-based control over what gets measured
+	//   - Integration with secure boot signature verification
+	//
+	// This custom FIM is kept for backwards compatibility with existing deployments.
+	if len(tpm.config.FileIntegrity) > 0 {
+		tpm.logger.Warn("tpm: file-integrity config is deprecated, use IMA (PCR 10) via golden-pcrs instead")
+		for _, dir := range tpm.config.FileIntegrity {
+			dirSum := tpm.fileIntegritySum(dir)
+			digest.Write(dirSum)
+			gold = digest.Sum(nil)
+		}
 	}
 	return gold
 }

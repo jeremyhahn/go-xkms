@@ -277,3 +277,75 @@ func BenchmarkSoftwareResolver_Rand1024(b *testing.B) {
 		_, _ = resolver.Rand(1024)
 	}
 }
+
+func TestAutoResolver_Methods(t *testing.T) {
+	// Test auto resolver explicitly
+	cfg := &Config{Mode: ModeAuto}
+	resolver, err := NewResolver(cfg)
+	if err != nil {
+		t.Fatalf("NewResolver(ModeAuto) failed: %v", err)
+	}
+	defer func() { _ = resolver.Close() }()
+
+	// Test Rand
+	buf, err := resolver.Rand(32)
+	if err != nil {
+		t.Fatalf("Rand failed: %v", err)
+	}
+	if len(buf) != 32 {
+		t.Errorf("Expected 32 bytes, got %d", len(buf))
+	}
+
+	// Test Source
+	source := resolver.Source()
+	if source == nil {
+		t.Error("Source() returned nil")
+	}
+
+	// Test Available
+	if !resolver.Available() {
+		t.Error("Available() should return true")
+	}
+}
+
+func TestSoftwareSource_Methods(t *testing.T) {
+	resolver, _ := NewResolver(ModeSoftware)
+	defer func() { _ = resolver.Close() }()
+
+	source := resolver.Source()
+	if source == nil {
+		t.Fatal("Source() returned nil")
+	}
+
+	// Test Rand on source
+	buf, err := source.Rand(32)
+	if err != nil {
+		t.Fatalf("Source.Rand failed: %v", err)
+	}
+	if len(buf) != 32 {
+		t.Errorf("Expected 32 bytes, got %d", len(buf))
+	}
+
+	// Test Available on source
+	if !source.Available() {
+		t.Error("Source.Available() should return true")
+	}
+
+	// Test Close on source
+	err = source.Close()
+	if err != nil {
+		t.Errorf("Source.Close() failed: %v", err)
+	}
+}
+
+func TestNewResolver_AutoMode(t *testing.T) {
+	resolver, err := NewResolver(ModeAuto)
+	if err != nil {
+		t.Fatalf("NewResolver(ModeAuto) failed: %v", err)
+	}
+	defer func() { _ = resolver.Close() }()
+
+	if !resolver.Available() {
+		t.Error("Auto resolver should be available")
+	}
+}

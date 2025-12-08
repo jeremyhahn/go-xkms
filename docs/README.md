@@ -16,6 +16,7 @@ Core architectural concepts, design patterns, and technical specifications:
 - [Storage Abstraction](architecture/storage-abstraction.md) - Unified storage interface
 - [Symmetric Encryption](architecture/symmetric-encryption.md) - Symmetric key support architecture
 - [Hardware Certificate Storage](architecture/hardware-certificate-storage.md) - HSM certificate storage design
+- [RBAC](architecture/rbac.md) - Role-based access control
 
 ### [Backends](backends/)
 Backend-specific documentation for all supported storage systems:
@@ -36,6 +37,8 @@ User guides and tutorials:
 - [Key Import/Export](usage/key-import-export.md) - Key management operations
 - [Certificate Management](usage/certificate-management.md) - X.509 certificate handling
 - [API Parity](usage/api-parity.md) - Cross-backend compatibility
+- [User Management](usage/user.md) - User accounts, roles, and sessions
+- [WebAuthn](usage/webauthn.md) - Passwordless authentication with FIDO2/passkeys
 
 ### [Testing](testing/)
 Testing documentation and best practices:

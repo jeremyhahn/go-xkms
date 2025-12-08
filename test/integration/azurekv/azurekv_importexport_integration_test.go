@@ -294,7 +294,7 @@ func TestAzureKVImportExport(t *testing.T) {
 		if err != nil {
 			// Azure KV emulator may not support ImportKey
 			t.Logf("⚠ ImportKey not supported by emulator (Azure KV production supports this): %v", err)
-			t.Skip("Skipping due to emulator limitation")
+			t.Fatal("Skipping due to emulator limitation")
 			return
 		}
 		t.Logf("✓ Successfully imported key into Azure Key Vault")
@@ -371,7 +371,7 @@ func TestAzureKVImportExport(t *testing.T) {
 		if err != nil {
 			// Azure KV emulator may not support ECDSA or ImportKey
 			t.Logf("⚠ ImportKey not supported by emulator (Azure KV production supports this): %v", err)
-			t.Skip("Skipping due to emulator limitation")
+			t.Fatal("Skipping due to emulator limitation")
 			return
 		}
 		t.Logf("✓ Successfully imported ECDSA key into Azure Key Vault")

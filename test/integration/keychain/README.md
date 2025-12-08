@@ -147,7 +147,7 @@ All tests use in-memory storage backends (`memory.NewKeyStorage()` and `memory.N
 ### Software Backend Key Listing
 The software backend currently lists keys with different ID formats, resulting in duplicates:
 - Simple ID: `"key1"`
-- Full ID: `"pkcs8:SIGNING:key1:rsa"`
+- Full ID: `"pkcs8:signing:key1:rsa"`
 
 This is a known issue in the backend implementation. The tests account for this by checking for minimum key counts rather than exact counts.
 

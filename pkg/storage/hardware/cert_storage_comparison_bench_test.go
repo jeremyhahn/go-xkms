@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build (tpm2 || pkcs11) && !integration
+//go:build !integration
 
 package hardware
 
@@ -116,7 +116,7 @@ func BenchmarkComparison_GetCert(b *testing.B) {
 		// Pre-populate
 		for i := 0; i < 100; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -137,7 +137,7 @@ func BenchmarkComparison_GetCert(b *testing.B) {
 		// Pre-populate (limited)
 		for i := 0; i < 4; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -158,7 +158,7 @@ func BenchmarkComparison_GetCert(b *testing.B) {
 		// Pre-populate
 		for i := 0; i < 100; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -182,7 +182,7 @@ func BenchmarkComparison_GetCert(b *testing.B) {
 		// Pre-populate hardware
 		for i := 0; i < 100; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			hybrid.SaveCert(id, cert)
+			_ = hybrid.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -206,7 +206,7 @@ func BenchmarkComparison_GetCert(b *testing.B) {
 		// Pre-populate external
 		for i := 0; i < 100; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			external.SaveCert(id, cert)
+			_ = external.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -235,7 +235,7 @@ func BenchmarkComparison_DeleteCert(b *testing.B) {
 		// Pre-populate
 		for i := 0; i < b.N; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -254,7 +254,7 @@ func BenchmarkComparison_DeleteCert(b *testing.B) {
 		// Pre-populate
 		for i := 0; i < b.N; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -273,7 +273,7 @@ func BenchmarkComparison_DeleteCert(b *testing.B) {
 		// Pre-populate
 		for i := 0; i < b.N; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -295,8 +295,8 @@ func BenchmarkComparison_DeleteCert(b *testing.B) {
 		// Pre-populate both
 		for i := 0; i < b.N; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			hardware.SaveCert(id, cert)
-			external.SaveCert(id, cert)
+			_ = hardware.SaveCert(id, cert)
+			_ = external.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -325,7 +325,7 @@ func BenchmarkComparison_ListCerts(b *testing.B) {
 			storage := newBenchMockPKCS11Storage()
 			for i := 0; i < count; i++ {
 				id := fmt.Sprintf("cert-%d", i)
-				storage.SaveCert(id, cert)
+				_ = storage.SaveCert(id, cert)
 			}
 
 			b.ResetTimer()
@@ -349,7 +349,7 @@ func BenchmarkComparison_ListCerts(b *testing.B) {
 				}
 				for i := 0; i < actualCount; i++ {
 					id := fmt.Sprintf("cert-%d", i)
-					storage.SaveCert(id, cert)
+					_ = storage.SaveCert(id, cert)
 				}
 
 				b.ResetTimer()
@@ -368,7 +368,7 @@ func BenchmarkComparison_ListCerts(b *testing.B) {
 			storage := newBenchMockExternalStorage()
 			for i := 0; i < count; i++ {
 				id := fmt.Sprintf("cert-%d", i)
-				storage.SaveCert(id, cert)
+				_ = storage.SaveCert(id, cert)
 			}
 
 			b.ResetTimer()
@@ -390,7 +390,7 @@ func BenchmarkComparison_ListCerts(b *testing.B) {
 			// Populate both
 			for i := 0; i < count; i++ {
 				id := fmt.Sprintf("cert-%d", i)
-				hybrid.SaveCert(id, cert)
+				_ = hybrid.SaveCert(id, cert)
 			}
 
 			b.ResetTimer()
@@ -417,7 +417,7 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 		storage := newBenchMockPKCS11Storage()
 		for i := 0; i < 100; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -427,7 +427,7 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 			i := 0
 			for pb.Next() {
 				id := fmt.Sprintf("cert-%d", i%100)
-				storage.GetCert(id)
+				_, _ = storage.GetCert(id)
 				i++
 			}
 		})
@@ -438,7 +438,7 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 		storage := newBenchMockTPM2Storage()
 		for i := 0; i < 4; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -448,7 +448,7 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 			i := 0
 			for pb.Next() {
 				id := fmt.Sprintf("cert-%d", i%4)
-				storage.GetCert(id)
+				_, _ = storage.GetCert(id)
 				i++
 			}
 		})
@@ -459,7 +459,7 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 		storage := newBenchMockExternalStorage()
 		for i := 0; i < 100; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -469,7 +469,7 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 			i := 0
 			for pb.Next() {
 				id := fmt.Sprintf("cert-%d", i%100)
-				storage.GetCert(id)
+				_, _ = storage.GetCert(id)
 				i++
 			}
 		})
@@ -483,11 +483,11 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 
 		for i := 0; i < 50; i++ {
 			id := fmt.Sprintf("hw-cert-%d", i)
-			hardware.SaveCert(id, cert)
+			_ = hardware.SaveCert(id, cert)
 		}
 		for i := 0; i < 50; i++ {
 			id := fmt.Sprintf("ext-cert-%d", i)
-			external.SaveCert(id, cert)
+			_ = external.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -502,7 +502,7 @@ func BenchmarkComparison_ConcurrentReads(b *testing.B) {
 				} else {
 					id = fmt.Sprintf("ext-cert-%d", i%50)
 				}
-				hybrid.GetCert(id)
+				_, _ = hybrid.GetCert(id)
 				i++
 			}
 		})
@@ -522,7 +522,7 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 		storage := newBenchMockPKCS11Storage()
 		for i := 0; i < 50; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -531,11 +531,11 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			switch i % 4 {
 			case 0, 1:
-				storage.GetCert(fmt.Sprintf("cert-%d", i%50))
+				_, _ = storage.GetCert(fmt.Sprintf("cert-%d", i%50))
 			case 2:
-				storage.SaveCert(fmt.Sprintf("new-%d", i), cert)
+				_ = storage.SaveCert(fmt.Sprintf("new-%d", i), cert)
 			case 3:
-				storage.ListCerts()
+				_, _ = storage.ListCerts()
 			}
 		}
 	})
@@ -544,7 +544,7 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 		storage := newBenchMockTPM2Storage()
 		for i := 0; i < 4; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -553,11 +553,11 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			switch i % 4 {
 			case 0, 1:
-				storage.GetCert(fmt.Sprintf("cert-%d", i%4))
+				_, _ = storage.GetCert(fmt.Sprintf("cert-%d", i%4))
 			case 2:
-				storage.SaveCert(fmt.Sprintf("new-%d", i), cert)
+				_ = storage.SaveCert(fmt.Sprintf("new-%d", i), cert)
 			case 3:
-				storage.ListCerts()
+				_, _ = storage.ListCerts()
 			}
 		}
 	})
@@ -566,7 +566,7 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 		storage := newBenchMockExternalStorage()
 		for i := 0; i < 50; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			storage.SaveCert(id, cert)
+			_ = storage.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -575,11 +575,11 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			switch i % 4 {
 			case 0, 1:
-				storage.GetCert(fmt.Sprintf("cert-%d", i%50))
+				_, _ = storage.GetCert(fmt.Sprintf("cert-%d", i%50))
 			case 2:
-				storage.SaveCert(fmt.Sprintf("new-%d", i), cert)
+				_ = storage.SaveCert(fmt.Sprintf("new-%d", i), cert)
 			case 3:
-				storage.ListCerts()
+				_, _ = storage.ListCerts()
 			}
 		}
 	})
@@ -591,7 +591,7 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 
 		for i := 0; i < 50; i++ {
 			id := fmt.Sprintf("cert-%d", i)
-			hybrid.SaveCert(id, cert)
+			_ = hybrid.SaveCert(id, cert)
 		}
 
 		b.ResetTimer()
@@ -600,11 +600,11 @@ func BenchmarkComparison_Throughput(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			switch i % 4 {
 			case 0, 1:
-				hybrid.GetCert(fmt.Sprintf("cert-%d", i%50))
+				_, _ = hybrid.GetCert(fmt.Sprintf("cert-%d", i%50))
 			case 2:
-				hybrid.SaveCert(fmt.Sprintf("new-%d", i), cert)
+				_ = hybrid.SaveCert(fmt.Sprintf("new-%d", i), cert)
 			case 3:
-				hybrid.ListCerts()
+				_, _ = hybrid.ListCerts()
 			}
 		}
 	})

@@ -19,6 +19,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"sync"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
@@ -51,7 +52,7 @@ var _ types.Backend = (*Backend)(nil)
 // NewBackend creates a new YubiKey backend instance
 func NewBackend(config *Config) (*Backend, error) {
 	if config == nil {
-		return nil, fmt.Errorf("yubikey: config is required")
+		return nil, ErrConfigRequired
 	}
 
 	// Apply defaults
@@ -59,7 +60,7 @@ func NewBackend(config *Config) (*Backend, error) {
 
 	// Validate configuration
 	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("yubikey: invalid configuration: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrConfigRequired, err)
 	}
 
 	b := &Backend{
@@ -126,7 +127,7 @@ func (b *Backend) Initialize() error {
 	}
 
 	if len(slots) == 0 {
-		return fmt.Errorf("yubikey: no YubiKey device found")
+		return ErrNoDevice
 	}
 
 	b.slotID = slots[0]
@@ -253,17 +254,17 @@ func (b *Backend) GetFirmwareVersion() *FirmwareVersion {
 // Returns random bytes or an error if the YubiKey RNG is unavailable.
 func (b *Backend) GenerateRandom(length int) ([]byte, error) {
 	if !b.initialized {
-		return nil, fmt.Errorf("yubikey: backend not initialized")
+		return nil, ErrNotInitialized
 	}
 
 	if length <= 0 {
-		return nil, fmt.Errorf("yubikey: invalid length %d, must be > 0", length)
+		return nil, fmt.Errorf("%w: must be > 0, got %d", ErrInvalidLength, length)
 	}
 
 	// YubiKey PKCS#11 has limits on single RNG calls
 	// Recommended max is 1024 bytes per call
 	if length > 1024 {
-		return nil, fmt.Errorf("yubikey: length %d exceeds maximum 1024 bytes per call", length)
+		return nil, fmt.Errorf("%w: got %d bytes, maximum is 1024", ErrMaxLengthExceeded, length)
 	}
 
 	// Use PKCS#11 C_GenerateRandom
@@ -315,7 +316,8 @@ func (b *Backend) Capabilities() types.Capabilities {
 		HardwareBacked:      true,
 		Signing:             true,
 		Decryption:          true,
-		SymmetricEncryption: false, // YubiKey PIV doesn't support symmetric encryption directly
+		SymmetricEncryption: true,  // Envelope encryption with YubiKey PIV RSA key
+		Sealing:             true,  // Envelope encryption via RSA key wrap
 		Import:              false, // YubiKey keys are non-exportable (can't import wrapped keys)
 		Export:              false, // YubiKey keys are non-exportable
 	}
@@ -327,7 +329,7 @@ func (b *Backend) ensureInitialized() error {
 	defer b.mu.RUnlock()
 
 	if !b.initialized {
-		return fmt.Errorf("yubikey: backend not initialized")
+		return ErrNotInitialized
 	}
 	return nil
 }
@@ -339,7 +341,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	}
 
 	if b.config.Slot == nil {
-		return nil, fmt.Errorf("yubikey: PIV slot must be specified in config")
+		return nil, ErrSlotRequired
 	}
 
 	// YubiKey PIV key generation requires:
@@ -413,7 +415,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	case x509.ECDSA:
 		return b.generateECDSAKeyPair(attrs, []byte{ckaid})
 	default:
-		return nil, fmt.Errorf("yubikey: unsupported key algorithm: %v", attrs.KeyAlgorithm)
+		return nil, fmt.Errorf("%w: %v", ErrUnsupportedAlgorithm, attrs.KeyAlgorithm)
 	}
 }
 
@@ -426,11 +428,11 @@ func (b *Backend) generateRSAKeyPair(attrs *types.KeyAttributes, ckaid []byte) (
 
 	// Check firmware version for larger key sizes
 	if keySize == 3072 && !b.SupportsRSA3072() {
-		return nil, fmt.Errorf("yubikey: RSA 3072 requires firmware 5.7+, have %d.%d",
+		return nil, fmt.Errorf("%w: have %d.%d", ErrFirmwareRequired,
 			b.firmwareVer.Major, b.firmwareVer.Minor)
 	}
 	if keySize == 4096 && !b.SupportsRSA4096() {
-		return nil, fmt.Errorf("yubikey: RSA 4096 requires firmware 5.7+, have %d.%d",
+		return nil, fmt.Errorf("%w: have %d.%d", ErrFirmwareRequired,
 			b.firmwareVer.Major, b.firmwareVer.Minor)
 	}
 
@@ -439,7 +441,7 @@ func (b *Backend) generateRSAKeyPair(attrs *types.KeyAttributes, ckaid []byte) (
 	case 1024, 2048, 3072, 4096:
 		// Valid sizes
 	default:
-		return nil, fmt.Errorf("yubikey: invalid RSA key size: %d (must be 1024, 2048, 3072, or 4096)", keySize)
+		return nil, fmt.Errorf("%w: got %d (must be 1024, 2048, 3072, or 4096)", ErrInvalidKeySize, keySize)
 	}
 
 	label := attrs.CN
@@ -477,15 +479,15 @@ func (b *Backend) generateRSAKeyPair(attrs *types.KeyAttributes, ckaid []byte) (
 
 	// Return a signer that uses the PKCS#11 backend (which now has the key)
 	// The key was generated on our session, but the PKCS#11 backend can find it by CKA_ID
-	_ = pubHandle
-	_ = privHandle
+	// Log generated handles for debugging
+	log.Printf("yubikey: generated RSA key pair with handles pub=%d priv=%d", pubHandle, privHandle)
 	return b.pkcs11.GetKey(attrs)
 }
 
 // generateECDSAKeyPair generates an ECDSA key pair using direct PKCS#11 calls
 func (b *Backend) generateECDSAKeyPair(attrs *types.KeyAttributes, ckaid []byte) (crypto.PrivateKey, error) {
 	if attrs.ECCAttributes == nil || attrs.ECCAttributes.Curve == nil {
-		return nil, fmt.Errorf("yubikey: ECC curve is required")
+		return nil, ErrCurveRequired
 	}
 
 	// Map curve to PKCS#11 OID
@@ -496,9 +498,9 @@ func (b *Backend) generateECDSAKeyPair(attrs *types.KeyAttributes, ckaid []byte)
 	case "P-384":
 		curve = []byte{0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22}
 	case "P-521":
-		return nil, fmt.Errorf("yubikey: P-521 not supported by YubiKey PIV")
+		return nil, ErrP521NotSupported
 	default:
-		return nil, fmt.Errorf("yubikey: unsupported curve: %s", attrs.ECCAttributes.Curve.Params().Name)
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedCurve, attrs.ECCAttributes.Curve.Params().Name)
 	}
 
 	label := attrs.CN
@@ -534,8 +536,8 @@ func (b *Backend) generateECDSAKeyPair(attrs *types.KeyAttributes, ckaid []byte)
 	}
 
 	// Return a signer that uses the PKCS#11 backend (which now has the key)
-	_ = pubHandle
-	_ = privHandle
+	// Log generated handles for debugging
+	log.Printf("yubikey: generated ECDSA key pair with handles pub=%d priv=%d", pubHandle, privHandle)
 	return b.pkcs11.GetKey(attrs)
 }
 
@@ -613,7 +615,7 @@ func (b *Backend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Signer, error)
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("yubikey: generated key does not implement crypto.Signer")
+		return nil, fmt.Errorf("%w: got %T", ErrNotSigner, key)
 	}
 	return signer, nil
 }
@@ -628,7 +630,7 @@ func (b *Backend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Signer, erro
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("yubikey: generated key does not implement crypto.Signer")
+		return nil, fmt.Errorf("%w: got %T", ErrNotSigner, key)
 	}
 	return signer, nil
 }
@@ -643,7 +645,7 @@ func (b *Backend) GenerateEd25519(attrs *types.KeyAttributes) (crypto.Signer, er
 	}
 	signer, ok := key.(crypto.Signer)
 	if !ok {
-		return nil, fmt.Errorf("yubikey: generated key does not implement crypto.Signer")
+		return nil, fmt.Errorf("%w: got %T", ErrNotSigner, key)
 	}
 	return signer, nil
 }

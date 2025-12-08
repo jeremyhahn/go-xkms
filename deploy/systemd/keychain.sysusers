@@ -1,0 +1,8 @@
+# systemd-sysusers configuration for go-keychain
+# Install to: /usr/lib/sysusers.d/keychain.conf
+#
+# This creates the keychain user and group used by the service.
+# Run: systemd-sysusers --create /usr/lib/sysusers.d/keychain.conf
+
+# Type  Name      ID    GECOS                      Home             Shell
+u       keychain  -     "Go Keychain Service"      /var/lib/keychain /usr/sbin/nologin

@@ -34,6 +34,7 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -344,7 +345,7 @@ func TestKeyStore_ListKeys(t *testing.T) {
 	}
 
 	// Note: Software backend currently lists keys with different ID formats,
-	// resulting in duplicates (e.g., "key1" and "pkcs8:SIGNING:key1:rsa").
+	// resulting in duplicates (e.g., "key1" and "pkcs8:signing:key1:rsa").
 	// This is a known issue. For now, we verify that at least our keys are present.
 	expectedMinCount := initialCount + len(keyNames)
 	if len(keys) < expectedMinCount {

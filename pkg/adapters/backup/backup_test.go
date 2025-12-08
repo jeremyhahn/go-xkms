@@ -31,6 +31,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// skipIfRoot skips the test if running as root, since root bypasses file permission checks
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("Skipping test that relies on file permissions (running as root)")
+	}
+}
+
 func TestNewFileBackupAdapter(t *testing.T) {
 	// Test creating a new adapter with a valid path
 	t.Run("ValidPath", func(t *testing.T) {
@@ -53,6 +61,26 @@ func TestNewFileBackupAdapter(t *testing.T) {
 		invalidPath := filepath.Join(filePath, "subdir")
 		_, err = NewFileBackupAdapter(invalidPath)
 		assert.Error(t, err)
+	})
+
+	// Test loadIndex error during initialization
+	t.Run("LoadIndexError", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		// Create a file instead of a directory for basePath
+		badPath := filepath.Join(tempDir, "file")
+		err := os.WriteFile(badPath, []byte("content"), 0600)
+		require.NoError(t, err)
+
+		// Make it unreadable
+		err = os.Chmod(badPath, 0000)
+		if err == nil {
+			defer func() { _ = os.Chmod(badPath, 0600) }()
+
+			// This should fail when trying to read the directory
+			_, err = NewFileBackupAdapter(badPath)
+			assert.Error(t, err)
+		}
 	})
 }
 
@@ -172,6 +200,39 @@ func TestFileBackupAdapter_CreateBackup(t *testing.T) {
 		_, err := adapter.CreateBackup(ctx, data, opts)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "not yet implemented")
+	})
+
+	// Test creating a backup with nil options (should use defaults)
+	t.Run("NilOptions", func(t *testing.T) {
+		data := createTestBackupData(t, 1)
+		metadata, err := adapter.CreateBackup(ctx, data, nil)
+		require.NoError(t, err)
+		assert.Equal(t, BackupFormatJSON, metadata.Format)
+	})
+
+	// Test creating a backup with invalid format string
+	t.Run("InvalidFormat", func(t *testing.T) {
+		data := createTestBackupData(t, 1)
+		opts := &BackupOptions{
+			Format: "invalid-format",
+		}
+		_, err := adapter.CreateBackup(ctx, data, opts)
+		assert.Error(t, err)
+		assert.ErrorIs(t, err, ErrInvalidBackupFormat)
+	})
+
+	// Test encryption failure path
+	t.Run("EncryptionFailure", func(t *testing.T) {
+		data := createTestBackupData(t, 1)
+		// Use invalid key size to trigger encryption error
+		invalidKey := make([]byte, 16) // Should be 32 for AES-256
+		opts := &BackupOptions{
+			Format:        BackupFormatEncrypted,
+			EncryptionKey: invalidKey,
+		}
+		_, err := adapter.CreateBackup(ctx, data, opts)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to encrypt backup")
 	})
 }
 
@@ -1323,6 +1384,7 @@ func TestFileBackupAdapter_ExportBackup_ReadError(t *testing.T) {
 }
 
 func TestFileBackupAdapter_ImportBackup_FileWriteError(t *testing.T) {
+	skipIfRoot(t)
 	tempDir := t.TempDir()
 	adapter, err := NewFileBackupAdapter(tempDir)
 	require.NoError(t, err)
@@ -1652,6 +1714,17 @@ func TestFileBackupAdapter_ImportBackup_EmptyID(t *testing.T) {
 	metadata, err := adapter.ImportBackup(ctx, sourcePath)
 	require.NoError(t, err)
 	assert.NotEmpty(t, metadata.ID)
+}
+
+func TestFileBackupAdapter_DecompressData_UnsupportedAlgorithm(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	// Test decompression with unsupported algorithm
+	_, err = adapter.decompressData([]byte("test"), "unsupported")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported compression algorithm")
 }
 
 // Helper functions

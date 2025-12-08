@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build hw_integration && tpm2
+//go:build hw_integration
 
 package storage_test
 
@@ -31,7 +31,7 @@ import (
 func TestRealTPM2Hardware(t *testing.T) {
 	hwStorage := initRealTPM2Hardware(t)
 	if hwStorage == nil {
-		t.Skip("Real TPM2 hardware not available")
+		t.Fatal("Real TPM2 hardware not available")
 	}
 	defer hwStorage.Close()
 

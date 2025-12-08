@@ -47,6 +47,9 @@ service KeystoreService {
   // Decrypt decrypts data with the specified key
   rpc Decrypt(DecryptRequest) returns (DecryptResponse);
 
+  // EncryptAsym encrypts data using asymmetric encryption (RSA-OAEP)
+  rpc EncryptAsym(EncryptAsymRequest) returns (EncryptAsymResponse);
+
   // SaveCert stores a certificate
   rpc SaveCert(SaveCertRequest) returns (SaveCertResponse);
 
@@ -271,6 +274,19 @@ message DecryptRequest {
 // DecryptResponse contains the decrypted data
 message DecryptResponse {
   bytes plaintext = 1;
+}
+
+// EncryptAsymRequest requests asymmetric encryption (RSA-OAEP)
+message EncryptAsymRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes plaintext = 3;
+  string hash = 4;  // Hash algorithm for OAEP (e.g., "sha256")
+}
+
+// EncryptAsymResponse contains the asymmetrically encrypted data
+message EncryptAsymResponse {
+  bytes ciphertext = 1;
 }
 
 // SaveCertRequest requests storage of a certificate

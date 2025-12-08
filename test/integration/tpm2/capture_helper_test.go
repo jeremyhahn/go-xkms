@@ -1,4 +1,4 @@
-//go:build integration && tpm2
+//go:build integration
 
 package integration
 

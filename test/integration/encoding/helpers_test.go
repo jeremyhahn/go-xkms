@@ -25,6 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/require"
 )

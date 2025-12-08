@@ -971,13 +971,13 @@ keychain_keys_total{backend}
 FROM golang:1.21-alpine AS builder
 WORKDIR /build
 COPY . .
-RUN go build -o keychain-server ./cmd/server
+RUN go build -o keychaind ./cmd/server
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
-COPY --from=builder /build/keychain-server /usr/local/bin/
+COPY --from=builder /build/keychaind /usr/local/bin/
 EXPOSE 8443 9443 9444 9090
-ENTRYPOINT ["keychain-server"]
+ENTRYPOINT ["keychaind"]
 ```
 
 ### Kubernetes

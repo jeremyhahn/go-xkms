@@ -137,20 +137,20 @@ func getYubiKeyConfig(t *testing.T) (*pkcs11.Config, bool) {
 func TestYubiKeyPKCS11Integration(t *testing.T) {
 	config, available := getYubiKeyConfig(t)
 	if !available {
-		t.Skip("YubiKey PKCS#11 library not found. Install Yubico PIV Tool or set YUBIKEY_PKCS11_LIBRARY environment variable.")
+		t.Fatal("YubiKey PKCS#11 library not found. Install Yubico PIV Tool or set YUBIKEY_PKCS11_LIBRARY environment variable.")
 	}
 
 	// Create PKCS11 backend
 	yubikey, err := pkcs11.NewBackend(config)
 	if err != nil {
-		t.Skipf("Failed to create YubiKey PKCS#11 backend: %v (YubiKey may not be connected)", err)
+		t.Fatalf("Failed to create YubiKey PKCS#11 backend: %v (YubiKey may not be connected)", err)
 	}
 	defer yubikey.Close()
 
 	// Initialize (login to the YubiKey)
 	err = yubikey.Initialize(config.SOPIN, config.PIN)
 	if err != nil && err != pkcs11.ErrAlreadyInitialized {
-		t.Skipf("Failed to initialize YubiKey PKCS#11 backend: %v", err)
+		t.Fatalf("Failed to initialize YubiKey PKCS#11 backend: %v", err)
 	}
 
 	t.Log("=== YubiKey PKCS#11 Integration Tests ===")
@@ -546,29 +546,29 @@ func TestYubiKeyPKCS11Integration(t *testing.T) {
 // Note: Direct RNG access via Backend.Random() is not implemented.
 // YubiKey RNG is accessed through crypto/rand tests instead.
 func TestYubiKeyRNG(t *testing.T) {
-	t.Skip("YubiKey RNG tests are in test/integration/crypto/rand_yubikey_integration_test.go")
+	t.Fatal("YubiKey RNG tests are in test/integration/crypto/rand_yubikey_integration_test.go")
 }
 
 // TestYubiKeyStressTest performs stress testing on the YubiKey
 func TestYubiKeyStressTest(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping stress test in short mode")
+		t.Fatal("Skipping stress test in short mode")
 	}
 
 	config, available := getYubiKeyConfig(t)
 	if !available {
-		t.Skip("YubiKey PKCS#11 library not found")
+		t.Fatal("YubiKey PKCS#11 library not found")
 	}
 
 	yubikey, err := pkcs11.NewBackend(config)
 	if err != nil {
-		t.Skipf("Failed to create YubiKey PKCS#11 backend: %v", err)
+		t.Fatalf("Failed to create YubiKey PKCS#11 backend: %v", err)
 	}
 	defer yubikey.Close()
 
 	err = yubikey.Initialize(config.SOPIN, config.PIN)
 	if err != nil && err != pkcs11.ErrAlreadyInitialized {
-		t.Skipf("Failed to initialize YubiKey: %v", err)
+		t.Fatalf("Failed to initialize YubiKey: %v", err)
 	}
 
 	t.Run("MultipleSignOperations", func(t *testing.T) {

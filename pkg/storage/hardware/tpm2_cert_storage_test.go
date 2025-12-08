@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2
-
 package hardware
 
 import (
@@ -660,8 +658,7 @@ func (sc *simulatorCloser) Send(input []byte) ([]byte, error) {
 }
 
 func (sc *simulatorCloser) Close() error {
-	sc.sim.Close()
-	return nil
+	return sc.sim.Close()
 }
 
 // generateTestCert creates a test X.509 certificate

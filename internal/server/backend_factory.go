@@ -101,13 +101,13 @@ func Initialize(config *BackendFactoryConfig) error {
 		}
 	}
 
-	// Initialize the facade
-	facadeConfig := &keychain.FacadeConfig{
+	// Initialize the service
+	serviceConfig := &keychain.ServiceConfig{
 		Backends:       keystores,
 		DefaultBackend: defaultBackend,
 	}
 
-	return keychain.Initialize(facadeConfig)
+	return keychain.Initialize(serviceConfig)
 }
 
 // getDefaultBackendConfigs returns default configurations for all compiled-in backends.

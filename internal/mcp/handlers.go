@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -27,6 +28,23 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
+
+// findKeyByCN searches for a key by its common name and returns the full attributes.
+// It uses ListKeys to find all keys and matches by CN.
+func (s *Server) findKeyByCN(keyID string) (*types.KeyAttributes, error) {
+	keys, err := s.keystore.ListKeys()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list keys: %w", err)
+	}
+
+	for _, attr := range keys {
+		if attr.CN == keyID {
+			return attr, nil
+		}
+	}
+
+	return nil, fmt.Errorf("key not found: %s", keyID)
+}
 
 // handleHealth handles the health check method
 func (s *Server) handleHealth(req *JSONRPCRequest) (interface{}, error) {
@@ -72,6 +90,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 
 	switch params.KeyType {
 	case "rsa":
+		attrs.KeyType = types.KeyTypeTLS
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: params.KeySize,
 		}
@@ -81,6 +100,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		privKey, err = s.keystore.GenerateRSA(attrs)
 
 	case "ecdsa":
+		attrs.KeyType = types.KeyTypeTLS
 		attrs.ECCAttributes = &types.ECCAttributes{}
 		if params.Curve != "" {
 			curve, curveErr := types.ParseCurve(params.Curve)
@@ -98,6 +118,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		privKey, err = s.keystore.GenerateECDSA(attrs)
 
 	case "ed25519":
+		attrs.KeyType = types.KeyTypeTLS
 		privKey, err = s.keystore.GenerateEd25519(attrs)
 
 	case "aes":
@@ -186,16 +207,10 @@ func (s *Server) handleGetKey(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
-	}
-
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
-		}
-		attrs.StoreType = storeType
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	privKey, err := s.keystore.GetKey(attrs)
@@ -235,16 +250,10 @@ func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
-	}
-
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
-		}
-		attrs.StoreType = storeType
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	if err := s.keystore.DeleteKey(attrs); err != nil {
@@ -293,16 +302,10 @@ func (s *Server) handleSign(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
-	}
-
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
-		}
-		attrs.StoreType = storeType
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	signer, err := s.keystore.Signer(attrs)
@@ -310,7 +313,18 @@ func (s *Server) handleSign(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("failed to get signer: %w", err)
 	}
 
-	// Hash the data
+	// Ed25519 uses pure signing (no prehashing) - pass raw message with Hash(0)
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		signature, err := signer.Sign(nil, params.Data, crypto.Hash(0))
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign: %w", err)
+		}
+		return SignResult{
+			Signature: signature,
+		}, nil
+	}
+
+	// Hash the data for other algorithms
 	hash, err := parseHashAlgorithm(params.Hash)
 	if err != nil {
 		return nil, err
@@ -342,16 +356,10 @@ func (s *Server) handleVerify(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
-	}
-
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
-		}
-		attrs.StoreType = storeType
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	// Get the key
@@ -365,24 +373,22 @@ func (s *Server) handleVerify(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("failed to extract public key: %w", err)
 	}
 
-	// Hash the data
-	hash, err := parseHashAlgorithm(params.Hash)
-	if err != nil {
-		return nil, err
-	}
-
-	hasher := hash.New()
-	hasher.Write(params.Data)
-	digest := hasher.Sum(nil)
-
 	// Convert signature to bytes
 	var sigBytes []byte
 	switch sig := params.Signature.(type) {
 	case []byte:
 		sigBytes = sig
 	case string:
-		sigBytes = []byte(sig)
+		// JSON encodes []byte as base64 string, so decode it
+		decoded, err := base64.StdEncoding.DecodeString(sig)
+		if err != nil {
+			// Not base64, treat as raw bytes
+			sigBytes = []byte(sig)
+		} else {
+			sigBytes = decoded
+		}
 	case []interface{}:
+		// JSON array of numbers (e.g., [0, 255, 128, ...])
 		sigBytes = make([]byte, len(sig))
 		for i, v := range sig {
 			if b, ok := v.(float64); ok {
@@ -394,6 +400,25 @@ func (s *Server) handleVerify(req *JSONRPCRequest) (interface{}, error) {
 		sigJSON, _ := json.Marshal(params.Signature)
 		_ = json.Unmarshal(sigJSON, &sigBytes) // Best-effort unmarshal
 	}
+
+	// Ed25519 uses pure verification (no prehashing) - verify against raw data
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		valid, err := verifySignature(pubKey, params.Data, sigBytes, crypto.Hash(0))
+		if err != nil {
+			return nil, fmt.Errorf("failed to verify: %w", err)
+		}
+		return VerifyResult{Valid: valid}, nil
+	}
+
+	// Hash the data for other algorithms
+	hash, err := parseHashAlgorithm(params.Hash)
+	if err != nil {
+		return nil, err
+	}
+
+	hasher := hash.New()
+	hasher.Write(params.Data)
+	digest := hasher.Sum(nil)
 
 	// Verify signature
 	valid, err := verifySignature(pubKey, digest, sigBytes, hash)

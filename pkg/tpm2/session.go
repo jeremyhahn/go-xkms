@@ -365,16 +365,19 @@ func (tpm *TPM2) LoadKeyPair(
 	}
 
 	// Load the public and private area blobs
+	tpm.logger.Infof("tpm: LoadKeyPair - loading blobs for CN=%s, KeyType=%v", keyAttrs.CN, keyAttrs.KeyType)
 	priv, err := backend.Get(keyAttrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
-		tpm.logger.Errorf("%s: %s", err, keyAttrs.CN)
+		tpm.logger.Errorf("tpm: LoadKeyPair - failed to load private blob: %s: %s", err, keyAttrs.CN)
 		return nil, err
 	}
+	tpm.logger.Infof("tpm: LoadKeyPair - loaded private blob: %d bytes", len(priv))
 	pub, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
-		tpm.logger.Errorf("%s: %s", err, keyAttrs.CN)
+		tpm.logger.Errorf("tpm: LoadKeyPair - failed to load public blob: %s: %s", err, keyAttrs.CN)
 		return nil, err
 	}
+	tpm.logger.Infof("tpm: LoadKeyPair - loaded public blob: %d bytes", len(pub))
 
 	if keyAttrs.Password != nil && !keyAttrs.PlatformPolicy {
 		auth = keyAttrs.Password.Bytes()

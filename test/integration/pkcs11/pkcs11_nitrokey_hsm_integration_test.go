@@ -53,7 +53,7 @@ func TestNitrokeyHSM(t *testing.T) {
 	// Check if OpenSC library exists
 	libPath := "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so"
 	if _, err := os.Stat(libPath); os.IsNotExist(err) {
-		t.Skip("Skipping Nitrokey HSM tests: OpenSC PKCS#11 library not found")
+		t.Fatal("Nitrokey HSM tests require OpenSC PKCS#11 library")
 	}
 
 	// Create storage backends

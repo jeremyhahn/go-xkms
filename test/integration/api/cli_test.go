@@ -43,7 +43,7 @@ func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, err
 func TestCLIVersion(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
 	}
 
 	stdout, stderr, err := execCLI(t, cfg, "version")
@@ -64,7 +64,10 @@ func TestCLIVersion(t *testing.T) {
 func TestCLIListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
+	}
+	if !isUnixSocketAvailable(t, cfg) {
+		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	stdout, stderr, err := execCLI(t, cfg, "backends", "list")
@@ -79,8 +82,8 @@ func TestCLIListBackends(t *testing.T) {
 		t.Fatal("Backends list command produced no output")
 	}
 
-	// Should contain at least pkcs8 backend
-	assertContains(t, output, "pkcs8", "Output should contain pkcs8 backend")
+	// Should contain at least software backend
+	assertContains(t, output, "software", "Output should contain software backend")
 
 	t.Logf("CLI backends list output:\n%s", strings.TrimSpace(output))
 }
@@ -89,10 +92,13 @@ func TestCLIListBackends(t *testing.T) {
 func TestCLIBackendInfo(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
+	}
+	if !isUnixSocketAvailable(t, cfg) {
+		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
-	stdout, stderr, err := execCLI(t, cfg, "backends", "info", "pkcs8")
+	stdout, stderr, err := execCLI(t, cfg, "backends", "info", "software")
 	if err != nil {
 		t.Logf("stdout: %s", stdout)
 		t.Logf("stderr: %s", stderr)
@@ -104,7 +110,7 @@ func TestCLIBackendInfo(t *testing.T) {
 		t.Fatal("Backend info command produced no output")
 	}
 
-	assertContains(t, output, "pkcs8", "Output should contain backend name")
+	assertContains(t, output, "software", "Output should contain backend name")
 
 	t.Logf("CLI backend info output:\n%s", strings.TrimSpace(output))
 }
@@ -113,7 +119,7 @@ func TestCLIBackendInfo(t *testing.T) {
 func TestCLIHelp(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
 	}
 
 	tests := []struct {
@@ -147,7 +153,7 @@ func TestCLIHelp(t *testing.T) {
 func TestCLIInvalidCommand(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
 	}
 
 	_, stderr, err := execCLI(t, cfg, "invalid-command")
@@ -167,7 +173,10 @@ func TestCLIInvalidCommand(t *testing.T) {
 func TestCLIGenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
+	}
+	if !isUnixSocketAvailable(t, cfg) {
+		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("cli-key")
@@ -179,23 +188,25 @@ func TestCLIGenerateKey(t *testing.T) {
 	defer os.RemoveAll(keyDir)
 
 	tests := []struct {
-		name    string
-		keyType string
-		keySize string
-		curve   string
+		name         string
+		keyType      string
+		keyAlgorithm string
+		keySize      string
+		curve        string
 	}{
-		{"RSA 2048", "rsa", "2048", ""},
-		{"ECDSA P256", "ecdsa", "", "P256"},
-		{"Ed25519", "ed25519", "", ""},
+		{"RSA 2048", "rsa", "rsa", "2048", ""},
+		{"ECDSA P256", "ecdsa", "ecdsa", "", "P-256"},
+		{"Ed25519", "ed25519", "ed25519", "", ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testKeyID := fmt.Sprintf("%s-%s", keyID, tt.keyType)
+			testKeyID := fmt.Sprintf("%s-%s", keyID, tt.keyAlgorithm)
 
 			args := []string{"key", "generate", testKeyID,
-				"--backend", "pkcs8",
+				"--backend", "software",
 				"--key-type", tt.keyType,
+				"--key-algorithm", tt.keyAlgorithm,
 				"--key-dir", keyDir,
 			}
 
@@ -213,12 +224,17 @@ func TestCLIGenerateKey(t *testing.T) {
 				assertNoError(t, err, "Generate key command failed")
 			}
 
-			t.Logf("Generated %s key: %s", tt.keyType, testKeyID)
+			t.Logf("Generated %s key: %s", tt.keyAlgorithm, testKeyID)
 
 			// Cleanup - delete the key
 			delArgs := []string{"key", "delete", testKeyID,
-				"--backend", "pkcs8",
+				"--backend", "software",
+				"--key-type", tt.keyType,
+				"--key-algorithm", tt.keyAlgorithm,
 				"--key-dir", keyDir,
+			}
+			if tt.curve != "" {
+				delArgs = append(delArgs, "--curve", tt.curve)
 			}
 			execCLI(t, cfg, delArgs...)
 		})
@@ -229,7 +245,10 @@ func TestCLIGenerateKey(t *testing.T) {
 func TestCLIListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
+	}
+	if !isUnixSocketAvailable(t, cfg) {
+		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("cli-list-key")
@@ -242,8 +261,9 @@ func TestCLIListKeys(t *testing.T) {
 
 	// Generate a test key first
 	genArgs := []string{"key", "generate", keyID,
-		"--backend", "pkcs8",
+		"--backend", "software",
 		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-size", "2048",
 		"--key-dir", keyDir,
 	}
@@ -252,7 +272,9 @@ func TestCLIListKeys(t *testing.T) {
 
 	defer func() {
 		delArgs := []string{"key", "delete", keyID,
-			"--backend", "pkcs8",
+			"--backend", "software",
+			"--key-type", "rsa",
+			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
 		execCLI(t, cfg, delArgs...)
@@ -260,7 +282,7 @@ func TestCLIListKeys(t *testing.T) {
 
 	// List keys
 	stdout, stderr, err := execCLI(t, cfg, "key", "list",
-		"--backend", "pkcs8",
+		"--backend", "software",
 		"--key-dir", keyDir,
 	)
 	if err != nil {
@@ -279,7 +301,10 @@ func TestCLIListKeys(t *testing.T) {
 func TestCLISignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
+	}
+	if !isUnixSocketAvailable(t, cfg) {
+		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("cli-sign-key")
@@ -292,8 +317,9 @@ func TestCLISignVerify(t *testing.T) {
 
 	// Generate key
 	genArgs := []string{"key", "generate", keyID,
-		"--backend", "pkcs8",
+		"--backend", "software",
 		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-size", "2048",
 		"--key-dir", keyDir,
 	}
@@ -302,7 +328,9 @@ func TestCLISignVerify(t *testing.T) {
 
 	defer func() {
 		delArgs := []string{"key", "delete", keyID,
-			"--backend", "pkcs8",
+			"--backend", "software",
+			"--key-type", "rsa",
+			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
 		execCLI(t, cfg, delArgs...)
@@ -320,9 +348,11 @@ func TestCLISignVerify(t *testing.T) {
 	defer os.Remove(sigFile)
 
 	signArgs := []string{"key", "sign", keyID, testData,
-		"--backend", "pkcs8",
+		"--backend", "software",
+		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
-		"--hash", "SHA256",
+		"--hash", "sha256",
 	}
 
 	stdout, stderr, err := execCLI(t, cfg, signArgs...)
@@ -349,7 +379,10 @@ func TestCLISignVerify(t *testing.T) {
 func TestCLIDeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
+	}
+	if !isUnixSocketAvailable(t, cfg) {
+		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("cli-delete-key")
@@ -362,8 +395,9 @@ func TestCLIDeleteKey(t *testing.T) {
 
 	// Generate key
 	genArgs := []string{"key", "generate", keyID,
-		"--backend", "pkcs8",
+		"--backend", "software",
 		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-size", "2048",
 		"--key-dir", keyDir,
 	}
@@ -372,7 +406,9 @@ func TestCLIDeleteKey(t *testing.T) {
 
 	// Delete key
 	delArgs := []string{"key", "delete", keyID,
-		"--backend", "pkcs8",
+		"--backend", "software",
+		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
 	}
 	stdout, stderr, err := execCLI(t, cfg, delArgs...)
@@ -386,7 +422,9 @@ func TestCLIDeleteKey(t *testing.T) {
 
 	// Verify key is gone by trying to list it
 	listArgs := []string{"key", "get", keyID,
-		"--backend", "pkcs8",
+		"--backend", "software",
+		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
 	}
 	_, _, err = execCLI(t, cfg, listArgs...)
@@ -399,7 +437,10 @@ func TestCLIDeleteKey(t *testing.T) {
 func TestCLIGetKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
+		t.Skip("CLI binary required for integration tests. Run: make build")
+	}
+	if !isUnixSocketAvailable(t, cfg) {
+		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("cli-get-key")
@@ -412,8 +453,9 @@ func TestCLIGetKey(t *testing.T) {
 
 	// Generate key
 	genArgs := []string{"key", "generate", keyID,
-		"--backend", "pkcs8",
+		"--backend", "software",
 		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-size", "2048",
 		"--key-dir", keyDir,
 	}
@@ -422,7 +464,9 @@ func TestCLIGetKey(t *testing.T) {
 
 	defer func() {
 		delArgs := []string{"key", "delete", keyID,
-			"--backend", "pkcs8",
+			"--backend", "software",
+			"--key-type", "rsa",
+			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
 		execCLI(t, cfg, delArgs...)
@@ -430,7 +474,9 @@ func TestCLIGetKey(t *testing.T) {
 
 	// Get key details
 	getArgs := []string{"key", "get", keyID,
-		"--backend", "pkcs8",
+		"--backend", "software",
+		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
 	}
 	stdout, stderr, err := execCLI(t, cfg, getArgs...)

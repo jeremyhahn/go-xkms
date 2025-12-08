@@ -73,7 +73,13 @@ func ParseEventLogWithOptions(filePath string, opts ParseEventLogOptions) ([]Eve
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %v", err)
 	}
-	defer func() { _ = file.Close() }()
+	defer func() {
+		if err := file.Close(); err != nil {
+			// Log error during file close, but don't fail the operation
+			// since we've already read the data
+			fmt.Fprintf(os.Stderr, "warning: failed to close event log file: %v\n", err)
+		}
+	}()
 
 	var events []Event
 	eventIndex := 1

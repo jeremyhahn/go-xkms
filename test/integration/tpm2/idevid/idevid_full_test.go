@@ -1,4 +1,4 @@
-//go:build integration && tpm2 && idevid
+//go:build integration && idevid
 
 package idevid
 
@@ -287,7 +287,7 @@ func TestMain(m *testing.M) {
 		os.Setenv("TPM2_SIMULATOR_HOST", "tpm-simulator")
 	}
 	if os.Getenv("TPM2_SIMULATOR_PORT") == "" {
-		os.Setenv("TPM2_SIMULATOR_PORT", "2321")
+		os.Setenv("TPM2_SIMULATOR_PORT", "2421")
 	}
 
 	os.Exit(m.Run())

@@ -683,3 +683,80 @@ func TestParseHashFromSignatureAlgorithm_UnknownAlgo(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown signature algorithm")
 }
+
+// ========================================================================
+// Test ClearPassword
+// ========================================================================
+
+func TestClearPassword_Clear(t *testing.T) {
+	// Create a password with some data
+	password := []byte("secret-password")
+	clearPwd := NewClearPassword(password)
+
+	// Verify the password was stored
+	bytes := clearPwd.Bytes()
+	assert.Equal(t, password, bytes)
+
+	// Clear the password
+	clearPwd.Clear()
+
+	// Verify the password memory was overwritten with zeros
+	bytes = clearPwd.Bytes()
+	for _, b := range bytes {
+		assert.Equal(t, byte(0), b)
+	}
+}
+
+func TestClearPassword_ClearEmpty(t *testing.T) {
+	// Test clearing an empty password
+	clearPwd := NewClearPassword([]byte{})
+	clearPwd.Clear() // Should not panic
+	bytes := clearPwd.Bytes()
+	assert.Empty(t, bytes)
+}
+
+// ========================================================================
+// Test ParseStoreType edge cases
+// ========================================================================
+
+func TestParseStoreType_UnknownType(t *testing.T) {
+	// Test with an unknown store type string
+	result := ParseStoreType("unknown-type")
+	assert.Equal(t, StoreUnknown, result)
+}
+
+// ========================================================================
+// Test Digest edge cases
+// ========================================================================
+
+func TestDigest_UnsupportedHashType(t *testing.T) {
+	// Create test data
+	data := []byte("test data")
+
+	// Test with an unavailable hash type (crypto.Hash(0) is never available)
+	hash, err := Digest(crypto.Hash(0), data)
+	assert.Error(t, err)
+	assert.Nil(t, hash)
+	assert.Contains(t, err.Error(), "hash function not available")
+}
+
+// ========================================================================
+// Test EncodePubKeyPEM edge cases
+// ========================================================================
+
+func TestEncodePubKeyPEM_UnsupportedKeyType(t *testing.T) {
+	// Test with a nil key
+	_, err := EncodePubKeyPEM(nil)
+	assert.Error(t, err)
+}
+
+// ========================================================================
+// Test Deserialize edge cases
+// ========================================================================
+
+func TestDeserialize_InvalidJSON(t *testing.T) {
+	// Test with invalid JSON
+	key, err := Deserialize("not valid json")
+	assert.Error(t, err)
+	assert.Nil(t, key)
+}

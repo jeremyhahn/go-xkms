@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2
-
 package tpm2
 
 import (
@@ -170,7 +168,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	// Save public blob
 	if err := tpm.backend.Save(attrs, publicBlob, ".pub", false); err != nil {
 		// Cleanup private blob on failure
-		tpm.backend.Delete(attrs)
+		_ = tpm.backend.Delete(attrs)
 		return nil, fmt.Errorf("tpm2: failed to save public blob: %w", err)
 	}
 
@@ -482,7 +480,7 @@ func (e *tpm2AESEncrypter) loadKeyMaterial() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tpm2: failed to load sealed key: %w", err)
 	}
-	defer tpm2.FlushContext{FlushHandle: loadResp.ObjectHandle}.Execute(e.tpm.transport)
+	defer func() { _, _ = tpm2.FlushContext{FlushHandle: loadResp.ObjectHandle}.Execute(e.tpm.transport) }()
 
 	// Unseal the key material using TPM2_Unseal
 	unsealResp, err := tpm2.Unseal{

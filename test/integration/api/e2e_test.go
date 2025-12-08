@@ -34,7 +34,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 	hasGRPC := isGRPCServerAvailable(t, cfg)
 
 	if !hasREST && !hasGRPC {
-		t.Fatal("Server interfaces required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server interfaces required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-workflow-key")
@@ -47,7 +47,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 
 			reqBody := map[string]interface{}{
 				"key_id":   keyID,
-				"backend":  "pkcs8",
+				"backend":  "software",
 				"key_type": "rsa",
 				"key_size": 2048,
 			}
@@ -72,7 +72,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 
 			resp, err := grpcClient.client.GetKey(ctx, &pb.GetKeyRequest{
 				KeyId:   keyID,
-				Backend: "pkcs8",
+				Backend: "software",
 			})
 			assertNoError(t, err, "Failed to get key via gRPC")
 
@@ -85,7 +85,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 			t.Log("Step 3: Listing keys via REST...")
 			restClient := NewRESTClient(cfg.RESTBaseURL)
 
-			resp, err := restClient.doRequest("GET", "/api/v1/keys?backend=pkcs8", nil)
+			resp, err := restClient.doRequest("GET", "/api/v1/keys?backend=software", nil)
 			assertNoError(t, err, "Failed to list keys")
 			defer resp.Body.Close()
 
@@ -128,7 +128,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 
 			signResp, err := grpcClient.client.Sign(ctx, &pb.SignRequest{
 				KeyId:   keyID,
-				Backend: "pkcs8",
+				Backend: "software",
 				Data:    testData,
 				Hash:    "SHA256",
 			})
@@ -149,7 +149,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 				"hash":      "SHA256",
 			}
 
-			resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/verify?backend=pkcs8", keyID), verifyReq)
+			resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/verify?backend=software", keyID), verifyReq)
 			assertNoError(t, err, "Failed to verify via REST")
 			defer resp.Body.Close()
 
@@ -173,7 +173,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 			t.Log("Step 6: Deleting key via REST...")
 			restClient := NewRESTClient(cfg.RESTBaseURL)
 
-			resp, err := restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+			resp, err := restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 			assertNoError(t, err, "Failed to delete key via REST")
 			resp.Body.Close()
 
@@ -193,7 +193,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 
 			_, err = grpcClient.client.GetKey(ctx, &pb.GetKeyRequest{
 				KeyId:   keyID,
-				Backend: "pkcs8",
+				Backend: "software",
 			})
 
 			if err == nil {
@@ -211,10 +211,10 @@ func TestE2ERESTToGRPC(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-rest-to-grpc")
@@ -225,7 +225,7 @@ func TestE2ERESTToGRPC(t *testing.T) {
 
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "ecdsa",
 		"curve":    "P256",
 	}
@@ -235,7 +235,7 @@ func TestE2ERESTToGRPC(t *testing.T) {
 	resp.Body.Close()
 
 	defer func() {
-		restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+		restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 	}()
 
 	// Use key via gRPC for signing
@@ -251,7 +251,7 @@ func TestE2ERESTToGRPC(t *testing.T) {
 
 	signResp, err := grpcClient.client.Sign(ctx, &pb.SignRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 		Data:    testData,
 		Hash:    "SHA256",
 	})
@@ -269,10 +269,10 @@ func TestE2EGRPCToREST(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-grpc-to-rest")
@@ -288,7 +288,7 @@ func TestE2EGRPCToREST(t *testing.T) {
 
 	_, err = grpcClient.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 		KeyType: "rsa",
 		KeySize: 2048,
 	})
@@ -297,7 +297,7 @@ func TestE2EGRPCToREST(t *testing.T) {
 	defer func() {
 		grpcClient.client.DeleteKey(context.Background(), &pb.DeleteKeyRequest{
 			KeyId:   keyID,
-			Backend: "pkcs8",
+			Backend: "software",
 		})
 	}()
 
@@ -310,7 +310,7 @@ func TestE2EGRPCToREST(t *testing.T) {
 		"hash": "SHA256",
 	}
 
-	resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=pkcs8", keyID), signReq)
+	resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=software", keyID), signReq)
 	assertNoError(t, err, "Failed to sign via REST")
 	defer resp.Body.Close()
 
@@ -331,10 +331,10 @@ func TestE2EConcurrentAccess(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-concurrent")
@@ -343,7 +343,7 @@ func TestE2EConcurrentAccess(t *testing.T) {
 	restClient := NewRESTClient(cfg.RESTBaseURL)
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
@@ -353,7 +353,7 @@ func TestE2EConcurrentAccess(t *testing.T) {
 	resp.Body.Close()
 
 	defer func() {
-		restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+		restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 	}()
 
 	// Concurrent operations
@@ -369,7 +369,7 @@ func TestE2EConcurrentAccess(t *testing.T) {
 				"hash": "SHA256",
 			}
 
-			resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=pkcs8", keyID), signReq)
+			resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=software", keyID), signReq)
 			if err != nil {
 				t.Errorf("REST sign failed: %v", err)
 				done <- false
@@ -394,7 +394,7 @@ func TestE2EConcurrentAccess(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			_, err := grpcClient.client.Sign(ctx, &pb.SignRequest{
 				KeyId:   keyID,
-				Backend: "pkcs8",
+				Backend: "software",
 				Data:    []byte(fmt.Sprintf("test data %d", i)),
 				Hash:    "SHA256",
 			})
@@ -425,10 +425,10 @@ func TestE2EMultipleKeyTypes(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyTypes := []struct {
@@ -456,7 +456,7 @@ func TestE2EMultipleKeyTypes(t *testing.T) {
 
 			req := &pb.GenerateKeyRequest{
 				KeyId:   keyID,
-				Backend: "pkcs8",
+				Backend: "software",
 				KeyType: kt.keyType,
 				KeySize: kt.keySize,
 				Curve:   kt.curve,
@@ -466,7 +466,7 @@ func TestE2EMultipleKeyTypes(t *testing.T) {
 			assertNoError(t, err, "Failed to generate key")
 
 			defer func() {
-				restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+				restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 			}()
 
 			// Sign via REST
@@ -475,7 +475,7 @@ func TestE2EMultipleKeyTypes(t *testing.T) {
 				"hash": "SHA256",
 			}
 
-			resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=pkcs8", keyID), signReq)
+			resp, err := restClient.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=software", keyID), signReq)
 			assertNoError(t, err, "Failed to sign")
 			defer resp.Body.Close()
 

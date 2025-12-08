@@ -43,6 +43,15 @@ func (m *mockFailingResolver) Close() error {
 	return nil
 }
 
+func (m *mockFailingResolver) Read(p []byte) (n int, err error) {
+	data, err := m.Rand(len(p))
+	if err != nil {
+		return 0, err
+	}
+	copy(p, data)
+	return len(data), nil
+}
+
 type mockFailingSource struct {
 	failRand bool
 }

@@ -139,14 +139,16 @@ RUN mkdir -p /workspace \
     /etc/softhsm \
     /etc/keychain \
     /data \
-    /app \
+    /app/build/bin \
+    /var/run/keychain \
     && chown -R testuser:testuser /workspace \
     && chown -R testuser:testuser /var/lib/softhsm \
     && chown -R testuser:testuser /var/lib/swtpm \
     && chown -R testuser:testuser /etc/softhsm \
     && chown -R testuser:testuser /etc/keychain \
     && chown -R testuser:testuser /data \
-    && chown -R testuser:testuser /app
+    && chown -R testuser:testuser /app \
+    && chown -R testuser:testuser /var/run/keychain
 
 # Switch to non-root user
 USER testuser
@@ -231,10 +233,10 @@ USER testuser
 # Build the server binary with all backends enabled (including quantum-safe cryptography)
 RUN mkdir -p /app && \
     CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum" \
-    -o /app/keychain-server ./cmd/server/main.go
+    -o /app/keychaind ./cmd/server/main.go
 
 # Validate that the server binary exists
-RUN test -f /app/keychain-server || (echo "ERROR: Server binary not built" && exit 1)
+RUN test -f /app/keychaind || (echo "ERROR: Server binary not built" && exit 1)
 
 # Build the application with all backends enabled (including quantum-safe cryptography)
 RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true

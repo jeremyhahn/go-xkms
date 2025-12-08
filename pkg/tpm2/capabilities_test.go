@@ -611,11 +611,6 @@ func TestLockoutRecovery_Parsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Verify the value can be stored in uint32
-			if false { // tt.recoveryValue is uint32, cannot exceed MaxUint32
-				t.Errorf("Recovery value %d exceeds uint32 max", tt.recoveryValue)
-			}
-
 			// Calculate hours for informational purposes
 			hours := tt.recoveryValue / 3600
 			days := hours / 24
@@ -656,11 +651,6 @@ func TestLockoutInterval_Parsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Verify the value can be stored in uint32
-			if false { // tt.intervalValue is uint32, cannot exceed MaxUint32
-				t.Errorf("Interval value %d exceeds uint32 max", tt.intervalValue)
-			}
-
 			// Calculate minutes for informational purposes
 			minutes := tt.intervalValue / 60
 

@@ -113,7 +113,7 @@ func (p *PlatformPassword) String() (string, error) {
 // is valid, returns the cached value. Otherwise, unseals from the TPM
 // and caches the result (if caching is enabled).
 func (p *PlatformPassword) Bytes() []byte {
-	// Check cache first if enabled
+	// Check cache first if enabled (with read lock)
 	if p.cacheEnabled() {
 		if cached := p.getCached(); cached != nil {
 			if p.keyAttrs.Debug {
@@ -123,8 +123,50 @@ func (p *PlatformPassword) Bytes() []byte {
 			}
 			return cached
 		}
+
+		// Cache miss - need to unseal. Use write lock to ensure only one
+		// goroutine performs the unseal operation.
+		return p.unsealWithLock()
 	}
 
+	// Caching disabled - unseal directly
+	return p.unsealDirect()
+}
+
+// unsealWithLock performs unseal while holding the write lock to prevent
+// concurrent unseal operations when caching is enabled.
+func (p *PlatformPassword) unsealWithLock() []byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Double-check cache after acquiring lock (another goroutine may have populated it)
+	if p.cachedData != nil && time.Since(p.cacheTime) <= p.cacheTTL() {
+		result := make([]byte, len(p.cachedData))
+		copy(result, p.cachedData)
+		return result
+	}
+
+	// Perform unseal
+	data := p.unsealDirect()
+	if data == nil {
+		return nil
+	}
+
+	// Store in cache (we already hold the lock)
+	if p.cachedData != nil {
+		for i := range p.cachedData {
+			p.cachedData[i] = 0
+		}
+	}
+	p.cachedData = make([]byte, len(data))
+	copy(p.cachedData, data)
+	p.cacheTime = time.Now()
+
+	return data
+}
+
+// unsealDirect performs the actual TPM unseal operation without any locking.
+func (p *PlatformPassword) unsealDirect() []byte {
 	if p.keyAttrs.Debug {
 		p.logger.Debugf(
 			"keystore/tpm2: retrieving platform password from TPM: %s",
@@ -136,17 +178,22 @@ func (p *PlatformPassword) Bytes() []byte {
 	// key type
 	secretAttrs := *p.keyAttrs
 	secretAttrs.KeyType = types.KeyTypeHMAC
+
+	// Always log for tracing - remove after debugging
+	p.logger.Infof("keystore/tpm2: attempting unseal for CN=%s, KeyType=%v, Parent=%v",
+		secretAttrs.CN, secretAttrs.KeyType, secretAttrs.Parent != nil)
+
 	data, err := p.tpm.UnsealKey(&secretAttrs, p.backend)
+
+	// Always log result for tracing - remove after debugging
+	p.logger.Infof("keystore/tpm2: unseal result - data=%d bytes, err=%v",
+		len(data), err)
+
 	if err != nil {
 		// Log the error and return nil - this matches the common.Password interface
 		// which doesn't allow Bytes() to return an error
 		p.logger.Errorf("keystore/tpm2: failed to unseal platform password: %v", err)
 		return nil
-	}
-
-	// Cache the result if caching is enabled
-	if p.cacheEnabled() {
-		p.setCache(data)
 	}
 
 	return data
@@ -220,24 +267,6 @@ func (p *PlatformPassword) getCached() []byte {
 	result := make([]byte, len(p.cachedData))
 	copy(result, p.cachedData)
 	return result
-}
-
-// setCache stores the password in the cache with the current timestamp.
-func (p *PlatformPassword) setCache(data []byte) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Clear any existing cached data
-	if p.cachedData != nil {
-		for i := range p.cachedData {
-			p.cachedData[i] = 0
-		}
-	}
-
-	// Store a copy of the data
-	p.cachedData = make([]byte, len(data))
-	copy(p.cachedData, data)
-	p.cacheTime = time.Now()
 }
 
 // Create seals a password to the TPM as a keyed hash object. If the key

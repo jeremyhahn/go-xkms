@@ -29,7 +29,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
@@ -39,6 +38,16 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
+
+// SimulatorInterface abstracts the TPM simulator for conditional compilation
+type SimulatorInterface interface {
+	Close() error
+	Transport() transport.TPM
+	ReadWriter() io.ReadWriter
+}
+
+// simulatorOpener is set by tpm_simulator.go or tpm_no_simulator.go
+var simulatorOpener func() (SimulatorInterface, error)
 
 type TrustedPlatformModule interface {
 	ActivateCredential(credentialBlob, encryptedSecret []byte) ([]byte, error)
@@ -214,7 +223,7 @@ type TPM2 struct {
 	policyDigest tpm2.TPM2BDigest
 	random       io.Reader
 	signerStore  store.SignerStorer
-	simulator    *simulator.Simulator
+	simulator    SimulatorInterface
 	ssrkAttrs    *types.KeyAttributes
 	tracker      types.AEADSafetyTracker
 	transport    transport.TPM
@@ -245,7 +254,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		params.Logger = logging.DefaultLogger()
 	}
 
-	var sim *simulator.Simulator
+	var sim SimulatorInterface
 	var tpmTransport transport.TPM
 	var device *os.File
 	var err error
@@ -256,12 +265,12 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		tpmTransport = params.Transport
 	} else if params.Config.UseSimulator {
 		params.Logger.Info(infoOpeningSimulator)
-		sim, err = simulator.GetWithFixedSeedInsecure(1234567890)
+		sim, err = simulatorOpener()
 		if err != nil {
 			params.Logger.Error(err)
 			return nil, err
 		}
-		tpmTransport = transport.FromReadWriter(sim)
+		tpmTransport = sim.Transport()
 	} else if params.Config.Device != "" {
 		params.Logger.Info(infoOpeningDevice,
 			slog.String("device", params.Config.Device))
@@ -355,13 +364,13 @@ func (tpm *TPM2) Open() error {
 	if tpm.config.UseSimulator {
 
 		tpm.logger.Info(infoOpeningSimulator)
-		sim, err := simulator.GetWithFixedSeedInsecure(1234567890)
+		sim, err := simulatorOpener()
 		if err != nil {
 			tpm.logger.Error(err)
 			return err
 		}
 		tpm.simulator = sim
-		t = transport.FromReadWriter(sim)
+		t = sim.Transport()
 	} else if tpm.config.Device != "" {
 		// tpm.logger.Info(infoOpeningDevice, slog.String("device", tpm.config.Device))
 		// f, err := os.OpenFile(tpm.config.Device, os.O_RDWR, 0)
@@ -477,7 +486,11 @@ func (tpm *TPM2) PlatformPolicyDigest() tpm2.TPM2BDigest {
 		if err != nil {
 			tpm.logger.FatalError(err)
 		}
-		defer func() { _ = closer() }()
+		defer func() {
+			if err := closer(); err != nil {
+				tpm.logger.Errorf("failed to close session: %v", err)
+			}
+		}()
 	}
 	return tpm.policyDigest
 }
@@ -521,16 +534,17 @@ func (tpm *TPM2) getActiveTransientHandles() []tpm2.TPMHandle {
 }
 
 // flushSilent flushes a handle without logging errors (for cleanup operations)
+// flushSilent flushes a handle without logging errors (for cleanup operations)
 func (tpm *TPM2) flushSilent(handle tpm2.TPMHandle) {
 	tpm.logger.Debugf("tpm: flushing handle: 0x%x", handle)
-	_, _ = tpm2.FlushContext{FlushHandle: handle}.Execute(tpm.transport)
+	_, err := tpm2.FlushContext{FlushHandle: handle}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Debugf("tpm: failed to flush handle 0x%x: %v", handle, err)
+	}
 }
-
-// Closes the connection to the TPM
 func (tpm *TPM2) Close() error {
 	tpm.logger.Info(infoClosingConnection)
 
-	// Flush only active transient handles before closing
 	if tpm.transport != nil {
 		activeHandles := tpm.getActiveTransientHandles()
 		for _, handle := range activeHandles {
@@ -776,7 +790,11 @@ func (tpm *TPM2) Sign(
 		}
 		return nil, err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close session: %v", err)
+		}
+	}()
 
 	var handle tpm2.TPMHandle
 
@@ -932,7 +950,11 @@ func (tpm *TPM2) Sign(
 		tpm.logger.Error(err)
 		return nil, err
 	}
-	defer func() { _ = closer2() }()
+	defer func() {
+		if err := closer2(); err != nil {
+			tpm.logger.Errorf("failed to close session: %v", err)
+		}
+	}()
 
 	if outPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
 

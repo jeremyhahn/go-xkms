@@ -29,6 +29,7 @@ func TestKeyAlgorithm_IsSymmetric(t *testing.T) {
 		{"AES-192-GCM is symmetric", backend.ALG_AES192_GCM, true},
 		{"AES-256-GCM is symmetric", backend.ALG_AES256_GCM, true},
 		{"ChaCha20-Poly1305 is symmetric", backend.ALG_CHACHA20_POLY1305, true},
+		{"XChaCha20-Poly1305 is symmetric", backend.ALG_XCHACHA20_POLY1305, true},
 		{"RSA is not symmetric", backend.ALG_RSA, false},
 		{"ECDSA is not symmetric", backend.ALG_ECDSA, false},
 		{"Ed25519 is not symmetric", backend.ALG_ED25519, false},
@@ -57,6 +58,7 @@ func TestKeyAlgorithm_IsAsymmetric(t *testing.T) {
 		{"AES-192-GCM is not asymmetric", backend.ALG_AES192_GCM, false},
 		{"AES-256-GCM is not asymmetric", backend.ALG_AES256_GCM, false},
 		{"ChaCha20-Poly1305 is not asymmetric", backend.ALG_CHACHA20_POLY1305, false},
+		{"XChaCha20-Poly1305 is not asymmetric", backend.ALG_XCHACHA20_POLY1305, false},
 	}
 
 	for _, tt := range tests {

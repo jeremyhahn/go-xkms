@@ -173,7 +173,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 		if err != nil {
 			// Azure KV emulator may not support rotation
 			t.Logf("⚠ Key rotation not supported (emulator limitation): %v", err)
-			t.Skip("Skipping due to emulator limitation")
+			t.Fatal("Skipping due to emulator limitation")
 			return
 		}
 		t.Logf("✓ Successfully rotated key")
@@ -260,7 +260,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 		keyID1, err := b.CreateKey(attrs)
 		if err != nil {
 			t.Logf("⚠ ECDSA not supported by emulator (Azure KV supports this in production): %v", err)
-			t.Skip("Skipping ECDSA rotation due to emulator limitation")
+			t.Fatal("Skipping ECDSA rotation due to emulator limitation")
 			return
 		}
 		require.NotEmpty(t, keyID1, "Key ID should not be empty")
@@ -356,7 +356,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 			if err != nil {
 				t.Logf("⚠ Key rotation not supported: %v", err)
 				_ = b.Delete(attrs)
-				t.Skip("Skipping due to rotation limitation")
+				t.Fatal("Skipping due to rotation limitation")
 				return
 			}
 			t.Logf("✓ Rotated to version %d", i+1)
@@ -416,7 +416,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 		if err != nil {
 			t.Logf("⚠ Signer interface not supported: %v", err)
 			_ = b.Delete(attrs)
-			t.Skip("Skipping Signer interface test")
+			t.Fatal("Skipping Signer interface test")
 			return
 		}
 		require.NotNil(t, signer1, "Signer should not be nil")
@@ -441,7 +441,7 @@ func TestAzureKVKeyRotation(t *testing.T) {
 		if err != nil {
 			t.Logf("⚠ Key rotation not supported: %v", err)
 			_ = b.Delete(attrs)
-			t.Skip("Skipping due to rotation limitation")
+			t.Fatal("Skipping due to rotation limitation")
 			return
 		}
 		t.Logf("✓ Key rotated")

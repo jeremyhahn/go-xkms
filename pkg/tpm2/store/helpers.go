@@ -135,7 +135,8 @@ func ParseCurve(s string) (elliptic.Curve, error) {
 	}
 }
 
-// AvailableHashes returns a map of available hash functions
+// AvailableHashes returns a map of available hash functions.
+// Uses standard Go crypto.Hash.String() format (e.g., "SHA-256").
 func AvailableHashes() map[string]crypto.Hash {
 	return map[string]crypto.Hash{
 		"SHA-1":   crypto.SHA1,

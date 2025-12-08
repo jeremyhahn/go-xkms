@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -31,6 +32,7 @@ type Service struct {
 	sessions   SessionStore
 	creds      CredentialStore
 	jwtGen     JWTGenerator // optional
+	logger     *slog.Logger
 	configured bool
 }
 
@@ -51,6 +53,10 @@ type ServiceParams struct {
 	// JWTGenerator is an optional token generator for post-auth tokens.
 	// If nil, the service returns the base64-encoded user ID after auth.
 	JWTGenerator JWTGenerator
+
+	// Logger is an optional logger for the service.
+	// If nil, uses slog.Default().
+	Logger *slog.Logger
 }
 
 // NewService creates a new WebAuthn service with the provided dependencies.
@@ -80,6 +86,11 @@ func NewService(params ServiceParams) (*Service, error) {
 		return nil, fmt.Errorf("failed to create webauthn instance: %w", err)
 	}
 
+	logger := params.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &Service{
 		webauthn:   wa,
 		config:     params.Config,
@@ -87,6 +98,7 @@ func NewService(params ServiceParams) (*Service, error) {
 		sessions:   params.SessionStore,
 		creds:      params.CredentialStore,
 		jwtGen:     params.JWTGenerator,
+		logger:     logger,
 		configured: true,
 	}, nil
 }
@@ -181,10 +193,11 @@ func (s *Service) FinishRegistration(ctx context.Context, sessionID string, resp
 		return "", nil, WrapError("save user", err)
 	}
 
-	// Delete session
+	// Delete session - best-effort cleanup, don't fail the operation
 	if err := s.sessions.Delete(ctx, sessionID); err != nil {
-		// Log but don't fail - session cleanup is best-effort
-		_ = err
+		s.logger.Warn("failed to delete registration session after completion",
+			"session_id", sessionID,
+			"error", err)
 	}
 
 	// Generate token
@@ -311,10 +324,11 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID string, userID []by
 		return "", nil, WrapError("save user", err)
 	}
 
-	// Delete session
+	// Delete session - best-effort cleanup, don't fail the operation
 	if err := s.sessions.Delete(ctx, sessionID); err != nil {
-		// Log but don't fail
-		_ = err
+		s.logger.Warn("failed to delete login session after completion",
+			"session_id", sessionID,
+			"error", err)
 	}
 
 	// Generate token

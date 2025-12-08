@@ -187,7 +187,7 @@ func TestGetImportParameters(t *testing.T) {
 			// Full integration tests would require a real backend manager
 			// For now, we test the validation logic and error handling
 
-			// Create service using the global facade
+			// Create service using the global keychain service
 			service := NewService()
 
 			resp, err := service.GetImportParameters(context.Background(), tt.request)

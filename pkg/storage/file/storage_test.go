@@ -24,6 +24,14 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 )
 
+// skipIfRoot skips the test if running as root, since root bypasses file permission checks
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("Skipping test that relies on file permissions (running as root)")
+	}
+}
+
 // Helper to create a temporary directory for tests
 func setupTestDir(t *testing.T) string {
 	t.Helper()
@@ -93,6 +101,33 @@ func TestNew(t *testing.T) {
 		_, err := New("")
 		if err == nil {
 			t.Error("New() with empty directory should return error")
+		}
+	})
+
+	t.Run("relative path conversion", func(t *testing.T) {
+		// Test that relative paths get converted to absolute paths
+		relDir := "test-relative-dir"
+		defer func() { _ = os.RemoveAll(relDir) }()
+
+		store, err := New(relDir)
+		if err != nil {
+			t.Fatalf("New() with relative path error = %v", err)
+		}
+		if store == nil {
+			t.Fatal("New() returned nil")
+		}
+
+		// Verify the directory exists
+		absPath, err := filepath.Abs(relDir)
+		if err != nil {
+			t.Fatalf("Failed to get absolute path: %v", err)
+		}
+		info, err := os.Stat(absPath)
+		if err != nil {
+			t.Fatalf("Directory not created: %v", err)
+		}
+		if !info.IsDir() {
+			t.Error("Path is not a directory")
 		}
 	})
 }
@@ -967,6 +1002,7 @@ func TestErrorConditions(t *testing.T) {
 	})
 
 	t.Run("get with read error", func(t *testing.T) {
+		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -998,6 +1034,7 @@ func TestErrorConditions(t *testing.T) {
 	})
 
 	t.Run("put with write error", func(t *testing.T) {
+		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1023,7 +1060,44 @@ func TestErrorConditions(t *testing.T) {
 		}
 	})
 
+	t.Run("delete with stat error", func(t *testing.T) {
+		skipIfRoot(t)
+		dir := setupTestDir(t)
+		store, err := New(dir)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer func() { _ = store.Close() }()
+
+		// Create a directory that we'll make inaccessible
+		subdir := filepath.Join(dir, "statdir")
+		if err := os.MkdirAll(subdir, 0700); err != nil {
+			t.Fatalf("Failed to create dir: %v", err)
+		}
+
+		key := "statdir/file"
+		if err := store.Put(key, []byte("data"), nil); err != nil {
+			t.Fatalf("Put() error = %v", err)
+		}
+
+		// Make directory unreadable/unsearchable (cannot stat files inside)
+		if err := os.Chmod(subdir, 0000); err != nil {
+			t.Fatalf("Failed to chmod dir: %v", err)
+		}
+		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
+
+		// Try to delete - should get stat error
+		err = store.Delete(key)
+		if err == nil {
+			t.Error("Delete() with stat error should return error")
+		}
+		if err == storage.ErrNotFound {
+			t.Error("Delete() with stat error should not return ErrNotFound")
+		}
+	})
+
 	t.Run("delete with remove error", func(t *testing.T) {
+		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1059,6 +1133,7 @@ func TestErrorConditions(t *testing.T) {
 	})
 
 	t.Run("list with walk error", func(t *testing.T) {
+		skipIfRoot(t)
 		dir := setupTestDir(t)
 		store, err := New(dir)
 		if err != nil {
@@ -1088,6 +1163,39 @@ func TestErrorConditions(t *testing.T) {
 		}
 	})
 
+	t.Run("exists with stat error", func(t *testing.T) {
+		skipIfRoot(t)
+		dir := setupTestDir(t)
+		store, err := New(dir)
+		if err != nil {
+			t.Fatalf("New() error = %v", err)
+		}
+		defer func() { _ = store.Close() }()
+
+		// Create a directory with a file, then make it inaccessible
+		subdir := filepath.Join(dir, "existsdir")
+		if err := os.MkdirAll(subdir, 0700); err != nil {
+			t.Fatalf("Failed to create dir: %v", err)
+		}
+
+		key := "existsdir/file"
+		if err := store.Put(key, []byte("data"), nil); err != nil {
+			t.Fatalf("Put() error = %v", err)
+		}
+
+		// Make directory unsearchable (cannot stat files inside)
+		if err := os.Chmod(subdir, 0000); err != nil {
+			t.Fatalf("Failed to chmod dir: %v", err)
+		}
+		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
+
+		// Try to check existence - should get stat error
+		_, err = store.Exists(key)
+		if err == nil {
+			t.Error("Exists() with stat error should return error")
+		}
+	})
+
 	t.Run("pathToKey success case", func(t *testing.T) {
 		dir := setupTestDir(t)
 		fs := &FileStorage{rootDir: dir}
@@ -1102,4 +1210,32 @@ func TestErrorConditions(t *testing.T) {
 			t.Errorf("pathToKey() = %q, want test/key or test\\key", key)
 		}
 	})
+}
+
+func TestValidateStorageKeyEdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{
+			name:    "path with middle traversal suffix",
+			key:     "foo/bar/..",
+			wantErr: false, // cleaned to "foo" which is valid
+		},
+		{
+			name:    "path ending with separator and dotdot",
+			key:     "foo/..",
+			wantErr: false, // cleaned to "." which is allowed after cleaning
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateStorageKey(tt.key)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateStorageKey(%q) error = %v, wantErr %v", tt.key, err, tt.wantErr)
+			}
+		})
+	}
 }

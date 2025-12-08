@@ -232,12 +232,21 @@ type Source interface {
 
 // Resolver provides the main interface for generating random numbers.
 // Applications should create a Resolver at startup and reuse it.
+//
+// Resolver implements io.Reader, making it compatible with crypto/rand.Reader
+// and usable anywhere an io.Reader is expected for random number generation.
 type Resolver interface {
 	// Rand returns n random bytes from the configured RNG source.
 	// If the primary source fails and FallbackMode is configured,
 	// tries the fallback source.
 	// Returns an error if all sources fail.
 	Rand(n int) ([]byte, error)
+
+	// Read implements io.Reader, making this Resolver usable as a drop-in
+	// replacement for crypto/rand.Reader. This allows hardware-backed RNG
+	// to be used with standard library functions like rsa.GenerateKey,
+	// ecdsa.GenerateKey, and x509.CreateCertificate.
+	Read(p []byte) (n int, err error)
 
 	// Source returns the underlying RNG Source being used.
 	// Useful for testing and debugging.
@@ -316,6 +325,13 @@ func (s *SoftwareResolver) Rand(n int) ([]byte, error) {
 	buf := make([]byte, n)
 	_, err := rand.Read(buf)
 	return buf, err
+}
+
+// Read implements io.Reader for compatibility with crypto/rand.Reader.
+// This allows the SoftwareResolver to be used with standard library
+// functions that expect an io.Reader for randomness.
+func (s *SoftwareResolver) Read(p []byte) (n int, err error) {
+	return rand.Read(p)
 }
 
 func (s *SoftwareResolver) Source() Source {

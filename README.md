@@ -3,7 +3,7 @@
 # go-keychain
 
 [![Go Version](https://img.shields.io/badge/Go-1.25.1-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-v0.1.6--alpha-green.svg)](https://github.com/jeremyhahn/go-keychain/releases)
+[![Version](https://img.shields.io/badge/version-v0.2.0--alpha-green.svg)](https://github.com/jeremyhahn/go-keychain/releases)
 [![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen.svg)](test/integration)
 [![Coverage](https://img.shields.io/badge/coverage-92.5%25-brightgreen.svg)](pkg)
 [![Backends](https://img.shields.io/badge/backends-10-blue.svg)](#backend-support-)
@@ -22,7 +22,7 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 - **Thread-Safe**: Safe for concurrent operations with proper synchronization
 - **Well-Tested**: 92.5% unit test coverage with 151 passing integration tests
 - **Pluggable Architecture**: Easy to add custom backends and storage implementations
-- **Unified Facade**: Simple API that abstracts backend complexity
+- **Unified Service API**: Simple API that abstracts backend complexity
 
 ## Overview
 
@@ -39,10 +39,10 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 
 - **Clean Architecture**: Clear separation of concerns, interface-based design
 - **Pluggable Backends**: Easy to add new storage types
-- **Unified Facade**: Single API for all backends - no leaky abstractions
+- **Unified Service API**: Single API for all backends - no leaky abstractions
 - **Thread-Safe**: Safe for concurrent operations
 - **Well-Tested**: 92.5% unit test coverage, 151 passing integration tests
-- **Production-Ready**: v0.1.6-alpha with 10 fully working backends
+- **Production-Ready**: v0.2.0-alpha with 10 fully working backends
 - **Focused Scope**: Just keys and certificates - no server/events/secrets
 
 ---
@@ -79,18 +79,30 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 
 ### Backend Support
 
-| Backend | Description | Use Case | Status |
-|---------|-------------|----------|--------|
-| **PKCS#8** | File-based asymmetric keys | Development, testing, simple deployments | Complete |
-| **AES** | File-based symmetric keys | Local symmetric encryption | Complete |
-| **PKCS#11** | Hardware Security Module | High-security environments, compliance | Complete |
-| **SmartCard-HSM** | CardContact SmartCard-HSM with DKEK | Hardware-backed keys with distributed key backup | Complete |
-| **TPM2** | Trusted Platform Module | Device attestation, secure boot | Complete |
-| **YubiKey** | YubiKey PIV (Smart Card) | Hardware-backed keys, 2FA, portable HSM | Complete |
-| **AWS KMS** | Amazon Key Management Service | AWS cloud deployments | Complete |
-| **GCP KMS** | Google Cloud KMS | GCP cloud deployments | Complete |
-| **Azure Key Vault** | Azure Key Vault | Azure cloud deployments | Complete |
-| **HashiCorp Vault** | HashiCorp Vault Transit Engine | Multi-cloud, on-premise | Complete |
+True backends support **all three** operation types: asymmetric, symmetric, and sealing.
+
+| Backend | Asymmetric | Symmetric | Sealing | Description |
+|---------|:----------:|:---------:|:-------:|-------------|
+| **Software** | ✓ | ✓ | ✓ | File-based keys using PKCS#8 + AES/ChaCha20 |
+| **PKCS#11** | ✓ | ✓ | ✓ | Hardware Security Modules |
+| **TPM2** | ✓ | ✓ | ✓ | Trusted Platform Module |
+| **YubiKey** | ✓ | ✓ | ✓ | YubiKey PIV (RSA/ECDSA/Ed25519 envelope encryption) |
+| **CanoKey** | ✓ | ✓ | ✓ | Open-source PIV key (virtual/hardware, CI/CD testing) |
+| **AWS KMS** | ✓ | ✓ | ✓ | Amazon Key Management Service |
+| **GCP KMS** | ✓ | ✓ | ✓ | Google Cloud KMS |
+| **Azure Key Vault** | ✓ | ✓ | ✓ | Azure Key Vault |
+| **HashiCorp Vault** | ✓ | ✓ | ✓ | Vault Transit Engine |
+
+### Convenience Libraries
+
+Building blocks and specialized cryptographic libraries:
+
+| Package | Purpose | Operations |
+|---------|---------|------------|
+| **PKCS#8** | Asymmetric key operations | RSA, ECDSA, Ed25519, X25519 |
+| **AES** | Symmetric encryption | AES-GCM (128/192/256-bit) |
+| **Quantum** | Post-quantum cryptography | ML-KEM key encapsulation, ML-DSA signatures |
+| **Threshold** | Secret sharing | Shamir's Secret Sharing, threshold signatures |
 
 ---
 
@@ -110,146 +122,251 @@ All interfaces expose the complete KeyStore API for keys and certificates. See [
 
 ### Interface Examples
 
+**CLI (Command Line):**
+```bash
+# Key Management
+keychain key generate --name my-key --type rsa --size 2048
+keychain key generate --name signing-key --type ecdsa --curve P-256
+keychain key generate --name ed-key --type ed25519
+keychain key list
+keychain key get my-key
+keychain key delete my-key
+keychain key rotate my-key
+
+# Certificate Management
+keychain cert list
+keychain cert get my-key
+keychain cert delete my-key
+
+# Admin Management (requires FIDO2 security key)
+keychain admin status
+keychain admin create admin@example.com --display-name "Admin"
+keychain admin list
+keychain admin get admin@example.com
+keychain admin disable admin@example.com
+keychain admin enable admin@example.com
+
+# FIDO2 Operations
+keychain fido2 list        # List connected security keys
+keychain fido2 info        # Show device information
+
+# Backend Information
+keychain backends          # List available backends
+```
+
 **REST API:**
 ```bash
+# Generate a key
 curl -X POST http://localhost:8443/api/v1/keys \
   -H "Content-Type: application/json" \
   -d '{"key_id": "my-key", "key_type": "rsa", "key_size": 2048}'
+
+# List keys
+curl http://localhost:8443/api/v1/keys
+
+# Get a key's public info
+curl http://localhost:8443/api/v1/keys/my-key
+
+# Sign data
+curl -X POST http://localhost:8443/api/v1/keys/my-key/sign \
+  -H "Content-Type: application/json" \
+  -d '{"data": "SGVsbG8gV29ybGQ=", "hash": "sha256"}'
+
+# Health check
+curl http://localhost:8443/api/v1/health
 ```
 
 **gRPC:**
 ```go
+import pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+
 conn, _ := grpc.Dial("localhost:9443", grpc.WithInsecure())
 client := pb.NewKeychainServiceClient(conn)
-resp, _ := client.GenerateKey(ctx, &pb.GenerateKeyRequest{...})
+
+// Generate key
+resp, _ := client.GenerateKey(ctx, &pb.GenerateKeyRequest{
+    KeyId:   "my-key",
+    KeyType: pb.KeyType_KEY_TYPE_RSA,
+    KeySize: 2048,
+})
+
+// List keys
+keys, _ := client.ListKeys(ctx, &pb.ListKeysRequest{})
 ```
 
-**CLI:**
-```bash
-keychain key generate --name my-key --type rsa --size 2048
-keychain key list
-keychain cert get my-key
-```
-
-**MCP (JSON-RPC):**
+**MCP (Model Context Protocol - for AI assistants):**
 ```json
 {"jsonrpc": "2.0", "method": "keychain.generateKey",
- "params": {"key_id": "my-key", "key_type": "rsa"}, "id": 1}
+ "params": {"key_id": "my-key", "key_type": "rsa", "key_size": 2048}, "id": 1}
+
+{"jsonrpc": "2.0", "method": "keychain.listKeys", "params": {}, "id": 2}
+
+{"jsonrpc": "2.0", "method": "keychain.sign",
+ "params": {"key_id": "my-key", "data": "base64data", "hash": "sha256"}, "id": 3}
 ```
 
-**QUIC (HTTP/3):**
+**QUIC (HTTP/3 - low latency UDP-based):**
 ```bash
+# Same REST API over QUIC/HTTP3
 curl --http3 https://localhost:8444/api/v1/keys
+curl --http3 https://localhost:8444/api/v1/health
 ```
 
 ---
 
 ## Installation
 
+### As a Library
+
 ```bash
 go get github.com/jeremyhahn/go-keychain
 ```
 
+### As a Server
+
+```bash
+# Build the server and CLI
+make build-server build-cli
+
+# Copy binaries to system path
+sudo cp bin/keychaind bin/keychain /usr/bin/
+```
+
+See [deploy/README.md](deploy/README.md) for systemd and OpenRC service installation.
+
 ---
 
-## Quick Start
+## Server Quick Start
 
-### Simple Usage with Facade (Recommended)
+### 1. First-Time Setup
+
+Before using go-keychain as a service, you must create an administrator account with a FIDO2 security key:
+
+```bash
+# Check if setup is required
+keychain admin status
+
+# Create the first administrator (requires FIDO2 security key)
+keychain admin create admin@example.com --display-name "Admin User"
+# Touch your security key when prompted...
+
+# Verify the admin was created
+keychain admin list
+```
+
+**Requirements:**
+- A FIDO2-compatible security key (YubiKey 5, SoloKey, Nitrokey, etc.)
+- The security key must be connected via USB
+
+### 2. Configure the Server
+
+Create a configuration file at `/etc/keychain/config.yaml`:
+
+```yaml
+# Server configuration
+server:
+  host: "0.0.0.0"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+
+# Default backend
+default: pkcs8
+
+# Backend configurations
+backends:
+  pkcs8:
+    enabled: true
+    key_dir: /var/lib/keychain/keys
+```
+
+### 3. Start the Server
+
+```bash
+# Direct execution
+keychaind -config /etc/keychain/config.yaml
+
+# Or via systemd (after installing service files)
+sudo systemctl start keychain
+```
+
+### 4. Verify Server is Running
+
+```bash
+# REST API health check
+curl http://localhost:8443/api/v1/health
+
+# List keys via CLI
+keychain key list
+
+# Generate a test key
+keychain key generate --name test-key --type rsa --size 2048
+```
+
+---
+
+## Quick Start (Library Usage)
+
+go-keychain provides two API patterns depending on your use case:
+
+| API | Function | Use Case |
+|-----|----------|----------|
+| **`keychain.New()`** | Creates a single KeyStore instance | Libraries, embedded use, explicit resource management |
+| **`keychain.Initialize()`** | Sets up global service with multiple backends | Server applications, multi-backend scenarios |
+
+### Pattern 1: Direct KeyStore (Recommended for Libraries)
+
+Use `keychain.New()` when you need a single keystore instance with explicit lifecycle management:
 
 ```go
 package main
 
 import (
     "crypto"
+    "crypto/rand"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/internal/server"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
-)
-
-func main() {
-    // Initialize the keychain with auto-detected backends
-    // This sets up PKCS8, Software, and AES backends automatically
-    err := server.Initialize(nil)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer keychain.Close()
-
-    // Generate RSA key using the default backend
-    key, err := keychain.KeyByID("my-signing-key")
-    if err != nil {
-        // Key doesn't exist, generate it
-        ks, _ := keychain.DefaultBackend()
-
-        attrs := &types.KeyAttributes{
-            CN:        "my-signing-key",
-            KeyType:   types.KeyTypeTLS,
-            StoreType: types.StorePKCS8,
-            RSAAttributes: &types.RSAAttributes{
-                KeySize: 2048,
-            },
-        }
-
-        key, err = ks.GenerateRSA(attrs)
-        if err != nil {
-            log.Fatal(err)
-        }
-    }
-
-    // Use the key for signing
-    signer, err := keychain.Signer("my-signing-key")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    signature, err := signer.Sign(nil, []byte("data to sign"), crypto.SHA256)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Printf("Generated key and created signature: %x", signature[:16])
-}
-```
-
-### Advanced: Using Specific Backends
-
-```go
-package main
-
-import (
-    "log"
-
-    "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
+    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
     "github.com/jeremyhahn/go-keychain/pkg/keychain"
     "github.com/jeremyhahn/go-keychain/pkg/storage/file"
     "github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 func main() {
-    // Create file-based storage
-    keyStorage, _ := file.New("./keys")
-    certStorage, _ := file.New("./certs")
+    // 1. Create storage backends
+    keyStorage, err := file.New("./keys")
+    if err != nil {
+        log.Fatal(err)
+    }
+    certStorage, err := file.New("./certs")
+    if err != nil {
+        log.Fatal(err)
+    }
 
-    // Create PKCS#8 backend
-    pkcs8Backend, _ := pkcs8.NewBackend(&pkcs8.Config{
+    // 2. Create the software backend (supports all operations: keys, encryption, sealing)
+    backend, err := software.NewBackend(&software.Config{
         KeyStorage: keyStorage,
     })
-    defer pkcs8Backend.Close()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer backend.Close()
 
-    // Create keystore
-    ks, _ := keychain.New(&keychain.Config{
-        Backend:     pkcs8Backend,
+    // 3. Create the KeyStore
+    ks, err := keychain.New(&keychain.Config{
+        Backend:     backend,
         CertStorage: certStorage,
     })
+    if err != nil {
+        log.Fatal(err)
+    }
     defer ks.Close()
 
-    // Generate RSA key
+    // 4. Generate a key
     attrs := &types.KeyAttributes{
-        CN:        "example-key",
-        KeyType:   types.KeyTypeTLS,
-        StoreType: types.StorePKCS8,
+        CN:        "my-signing-key",
+        KeyType:   types.KeyTypeSigning,
+        StoreType: types.StoreSoftware,
         RSAAttributes: &types.RSAAttributes{
             KeySize: 2048,
         },
@@ -260,11 +377,93 @@ func main() {
         log.Fatal(err)
     }
 
-    log.Printf("Generated RSA key: %v", key.Public())
+    // 5. Use the key for signing
+    signer, err := ks.Signer(attrs)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    data := []byte("Hello, World!")
+    signature, err := signer.Sign(rand.Reader, data, crypto.SHA256)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Generated signature: %x...", signature[:16])
 }
 ```
 
-### Multi-Backend Operations
+### Pattern 2: Global Service (Recommended for Servers)
+
+Use `keychain.Initialize()` for server applications that need multiple backends with global access:
+
+```go
+package main
+
+import (
+    "crypto"
+    "log"
+
+    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
+    "github.com/jeremyhahn/go-keychain/pkg/keychain"
+    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-keychain/pkg/types"
+)
+
+func main() {
+    // 1. Create storage and backend
+    keyStorage, _ := file.New("./keys")
+    certStorage, _ := file.New("./certs")
+
+    // Software backend supports asymmetric keys, symmetric encryption, and sealing
+    softwareBackend, _ := software.NewBackend(&software.Config{KeyStorage: keyStorage})
+    softwareKS, _ := keychain.New(&keychain.Config{
+        Backend:     softwareBackend,
+        CertStorage: certStorage,
+    })
+
+    // 2. Initialize the global service
+    err := keychain.Initialize(&keychain.ServiceConfig{
+        Backends: map[string]keychain.KeyStore{
+            "software": softwareKS,
+        },
+        DefaultBackend: "software",
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer keychain.Close()
+
+    // 3. Use global functions - keys are referenced as "backend:keyid" or just "keyid" for default
+    attrs := &types.KeyAttributes{
+        CN:        "server-key",
+        KeyType:   types.KeyTypeSigning,
+        StoreType: types.StoreSoftware,
+        RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+    }
+
+    _, err = keychain.GenerateKey(attrs)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Sign using the global service
+    signature, err := keychain.Sign("server-key", []byte("data"), &keychain.SignOptions{
+        Hash: crypto.SHA256,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Signature: %x...", signature[:16])
+
+    // List available backends
+    backends := keychain.Backends()
+    log.Printf("Available backends: %v", backends)
+}
+```
+
+### Symmetric Encryption Example
 
 ```go
 package main
@@ -272,75 +471,212 @@ package main
 import (
     "log"
 
-    "github.com/jeremyhahn/go-keychain/internal/server"
+    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
     "github.com/jeremyhahn/go-keychain/pkg/keychain"
+    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
     "github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
 func main() {
-    // Initialize with multiple backends
-    config := &server.BackendFactoryConfig{
-        DefaultBackend: "pkcs8",
-        Backends: []server.BackendConfig{
-            {
-                Name:    "pkcs8",
-                Type:    "pkcs8",
-                Enabled: true,
-                Config: map[string]interface{}{
-                    "key_dir": "./keys/pkcs8",
-                },
-            },
-            {
-                Name:    "aes",
-                Type:    "aes",
-                Enabled: true,
-                Config: map[string]interface{}{
-                    "key_dir": "./keys/aes",
-                },
-            },
-        },
+    // Setup - software backend supports both asymmetric and symmetric operations
+    keyStorage, _ := file.New("./keys")
+    certStorage, _ := file.New("./certs")
+    backend, _ := software.NewBackend(&software.Config{KeyStorage: keyStorage})
+    defer backend.Close()
+
+    ks, _ := keychain.New(&keychain.Config{
+        Backend:     backend,
+        CertStorage: certStorage,
+    })
+    defer ks.Close()
+
+    // Generate AES-256-GCM key
+    attrs := &types.KeyAttributes{
+        CN:                 "encryption-key",
+        KeyType:            types.KeyTypeEncryption,
+        StoreType:          types.StoreSoftware,
+        SymmetricAlgorithm: types.SymmetricAES256GCM,
     }
 
-    err := server.Initialize(config)
+    _, err := ks.GenerateSymmetricKey(attrs)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Encrypt data
+    encrypter, err := ks.SymmetricEncrypter(attrs)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    plaintext := []byte("sensitive data")
+    ciphertext, err := encrypter.Encrypt(plaintext, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Decrypt data
+    decrypted, err := encrypter.Decrypt(ciphertext, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    log.Printf("Decrypted: %s", decrypted)
+}
+```
+
+For more examples, see the [examples/](examples/) directory and [docs/usage/getting-started.md](docs/usage/getting-started.md).
+
+---
+
+## Keychain Service API
+
+The `keychain` package provides a simplified service API that abstracts backend complexity. After initialization, you can use simple function calls without managing KeyStore instances directly.
+
+### Service Functions Overview
+
+```go
+import "github.com/jeremyhahn/go-keychain/pkg/keychain"
+
+// Initialization
+keychain.Initialize(config)     // Initialize with backends
+keychain.IsInitialized()        // Check if initialized
+keychain.Close()                // Close all backends
+keychain.Reset()                // Reset for testing
+
+// Backend Access
+keychain.Backend("pkcs8")       // Get specific backend
+keychain.DefaultBackend()       // Get default backend
+keychain.Backends()             // List all backend names
+
+// Key Operations (use key references like "my-key" or "backend:my-key")
+keychain.GenerateKey(attrs)              // Generate key on default backend
+keychain.GenerateKeyWithBackend("tpm2", attrs)  // Generate on specific backend
+keychain.KeyByID("my-key")               // Get key by ID
+keychain.DeleteKey("my-key")             // Delete key
+keychain.RotateKey("my-key")             // Rotate key
+keychain.ListKeys()                      // List all keys
+keychain.ListKeys("pkcs8")               // List keys from specific backend
+
+// Crypto Operations
+keychain.Signer("my-key")                // Get crypto.Signer
+keychain.Decrypter("my-key")             // Get crypto.Decrypter
+keychain.Sign("my-key", data, opts)      // Sign data
+keychain.Verify("my-key", data, sig, opts)  // Verify signature
+
+// Symmetric Encryption
+keychain.GenerateSymmetricKey("aes", attrs)  // Generate symmetric key
+keychain.GetSymmetricKey("my-aes-key")       // Get symmetric key
+keychain.Encrypt("my-aes-key", data, opts)   // Encrypt data
+keychain.Decrypt("my-aes-key", encrypted, opts)  // Decrypt data
+
+// Certificate Operations
+keychain.SaveCertificate("my-key", cert)
+keychain.Certificate("my-key")
+keychain.DeleteCertificate("my-key")
+keychain.ListCertificates()
+keychain.SaveCertificateChain("my-key", chain)
+keychain.CertificateChain("my-key")
+keychain.CertificateExists("my-key")
+
+// TLS Operations
+keychain.GetTLSCertificate("my-key")     // Get tls.Certificate
+
+// Sealing Operations (hardware-backed encryption)
+keychain.Seal(ctx, data, opts)           // Seal with default backend
+keychain.SealWithBackend(ctx, "tpm2", data, opts)
+keychain.Unseal(ctx, sealed, opts)       // Unseal data
+keychain.CanSeal()                       // Check if sealing supported
+
+// Import/Export Operations
+keychain.GetImportParameters(backend, attrs, algorithm)
+keychain.WrapKey(backend, keyMaterial, params)
+keychain.UnwrapKey(backend, wrapped, params)
+keychain.ImportKey(backend, attrs, wrapped)
+keychain.ExportKey("my-key", algorithm)
+keychain.CopyKey("source:my-key", "dest-backend", attrs)
+```
+
+### Key Reference Format
+
+Keys can be referenced in two formats:
+- `"my-key"` - Uses the default backend
+- `"backend:my-key"` - Uses a specific backend (e.g., `"tpm2:signing-key"`)
+
+### Complete Example: Key Generation and Signing
+
+```go
+package main
+
+import (
+    "crypto"
+    "crypto/x509"
+    "log"
+
+    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
+    "github.com/jeremyhahn/go-keychain/pkg/keychain"
+    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-keychain/pkg/types"
+)
+
+func main() {
+    // 1. Setup storage and backend
+    keyStorage, _ := file.New("./keys")
+    certStorage, _ := file.New("./certs")
+    backend, _ := software.NewBackend(&software.Config{KeyStorage: keyStorage})
+
+    ks, _ := keychain.New(&keychain.Config{
+        Backend:     backend,
+        CertStorage: certStorage,
+    })
+
+    // 2. Initialize global service (for server applications)
+    err := keychain.Initialize(&keychain.ServiceConfig{
+        Backends:       map[string]keychain.KeyStore{"software": ks},
+        DefaultBackend: "software",
+    })
     if err != nil {
         log.Fatal(err)
     }
     defer keychain.Close()
 
-    // Get specific backend
-    aesBackend, err := keychain.Backend("aes")
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // Generate symmetric key
+    // 3. Generate an RSA key
     attrs := &types.KeyAttributes{
-        CN:                 "my-encryption-key",
-        KeyType:            types.KeyTypeEncryption,
-        StoreType:          types.StorePKCS8,
-        SymmetricAlgorithm: types.SymmetricAES256GCM,
+        CN:           "my-signing-key",
+        KeyType:      types.KeyTypeSigning,
+        StoreType:    types.StoreSoftware,
+        KeyAlgorithm: x509.RSA,
+        RSAAttributes: &types.RSAAttributes{
+            KeySize: 2048,
+        },
     }
 
-    _, err = aesBackend.GenerateSymmetricKey(attrs)
+    key, err := keychain.GenerateKey(attrs)
     if err != nil {
         log.Fatal(err)
     }
+    log.Printf("Generated key: %T", key)
 
-    // List all keys across all backends
-    allKeys, err := keychain.ListKeys()
+    // 4. Sign some data
+    data := []byte("Hello, World!")
+    signature, err := keychain.Sign("my-signing-key", data, &keychain.SignOptions{
+        Hash: crypto.SHA256,
+    })
     if err != nil {
         log.Fatal(err)
     }
+    log.Printf("Signature: %x", signature[:16])
 
-    log.Printf("Total keys across all backends: %d", len(allKeys))
-
-    // List backends
-    backends := keychain.Backends()
-    log.Printf("Available backends: %v", backends)
+    // 5. Verify the signature
+    err = keychain.Verify("my-signing-key", data, signature, &types.VerifyOpts{
+        Hash: crypto.SHA256,
+    })
+    if err != nil {
+        log.Fatal("Verification failed:", err)
+    }
+    log.Println("Signature verified!")
 }
 ```
-
-For more details, see [docs/symmetric-encryption.md](docs/symmetric-encryption.md).
 
 ### Certificate Management
 

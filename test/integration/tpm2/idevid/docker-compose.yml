@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   tpm-simulator:
     image: ghcr.io/stefanberger/swtpm:latest
@@ -9,16 +7,16 @@ services:
       - dir=/tmp
       - --tpm2
       - --server
-      - type=tcp,port=2321,bindaddr=0.0.0.0
+      - type=tcp,port=2421,bindaddr=0.0.0.0
       - --ctrl
-      - type=tcp,port=2322,bindaddr=0.0.0.0
+      - type=tcp,port=2422,bindaddr=0.0.0.0
       - --flags
       - startup-clear
       - --log
       - level=20
     ports:
-      - "2321:2321"
-      - "2322:2322"
+      - "2421:2421"
+      - "2422:2422"
     networks:
       - idevid-test-network
 
@@ -30,8 +28,8 @@ services:
       - tpm-simulator
     environment:
       - TPM2_SIMULATOR_HOST=tpm-simulator
-      - TPM2_SIMULATOR_PORT=2321
-      - TPM2_SIMULATOR_CTRL_PORT=2322
+      - TPM2_SIMULATOR_PORT=2421
+      - TPM2_SIMULATOR_CTRL_PORT=2422
       - CGO_ENABLED=1
     volumes:
       - ../../../test/integration/coverage:/app/coverage

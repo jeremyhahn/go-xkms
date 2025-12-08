@@ -624,7 +624,7 @@ func TestVaultIntegration(t *testing.T) {
 		// Check if backend supports symmetric encryption
 		caps := b.Capabilities()
 		if !caps.SupportsSymmetricEncryption() {
-			t.Skip("Vault backend does not support symmetric encryption")
+			t.Fatal("Vault backend does not support symmetric encryption")
 			return
 		}
 

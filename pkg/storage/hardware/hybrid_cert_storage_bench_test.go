@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build (tpm2 || pkcs11) && !integration
+//go:build !integration
 
 package hardware
 
@@ -94,7 +94,7 @@ func BenchmarkHybrid_GetCert_FromHardware(b *testing.B) {
 	// Pre-populate hardware
 	for i := 0; i < 100; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		hybrid.SaveCert(id, cert)
+		_ = hybrid.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -129,7 +129,7 @@ func BenchmarkHybrid_GetCert_FromExternal_Failover(b *testing.B) {
 	// Pre-populate external only
 	for i := 0; i < 100; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		external.SaveCert(id, cert)
+		_ = external.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -164,11 +164,11 @@ func BenchmarkHybrid_ListCerts_MergedResults(b *testing.B) {
 	// Populate both storages
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("hw-cert-%d", i)
-		hardware.SaveCert(id, cert)
+		_ = hardware.SaveCert(id, cert)
 	}
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("ext-cert-%d", i)
-		external.SaveCert(id, cert)
+		_ = external.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -200,8 +200,8 @@ func BenchmarkHybrid_DeleteCert_BothStorages(b *testing.B) {
 	// Pre-populate both storages with same IDs
 	for i := 0; i < b.N; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		hardware.SaveCert(id, cert)
-		external.SaveCert(id, cert)
+		_ = hardware.SaveCert(id, cert)
+		_ = external.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -233,11 +233,11 @@ func BenchmarkHybrid_ConcurrentReads(b *testing.B) {
 	// Populate both storages
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("hw-cert-%d", i)
-		hardware.SaveCert(id, cert)
+		_ = hardware.SaveCert(id, cert)
 	}
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("ext-cert-%d", i)
-		external.SaveCert(id, cert)
+		_ = external.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -345,7 +345,7 @@ func BenchmarkHybrid_MixedOperations(b *testing.B) {
 	// Pre-populate
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		hybrid.SaveCert(id, cert)
+		_ = hybrid.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -355,15 +355,15 @@ func BenchmarkHybrid_MixedOperations(b *testing.B) {
 		switch i % 5 {
 		case 0, 1: // Read (40%)
 			id := fmt.Sprintf("cert-%d", i%50)
-			hybrid.GetCert(id)
+			_, _ = hybrid.GetCert(id)
 		case 2: // Write (20%)
 			id := fmt.Sprintf("cert-new-%d", i)
-			hybrid.SaveCert(id, cert)
+			_ = hybrid.SaveCert(id, cert)
 		case 3: // Delete (20%)
 			id := fmt.Sprintf("cert-new-%d", i-1)
-			hybrid.DeleteCert(id)
+			_ = hybrid.DeleteCert(id)
 		case 4: // List (20%)
-			hybrid.ListCerts()
+			_, _ = hybrid.ListCerts()
 		}
 	}
 

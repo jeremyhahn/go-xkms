@@ -35,11 +35,11 @@ RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
     -buildvcs=false \
     -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,vault,pkcs11" \
     -ldflags="-w -s -X main.version=${VERSION:-dev} -X main.commit=${COMMIT:-unknown} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -o /build/keychain-server \
+    -o /build/keychaind \
     ./cmd/server/main.go
 
 # Verify binary was built
-RUN test -f /build/keychain-server || (echo "ERROR: Server binary not built" && exit 1)
+RUN test -f /build/keychaind || (echo "ERROR: Server binary not built" && exit 1)
 
 # Stage 2: Runtime
 FROM alpine:latest
@@ -67,7 +67,7 @@ RUN mkdir -p /app /etc/keychain /var/lib/keychain /data && \
     chown -R appuser:appuser /app /etc/keychain /var/lib/keychain /data
 
 # Copy binary from builder
-COPY --from=builder --chown=appuser:appuser /build/keychain-server /app/keychain-server
+COPY --from=builder --chown=appuser:appuser /build/keychaind /app/keychaind
 
 # Switch to non-root user
 USER appuser
@@ -93,7 +93,7 @@ VOLUME ["/var/lib/keychain", "/etc/keychain"]
 ENV KEYSTORE_CONFIG=/etc/keychain/config.yaml
 
 # Set entrypoint
-ENTRYPOINT ["/app/keychain-server"]
+ENTRYPOINT ["/app/keychaind"]
 
 # Default command (can be overridden)
 CMD ["--config", "/etc/keychain/config.yaml"]

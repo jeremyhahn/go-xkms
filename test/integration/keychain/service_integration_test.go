@@ -28,13 +28,14 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// setupFacadeIntegration initializes the facade with multiple backends for testing
-func setupFacadeIntegration(t *testing.T) {
+// setupServiceIntegration initializes the service with multiple backends for testing
+func setupServiceIntegration(t *testing.T) {
 	t.Helper()
 	keychain.Reset()
 
@@ -68,8 +69,8 @@ func setupFacadeIntegration(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Initialize facade with multiple backends
-	err = keychain.Initialize(&keychain.FacadeConfig{
+	// Initialize service with multiple backends
+	err = keychain.Initialize(&keychain.ServiceConfig{
 		Backends: map[string]keychain.KeyStore{
 			"backend1": software1KS,
 			"backend2": software2KS,
@@ -79,9 +80,9 @@ func setupFacadeIntegration(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestFacadeIntegration_BackendManagement tests backend management operations
-func TestFacadeIntegration_BackendManagement(t *testing.T) {
-	setupFacadeIntegration(t)
+// TestServiceIntegration_BackendManagement tests backend management operations
+func TestServiceIntegration_BackendManagement(t *testing.T) {
+	setupServiceIntegration(t)
 	defer keychain.Reset()
 
 	t.Run("Backends", func(t *testing.T) {
@@ -114,14 +115,14 @@ func TestFacadeIntegration_BackendManagement(t *testing.T) {
 	})
 }
 
-// TestFacadeIntegration_KeyGeneration tests key generation through the facade
-func TestFacadeIntegration_KeyGeneration(t *testing.T) {
-	setupFacadeIntegration(t)
+// TestServiceIntegration_KeyGeneration tests key generation through the service
+func TestServiceIntegration_KeyGeneration(t *testing.T) {
+	setupServiceIntegration(t)
 	defer keychain.Reset()
 
 	t.Run("GenerateRSA", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
-			CN:           "test-rsa-facade",
+			CN:           "test-rsa-service",
 			KeyType:      types.KeyTypeSigning,
 			StoreType:    types.StorePKCS8,
 			KeyAlgorithm: x509.RSA,
@@ -143,7 +144,7 @@ func TestFacadeIntegration_KeyGeneration(t *testing.T) {
 
 	t.Run("GenerateECDSA", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
-			CN:           "test-ecdsa-facade",
+			CN:           "test-ecdsa-service",
 			KeyType:      types.KeyTypeSigning,
 			StoreType:    types.StorePKCS8,
 			KeyAlgorithm: x509.ECDSA,
@@ -160,7 +161,7 @@ func TestFacadeIntegration_KeyGeneration(t *testing.T) {
 
 	t.Run("GenerateEd25519", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
-			CN:           "test-ed25519-facade",
+			CN:           "test-ed25519-service",
 			KeyType:      types.KeyTypeSigning,
 			StoreType:    types.StorePKCS8,
 			KeyAlgorithm: x509.Ed25519,
@@ -172,14 +173,14 @@ func TestFacadeIntegration_KeyGeneration(t *testing.T) {
 	})
 }
 
-// TestFacadeIntegration_KeyRetrieval tests key retrieval through the facade
-func TestFacadeIntegration_KeyRetrieval(t *testing.T) {
-	setupFacadeIntegration(t)
+// TestServiceIntegration_KeyRetrieval tests key retrieval through the service
+func TestServiceIntegration_KeyRetrieval(t *testing.T) {
+	setupServiceIntegration(t)
 	defer keychain.Reset()
 
 	t.Run("Key", func(t *testing.T) {
 		attrs := &types.KeyAttributes{
-			CN:           "test-retrieve-facade",
+			CN:           "test-retrieve-service",
 			KeyType:      types.KeyTypeSigning,
 			StoreType:    types.StorePKCS8,
 			KeyAlgorithm: x509.RSA,
@@ -200,9 +201,9 @@ func TestFacadeIntegration_KeyRetrieval(t *testing.T) {
 	})
 }
 
-// TestFacadeIntegration_CertificateOperations tests certificate operations
-func TestFacadeIntegration_CertificateOperations(t *testing.T) {
-	setupFacadeIntegration(t)
+// TestServiceIntegration_CertificateOperations tests certificate operations
+func TestServiceIntegration_CertificateOperations(t *testing.T) {
+	setupServiceIntegration(t)
 	defer keychain.Reset()
 
 	// Helper to create a test certificate
@@ -233,7 +234,7 @@ func TestFacadeIntegration_CertificateOperations(t *testing.T) {
 	t.Run("SaveAndRetrieveCertificate", func(t *testing.T) {
 		// Generate key first
 		attrs := &types.KeyAttributes{
-			CN:           "test-cert-facade",
+			CN:           "test-cert-service",
 			KeyType:      types.KeyTypeSigning,
 			StoreType:    types.StorePKCS8,
 			KeyAlgorithm: x509.RSA,
@@ -247,14 +248,14 @@ func TestFacadeIntegration_CertificateOperations(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create certificate
-		cert := createTestCert(t, "test-cert-facade", key.(crypto.Signer))
+		cert := createTestCert(t, "test-cert-service", key.(crypto.Signer))
 
 		// Save certificate
-		err = keychain.SaveCertificate("test-cert-facade", cert)
+		err = keychain.SaveCertificate("test-cert-service", cert)
 		assert.NoError(t, err)
 
 		// Retrieve certificate
-		retrievedCert, err := keychain.Certificate("test-cert-facade")
+		retrievedCert, err := keychain.Certificate("test-cert-service")
 		assert.NoError(t, err)
 		assert.NotNil(t, retrievedCert)
 		assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
@@ -344,9 +345,9 @@ func TestFacadeIntegration_CertificateOperations(t *testing.T) {
 	})
 }
 
-// TestFacadeIntegration_ListKeys tests listing keys across backends
-func TestFacadeIntegration_ListKeys(t *testing.T) {
-	setupFacadeIntegration(t)
+// TestServiceIntegration_ListKeys tests listing keys across backends
+func TestServiceIntegration_ListKeys(t *testing.T) {
+	setupServiceIntegration(t)
 	defer keychain.Reset()
 
 	// Generate keys in both backends
@@ -397,14 +398,14 @@ func TestFacadeIntegration_ListKeys(t *testing.T) {
 	})
 }
 
-// TestFacadeIntegration_Close tests closing the facade
-func TestFacadeIntegration_Close(t *testing.T) {
-	setupFacadeIntegration(t)
+// TestServiceIntegration_Close tests closing the service
+func TestServiceIntegration_Close(t *testing.T) {
+	setupServiceIntegration(t)
 
 	err := keychain.Close()
 	assert.NoError(t, err)
 
-	// Facade should still be initialized after Close()
+	// Service should still be initialized after Close()
 	assert.True(t, keychain.IsInitialized())
 
 	// Reset to fully clear

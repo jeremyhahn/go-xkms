@@ -1,4 +1,7 @@
 # Example configuration for keychain server
+#
+# By default, keychaind only listens on Unix socket for local IPC.
+# Enable REST, gRPC, QUIC, or MCP protocols as needed for remote access.
 
 server:
   host: "0.0.0.0"
@@ -7,11 +10,20 @@ server:
   quic_port: 8444
   mcp_port: 9444
 
+# Protocol settings
+# Unix socket is enabled by default for local CLI communication.
+# Enable network protocols only when remote access is required.
 protocols:
-  rest: true
-  grpc: true
-  quic: false
-  mcp: false
+  unix: true           # Local Unix socket (default: true)
+  rest: false          # REST/HTTP API (enable for remote access)
+  grpc: false          # gRPC API (enable for remote access)
+  quic: false          # QUIC/HTTP3 API (enable for remote access)
+  mcp: false           # MCP JSON-RPC API (enable for AI/LLM integration)
+
+# Unix socket configuration
+unix:
+  socket_path: "/var/run/keychain/keychain.sock"
+  socket_mode: "0660"  # File permissions for the socket
 
 logging:
   level: "info"        # debug, info, warn, error
@@ -45,3 +57,38 @@ metrics:
 health:
   enabled: true
   path: "/health"
+
+# Random Number Generation (RNG) configuration
+# Controls the source of cryptographic randomness used for key generation,
+# nonces, and other security-critical operations.
+#
+# Mode options:
+#   - "auto" (default): Automatically select best available hardware RNG
+#                       Priority: PKCS#11 > TPM2 > Software
+#   - "software": Use crypto/rand from Go standard library
+#   - "tpm2": Use TPM 2.0 hardware RNG
+#   - "pkcs11": Use PKCS#11 HSM RNG
+#
+# Environment variables:
+#   KEYCHAIN_RNG_MODE          - Override mode
+#   KEYCHAIN_RNG_FALLBACK      - Override fallback mode
+#   KEYCHAIN_RNG_TPM2_DEVICE   - TPM device path
+#   KEYCHAIN_RNG_PKCS11_MODULE - PKCS#11 module path
+#   KEYCHAIN_RNG_PKCS11_PIN    - PKCS#11 PIN (prefer env var over config)
+rng:
+  mode: "auto"             # auto, software, tpm2, pkcs11
+  fallback_mode: "software"  # Fallback if primary fails
+
+  # TPM2-specific settings (optional, used when mode is "tpm2" or "auto")
+  # tpm2:
+  #   device: "/dev/tpm0"           # TPM device path
+  #   use_simulator: false           # Connect to TPM simulator instead
+  #   simulator_host: "localhost"    # Simulator hostname
+  #   simulator_port: 2321           # Simulator port
+
+  # PKCS#11-specific settings (optional, used when mode is "pkcs11" or "auto")
+  # pkcs11:
+  #   module: "/usr/lib/libsofthsm2.so"  # PKCS#11 library path
+  #   slot_id: 0                          # Token slot ID
+  #   pin_required: true                  # Whether PIN is needed
+  #   # pin: "1234"                       # PIN (prefer KEYCHAIN_RNG_PKCS11_PIN env var)

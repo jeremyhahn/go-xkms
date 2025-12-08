@@ -52,7 +52,9 @@ func NewStorageFactory(logger Logger, baseDir string) (*StorageFactory, error) {
 	backend, err = file.New(baseDir)
 	if err != nil {
 		if tempDir != "" {
-			_ = os.RemoveAll(tempDir)
+			if rmErr := os.RemoveAll(tempDir); rmErr != nil {
+				logger.Errorf("failed to remove temp directory %s: %v", tempDir, rmErr)
+			}
 		}
 		return nil, err
 	}
@@ -101,7 +103,9 @@ func (f *StorageFactory) Close() error {
 		err = f.backend.Close()
 	}
 	if f.tempDir != "" {
-		_ = os.RemoveAll(f.tempDir)
+		if rmErr := os.RemoveAll(f.tempDir); rmErr != nil {
+			f.logger.Errorf("failed to remove temp directory %s: %v", f.tempDir, rmErr)
+		}
 	}
 	return err
 }

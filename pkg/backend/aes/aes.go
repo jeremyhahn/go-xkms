@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -217,12 +218,39 @@ func (b *AESBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 
+	// Parse key ID format: [partition:]sw:secret:cn:algorithm
 	attrs := make([]*types.KeyAttributes, 0, len(keyIDs))
 	for _, id := range keyIDs {
-		// Parse key ID format: [partition:]sw:secret:cn:algorithm
-		// For now, return minimal attributes
+		parts := strings.Split(id, ":")
+		var cn string
+		var keyTypeStr string
+
+		if len(parts) >= 4 {
+			// Has all required parts
+			// For format without partition: sw:secret:my-key:aes (4 parts)
+			// For format with partition: partition:sw:secret:my-key:aes (5 parts)
+			if len(parts) == 4 {
+				// storetype:keytype:cn:algorithm
+				keyTypeStr = parts[1]
+				cn = parts[2]
+			} else {
+				// partition:storetype:keytype:cn:algorithm
+				keyTypeStr = parts[2]
+				cn = parts[3]
+			}
+		} else {
+			// Fallback to using the whole ID as CN
+			cn = id
+			keyTypeStr = "secret" // Default to SECRET for AES keys
+		}
+
 		attr := &types.KeyAttributes{
-			CN: id,
+			CN:      cn,
+			KeyType: types.ParseKeyType(keyTypeStr),
+		}
+		// Ensure we have a valid key type for AES keys
+		if attr.KeyType == 0 {
+			attr.KeyType = types.KeyTypeSecret // Default to Secret if parsing fails
 		}
 		attrs = append(attrs, attr)
 	}

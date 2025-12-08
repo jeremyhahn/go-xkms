@@ -1,0 +1,85 @@
+# systemd service file for go-keychain server
+# Install to: /etc/systemd/system/keychain.service
+#
+# Usage:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable keychain
+#   sudo systemctl start keychain
+
+[Unit]
+Description=Go Keychain - Cryptographic Key Management Service
+Documentation=https://github.com/jeremyhahn/go-keychain
+After=network-online.target
+Wants=network-online.target
+# Optional dependencies for hardware security modules
+After=tpm2-abrmd.service
+After=pcscd.service
+
+[Service]
+Type=notify
+User=keychain
+Group=keychain
+
+# Environment configuration
+Environment=KEYSTORE_CONFIG=/etc/keychain/config.yaml
+EnvironmentFile=-/etc/keychain/environment
+
+# Working directory and binary
+WorkingDirectory=/var/lib/keychain
+ExecStart=/usr/bin/keychaind -config /etc/keychain/config.yaml
+
+# Graceful shutdown
+ExecReload=/bin/kill -HUP $MAINPID
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Restart behavior
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keychain
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RemoveIPC=true
+
+# Allow access to TPM and PKCS#11 devices
+DeviceAllow=/dev/tpm0 rw
+DeviceAllow=/dev/tpmrm0 rw
+
+# File system access
+ReadWritePaths=/var/lib/keychain
+ReadWritePaths=/var/log/keychain
+ReadOnlyPaths=/etc/keychain
+
+# Capabilities
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Network access (required for REST/gRPC/QUIC servers)
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# System call filtering
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

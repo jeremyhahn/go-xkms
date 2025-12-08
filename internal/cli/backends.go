@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -34,22 +35,71 @@ var backendsListCmd = &cobra.Command{
 	Short: "List all available backends",
 	Long:  `List all cryptographic backends available in this build`,
 	Run: func(cmd *cobra.Command, args []string) {
-		printer := NewPrinter(getConfig().OutputFormat, os.Stdout)
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		backends := []string{
-			"pkcs8",
-			"pkcs11",
-			"tpm2",
-			"awskms",
-			"gcpkms",
-			"azurekv",
-			"vault",
-		}
-
-		if err := printer.PrintBackendList(backends); err != nil {
-			handleError(err)
+		// Use client or local mode
+		if cfg.IsLocal() {
+			listBackendsLocal(printer)
+		} else {
+			listBackendsRemote(cfg, printer)
 		}
 	},
+}
+
+// listBackendsLocal lists backends in local mode
+func listBackendsLocal(printer *Printer) {
+	backends := []string{
+		"software",
+		"pkcs8",
+		"pkcs11",
+		"tpm2",
+		"awskms",
+		"gcpkms",
+		"azurekv",
+		"vault",
+	}
+
+	if err := printer.PrintBackendList(backends); err != nil {
+		handleError(err)
+	}
+}
+
+// listBackendsRemote lists backends using the client
+func listBackendsRemote(cfg *Config, printer *Printer) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// List backends
+	resp, err := cl.ListBackends(ctx)
+	if err != nil {
+		handleError(fmt.Errorf("failed to list backends: %w", err))
+		return
+	}
+
+	// Extract backend IDs
+	backends := make([]string, len(resp.Backends))
+	for i, be := range resp.Backends {
+		backends[i] = be.ID
+	}
+
+	if err := printer.PrintBackendList(backends); err != nil {
+		handleError(err)
+	}
 }
 
 // backendsInfoCmd shows information about a specific backend
@@ -60,19 +110,89 @@ var backendsInfoCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		backendName := args[0]
-		printer := NewPrinter(getConfig().OutputFormat, os.Stdout)
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		// Get backend capabilities
-		caps, err := getBackendCapabilities(backendName)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get backend info: %w", err))
-			return
-		}
-
-		if err := printer.PrintBackendInfo(backendName, caps); err != nil {
-			handleError(err)
+		// Use client or local mode
+		if cfg.IsLocal() {
+			backendInfoLocal(printer, backendName)
+		} else {
+			backendInfoRemote(cfg, printer, backendName)
 		}
 	},
+}
+
+// backendInfoLocal gets backend info in local mode
+func backendInfoLocal(printer *Printer, backendName string) {
+	// Get backend capabilities
+	caps, err := getBackendCapabilities(backendName)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get backend info: %w", err))
+		return
+	}
+
+	if err := printer.PrintBackendInfo(backendName, caps); err != nil {
+		handleError(err)
+	}
+}
+
+// backendInfoRemote gets backend info using the client
+func backendInfoRemote(cfg *Config, printer *Printer, backendName string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Get backend info
+	backendInfo, err := cl.GetBackend(ctx, backendName)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get backend info: %w", err))
+		return
+	}
+
+	// Convert capabilities map to types.Capabilities
+	caps := types.Capabilities{
+		HardwareBacked: backendInfo.HardwareBacked,
+	}
+
+	// Extract capabilities from map
+	if val, ok := backendInfo.Capabilities["keys"].(bool); ok {
+		caps.Keys = val
+	}
+	if val, ok := backendInfo.Capabilities["signing"].(bool); ok {
+		caps.Signing = val
+	}
+	if val, ok := backendInfo.Capabilities["decryption"].(bool); ok {
+		caps.Decryption = val
+	}
+	if val, ok := backendInfo.Capabilities["key_rotation"].(bool); ok {
+		caps.KeyRotation = val
+	}
+	if val, ok := backendInfo.Capabilities["symmetric_encryption"].(bool); ok {
+		caps.SymmetricEncryption = val
+	}
+	if val, ok := backendInfo.Capabilities["import"].(bool); ok {
+		caps.Import = val
+	}
+	if val, ok := backendInfo.Capabilities["export"].(bool); ok {
+		caps.Export = val
+	}
+
+	if err := printer.PrintBackendInfo(backendName, caps); err != nil {
+		handleError(err)
+	}
 }
 
 func init() {
@@ -83,6 +203,19 @@ func init() {
 // getBackendCapabilities returns the capabilities for a given backend
 func getBackendCapabilities(backendName string) (types.Capabilities, error) {
 	switch backendName {
+	case "software":
+		return types.Capabilities{
+			Keys:                true,
+			HardwareBacked:      false,
+			Signing:             true,
+			Decryption:          true,
+			KeyRotation:         true,
+			SymmetricEncryption: true,
+			Import:              true,
+			Export:              true,
+			KeyAgreement:        true,
+			ECIES:               true,
+		}, nil
 	case "pkcs8":
 		return types.Capabilities{
 			Keys:                true,

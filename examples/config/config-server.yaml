@@ -1,5 +1,8 @@
 # Example configuration for unified go-keychain server
-# Supports all protocols: REST, gRPC, QUIC, MCP
+# Supports all protocols: Unix socket (local), REST, gRPC, QUIC, MCP
+#
+# By default, keychaind only listens on Unix socket for local IPC.
+# This example enables all protocols for demonstration purposes.
 
 server:
   host: 0.0.0.0
@@ -8,11 +11,20 @@ server:
   quic_port: 8444
   mcp_port: 9444
 
+# Protocol settings
+# Unix socket is enabled by default for local CLI communication.
+# Enable network protocols only when remote access is required.
 protocols:
-  rest: true
-  grpc: true
-  quic: true
-  mcp: true
+  unix: true    # Local Unix socket (default: true)
+  rest: true    # REST/HTTP API (enable for remote access)
+  grpc: true    # gRPC API (enable for remote access)
+  quic: true    # QUIC/HTTP3 API (enable for remote access)
+  mcp: true     # MCP JSON-RPC API (enable for AI/LLM integration)
+
+# Unix socket configuration
+unix:
+  socket_path: /var/run/keychain/keychain.sock
+  socket_mode: "0660"
 
 logging:
   level: info  # debug, info, warn, error

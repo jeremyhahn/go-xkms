@@ -41,7 +41,7 @@ import (
 func TestPKCS11CertificateStorageIntegration(t *testing.T) {
 	// Skip if SOFTHSM2_CONF is not set
 	if os.Getenv("SOFTHSM2_CONF") == "" {
-		t.Skip("Skipping PKCS11 certificate integration tests: SOFTHSM2_CONF not set")
+		t.Fatal("Skipping PKCS11 certificate integration tests: SOFTHSM2_CONF not set")
 	}
 
 	// Skip if library path is not available
@@ -51,7 +51,7 @@ func TestPKCS11CertificateStorageIntegration(t *testing.T) {
 		if _, err := os.Stat(libPath); os.IsNotExist(err) {
 			libPath = "/usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so"
 			if _, err := os.Stat(libPath); os.IsNotExist(err) {
-				t.Skip("Skipping PKCS11 certificate integration tests: SoftHSM library not found")
+				t.Fatal("PKCS11 certificate integration tests require SoftHSM library")
 			}
 		}
 	}

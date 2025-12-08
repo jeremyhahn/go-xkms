@@ -934,6 +934,61 @@ func TestCrossAlgorithmComparison(t *testing.T) {
 	}
 }
 
+// TestArgon2Adapter_DeriveKey_UnsupportedVariant tests deriveKey with unsupported variant
+func TestArgon2Adapter_DeriveKey_UnsupportedVariant(t *testing.T) {
+	// Create an adapter with an invalid variant directly
+	adapter := &Argon2Adapter{variant: KDFAlgorithm("invalid")}
+
+	params := &KDFParams{
+		Algorithm: KDFAlgorithm("invalid"),
+		Salt:      testSalt,
+		Memory:    64 * 1024,
+		Time:      3,
+		Threads:   4,
+		KeyLength: 32,
+	}
+
+	_, err := adapter.DeriveKey(testIKM, params)
+	if err != ErrUnsupportedAlgorithm {
+		t.Errorf("DeriveKey() error = %v, want %v", err, ErrUnsupportedAlgorithm)
+	}
+}
+
+// TestPBKDF2Adapter_ValidateParams_InvalidHash tests ValidateParams with invalid hash
+func TestPBKDF2Adapter_ValidateParams_InvalidHash(t *testing.T) {
+	adapter := NewPBKDF2Adapter()
+
+	params := &KDFParams{
+		Algorithm:  AlgorithmPBKDF2,
+		Salt:       testSalt,
+		Iterations: 100000,
+		KeyLength:  32,
+		Hash:       0, // Invalid hash
+	}
+
+	err := adapter.ValidateParams(params)
+	if err != ErrInvalidHash {
+		t.Errorf("ValidateParams() error = %v, want %v", err, ErrInvalidHash)
+	}
+}
+
+// TestHKDFAdapter_DeriveKey_NilIKM tests DeriveKey with nil IKM
+func TestHKDFAdapter_DeriveKey_NilIKM(t *testing.T) {
+	adapter := NewHKDFAdapter()
+
+	params := &KDFParams{
+		Algorithm: AlgorithmHKDF,
+		Salt:      testSalt,
+		KeyLength: 32,
+		Hash:      crypto.SHA256,
+	}
+
+	_, err := adapter.DeriveKey(nil, params)
+	if err != ErrInvalidIKM {
+		t.Errorf("DeriveKey() error = %v, want %v", err, ErrInvalidIKM)
+	}
+}
+
 // BenchmarkHKDF benchmarks HKDF performance
 func BenchmarkHKDF(b *testing.B) {
 	adapter := NewHKDFAdapter()

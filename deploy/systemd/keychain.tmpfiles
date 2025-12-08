@@ -1,0 +1,12 @@
+# systemd-tmpfiles configuration for go-keychain
+# Install to: /usr/lib/tmpfiles.d/keychain.conf
+#
+# This creates required directories with proper ownership and permissions.
+# Run: systemd-tmpfiles --create /usr/lib/tmpfiles.d/keychain.conf
+
+# Type  Path                    Mode  User      Group     Age  Argument
+d       /etc/keychain           0750  root      keychain  -    -
+d       /var/lib/keychain       0750  keychain  keychain  -    -
+d       /var/lib/keychain/keys  0700  keychain  keychain  -    -
+d       /var/lib/keychain/certs 0750  keychain  keychain  -    -
+d       /var/log/keychain       0750  keychain  keychain  -    -

@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2
-
 package server
 
 // initTPM2Backend initializes the TPM2 backend if enabled in configuration

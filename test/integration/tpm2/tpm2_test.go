@@ -1,4 +1,4 @@
-//go:build integration && tpm2
+//go:build integration
 
 package integration_test
 
@@ -16,7 +16,7 @@ func TestTPMSimulatorConnection(t *testing.T) {
 	}
 	port := os.Getenv("TPM2_SIMULATOR_PORT")
 	if port == "" {
-		port = "2321"
+		port = "2421"
 	}
 
 	t.Logf("Testing connection to TPM simulator at %s:%s", host, port)
@@ -68,7 +68,7 @@ func Example_tpmIntegrationWorkflow() {
 	}
 	port := os.Getenv("TPM2_SIMULATOR_PORT")
 	if port == "" {
-		port = "2321"
+		port = "2421"
 	}
 
 	fmt.Printf("Connecting to TPM at %s:%s\n", host, port)
@@ -82,5 +82,5 @@ func Example_tpmIntegrationWorkflow() {
 	// 6. Close TPM connection
 
 	// Output:
-	// Connecting to TPM at tpm-simulator:2321
+	// Connecting to TPM at tpm-simulator:2421
 }

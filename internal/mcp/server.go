@@ -64,10 +64,10 @@ type Config struct {
 }
 
 // NewServer creates a new MCP JSON-RPC server
-// The server uses the global keychain facade for backend management
+// The server uses the global keychain service for backend management
 func NewServer(config *Config) (*Server, error) {
 	if !keychain.IsInitialized() {
-		return nil, fmt.Errorf("keychain facade must be initialized before creating MCP server")
+		return nil, fmt.Errorf("keychain service must be initialized before creating MCP server")
 	}
 
 	if config.Addr == "" {

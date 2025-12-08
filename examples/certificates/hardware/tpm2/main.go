@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2
-
 package main
 
 import (
@@ -64,9 +62,9 @@ func main() {
 		// For testing with simulator
 		log.Println("ℹ Using TPM simulator (swtpm)")
 		log.Println("  Start swtpm: swtpm socket --tpmstate dir=/tmp/tpm --ctrl type=tcp,port=2322 --server type=tcp,port=2321")
-		tpm, err = transport.OpenTPM("swtpm:host=localhost,port=2321")
+		tpm, err = transport.OpenTPM("swtpm:host=localhost,port=2321") //nolint:staticcheck // TODO: migrate to swtpm package when available
 	} else {
-		tpm, err = transport.OpenTPM(tpmDevice)
+		tpm, err = transport.OpenTPM(tpmDevice) //nolint:staticcheck // TODO: migrate to linuxtpm package when available
 	}
 
 	if err != nil {
@@ -101,8 +99,7 @@ func main() {
 	// Step 4: Check NV RAM capacity
 	log.Println("\n[Step 4] Checking NV RAM capacity...")
 
-	hwStorage := certStorage.(hardware.HardwareCertStorage)
-	total, available, err := hwStorage.GetCapacity()
+	total, available, err := certStorage.GetCapacity()
 	if err != nil {
 		log.Printf("Warning: Unable to query exact capacity: %v", err)
 		log.Println("ℹ Using estimated capacity (4 certificates)")
@@ -291,7 +288,7 @@ func main() {
 
 	// Final capacity check
 	log.Println("\n[Final] Final NV RAM status...")
-	total, available, err = hwStorage.GetCapacity()
+	total, available, err = certStorage.GetCapacity()
 	if err == nil {
 		log.Printf("✓ NV RAM after cleanup: %d total, %d available, %d used",
 			total, available, total-available)

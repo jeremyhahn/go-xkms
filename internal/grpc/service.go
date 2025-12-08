@@ -61,7 +61,7 @@ type Service struct {
 }
 
 // NewService creates a new gRPC service
-// The service uses the global keychain facade for backend management
+// The service uses the global keychain service for backend management
 func NewService() *Service {
 	return &Service{}
 }
@@ -153,6 +153,11 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 
 	// Parse key type
 	keyType := types.ParseKeyType(req.KeyType)
+	// Default to KeyTypeSigning if the parsed key type is invalid
+	// (e.g., when req.KeyType is an algorithm name like "rsa", "ecdsa", "ed25519")
+	if keyType == 0 {
+		keyType = types.KeyTypeSigning
+	}
 
 	// Build key attributes
 	attrs := &types.KeyAttributes{
@@ -355,6 +360,17 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 		return nil, status.Errorf(codes.Internal, "failed to get signer: %v", err)
 	}
 
+	// Ed25519 uses pure signing (no prehashing) - pass raw message with Hash(0)
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		signature, err := signer.Sign(nil, req.Data, crypto.Hash(0))
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to sign: %v", err)
+		}
+		return &pb.SignResponse{
+			Signature: signature,
+		}, nil
+	}
+
 	// Determine hash algorithm
 	hashAlg := parseHashAlgorithm(req.Hash)
 	cryptoHash := hashAlg
@@ -416,6 +432,9 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 		pubKey = &k.PublicKey
 	case ed25519.PrivateKey:
 		pubKey = k.Public()
+	case crypto.Signer:
+		// Handle OpaqueKey and other Signer implementations
+		pubKey = k.Public()
 	default:
 		return nil, status.Error(codes.Internal, "unsupported key type")
 	}
@@ -429,7 +448,7 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 	hasher.Write(req.Data)
 	digest := hasher.Sum(nil)
 
-	// Verify signature
+	// Verify signature based on public key type
 	valid := false
 	switch pub := pubKey.(type) {
 	case *rsa.PublicKey:
@@ -1416,6 +1435,9 @@ func extractPublicKeyPEM(privKey crypto.PrivateKey) (string, error) {
 	case *ecdsa.PrivateKey:
 		pubKey = &k.PublicKey
 	case ed25519.PrivateKey:
+		pubKey = k.Public()
+	case crypto.Signer:
+		// Handle OpaqueKey and other Signer implementations
 		pubKey = k.Public()
 	default:
 		return "", fmt.Errorf("unsupported key type")

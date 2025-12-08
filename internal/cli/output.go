@@ -21,10 +21,46 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
+
+// FIDO2 type aliases to avoid circular imports
+type fido2Device = struct {
+	Path         string
+	VendorID     uint16
+	ProductID    uint16
+	Manufacturer string
+	Product      string
+	SerialNumber string
+	Transport    string
+}
+
+type fido2EnrollmentResult = struct {
+	CredentialID []byte
+	PublicKey    []byte
+	AAGUID       []byte
+	SignCount    uint32
+	RelyingParty fido2RelyingParty
+	User         fido2User
+	Salt         []byte
+	Created      time.Time
+}
+
+type fido2User = struct {
+	ID          []byte
+	Name        string
+	DisplayName string
+	Icon        string
+}
+
+type fido2RelyingParty = struct {
+	ID   string
+	Name string
+	Icon string
+}
 
 // OutputFormat defines the output format type
 type OutputFormat string
@@ -493,6 +529,143 @@ func (p *Printer) PrintEncryptedAsym(ciphertext string) error {
 	default:
 		return fmt.Errorf("unknown output format: %s", p.format)
 	}
+}
+
+// PrintMessage prints a simple message
+func (p *Printer) PrintMessage(message string) error {
+	switch p.format {
+	case OutputFormatJSON:
+		return p.printJSON(map[string]interface{}{
+			"message": message,
+		})
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintln(p.writer, message)
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", p.format)
+	}
+}
+
+// PrintFIDO2Devices prints a list of FIDO2 devices
+func (p *Printer) PrintFIDO2Devices(devices []fido2Device) error {
+	switch p.format {
+	case OutputFormatJSON:
+		deviceList := make([]map[string]interface{}, len(devices))
+		for i, dev := range devices {
+			deviceList[i] = map[string]interface{}{
+				"path":         dev.Path,
+				"vendor_id":    fmt.Sprintf("0x%04X", dev.VendorID),
+				"product_id":   fmt.Sprintf("0x%04X", dev.ProductID),
+				"manufacturer": dev.Manufacturer,
+				"product":      dev.Product,
+				"transport":    dev.Transport,
+			}
+		}
+		return p.printJSON(map[string]interface{}{
+			"devices": deviceList,
+		})
+	case OutputFormatTable:
+		_, _ = fmt.Fprintf(p.writer, "%-20s %-10s %-10s %-25s %-25s\n",
+			"PATH", "VENDOR", "PRODUCT", "MANUFACTURER", "NAME")
+		_, _ = fmt.Fprintln(p.writer, strings.Repeat("-", 92))
+		for _, dev := range devices {
+			_, _ = fmt.Fprintf(p.writer, "%-20s 0x%04X     0x%04X     %-25s %-25s\n",
+				dev.Path, dev.VendorID, dev.ProductID,
+				truncateString(dev.Manufacturer, 25),
+				truncateString(dev.Product, 25))
+		}
+		return nil
+	case OutputFormatText:
+		_, _ = fmt.Fprintln(p.writer, "FIDO2 Devices:")
+		for _, dev := range devices {
+			_, _ = fmt.Fprintf(p.writer, "  - %s\n", dev.Path)
+			_, _ = fmt.Fprintf(p.writer, "    Product:      %s\n", dev.Product)
+			_, _ = fmt.Fprintf(p.writer, "    Manufacturer: %s\n", dev.Manufacturer)
+			_, _ = fmt.Fprintf(p.writer, "    Vendor ID:    0x%04X\n", dev.VendorID)
+			_, _ = fmt.Fprintf(p.writer, "    Product ID:   0x%04X\n", dev.ProductID)
+			_, _ = fmt.Fprintf(p.writer, "    Transport:    %s\n", dev.Transport)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", p.format)
+	}
+}
+
+// PrintFIDO2DeviceInfo prints detailed information about a FIDO2 device
+func (p *Printer) PrintFIDO2DeviceInfo(dev fido2Device) error {
+	switch p.format {
+	case OutputFormatJSON:
+		return p.printJSON(map[string]interface{}{
+			"path":          dev.Path,
+			"vendor_id":     fmt.Sprintf("0x%04X", dev.VendorID),
+			"product_id":    fmt.Sprintf("0x%04X", dev.ProductID),
+			"manufacturer":  dev.Manufacturer,
+			"product":       dev.Product,
+			"serial_number": dev.SerialNumber,
+			"transport":     dev.Transport,
+		})
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintln(p.writer, "FIDO2 Device Information:")
+		_, _ = fmt.Fprintf(p.writer, "  Path:          %s\n", dev.Path)
+		_, _ = fmt.Fprintf(p.writer, "  Product:       %s\n", dev.Product)
+		_, _ = fmt.Fprintf(p.writer, "  Manufacturer:  %s\n", dev.Manufacturer)
+		_, _ = fmt.Fprintf(p.writer, "  Vendor ID:     0x%04X\n", dev.VendorID)
+		_, _ = fmt.Fprintf(p.writer, "  Product ID:    0x%04X\n", dev.ProductID)
+		if dev.SerialNumber != "" {
+			_, _ = fmt.Fprintf(p.writer, "  Serial Number: %s\n", dev.SerialNumber)
+		}
+		_, _ = fmt.Fprintf(p.writer, "  Transport:     %s\n", dev.Transport)
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", p.format)
+	}
+}
+
+// PrintFIDO2Registration prints FIDO2 credential registration result
+func (p *Printer) PrintFIDO2Registration(result *fido2EnrollmentResult) error {
+	switch p.format {
+	case OutputFormatJSON:
+		return p.printJSON(map[string]interface{}{
+			"credential_id": base64.StdEncoding.EncodeToString(result.CredentialID),
+			"public_key":    base64.StdEncoding.EncodeToString(result.PublicKey),
+			"aaguid":        base64.StdEncoding.EncodeToString(result.AAGUID),
+			"salt":          base64.StdEncoding.EncodeToString(result.Salt),
+			"user_name":     result.User.Name,
+			"user_display":  result.User.DisplayName,
+			"relying_party": result.RelyingParty.ID,
+			"created":       result.Created.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	case OutputFormatTable, OutputFormatText:
+		_, _ = fmt.Fprintln(p.writer, "FIDO2 Credential Registration Successful!")
+		_, _ = fmt.Fprintln(p.writer, "")
+		_, _ = fmt.Fprintln(p.writer, "Credential Information:")
+		_, _ = fmt.Fprintf(p.writer, "  User:          %s (%s)\n", result.User.Name, result.User.DisplayName)
+		_, _ = fmt.Fprintf(p.writer, "  Relying Party: %s\n", result.RelyingParty.ID)
+		_, _ = fmt.Fprintf(p.writer, "  Created:       %s\n", result.Created.Format("2006-01-02 15:04:05"))
+		_, _ = fmt.Fprintln(p.writer, "")
+		_, _ = fmt.Fprintln(p.writer, "Store these values securely for authentication:")
+		_, _ = fmt.Fprintf(p.writer, "  Credential ID: %s\n", base64.StdEncoding.EncodeToString(result.CredentialID))
+		_, _ = fmt.Fprintf(p.writer, "  Salt:          %s\n", base64.StdEncoding.EncodeToString(result.Salt))
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", p.format)
+	}
+}
+
+// truncateString truncates a string to maxLen characters
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// PrintJSON prints data as JSON (public wrapper)
+func (p *Printer) PrintJSON(data interface{}) error {
+	return p.printJSON(data)
 }
 
 // printJSON prints data as JSON

@@ -396,3 +396,53 @@ func BenchmarkIncrementActiveConnections(b *testing.B) {
 		IncrementActiveConnections(ProtocolHTTP)
 	}
 }
+
+func TestActiveConnectionsWhenDisabled(t *testing.T) {
+	Disable()
+	defer Enable()
+
+	// These should not panic when disabled
+	IncrementActiveConnections(ProtocolHTTP)
+	DecrementActiveConnections(ProtocolHTTP)
+}
+
+func TestSetKeysTotalWhenDisabled(t *testing.T) {
+	Disable()
+	defer Enable()
+
+	// Should not panic when disabled
+	SetKeysTotal("pkcs8", 10)
+}
+
+func TestSetCertsTotalWhenDisabled(t *testing.T) {
+	Disable()
+	defer Enable()
+
+	// Should not panic when disabled
+	SetCertsTotal("pkcs8", 5)
+}
+
+func TestSetBackendHealthWhenDisabled(t *testing.T) {
+	Disable()
+	defer Enable()
+
+	// Should not panic when disabled
+	SetBackendHealth("pkcs8", true)
+	SetBackendHealth("pkcs8", false)
+}
+
+func TestRecordHTTPRequestWhenDisabled(t *testing.T) {
+	Disable()
+	defer Enable()
+
+	// Should not panic when disabled
+	RecordHTTPRequest("GET", "200", 0.05)
+}
+
+func TestRecordGRPCRequestWhenDisabled(t *testing.T) {
+	Disable()
+	defer Enable()
+
+	// Should not panic when disabled
+	RecordGRPCRequest("/test.Method", "OK", 0.1)
+}

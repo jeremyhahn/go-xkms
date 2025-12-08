@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2
-
 package hardware
 
 import (
@@ -25,7 +23,6 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	storagepkg "github.com/jeremyhahn/go-keychain/pkg/storage"
 )
 
 // TPM2CertStorage implements HardwareCertStorage for TPM 2.0 devices.
@@ -465,7 +462,7 @@ func (t *TPM2CertStorage) readNVIndex(index uint32) ([]byte, error) {
 	}.Execute(t.tpm)
 
 	if err != nil {
-		return nil, storagepkg.ErrNotFound
+		return nil, storage.ErrNotFound
 	}
 
 	nvPublic, err := readPubResp.NVPublic.Contents()

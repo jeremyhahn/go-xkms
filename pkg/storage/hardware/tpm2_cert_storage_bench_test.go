@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2 && !integration
+//go:build !integration
 
 package hardware
 
@@ -61,7 +61,7 @@ func BenchmarkTPM2_GetCert(b *testing.B) {
 	// Pre-populate (TPM has limited capacity, so use fewer certs)
 	for i := 0; i < 4; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		storage.SaveCert(id, cert)
+		_ = storage.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -89,7 +89,7 @@ func BenchmarkTPM2_DeleteCert(b *testing.B) {
 	// Pre-populate
 	for i := 0; i < b.N; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		storage.SaveCert(id, cert)
+		_ = storage.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -173,7 +173,7 @@ func BenchmarkTPM2_GetCertChain(b *testing.B) {
 	// Pre-populate chains
 	for i := 0; i < 4; i++ {
 		id := fmt.Sprintf("chain-%d", i)
-		storage.SaveCertChain(id, chain)
+		_ = storage.SaveCertChain(id, chain)
 	}
 
 	b.ResetTimer()
@@ -206,7 +206,7 @@ func BenchmarkTPM2_ListCerts(b *testing.B) {
 			// Pre-populate
 			for i := 0; i < count; i++ {
 				id := fmt.Sprintf("cert-%d", i)
-				storage.SaveCert(id, cert)
+				_ = storage.SaveCert(id, cert)
 			}
 
 			b.ResetTimer()
@@ -287,7 +287,7 @@ func BenchmarkTPM2_ConcurrentReads(b *testing.B) {
 	// Pre-populate with limited certs
 	for i := 0; i < 4; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		storage.SaveCert(id, cert)
+		_ = storage.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()
@@ -346,7 +346,7 @@ func BenchmarkTPM2_CapacityCheck(b *testing.B) {
 	// Pre-populate
 	for i := 0; i < 4; i++ {
 		id := fmt.Sprintf("cert-%d", i)
-		storage.SaveCert(id, cert)
+		_ = storage.SaveCert(id, cert)
 	}
 
 	b.ResetTimer()

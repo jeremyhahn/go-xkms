@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -34,24 +35,24 @@ var (
 	ErrNoDefaultBackend = errors.New("no default backend configured")
 )
 
-// Facade singleton instance
+// Service singleton instance
 var (
-	facade   *KeychainFacade
+	service  *KeychainService
 	initOnce sync.Once
 	initMu   sync.RWMutex
 )
 
-// KeychainFacade provides a simplified API for keychain operations
+// KeychainService provides a simplified API for keychain operations
 // across multiple backends. Applications and services use this instead of managing
 // KeyStore instances directly, preventing leaky abstractions.
-type KeychainFacade struct {
+type KeychainService struct {
 	backends       map[string]KeyStore // backend name -> KeyStore
 	defaultBackend string              // default backend to use
 	mu             sync.RWMutex
 }
 
-// FacadeConfig configures the keychain facade
-type FacadeConfig struct {
+// ServiceConfig configures the keychain service
+type ServiceConfig struct {
 	// Backends is a map of backend name to KeyStore
 	Backends map[string]KeyStore
 
@@ -60,9 +61,9 @@ type FacadeConfig struct {
 	DefaultBackend string
 }
 
-// Initialize sets up the keychain facade
+// Initialize sets up the keychain service
 // This should be called once at application startup
-func Initialize(config *FacadeConfig) error {
+func Initialize(config *ServiceConfig) error {
 	var initErr error
 
 	initOnce.Do(func() {
@@ -91,7 +92,7 @@ func Initialize(config *FacadeConfig) error {
 			return
 		}
 
-		facade = &KeychainFacade{
+		service = &KeychainService{
 			backends:       config.Backends,
 			defaultBackend: defaultBackend,
 		}
@@ -100,29 +101,31 @@ func Initialize(config *FacadeConfig) error {
 	return initErr
 }
 
-// Reset clears the facade (useful for testing)
+// Reset clears the service (useful for testing)
 func Reset() {
 	initMu.Lock()
 	defer initMu.Unlock()
 
-	if facade != nil {
-		facade.mu.Lock()
-		for _, ks := range facade.backends {
-			_ = ks.Close()
+	if service != nil {
+		service.mu.Lock()
+		for _, ks := range service.backends {
+			if closeErr := ks.Close(); closeErr != nil {
+				log.Printf("failed to close keystore during reset: %v", closeErr)
+			}
 		}
-		facade.backends = nil
-		facade.mu.Unlock()
+		service.backends = nil
+		service.mu.Unlock()
 	}
 
-	facade = nil
+	service = nil
 	initOnce = sync.Once{}
 }
 
-// IsInitialized returns whether the facade has been initialized
+// IsInitialized returns whether the service has been initialized
 func IsInitialized() bool {
 	initMu.RLock()
 	defer initMu.RUnlock()
-	return facade != nil
+	return service != nil
 }
 
 // Backend returns a specific backend by name
@@ -136,10 +139,10 @@ func Backend(name string) (KeyStore, error) {
 		return nil, ErrNotInitialized
 	}
 
-	facade.mu.RLock()
-	defer facade.mu.RUnlock()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 
-	ks, ok := facade.backends[name]
+	ks, ok := service.backends[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, validation.SanitizeForLog(name))
 	}
@@ -153,16 +156,16 @@ func DefaultBackend() (KeyStore, error) {
 		return nil, ErrNotInitialized
 	}
 
-	facade.mu.RLock()
-	defer facade.mu.RUnlock()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 
-	if facade.defaultBackend == "" {
+	if service.defaultBackend == "" {
 		return nil, ErrNoDefaultBackend
 	}
 
-	ks, ok := facade.backends[facade.defaultBackend]
+	ks, ok := service.backends[service.defaultBackend]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, facade.defaultBackend)
+		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, service.defaultBackend)
 	}
 
 	return ks, nil
@@ -174,11 +177,11 @@ func Backends() []string {
 		return nil
 	}
 
-	facade.mu.RLock()
-	defer facade.mu.RUnlock()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 
-	backends := make([]string, 0, len(facade.backends))
-	for name := range facade.backends {
+	backends := make([]string, 0, len(service.backends))
+	for name := range service.backends {
 		backends = append(backends, name)
 	}
 
@@ -349,14 +352,14 @@ func ListKeys(backendName ...string) ([]*types.KeyAttributes, error) {
 		}
 	}
 
-	facade.mu.RLock()
-	defer facade.mu.RUnlock()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 
 	var allKeys []*types.KeyAttributes
 
 	if len(backendName) > 0 && backendName[0] != "" {
 		// List from specific backend
-		ks, ok := facade.backends[backendName[0]]
+		ks, ok := service.backends[backendName[0]]
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, validation.SanitizeForLog(backendName[0]))
 		}
@@ -365,7 +368,7 @@ func ListKeys(backendName ...string) ([]*types.KeyAttributes, error) {
 	}
 
 	// List from all backends
-	for _, ks := range facade.backends {
+	for _, ks := range service.backends {
 		keys, err := ks.ListKeys()
 		if err != nil {
 			// Log error but continue with other backends
@@ -435,14 +438,14 @@ func ListCertificates(backendName ...string) ([]string, error) {
 		}
 	}
 
-	facade.mu.RLock()
-	defer facade.mu.RUnlock()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 
 	var allCerts []string
 
 	if len(backendName) > 0 && backendName[0] != "" {
 		// List from specific backend
-		ks, ok := facade.backends[backendName[0]]
+		ks, ok := service.backends[backendName[0]]
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, validation.SanitizeForLog(backendName[0]))
 		}
@@ -451,7 +454,7 @@ func ListCertificates(backendName ...string) ([]string, error) {
 	}
 
 	// List from all backends
-	for _, ks := range facade.backends {
+	for _, ks := range service.backends {
 		certs, err := ks.ListCerts()
 		if err != nil {
 			// Log error but continue with other backends
@@ -469,11 +472,11 @@ func Close() error {
 		return nil
 	}
 
-	facade.mu.Lock()
-	defer facade.mu.Unlock()
+	service.mu.Lock()
+	defer service.mu.Unlock()
 
 	var errs []error
-	for name, ks := range facade.backends {
+	for name, ks := range service.backends {
 		if err := ks.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("backend %s: %w", name, err))
 		}
@@ -550,10 +553,10 @@ func Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOpt
 	}
 
 	// Find the backend that matches the sealed data's backend type
-	facade.mu.RLock()
-	defer facade.mu.RUnlock()
+	service.mu.RLock()
+	defer service.mu.RUnlock()
 
-	for _, ks := range facade.backends {
+	for _, ks := range service.backends {
 		if ks.Backend().Type() == sealed.Backend {
 			return ks.Unseal(ctx, sealed, opts)
 		}
@@ -758,6 +761,12 @@ func Sign(keyRef string, data []byte, opts *SignOptions) ([]byte, error) {
 		return nil, fmt.Errorf("failed to get signer: %w", err)
 	}
 
+	// Ed25519 uses pure signing (no prehashing) by default
+	// The signer expects the raw message and crypto.Hash(0) as SignerOpts
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		return signer.Sign(nil, data, crypto.Hash(0))
+	}
+
 	if opts == nil {
 		opts = &SignOptions{Hash: crypto.SHA256}
 	}
@@ -816,6 +825,13 @@ func Verify(keyRef string, data, signature []byte, opts *types.VerifyOpts) error
 		pubKey = signer.Public()
 	} else {
 		return fmt.Errorf("key does not support signing operations")
+	}
+
+	// Ed25519 uses pure verification (no prehashing) by default
+	// Verify against the raw message, not a hash
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		verifier := types.NewVerifier(&types.VerifyOpts{Hash: crypto.Hash(0)})
+		return verifier.Verify(pubKey, data, signature)
 	}
 
 	if opts == nil {

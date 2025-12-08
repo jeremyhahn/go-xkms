@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2 || pkcs11
-
 package hardware
 
 import (
@@ -682,7 +680,7 @@ func TestHybridCertStorage_SaveCert(t *testing.T) {
 		cert, err := createTestCertificate("test")
 		require.NoError(t, err)
 
-		hybrid.Close()
+		_ = hybrid.Close()
 
 		err = hybrid.SaveCert("test", cert)
 		require.Error(t, err)
@@ -772,7 +770,7 @@ func TestHybridCertStorage_GetCert(t *testing.T) {
 		ext := newMockExternalCertStorage()
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
-		hybrid.Close()
+		_ = hybrid.Close()
 
 		_, err := hybrid.GetCert("test")
 		require.Error(t, err)
@@ -791,8 +789,8 @@ func TestHybridCertStorage_DeleteCert(t *testing.T) {
 		require.NoError(t, err)
 
 		// Save to both
-		hw.SaveCert("test", cert)
-		ext.SaveCert("test", cert)
+		_ = hw.SaveCert("test", cert)
+		_ = ext.SaveCert("test", cert)
 
 		// Delete should remove from both
 		err = hybrid.DeleteCert("test")
@@ -815,7 +813,7 @@ func TestHybridCertStorage_DeleteCert(t *testing.T) {
 		require.NoError(t, err)
 
 		// Save to hardware only
-		hw.SaveCert("test", cert)
+		_ = hw.SaveCert("test", cert)
 
 		// Delete should succeed
 		err = hybrid.DeleteCert("test")
@@ -835,7 +833,7 @@ func TestHybridCertStorage_DeleteCert(t *testing.T) {
 		require.NoError(t, err)
 
 		// Save to external only
-		ext.SaveCert("test", cert)
+		_ = ext.SaveCert("test", cert)
 
 		// Delete should succeed
 		err = hybrid.DeleteCert("test")
@@ -868,8 +866,8 @@ func TestHybridCertStorage_DeleteCert(t *testing.T) {
 
 		hw.failDelete = false
 		ext.failDelete = false
-		hw.SaveCert("test", cert)
-		ext.SaveCert("test", cert)
+		_ = hw.SaveCert("test", cert)
+		_ = ext.SaveCert("test", cert)
 		hw.failDelete = true
 		ext.failDelete = true
 
@@ -894,7 +892,7 @@ func TestHybridCertStorage_DeleteCert(t *testing.T) {
 		ext := newMockExternalCertStorage()
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
-		hybrid.Close()
+		_ = hybrid.Close()
 
 		err := hybrid.DeleteCert("test")
 		require.Error(t, err)
@@ -972,7 +970,7 @@ func TestHybridCertStorage_SaveCertChain(t *testing.T) {
 		cert1, _ := createTestCertificate("cert1")
 		chain := []*x509.Certificate{cert1}
 
-		hybrid.Close()
+		_ = hybrid.Close()
 
 		err := hybrid.SaveCertChain("test", chain)
 		require.Error(t, err)
@@ -991,7 +989,7 @@ func TestHybridCertStorage_GetCertChain(t *testing.T) {
 		cert2, _ := createTestCertificate("cert2")
 		chain := []*x509.Certificate{cert1, cert2}
 
-		hw.SaveCertChain("test", chain)
+		_ = hw.SaveCertChain("test", chain)
 
 		retrieved, err := hybrid.GetCertChain("test")
 		require.NoError(t, err)
@@ -1007,7 +1005,7 @@ func TestHybridCertStorage_GetCertChain(t *testing.T) {
 		cert2, _ := createTestCertificate("cert2")
 		chain := []*x509.Certificate{cert1, cert2}
 
-		ext.SaveCertChain("test", chain)
+		_ = ext.SaveCertChain("test", chain)
 
 		retrieved, err := hybrid.GetCertChain("test")
 		require.NoError(t, err)
@@ -1029,7 +1027,7 @@ func TestHybridCertStorage_GetCertChain(t *testing.T) {
 		ext := newMockExternalCertStorage()
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
-		hybrid.Close()
+		_ = hybrid.Close()
 
 		_, err := hybrid.GetCertChain("test")
 		require.Error(t, err)
@@ -1048,9 +1046,9 @@ func TestHybridCertStorage_ListCerts(t *testing.T) {
 		cert2, _ := createTestCertificate("cert2")
 		cert3, _ := createTestCertificate("cert3")
 
-		hw.SaveCert("test1", cert1)
-		hw.SaveCert("test2", cert2)
-		ext.SaveCert("test3", cert3)
+		_ = hw.SaveCert("test1", cert1)
+		_ = hw.SaveCert("test2", cert2)
+		_ = ext.SaveCert("test3", cert3)
 
 		list, err := hybrid.ListCerts()
 		require.NoError(t, err)
@@ -1069,8 +1067,8 @@ func TestHybridCertStorage_ListCerts(t *testing.T) {
 		cert2, _ := createTestCertificate("cert2")
 
 		// Save same IDs to both storages
-		hw.SaveCert("test1", cert1)
-		ext.SaveCert("test1", cert2)
+		_ = hw.SaveCert("test1", cert1)
+		_ = ext.SaveCert("test1", cert2)
 
 		list, err := hybrid.ListCerts()
 		require.NoError(t, err)
@@ -1095,7 +1093,7 @@ func TestHybridCertStorage_ListCerts(t *testing.T) {
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
 		cert1, _ := createTestCertificate("cert1")
-		ext.SaveCert("test1", cert1)
+		_ = ext.SaveCert("test1", cert1)
 
 		// Should still succeed with external list
 		list, err := hybrid.ListCerts()
@@ -1121,7 +1119,7 @@ func TestHybridCertStorage_ListCerts(t *testing.T) {
 		ext := newMockExternalCertStorage()
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
-		hybrid.Close()
+		_ = hybrid.Close()
 
 		_, err := hybrid.ListCerts()
 		require.Error(t, err)
@@ -1137,7 +1135,7 @@ func TestHybridCertStorage_CertExists(t *testing.T) {
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
 		cert, _ := createTestCertificate("cert1")
-		hw.SaveCert("test", cert)
+		_ = hw.SaveCert("test", cert)
 
 		exists, err := hybrid.CertExists("test")
 		require.NoError(t, err)
@@ -1150,7 +1148,7 @@ func TestHybridCertStorage_CertExists(t *testing.T) {
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
 		cert, _ := createTestCertificate("cert1")
-		ext.SaveCert("test", cert)
+		_ = ext.SaveCert("test", cert)
 
 		exists, err := hybrid.CertExists("test")
 		require.NoError(t, err)
@@ -1195,7 +1193,7 @@ func TestHybridCertStorage_CertExists(t *testing.T) {
 		ext := newMockExternalCertStorage()
 		hybrid, _ := NewHybridCertStorage(hw, ext)
 
-		hybrid.Close()
+		_ = hybrid.Close()
 
 		_, err := hybrid.CertExists("test")
 		require.Error(t, err)

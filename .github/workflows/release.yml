@@ -63,9 +63,11 @@ jobs:
 
           **Available Binaries**:
           - \`keychain-cli-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard CLI
-          - \`keychain-server-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Server
-          - \`keychain-{cli,server}-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant builds
-          - \`keychain-{cli,server}-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}-quantum\` - Quantum builds
+          - \`keychaind-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Server
+          - \`keychain-cli-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant CLI
+          - \`keychaind-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant Server
+          - \`keychain-cli-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}-quantum\` - Quantum CLI
+          - \`keychaind-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}-quantum\` - Quantum Server
 
           **Quick Start**:
           \`\`\`bash
@@ -242,9 +244,9 @@ jobs:
             ./cmd/cli
 
           # Build multi-protocol Server (supports REST, gRPC, QUIC, MCP)
-          echo "Building keychain-server..."
+          echo "Building keychaind..."
           CGO_ENABLED=${CGO_MODE} go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o /workspace/dist/keychain-server \
+            -o /workspace/dist/keychaind \
             ./cmd/server
 
           # Verify binaries are statically linked
@@ -302,7 +304,7 @@ jobs:
           # Create renamed binaries with platform/variant info
           cd dist
 
-          for binary in keychain-cli keychain-server; do
+          for binary in keychain-cli keychaind; do
             if [ -f "$binary" ]; then
               # Create binary with full name including platform/arch/variant
               NEW_NAME="${binary}-${VERSION}-linux-${ARCH}${VARIANT_SUFFIX}"
@@ -326,8 +328,8 @@ jobs:
           files: |
             keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}
             keychain-cli-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}.sha256
-            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}
-            keychain-server-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}.sha256
+            keychaind-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}
+            keychaind-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || (matrix.variant == 'fips' && '-fips' || '') }}.sha256
 
   build-darwin-binaries:
     name: Build Darwin Binaries (${{ matrix.arch }}, ${{ matrix.variant }})
@@ -392,9 +394,9 @@ jobs:
             ./cmd/cli
 
           # Build Server
-          echo "Building keychain-server..."
+          echo "Building keychaind..."
           go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o dist/keychain-server \
+            -o dist/keychaind \
             ./cmd/server
 
           # Verify binaries
@@ -417,7 +419,7 @@ jobs:
           # Create renamed binaries with platform/variant info
           cd dist
 
-          for binary in keychain-cli keychain-server; do
+          for binary in keychain-cli keychaind; do
             if [ -f "$binary" ]; then
               # Create binary with full name including platform/arch/variant
               NEW_NAME="${binary}-${VERSION}-darwin-${ARCH}${VARIANT_SUFFIX}"
@@ -441,8 +443,8 @@ jobs:
           files: |
             keychain-cli-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
             keychain-cli-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
-            keychain-server-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
-            keychain-server-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
+            keychaind-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}
+            keychaind-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}${{ matrix.variant == 'quantum' && '-quantum' || '' }}.sha256
 
   build-docker:
     name: Build Docker Server Image
@@ -536,7 +538,7 @@ jobs:
               -buildvcs=false \
               -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,quantum" \
               -ldflags="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
-              -o /build/keychain-server \
+              -o /build/keychaind \
               ./cmd/server
 
           # Stage 2: Runtime
@@ -563,7 +565,7 @@ jobs:
               chown -R keychain:keychain /etc/keychain /var/lib/keychain /var/lib/softhsm
 
           # Copy binary from builder
-          COPY --from=builder /build/keychain-server /usr/local/bin/keychain-server
+          COPY --from=builder /build/keychaind /usr/local/bin/keychaind
 
           # Switch to non-root user
           USER keychain
@@ -571,7 +573,7 @@ jobs:
           # Expose ports for all protocols: REST, gRPC, QUIC, MCP
           EXPOSE 8080 8443 9090 9091
 
-          ENTRYPOINT ["/usr/local/bin/keychain-server"]
+          ENTRYPOINT ["/usr/local/bin/keychaind"]
           CMD ["-config", "/etc/keychain/config.yaml"]
           EOF
 

@@ -1,4 +1,4 @@
-//go:build integration && tpm2 && tpmops
+//go:build integration && tpmops
 
 package tpmops
 
@@ -80,7 +80,7 @@ func TestMain(m *testing.M) {
 		os.Setenv("TPM2_SIMULATOR_HOST", "tpm-simulator")
 	}
 	if os.Getenv("TPM2_SIMULATOR_PORT") == "" {
-		os.Setenv("TPM2_SIMULATOR_PORT", "2321")
+		os.Setenv("TPM2_SIMULATOR_PORT", "2421")
 	}
 
 	// Create shared logger
@@ -277,7 +277,7 @@ func TestTPMOps_SignValidate(t *testing.T) {
 	digest, validationDigest, err := sharedTPM.HashSequence(iakAttrs, message)
 	if err != nil {
 		t.Logf("HashSequence error: %v", err)
-		t.Skip("HashSequence failed, cannot test SignValidate")
+		t.Fatal("HashSequence failed, cannot test SignValidate")
 	}
 
 	// Now sign with SignValidate
@@ -305,10 +305,10 @@ func TestTPMOps_CreateIDevIDFlow(t *testing.T) {
 	ekAttrs, err := sharedTPM.EKAttributes()
 	if err != nil {
 		t.Logf("EKAttributes error: %v", err)
-		t.Skip("EK not available, skipping CreateIDevID test")
+		t.Fatal("EK not available, skipping CreateIDevID test")
 	}
 	if ekAttrs == nil || ekAttrs.TPMAttributes == nil {
-		t.Skip("EK attributes not available, skipping CreateIDevID test")
+		t.Fatal("EK attributes not available, skipping CreateIDevID test")
 	}
 
 	// Get EK public key
@@ -329,10 +329,10 @@ func TestTPMOps_CreateIDevIDFlow(t *testing.T) {
 	idevIDAttrs, tcgCSR, err := sharedTPM.CreateIDevID(iakAttrs, ekCert, qualifyingData)
 	if err != nil {
 		if strings.Contains(err.Error(), "NV_DEFINED") || strings.Contains(err.Error(), "already defined") {
-			t.Skip("IDevID already exists in NV, skipping test")
+			t.Fatal("IDevID already exists in NV, skipping test")
 		}
 		t.Logf("CreateIDevID error: %v", err)
-		t.Skip("CreateIDevID failed, code paths exercised")
+		t.Fatal("CreateIDevID failed, code paths exercised")
 	} else {
 		require.NotNil(t, idevIDAttrs, "IDevID attributes should not be nil")
 		require.NotNil(t, tcgCSR, "TCG CSR should not be nil")
@@ -358,7 +358,7 @@ func TestTPMOps_CreateIDevIDWithVariousQualifyingData(t *testing.T) {
 
 	ekAttrs, err := sharedTPM.EKAttributes()
 	if err != nil || ekAttrs == nil || ekAttrs.TPMAttributes == nil {
-		t.Skip("EK not available")
+		t.Fatal("EK not available")
 	}
 
 	ekPub := sharedTPM.EK()
@@ -383,7 +383,7 @@ func TestTPMOps_CreateIDevIDWithVariousQualifyingData(t *testing.T) {
 			idevIDAttrs, tcgCSR, err := sharedTPM.CreateIDevID(iakAttrs, ekCert, qualifyingData)
 			if err != nil {
 				if strings.Contains(err.Error(), "NV_DEFINED") || strings.Contains(err.Error(), "already defined") {
-					t.Skip("IDevID already exists in NV")
+					t.Fatal("IDevID already exists in NV")
 				}
 				t.Logf("CreateIDevID error with %d byte qualifying data: %v", tc.size, err)
 			} else {
@@ -663,7 +663,7 @@ func TestTPMOps_EKECC(t *testing.T) {
 
 	// Skip this test since EKECC() calls FatalError when ECC EK is not available
 	// and we're using RSA-only configuration
-	t.Skip("Skipping EKECC test - RSA-only configuration, no ECC EK available")
+	t.Fatal("Skipping EKECC test - RSA-only configuration, no ECC EK available")
 }
 
 // TestTPMOps_Install tests the Install function
@@ -746,7 +746,7 @@ func TestTPMOps_RSAEncryptDecrypt(t *testing.T) {
 
 	// Skip if no TPM attributes
 	if ekAttrs.TPMAttributes == nil {
-		t.Skip("EK TPM attributes not available")
+		t.Fatal("EK TPM attributes not available")
 	}
 
 	// Get the handle and name from TPM attributes
@@ -773,7 +773,7 @@ func TestTPMOps_RSAEncryptWithDifferentMessageSizes(t *testing.T) {
 	require.NoError(t, err, "EKAttributes should succeed")
 
 	if ekAttrs == nil || ekAttrs.TPMAttributes == nil {
-		t.Skip("EK TPM attributes not available")
+		t.Fatal("EK TPM attributes not available")
 	}
 
 	handle := ekAttrs.TPMAttributes.Handle
@@ -847,7 +847,7 @@ func TestTPMOps_RSADecrypt(t *testing.T) {
 	createResp, err := sharedTPM.CreateRSA(keyAttrs, backend, false)
 	if err != nil {
 		t.Logf("CreateRSA error: %v", err)
-		t.Skip("Cannot create RSA key for decryption test")
+		t.Fatal("Cannot create RSA key for decryption test")
 	}
 	require.NotNil(t, createResp, "CreateResponse should not be nil")
 
@@ -855,14 +855,14 @@ func TestTPMOps_RSADecrypt(t *testing.T) {
 	session, closer, err := sharedTPM.CreateSession(keyAttrs)
 	if err != nil {
 		t.Logf("CreateSession error: %v", err)
-		t.Skip("Cannot create session for decryption test")
+		t.Fatal("Cannot create session for decryption test")
 	}
 	defer closer()
 
 	loadResp, err := sharedTPM.LoadKeyPair(keyAttrs, &session, backend)
 	if err != nil {
 		t.Logf("LoadKeyPair error: %v", err)
-		t.Skip("Cannot load key pair for decryption test")
+		t.Fatal("Cannot load key pair for decryption test")
 	}
 
 	handle := loadResp.ObjectHandle
@@ -873,7 +873,7 @@ func TestTPMOps_RSADecrypt(t *testing.T) {
 	ciphertext, err := sharedTPM.RSAEncrypt(handle, name, plaintext)
 	if err != nil {
 		t.Logf("RSAEncrypt error: %v", err)
-		t.Skip("RSAEncrypt failed")
+		t.Fatal("RSAEncrypt failed")
 	}
 
 	t.Logf("Encrypted %d bytes to %d bytes", len(plaintext), len(ciphertext))
@@ -1144,7 +1144,7 @@ func TestTPMOps_VerifyTCGCSR(t *testing.T) {
 	idevidAttrs, err := sharedTPM.IDevIDAttributes()
 	if err != nil {
 		t.Logf("IDevIDAttributes error: %v", err)
-		t.Skip("IDevID not available for verification test")
+		t.Fatal("IDevID not available for verification test")
 	}
 	require.NotNil(t, idevidAttrs, "IDevID attributes should not be nil")
 	require.NotNil(t, idevidAttrs.TPMAttributes, "IDevID TPM attributes should not be nil")
@@ -1465,14 +1465,14 @@ func TestTPMOps_LoadKeyPair(t *testing.T) {
 	_, err = sharedTPM.SealKey(keyAttrs, backend, false)
 	if err != nil {
 		t.Logf("Seal error: %v", err)
-		t.Skip("Cannot seal key for load test")
+		t.Fatal("Cannot seal key for load test")
 	}
 
 	// Now try to load the key pair back
 	session, closer, err := sharedTPM.CreateSession(keyAttrs)
 	if err != nil {
 		t.Logf("CreateSession error: %v", err)
-		t.Skip("Cannot create session for load test")
+		t.Fatal("Cannot create session for load test")
 	}
 	defer closer()
 
@@ -1524,7 +1524,7 @@ func TestTPMOps_LoadKeyPairMissingBackendData(t *testing.T) {
 	session, closer, err := sharedTPM.CreateSession(keyAttrs)
 	if err != nil {
 		t.Logf("CreateSession error: %v", err)
-		t.Skip("Cannot create session for load test")
+		t.Fatal("Cannot create session for load test")
 	}
 	defer closer()
 
@@ -1562,7 +1562,7 @@ func TestTPMOps_CreateTCG_CSR_IDEVID(t *testing.T) {
 	idevidAttrs, err := sharedTPM.IDevIDAttributes()
 	if err != nil {
 		t.Logf("IDevIDAttributes error: %v", err)
-		t.Skip("IDevID not available for CSR creation test")
+		t.Fatal("IDevID not available for CSR creation test")
 	}
 
 	// Get EK certificate
@@ -1730,20 +1730,20 @@ func TestTPMOps_RSADecryptWithInvalidCiphertext(t *testing.T) {
 	_, err = sharedTPM.CreateRSA(keyAttrs, backend, false)
 	if err != nil {
 		t.Logf("CreateRSA error: %v", err)
-		t.Skip("Cannot create RSA key for decrypt error test")
+		t.Fatal("Cannot create RSA key for decrypt error test")
 	}
 
 	session, closer, err := sharedTPM.CreateSession(keyAttrs)
 	if err != nil {
 		t.Logf("CreateSession error: %v", err)
-		t.Skip("Cannot create session for decrypt error test")
+		t.Fatal("Cannot create session for decrypt error test")
 	}
 	defer closer()
 
 	loadResp, err := sharedTPM.LoadKeyPair(keyAttrs, &session, backend)
 	if err != nil {
 		t.Logf("LoadKeyPair error: %v", err)
-		t.Skip("Cannot load key pair for decrypt error test")
+		t.Fatal("Cannot load key pair for decrypt error test")
 	}
 
 	handle := loadResp.ObjectHandle
@@ -1840,23 +1840,23 @@ func TestTPMOps_FlushHandle(t *testing.T) {
 	_, err = sharedTPM.CreateRSA(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory, skipping flush test")
+			t.Fatal("TPM out of memory, skipping flush test")
 		}
 		t.Logf("CreateRSA error: %v", err)
-		t.Skip("Cannot create key for flush test")
+		t.Fatal("Cannot create key for flush test")
 	}
 
 	session, closer, err := sharedTPM.CreateSession(keyAttrs)
 	if err != nil {
 		t.Logf("CreateSession error: %v", err)
-		t.Skip("Cannot create session for flush test")
+		t.Fatal("Cannot create session for flush test")
 	}
 	defer closer()
 
 	loadResp, err := sharedTPM.LoadKeyPair(keyAttrs, &session, backend)
 	if err != nil {
 		t.Logf("LoadKeyPair error: %v", err)
-		t.Skip("Cannot load key pair for flush test")
+		t.Fatal("Cannot load key pair for flush test")
 	}
 
 	// Test Flush on the transient handle
@@ -1907,7 +1907,7 @@ func TestTPMOps_CreateECDSAP256(t *testing.T) {
 	pubKey, err := sharedTPM.CreateECDSA(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("CreateECDSA P-256 error: %v", err)
 	} else {
@@ -1959,7 +1959,7 @@ func TestTPMOps_CreateECDSAP384(t *testing.T) {
 	pubKey, err := sharedTPM.CreateECDSA(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("CreateECDSA P-384 error: %v", err)
 	} else {
@@ -2011,7 +2011,7 @@ func TestTPMOps_CreateECDSAP521(t *testing.T) {
 	pubKey, err := sharedTPM.CreateECDSA(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("CreateECDSA P-521 error: %v", err)
 	} else {
@@ -2061,7 +2061,7 @@ func TestTPMOps_CreateECDSAWithPlatformPolicy(t *testing.T) {
 	pubKey, err := sharedTPM.CreateECDSA(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("CreateECDSA with platform policy error: %v", err)
 	} else {
@@ -2109,7 +2109,7 @@ func TestTPMOps_CreateRSAWithPlatformPolicy(t *testing.T) {
 	pubKey, err := sharedTPM.CreateRSA(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("CreateRSA with platform policy error: %v", err)
 	} else {
@@ -2156,7 +2156,7 @@ func TestTPMOps_CreateRSAPSSKey(t *testing.T) {
 	pubKey, err := sharedTPM.CreateRSA(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("CreateRSA-PSS error: %v", err)
 	} else {
@@ -2229,10 +2229,10 @@ func TestTPMOps_DeleteKeyPersistent(t *testing.T) {
 	_, err = sharedTPM.SealKey(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("Seal error: %v", err)
-		t.Skip("Cannot seal key for delete test")
+		t.Fatal("Cannot seal key for delete test")
 	}
 
 	// Test DeleteKey (for transient/sealed key)
@@ -2260,7 +2260,7 @@ func TestTPMOps_ProvisionEKCertWithNoCertHandle(t *testing.T) {
 	err = sharedTPM.ProvisionEKCert(nil, ekCertDER)
 	if err != nil {
 		if strings.Contains(err.Error(), "NV_DEFINED") {
-			t.Skip("EK cert NV index already defined")
+			t.Fatal("EK cert NV index already defined")
 		}
 		t.Logf("ProvisionEKCert error: %v", err)
 	} else {
@@ -2516,7 +2516,7 @@ func TestTPMOps_WriteEKCert(t *testing.T) {
 	err = sharedTPM.WriteEKCert(ekCertDER)
 	if err != nil {
 		if strings.Contains(err.Error(), "NV_DEFINED") {
-			t.Skip("EK cert already written")
+			t.Fatal("EK cert already written")
 		}
 		t.Logf("WriteEKCert error: %v", err)
 	} else {
@@ -2593,7 +2593,7 @@ func TestTPMOps_SealWithPlatformPolicy(t *testing.T) {
 	createResp, err := sharedTPM.SealKey(keyAttrs, backend, false)
 	if err != nil {
 		if strings.Contains(err.Error(), "OBJECT_MEMORY") {
-			t.Skip("TPM out of memory")
+			t.Fatal("TPM out of memory")
 		}
 		t.Logf("Seal with platform policy error: %v", err)
 	} else {

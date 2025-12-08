@@ -23,19 +23,7 @@ This directory contains the complete architecture and implementation guidance fo
      - Common patterns and best practices
      - Deployment considerations
 
-2. **[implementation-guide.md](./implementation-guide.md)** (15KB)
-   - **Purpose:** Step-by-step implementation checklist
-   - **Audience:** Developers implementing the server
-   - **Contents:**
-     - Phase-by-phase implementation plan (8 weeks)
-     - Detailed checklists for each component
-     - Testing commands and verification steps
-     - Common issues and solutions
-     - Development workflow
-     - Debugging tips
-     - Performance optimization guidance
-
-3. **[api-specifications.md](./api-specifications.md)** (22KB)
+2. **[api-specifications.md](./api-specifications.md)** (22KB)
    - **Purpose:** Complete API reference for all protocols
    - **Audience:** API users, integrators, frontend developers
    - **Contents:**
@@ -49,11 +37,20 @@ This directory contains the complete architecture and implementation guidance fo
      - Rate limits
      - Complete usage examples
 
-4. **[overview.md](./overview.md)** (14KB)
+3. **[overview.md](./overview.md)** (14KB)
    - **Purpose:** High-level architecture overview
    - **Audience:** Project stakeholders, managers
    - **Contents:** Existing overview document
 
+4. **[rbac.md](./rbac.md)** (12KB)
+   - **Purpose:** Role-based access control documentation
+   - **Audience:** Developers implementing authorization
+   - **Contents:**
+     - Permission model (resource:action pairs)
+     - Predefined roles (admin, operator, auditor, user, readonly, guest)
+     - RBAC adapter interface
+     - Integration with user management
+     - HTTP middleware examples
 
 ## Quick Start
 
@@ -63,13 +60,10 @@ This directory contains the complete architecture and implementation guidance fo
    - Understand the overall design
    - Review the architecture diagrams
    - Familiarize yourself with design principles
-
-2. **Follow:** [implementation-guide.md](./implementation-guide.md)
-   - Understand the core infrastructure components
    - Use the development workflow guidelines
    - Follow the testing strategy
 
-3. **Reference:** [api-specifications.md](./api-specifications.md)
+2. **Reference:** [api-specifications.md](./api-specifications.md)
    - Implement APIs according to specifications
    - Ensure consistency across all protocols
    - Validate against provided examples
@@ -420,7 +414,7 @@ kubectl apply -f deployments/kubernetes/
 make build
 
 # Run
-./bin/keychain-server --config /etc/keychain/config.yaml
+./bin/keychaind --config /etc/keychain/config.yaml
 ```
 
 
@@ -458,7 +452,7 @@ make docker-test       # Run integration tests in Docker
 ## Next Steps
 
 1. **Begin Development:** Start with Core Infrastructure components
-2. **Follow Checklist:** Use implementation-guide.md
+2. **Follow Architecture:** Review server-architecture.md for implementation details
 3. **Test Continuously:** Run tests after each component
 4. **Document Changes:** Update docs as you implement
 5. **Review Regularly:** Ensure consistency across protocols
@@ -468,7 +462,6 @@ make docker-test       # Run integration tests in Docker
 
 ### Internal Documentation
 - [Server Architecture](./server-architecture.md) - Complete technical design
-- [Implementation Guide](./implementation-guide.md) - Step-by-step checklist
 - [API Specifications](./api-specifications.md) - Complete API reference
 - [KeyStore Interface](../../pkg/keychain/keystore.go) - Core interface
 - [Backend Interface](../../pkg/backend/backend.go) - Backend contract
@@ -516,4 +509,4 @@ These architecture documents should be updated when:
 **Document Owner:** Architecture Team
 
 
-**Ready to begin development? Start with [implementation-guide.md](./implementation-guide.md)!**
+**Ready to begin development? Start with [server-architecture.md](./server-architecture.md)!**

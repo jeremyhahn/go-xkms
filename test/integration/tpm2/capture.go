@@ -1,4 +1,4 @@
-//go:build integration && tpm2
+//go:build integration
 
 // Package integration provides TPM2 session encryption verification through
 // packet capture and analysis.

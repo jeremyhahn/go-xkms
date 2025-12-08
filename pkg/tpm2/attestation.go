@@ -197,7 +197,11 @@ func (tpm *TPM2) ActivateCredential(
 		tpm.logger.Error(err)
 		return nil, err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close policy session: %v", err)
+		}
+	}()
 
 	_, err = tpm2.PolicySecret{
 		AuthHandle: tpm2.AuthHandle{

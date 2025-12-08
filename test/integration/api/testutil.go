@@ -16,11 +16,14 @@
 package integration
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +33,9 @@ import (
 type TestConfig struct {
 	// CLI configuration
 	CLIBinPath string
+
+	// Unix socket configuration
+	UnixSocketPath string
 
 	// REST API configuration
 	RESTBaseURL string
@@ -44,14 +50,28 @@ type TestConfig struct {
 	MCPAddr string
 }
 
+// getProjectRoot returns the project root directory by walking up from the test file location
+func getProjectRoot() string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	// This file is in test/integration/api/, so go up 3 levels
+	return filepath.Join(filepath.Dir(filename), "..", "..", "..")
+}
+
 // LoadTestConfig loads test configuration from environment or defaults
 func LoadTestConfig() *TestConfig {
+	projectRoot := getProjectRoot()
+	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychain")
+
 	cfg := &TestConfig{
-		CLIBinPath:  getEnv("KEYSTORE_CLI_BIN", "./bin/keychain"),
-		RESTBaseURL: getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
-		GRPCAddr:    getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
-		QUICBaseURL: getEnv("KEYSTORE_QUIC_URL", "https://localhost:9445"),
-		MCPAddr:     getEnv("KEYSTORE_MCP_ADDR", "localhost:9444"),
+		CLIBinPath:     getEnv("KEYSTORE_CLI_BIN", defaultCLIPath),
+		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/keychain/keychain.sock"),
+		RESTBaseURL:    getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
+		GRPCAddr:       getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
+		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:9445"),
+		MCPAddr:        getEnv("KEYSTORE_MCP_ADDR", "localhost:9444"),
 	}
 	return cfg
 }
@@ -160,4 +180,123 @@ func assertNotNil(t *testing.T, v interface{}, msg string) {
 	if v == nil {
 		t.Fatal(msg)
 	}
+}
+
+// isUnixSocketAvailable checks if the Unix socket server is available
+func isUnixSocketAvailable(t *testing.T, cfg *TestConfig) bool {
+	t.Helper()
+
+	// Check if socket file exists
+	if _, err := os.Stat(cfg.UnixSocketPath); os.IsNotExist(err) {
+		return false
+	}
+
+	// Try to connect
+	conn, err := net.DialTimeout("unix", cfg.UnixSocketPath, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	return true
+}
+
+// ProtocolType represents the communication protocol for tests
+type ProtocolType string
+
+const (
+	// ProtocolUnix uses Unix domain socket
+	ProtocolUnix ProtocolType = "unix"
+	// ProtocolREST uses HTTP/HTTPS
+	ProtocolREST ProtocolType = "rest"
+	// ProtocolGRPC uses gRPC
+	ProtocolGRPC ProtocolType = "grpc"
+	// ProtocolQUIC uses HTTP/3 over QUIC
+	ProtocolQUIC ProtocolType = "quic"
+)
+
+// GetServerURL returns the server URL for the specified protocol
+func (cfg *TestConfig) GetServerURL(protocol ProtocolType) string {
+	switch protocol {
+	case ProtocolUnix:
+		return "unix://" + cfg.UnixSocketPath
+	case ProtocolREST:
+		return cfg.RESTBaseURL
+	case ProtocolGRPC:
+		return "grpc://" + cfg.GRPCAddr
+	case ProtocolQUIC:
+		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(cfg.QUICBaseURL, "https://"), "http://")
+	default:
+		return ""
+	}
+}
+
+// IsProtocolAvailable checks if the specified protocol server is available
+func (cfg *TestConfig) IsProtocolAvailable(t *testing.T, protocol ProtocolType) bool {
+	t.Helper()
+
+	switch protocol {
+	case ProtocolUnix:
+		return isUnixSocketAvailable(t, cfg)
+	case ProtocolREST:
+		return isServerAvailable(t, cfg)
+	case ProtocolGRPC:
+		return isGRPCServerAvailable(t, cfg)
+	case ProtocolQUIC:
+		// QUIC is known to fail in Docker due to UDP buffer size limitations
+		// Skip QUIC tests when running in Docker (detected by DOCKER_ENV or container detection)
+		if os.Getenv("DOCKER_ENV") != "" || isRunningInDocker() {
+			t.Log("Skipping QUIC: Docker environment detected (UDP buffer limitations)")
+			return false
+		}
+		// QUIC availability check - use HTTP client to check QUIC health endpoint
+		// UDP dial alone is insufficient since UDP is connectionless
+		// We use insecure TLS for testing as the server may use self-signed certs
+		client := &http.Client{
+			Timeout: 2 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+		resp, err := client.Get(cfg.QUICBaseURL + "/health")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	default:
+		return false
+	}
+}
+
+// isRunningInDocker detects if the current process is running inside a Docker container
+func isRunningInDocker() bool {
+	// Check for /.dockerenv file
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	// Check for docker in /proc/1/cgroup
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		if strings.Contains(string(data), "docker") || strings.Contains(string(data), "kubepods") {
+			return true
+		}
+	}
+	// Check for container hostname pattern
+	if hostname, err := os.Hostname(); err == nil {
+		// Docker containers often have 12-char hex hostnames
+		if len(hostname) == 12 && isHexString(hostname) {
+			return true
+		}
+	}
+	return false
+}
+
+// isHexString checks if a string contains only hexadecimal characters
+func isHexString(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

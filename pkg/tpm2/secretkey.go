@@ -37,7 +37,11 @@ func (tpm *TPM2) CreateSecretKey(
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close session: %v", err)
+		}
+	}()
 
 	response, err := tpm2.Create{
 		ParentHandle: tpm2.AuthHandle{

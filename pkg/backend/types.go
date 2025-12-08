@@ -129,7 +129,7 @@ const (
 // IsSymmetric returns true if the algorithm is a symmetric algorithm.
 func (ka KeyAlgorithm) IsSymmetric() bool {
 	switch ka {
-	case ALG_AES128_GCM, ALG_AES192_GCM, ALG_AES256_GCM, ALG_CHACHA20_POLY1305:
+	case ALG_AES128_GCM, ALG_AES192_GCM, ALG_AES256_GCM, ALG_CHACHA20_POLY1305, ALG_XCHACHA20_POLY1305:
 		return true
 	default:
 		return false

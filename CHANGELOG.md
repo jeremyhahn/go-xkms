@@ -7,6 +7,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-alpha] - 2025-12-13
+
+### Added
+- **CanoKey Backend**: Complete PIV-compatible backend for CanoKey hardware tokens
+  - `pkg/backend/canokey/` - Full backend implementation with PKCS#11 wrapper
+  - Hardware and virtual (QEMU) device support for CI/CD testing
+  - PIV slot management (9a, 9c, 9d, 9e, 82-95) matching YubiKey compatibility
+  - Ed25519/X25519 support on firmware 3.0+
+  - Symmetric encryption via envelope encryption pattern
+  - Sealing/unsealing operations with hardware-backed keys
+  - Comprehensive documentation in `docs/backends/canokey.md`
+- **YubiKey Sealer Interface**: Hardware-backed data sealing for YubiKey PIV
+  - `pkg/backend/yubikey/yubikey_sealer.go` - Envelope encryption sealing
+  - RSA-OAEP key wrapping for DEK protection
+  - AES-256-GCM authenticated encryption
+- **YubiKey Symmetric Encryption**: AES-GCM envelope encryption using PIV keys
+  - `pkg/backend/yubikey/yubikey_symmetric.go` - Full symmetric backend
+  - DEK wrapping with RSA-OAEP, ECIES (P-256/P-384), and X25519
+  - Ed25519 to X25519 key conversion for key agreement
+- **Configurable Hardware-Backed RNG**: Support for TPM2 and PKCS#11 hardware random number generators
+  - `pkg/crypto/rand/` Resolver interface now implements `io.Reader` for crypto/rand compatibility
+  - New `RNGConfig` in server configuration for RNG source selection
+  - Modes: `auto` (default), `software`, `tpm2`, `pkcs11`
+  - Fallback mode support when primary RNG fails
+  - Environment variable overrides: `KEYCHAIN_RNG_MODE`, `KEYCHAIN_RNG_FALLBACK`, `KEYCHAIN_RNG_TPM2_*`, `KEYCHAIN_RNG_PKCS11_*`
+- **Unix Socket Client Package**: `pkg/client/` for Go applications to communicate with keychain server
+- **CLI Configuration Tests**: `internal/cli/config_test.go` with comprehensive config validation
+- **Extended CLI Integration Tests**: Multi-protocol and complete lifecycle tests
+- **User Documentation**: `docs/usage/user.md` for end-user documentation
+- **Daemon Configuration**: Complete daemon operation support for `keychaind`
+  - Configuration file support (`--config`, `KEYCHAIN_CONFIG`)
+  - Signal handling: SIGTERM/SIGINT for graceful shutdown, SIGHUP for config reload
+  - PID file management with automatic creation and cleanup
+  - Runtime configuration reload without restart
+  - Unix socket protocol selection (gRPC or HTTP)
+  - systemd service file with security hardening
+  - Installation script and comprehensive documentation in `configs/`
+- **Comprehensive Test Suites**: New test files for sealer and symmetric operations
+  - `pkg/backend/canokey/canokey_sealer_test.go` (26 tests)
+  - `pkg/backend/canokey/canokey_symmetric_test.go` (20 tests)
+  - `pkg/backend/yubikey/yubikey_sealer_test.go` (14 test functions)
+  - `pkg/backend/yubikey/yubikey_symmetric_test.go` (20 tests)
+- **Deployment Documentation**: systemd and OpenRC service files for production deployments
+  - `deploy/systemd/` - systemd service unit, sysusers, and tmpfiles configurations
+  - `deploy/openrc/` - OpenRC init script and configuration for Alpine Linux
+  - `deploy/README.md` - Comprehensive deployment guide with installation steps
+- **Enhanced README**: Expanded quick start guide with FIDO2 admin setup
+  - Server Quick Start section with first-time setup instructions
+  - Complete CLI examples for key, certificate, and admin management
+  - Keychain Service API overview with all service functions documented
+  - Multi-backend configuration examples
+- **Admin CLI Commands**: `internal/cli/admin.go` for administrator management
+  - Create, list, delete admin users
+  - Role assignment and permissions management
+- **FIDO2 CLI Commands**: `internal/cli/fido2.go` for passwordless authentication setup
+  - Register and manage FIDO2 credentials
+  - Authenticate using hardware security keys
+- **RBAC Middleware**: `internal/rest/rbac_middleware.go` for role-based access control
+  - Permission-based route protection
+  - Role hierarchy support
+- **User Management API**: `internal/rest/user_handlers.go` for user operations
+  - REST endpoints for user CRUD operations
+  - Integration with RBAC system
+- **Unix Socket HTTP Server**: `internal/unix/` for local IPC
+  - HTTP server over Unix domain sockets
+  - Handlers for all keychain operations
+
+### Changed
+- **API Naming**: Renamed `KeychainFacade` to `KeychainService` for clarity
+  - `FacadeConfig` → `ServiceConfig`
+  - `facade.go` → `service.go`
+  - Updated all documentation, tests, and code references
+- **Documentation**: Updated terminology from "facade" to "service" throughout
+- **Typed Errors**: Replaced all `fmt.Errorf` with typed errors in PIV backends
+  - CanoKey: 38 typed error variables, ~118 replacements
+  - YubiKey: 37 typed error variables, ~139 replacements
+  - Enables proper `errors.Is()` and `errors.As()` error handling
+- Extended `Resolver` interface with `Read(p []byte) (n int, err error)` method for `io.Reader` compatibility
+- Hardware RNG (TPM2/PKCS#11) can now be used as drop-in replacement for `crypto/rand.Reader`
+- Updated example configurations with RNG settings documentation
+- **Documentation Cleanup**: Streamlined architecture documentation
+  - `docs/architecture/unified-keyid-jwk-integration.md` reduced from 1,580 to 245 lines
+  - Removed all legacy/migration content, kept only current API documentation
+- **CI/CD**: Added FIPS 140-2/3 compliant builds to CI and release workflows
+  - BoringCrypto-enabled binaries for environments requiring FIPS certification
+
+### Fixed
+- **Makefile**: Fixed `bc` dependency error in coverage calculation (replaced with pure shell/awk)
+- **Ed25519 to X25519 Conversion**: Fixed SHA256 → SHA512 for RFC 7748 compliance in YubiKey symmetric
+- **TestMCPStreamingNotifications**: Fixed flaky integration test for async MCP notifications
+- **PlatformPassword Race Condition**: Fixed concurrent cache access in `pkg/tpm2/password.go`
+  - Multiple goroutines calling `Bytes()` could bypass cache and trigger excessive TPM unseal operations
+  - Implemented double-checked locking pattern to ensure only one goroutine performs unseal when cache is empty
+  - `TestPlatformPassword_CacheConcurrency` now passes with race detector enabled
+- Improved error handling and logging for ignored HTTP write errors
+- Integration test stability improvements across all backends
+
+### Removed
+- `test/integration/encoding/README_FIX.md` - Development-only fix notes
+- `pkg/metrics/implementation-summary.md` - Development-only implementation notes
+
 ## [0.1.9-alpha] - 2025-12-07
 
 ### Added
@@ -97,24 +198,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.6-alpha] - 2025-11-22
 
 ### Added
-- Unified facade pattern for simplified multi-backend management
+- Unified service pattern for simplified multi-backend management
 - Backend factory pattern with auto-detection and configuration
-- Comprehensive test coverage for facade and factory (40+ test cases)
+- Comprehensive test coverage for service and factory (40+ test cases)
 - Input validation for all API endpoints to prevent injection attacks
 - Path traversal protection in file storage backend
 
 ### Changed
-- Simplified API: `server.Initialize()` instead of `server.InitializeFacade()`
+- Simplified API: `server.Initialize()` instead of `server.InitializeService()`
 - Refactored keychain initialization with auto-backend detection
 - Updated documentation and examples to reflect simplified API
 - Improved code coverage from 72.8% to 92.5% in keychain package
 
 ### Security
-- Centralized validation at facade layer protects ALL public APIs (REST, gRPC, QUIC, CLI, MCP)
+- Centralized validation at service layer protects ALL public APIs (REST, gRPC, QUIC, CLI, MCP)
 - All user inputs validated before reaching any backend or storage layer
 - Created shared `pkg/validation` package for consistent validation across codebase
-- Facade layer validates all keyIDs, backend names, and key references
-- Defense in depth: Storage layer also validates (though facade should prevent bad input)
+- Service layer validates all keyIDs, backend names, and key references
+- Defense in depth: Storage layer also validates (though service should prevent bad input)
 - Rejects special characters, null bytes, and directory traversal attempts
 - Backend names: whitelist pattern `[a-z0-9\-]+` only (max 64 chars)
 - KeyIDs: whitelist pattern `[a-zA-Z0-9_\-\.]+` only (max 255 chars)
@@ -123,7 +224,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Log injection prevention via sanitization of all logged user input
 
 ### Fixed
-- Test coverage gaps in facade and backend factory code
+- Test coverage gaps in service and backend factory code
 - Documentation examples now demonstrate clean, simple API usage
 - Potential path traversal vulnerability in file storage operations
 
@@ -332,6 +433,7 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - Commercial Licensing: licensing@automatethethings.com
 - AGPL-3.0 License: https://www.gnu.org/licenses/agpl-3.0.html
 
+[0.2.0-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.0-alpha
 [0.1.9-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.9-alpha
 [0.1.8-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.8-alpha
 [0.1.7-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.7-alpha

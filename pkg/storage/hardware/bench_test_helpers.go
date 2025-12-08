@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build (tpm2 || pkcs11) && !integration
+//go:build !integration
 
 package hardware
 
@@ -419,7 +419,7 @@ func generateBenchCert(sizeKB int) (*x509.Certificate, error) {
 	// Create padding data using base64 encoding to ensure valid UTF-8
 	// Base64 encoding increases size by ~4/3, so we generate less random data
 	paddingBytes := make([]byte, (sizeKB*1024-500)*3/4)
-	rand.Read(paddingBytes)
+	_, _ = rand.Read(paddingBytes)
 	paddingStr := base64.StdEncoding.EncodeToString(paddingBytes)
 
 	template := x509.Certificate{

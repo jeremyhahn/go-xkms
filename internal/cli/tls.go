@@ -62,7 +62,7 @@ var tlsGetCmd = &cobra.Command{
 		}
 
 		// Build key attributes
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
+		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
 		if err != nil {
 			handleError(fmt.Errorf("invalid key parameters: %w", err))
 			return

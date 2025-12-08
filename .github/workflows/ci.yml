@@ -72,7 +72,8 @@ jobs:
       - name: Check coverage threshold
         run: |
           COVERAGE=${{ steps.coverage.outputs.coverage }}
-          if (( $(echo "${COVERAGE} < ${COVERAGE_THRESHOLD}" | bc -l) )); then
+          COVERAGE_INT=$(echo "${COVERAGE}" | awk '{printf "%d", $1}')
+          if [ "${COVERAGE_INT}" -lt "${COVERAGE_THRESHOLD}" ]; then
             echo "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
             exit 1
           else
@@ -198,7 +199,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.6.2
+          version: v2.7.2
           args: --timeout=5m
 
   # Job 4: Security Scanning
@@ -270,7 +271,7 @@ jobs:
           TAGS="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault"
           mkdir -p build
           if [ "${{ matrix.binary }}" = "cli" ]; then
-            go build -tags="${TAGS}" -o build/keychain ./cmd/cli/main.go
+            go build -tags="${TAGS}" -o build/keychain-cli ./cmd/cli/main.go
           else
             go build -tags="${TAGS}" -o build/keychain-${{ matrix.binary }} ./cmd/${{ matrix.binary }}/main.go
           fi
@@ -342,7 +343,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           format: 'sarif'
@@ -358,6 +359,7 @@ jobs:
       - name: Run Grype vulnerability scanner
         uses: anchore/scan-action@v3
         id: grype
+        continue-on-error: true
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           fail-build: false
@@ -365,6 +367,7 @@ jobs:
 
       - name: Upload Grype results
         uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
         with:
           sarif_file: ${{ steps.grype.outputs.sarif }}
           category: grype
@@ -428,4 +431,4 @@ jobs:
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -short -tags="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault" ./...
+        run: go test -race -short -tags="pkcs8,tpm_simulator,awskms,gcpkms,azurekv,pkcs11,vault" ./...

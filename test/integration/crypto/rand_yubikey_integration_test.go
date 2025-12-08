@@ -31,19 +31,19 @@ import (
 func discoverYubiKeySlot(t *testing.T, libPath string) uint {
 	p := pkcs11lib.New(libPath)
 	if p == nil {
-		t.Skip("Failed to load PKCS#11 library")
+		t.Fatal("Failed to load PKCS#11 library")
 	}
 
 	err := p.Initialize()
 	if err != nil {
-		t.Skipf("Failed to initialize PKCS#11: %v", err)
+		t.Fatalf("Failed to initialize PKCS#11: %v", err)
 	}
 	defer p.Finalize()
 	defer p.Destroy()
 
 	slots, err := p.GetSlotList(true)
 	if err != nil || len(slots) == 0 {
-		t.Skipf("No PKCS#11 slots found: %v", err)
+		t.Fatalf("No PKCS#11 slots found: %v", err)
 	}
 
 	return slots[0]
@@ -86,7 +86,7 @@ func TestRandYubiKeyIntegration(t *testing.T) {
 			}
 
 			if !found {
-				t.Skip("YubiKey PKCS#11 library not found. Install Yubico PIV Tool or set YUBIKEY_PKCS11_LIBRARY environment variable.")
+				t.Fatal("YubiKey PKCS#11 library not found. Install Yubico PIV Tool or set YUBIKEY_PKCS11_LIBRARY environment variable.")
 			}
 		}
 	}
@@ -118,7 +118,7 @@ func TestRandYubiKeyIntegration(t *testing.T) {
 
 	resolver, err := rand.NewResolver(config)
 	if err != nil {
-		t.Skipf("Skipping YubiKey RNG test: %v (YubiKey may not be connected or accessible)", err)
+		t.Fatalf("Skipping YubiKey RNG test: %v (YubiKey may not be connected or accessible)", err)
 		return
 	}
 	defer resolver.Close()
@@ -282,7 +282,7 @@ func TestRandYubiKeyVsSoftware(t *testing.T) {
 	if yubikeyLib == "" {
 		yubikeyLib = "/usr/lib/x86_64-linux-gnu/libykcs11.so"
 		if _, err := os.Stat(yubikeyLib); os.IsNotExist(err) {
-			t.Skip("YubiKey PKCS#11 library not found at default location. Set YUBIKEY_PKCS11_LIBRARY environment variable.")
+			t.Fatal("YubiKey PKCS#11 library not found at default location. Set YUBIKEY_PKCS11_LIBRARY environment variable.")
 		}
 	}
 
@@ -307,7 +307,7 @@ func TestRandYubiKeyVsSoftware(t *testing.T) {
 
 	yubikeyResolver, err := rand.NewResolver(yubikeyConfig)
 	if err != nil {
-		t.Skipf("Skipping YubiKey comparison test: %v", err)
+		t.Fatalf("Skipping YubiKey comparison test: %v", err)
 		return
 	}
 	defer yubikeyResolver.Close()
@@ -383,7 +383,7 @@ func TestRandYubiKeyReliability(t *testing.T) {
 	if yubikeyLib == "" {
 		yubikeyLib = "/usr/lib/x86_64-linux-gnu/libykcs11.so"
 		if _, err := os.Stat(yubikeyLib); os.IsNotExist(err) {
-			t.Skip("YubiKey PKCS#11 library not found at default location. Set YUBIKEY_PKCS11_LIBRARY environment variable.")
+			t.Fatal("YubiKey PKCS#11 library not found at default location. Set YUBIKEY_PKCS11_LIBRARY environment variable.")
 		}
 	}
 
@@ -407,7 +407,7 @@ func TestRandYubiKeyReliability(t *testing.T) {
 
 	resolver, err := rand.NewResolver(config)
 	if err != nil {
-		t.Skipf("Skipping YubiKey reliability test: %v", err)
+		t.Fatalf("Skipping YubiKey reliability test: %v", err)
 		return
 	}
 	defer resolver.Close()
@@ -447,14 +447,14 @@ func TestRandYubiKeyReliability(t *testing.T) {
 // TestRandYubiKeyPerformance benchmarks YubiKey RNG performance
 func TestRandYubiKeyPerformance(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping performance test in short mode")
+		t.Fatal("Skipping performance test in short mode")
 	}
 
 	yubikeyLib := os.Getenv("YUBIKEY_PKCS11_LIBRARY")
 	if yubikeyLib == "" {
 		yubikeyLib = "/usr/lib/x86_64-linux-gnu/libykcs11.so"
 		if _, err := os.Stat(yubikeyLib); os.IsNotExist(err) {
-			t.Skip("YubiKey PKCS#11 library not found at default location. Set YUBIKEY_PKCS11_LIBRARY environment variable.")
+			t.Fatal("YubiKey PKCS#11 library not found at default location. Set YUBIKEY_PKCS11_LIBRARY environment variable.")
 		}
 	}
 
@@ -478,7 +478,7 @@ func TestRandYubiKeyPerformance(t *testing.T) {
 
 	resolver, err := rand.NewResolver(config)
 	if err != nil {
-		t.Skipf("Skipping YubiKey performance test: %v", err)
+		t.Fatalf("Skipping YubiKey performance test: %v", err)
 		return
 	}
 	defer resolver.Close()

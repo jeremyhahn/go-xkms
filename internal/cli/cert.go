@@ -14,11 +14,13 @@
 package cli
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"os"
 
+	"github.com/jeremyhahn/go-keychain/pkg/client"
 	"github.com/spf13/cobra"
 )
 
@@ -58,7 +60,7 @@ var certSaveCmd = &cobra.Command{
 			return
 		}
 
-		// Parse X.509 certificate
+		// Parse X.509 certificate to validate it
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
 			handleError(fmt.Errorf("failed to parse certificate: %w", err))
@@ -67,23 +69,69 @@ var certSaveCmd = &cobra.Command{
 
 		printVerbose("Certificate Subject: %s", cert.Subject.String())
 
-		// Create certificate storage
-		certStorage, err := cfg.CreateCertStorage()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create cert storage: %w", err))
-			return
-		}
-
-		// Save the certificate
-		if err := certStorage.SaveCert(keyID, cert); err != nil {
-			handleError(fmt.Errorf("failed to save certificate: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully saved certificate for key: %s", keyID)); err != nil {
-			handleError(err)
+		// Use client or local storage based on --local flag
+		if cfg.IsLocal() {
+			saveCertLocal(cfg, printer, keyID, cert)
+		} else {
+			saveCertRemote(cfg, printer, keyID, string(certPEM))
 		}
 	},
+}
+
+// saveCertLocal saves a certificate using local storage
+func saveCertLocal(cfg *Config, printer *Printer, keyID string, cert *x509.Certificate) {
+	// Create certificate storage
+	certStorage, err := cfg.CreateCertStorage()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		return
+	}
+
+	// Save the certificate
+	if err := certStorage.SaveCert(keyID, cert); err != nil {
+		handleError(fmt.Errorf("failed to save certificate: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully saved certificate for key: %s", keyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// saveCertRemote saves a certificate using the client
+func saveCertRemote(cfg *Config, printer *Printer, keyID, certPEM string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Save the certificate
+	req := &client.SaveCertificateRequest{
+		Backend:        cfg.Backend,
+		KeyID:          keyID,
+		CertificatePEM: certPEM,
+	}
+
+	if err := cl.SaveCertificate(ctx, req); err != nil {
+		handleError(fmt.Errorf("failed to save certificate: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully saved certificate for key: %s", keyID)); err != nil {
+		handleError(err)
+	}
 }
 
 // certGetCmd retrieves a certificate
@@ -99,26 +147,82 @@ var certGetCmd = &cobra.Command{
 
 		printVerbose("Getting certificate for key: %s", keyID)
 
-		// Create certificate storage
-		certStorage, err := cfg.CreateCertStorage()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create cert storage: %w", err))
-			return
-		}
-
-		// Get the certificate
-		cert, err := certStorage.GetCert(keyID)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get certificate: %w", err))
-			return
-		}
-
-		printVerbose("Certificate Subject: %s", cert.Subject.String())
-
-		if err := printer.PrintCertificate(cert); err != nil {
-			handleError(err)
+		// Use client or local storage based on --local flag
+		if cfg.IsLocal() {
+			getCertLocal(cfg, printer, keyID)
+		} else {
+			getCertRemote(cfg, printer, keyID)
 		}
 	},
+}
+
+// getCertLocal retrieves a certificate using local storage
+func getCertLocal(cfg *Config, printer *Printer, keyID string) {
+	// Create certificate storage
+	certStorage, err := cfg.CreateCertStorage()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		return
+	}
+
+	// Get the certificate
+	cert, err := certStorage.GetCert(keyID)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get certificate: %w", err))
+		return
+	}
+
+	printVerbose("Certificate Subject: %s", cert.Subject.String())
+
+	if err := printer.PrintCertificate(cert); err != nil {
+		handleError(err)
+	}
+}
+
+// getCertRemote retrieves a certificate using the client
+func getCertRemote(cfg *Config, printer *Printer, keyID string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Get the certificate
+	resp, err := cl.GetCertificate(ctx, cfg.Backend, keyID)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get certificate: %w", err))
+		return
+	}
+
+	// Parse the certificate
+	block, _ := pem.Decode([]byte(resp.CertificatePEM))
+	if block == nil {
+		handleError(fmt.Errorf("failed to decode certificate PEM"))
+		return
+	}
+
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		handleError(fmt.Errorf("failed to parse certificate: %w", err))
+		return
+	}
+
+	printVerbose("Certificate Subject: %s", cert.Subject.String())
+
+	if err := printer.PrintCertificate(cert); err != nil {
+		handleError(err)
+	}
 }
 
 // certDeleteCmd deletes a certificate
@@ -134,23 +238,63 @@ var certDeleteCmd = &cobra.Command{
 
 		printVerbose("Deleting certificate for key: %s", keyID)
 
-		// Create certificate storage
-		certStorage, err := cfg.CreateCertStorage()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create cert storage: %w", err))
-			return
-		}
-
-		// Delete the certificate
-		if err := certStorage.DeleteCert(keyID); err != nil {
-			handleError(fmt.Errorf("failed to delete certificate: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully deleted certificate for key: %s", keyID)); err != nil {
-			handleError(err)
+		// Use client or local storage based on --local flag
+		if cfg.IsLocal() {
+			deleteCertLocal(cfg, printer, keyID)
+		} else {
+			deleteCertRemote(cfg, printer, keyID)
 		}
 	},
+}
+
+// deleteCertLocal deletes a certificate using local storage
+func deleteCertLocal(cfg *Config, printer *Printer, keyID string) {
+	// Create certificate storage
+	certStorage, err := cfg.CreateCertStorage()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		return
+	}
+
+	// Delete the certificate
+	if err := certStorage.DeleteCert(keyID); err != nil {
+		handleError(fmt.Errorf("failed to delete certificate: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully deleted certificate for key: %s", keyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// deleteCertRemote deletes a certificate using the client
+func deleteCertRemote(cfg *Config, printer *Printer, keyID string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Delete the certificate
+	if err := cl.DeleteCertificate(ctx, cfg.Backend, keyID); err != nil {
+		handleError(fmt.Errorf("failed to delete certificate: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully deleted certificate for key: %s", keyID)); err != nil {
+		handleError(err)
+	}
 }
 
 // certListCmd lists all certificates
@@ -164,26 +308,75 @@ var certListCmd = &cobra.Command{
 
 		printVerbose("Listing certificates")
 
-		// Create certificate storage
-		certStorage, err := cfg.CreateCertStorage()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create cert storage: %w", err))
-			return
-		}
-
-		// List certificates
-		certIDs, err := certStorage.ListCerts()
-		if err != nil {
-			handleError(fmt.Errorf("failed to list certificates: %w", err))
-			return
-		}
-
-		printVerbose("Found %d certificates", len(certIDs))
-
-		if err := printer.PrintCertList(certIDs); err != nil {
-			handleError(err)
+		// Use client or local storage based on --local flag
+		if cfg.IsLocal() {
+			listCertsLocal(cfg, printer)
+		} else {
+			listCertsRemote(cfg, printer)
 		}
 	},
+}
+
+// listCertsLocal lists certificates using local storage
+func listCertsLocal(cfg *Config, printer *Printer) {
+	// Create certificate storage
+	certStorage, err := cfg.CreateCertStorage()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		return
+	}
+
+	// List certificates
+	certIDs, err := certStorage.ListCerts()
+	if err != nil {
+		handleError(fmt.Errorf("failed to list certificates: %w", err))
+		return
+	}
+
+	printVerbose("Found %d certificates", len(certIDs))
+
+	if err := printer.PrintCertList(certIDs); err != nil {
+		handleError(err)
+	}
+}
+
+// listCertsRemote lists certificates using the client
+func listCertsRemote(cfg *Config, printer *Printer) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// List certificates
+	resp, err := cl.ListCertificates(ctx, cfg.Backend)
+	if err != nil {
+		handleError(fmt.Errorf("failed to list certificates: %w", err))
+		return
+	}
+
+	// Extract key IDs from certificates
+	certIDs := make([]string, len(resp.Certificates))
+	for i, cert := range resp.Certificates {
+		certIDs[i] = cert.KeyID
+	}
+
+	printVerbose("Found %d certificates", len(certIDs))
+
+	if err := printer.PrintCertList(certIDs); err != nil {
+		handleError(err)
+	}
 }
 
 // certExistsCmd checks if a certificate exists
@@ -199,24 +392,62 @@ var certExistsCmd = &cobra.Command{
 
 		printVerbose("Checking if certificate exists for key: %s", keyID)
 
-		// Create certificate storage
-		certStorage, err := cfg.CreateCertStorage()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create cert storage: %w", err))
-			return
-		}
-
-		// Check if certificate exists
-		exists, err := certStorage.CertExists(keyID)
-		if err != nil {
-			handleError(fmt.Errorf("failed to check certificate existence: %w", err))
-			return
-		}
-
-		if err := printer.PrintCertExists(keyID, exists); err != nil {
-			handleError(err)
+		// Use client or local storage based on --local flag
+		if cfg.IsLocal() {
+			certExistsLocal(cfg, printer, keyID)
+		} else {
+			certExistsRemote(cfg, printer, keyID)
 		}
 	},
+}
+
+// certExistsLocal checks if a certificate exists using local storage
+func certExistsLocal(cfg *Config, printer *Printer, keyID string) {
+	// Create certificate storage
+	certStorage, err := cfg.CreateCertStorage()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		return
+	}
+
+	// Check if certificate exists
+	exists, err := certStorage.CertExists(keyID)
+	if err != nil {
+		handleError(fmt.Errorf("failed to check certificate existence: %w", err))
+		return
+	}
+
+	if err := printer.PrintCertExists(keyID, exists); err != nil {
+		handleError(err)
+	}
+}
+
+// certExistsRemote checks if a certificate exists using the client
+func certExistsRemote(cfg *Config, printer *Printer, keyID string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Try to get the certificate - if it succeeds, it exists
+	_, err = cl.GetCertificate(ctx, cfg.Backend, keyID)
+	exists := err == nil
+
+	if err := printer.PrintCertExists(keyID, exists); err != nil {
+		handleError(err)
+	}
 }
 
 // certSaveChainCmd saves a certificate chain
@@ -235,6 +466,7 @@ var certSaveChainCmd = &cobra.Command{
 
 		// Parse all certificates
 		chain := make([]*x509.Certificate, 0, len(certFiles))
+		chainPEMs := make([]string, 0, len(certFiles))
 		for i, certFile := range certFiles {
 			printVerbose("Reading certificate %d from: %s", i+1, certFile)
 
@@ -262,25 +494,72 @@ var certSaveChainCmd = &cobra.Command{
 
 			printVerbose("Certificate %d Subject: %s", i+1, cert.Subject.String())
 			chain = append(chain, cert)
+			chainPEMs = append(chainPEMs, string(certPEM))
 		}
 
-		// Create certificate storage
-		certStorage, err := cfg.CreateCertStorage()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create cert storage: %w", err))
-			return
-		}
-
-		// Save the certificate chain
-		if err := certStorage.SaveCertChain(keyID, chain); err != nil {
-			handleError(fmt.Errorf("failed to save certificate chain: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully saved certificate chain for key: %s (%d certificates)", keyID, len(chain))); err != nil {
-			handleError(err)
+		// Use client or local storage based on --local flag
+		if cfg.IsLocal() {
+			saveChainLocal(cfg, printer, keyID, chain)
+		} else {
+			saveChainRemote(cfg, printer, keyID, chainPEMs)
 		}
 	},
+}
+
+// saveChainLocal saves a certificate chain using local storage
+func saveChainLocal(cfg *Config, printer *Printer, keyID string, chain []*x509.Certificate) {
+	// Create certificate storage
+	certStorage, err := cfg.CreateCertStorage()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		return
+	}
+
+	// Save the certificate chain
+	if err := certStorage.SaveCertChain(keyID, chain); err != nil {
+		handleError(fmt.Errorf("failed to save certificate chain: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully saved certificate chain for key: %s (%d certificates)", keyID, len(chain))); err != nil {
+		handleError(err)
+	}
+}
+
+// saveChainRemote saves a certificate chain using the client
+func saveChainRemote(cfg *Config, printer *Printer, keyID string, chainPEMs []string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Save the certificate chain
+	req := &client.SaveCertificateChainRequest{
+		Backend:  cfg.Backend,
+		KeyID:    keyID,
+		ChainPEM: chainPEMs,
+	}
+
+	if err := cl.SaveCertificateChain(ctx, req); err != nil {
+		handleError(fmt.Errorf("failed to save certificate chain: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully saved certificate chain for key: %s (%d certificates)", keyID, len(chainPEMs))); err != nil {
+		handleError(err)
+	}
 }
 
 // certGetChainCmd retrieves a certificate chain
@@ -296,26 +575,86 @@ var certGetChainCmd = &cobra.Command{
 
 		printVerbose("Getting certificate chain for key: %s", keyID)
 
-		// Create certificate storage
-		certStorage, err := cfg.CreateCertStorage()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create cert storage: %w", err))
-			return
-		}
-
-		// Get the certificate chain
-		chain, err := certStorage.GetCertChain(keyID)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get certificate chain: %w", err))
-			return
-		}
-
-		printVerbose("Retrieved %d certificates in chain", len(chain))
-
-		if err := printer.PrintCertChain(chain); err != nil {
-			handleError(err)
+		// Use client or local storage based on --local flag
+		if cfg.IsLocal() {
+			getChainLocal(cfg, printer, keyID)
+		} else {
+			getChainRemote(cfg, printer, keyID)
 		}
 	},
+}
+
+// getChainLocal retrieves a certificate chain using local storage
+func getChainLocal(cfg *Config, printer *Printer, keyID string) {
+	// Create certificate storage
+	certStorage, err := cfg.CreateCertStorage()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create cert storage: %w", err))
+		return
+	}
+
+	// Get the certificate chain
+	chain, err := certStorage.GetCertChain(keyID)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get certificate chain: %w", err))
+		return
+	}
+
+	printVerbose("Retrieved %d certificates in chain", len(chain))
+
+	if err := printer.PrintCertChain(chain); err != nil {
+		handleError(err)
+	}
+}
+
+// getChainRemote retrieves a certificate chain using the client
+func getChainRemote(cfg *Config, printer *Printer, keyID string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Get the certificate chain
+	resp, err := cl.GetCertificateChain(ctx, cfg.Backend, keyID)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get certificate chain: %w", err))
+		return
+	}
+
+	// Parse each certificate
+	chain := make([]*x509.Certificate, 0, len(resp.ChainPEM))
+	for i, certPEM := range resp.ChainPEM {
+		block, _ := pem.Decode([]byte(certPEM))
+		if block == nil {
+			handleError(fmt.Errorf("failed to decode certificate %d PEM", i+1))
+			return
+		}
+
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			handleError(fmt.Errorf("failed to parse certificate %d: %w", i+1, err))
+			return
+		}
+		chain = append(chain, cert)
+	}
+
+	printVerbose("Retrieved %d certificates in chain", len(chain))
+
+	if err := printer.PrintCertChain(chain); err != nil {
+		handleError(err)
+	}
 }
 
 func init() {

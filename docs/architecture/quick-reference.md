@@ -239,7 +239,7 @@ make build-cli          # CLI only
 ### Run
 ```bash
 # Server
-./bin/keychain-server --config config.yaml
+./bin/keychaind --config config.yaml
 
 # CLI
 ./bin/keychain key generate my-key --backend pkcs8 --key-type rsa
@@ -289,7 +289,7 @@ docker-compose logs -f keychain-server
 ### Enable Debug Logging
 ```bash
 export KEYCHAIN_SERVER_LOG_LEVEL=debug
-./bin/keychain-server
+./bin/keychaind
 ```
 
 ### Test Individual Endpoints

@@ -46,18 +46,29 @@ type FileStorage struct {
 
 // New creates a new FileStorage instance with the specified root directory.
 // The root directory is created with 0700 permissions if it doesn't exist.
+// Relative paths are converted to absolute paths using the current working directory.
 func New(rootDir string) (storage.Backend, error) {
 	if rootDir == "" {
 		return nil, fmt.Errorf("file storage: root directory cannot be empty")
 	}
 
+	// Convert relative paths to absolute paths
+	absRootDir := rootDir
+	if !filepath.IsAbs(rootDir) {
+		var err error
+		absRootDir, err = filepath.Abs(rootDir)
+		if err != nil {
+			return nil, fmt.Errorf("file storage: failed to get absolute path: %w", err)
+		}
+	}
+
 	// Create root directory if it doesn't exist
-	if err := os.MkdirAll(rootDir, defaultDirPerms); err != nil {
+	if err := os.MkdirAll(absRootDir, defaultDirPerms); err != nil {
 		return nil, fmt.Errorf("file storage: failed to create root directory: %w", err)
 	}
 
 	return &FileStorage{
-		rootDir: rootDir,
+		rootDir: absRootDir,
 	}, nil
 }
 
@@ -215,7 +226,7 @@ func (f *FileStorage) keyToPath(key string) string {
 	return filepath.Join(f.rootDir, key)
 }
 
-// validateStorageKey validates storage keys (more permissive than facade validation).
+// validateStorageKey validates storage keys (more permissive than service validation).
 // Storage is internal - allows path separators for organization but blocks traversal.
 func validateStorageKey(key string) error {
 	if key == "" {

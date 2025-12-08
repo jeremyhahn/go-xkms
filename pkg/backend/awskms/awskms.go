@@ -298,11 +298,14 @@ func (b *Backend) CreateKey(attrs *types.KeyAttributes) (string, error) {
 
 	// Create an alias for easier reference
 	aliasName := fmt.Sprintf("alias/%s", attrs.CN)
-	_, _ = b.client.CreateAlias(ctx, &kms.CreateAliasInput{
+	if _, err := b.client.CreateAlias(ctx, &kms.CreateAliasInput{
 		AliasName:   aws.String(aliasName),
 		TargetKeyId: aws.String(keyID),
-	})
-	// Note: We ignore alias creation errors and continue to store metadata
+	}); err != nil {
+		// Log warning but continue - alias is optional for key functionality
+		// Alias might already exist or there may be permission issues
+		fmt.Printf("warning: failed to create alias %s for key %s: %v\n", aliasName, keyID, err)
+	}
 
 	// Store metadata
 	metadata := map[string]interface{}{
@@ -511,14 +514,10 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	}
 
 	// Create the KMS key
-	keyID, err := b.CreateKey(attrs)
+	_, err := b.CreateKey(attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KMS key: %w", err)
 	}
-
-	// For KMS, we don't return the actual private key material (it stays in KMS)
-	// Instead, we return a reference that can be used via Signer/Decrypter
-	_ = keyID
 
 	// Return nil for private key since it's not extractable from KMS
 	// Callers should use Signer() or Decrypter() instead

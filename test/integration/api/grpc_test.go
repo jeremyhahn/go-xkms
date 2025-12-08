@@ -58,7 +58,7 @@ func (c *GRPCClient) Close() error {
 func TestGRPCHealth(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -84,7 +84,7 @@ func TestGRPCHealth(t *testing.T) {
 func TestGRPCListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -118,7 +118,7 @@ func TestGRPCListBackends(t *testing.T) {
 func TestGRPCGetBackendInfo(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -128,9 +128,9 @@ func TestGRPCGetBackendInfo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Get info for pkcs8 backend (should always be available)
+	// Get info for software backend (should always be available)
 	resp, err := client.client.GetBackendInfo(ctx, &pb.GetBackendInfoRequest{
-		Name: "pkcs8",
+		Name: "software",
 	})
 	assertNoError(t, err, "GetBackendInfo failed")
 
@@ -138,7 +138,7 @@ func TestGRPCGetBackendInfo(t *testing.T) {
 		t.Fatal("Backend info is nil")
 	}
 
-	assertEqual(t, "pkcs8", resp.Backend.Name, "Backend name mismatch")
+	assertEqual(t, "software", resp.Backend.Name, "Backend name mismatch")
 
 	t.Logf("Backend info: %s (%s) - %s", resp.Backend.Name, resp.Backend.Type, resp.Backend.Description)
 }
@@ -147,7 +147,7 @@ func TestGRPCGetBackendInfo(t *testing.T) {
 func TestGRPCGenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -185,7 +185,7 @@ func TestGRPCGenerateKey(t *testing.T) {
 
 			req := &pb.GenerateKeyRequest{
 				KeyId:   keyID,
-				Backend: "pkcs8",
+				Backend: "software",
 				KeyType: tt.keyType,
 				KeySize: tt.keySize,
 				Curve:   tt.curve,
@@ -195,7 +195,7 @@ func TestGRPCGenerateKey(t *testing.T) {
 			assertNoError(t, err, "GenerateKey failed")
 
 			assertEqual(t, keyID, resp.KeyId, "Key ID mismatch")
-			assertEqual(t, "pkcs8", resp.Backend, "Backend mismatch")
+			assertEqual(t, "software", resp.Backend, "Backend mismatch")
 			assertEqual(t, tt.keyType, resp.KeyType, "Key type mismatch")
 
 			if tt.keyType != "ed25519" && tt.keyType != "aes" {
@@ -215,7 +215,7 @@ func TestGRPCGenerateKey(t *testing.T) {
 
 				_, _ = client.client.DeleteKey(delCtx, &pb.DeleteKeyRequest{
 					KeyId:   keyID,
-					Backend: "pkcs8",
+					Backend: "software",
 				})
 			}()
 		})
@@ -226,7 +226,7 @@ func TestGRPCGenerateKey(t *testing.T) {
 func TestGRPCListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -241,7 +241,7 @@ func TestGRPCListKeys(t *testing.T) {
 	// Create a test key
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 		KeyType: "rsa",
 		KeySize: 2048,
 	})
@@ -252,13 +252,13 @@ func TestGRPCListKeys(t *testing.T) {
 		defer delCancel()
 		_, _ = client.client.DeleteKey(delCtx, &pb.DeleteKeyRequest{
 			KeyId:   keyID,
-			Backend: "pkcs8",
+			Backend: "software",
 		})
 	}()
 
 	// List keys
 	resp, err := client.client.ListKeys(ctx, &pb.ListKeysRequest{
-		Backend: "pkcs8",
+		Backend: "software",
 		Limit:   100,
 		Offset:  0,
 	})
@@ -273,7 +273,7 @@ func TestGRPCListKeys(t *testing.T) {
 	for _, key := range resp.Keys {
 		if key.KeyId == keyID {
 			found = true
-			assertEqual(t, "pkcs8", key.Backend, "Backend mismatch")
+			assertEqual(t, "software", key.Backend, "Backend mismatch")
 			assertEqual(t, "rsa", key.KeyType, "Key type mismatch")
 			break
 		}
@@ -290,7 +290,7 @@ func TestGRPCListKeys(t *testing.T) {
 func TestGRPCGetKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -305,7 +305,7 @@ func TestGRPCGetKey(t *testing.T) {
 	// Create a test key
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 		KeyType: "rsa",
 		KeySize: 2048,
 	})
@@ -316,14 +316,14 @@ func TestGRPCGetKey(t *testing.T) {
 		defer delCancel()
 		_, _ = client.client.DeleteKey(delCtx, &pb.DeleteKeyRequest{
 			KeyId:   keyID,
-			Backend: "pkcs8",
+			Backend: "software",
 		})
 	}()
 
 	// Get the key
 	resp, err := client.client.GetKey(ctx, &pb.GetKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 	})
 	assertNoError(t, err, "GetKey failed")
 
@@ -332,7 +332,7 @@ func TestGRPCGetKey(t *testing.T) {
 	}
 
 	assertEqual(t, keyID, resp.Key.KeyId, "Key ID mismatch")
-	assertEqual(t, "pkcs8", resp.Key.Backend, "Backend mismatch")
+	assertEqual(t, "software", resp.Key.Backend, "Backend mismatch")
 	assertEqual(t, "rsa", resp.Key.KeyType, "Key type mismatch")
 
 	t.Logf("Retrieved key: %s", keyID)
@@ -342,7 +342,7 @@ func TestGRPCGetKey(t *testing.T) {
 func TestGRPCSignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -357,7 +357,7 @@ func TestGRPCSignVerify(t *testing.T) {
 	// Create a test key
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 		KeyType: "rsa",
 		KeySize: 2048,
 	})
@@ -368,7 +368,7 @@ func TestGRPCSignVerify(t *testing.T) {
 		defer delCancel()
 		_, _ = client.client.DeleteKey(delCtx, &pb.DeleteKeyRequest{
 			KeyId:   keyID,
-			Backend: "pkcs8",
+			Backend: "software",
 		})
 	}()
 
@@ -377,7 +377,7 @@ func TestGRPCSignVerify(t *testing.T) {
 	// Sign data
 	signResp, err := client.client.Sign(ctx, &pb.SignRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 		Data:    testData,
 		Hash:    "SHA256",
 	})
@@ -392,7 +392,7 @@ func TestGRPCSignVerify(t *testing.T) {
 	// Verify signature
 	verifyResp, err := client.client.Verify(ctx, &pb.VerifyRequest{
 		KeyId:     keyID,
-		Backend:   "pkcs8",
+		Backend:   "software",
 		Data:      testData,
 		Signature: signResp.Signature,
 		Hash:      "SHA256",
@@ -409,7 +409,7 @@ func TestGRPCSignVerify(t *testing.T) {
 	wrongData := []byte("wrong data")
 	verifyResp, err = client.client.Verify(ctx, &pb.VerifyRequest{
 		KeyId:     keyID,
-		Backend:   "pkcs8",
+		Backend:   "software",
 		Data:      wrongData,
 		Signature: signResp.Signature,
 		Hash:      "SHA256",
@@ -427,7 +427,7 @@ func TestGRPCSignVerify(t *testing.T) {
 func TestGRPCDeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -442,7 +442,7 @@ func TestGRPCDeleteKey(t *testing.T) {
 	// Create a test key
 	_, err = client.client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 		KeyType: "rsa",
 		KeySize: 2048,
 	})
@@ -451,7 +451,7 @@ func TestGRPCDeleteKey(t *testing.T) {
 	// Delete the key
 	delResp, err := client.client.DeleteKey(ctx, &pb.DeleteKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 	})
 	assertNoError(t, err, "DeleteKey failed")
 
@@ -464,7 +464,7 @@ func TestGRPCDeleteKey(t *testing.T) {
 	// Verify key is gone
 	_, err = client.client.GetKey(ctx, &pb.GetKeyRequest{
 		KeyId:   keyID,
-		Backend: "pkcs8",
+		Backend: "software",
 	})
 
 	if err == nil {
@@ -488,7 +488,7 @@ func TestGRPCDeleteKey(t *testing.T) {
 func TestGRPCErrorHandling(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -518,7 +518,7 @@ func TestGRPCErrorHandling(t *testing.T) {
 			operation: func() error {
 				_, err := client.client.GetKey(ctx, &pb.GetKeyRequest{
 					KeyId:   "non-existent-key",
-					Backend: "pkcs8",
+					Backend: "software",
 				})
 				return err
 			},
@@ -529,7 +529,7 @@ func TestGRPCErrorHandling(t *testing.T) {
 			operation: func() error {
 				_, err := client.client.DeleteKey(ctx, &pb.DeleteKeyRequest{
 					KeyId:   "non-existent-key",
-					Backend: "pkcs8",
+					Backend: "software",
 				})
 				return err
 			},

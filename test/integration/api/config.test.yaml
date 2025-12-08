@@ -1,4 +1,5 @@
 # Integration test configuration for keychain server
+# Enables ALL protocols for comprehensive testing
 
 server:
   host: "0.0.0.0"
@@ -7,11 +8,18 @@ server:
   quic_port: 8444
   mcp_port: 9444
 
+# Enable ALL protocols for complete integration testing
 protocols:
-  rest: true
-  grpc: true
-  quic: true
-  mcp: true
+  unix: true    # Unix domain socket for local CLI
+  rest: true    # REST/HTTP API
+  grpc: true    # gRPC API
+  quic: true    # QUIC/HTTP3 API
+  mcp: true     # MCP JSON-RPC API
+
+# Unix socket configuration
+unix:
+  socket_path: /var/run/keychain/keychain.sock
+  socket_mode: "0660"
 
 logging:
   level: "debug"
@@ -43,13 +51,13 @@ storage:
   path: "/data/keychain"
 
 # Default backend for key operations
-default_backend: "pkcs8"
+default_backend: "software"
 
 # Backend configurations
 backends:
-  pkcs8:
+  software:
     enabled: true
-    path: "/data/keychain/pkcs8"
+    path: "/data/keychain/software"
 
   tpm2:
     enabled: false  # Disabled by default, can be enabled per test

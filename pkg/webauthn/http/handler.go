@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -27,11 +28,21 @@ import (
 // These handlers can be mounted on any HTTP router.
 type Handler struct {
 	service *webauthn.Service
+	logger  *slog.Logger
 }
 
 // NewHandler creates a new WebAuthn HTTP handler.
 func NewHandler(service *webauthn.Service) *Handler {
-	return &Handler{service: service}
+	return &Handler{
+		service: service,
+		logger:  slog.Default(),
+	}
+}
+
+// WithLogger sets a custom logger for the handler.
+func (h *Handler) WithLogger(logger *slog.Logger) *Handler {
+	h.logger = logger
+	return h
 }
 
 // BeginRegistration handles POST /registration/begin
@@ -300,8 +311,10 @@ func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Log error but can't do much at this point
-		_ = err
+		// Response headers already written, can only log the error
+		h.logger.Error("failed to encode JSON response",
+			"error", err,
+			"status", status)
 	}
 }
 

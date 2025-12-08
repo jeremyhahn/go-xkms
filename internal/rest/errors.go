@@ -33,6 +33,7 @@ var (
 	ErrBackendNotFound = errors.New("backend not found")
 	ErrInternalError   = errors.New("internal server error")
 	ErrUnauthorized    = errors.New("unauthorized")
+	ErrForbidden       = errors.New("forbidden")
 )
 
 // writeError writes an error response to the client.

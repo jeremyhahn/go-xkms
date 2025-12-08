@@ -60,7 +60,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 	// Check required environment variables
 	projectID := os.Getenv("GCP_PROJECT_ID")
 	if projectID == "" {
-		t.Skip("GCP_PROJECT_ID not set - skipping real GCP KMS tests")
+		t.Fatal("GCP_PROJECT_ID not set - skipping real GCP KMS tests")
 	}
 
 	location := os.Getenv("GCP_LOCATION")
@@ -80,7 +80,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 	t.Log("Setting up GCP KMS resources...")
 	setupErr := setupGCPKeyRing(ctx, projectID, location, keyring)
 	if setupErr != nil {
-		t.Skipf("Cannot setup GCP KMS resources: %v\n\n"+
+		t.Fatalf("Cannot setup GCP KMS resources: %v\n\n"+
 			"To fix this, you need Cloud KMS Admin permissions. Run:\n"+
 			"  gcloud projects add-iam-policy-binding %s \\\n"+
 			"    --member='user:%s' \\\n"+
@@ -318,7 +318,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		// Check if backend supports import/export
 		caps := b.Capabilities()
 		if !caps.SupportsImportExport() {
-			t.Skip("GCP KMS backend does not support import/export")
+			t.Fatal("GCP KMS backend does not support import/export")
 			return
 		}
 
@@ -343,7 +343,7 @@ func TestGCPKMSCloudIntegration(t *testing.T) {
 		// Check if backend supports symmetric encryption
 		caps := b.Capabilities()
 		if !caps.SupportsSymmetricEncryption() {
-			t.Skip("GCP KMS backend does not support symmetric encryption")
+			t.Fatal("GCP KMS backend does not support symmetric encryption")
 			return
 		}
 

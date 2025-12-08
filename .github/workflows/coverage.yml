@@ -45,11 +45,12 @@ jobs:
       - name: Check coverage threshold
         run: |
           COVERAGE=${{ steps.coverage.outputs.coverage }}
-          if (( $(echo "${COVERAGE} < ${COVERAGE_THRESHOLD}" | bc -l) )); then
-            echo "❌ Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+          COVERAGE_INT=$(echo "${COVERAGE}" | awk '{printf "%d", $1}')
+          if [ "${COVERAGE_INT}" -lt "${COVERAGE_THRESHOLD}" ]; then
+            echo "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
             exit 1
           else
-            echo "✅ Coverage ${COVERAGE}% meets threshold ${COVERAGE_THRESHOLD}%"
+            echo "Coverage ${COVERAGE}% meets threshold ${COVERAGE_THRESHOLD}%"
           fi
 
       - name: Upload coverage to Codecov
@@ -115,7 +116,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.6.2
+          version: v2.7.2
           args: --timeout=5m
 
   race:

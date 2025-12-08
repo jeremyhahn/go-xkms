@@ -31,7 +31,7 @@ import (
 func TestRealPKCS11Hardware(t *testing.T) {
 	hwStorage := initRealPKCS11Hardware(t)
 	if hwStorage == nil {
-		t.Skip("Real PKCS#11 hardware not available")
+		t.Fatal("Real PKCS#11 hardware not available")
 	}
 	defer hwStorage.Close()
 

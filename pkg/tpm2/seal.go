@@ -120,7 +120,11 @@ func (tpm *TPM2) sealKeyInternal(
 		tpm.logger.Error(err)
 		return nil, err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close load session: %v", err)
+		}
+	}()
 
 	var loadResponse *tpm2.LoadResponse
 	loadResponse, err = tpm2.Load{
@@ -220,10 +224,14 @@ func (tpm *TPM2) unsealKeyInternal(
 
 	// Create key session
 	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
-	defer func() { _ = closer2() }()
+	defer func() {
+		if err := closer2(); err != nil {
+			tpm.logger.Errorf("failed to close key session: %v", err)
+		}
+	}()
 	if err2 != nil {
-		tpm.logger.Error(err)
-		return nil, err
+		tpm.logger.Error(err2)
+		return nil, err2
 	}
 
 	// Unseal the data using the key session
@@ -313,10 +321,14 @@ func (tpm *TPM2) unsealFromBlobs(
 
 	// Create key session
 	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
-	defer func() { _ = closer2() }()
+	defer func() {
+		if err := closer2(); err != nil {
+			tpm.logger.Errorf("failed to close key session: %v", err)
+		}
+	}()
 	if err2 != nil {
-		tpm.logger.Error(err)
-		return nil, err
+		tpm.logger.Error(err2)
+		return nil, err2
 	}
 
 	// Unseal the data using the key session

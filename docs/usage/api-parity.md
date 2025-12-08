@@ -131,9 +131,9 @@ Access via: `keystore.Backend().(backend.SymmetricBackend)`
 - Health check endpoint
 - Backend listing
 
-## KeychainFacade API
+## KeychainService API
 
-The `KeychainFacade` in `pkg/keychain/` provides a unified, singleton API for all keychain operations. All client interfaces (REST, gRPC, CLI, MCP, QUIC) use the facade as their backend.
+The `KeychainService` in `pkg/keychain/` provides a unified, singleton API for all keychain operations. All client interfaces (REST, gRPC, CLI, MCP, QUIC) use the service as their backend.
 
 ### Initialization
 
@@ -141,7 +141,7 @@ The `KeychainFacade` in `pkg/keychain/` provides a unified, singleton API for al
 import "github.com/jeremyhahn/go-keychain/pkg/keychain"
 
 // Initialize with backends
-err := keychain.Initialize(&keychain.FacadeConfig{
+err := keychain.Initialize(&keychain.ServiceConfig{
     Backends: map[string]keychain.KeyStore{
         "pkcs8":   pkcs8Backend,
         "pkcs11":  pkcs11Backend,
@@ -153,11 +153,11 @@ err := keychain.Initialize(&keychain.FacadeConfig{
 
 ### Key Reference Format
 
-All facade methods accept key references in two formats:
+All service methods accept key references in two formats:
 - `"backend:key-id"` - Specifies which backend to use
 - `"key-id"` - Uses the default backend
 
-### Facade Methods
+### Service Methods
 
 | Category | Method | Description |
 |----------|--------|-------------|
@@ -196,10 +196,10 @@ All facade methods accept key references in two formats:
 | **Sealing** | `CanSeal(backends...)` | Check sealing support |
 | | `Seal(ctx, data, opts)` | Seal data |
 | | `Unseal(ctx, sealed, opts)` | Unseal data |
-| **Lifecycle** | `Initialize(config)` | Initialize facade |
+| **Lifecycle** | `Initialize(config)` | Initialize service |
 | | `IsInitialized()` | Check initialization |
 | | `Close()` | Close all backends |
-| | `Reset()` | Reset facade (testing) |
+| | `Reset()` | Reset service (testing) |
 
 ## Testing Status
 

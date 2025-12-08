@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -27,6 +28,7 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
+	"github.com/jeremyhahn/go-keychain/pkg/client"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -52,63 +54,124 @@ var keyGenerateCmd = &cobra.Command{
 		// Get flags
 		keyType, _ := cmd.Flags().GetString("key-type")
 		algorithm, _ := cmd.Flags().GetString("algorithm")
+		keyAlgorithm, _ := cmd.Flags().GetString("key-algorithm")
 		keySize, _ := cmd.Flags().GetInt("key-size")
 		curve, _ := cmd.Flags().GetString("curve")
+		exportable, _ := cmd.Flags().GetBool("exportable")
 
-		printVerbose("Generating %s key with ID: %s", keyType, keyID)
+		printVerbose("Generating %s key with ID: %s (exportable: %v)", keyType, keyID, exportable)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Check if this is a symmetric key (AES)
-		if keyType == "aes" || algorithm == "aes-128-gcm" || algorithm == "aes-192-gcm" || algorithm == "aes-256-gcm" {
-			// Generate symmetric key
-			attrs, err := buildSymmetricKeyAttributes(keyID, algorithm, keySize)
-			if err != nil {
-				handleError(fmt.Errorf("invalid symmetric key parameters: %w", err))
-				return
-			}
-
-			printVerbose("Symmetric key attributes: %+v", attrs)
-
-			// Generate the symmetric key
-			_, err = be.GenerateKey(attrs)
-			if err != nil {
-				handleError(fmt.Errorf("failed to generate symmetric key: %w", err))
-				return
-			}
-
-			if err := printer.PrintSuccess(fmt.Sprintf("Successfully generated AES-%d key: %s", keySize, keyID)); err != nil {
-				handleError(err)
-			}
-			return
-		}
-
-		// Build asymmetric key attributes
-		attrs, err := buildKeyAttributes(keyID, keyType, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
-		printVerbose("Key attributes: %+v", attrs)
-
-		// Generate the key
-		_, err = be.GenerateKey(attrs)
-		if err != nil {
-			handleError(fmt.Errorf("failed to generate key: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully generated %s key: %s", keyType, keyID)); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			generateKeyLocal(cfg, printer, keyID, keyType, algorithm, keyAlgorithm, keySize, curve, exportable)
+		} else {
+			generateKeyRemote(cfg, printer, keyID, keyType, algorithm, keyAlgorithm, keySize, curve, exportable)
 		}
 	},
+}
+
+// generateKeyLocal generates a key using direct backend access
+func generateKeyLocal(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAlgorithm string, keySize int, curve string, exportable bool) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Check if this is a symmetric key (AES)
+	if keyType == "aes" || algorithm == "aes-128-gcm" || algorithm == "aes-192-gcm" || algorithm == "aes-256-gcm" {
+		// Generate symmetric key
+		attrs, err := buildSymmetricKeyAttributes(keyID, algorithm, keySize)
+		if err != nil {
+			handleError(fmt.Errorf("invalid symmetric key parameters: %w", err))
+			return
+		}
+
+		printVerbose("Symmetric key attributes: %+v", attrs)
+
+		// Cast backend to SymmetricBackend for symmetric key generation
+		symBackend, ok := be.(types.SymmetricBackend)
+		if !ok {
+			handleError(fmt.Errorf("backend does not support symmetric key generation"))
+			return
+		}
+
+		// Generate the symmetric key
+		_, err = symBackend.GenerateSymmetricKey(attrs)
+		if err != nil {
+			handleError(fmt.Errorf("failed to generate symmetric key: %w", err))
+			return
+		}
+
+		if err := printer.PrintSuccess(fmt.Sprintf("Successfully generated AES-%d key: %s", keySize, keyID)); err != nil {
+			handleError(err)
+		}
+		return
+	}
+
+	// Build asymmetric key attributes using the key-algorithm flag
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, exportable)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	printVerbose("Key attributes: %+v", attrs)
+
+	// Generate the key
+	_, err = be.GenerateKey(attrs)
+	if err != nil {
+		handleError(fmt.Errorf("failed to generate key: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully generated %s key: %s", keyType, keyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// generateKeyRemote generates a key using the client to communicate with keychaind
+func generateKeyRemote(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAlgorithm string, keySize int, curve string, exportable bool) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare generate key request
+	req := &client.GenerateKeyRequest{
+		KeyID:     keyID,
+		Backend:   cfg.Backend,
+		KeyType:   keyType,
+		KeySize:   keySize,
+		Curve:     curve,
+		Algorithm: keyAlgorithm,
+	}
+
+	// Generate the key
+	resp, err := cl.GenerateKey(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to generate key: %w", err))
+		return
+	}
+
+	printVerbose("Key generated: %s", resp.KeyID)
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully generated %s key: %s", keyType, keyID)); err != nil {
+		handleError(err)
+	}
 }
 
 // keyListCmd lists all keys
@@ -122,27 +185,79 @@ var keyListCmd = &cobra.Command{
 
 		printVerbose("Listing keys from backend: %s", cfg.Backend)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// List keys
-		keys, err := be.ListKeys()
-		if err != nil {
-			handleError(fmt.Errorf("failed to list keys: %w", err))
-			return
-		}
-
-		printVerbose("Found %d keys", len(keys))
-
-		if err := printer.PrintKeyList(keys); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			listKeysLocal(cfg, printer)
+		} else {
+			listKeysRemote(cfg, printer)
 		}
 	},
+}
+
+// listKeysLocal lists keys using direct backend access
+func listKeysLocal(cfg *Config, printer *Printer) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// List keys
+	keys, err := be.ListKeys()
+	if err != nil {
+		handleError(fmt.Errorf("failed to list keys: %w", err))
+		return
+	}
+
+	printVerbose("Found %d keys", len(keys))
+
+	if err := printer.PrintKeyList(keys); err != nil {
+		handleError(err)
+	}
+}
+
+// listKeysRemote lists keys using the client
+func listKeysRemote(cfg *Config, printer *Printer) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// List keys
+	resp, err := cl.ListKeys(ctx, cfg.Backend)
+	if err != nil {
+		handleError(fmt.Errorf("failed to list keys: %w", err))
+		return
+	}
+
+	printVerbose("Found %d keys", len(resp.Keys))
+
+	// Convert client.KeyInfo to types.KeyAttributes for printing
+	keys := make([]*types.KeyAttributes, len(resp.Keys))
+	for i, key := range resp.Keys {
+		keys[i] = &types.KeyAttributes{
+			CN:      key.KeyID,
+			KeyType: types.ParseKeyType(key.KeyType),
+		}
+	}
+
+	if err := printer.PrintKeyList(keys); err != nil {
+		handleError(err)
+	}
 }
 
 // keyGetCmd gets information about a specific key
@@ -164,32 +279,79 @@ var keyGetCmd = &cobra.Command{
 
 		printVerbose("Getting key info for: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Build key attributes with algorithm-specific params
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
-		// Try to get the key to verify it exists
-		_, err = be.GetKey(attrs)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get key: %w", err))
-			return
-		}
-
-		if err := printer.PrintKeyInfo(attrs); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			getKeyLocal(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve)
+		} else {
+			getKeyRemote(cfg, printer, keyID)
 		}
 	},
+}
+
+// getKeyLocal gets key info using direct backend access
+func getKeyLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Build key attributes with algorithm-specific params
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Try to get the key to verify it exists
+	_, err = be.GetKey(attrs)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get key: %w", err))
+		return
+	}
+
+	if err := printer.PrintKeyInfo(attrs); err != nil {
+		handleError(err)
+	}
+}
+
+// getKeyRemote gets key info using the client
+func getKeyRemote(cfg *Config, printer *Printer, keyID string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Get key info
+	resp, err := cl.GetKey(ctx, cfg.Backend, keyID)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get key: %w", err))
+		return
+	}
+
+	// Convert to KeyAttributes for printing
+	attrs := &types.KeyAttributes{
+		CN:      resp.KeyID,
+		KeyType: types.ParseKeyType(resp.KeyType),
+	}
+
+	if err := printer.PrintKeyInfo(attrs); err != nil {
+		handleError(err)
+	}
 }
 
 // keyDeleteCmd deletes a key
@@ -211,31 +373,81 @@ var keyDeleteCmd = &cobra.Command{
 
 		printVerbose("Deleting key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			deleteKeyLocal(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve)
+		} else {
+			deleteKeyRemote(cfg, printer, keyID)
 		}
-		defer func() { _ = be.Close() }()
+	},
+}
 
-		// Build key attributes with algorithm-specific params
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
+// deleteKeyLocal deletes a key using direct backend access
+func deleteKeyLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
 
-		// Delete the key
-		if err := be.DeleteKey(attrs); err != nil {
-			handleError(fmt.Errorf("failed to delete key: %w", err))
-			return
-		}
+	// Build key attributes - check if symmetric (AES) key
+	var attrs *types.KeyAttributes
+	if isSymmetricAlgorithm(keyAlgorithm) {
+		attrs, err = buildSymmetricKeyAttributes(keyID, keyAlgorithm, keySize)
+	} else {
+		attrs, err = buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	}
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
 
+	// Delete the key
+	if err := be.DeleteKey(attrs); err != nil {
+		handleError(fmt.Errorf("failed to delete key: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully deleted key: %s", keyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// deleteKeyRemote deletes a key using the client
+func deleteKeyRemote(cfg *Config, printer *Printer, keyID string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Delete the key
+	resp, err := cl.DeleteKey(ctx, cfg.Backend, keyID)
+	if err != nil {
+		handleError(fmt.Errorf("failed to delete key: %w", err))
+		return
+	}
+
+	if resp.Success {
 		if err := printer.PrintSuccess(fmt.Sprintf("Successfully deleted key: %s", keyID)); err != nil {
 			handleError(err)
 		}
-	},
+	} else {
+		handleError(fmt.Errorf("failed to delete key: %s", resp.Message))
+	}
 }
 
 // keySignCmd signs data with a key
@@ -259,36 +471,54 @@ var keySignCmd = &cobra.Command{
 
 		printVerbose("Signing data with key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Build key attributes with algorithm-specific params
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-		// Parse hash algorithm from string
-		if hashAlgParsed, ok := types.AvailableHashes()[hashAlg]; ok {
-			attrs.Hash = hashAlgParsed
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			signLocal(cfg, printer, keyID, data, keyType, keyAlgorithm, keySize, curve, hashAlg)
 		} else {
-			handleError(fmt.Errorf("invalid hash algorithm: %s", hashAlg))
-			return
+			signRemote(cfg, printer, keyID, data, hashAlg)
 		}
+	},
+}
 
-		// Get signer
-		signer, err := be.Signer(attrs)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get signer: %w", err))
-			return
-		}
+// signLocal signs data using direct backend access
+func signLocal(cfg *Config, printer *Printer, keyID, data, keyType, keyAlgorithm string, keySize int, curve, hashAlg string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
 
-		// Hash the data
+	// Build key attributes with algorithm-specific params
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+	// Parse hash algorithm from string
+	if hashAlgParsed, ok := types.AvailableHashes()[hashAlg]; ok {
+		attrs.Hash = hashAlgParsed
+	} else {
+		handleError(fmt.Errorf("invalid hash algorithm: %s", hashAlg))
+		return
+	}
+
+	// Get signer
+	signer, err := be.Signer(attrs)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get signer: %w", err))
+		return
+	}
+
+	var signature []byte
+	// Ed25519 requires the raw message, not a hash
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		printVerbose("Ed25519: signing raw message")
+		// For Ed25519, pass raw message and crypto.Hash(0)
+		signature, err = signer.Sign(nil, []byte(data), crypto.Hash(0))
+	} else {
+		// For RSA and ECDSA, hash the data first
 		hash := attrs.Hash
 		hasher := hash.New()
 		hasher.Write([]byte(data))
@@ -296,20 +526,61 @@ var keySignCmd = &cobra.Command{
 
 		printVerbose("Data digest (hex): %x", digest)
 
-		// Sign the digest
-		signature, err := signer.Sign(nil, digest, hash)
-		if err != nil {
-			handleError(fmt.Errorf("failed to sign data: %w", err))
-			return
-		}
+		signature, err = signer.Sign(nil, digest, hash)
+	}
+	if err != nil {
+		handleError(fmt.Errorf("failed to sign data: %w", err))
+		return
+	}
 
-		// Encode signature as base64
-		sigBase64 := base64.StdEncoding.EncodeToString(signature)
+	// Encode signature as base64
+	sigBase64 := base64.StdEncoding.EncodeToString(signature)
 
-		if err := printer.PrintSignature(sigBase64); err != nil {
-			handleError(err)
-		}
-	},
+	if err := printer.PrintSignature(sigBase64); err != nil {
+		handleError(err)
+	}
+}
+
+// signRemote signs data using the client
+func signRemote(cfg *Config, printer *Printer, keyID, data, hashAlg string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare sign request
+	req := &client.SignRequest{
+		Backend: cfg.Backend,
+		KeyID:   keyID,
+		Data:    []byte(data),
+		Hash:    hashAlg,
+	}
+
+	// Sign the data
+	resp, err := cl.Sign(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to sign data: %w", err))
+		return
+	}
+
+	// Encode signature as base64
+	sigBase64 := base64.StdEncoding.EncodeToString(resp.Signature)
+
+	if err := printer.PrintSignature(sigBase64); err != nil {
+		handleError(err)
+	}
 }
 
 // keyRotateCmd rotates a key
@@ -331,31 +602,78 @@ var keyRotateCmd = &cobra.Command{
 
 		printVerbose("Rotating key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Build key attributes with algorithm-specific params
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
-		// Rotate the key
-		if err := be.RotateKey(attrs); err != nil {
-			handleError(fmt.Errorf("failed to rotate key: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully rotated key: %s", keyID)); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			rotateKeyLocal(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve)
+		} else {
+			rotateKeyRemote(cfg, printer, keyID)
 		}
 	},
+}
+
+// rotateKeyLocal rotates a key using direct backend access
+func rotateKeyLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Build key attributes with algorithm-specific params
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Rotate the key
+	if err := be.RotateKey(attrs); err != nil {
+		handleError(fmt.Errorf("failed to rotate key: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully rotated key: %s", keyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// rotateKeyRemote rotates a key using the client
+func rotateKeyRemote(cfg *Config, printer *Printer, keyID string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare rotate key request
+	req := &client.RotateKeyRequest{
+		Backend: cfg.Backend,
+		KeyID:   keyID,
+	}
+
+	// Rotate the key
+	_, err = cl.RotateKey(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to rotate key: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully rotated key: %s", keyID)); err != nil {
+		handleError(err)
+	}
 }
 
 // keyEncryptCmd encrypts data with a symmetric key
@@ -371,61 +689,121 @@ var keyEncryptCmd = &cobra.Command{
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		// Get flags
-		keyType, _ := cmd.Flags().GetString("key-type")
 		keyAlgorithm, _ := cmd.Flags().GetString("key-algorithm")
 		keySize, _ := cmd.Flags().GetInt("key-size")
 		aad, _ := cmd.Flags().GetString("aad")
 
 		printVerbose("Encrypting data with key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Build key attributes
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, "")
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
-		// Get symmetric encrypter (requires SymmetricBackend)
-		symBackend, ok := be.(types.SymmetricBackend)
-		if !ok {
-			handleError(fmt.Errorf("backend does not support symmetric encryption"))
-			return
-		}
-
-		encrypter, err := symBackend.SymmetricEncrypter(attrs)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get symmetric encrypter: %w", err))
-			return
-		}
-
-		// Prepare encryption options
-		opts := &types.EncryptOptions{}
-		if aad != "" {
-			opts.AdditionalData = []byte(aad)
-		}
-
-		// Encrypt the data
-		encrypted, err := encrypter.Encrypt([]byte(plaintext), opts)
-		if err != nil {
-			handleError(fmt.Errorf("failed to encrypt data: %w", err))
-			return
-		}
-
-		printVerbose("Encrypted data: ciphertext=%d bytes, nonce=%d bytes, tag=%d bytes",
-			len(encrypted.Ciphertext), len(encrypted.Nonce), len(encrypted.Tag))
-
-		if err := printer.PrintEncryptedData(encrypted); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			encryptLocal(cfg, printer, keyID, plaintext, keyAlgorithm, keySize, aad)
+		} else {
+			encryptRemote(cfg, printer, keyID, plaintext, aad)
 		}
 	},
+}
+
+// encryptLocal encrypts data using direct backend access
+func encryptLocal(cfg *Config, printer *Printer, keyID, plaintext, keyAlgorithm string, keySize int, aad string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Build symmetric key attributes (encrypt is for symmetric keys)
+	attrs, err := buildSymmetricKeyAttributes(keyID, keyAlgorithm, keySize)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Get symmetric encrypter (requires SymmetricBackend)
+	symBackend, ok := be.(types.SymmetricBackend)
+	if !ok {
+		handleError(fmt.Errorf("backend does not support symmetric encryption"))
+		return
+	}
+
+	encrypter, err := symBackend.SymmetricEncrypter(attrs)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get symmetric encrypter: %w", err))
+		return
+	}
+
+	// Prepare encryption options
+	opts := &types.EncryptOptions{}
+	if aad != "" {
+		opts.AdditionalData = []byte(aad)
+	}
+
+	// Encrypt the data
+	encrypted, err := encrypter.Encrypt([]byte(plaintext), opts)
+	if err != nil {
+		handleError(fmt.Errorf("failed to encrypt data: %w", err))
+		return
+	}
+
+	printVerbose("Encrypted data: ciphertext=%d bytes, nonce=%d bytes, tag=%d bytes",
+		len(encrypted.Ciphertext), len(encrypted.Nonce), len(encrypted.Tag))
+
+	if err := printer.PrintEncryptedData(encrypted); err != nil {
+		handleError(err)
+	}
+}
+
+// encryptRemote encrypts data using the client
+func encryptRemote(cfg *Config, printer *Printer, keyID, plaintext, aad string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare encrypt request
+	req := &client.EncryptRequest{
+		Backend:   cfg.Backend,
+		KeyID:     keyID,
+		Plaintext: []byte(plaintext),
+	}
+	if aad != "" {
+		req.AdditionalData = []byte(aad)
+	}
+
+	// Encrypt the data
+	resp, err := cl.Encrypt(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to encrypt data: %w", err))
+		return
+	}
+
+	printVerbose("Encrypted data: ciphertext=%d bytes, nonce=%d bytes, tag=%d bytes",
+		len(resp.Ciphertext), len(resp.Nonce), len(resp.Tag))
+
+	// Convert to EncryptedData for printing
+	encrypted := &types.EncryptedData{
+		Ciphertext: resp.Ciphertext,
+		Nonce:      resp.Nonce,
+		Tag:        resp.Tag,
+	}
+
+	if err := printer.PrintEncryptedData(encrypted); err != nil {
+		handleError(err)
+	}
 }
 
 // keyDecryptCmd decrypts data with a key
@@ -448,118 +826,266 @@ var keyDecryptCmd = &cobra.Command{
 		aad, _ := cmd.Flags().GetString("aad")
 		nonce, _ := cmd.Flags().GetString("nonce")
 		tag, _ := cmd.Flags().GetString("tag")
+		hashAlg, _ := cmd.Flags().GetString("hash")
 
 		printVerbose("Decrypting data with key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			decryptLocal(cfg, printer, keyID, ciphertext, keyType, keyAlgorithm, keySize, curve, aad, nonce, tag, hashAlg)
+		} else {
+			decryptRemote(cfg, printer, keyID, ciphertext, aad, nonce, tag)
 		}
-		defer func() { _ = be.Close() }()
+	},
+}
 
-		// Build key attributes with algorithm-specific params
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
+// decryptLocal decrypts data using direct backend access
+func decryptLocal(cfg *Config, printer *Printer, keyID, ciphertext, keyType, keyAlgorithm string, keySize int, curve, aad, nonce, tag, hashAlg string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Check if this is symmetric decryption (nonce and tag present)
+	if nonce != "" && tag != "" {
+		// Build symmetric key attributes
+		attrs, err := buildSymmetricKeyAttributes(keyID, keyAlgorithm, keySize)
 		if err != nil {
 			handleError(fmt.Errorf("invalid key parameters: %w", err))
 			return
 		}
-
-		// Check if this is symmetric decryption (nonce and tag present)
-		if nonce != "" && tag != "" {
-			// Symmetric decryption (requires SymmetricBackend)
-			symBackend, ok := be.(types.SymmetricBackend)
-			if !ok {
-				handleError(fmt.Errorf("backend does not support symmetric encryption"))
-				return
-			}
-
-			encrypter, err := symBackend.SymmetricEncrypter(attrs)
-			if err != nil {
-				handleError(fmt.Errorf("failed to get symmetric encrypter: %w", err))
-				return
-			}
-
-			// Decode base64 inputs
-			ciphertextBytes, err := base64.StdEncoding.DecodeString(ciphertext)
-			if err != nil {
-				handleError(fmt.Errorf("failed to decode ciphertext: %w", err))
-				return
-			}
-
-			nonceBytes, err := base64.StdEncoding.DecodeString(nonce)
-			if err != nil {
-				handleError(fmt.Errorf("failed to decode nonce: %w", err))
-				return
-			}
-
-			tagBytes, err := base64.StdEncoding.DecodeString(tag)
-			if err != nil {
-				handleError(fmt.Errorf("failed to decode tag: %w", err))
-				return
-			}
-
-			// Build EncryptedData
-			encrypted := &types.EncryptedData{
-				Ciphertext: ciphertextBytes,
-				Nonce:      nonceBytes,
-				Tag:        tagBytes,
-				Algorithm:  string(attrs.SymmetricAlgorithm),
-			}
-
-			// Prepare decryption options
-			opts := &types.DecryptOptions{}
-			if aad != "" {
-				opts.AdditionalData = []byte(aad)
-			}
-
-			// Decrypt
-			plaintext, err := encrypter.Decrypt(encrypted, opts)
-			if err != nil {
-				handleError(fmt.Errorf("failed to decrypt data: %w", err))
-				return
-			}
-
-			// Output plaintext as base64
-			plaintextBase64 := base64.StdEncoding.EncodeToString(plaintext)
-
-			if err := printer.PrintDecryptedData(plaintextBase64); err != nil {
-				handleError(err)
-			}
+		// Symmetric decryption (requires SymmetricBackend)
+		symBackend, ok := be.(types.SymmetricBackend)
+		if !ok {
+			handleError(fmt.Errorf("backend does not support symmetric encryption"))
 			return
 		}
 
-		// Asymmetric decryption
-		decrypter, err := be.Decrypter(attrs)
+		encrypter, err := symBackend.SymmetricEncrypter(attrs)
 		if err != nil {
-			handleError(fmt.Errorf("failed to get decrypter: %w", err))
+			handleError(fmt.Errorf("failed to get symmetric encrypter: %w", err))
 			return
 		}
 
-		// Decode ciphertext from base64
+		// Decode base64 inputs
 		ciphertextBytes, err := base64.StdEncoding.DecodeString(ciphertext)
 		if err != nil {
 			handleError(fmt.Errorf("failed to decode ciphertext: %w", err))
 			return
 		}
 
-		printVerbose("Ciphertext size: %d bytes", len(ciphertextBytes))
+		nonceBytes, err := base64.StdEncoding.DecodeString(nonce)
+		if err != nil {
+			handleError(fmt.Errorf("failed to decode nonce: %w", err))
+			return
+		}
 
-		// Decrypt the data
-		plaintext, err := decrypter.Decrypt(nil, ciphertextBytes, nil)
+		tagBytes, err := base64.StdEncoding.DecodeString(tag)
+		if err != nil {
+			handleError(fmt.Errorf("failed to decode tag: %w", err))
+			return
+		}
+
+		// Build EncryptedData
+		encrypted := &types.EncryptedData{
+			Ciphertext: ciphertextBytes,
+			Nonce:      nonceBytes,
+			Tag:        tagBytes,
+			Algorithm:  string(attrs.SymmetricAlgorithm),
+		}
+
+		// Prepare decryption options
+		opts := &types.DecryptOptions{}
+		if aad != "" {
+			opts.AdditionalData = []byte(aad)
+		}
+
+		// Decrypt
+		plaintext, err := encrypter.Decrypt(encrypted, opts)
 		if err != nil {
 			handleError(fmt.Errorf("failed to decrypt data: %w", err))
 			return
 		}
 
-		// Encode plaintext as base64 for output
+		// Output plaintext as base64
 		plaintextBase64 := base64.StdEncoding.EncodeToString(plaintext)
 
 		if err := printer.PrintDecryptedData(plaintextBase64); err != nil {
 			handleError(err)
 		}
-	},
+		return
+	}
+
+	// Asymmetric decryption
+	// Build key attributes with algorithm-specific params
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Decode ciphertext from base64
+	ciphertextBytes, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		handleError(fmt.Errorf("failed to decode ciphertext: %w", err))
+		return
+	}
+
+	printVerbose("Ciphertext size: %d bytes", len(ciphertextBytes))
+
+	var plaintext []byte
+
+	// If hash is specified, use RSA OAEP decryption directly
+	if hashAlg != "" {
+		var hash crypto.Hash
+		if hashAlgParsed, ok := types.AvailableHashes()[hashAlg]; ok {
+			hash = hashAlgParsed
+		} else {
+			handleError(fmt.Errorf("invalid hash algorithm: %s", hashAlg))
+			return
+		}
+
+		// Get the key to get the private key for OAEP decryption
+		key, err := be.GetKey(attrs)
+		if err != nil {
+			handleError(fmt.Errorf("failed to get key: %w", err))
+			return
+		}
+
+		// Extract RSA private key
+		var rsaPrivKey *rsa.PrivateKey
+		switch k := key.(type) {
+		case *rsa.PrivateKey:
+			rsaPrivKey = k
+		case crypto.Signer:
+			// Try to get from decrypter interface
+			if d, ok := k.(crypto.Decrypter); ok {
+				if priv, ok := d.(*rsa.PrivateKey); ok {
+					rsaPrivKey = priv
+				}
+			}
+		}
+
+		if rsaPrivKey != nil {
+			// RSA OAEP decryption
+			plaintext, err = rsa.DecryptOAEP(
+				hash.New(),
+				rand.Reader,
+				rsaPrivKey,
+				ciphertextBytes,
+				nil, // no label
+			)
+			if err != nil {
+				handleError(fmt.Errorf("failed to decrypt data: %w", err))
+				return
+			}
+		} else {
+			// Fallback to decrypter with OAEP options
+			decrypter, err := be.Decrypter(attrs)
+			if err != nil {
+				handleError(fmt.Errorf("failed to get decrypter: %w", err))
+				return
+			}
+			opts := &rsa.OAEPOptions{Hash: hash}
+			plaintext, err = decrypter.Decrypt(rand.Reader, ciphertextBytes, opts)
+			if err != nil {
+				handleError(fmt.Errorf("failed to decrypt data: %w", err))
+				return
+			}
+		}
+	} else {
+		// Use backend's decrypter (PKCS1v15 or default)
+		decrypter, err := be.Decrypter(attrs)
+		if err != nil {
+			handleError(fmt.Errorf("failed to get decrypter: %w", err))
+			return
+		}
+		plaintext, err = decrypter.Decrypt(nil, ciphertextBytes, nil)
+		if err != nil {
+			handleError(fmt.Errorf("failed to decrypt data: %w", err))
+			return
+		}
+	}
+
+	// Encode plaintext as base64 for output
+	plaintextBase64 := base64.StdEncoding.EncodeToString(plaintext)
+
+	if err := printer.PrintDecryptedData(plaintextBase64); err != nil {
+		handleError(err)
+	}
+}
+
+// decryptRemote decrypts data using the client
+func decryptRemote(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Decode ciphertext from base64
+	ciphertextBytes, err := base64.StdEncoding.DecodeString(ciphertext)
+	if err != nil {
+		handleError(fmt.Errorf("failed to decode ciphertext: %w", err))
+		return
+	}
+
+	// Prepare decrypt request
+	req := &client.DecryptRequest{
+		Backend:    cfg.Backend,
+		KeyID:      keyID,
+		Ciphertext: ciphertextBytes,
+	}
+
+	if aad != "" {
+		req.AdditionalData = []byte(aad)
+	}
+
+	if nonce != "" {
+		nonceBytes, err := base64.StdEncoding.DecodeString(nonce)
+		if err != nil {
+			handleError(fmt.Errorf("failed to decode nonce: %w", err))
+			return
+		}
+		req.Nonce = nonceBytes
+	}
+
+	if tag != "" {
+		tagBytes, err := base64.StdEncoding.DecodeString(tag)
+		if err != nil {
+			handleError(fmt.Errorf("failed to decode tag: %w", err))
+			return
+		}
+		req.Tag = tagBytes
+	}
+
+	// Decrypt the data
+	resp, err := cl.Decrypt(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to decrypt data: %w", err))
+		return
+	}
+
+	// Encode plaintext as base64 for output
+	plaintextBase64 := base64.StdEncoding.EncodeToString(resp.Plaintext)
+
+	if err := printer.PrintDecryptedData(plaintextBase64); err != nil {
+		handleError(err)
+	}
 }
 
 // keyImportCmd imports a wrapped key
@@ -582,34 +1108,8 @@ var keyImportCmd = &cobra.Command{
 
 		printVerbose("Importing wrapped key: %s from file: %s", keyID, wrappedKeyFile)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Check if backend supports import/export
-		importExportBe, ok := be.(backend.ImportExportBackend)
-		if !ok {
-			handleError(fmt.Errorf("backend does not support import operations"))
-			return
-		}
-
-		// Build key attributes
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
 		// Read wrapped key from file (JSON format)
 		cleanPath := filepath.Clean(wrappedKeyFile)
-		if !filepath.IsAbs(cleanPath) && false { // Path validation disabled in CLI context
-			handleError(fmt.Errorf("file path must be absolute: %s", wrappedKeyFile))
-			return
-		}
 		wrappedKeyData, err := os.ReadFile(cleanPath)
 		if err != nil {
 			handleError(fmt.Errorf("failed to read wrapped key file: %w", err))
@@ -627,16 +1127,87 @@ var keyImportCmd = &cobra.Command{
 
 		printVerbose("Wrapped key algorithm: %s", wrapped.Algorithm)
 
-		// Import the key
-		if err := importExportBe.ImportKey(attrs, &wrapped); err != nil {
-			handleError(fmt.Errorf("failed to import key: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully imported key: %s", keyID)); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			importKeyLocal(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve, &wrapped)
+		} else {
+			importKeyRemote(cfg, printer, keyID, &wrapped)
 		}
 	},
+}
+
+// importKeyLocal imports a wrapped key using direct backend access
+func importKeyLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string, wrapped *backend.WrappedKeyMaterial) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Check if backend supports import/export
+	importExportBe, ok := be.(backend.ImportExportBackend)
+	if !ok {
+		handleError(fmt.Errorf("backend does not support import operations"))
+		return
+	}
+
+	// Build key attributes
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Import the key
+	if err := importExportBe.ImportKey(attrs, wrapped); err != nil {
+		handleError(fmt.Errorf("failed to import key: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully imported key: %s", keyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// importKeyRemote imports a wrapped key using the client
+func importKeyRemote(cfg *Config, printer *Printer, keyID string, wrapped *backend.WrappedKeyMaterial) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare import key request
+	req := &client.ImportKeyRequest{
+		Backend:            cfg.Backend,
+		KeyID:              keyID,
+		WrappedKeyMaterial: wrapped.WrappedKey,
+		Algorithm:          string(wrapped.Algorithm),
+	}
+
+	// Import the key
+	_, err = cl.ImportKey(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to import key: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully imported key: %s", keyID)); err != nil {
+		handleError(err)
+	}
 }
 
 // keyExportCmd exports a key in wrapped form
@@ -660,57 +1231,125 @@ var keyExportCmd = &cobra.Command{
 
 		printVerbose("Exporting key: %s to file: %s", keyID, outputFile)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Check if backend supports import/export
-		importExportBe, ok := be.(backend.ImportExportBackend)
-		if !ok {
-			handleError(fmt.Errorf("backend does not support export operations"))
-			return
-		}
-
-		// Build key attributes
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
 		// Parse wrapping algorithm
 		algorithm := backend.WrappingAlgorithm(algorithmStr)
 		printVerbose("Using wrapping algorithm: %s", algorithm)
 
-		// Export the key
-		wrapped, err := importExportBe.ExportKey(attrs, algorithm)
-		if err != nil {
-			handleError(fmt.Errorf("failed to export key: %w", err))
-			return
-		}
-
-		printVerbose("Wrapped key size: %d bytes", len(wrapped.WrappedKey))
-
-		// Serialize to JSON and write to file
-		wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
-		if err != nil {
-			handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
-			return
-		}
-
-		if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
-			handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully exported key to: %s", outputFile)); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			exportKeyLocal(cfg, printer, keyID, outputFile, keyType, keyAlgorithm, keySize, curve, algorithm)
+		} else {
+			exportKeyRemote(cfg, printer, keyID, outputFile, algorithm)
 		}
 	},
+}
+
+// exportKeyLocal exports a key using direct backend access
+func exportKeyLocal(cfg *Config, printer *Printer, keyID, outputFile, keyType, keyAlgorithm string, keySize int, curve string, algorithm backend.WrappingAlgorithm) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Check if backend supports import/export
+	importExportBe, ok := be.(backend.ImportExportBackend)
+	if !ok {
+		handleError(fmt.Errorf("backend does not support export operations"))
+		return
+	}
+
+	// Build key attributes - export operations require Exportable=true
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, true)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Export the key
+	wrapped, err := importExportBe.ExportKey(attrs, algorithm)
+	if err != nil {
+		handleError(fmt.Errorf("failed to export key: %w", err))
+		return
+	}
+
+	printVerbose("Wrapped key size: %d bytes", len(wrapped.WrappedKey))
+
+	// Serialize to JSON and write to file
+	wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
+	if err != nil {
+		handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
+		return
+	}
+
+	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
+		handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully exported key to: %s", outputFile)); err != nil {
+		handleError(err)
+	}
+}
+
+// exportKeyRemote exports a key using the client
+func exportKeyRemote(cfg *Config, printer *Printer, keyID, outputFile string, algorithm backend.WrappingAlgorithm) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare export key request
+	req := &client.ExportKeyRequest{
+		Backend:   cfg.Backend,
+		KeyID:     keyID,
+		Algorithm: string(algorithm),
+	}
+
+	// Export the key
+	resp, err := cl.ExportKey(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to export key: %w", err))
+		return
+	}
+
+	printVerbose("Wrapped key size: %d bytes", len(resp.WrappedKeyMaterial))
+
+	// Create WrappedKeyMaterial structure for file output
+	wrapped := &backend.WrappedKeyMaterial{
+		WrappedKey: resp.WrappedKeyMaterial,
+		Algorithm:  algorithm,
+	}
+
+	// Serialize to JSON and write to file
+	wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
+	if err != nil {
+		handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
+		return
+	}
+
+	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
+		handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully exported key to: %s", outputFile)); err != nil {
+		handleError(err)
+	}
 }
 
 // keyCopyCmd copies a key from one backend to another
@@ -740,84 +1379,135 @@ var keyCopyCmd = &cobra.Command{
 
 		printVerbose("Copying key: %s -> %s (backend: %s -> %s)", sourceKeyID, destKeyID, cfg.Backend, destBackend)
 
-		// Step 1: Export from source backend
-		printVerbose("Step 1: Exporting key from source backend (%s)", cfg.Backend)
-		sourceBe, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create source backend: %w", err))
-			return
-		}
-		defer func() { _ = sourceBe.Close() }()
-
-		// Check if source backend supports import/export
-		sourceImportExportBe, ok := sourceBe.(backend.ImportExportBackend)
-		if !ok {
-			handleError(fmt.Errorf("source backend '%s' does not support export operations", cfg.Backend))
-			return
-		}
-
-		// Build key attributes for source
-		sourceAttrs, err := buildKeyAttributesFromFlags(sourceKeyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
 		// Parse wrapping algorithm
 		algorithm := backend.WrappingAlgorithm(algorithmStr)
 		printVerbose("Using wrapping algorithm: %s", algorithm)
 
-		// Export the key
-		wrapped, err := sourceImportExportBe.ExportKey(sourceAttrs, algorithm)
-		if err != nil {
-			handleError(fmt.Errorf("failed to export key from source backend: %w", err))
-			return
-		}
-
-		printVerbose("Successfully exported key (%d bytes wrapped)", len(wrapped.WrappedKey))
-
-		// Step 2: Import to destination backend
-		printVerbose("Step 2: Importing key to destination backend (%s)", destBackend)
-
-		// Create destination backend config
-		destCfg := *cfg // Copy config
-		destCfg.Backend = destBackend
-		if destKeyDir != "" {
-			destCfg.KeyDir = destKeyDir
-		}
-
-		destBe, err := destCfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create destination backend: %w", err))
-			return
-		}
-		defer func() { _ = destBe.Close() }()
-
-		// Check if destination backend supports import/export
-		destImportExportBe, ok := destBe.(backend.ImportExportBackend)
-		if !ok {
-			handleError(fmt.Errorf("destination backend '%s' does not support import operations", destBackend))
-			return
-		}
-
-		// Build key attributes for destination
-		destAttrs, err := buildKeyAttributesFromFlags(destKeyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid destination key parameters: %w", err))
-			return
-		}
-
-		// Import the key
-		if err := destImportExportBe.ImportKey(destAttrs, wrapped); err != nil {
-			handleError(fmt.Errorf("failed to import key to destination backend: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully copied key from %s:%s to %s:%s",
-			cfg.Backend, sourceKeyID, destBackend, destKeyID)); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			copyKeyLocal(cfg, printer, sourceKeyID, destKeyID, destBackend, destKeyDir, keyType, keyAlgorithm, keySize, curve, algorithm)
+		} else {
+			copyKeyRemote(cfg, printer, sourceKeyID, destKeyID, destBackend, algorithm)
 		}
 	},
+}
+
+// copyKeyLocal copies a key using direct backend access
+func copyKeyLocal(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend, destKeyDir, keyType, keyAlgorithm string, keySize int, curve string, algorithm backend.WrappingAlgorithm) {
+	// Step 1: Export from source backend
+	printVerbose("Step 1: Exporting key from source backend (%s)", cfg.Backend)
+	sourceBe, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create source backend: %w", err))
+		return
+	}
+	defer func() { _ = sourceBe.Close() }()
+
+	// Check if source backend supports import/export
+	sourceImportExportBe, ok := sourceBe.(backend.ImportExportBackend)
+	if !ok {
+		handleError(fmt.Errorf("source backend '%s' does not support export operations", cfg.Backend))
+		return
+	}
+
+	// Build key attributes for source (requires Exportable=true for export operation)
+	sourceAttrs, err := buildKeyAttributesFromFlags(sourceKeyID, keyType, keyAlgorithm, keySize, curve, true)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Export the key
+	wrapped, err := sourceImportExportBe.ExportKey(sourceAttrs, algorithm)
+	if err != nil {
+		handleError(fmt.Errorf("failed to export key from source backend: %w", err))
+		return
+	}
+
+	printVerbose("Successfully exported key (%d bytes wrapped)", len(wrapped.WrappedKey))
+
+	// Step 2: Import to destination backend
+	printVerbose("Step 2: Importing key to destination backend (%s)", destBackend)
+
+	// Create destination backend config
+	destCfg := *cfg // Copy config
+	destCfg.Backend = destBackend
+	if destKeyDir != "" {
+		destCfg.KeyDir = destKeyDir
+	}
+
+	destBe, err := destCfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create destination backend: %w", err))
+		return
+	}
+	defer func() { _ = destBe.Close() }()
+
+	// Check if destination backend supports import/export
+	destImportExportBe, ok := destBe.(backend.ImportExportBackend)
+	if !ok {
+		handleError(fmt.Errorf("destination backend '%s' does not support import operations", destBackend))
+		return
+	}
+
+	// Build key attributes for destination
+	destAttrs, err := buildKeyAttributesFromFlags(destKeyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid destination key parameters: %w", err))
+		return
+	}
+
+	// Import the key
+	if err := destImportExportBe.ImportKey(destAttrs, wrapped); err != nil {
+		handleError(fmt.Errorf("failed to import key to destination backend: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully copied key from %s:%s to %s:%s",
+		cfg.Backend, sourceKeyID, destBackend, destKeyID)); err != nil {
+		handleError(err)
+	}
+}
+
+// copyKeyRemote copies a key using the client
+func copyKeyRemote(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend string, algorithm backend.WrappingAlgorithm) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare copy key request
+	req := &client.CopyKeyRequest{
+		SourceBackend: cfg.Backend,
+		SourceKeyID:   sourceKeyID,
+		DestBackend:   destBackend,
+		DestKeyID:     destKeyID,
+		Algorithm:     string(algorithm),
+	}
+
+	// Copy the key
+	_, err = cl.CopyKey(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to copy key: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully copied key from %s:%s to %s:%s",
+		cfg.Backend, sourceKeyID, destBackend, destKeyID)); err != nil {
+		handleError(err)
+	}
 }
 
 // keyGetImportParamsCmd gets import parameters for wrapping keys
@@ -841,67 +1531,145 @@ var keyGetImportParamsCmd = &cobra.Command{
 
 		printVerbose("Getting import parameters for key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Check if backend supports import/export
-		importExportBe, ok := be.(backend.ImportExportBackend)
-		if !ok {
-			handleError(fmt.Errorf("backend does not support import/export operations"))
-			return
-		}
-
-		// Build key attributes
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
 		// Parse wrapping algorithm
 		algorithm := backend.WrappingAlgorithm(algorithmStr)
 		printVerbose("Requesting parameters for algorithm: %s", algorithm)
 
-		// Get import parameters
-		params, err := importExportBe.GetImportParameters(attrs, algorithm)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			getImportParamsLocal(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve, algorithm, outputFile)
+		} else {
+			getImportParamsRemote(cfg, printer, keyID, algorithm, outputFile)
+		}
+	},
+}
+
+// getImportParamsLocal gets import parameters using direct backend access
+func getImportParamsLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string, algorithm backend.WrappingAlgorithm, outputFile string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Check if backend supports import/export
+	importExportBe, ok := be.(backend.ImportExportBackend)
+	if !ok {
+		handleError(fmt.Errorf("backend does not support import/export operations"))
+		return
+	}
+
+	// Build key attributes
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Get import parameters
+	params, err := importExportBe.GetImportParameters(attrs, algorithm)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get import parameters: %w", err))
+		return
+	}
+
+	printVerbose("Import parameters retrieved successfully")
+	if params.ExpiresAt != nil {
+		printVerbose("Parameters expire at: %s", params.ExpiresAt.String())
+	}
+
+	// If output file is specified, save params to file
+	if outputFile != "" {
+		paramsData, err := json.MarshalIndent(params, "", "  ")
 		if err != nil {
-			handleError(fmt.Errorf("failed to get import parameters: %w", err))
+			handleError(fmt.Errorf("failed to serialize import parameters: %w", err))
 			return
 		}
 
-		printVerbose("Import parameters retrieved successfully")
-		if params.ExpiresAt != nil {
-			printVerbose("Parameters expire at: %s", params.ExpiresAt.String())
+		if err := os.WriteFile(outputFile, paramsData, 0600); err != nil {
+			handleError(fmt.Errorf("failed to write parameters file: %w", err))
+			return
 		}
 
-		// If output file is specified, save params to file
-		if outputFile != "" {
-			paramsData, err := json.MarshalIndent(params, "", "  ")
-			if err != nil {
-				handleError(fmt.Errorf("failed to serialize import parameters: %w", err))
-				return
-			}
-
-			if err := os.WriteFile(outputFile, paramsData, 0600); err != nil {
-				handleError(fmt.Errorf("failed to write parameters file: %w", err))
-				return
-			}
-
-			if err := printer.PrintSuccess(fmt.Sprintf("Import parameters saved to: %s", outputFile)); err != nil {
-				handleError(err)
-			}
-		} else {
-			// Print params in user-friendly format
-			if err := printer.PrintImportParameters(params); err != nil {
-				handleError(err)
-			}
+		if err := printer.PrintSuccess(fmt.Sprintf("Import parameters saved to: %s", outputFile)); err != nil {
+			handleError(err)
 		}
-	},
+	} else {
+		// Print params in user-friendly format
+		if err := printer.PrintImportParameters(params); err != nil {
+			handleError(err)
+		}
+	}
+}
+
+// getImportParamsRemote gets import parameters using the client
+func getImportParamsRemote(cfg *Config, printer *Printer, keyID string, algorithm backend.WrappingAlgorithm, outputFile string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare get import parameters request
+	req := &client.GetImportParametersRequest{
+		Backend:   cfg.Backend,
+		KeyID:     keyID,
+		Algorithm: string(algorithm),
+	}
+
+	// Get import parameters
+	resp, err := cl.GetImportParameters(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get import parameters: %w", err))
+		return
+	}
+
+	printVerbose("Import parameters retrieved successfully")
+	if resp.ExpiresAt != "" {
+		printVerbose("Parameters expire at: %s", resp.ExpiresAt)
+	}
+
+	// Convert to backend.ImportParameters for output
+	params := &backend.ImportParameters{
+		WrappingPublicKey: resp.WrappingPublicKey,
+		Algorithm:         algorithm,
+	}
+
+	// If output file is specified, save params to file
+	if outputFile != "" {
+		paramsData, err := json.MarshalIndent(params, "", "  ")
+		if err != nil {
+			handleError(fmt.Errorf("failed to serialize import parameters: %w", err))
+			return
+		}
+
+		if err := os.WriteFile(outputFile, paramsData, 0600); err != nil {
+			handleError(fmt.Errorf("failed to write parameters file: %w", err))
+			return
+		}
+
+		if err := printer.PrintSuccess(fmt.Sprintf("Import parameters saved to: %s", outputFile)); err != nil {
+			handleError(err)
+		}
+	} else {
+		// Print params in user-friendly format
+		if err := printer.PrintImportParameters(params); err != nil {
+			handleError(err)
+		}
+	}
 }
 
 // keyWrapCmd wraps key material for secure transport
@@ -919,24 +1687,9 @@ var keyWrapCmd = &cobra.Command{
 
 		printVerbose("Wrapping key material from: %s", keyMaterialFile)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Check if backend supports import/export
-		importExportBe, ok := be.(backend.ImportExportBackend)
-		if !ok {
-			handleError(fmt.Errorf("backend does not support wrap operations"))
-			return
-		}
-
 		// Read key material
 		cleanPath := filepath.Clean(keyMaterialFile)
-		keyMaterial, err := /* #nosec G304 */ os.ReadFile(cleanPath)
+		keyMaterial, err := os.ReadFile(cleanPath)
 		if err != nil {
 			handleError(fmt.Errorf("failed to read key material file: %w", err))
 			return
@@ -946,10 +1699,6 @@ var keyWrapCmd = &cobra.Command{
 
 		// Read import parameters
 		cleanPath = filepath.Clean(paramsFile)
-		if !filepath.IsAbs(cleanPath) && false { // Path validation disabled in CLI context
-			handleError(fmt.Errorf("file path must be absolute: %s", paramsFile))
-			return
-		}
 		paramsData, err := os.ReadFile(cleanPath)
 		if err != nil {
 			handleError(fmt.Errorf("failed to read parameters file: %w", err))
@@ -964,31 +1713,121 @@ var keyWrapCmd = &cobra.Command{
 
 		printVerbose("Using wrapping algorithm: %s", params.Algorithm)
 
-		// Wrap the key material
-		wrapped, err := importExportBe.WrapKey(keyMaterial, &params)
-		if err != nil {
-			handleError(fmt.Errorf("failed to wrap key material: %w", err))
-			return
-		}
-
-		printVerbose("Wrapped key size: %d bytes", len(wrapped.WrappedKey))
-
-		// Serialize and write wrapped key
-		wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
-		if err != nil {
-			handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
-			return
-		}
-
-		if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
-			handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully wrapped key to: %s", outputFile)); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			wrapKeyLocal(cfg, printer, keyMaterial, &params, outputFile)
+		} else {
+			wrapKeyRemote(cfg, printer, keyMaterial, &params, outputFile)
 		}
 	},
+}
+
+// wrapKeyLocal wraps key material using direct backend access
+func wrapKeyLocal(cfg *Config, printer *Printer, keyMaterial []byte, params *backend.ImportParameters, outputFile string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Check if backend supports import/export
+	importExportBe, ok := be.(backend.ImportExportBackend)
+	if !ok {
+		handleError(fmt.Errorf("backend does not support wrap operations"))
+		return
+	}
+
+	// Wrap the key material
+	wrapped, err := importExportBe.WrapKey(keyMaterial, params)
+	if err != nil {
+		handleError(fmt.Errorf("failed to wrap key material: %w", err))
+		return
+	}
+
+	printVerbose("Wrapped key size: %d bytes", len(wrapped.WrappedKey))
+
+	// Serialize and write wrapped key
+	wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
+	if err != nil {
+		handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
+		return
+	}
+
+	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
+		handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully wrapped key to: %s", outputFile)); err != nil {
+		handleError(err)
+	}
+}
+
+// wrapKeyRemote wraps key material using the client
+func wrapKeyRemote(cfg *Config, printer *Printer, keyMaterial []byte, params *backend.ImportParameters, outputFile string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Marshal the public key to DER format
+	wrappingPubKeyDER, err := x509.MarshalPKIXPublicKey(params.WrappingPublicKey)
+	if err != nil {
+		handleError(fmt.Errorf("failed to marshal wrapping public key: %w", err))
+		return
+	}
+
+	// Prepare wrap key request
+	req := &client.WrapKeyRequest{
+		KeyMaterial:       keyMaterial,
+		WrappingPublicKey: wrappingPubKeyDER,
+		Algorithm:         string(params.Algorithm),
+	}
+
+	// Wrap the key material
+	resp, err := cl.WrapKey(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to wrap key material: %w", err))
+		return
+	}
+
+	printVerbose("Wrapped key size: %d bytes", len(resp.WrappedKeyMaterial))
+
+	// Create WrappedKeyMaterial structure for file output
+	wrapped := &backend.WrappedKeyMaterial{
+		WrappedKey: resp.WrappedKeyMaterial,
+		Algorithm:  params.Algorithm,
+	}
+
+	// Serialize and write wrapped key
+	wrappedData, err := json.MarshalIndent(wrapped, "", "  ")
+	if err != nil {
+		handleError(fmt.Errorf("failed to serialize wrapped key: %w", err))
+		return
+	}
+
+	if err := os.WriteFile(outputFile, wrappedData, 0600); err != nil {
+		handleError(fmt.Errorf("failed to write wrapped key file: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully wrapped key to: %s", outputFile)); err != nil {
+		handleError(err)
+	}
 }
 
 // keyUnwrapCmd unwraps key material
@@ -1006,27 +1845,8 @@ var keyUnwrapCmd = &cobra.Command{
 
 		printVerbose("Unwrapping key from: %s", wrappedKeyFile)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Check if backend supports import/export
-		importExportBe, ok := be.(backend.ImportExportBackend)
-		if !ok {
-			handleError(fmt.Errorf("backend does not support unwrap operations"))
-			return
-		}
-
 		// Read wrapped key
 		cleanPath := filepath.Clean(wrappedKeyFile)
-		if !filepath.IsAbs(cleanPath) && false { // Path validation disabled in CLI context
-			handleError(fmt.Errorf("file path must be absolute: %s", wrappedKeyFile))
-			return
-		}
 		wrappedData, err := os.ReadFile(cleanPath)
 		if err != nil {
 			handleError(fmt.Errorf("failed to read wrapped key file: %w", err))
@@ -1043,10 +1863,6 @@ var keyUnwrapCmd = &cobra.Command{
 
 		// Read import parameters
 		cleanPath = filepath.Clean(paramsFile)
-		if !filepath.IsAbs(cleanPath) && false { // Path validation disabled in CLI context
-			handleError(fmt.Errorf("file path must be absolute: %s", paramsFile))
-			return
-		}
 		paramsData, err := os.ReadFile(cleanPath)
 		if err != nil {
 			handleError(fmt.Errorf("failed to read parameters file: %w", err))
@@ -1061,25 +1877,95 @@ var keyUnwrapCmd = &cobra.Command{
 
 		printVerbose("Using wrapping algorithm: %s", params.Algorithm)
 
-		// Unwrap the key material
-		keyMaterial, err := importExportBe.UnwrapKey(&wrapped, &params)
-		if err != nil {
-			handleError(fmt.Errorf("failed to unwrap key material: %w", err))
-			return
-		}
-
-		printVerbose("Unwrapped key material size: %d bytes", len(keyMaterial))
-
-		// Write unwrapped key material
-		if err := os.WriteFile(outputFile, keyMaterial, 0600); err != nil {
-			handleError(fmt.Errorf("failed to write key material file: %w", err))
-			return
-		}
-
-		if err := printer.PrintSuccess(fmt.Sprintf("Successfully unwrapped key to: %s", outputFile)); err != nil {
-			handleError(err)
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			unwrapKeyLocal(cfg, printer, &wrapped, &params, outputFile)
+		} else {
+			unwrapKeyRemote(cfg, printer, &wrapped, &params, outputFile)
 		}
 	},
+}
+
+// unwrapKeyLocal unwraps key material using direct backend access
+func unwrapKeyLocal(cfg *Config, printer *Printer, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters, outputFile string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Check if backend supports import/export
+	importExportBe, ok := be.(backend.ImportExportBackend)
+	if !ok {
+		handleError(fmt.Errorf("backend does not support unwrap operations"))
+		return
+	}
+
+	// Unwrap the key material
+	keyMaterial, err := importExportBe.UnwrapKey(wrapped, params)
+	if err != nil {
+		handleError(fmt.Errorf("failed to unwrap key material: %w", err))
+		return
+	}
+
+	printVerbose("Unwrapped key material size: %d bytes", len(keyMaterial))
+
+	// Write unwrapped key material
+	if err := os.WriteFile(outputFile, keyMaterial, 0600); err != nil {
+		handleError(fmt.Errorf("failed to write key material file: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully unwrapped key to: %s", outputFile)); err != nil {
+		handleError(err)
+	}
+}
+
+// unwrapKeyRemote unwraps key material using the client
+func unwrapKeyRemote(cfg *Config, printer *Printer, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters, outputFile string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare unwrap key request
+	req := &client.UnwrapKeyRequest{
+		WrappedKeyMaterial: wrapped.WrappedKey,
+		Algorithm:          string(params.Algorithm),
+	}
+
+	// Unwrap the key material
+	resp, err := cl.UnwrapKey(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to unwrap key material: %w", err))
+		return
+	}
+
+	printVerbose("Unwrapped key material size: %d bytes", len(resp.KeyMaterial))
+
+	// Write unwrapped key material
+	if err := os.WriteFile(outputFile, resp.KeyMaterial, 0600); err != nil {
+		handleError(fmt.Errorf("failed to write key material file: %w", err))
+		return
+	}
+
+	if err := printer.PrintSuccess(fmt.Sprintf("Successfully unwrapped key to: %s", outputFile)); err != nil {
+		handleError(err)
+	}
 }
 
 // keyVerifyCmd verifies a signature
@@ -1104,104 +1990,165 @@ var keyVerifyCmd = &cobra.Command{
 
 		printVerbose("Verifying signature with key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Build key attributes
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
-		// Parse hash algorithm
-		if hashAlgParsed, ok := types.AvailableHashes()[hashAlg]; ok {
-			attrs.Hash = hashAlgParsed
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			verifyLocal(cfg, printer, keyID, data, signatureBase64, keyType, keyAlgorithm, keySize, curve, hashAlg)
 		} else {
-			handleError(fmt.Errorf("invalid hash algorithm: %s", hashAlg))
-			return
-		}
-
-		// Get the key to extract public key
-		key, err := be.GetKey(attrs)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get key: %w", err))
-			return
-		}
-
-		// Extract public key
-		var publicKey crypto.PublicKey
-		switch k := key.(type) {
-		case crypto.Signer:
-			publicKey = k.Public()
-		default:
-			handleError(fmt.Errorf("key does not support verification"))
-			return
-		}
-
-		// Hash the data
-		hash := attrs.Hash
-		hasher := hash.New()
-		hasher.Write([]byte(data))
-		digest := hasher.Sum(nil)
-
-		printVerbose("Data digest (hex): %x", digest)
-
-		// Decode signature from base64
-		signature, err := base64.StdEncoding.DecodeString(signatureBase64)
-		if err != nil {
-			handleError(fmt.Errorf("failed to decode signature: %w", err))
-			return
-		}
-
-		printVerbose("Signature size: %d bytes", len(signature))
-
-		// Verify the signature based on key algorithm
-		var valid bool
-		switch pub := publicKey.(type) {
-		case *rsa.PublicKey:
-			// Verify RSA signature (PKCS1v15 or PSS)
-			err := rsa.VerifyPKCS1v15(pub, hash, digest, signature)
-			if err != nil {
-				// Try PSS if PKCS1v15 fails
-				pssOpts := &rsa.PSSOptions{
-					SaltLength: rsa.PSSSaltLengthAuto,
-					Hash:       hash,
-				}
-				err = rsa.VerifyPSS(pub, hash, digest, signature, pssOpts)
-				if err != nil {
-					handleError(fmt.Errorf("signature verification failed: %w", err))
-					return
-				}
-			}
-			valid = true
-
-		case *ecdsa.PublicKey:
-			// Verify ECDSA signature
-			valid = ecdsa.VerifyASN1(pub, digest, signature)
-
-		case ed25519.PublicKey:
-			// Verify Ed25519 signature (Ed25519 signs the whole message, not a hash)
-			valid = ed25519.Verify(pub, []byte(data), signature)
-
-		default:
-			handleError(fmt.Errorf("unsupported public key type for verification: %T", pub))
-			return
-		}
-
-		if valid {
-			if err := printer.PrintSuccess("Signature is valid"); err != nil {
-				handleError(err)
-			}
-		} else {
-			handleError(fmt.Errorf("signature is invalid"))
+			verifyRemote(cfg, printer, keyID, data, signatureBase64, hashAlg)
 		}
 	},
+}
+
+// verifyLocal verifies a signature using direct backend access
+func verifyLocal(cfg *Config, printer *Printer, keyID, data, signatureBase64, keyType, keyAlgorithm string, keySize int, curve, hashAlg string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Build key attributes
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Parse hash algorithm
+	if hashAlgParsed, ok := types.AvailableHashes()[hashAlg]; ok {
+		attrs.Hash = hashAlgParsed
+	} else {
+		handleError(fmt.Errorf("invalid hash algorithm: %s", hashAlg))
+		return
+	}
+
+	// Get the key to extract public key
+	key, err := be.GetKey(attrs)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get key: %w", err))
+		return
+	}
+
+	// Extract public key
+	var publicKey crypto.PublicKey
+	switch k := key.(type) {
+	case crypto.Signer:
+		publicKey = k.Public()
+	default:
+		handleError(fmt.Errorf("key does not support verification"))
+		return
+	}
+
+	// Hash the data
+	hash := attrs.Hash
+	hasher := hash.New()
+	hasher.Write([]byte(data))
+	digest := hasher.Sum(nil)
+
+	printVerbose("Data digest (hex): %x", digest)
+
+	// Decode signature from base64
+	signature, err := base64.StdEncoding.DecodeString(signatureBase64)
+	if err != nil {
+		handleError(fmt.Errorf("failed to decode signature: %w", err))
+		return
+	}
+
+	printVerbose("Signature size: %d bytes", len(signature))
+
+	// Verify the signature based on key algorithm
+	var valid bool
+	switch pub := publicKey.(type) {
+	case *rsa.PublicKey:
+		// Verify RSA signature (PKCS1v15 or PSS)
+		err := rsa.VerifyPKCS1v15(pub, hash, digest, signature)
+		if err != nil {
+			// Try PSS if PKCS1v15 fails
+			pssOpts := &rsa.PSSOptions{
+				SaltLength: rsa.PSSSaltLengthAuto,
+				Hash:       hash,
+			}
+			err = rsa.VerifyPSS(pub, hash, digest, signature, pssOpts)
+			if err != nil {
+				handleError(fmt.Errorf("signature verification failed: %w", err))
+				return
+			}
+		}
+		valid = true
+
+	case *ecdsa.PublicKey:
+		// Verify ECDSA signature
+		valid = ecdsa.VerifyASN1(pub, digest, signature)
+
+	case ed25519.PublicKey:
+		// Verify Ed25519 signature (Ed25519 signs the whole message, not a hash)
+		valid = ed25519.Verify(pub, []byte(data), signature)
+
+	default:
+		handleError(fmt.Errorf("unsupported public key type for verification: %T", pub))
+		return
+	}
+
+	if valid {
+		if err := printer.PrintSuccess("Signature is valid"); err != nil {
+			handleError(err)
+		}
+	} else {
+		handleError(fmt.Errorf("signature is invalid"))
+	}
+}
+
+// verifyRemote verifies a signature using the client
+func verifyRemote(cfg *Config, printer *Printer, keyID, data, signatureBase64, hashAlg string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Decode signature from base64
+	signature, err := base64.StdEncoding.DecodeString(signatureBase64)
+	if err != nil {
+		handleError(fmt.Errorf("failed to decode signature: %w", err))
+		return
+	}
+
+	// Prepare verify request
+	req := &client.VerifyRequest{
+		Backend:   cfg.Backend,
+		KeyID:     keyID,
+		Data:      []byte(data),
+		Signature: signature,
+		Hash:      hashAlg,
+	}
+
+	// Verify the signature
+	resp, err := cl.Verify(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to verify signature: %w", err))
+		return
+	}
+
+	if resp.Valid {
+		if err := printer.PrintSuccess("Signature is valid"); err != nil {
+			handleError(err)
+		}
+	} else {
+		handleError(fmt.Errorf("signature is invalid: %s", resp.Message))
+	}
 }
 
 // keyEncryptAsymCmd encrypts data with RSA public key
@@ -1225,78 +2172,132 @@ var keyEncryptAsymCmd = &cobra.Command{
 
 		printVerbose("Encrypting data with key: %s", keyID)
 
-		// Create backend
-		be, err := cfg.CreateBackend()
-		if err != nil {
-			handleError(fmt.Errorf("failed to create backend: %w", err))
-			return
-		}
-		defer func() { _ = be.Close() }()
-
-		// Build key attributes
-		attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve)
-		if err != nil {
-			handleError(fmt.Errorf("invalid key parameters: %w", err))
-			return
-		}
-
-		// Parse hash algorithm
-		var hash crypto.Hash
-		if hashAlgParsed, ok := types.AvailableHashes()[hashAlg]; ok {
-			hash = hashAlgParsed
+		// Use client or backend based on --local flag
+		if cfg.IsLocal() {
+			encryptAsymLocal(cfg, printer, keyID, plaintext, keyType, keyAlgorithm, keySize, curve, hashAlg)
 		} else {
-			handleError(fmt.Errorf("invalid hash algorithm: %s", hashAlg))
-			return
-		}
-
-		// Get the key to extract public key
-		key, err := be.GetKey(attrs)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get key: %w", err))
-			return
-		}
-
-		// Extract public key
-		var publicKey crypto.PublicKey
-		switch k := key.(type) {
-		case crypto.Signer:
-			publicKey = k.Public()
-		default:
-			handleError(fmt.Errorf("key does not support public key extraction"))
-			return
-		}
-
-		// Encrypt based on key type
-		var ciphertext []byte
-		switch pub := publicKey.(type) {
-		case *rsa.PublicKey:
-			// RSA OAEP encryption
-			ciphertext, err = rsa.EncryptOAEP(
-				hash.New(),
-				rand.Reader,
-				pub,
-				[]byte(plaintext),
-				nil, // no label
-			)
-			if err != nil {
-				handleError(fmt.Errorf("failed to encrypt data: %w", err))
-				return
-			}
-
-		default:
-			handleError(fmt.Errorf("asymmetric encryption only supported for RSA keys, got: %T", pub))
-			return
-		}
-
-		printVerbose("Ciphertext size: %d bytes", len(ciphertext))
-
-		// Encode ciphertext as base64
-		ciphertextBase64 := base64.StdEncoding.EncodeToString(ciphertext)
-
-		if err := printer.PrintEncryptedAsym(ciphertextBase64); err != nil {
-			handleError(err)
+			encryptAsymRemote(cfg, printer, keyID, plaintext, hashAlg)
 		}
 	},
+}
+
+// encryptAsymLocal encrypts data using direct backend access
+func encryptAsymLocal(cfg *Config, printer *Printer, keyID, plaintext, keyType, keyAlgorithm string, keySize int, curve, hashAlg string) {
+	// Create backend
+	be, err := cfg.CreateBackend()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create backend: %w", err))
+		return
+	}
+	defer func() { _ = be.Close() }()
+
+	// Build key attributes
+	attrs, err := buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm, keySize, curve, false)
+	if err != nil {
+		handleError(fmt.Errorf("invalid key parameters: %w", err))
+		return
+	}
+
+	// Parse hash algorithm
+	var hash crypto.Hash
+	if hashAlgParsed, ok := types.AvailableHashes()[hashAlg]; ok {
+		hash = hashAlgParsed
+	} else {
+		handleError(fmt.Errorf("invalid hash algorithm: %s", hashAlg))
+		return
+	}
+
+	// Get the key to extract public key
+	key, err := be.GetKey(attrs)
+	if err != nil {
+		handleError(fmt.Errorf("failed to get key: %w", err))
+		return
+	}
+
+	// Extract public key
+	var publicKey crypto.PublicKey
+	switch k := key.(type) {
+	case crypto.Signer:
+		publicKey = k.Public()
+	default:
+		handleError(fmt.Errorf("key does not support public key extraction"))
+		return
+	}
+
+	// Encrypt based on key type
+	var ciphertext []byte
+	switch pub := publicKey.(type) {
+	case *rsa.PublicKey:
+		// RSA OAEP encryption
+		ciphertext, err = rsa.EncryptOAEP(
+			hash.New(),
+			rand.Reader,
+			pub,
+			[]byte(plaintext),
+			nil, // no label
+		)
+		if err != nil {
+			handleError(fmt.Errorf("failed to encrypt data: %w", err))
+			return
+		}
+
+	default:
+		handleError(fmt.Errorf("asymmetric encryption only supported for RSA keys, got: %T", pub))
+		return
+	}
+
+	printVerbose("Ciphertext size: %d bytes", len(ciphertext))
+
+	// Encode ciphertext as base64
+	ciphertextBase64 := base64.StdEncoding.EncodeToString(ciphertext)
+
+	if err := printer.PrintEncryptedAsym(ciphertextBase64); err != nil {
+		handleError(err)
+	}
+}
+
+// encryptAsymRemote encrypts data using the client
+func encryptAsymRemote(cfg *Config, printer *Printer, keyID, plaintext, hashAlg string) {
+	// Create client
+	cl, err := cfg.CreateClient()
+	if err != nil {
+		handleError(fmt.Errorf("failed to create client: %w", err))
+		return
+	}
+	defer func() { _ = cl.Close() }()
+
+	// Connect to server
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		handleError(fmt.Errorf("failed to connect to keychaind: %w", err))
+		return
+	}
+
+	printVerbose("Connected to keychaind server")
+
+	// Prepare encrypt request
+	req := &client.EncryptAsymRequest{
+		Backend:   cfg.Backend,
+		KeyID:     keyID,
+		Plaintext: []byte(plaintext),
+		Hash:      hashAlg,
+	}
+
+	// Encrypt the data
+	resp, err := cl.EncryptAsym(ctx, req)
+	if err != nil {
+		handleError(fmt.Errorf("failed to encrypt data: %w", err))
+		return
+	}
+
+	printVerbose("Ciphertext size: %d bytes", len(resp.Ciphertext))
+
+	// Encode ciphertext as base64
+	ciphertextBase64 := base64.StdEncoding.EncodeToString(resp.Ciphertext)
+
+	if err := printer.PrintEncryptedAsym(ciphertextBase64); err != nil {
+		handleError(err)
+	}
 }
 
 func init() {
@@ -1324,6 +2325,7 @@ func init() {
 	keyGenerateCmd.Flags().String("key-algorithm", "rsa", "Key algorithm (rsa, ecdsa, ed25519)")
 	keyGenerateCmd.Flags().Int("key-size", 2048, "Key size in bits (128, 192, 256 for AES; 2048+ for RSA)")
 	keyGenerateCmd.Flags().String("curve", "P-256", "Elliptic curve (for ECDSA: P-256, P-384, P-521)")
+	keyGenerateCmd.Flags().Bool("exportable", false, "Allow the key to be exported")
 
 	// Flags for get command
 	keyGetCmd.Flags().String("key-type", "tls", "Key type")
@@ -1361,6 +2363,7 @@ func init() {
 	keyDecryptCmd.Flags().String("key-algorithm", "rsa", "Key algorithm")
 	keyDecryptCmd.Flags().Int("key-size", 2048, "Key size in bits (for RSA)")
 	keyDecryptCmd.Flags().String("curve", "P-256", "Elliptic curve (for ECDSA: P-256, P-384, P-521)")
+	keyDecryptCmd.Flags().String("hash", "", "Hash algorithm for RSA OAEP decryption (e.g., SHA-256)")
 	keyDecryptCmd.Flags().String("aad", "", "Additional authenticated data (for symmetric decryption)")
 	keyDecryptCmd.Flags().String("nonce", "", "Nonce/IV (base64, required for symmetric decryption)")
 	keyDecryptCmd.Flags().String("tag", "", "Authentication tag (base64, required for symmetric decryption)")
@@ -1379,7 +2382,7 @@ func init() {
 	keyExportCmd.Flags().String("algorithm", "RSAES_OAEP_SHA_256", "Wrapping algorithm")
 
 	// Flags for copy command
-	keyCopyCmd.Flags().String("dest-backend", "pkcs8", "Destination backend (pkcs8, pkcs11, tpm2, awskms, etc.)")
+	keyCopyCmd.Flags().String("dest-backend", "software", "Destination backend (software, pkcs11, tpm2, awskms, etc.)")
 	keyCopyCmd.Flags().String("dest-keydir", "", "Destination key directory (for file-based backends)")
 	keyCopyCmd.Flags().String("key-type", "tls", "Key type")
 	keyCopyCmd.Flags().String("key-algorithm", "rsa", "Key algorithm")
@@ -1410,62 +2413,8 @@ func init() {
 	keyEncryptAsymCmd.Flags().String("hash", "sha256", "Hash algorithm for OAEP (sha256, sha384, sha512)")
 }
 
-// buildKeyAttributes creates KeyAttributes from command line parameters
-func buildKeyAttributes(keyID, keyType string, keySize int, curve string) (*types.KeyAttributes, error) {
-	// Parse key algorithm from keyType flag
-	var keyAlgorithm x509.PublicKeyAlgorithm
-	switch keyType {
-	case "rsa":
-		keyAlgorithm = x509.RSA
-	case "ecdsa":
-		keyAlgorithm = x509.ECDSA
-	case "ed25519":
-		keyAlgorithm = x509.Ed25519
-	default:
-		keyAlgorithm = x509.RSA
-	}
-
-	attrs := &types.KeyAttributes{
-		CN:           keyID,
-		KeyType:      types.KeyTypeTLS,
-		StoreType:    types.StorePKCS8,
-		KeyAlgorithm: keyAlgorithm,
-		Hash:         crypto.SHA256,
-	}
-
-	// Set algorithm-specific attributes
-	switch keyAlgorithm {
-	case x509.RSA:
-		if keySize < 2048 {
-			return nil, fmt.Errorf("RSA key size must be at least 2048 bits")
-		}
-		attrs.RSAAttributes = &types.RSAAttributes{
-			KeySize: keySize,
-		}
-
-	case x509.ECDSA:
-		parsedCurve, err := types.ParseCurve(curve)
-		if err != nil {
-			return nil, fmt.Errorf("invalid curve: %s", curve)
-		}
-		attrs.ECCAttributes = &types.ECCAttributes{
-			Curve: parsedCurve,
-		}
-
-	case x509.Ed25519:
-		// Ed25519 has no configurable parameters
-	}
-
-	// Validate the attributes
-	if err := attrs.Validate(); err != nil {
-		return nil, err
-	}
-
-	return attrs, nil
-}
-
 // buildKeyAttributesFromFlags creates KeyAttributes from separate key type and algorithm flags
-func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize int, curve string) (*types.KeyAttributes, error) {
+func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize int, curve string, exportable bool) (*types.KeyAttributes, error) {
 	// Parse key type and algorithm
 	kt := types.ParseKeyType(keyType)
 	if kt == 0 {
@@ -1483,6 +2432,7 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 		StoreType:    types.StorePKCS8,
 		KeyAlgorithm: ka,
 		Hash:         crypto.SHA256,
+		Exportable:   exportable,
 	}
 
 	// Set algorithm-specific attributes
@@ -1515,10 +2465,6 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 
 	return attrs, nil
 }
-
-// parseKeySize converts a string key size to an integer
-
-// parseCurve validates and returns an ECC curve name
 
 // buildSymmetricKeyAttributes creates KeyAttributes for symmetric (AES) keys
 func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*types.KeyAttributes, error) {
@@ -1561,4 +2507,10 @@ func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*types.K
 	}
 
 	return attrs, nil
+}
+
+// isSymmetricAlgorithm checks if the algorithm string is a symmetric (AES) algorithm
+func isSymmetricAlgorithm(algorithm string) bool {
+	symAlg := types.SymmetricAlgorithm(algorithm)
+	return symAlg.IsValid()
 }

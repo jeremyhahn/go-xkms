@@ -110,6 +110,19 @@ func (p *pkcs11Resolver) Rand(n int) ([]byte, error) {
 	return result, nil
 }
 
+// Read implements io.Reader for compatibility with crypto/rand.Reader.
+// This allows the PKCS#11 resolver to be used with standard library
+// functions that expect an io.Reader for randomness, such as
+// rsa.GenerateKey, ecdsa.GenerateKey, and x509.CreateCertificate.
+func (p *pkcs11Resolver) Read(b []byte) (n int, err error) {
+	data, err := p.Rand(len(b))
+	if err != nil {
+		return 0, err
+	}
+	copy(b, data)
+	return len(data), nil
+}
+
 func (p *pkcs11Resolver) Source() Source {
 	return &pkcs11Source{resolver: p}
 }

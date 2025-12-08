@@ -1,0 +1,196 @@
+# keychaind configuration example
+# This is an example configuration file for the keychain daemon.
+# Copy this file to /etc/keychain/keychaind.yaml and customize for your environment.
+
+# Server configuration
+server:
+  host: "127.0.0.1"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 8445
+
+# Protocol configuration - controls which protocols are enabled
+protocols:
+  unix: true      # Unix socket enabled by default (recommended for local access)
+  rest: false     # REST API disabled by default
+  grpc: false     # TCP gRPC disabled by default
+  quic: false     # QUIC disabled by default
+  mcp: false      # MCP (Model Context Protocol) disabled by default
+
+# Unix domain socket configuration
+unix:
+  enabled: true
+  socket_path: "/var/run/keychain/keychain.sock"
+  socket_mode: "0660"
+  protocol: "grpc"  # Protocol to use over Unix socket: "grpc" or "http"
+
+# Logging configuration
+logging:
+  level: "info"     # Options: debug, info, warn, error, fatal
+  format: "json"    # Options: json, text, console
+
+# TLS configuration (required for REST, gRPC, QUIC protocols)
+tls:
+  enabled: false
+  cert_file: "/etc/keychain/tls/server.crt"
+  key_file: "/etc/keychain/tls/server.key"
+  ca_file: ""
+
+  # Client certificate verification (mTLS)
+  client_auth: "none"  # Options: none, request, require, verify, require_and_verify
+  client_cas: []
+
+  # TLS version constraints
+  min_version: "TLS1.2"
+  max_version: ""
+
+  # Cipher suites (leave empty for defaults)
+  cipher_suites: []
+
+  # Server cipher preference
+  prefer_server_ciphers: true
+
+  # Certificate rotation
+  watch_cert_files: false
+
+# Authentication configuration
+auth:
+  enabled: false
+  type: "noop"  # Options: noop, apikey, mtls, jwt, custom
+
+  # API key authentication
+  # api_keys:
+  #   "your-api-key-here":
+  #     subject: "admin"
+  #     roles: ["admin"]
+  #     permissions: ["read", "write"]
+
+  # JWT authentication
+  # jwt:
+  #   secret: ""
+  #   public_key_file: ""
+  #   issuer: ""
+  #   audience: []
+  #   algorithm: "RS256"
+
+  # mTLS authentication
+  mtls: false
+
+# Rate limiting configuration
+ratelimit:
+  enabled: false
+  requests_per_min: 60
+  burst: 100
+  cleanup_interval_sec: 600   # 10 minutes
+  max_idle_sec: 1800           # 30 minutes
+
+# Metrics configuration (Prometheus)
+metrics:
+  enabled: false
+  path: "/metrics"
+  port: 9090
+
+# Health check configuration
+health:
+  enabled: true
+  path: "/health"
+
+# Storage configuration
+storage:
+  backend: "file"
+  path: "/var/lib/keychain"
+
+# Random number generator configuration
+rng:
+  mode: "auto"           # Options: auto, software, tpm2, pkcs11
+  fallback_mode: "software"
+
+  # TPM2 RNG settings
+  # tpm2:
+  #   device: "/dev/tpm0"
+  #   use_simulator: false
+  #   simulator_host: "localhost"
+  #   simulator_port: 2321
+
+  # PKCS#11 RNG settings
+  # pkcs11:
+  #   module: "/usr/lib/softhsm/libsofthsm2.so"
+  #   slot_id: 0
+  #   pin_required: false
+  #   pin: ""
+
+# Default backend for key operations
+default_backend: "software"
+
+# Backend configuration
+backends:
+  # Software backend (uses PKCS#8 internally)
+  software:
+    enabled: true
+    path: "/var/lib/keychain/keys"
+
+  # PKCS#8 backend
+  # pkcs8:
+  #   enabled: false
+  #   path: "/var/lib/keychain/pkcs8"
+
+  # TPM 2.0 backend
+  # tpm2:
+  #   enabled: false
+  #   device_path: "/dev/tpmrm0"
+
+  # PKCS#11 backend (Hardware Security Modules)
+  # pkcs11:
+  #   enabled: false
+  #   library: "/usr/lib/softhsm/libsofthsm2.so"
+  #   token: "my-token"
+  #   pin: ""
+
+  # AWS KMS backend
+  # awskms:
+  #   enabled: false
+  #   region: "us-east-1"
+  #   access_key: ""
+  #   secret_key: ""
+  #   endpoint: ""
+
+  # GCP KMS backend
+  # gcpkms:
+  #   enabled: false
+  #   project_id: ""
+  #   location: "global"
+  #   key_ring: ""
+  #   credentials_file: ""
+
+  # Azure Key Vault backend
+  # azurekv:
+  #   enabled: false
+  #   vault_url: ""
+  #   tenant_id: ""
+  #   client_id: ""
+  #   client_secret: ""
+
+  # HashiCorp Vault backend
+  # vault:
+  #   enabled: false
+  #   address: "http://localhost:8200"
+  #   token: ""
+  #   namespace: ""
+  #   mount_path: "secret"
+
+# Environment variable overrides:
+# - KEYCHAIN_CONFIG: Override config file path
+# - KEYCHAIN_HOST: Override server host
+# - KEYCHAIN_REST_PORT: Override REST port
+# - KEYCHAIN_GRPC_PORT: Override gRPC port
+# - KEYCHAIN_QUIC_PORT: Override QUIC port
+# - KEYCHAIN_MCP_PORT: Override MCP port
+# - KEYCHAIN_SOCKET_PATH: Override Unix socket path
+# - KEYCHAIN_SOCKET_MODE: Override Unix socket permissions
+# - KEYCHAIN_UNIX_PROTOCOL: Override Unix socket protocol (grpc or http)
+# - KEYCHAIN_LOG_LEVEL: Override log level
+# - KEYCHAIN_LOG_FORMAT: Override log format
+# - KEYCHAIN_DATA_DIR: Override storage path
+# - KEYCHAIN_RNG_MODE: Override RNG mode
+# - KEYCHAIN_RNG_FALLBACK: Override RNG fallback mode

@@ -1,0 +1,9 @@
+# Configuration file for go-keychain OpenRC service
+# Install to: /etc/conf.d/keychain
+
+# Path to the keychain configuration file
+KEYCHAIN_CONFIG="/etc/keychain/config.yaml"
+
+# Additional environment variables can be set here
+# KEYSTORE_CONFIG is also supported as an alternative
+# KEYSTORE_CONFIG="/etc/keychain/config.yaml"

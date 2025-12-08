@@ -87,7 +87,11 @@ func (tpm *TPM2) NVWrite(
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close session: %v", err)
+		}
+	}()
 
 	write := tpm2.NVWrite{
 		AuthHandle: tpm2.AuthHandle{
@@ -139,7 +143,11 @@ func (tpm *TPM2) NVRead(
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close session: %v", err)
+		}
+	}()
 
 	hierarchy := keyAttrs.TPMAttributes.Hierarchy
 	handle := keyAttrs.TPMAttributes.Handle

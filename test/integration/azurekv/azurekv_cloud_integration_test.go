@@ -62,7 +62,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 	// Check required environment variables
 	vaultURI := os.Getenv("AZURE_KEYVAULT_URI")
 	if vaultURI == "" {
-		t.Skip("AZURE_KEYVAULT_URI not set - skipping real Azure Key Vault tests")
+		t.Fatal("AZURE_KEYVAULT_URI not set - skipping real Azure Key Vault tests")
 	}
 
 	// Create storage backends
@@ -251,7 +251,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 
 		_, err := b.CreateKey(attrs)
 		if err != nil {
-			t.Skip("RSA key creation not supported")
+			t.Fatal("RSA key creation not supported")
 		}
 
 		signer, err := b.Signer(attrs)
@@ -308,7 +308,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		// Check if backend supports import/export
 		caps := b.Capabilities()
 		if !caps.SupportsImportExport() {
-			t.Skip("Azure Key Vault backend does not support import/export")
+			t.Fatal("Azure Key Vault backend does not support import/export")
 			return
 		}
 
@@ -342,7 +342,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 		// Check if backend supports symmetric encryption
 		caps := b.Capabilities()
 		if !caps.SupportsSymmetricEncryption() {
-			t.Skip("Azure Key Vault backend does not support symmetric encryption")
+			t.Fatal("Azure Key Vault backend does not support symmetric encryption")
 			return
 		}
 

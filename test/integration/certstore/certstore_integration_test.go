@@ -1727,7 +1727,7 @@ func TestCertStore_StoreCRL_UpdateExisting(t *testing.T) {
 
 func TestCertStore_Performance_LargeNumberOfCerts(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping performance test in short mode")
+		t.Fatal("Skipping performance test in short mode")
 	}
 
 	backend := storage.New()
@@ -1764,7 +1764,7 @@ func TestCertStore_Performance_LargeNumberOfCerts(t *testing.T) {
 
 func TestCertStore_Performance_LargeChains(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping performance test in short mode")
+		t.Fatal("Skipping performance test in short mode")
 	}
 
 	backend := storage.New()

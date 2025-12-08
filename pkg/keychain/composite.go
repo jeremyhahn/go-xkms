@@ -14,6 +14,8 @@
 package keychain
 
 import (
+	"log"
+
 	"github.com/jeremyhahn/go-keychain/pkg/certstore"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -43,7 +45,9 @@ func (ks *compositeKeyStore) Close() error {
 	// Close backend first
 	if err := ks.backend.Close(); err != nil {
 		// Try to close cert storage even if backend close fails
-		_ = ks.certStorage.Close()
+		if closeErr := ks.certStorage.Close(); closeErr != nil {
+			log.Printf("failed to close certificate storage: %v", closeErr)
+		}
 		return err
 	}
 

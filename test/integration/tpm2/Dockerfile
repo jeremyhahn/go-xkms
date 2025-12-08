@@ -16,4 +16,4 @@ ENV CGO_ENABLED=1
 WORKDIR /app
 
 # Run all TPM2 integration tests including encryption verification
-CMD ["sh", "-c", "echo 'Waiting for TPM simulator to be ready...'; while ! nc -z tpm-simulator 2321; do sleep 1; done; echo 'TPM simulator is ready, running tests...'; go test -v -tags='integration tpm2' -timeout 30m ./test/integration/tpm2/..."]
+CMD ["sh", "-c", "echo 'Waiting for TPM simulator to be ready...'; while ! nc -z tpm-simulator 2421; do sleep 1; done; echo 'TPM simulator is ready, running tests...'; go test -v -tags='integration tpm2' -timeout 30m ./test/integration/tpm2/..."]

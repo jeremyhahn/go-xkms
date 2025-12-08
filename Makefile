@@ -47,17 +47,17 @@ endif
 
 # All available build tags for release builds
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
-CLI_BUILD_TAGS := pkcs8 tpm2 awskms gcpkms azurekv vault quantum
+CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault quantum
 # Server includes all tags including pkcs11
-SERVER_BUILD_TAGS := pkcs8 tpm2 awskms gcpkms azurekv vault pkcs11 quantum
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum
 
 # Build tags based on backend flags (for development/testing)
 BUILD_TAGS :=
 ifeq ($(WITH_PKCS8),1)
 	BUILD_TAGS += pkcs8
 endif
-ifeq ($(WITH_TPM2),1)
-	BUILD_TAGS += tpm2
+ifeq ($(WITH_TPM_SIMULATOR),1)
+	BUILD_TAGS += tpm_simulator
 endif
 ifeq ($(WITH_AWS_KMS),1)
 	BUILD_TAGS += awskms
@@ -240,8 +240,8 @@ build-cli:
 build-server:
 	@echo "$(CYAN)$(BOLD)→ Building unified keychain server...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychain-server ./cmd/server/main.go
-	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/keychain-server$(RESET)"
+	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychaind ./cmd/server/main.go
+	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/keychaind$(RESET)"
 
 .PHONY: build-rest-server
 ## build-rest-server: Build the REST API server binary
@@ -309,23 +309,23 @@ release-cli:
 	@echo "$(GREEN)✓ keychain-cli binaries built for all platforms$(RESET)"
 
 .PHONY: release-server
-## release-server: Build keychain-server for all platforms with ALL build tags (including pkcs11)
+## release-server: Build keychaind for all platforms with ALL build tags (including pkcs11)
 release-server:
-	@echo "$(CYAN)$(BOLD)→ Building keychain-server for all platforms (with all tags including pkcs11)...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building keychaind for all platforms (with all tags including pkcs11)...$(RESET)"
 	@mkdir -p $(BIN_DIR)/release
 	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-linux-amd64 ./cmd/server/main.go
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-amd64 ./cmd/server/main.go
 	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-linux-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for linux/arm64 requires aarch64-linux-gnu-gcc$(RESET)"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for linux/arm64 requires aarch64-linux-gnu-gcc$(RESET)"
 	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-darwin-amd64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/amd64 may require macOS SDK$(RESET)"
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-amd64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/amd64 may require macOS SDK$(RESET)"
 	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-darwin-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/arm64 may require macOS SDK$(RESET)"
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/arm64 may require macOS SDK$(RESET)"
 	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-windows-amd64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/amd64 requires mingw-w64$(RESET)"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-amd64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/amd64 requires mingw-w64$(RESET)"
 	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
-	@GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-server-windows-arm64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/arm64 requires appropriate cross-compiler$(RESET)"
-	@echo "$(GREEN)✓ keychain-server binaries built for all platforms$(RESET)"
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-arm64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/arm64 requires appropriate cross-compiler$(RESET)"
+	@echo "$(GREEN)✓ keychaind binaries built for all platforms$(RESET)"
 
 .PHONY: lib
 ## lib: Build shared library (libkeychain-VERSION.so)
@@ -352,9 +352,8 @@ test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
-	export WITH_TPM2=0; \
-	$(GOTEST) $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/...  2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum)") \
+	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
+		$$(go list -e ./pkg/...  2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -375,13 +374,44 @@ test-all: test test-importexport
 ## race: Run tests with race detector on all backends (matches GitHub Actions)
 race:
 	@echo "$(CYAN)$(BOLD)→ Running race detector tests with all backends...$(RESET)"
-	@CGO_ENABLED=1 $(GO) test -race -short -tags="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault" ./... || \
+	@CGO_ENABLED=1 $(GO) test -race -short -tags="pkcs8,tpm_simulator,awskms,gcpkms,azurekv,pkcs11,vault" ./... || \
 		(echo "$(RED)$(BOLD)✗ Race detector found issues$(RESET)" && exit 1)
 	@echo "$(GREEN)$(BOLD)✓ Race detector tests passed!$(RESET)"
 
 .PHONY: coverage
-## coverage: Generate test coverage report
+## coverage: Generate test coverage report (unit tests only, fast)
 coverage: test
+
+.PHONY: coverage-full
+## coverage-full: Generate comprehensive coverage report (unit + integration tests)
+coverage-full:
+	@echo "$(CYAN)$(BOLD)→ Running comprehensive coverage tests (unit + integration)...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
+	@$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
+		$$(go list -e ./pkg/... ./internal/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
+		2>&1 | tee $(COVERAGE_DIR)/unit.log || true
+	@echo "$(CYAN)→ Step 2: Running integration tests with coverage...$(RESET)"
+	@$(GOTEST) -v -tags=integration -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
+		./test/integration/signing/... \
+		./test/integration/opaque/... \
+		./test/integration/metrics/... \
+		./test/integration/health/... \
+		./test/integration/ratelimit/... \
+		./test/integration/correlation/... \
+		./test/integration/crypto/... \
+		./test/integration/keychain/... \
+		./test/integration/encoding/... \
+		./test/integration/backend/... \
+		./test/integration/certstore/... \
+		./pkg/webauthn/... \
+		2>&1 | tee $(COVERAGE_DIR)/integration.log || true
+	@echo "$(CYAN)→ Step 3: Merging coverage profiles...$(RESET)"
+	@echo "mode: atomic" > $(COVERAGE_FILE)
+	@tail -n +2 $(COVERAGE_DIR)/unit.out >> $(COVERAGE_FILE) 2>/dev/null || true
+	@tail -n +2 $(COVERAGE_DIR)/integration.out >> $(COVERAGE_FILE) 2>/dev/null || true
+	@$(MAKE) --no-print-directory coverage-report
+	@echo "$(GREEN)$(BOLD)✓ Comprehensive coverage report complete!$(RESET)"
 
 coverage-report:
 	@if [ -f "$(COVERAGE_FILE)" ]; then \
@@ -390,7 +420,12 @@ coverage-report:
 		COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_FILE) | grep total | awk '{print $$3}'); \
 		echo "$(GREEN)✓ Coverage report: $(COVERAGE_HTML)$(RESET)"; \
 		echo "$(BOLD)$(BLUE)Coverage: $$COVERAGE$(RESET)"; \
-		COVERAGE_NUM=$$(echo $$COVERAGE | sed 's/%//'); \
+		COVERAGE_NUM=$$(echo $$COVERAGE | sed 's/%//' | awk '{printf "%d", $$1}'); \
+		if [ $$COVERAGE_NUM -lt 90 ]; then \
+			echo "$(YELLOW)⚠ Coverage is below 90% target$(RESET)"; \
+		else \
+			echo "$(GREEN)✓ Coverage meets 90% target$(RESET)"; \
+		fi; \
 	else \
 		echo "$(RED)✗ Coverage file not found. Run 'make test' first.$(RESET)"; \
 	fi
@@ -543,10 +578,10 @@ bench-backup:
 	@$(GOTEST) -bench=. -benchmem -run=^$$ ./pkg/adapters/backup/...
 
 .PHONY: test-rand-tpm2
-## test-rand-tpm2: Run crypto/rand package unit tests with TPM2 support
+## test-rand-tpm2: Run crypto/rand package unit tests with TPM2 simulator support
 test-rand-tpm2:
-	@echo "$(CYAN)→ Testing crypto/rand package with TPM2...$(RESET)"
-	@$(GO) test -tags=tpm2 $(TEST_FLAGS) ./pkg/crypto/rand/...
+	@echo "$(CYAN)→ Testing crypto/rand package with TPM2 simulator...$(RESET)"
+	@$(GO) test -tags=tpm_simulator $(TEST_FLAGS) ./pkg/crypto/rand/...
 
 .PHONY: test-rand-all
 ## test-rand-all: Run all crypto/rand unit tests (software + TPM2)
@@ -567,7 +602,7 @@ test-importexport:
 	@echo "$(CYAN)→ Testing GCP KMS backend import/export...$(RESET)"
 	@$(GO) test -tags=gcpkms $(TEST_FLAGS) ./pkg/backend/gcpkms/... -run "Test.*Import|Test.*Export|Test.*Wrap"
 	@echo "$(CYAN)→ Testing TPM2 backend import/export...$(RESET)"
-	@$(GO) test -tags=tpm2 $(TEST_FLAGS) ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
+	@$(GO) test -tags=tpm_simulator $(TEST_FLAGS) ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
 	@echo "$(CYAN)→ Testing PKCS#11 backend import/export...$(RESET)"
 	@$(GO) test -tags=pkcs11 $(TEST_FLAGS) ./pkg/backend/pkcs11/... -run "Test.*Import|Test.*Export|TestCapabilities"
 
@@ -589,7 +624,7 @@ coverage-migration:
 
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends)
-integration-test: clean-test-containers integration-test-software integration-test-aes integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-webauthn
+integration-test: clean-test-containers integration-test-software integration-test-aes integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-webauthn integration-test-cli
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -667,7 +702,7 @@ integration-test-hw-storage-pkcs11:
 integration-test-hw-storage-tpm2:
 	@echo "$(CYAN)$(BOLD)→ Running real TPM2 hardware storage tests...$(RESET)"
 	@echo "$(YELLOW)NOTE: This requires real TPM2 hardware (/dev/tpm0 or /dev/tpmrm0)$(RESET)"
-	go test -v -tags='hw_integration,tpm2' ./test/integration/storage -run TestRealTPM2Hardware -timeout 15m
+	go test -v -tags='hw_integration,tpm_simulator' ./test/integration/storage -run TestRealTPM2Hardware -timeout 15m
 	@echo "$(GREEN)✓ Real TPM2 hardware storage tests complete$(RESET)"
 
 .PHONY: coverage-storage
@@ -702,7 +737,7 @@ coverage-memory-storage:
 coverage-hardware-storage:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Generating hardware storage coverage report...$(RESET)"
-	@$(GO) test -v -tags='integration,pkcs11,tpm2' -coverprofile=$(COVERAGE_DIR)/hardware-storage.out -covermode=atomic \
+	@$(GO) test -v -tags='integration,pkcs11,tpm_simulator' -coverprofile=$(COVERAGE_DIR)/hardware-storage.out -covermode=atomic \
 		./pkg/storage/hardware/... ./test/integration/storage/... -run 'TestHardwareStorage'
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/hardware-storage.out -o $(COVERAGE_DIR)/hardware-storage.html
 	@echo "$(GREEN)✓ Hardware storage coverage report generated$(RESET)"
@@ -809,7 +844,7 @@ integration-test-tpm2:
 	@cd test/integration/tpm2 && docker compose up -d tpm-simulator
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
-	@cd test/integration/tpm2 && (docker compose run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2321 test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/tpm2 && (docker compose run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption
@@ -820,7 +855,7 @@ test-tpm2-encryption:
 	@cd test/integration/tpm2 && docker compose up -d tpm-simulator
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
-	@cd test/integration/tpm2 && (docker compose run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2321 test sh /app/test/integration/tpm2/run_capture_tests.sh; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/tpm2 && (docker compose run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ TPM2 encryption verification tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption-local
@@ -834,7 +869,7 @@ test-tpm2-encryption-local:
 			exit 1; \
 		fi; \
 	fi
-	@go test -v -tags='integration,tpm2' -run 'TestTPMSession' -timeout 30m ./test/integration/tpm2/
+	@go test -v -tags='integration,tpm_simulator' -run 'TestTPMSession' -timeout 30m ./test/integration/tpm2/
 	@echo "$(GREEN)✓ TPM2 encryption tests complete$(RESET)"
 
 .PHONY: integration-test-awskms
@@ -893,6 +928,23 @@ integration-test-webauthn:
 	@echo "$(CYAN)$(BOLD)→ Running WebAuthn integration tests...$(RESET)"
 	@$(GOTEST) -v -tags=integration ./pkg/webauthn/...
 	@echo "$(GREEN)✓ WebAuthn integration tests complete$(RESET)"
+
+.PHONY: integration-test-cli
+## integration-test-cli: Run CLI integration tests across all protocols (Unix, REST, gRPC, QUIC)
+integration-test-cli:
+	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests...$(RESET)"
+	@echo "$(CYAN)  Testing all protocols: Unix, REST, gRPC, QUIC$(RESET)"
+	@cd test/integration/api && docker compose down -v >/dev/null 2>&1 || true
+	@cd test/integration/api && docker compose build
+	@cd test/integration/api && (docker compose run --rm integration-tests; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
+
+.PHONY: integration-test-cli-local
+## integration-test-cli-local: Run CLI integration tests locally (requires server running)
+integration-test-cli-local:
+	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests locally...$(RESET)"
+	@$(GOTEST) -v -tags=integration ./test/integration/api/... -timeout 15m
+	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: integration-test-signing
 ## integration-test-signing: Run signing package integration tests
@@ -1184,7 +1236,7 @@ coverage-importexport:
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/wrapping.out -covermode=atomic ./pkg/crypto/wrapping/...
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/software_import.out -covermode=atomic ./pkg/backend/software/... -run "Test.*Import|Test.*Export"
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/aes_import.out -covermode=atomic ./pkg/backend/aes/... -run "Test.*Import|Test.*Export"
-	@$(GO) test -tags=tpm2 -v -coverprofile=$(COVERAGE_DIR)/tpm2_import.out -covermode=atomic ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
+	@$(GO) test -tags=tpm_simulator -v -coverprofile=$(COVERAGE_DIR)/tpm2_import.out -covermode=atomic ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
 	@echo "$(GREEN)✓ Import/export coverage reports generated$(RESET)"
 	@echo "$(CYAN)Wrapping:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/wrapping.out | grep total
@@ -1225,7 +1277,7 @@ coverage-pkcs11:
 coverage-tpm2:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "Generating TPM2 coverage report (requires TPM device at /dev/tpmrm0)..."
-	@$(GO) test -v -tags="integration tpm2" -coverprofile=$(COVERAGE_DIR)/tpm2.out -covermode=atomic \
+	@$(GO) test -v -tags="integration,tpm_simulator" -coverprofile=$(COVERAGE_DIR)/tpm2.out -covermode=atomic \
 		./test/integration/tpm2/... ./pkg/tpm2/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/tpm2.out -o $(COVERAGE_DIR)/tpm2.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/tpm2.out | grep total
@@ -1348,7 +1400,7 @@ release: lib release-binaries
 	@gh release create v$(VERSION) \
 		$(SHARED_LIB) \
 		$(BIN_DIR)/release/keychain-cli-* \
-		$(BIN_DIR)/release/keychain-server-* \
+		$(BIN_DIR)/release/keychaind-* \
 		--title "go-keychain v$(VERSION)" \
 		--notes-file /tmp/release-notes-$(VERSION).md
 	@rm -f /tmp/release-notes-$(VERSION).md
@@ -1357,7 +1409,7 @@ release: lib release-binaries
 	@echo "$(CYAN)  Attached binaries:$(RESET)"
 	@echo "$(CYAN)    - $(SHARED_LIB)$(RESET)"
 	@echo "$(CYAN)    - keychain-cli (all platforms)$(RESET)"
-	@echo "$(CYAN)    - keychain-server (all platforms)$(RESET)"
+	@echo "$(CYAN)    - keychaind (all platforms)$(RESET)"
 
 # ==============================================================================
 # Docker Targets
@@ -1712,6 +1764,32 @@ vuln:
 		exit 1; \
 	fi
 
+.PHONY: trivy
+## trivy: Run Trivy vulnerability scanner on filesystem (matches GitHub CI)
+trivy:
+	@echo "$(CYAN)$(BOLD)→ Running Trivy vulnerability scan...$(RESET)"
+	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
+	if [ -n "$$TRIVY_BIN" ]; then \
+		$$TRIVY_BIN fs --severity CRITICAL,HIGH --exit-code 1 . && \
+		echo "$(GREEN)✓ Trivy scan complete - no critical/high vulnerabilities found$(RESET)"; \
+	else \
+		echo "$(YELLOW)⚠ trivy not found - skipping (install with: make install-trivy)$(RESET)"; \
+	fi
+
+.PHONY: trivy-image
+## trivy-image: Run Trivy on Docker image (same as GitHub CI)
+trivy-image: docker
+	@echo "$(CYAN)$(BOLD)→ Running Trivy vulnerability scan on Docker image...$(RESET)"
+	@TRIVY_BIN=$$(command -v trivy 2>/dev/null); \
+	if [ -n "$$TRIVY_BIN" ]; then \
+		$$TRIVY_BIN image --severity CRITICAL,HIGH $(REGISTRY)/$(IMAGE_NAME):$(VERSION) && \
+		echo "$(GREEN)✓ Trivy image scan complete$(RESET)"; \
+	else \
+		echo "$(YELLOW)⚠ trivy not found$(RESET)"; \
+		echo "$(YELLOW)  Install with: make install-trivy$(RESET)"; \
+		exit 1; \
+	fi
+
 .PHONY: check
 ## check: Run all code quality checks (fmt, vet, lint, gosec, vuln)
 check: fmt vet lint gosec vuln
@@ -1720,6 +1798,18 @@ check: fmt vet lint gosec vuln
 # ==============================================================================
 # Tool Installation
 # ==============================================================================
+
+.PHONY: install-trivy
+## install-trivy: Install Trivy vulnerability scanner
+install-trivy:
+	@echo "$(CYAN)$(BOLD)→ Installing trivy...$(RESET)"
+	@if ! command -v trivy >/dev/null 2>&1; then \
+		echo "$(CYAN)  Installing Trivy vulnerability scanner...$(RESET)"; \
+		curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b $$(go env GOPATH)/bin; \
+		echo "$(GREEN)  ✓ trivy installed$(RESET)"; \
+	else \
+		echo "$(GREEN)  ✓ trivy already installed$(RESET)"; \
+	fi
 
 .PHONY: install-govulncheck
 ## install-govulncheck: Install govulncheck vulnerability scanner
@@ -1746,8 +1836,8 @@ install-gosec:
 	fi
 
 .PHONY: install-tools
-## install-tools: Install development tools (golangci-lint, gosec, govulncheck, etc.)
-install-tools: install-gosec install-govulncheck
+## install-tools: Install development tools (golangci-lint, gosec, govulncheck, trivy, etc.)
+install-tools: install-gosec install-govulncheck install-trivy
 	@echo "$(CYAN)$(BOLD)→ Installing development tools...$(RESET)"
 	@echo "$(CYAN)  Installing golangci-lint v2.6.2 (same as CI)...$(RESET)"
 	@cd /tmp && \
@@ -1777,10 +1867,35 @@ tidy:
 verify: clean deps check test
 	@echo "$(GREEN)$(BOLD)✓ Verification complete! Ready to commit.$(RESET)"
 
-.PHONY: ci
-## ci: Run CI pipeline (format check, vet, lint, gosec, vuln, build, test, docker-test)
-ci: deps fmt-check vet lint gosec vuln build test race docker-test
+# CI Docker image name
+CI_IMAGE_NAME := go-keychain-ci
+
+.PHONY: docker-ci-build
+## docker-ci-build: Build the CI Docker image with all tools
+docker-ci-build:
+	@echo "$(CYAN)$(BOLD)→ Building CI Docker image...$(RESET)"
+	@docker build -t $(CI_IMAGE_NAME):latest -f Dockerfile.ci .
+	@echo "$(GREEN)✓ CI Docker image built$(RESET)"
+
+.PHONY: docker-ci
+## docker-ci: Run full CI pipeline in Docker container (recommended)
+docker-ci: docker-ci-build
+	@echo "$(CYAN)$(BOLD)→ Running CI pipeline in Docker container...$(RESET)"
+	@docker run --rm \
+		-v $(PWD):/workspace \
+		-w /workspace \
+		$(CI_IMAGE_NAME):latest \
+		make ci-local
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
+
+.PHONY: ci-local
+## ci-local: Run CI pipeline locally (requires all tools installed)
+ci-local: deps fmt-check vet lint gosec vuln trivy build test race
+	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
+
+.PHONY: ci
+## ci: Run CI pipeline in Docker (use ci-local for host execution)
+ci: docker-ci
 
 # ==============================================================================
 # Clean Targets
@@ -1796,7 +1911,7 @@ clean:
 	@rm -f coverage.out
 	@rm -f *.out *.test *.prof
 	@rm -f $(SHARED_LIB)
-	@rm -f server cli keychain keychain-server
+	@rm -f server cli keychain keychaind
 	@rm -f COMMIT_SUMMARY.md
 	@find . -name "*.test" -type f -delete 2>/dev/null || true
 	@find . -name "*.out" -type f -delete 2>/dev/null || true
@@ -2128,7 +2243,7 @@ bench-pkcs11-certs:
 bench-tpm2-certs:
 	@echo "$(CYAN)$(BOLD)→ Running TPM2 certificate storage benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=BenchmarkTPM2 -benchmem -benchtime=3s -run=^$$ -tags=tpm2 \
+	@$(GO) test -bench=BenchmarkTPM2 -benchmem -benchtime=3s -run=^$$ -tags=tpm_simulator \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/tpm2-certs.txt
 	@echo "$(GREEN)✓ TPM2 certificate benchmarks complete$(RESET)"
 	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/tpm2-certs.txt$(RESET)"
@@ -2138,7 +2253,7 @@ bench-tpm2-certs:
 bench-hybrid-certs:
 	@echo "$(CYAN)$(BOLD)→ Running hybrid certificate storage benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=BenchmarkHybrid -benchmem -benchtime=3s -run=^$$ -tags="pkcs11 tpm2" \
+	@$(GO) test -bench=BenchmarkHybrid -benchmem -benchtime=3s -run=^$$ -tags="pkcs11,tpm_simulator" \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/hybrid-certs.txt
 	@echo "$(GREEN)✓ Hybrid certificate benchmarks complete$(RESET)"
 	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/hybrid-certs.txt$(RESET)"
@@ -2148,7 +2263,7 @@ bench-hybrid-certs:
 bench-cert-comparison:
 	@echo "$(CYAN)$(BOLD)→ Running certificate storage comparison benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=BenchmarkComparison -benchmem -benchtime=3s -run=^$$ -tags="pkcs11 tpm2" \
+	@$(GO) test -bench=BenchmarkComparison -benchmem -benchtime=3s -run=^$$ -tags="pkcs11,tpm_simulator" \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/cert-comparison.txt
 	@echo "$(GREEN)✓ Certificate storage comparison benchmarks complete$(RESET)"
 	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/cert-comparison.txt$(RESET)"
@@ -2172,7 +2287,7 @@ bench-cert-baseline:
 	@echo "$(CYAN)$(BOLD)→ Creating certificate storage benchmark baseline...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
 	@rm -f $(BENCH_DIR)/cert-baseline.txt
-	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11 tpm2" \
+	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11,tpm_simulator" \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/cert-baseline.txt
 	@echo "$(GREEN)✓ Baseline saved to: $(BENCH_DIR)/cert-baseline.txt$(RESET)"
 
@@ -2189,7 +2304,7 @@ bench-cert-compare:
 		$(GO) install golang.org/x/perf/cmd/benchstat@latest; \
 	fi
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11 tpm2" \
+	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11,tpm_simulator" \
 		./pkg/storage/hardware/... > $(BENCH_DIR)/cert-current.txt
 	@benchstat $(BENCH_DIR)/cert-baseline.txt $(BENCH_DIR)/cert-current.txt | tee $(BENCH_DIR)/cert-comparison-stats.txt
 	@echo "$(GREEN)✓ Benchmark comparison complete$(RESET)"

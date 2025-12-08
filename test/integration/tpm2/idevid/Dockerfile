@@ -38,7 +38,7 @@ set -e\n\
 \n\
 echo "Waiting for TPM simulator..."\n\
 for i in $(seq 1 60); do\n\
-    if nc -z ${TPM2_SIMULATOR_HOST:-tpm-simulator} ${TPM2_SIMULATOR_PORT:-2321}; then\n\
+    if nc -z ${TPM2_SIMULATOR_HOST:-tpm-simulator} ${TPM2_SIMULATOR_PORT:-2421}; then\n\
         echo "TPM simulator is ready"\n\
         break\n\
     fi\n\

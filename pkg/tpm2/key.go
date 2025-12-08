@@ -465,14 +465,20 @@ func (tpm *TPM2) CreateSRK(
 
 	if tpm.config.EncryptSession && srkAttrs.Parent != nil {
 
-		session, closer, err := tpm.CreateSession(srkAttrs)
+		var session tpm2.Session
+		var closer func() error
+		session, closer, err = tpm.CreateSession(srkAttrs)
 		if err != nil {
 			tpm.logger.Error(err)
 			return err
 		}
-		defer func() { _ = closer() }()
+		defer func() {
+			if err := closer(); err != nil {
+				tpm.logger.Errorf("failed to close session: %v", err)
+			}
+		}()
 
-		primaryKey, _ = primaryKeyCMD.Execute(tpm.transport, session)
+		primaryKey, err = primaryKeyCMD.Execute(tpm.transport, session)
 
 	} else {
 		primaryKey, err = primaryKeyCMD.Execute(tpm.transport)

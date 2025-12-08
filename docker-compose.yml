@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # SWTPM TPM 2.0 Simulator Service
   swtpm:

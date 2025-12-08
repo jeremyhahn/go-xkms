@@ -309,7 +309,7 @@ func TestAWSKMSCloudIntegration(t *testing.T) {
 		// Check if backend supports import/export
 		caps := b.Capabilities()
 		if !caps.SupportsImportExport() {
-			t.Skip("AWS KMS backend does not support import/export")
+			t.Fatal("AWS KMS backend does not support import/export")
 			return
 		}
 
@@ -334,7 +334,7 @@ func TestAWSKMSCloudIntegration(t *testing.T) {
 		// Check if backend supports symmetric encryption
 		caps := b.Capabilities()
 		if !caps.SupportsSymmetricEncryption() {
-			t.Skip("AWS KMS backend does not support symmetric encryption")
+			t.Fatal("AWS KMS backend does not support symmetric encryption")
 			return
 		}
 

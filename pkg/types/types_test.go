@@ -441,7 +441,7 @@ func TestKeyAttributes_ID(t *testing.T) {
 			KeyAlgorithm: x509.RSA,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "pkcs8:TLS:test-key:rsa", id)
+		assert.Equal(t, "pkcs8:tls:test-key:rsa", id)
 	})
 
 	t.Run("Asymmetric_WithPartition", func(t *testing.T) {
@@ -453,7 +453,7 @@ func TestKeyAttributes_ID(t *testing.T) {
 			Partition:    PartitionTLS,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "issued:pkcs8:TLS:test-key:rsa", id)
+		assert.Equal(t, "issued:pkcs8:tls:test-key:rsa", id)
 	})
 
 	t.Run("Symmetric_NoPartition", func(t *testing.T) {
@@ -464,7 +464,7 @@ func TestKeyAttributes_ID(t *testing.T) {
 			SymmetricAlgorithm: SymmetricAES256GCM,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "pkcs8:SECRET:test-aes-key:aes256-gcm", id)
+		assert.Equal(t, "pkcs8:secret:test-aes-key:aes256-gcm", id)
 	})
 
 	t.Run("Symmetric_WithPartition", func(t *testing.T) {
@@ -476,7 +476,7 @@ func TestKeyAttributes_ID(t *testing.T) {
 			Partition:          PartitionSecrets,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "secrets:pkcs8:SECRET:test-aes-key:aes256-gcm", id)
+		assert.Equal(t, "secrets:pkcs8:secret:test-aes-key:aes256-gcm", id)
 	})
 
 	t.Run("NoAlgorithm", func(t *testing.T) {
@@ -486,7 +486,7 @@ func TestKeyAttributes_ID(t *testing.T) {
 			KeyType:   KeyTypeTLS,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "pkcs8:TLS:test-key:unknown", id)
+		assert.Equal(t, "pkcs8:tls:test-key:unknown", id)
 	})
 }
 
@@ -1398,7 +1398,7 @@ func TestKeyAttributes_ID_X25519(t *testing.T) {
 		X25519Attributes: &X25519Attributes{},
 	}
 	id := attrs.ID()
-	assert.Equal(t, "pkcs8:ENCRYPTION:test-x25519:x25519", id)
+	assert.Equal(t, "pkcs8:encryption:test-x25519:x25519", id)
 }
 
 func TestKeyAttributes_ID_X25519_WithPartition(t *testing.T) {
@@ -1410,7 +1410,7 @@ func TestKeyAttributes_ID_X25519_WithPartition(t *testing.T) {
 		Partition:        PartitionEncryptionKeys,
 	}
 	id := attrs.ID()
-	assert.Equal(t, "crypto:pkcs8:ENCRYPTION:test-x25519:x25519", id)
+	assert.Equal(t, "crypto:pkcs8:encryption:test-x25519:x25519", id)
 }
 
 // TestPassword is a simple test implementation of the Password interface

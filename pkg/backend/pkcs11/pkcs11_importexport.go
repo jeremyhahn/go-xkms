@@ -341,9 +341,12 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
 	}
 
-	// Ignore errors here - SetAttributeValue may not be supported for all key types
-	// The key was imported successfully even if we can't set the label/ID
-	_ = b.p11ctx.SetAttributeValue(session, keyHandle, setAttrs)
+	// Try to set label and ID - log warning if it fails but don't fail the import
+	// SetAttributeValue may not be supported for all key types on all HSMs
+	if err := b.p11ctx.SetAttributeValue(session, keyHandle, setAttrs); err != nil {
+		// Log warning - the key was imported successfully even if we can't set the label/ID
+		fmt.Printf("warning: failed to set label/ID attributes on imported key (key was imported successfully): %v\n", err)
+	}
 
 	// Store metadata about the imported key
 	metadata := map[string]interface{}{

@@ -767,14 +767,14 @@ func TestDecrypt_CorruptedEphemeralKeyBytes(t *testing.T) {
 			switch tc.position {
 			case -1: // Corrupt all X coordinates
 				for i := 1; i <= 32; i++ {
-					corrupted[i] = tc.value
+					corrupted[i] ^= tc.value
 				}
 			case -2: // Corrupt all Y coordinates
 				for i := 33; i <= 64; i++ {
-					corrupted[i] = tc.value
+					corrupted[i] ^= tc.value
 				}
 			default:
-				corrupted[tc.position] = tc.value
+				corrupted[tc.position] ^= tc.value
 			}
 
 			_, err := Decrypt(priv, corrupted, nil)

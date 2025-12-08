@@ -139,6 +139,7 @@ type StoreType string
 
 const (
 	// Store type constants
+	StoreSoftware  StoreType = "software"
 	StorePKCS8     StoreType = "pkcs8"
 	StorePKCS11    StoreType = "pkcs11"
 	StoreTPM2      StoreType = "tpm2"
@@ -159,7 +160,7 @@ func (st StoreType) String() string {
 // IsValid returns true if the store type is recognized.
 func (st StoreType) IsValid() bool {
 	switch st {
-	case StorePKCS8, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum:
+	case StoreSoftware, StorePKCS8, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum:
 		return true
 	default:
 		return false
@@ -171,6 +172,8 @@ func (st StoreType) IsValid() bool {
 func ParseStoreType(s string) StoreType {
 	s = strings.ToLower(strings.TrimSpace(s))
 	switch s {
+	case "software":
+		return StoreSoftware
 	case "pkcs8":
 		return StorePKCS8
 	case "pkcs11":
@@ -1007,18 +1010,20 @@ func (attrs *KeyAttributes) ID() string {
 	}
 
 	// Build ID based on whether partition is set
+	// Use lowercase for KeyType to ensure consistent key ID format
+	keyType := strings.ToLower(attrs.KeyType.String())
 	if attrs.Partition != "" {
 		return fmt.Sprintf("%s:%s:%s:%s:%s",
 			attrs.Partition,
 			attrs.StoreType,
-			attrs.KeyType,
+			keyType,
 			attrs.CN,
 			algorithm)
 	}
 
 	return fmt.Sprintf("%s:%s:%s:%s",
 		attrs.StoreType,
-		attrs.KeyType,
+		keyType,
 		attrs.CN,
 		algorithm)
 }
@@ -1298,6 +1303,10 @@ type EncryptedData struct {
 
 	// Algorithm identifies the encryption algorithm used
 	Algorithm string
+
+	// Metadata contains additional backend-specific data (e.g., encrypted DEK for envelope encryption).
+	// Keys should be namespaced for clarity (e.g., "encryptedDEK", "kmsKeyId").
+	Metadata map[string][]byte
 }
 
 // SymmetricEncrypter provides symmetric encryption and decryption operations.
@@ -1606,8 +1615,11 @@ type SealingBackend interface {
 // =============================================================================
 
 // AvailableHashes returns a map of all supported hash functions.
+// Supports both standard Go crypto.Hash.String() format (e.g., "SHA-256")
+// and common aliases (e.g., "sha256", "SHA256").
 func AvailableHashes() map[string]crypto.Hash {
 	return map[string]crypto.Hash{
+		// Standard format (crypto.Hash.String())
 		crypto.MD4.String():         crypto.MD4,
 		crypto.MD5.String():         crypto.MD5,
 		crypto.SHA1.String():        crypto.SHA1,
@@ -1627,6 +1639,34 @@ func AvailableHashes() map[string]crypto.Hash {
 		crypto.BLAKE2b_256.String(): crypto.BLAKE2b_256,
 		crypto.BLAKE2b_384.String(): crypto.BLAKE2b_384,
 		crypto.BLAKE2b_512.String(): crypto.BLAKE2b_512,
+		// Common aliases (lowercase without hyphens)
+		"md4":        crypto.MD4,
+		"md5":        crypto.MD5,
+		"sha1":       crypto.SHA1,
+		"sha224":     crypto.SHA224,
+		"sha256":     crypto.SHA256,
+		"sha384":     crypto.SHA384,
+		"sha512":     crypto.SHA512,
+		"sha3-224":   crypto.SHA3_224,
+		"sha3-256":   crypto.SHA3_256,
+		"sha3-384":   crypto.SHA3_384,
+		"sha3-512":   crypto.SHA3_512,
+		"sha512-224": crypto.SHA512_224,
+		"sha512-256": crypto.SHA512_256,
+		// Uppercase without hyphens
+		"MD4":        crypto.MD4,
+		"MD5":        crypto.MD5,
+		"SHA1":       crypto.SHA1,
+		"SHA224":     crypto.SHA224,
+		"SHA256":     crypto.SHA256,
+		"SHA384":     crypto.SHA384,
+		"SHA512":     crypto.SHA512,
+		"SHA3_224":   crypto.SHA3_224,
+		"SHA3_256":   crypto.SHA3_256,
+		"SHA3_384":   crypto.SHA3_384,
+		"SHA3_512":   crypto.SHA3_512,
+		"SHA512_224": crypto.SHA512_224,
+		"SHA512_256": crypto.SHA512_256,
 	}
 }
 
@@ -2031,8 +2071,8 @@ type KeyConfig struct {
 	Hash               string `yaml:"hash" json:"hash" mapstructure:"hash"`
 	RSAKeySize         int    `yaml:"rsa_key_size" json:"rsa_key_size" mapstructure:"rsa_key_size"`
 	ECCCurve           string `yaml:"ecc_curve" json:"ecc_curve" mapstructure:"ecc_curve"`
-	SignatureAlgorithm string `yaml:"signature_algorithm" json:"signature_algorithm" mapstructure:"signature_algorithm"`
-	StoreType          string `yaml:"store_type" json:"store_type" mapstructure:"store_type"`
+	SignatureAlgorithm string `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+	StoreType          string `yaml:"store" json:"store" mapstructure:"store"`
 	KeyType            string `yaml:"key_type" json:"key_type" mapstructure:"key_type"`
 	PlatformPolicy     bool   `yaml:"platform_policy" json:"platform_policy" mapstructure:"platform_policy"`
 }

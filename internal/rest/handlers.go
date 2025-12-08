@@ -16,6 +16,8 @@ package rest
 import (
 	"context"
 	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
@@ -49,7 +51,7 @@ type HealthChecker interface {
 }
 
 // NewHandlerContext creates a new handler context.
-// The handlers use the global keychain facade for backend management.
+// The handlers use the global keychain service for backend management.
 func NewHandlerContext(version string) *HandlerContext {
 	return &HandlerContext{
 		Version: version,
@@ -486,33 +488,38 @@ func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Unmarshal data
-	var data []byte
-	if err := json.Unmarshal(req.Data, &data); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
+	var signature []byte
 
-	// Parse hash algorithm
-	hashAlg := crypto.SHA256
-	if req.Hash != "" {
-		hashAlg = types.ParseHash(req.Hash)
-		if hashAlg == 0 {
-			hashAlg = crypto.SHA256 // Default if unknown
+	// Ed25519 uses pure signing (no prehashing) - pass raw message with Hash(0)
+	if targetAttr.KeyAlgorithm == x509.Ed25519 {
+		signature, err = signer.Sign(nil, req.Data, crypto.Hash(0))
+		if err != nil {
+			log.Printf("Failed to sign data: %v", err)
+			handleError(w, err)
+			return
 		}
-	}
+	} else {
+		// Parse hash algorithm
+		hashAlg := crypto.SHA256
+		if req.Hash != "" {
+			hashAlg = types.ParseHash(req.Hash)
+			if hashAlg == 0 {
+				hashAlg = crypto.SHA256 // Default if unknown
+			}
+		}
 
-	// Sign the data
-	cryptoHash := hashAlg
-	hasher := cryptoHash.New()
-	hasher.Write(data)
-	digest := hasher.Sum(nil)
+		// Sign the data
+		cryptoHash := hashAlg
+		hasher := cryptoHash.New()
+		hasher.Write(req.Data)
+		digest := hasher.Sum(nil)
 
-	signature, err := signer.Sign(nil, digest, cryptoHash)
-	if err != nil {
-		log.Printf("Failed to sign data: %v", err)
-		handleError(w, err)
-		return
+		signature, err = signer.Sign(nil, digest, cryptoHash)
+		if err != nil {
+			log.Printf("Failed to sign data: %v", err)
+			handleError(w, err)
+			return
+		}
 	}
 
 	// Build response
@@ -578,19 +585,6 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Unmarshal data and signature
-	var data []byte
-	if err := json.Unmarshal(req.Data, &data); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
-	var signature []byte
-	if err := json.Unmarshal(req.Signature, &signature); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
 	// Parse hash algorithm
 	hashAlg := crypto.SHA256
 	if req.Hash != "" {
@@ -607,19 +601,26 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify signature
-	cryptoHash := hashAlg
-	hasher := cryptoHash.New()
-	hasher.Write(data)
-	digest := hasher.Sum(nil)
-
 	verifier := verification.NewVerifier(nil) // No checksum provider for REST API
-	err = verifier.Verify(pubKey, cryptoHash, digest, signature, nil)
+	var verifyErr error
+
+	// Ed25519 uses pure verification (no prehashing) - verify against raw data
+	if targetAttr.KeyAlgorithm == x509.Ed25519 {
+		verifyErr = verifier.Verify(pubKey, crypto.Hash(0), req.Data, req.Signature, nil)
+	} else {
+		// Verify signature with hashed data
+		cryptoHash := hashAlg
+		hasher := cryptoHash.New()
+		hasher.Write(req.Data)
+		digest := hasher.Sum(nil)
+
+		verifyErr = verifier.Verify(pubKey, cryptoHash, digest, req.Signature, nil)
+	}
 
 	resp := VerifyResponse{
-		Valid: err == nil,
+		Valid: verifyErr == nil,
 	}
-	if err == nil {
+	if verifyErr == nil {
 		resp.Message = "Signature is valid"
 	} else {
 		resp.Message = "Signature is invalid"
@@ -813,27 +814,11 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Unmarshal plaintext
-	var plaintext []byte
-	if err := json.Unmarshal(req.Plaintext, &plaintext); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
-	// Unmarshal additional data if provided
-	var aad []byte
-	if len(req.AdditionalData) > 0 {
-		if err := json.Unmarshal(req.AdditionalData, &aad); err != nil {
-			writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-			return
-		}
-	}
-
 	// Encrypt the data
 	encryptOpts := &types.EncryptOptions{
-		AdditionalData: aad,
+		AdditionalData: req.AdditionalData,
 	}
-	encrypted, err := encrypter.Encrypt(plaintext, encryptOpts)
+	encrypted, err := encrypter.Encrypt(req.Plaintext, encryptOpts)
 	if err != nil {
 		log.Printf("Failed to encrypt data: %v", err)
 		handleError(w, err)
@@ -896,13 +881,6 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Unmarshal ciphertext
-	var ciphertext []byte
-	if err := json.Unmarshal(req.Ciphertext, &ciphertext); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
 	// Check if this is symmetric decryption (nonce and tag present)
 	var plaintext []byte
 	if len(req.Nonce) > 0 && len(req.Tag) > 0 {
@@ -921,39 +899,17 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		// Unmarshal nonce and tag
-		var nonce []byte
-		if err := json.Unmarshal(req.Nonce, &nonce); err != nil {
-			writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-			return
-		}
-
-		var tag []byte
-		if err := json.Unmarshal(req.Tag, &tag); err != nil {
-			writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-			return
-		}
-
-		// Unmarshal additional data if provided
-		var aad []byte
-		if len(req.AdditionalData) > 0 {
-			if err := json.Unmarshal(req.AdditionalData, &aad); err != nil {
-				writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-				return
-			}
-		}
-
 		// Build encrypted data structure
 		encryptedData := &types.EncryptedData{
-			Ciphertext: ciphertext,
-			Nonce:      nonce,
-			Tag:        tag,
+			Ciphertext: req.Ciphertext,
+			Nonce:      req.Nonce,
+			Tag:        req.Tag,
 			Algorithm:  getAlgorithmString(targetAttr),
 		}
 
 		// Decrypt the data
 		decryptOpts := &types.DecryptOptions{
-			AdditionalData: aad,
+			AdditionalData: req.AdditionalData,
 		}
 		plaintext, err = encrypter.Decrypt(encryptedData, decryptOpts)
 		if err != nil {
@@ -962,7 +918,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else {
-		// Asymmetric decryption path
+		// Asymmetric decryption path (RSA-OAEP with SHA256 to match EncryptAsymHandler)
 		decrypter, err := ks.Decrypter(targetAttr)
 		if err != nil {
 			log.Printf("Failed to get decrypter: %v", err)
@@ -970,8 +926,13 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
+		// Use OAEP options with SHA256 (matching EncryptAsymHandler)
+		oaepOpts := &rsa.OAEPOptions{
+			Hash: crypto.SHA256,
+		}
+
 		// Decrypt the data
-		plaintext, err = decrypter.Decrypt(nil, ciphertext, nil)
+		plaintext, err = decrypter.Decrypt(rand.Reader, req.Ciphertext, oaepOpts)
 		if err != nil {
 			log.Printf("Failed to decrypt data: %v", err)
 			handleError(w, err)
@@ -982,6 +943,118 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 	// Build response
 	resp := DecryptResponse{
 		Plaintext: plaintext,
+	}
+	writeJSON(w, resp, http.StatusOK)
+}
+
+// EncryptAsymHandler handles POST /api/v1/keys/{id}/encrypt-asym requests.
+// This performs RSA-OAEP asymmetric encryption using the public key.
+func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Request) {
+	keyID := chi.URLParam(r, "id")
+	if keyID == "" {
+		writeError(w, ErrMissingKeyID, http.StatusBadRequest)
+		return
+	}
+
+	backendID := r.URL.Query().Get("backend")
+	if backendID == "" {
+		writeError(w, ErrMissingBackend, http.StatusBadRequest)
+		return
+	}
+
+	var req EncryptAsymRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+
+	ks, err := keychain.Backend(backendID)
+	if err != nil {
+		writeError(w, ErrBackendNotFound, http.StatusNotFound)
+		return
+	}
+
+	// Find the key
+	keyAttrs, err := ks.ListKeys()
+	if err != nil {
+		log.Printf("Failed to list keys: %v", err)
+		handleError(w, err)
+		return
+	}
+
+	var targetAttr *types.KeyAttributes
+	for _, attr := range keyAttrs {
+		if attr.CN == keyID {
+			targetAttr = attr
+			break
+		}
+	}
+
+	if targetAttr == nil {
+		writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
+		return
+	}
+
+	// Get the key to extract public key
+	key, err := ks.GetKey(targetAttr)
+	if err != nil {
+		log.Printf("Failed to get key: %v", err)
+		handleError(w, err)
+		return
+	}
+
+	// Extract public key
+	var publicKey crypto.PublicKey
+	switch k := key.(type) {
+	case crypto.Signer:
+		publicKey = k.Public()
+	default:
+		writeError(w, fmt.Errorf("key does not support public key extraction"), http.StatusBadRequest)
+		return
+	}
+
+	// Determine hash algorithm for OAEP
+	var hashFunc crypto.Hash
+	hashAlg := strings.ToLower(strings.TrimPrefix(strings.TrimPrefix(req.Hash, "SHA-"), "sha-"))
+	switch hashAlg {
+	case "256", "sha256", "":
+		hashFunc = crypto.SHA256
+	case "384", "sha384":
+		hashFunc = crypto.SHA384
+	case "512", "sha512":
+		hashFunc = crypto.SHA512
+	case "1", "sha1":
+		hashFunc = crypto.SHA1
+	default:
+		writeError(w, fmt.Errorf("unsupported hash algorithm: %s", req.Hash), http.StatusBadRequest)
+		return
+	}
+
+	// Encrypt based on key type - only RSA supports asymmetric encryption
+	var ciphertext []byte
+	switch pub := publicKey.(type) {
+	case *rsa.PublicKey:
+		// RSA OAEP encryption
+		ciphertext, err = rsa.EncryptOAEP(
+			hashFunc.New(),
+			rand.Reader,
+			pub,
+			req.Plaintext,
+			nil, // no label
+		)
+		if err != nil {
+			log.Printf("Failed to encrypt data: %v", err)
+			handleError(w, err)
+			return
+		}
+	default:
+		writeError(w, fmt.Errorf("asymmetric encryption only supported for RSA keys, got: %T", pub), http.StatusBadRequest)
+		return
+	}
+
+	// Build response
+	resp := EncryptAsymResponse{
+		Ciphertext: ciphertext,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -1485,27 +1558,11 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Unmarshal key material
-	var keyMaterial []byte
-	if err := json.Unmarshal(req.KeyMaterial, &keyMaterial); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
 	// Build import parameters
 	params := &backend.ImportParameters{
 		WrappingPublicKey: wrappingKey,
 		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
-	}
-
-	// Add import token if provided
-	if len(req.ImportToken) > 0 {
-		var importToken []byte
-		if err := json.Unmarshal(req.ImportToken, &importToken); err != nil {
-			writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-			return
-		}
-		params.ImportToken = importToken
+		ImportToken:       req.ImportToken,
 	}
 
 	// Wrap the key material
@@ -1528,7 +1585,7 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	wrapped, err := importExportBackend.WrapKey(keyMaterial, params)
+	wrapped, err := importExportBackend.WrapKey(req.KeyMaterial, params)
 	if err != nil {
 		log.Printf("Failed to wrap key: %v", err)
 		handleError(w, err)
@@ -1537,13 +1594,9 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Build response
 	resp := WrapKeyResponse{
-		WrappedKey: json.RawMessage(wrapped.WrappedKey),
-		Algorithm:  string(wrapped.Algorithm),
-	}
-
-	// Add import token if present
-	if wrapped.ImportToken != nil {
-		resp.ImportToken = json.RawMessage(wrapped.ImportToken)
+		WrappedKey:  wrapped.WrappedKey,
+		Algorithm:   string(wrapped.Algorithm),
+		ImportToken: wrapped.ImportToken,
 	}
 
 	writeJSON(w, resp, http.StatusOK)
@@ -1579,42 +1632,18 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Unmarshal wrapped key
-	var wrappedKeyBytes []byte
-	if err := json.Unmarshal(req.WrappedKey, &wrappedKeyBytes); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
 	// Build wrapped key material
 	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey: wrappedKeyBytes,
-		Algorithm:  backend.WrappingAlgorithm(req.Algorithm),
-	}
-
-	// Add import token if provided
-	if len(req.ImportToken) > 0 {
-		var importToken []byte
-		if err := json.Unmarshal(req.ImportToken, &importToken); err != nil {
-			writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-			return
-		}
-		wrapped.ImportToken = importToken
+		WrappedKey:  req.WrappedKey,
+		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
+		ImportToken: req.ImportToken,
 	}
 
 	// Build import parameters
 	params := &backend.ImportParameters{
 		WrappingPublicKey: wrappingKey,
 		Algorithm:         backend.WrappingAlgorithm(req.Algorithm),
-	}
-
-	if len(req.ImportToken) > 0 {
-		var importToken []byte
-		if err := json.Unmarshal(req.ImportToken, &importToken); err != nil {
-			writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-			return
-		}
-		params.ImportToken = importToken
+		ImportToken:       req.ImportToken,
 	}
 
 	// Unwrap the key material
@@ -1711,27 +1740,11 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	// Build key attributes
 	attrs := buildKeyAttributes(req.KeyID, req.KeyType, req.KeySize, req.Curve, req.Hash, req.AESKeySize)
 
-	// Unmarshal wrapped key
-	var wrappedKeyBytes []byte
-	if err := json.Unmarshal(req.WrappedKey, &wrappedKeyBytes); err != nil {
-		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-		return
-	}
-
 	// Build wrapped key material
 	wrapped := &backend.WrappedKeyMaterial{
-		WrappedKey: wrappedKeyBytes,
-		Algorithm:  backend.WrappingAlgorithm(req.Algorithm),
-	}
-
-	// Add import token if provided
-	if len(req.ImportToken) > 0 {
-		var importToken []byte
-		if err := json.Unmarshal(req.ImportToken, &importToken); err != nil {
-			writeError(w, ErrInvalidRequest, http.StatusBadRequest)
-			return
-		}
-		wrapped.ImportToken = importToken
+		WrappedKey:  req.WrappedKey,
+		Algorithm:   backend.WrappingAlgorithm(req.Algorithm),
+		ImportToken: req.ImportToken,
 	}
 
 	// Import the key

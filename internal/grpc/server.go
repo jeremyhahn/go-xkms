@@ -57,7 +57,7 @@ type ServerConfig struct {
 }
 
 // NewServer creates a new gRPC server
-// The server uses the global keychain facade for backend management
+// The server uses the global keychain service for backend management
 func NewServer(cfg *ServerConfig) (*Server, error) {
 	// Don't set a default port here - let Port 0 remain 0 for ephemeral ports
 	// The port will be set in Start() after the listener is created
@@ -209,10 +209,10 @@ func (s *Server) Stop() error {
 		s.grpcSrv.Stop()
 	}
 
-	// Close the keychain facade
+	// Close the keychain service
 	if err := keychain.Close(); err != nil {
-		s.logger.Error("Failed to close keychain facade", logger.Error(err))
-		return fmt.Errorf("failed to close keychain facade: %w", err)
+		s.logger.Error("Failed to close keychain service", logger.Error(err))
+		return fmt.Errorf("failed to close keychain service: %w", err)
 	}
 
 	return nil

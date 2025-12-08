@@ -107,7 +107,7 @@ func isQUICServerAvailable(t *testing.T, cfg *TestConfig) bool {
 func TestQUIC_HealthEndpoint(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -145,7 +145,7 @@ func TestQUIC_HealthEndpoint(t *testing.T) {
 func TestQUIC_ListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -177,7 +177,7 @@ func TestQUIC_ListBackends(t *testing.T) {
 func TestQUIC_GenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -217,7 +217,7 @@ func TestQUIC_GenerateKey(t *testing.T) {
 
 			reqBody := map[string]interface{}{
 				"key_id":   testKeyID,
-				"backend":  "pkcs8",
+				"backend":  "software",
 				"key_type": tt.keyType,
 			}
 
@@ -258,7 +258,7 @@ func TestQUIC_GenerateKey(t *testing.T) {
 				// Cleanup
 				defer func() {
 					delResp, _ := client.doRequest("DELETE",
-						fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", testKeyID), nil)
+						fmt.Sprintf("/api/v1/keys/%s?backend=software", testKeyID), nil)
 					if delResp != nil {
 						delResp.Body.Close()
 					}
@@ -272,7 +272,7 @@ func TestQUIC_GenerateKey(t *testing.T) {
 func TestQUIC_ListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -283,7 +283,7 @@ func TestQUIC_ListKeys(t *testing.T) {
 	// Create a test key first
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
@@ -294,14 +294,14 @@ func TestQUIC_ListKeys(t *testing.T) {
 
 	defer func() {
 		delResp, _ := client.doRequest("DELETE",
-			fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+			fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 		if delResp != nil {
 			delResp.Body.Close()
 		}
 	}()
 
 	// List keys
-	resp, err = client.doRequest("GET", "/api/v1/keys?backend=pkcs8", nil)
+	resp, err = client.doRequest("GET", "/api/v1/keys?backend=software", nil)
 	assertNoError(t, err, "List keys request failed")
 	defer resp.Body.Close()
 
@@ -340,7 +340,7 @@ func TestQUIC_ListKeys(t *testing.T) {
 func TestQUIC_GetKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -351,7 +351,7 @@ func TestQUIC_GetKey(t *testing.T) {
 	// Create a test key
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
@@ -362,14 +362,14 @@ func TestQUIC_GetKey(t *testing.T) {
 
 	defer func() {
 		delResp, _ := client.doRequest("DELETE",
-			fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+			fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 		if delResp != nil {
 			delResp.Body.Close()
 		}
 	}()
 
 	// Get the key
-	resp, err = client.doRequest("GET", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+	resp, err = client.doRequest("GET", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 	assertNoError(t, err, "Get key request failed")
 	defer resp.Body.Close()
 
@@ -393,7 +393,7 @@ func TestQUIC_GetKey(t *testing.T) {
 func TestQUIC_SignAndVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -404,7 +404,7 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 	// Create a test key
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
@@ -415,7 +415,7 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 
 	defer func() {
 		delResp, _ := client.doRequest("DELETE",
-			fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+			fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 		if delResp != nil {
 			delResp.Body.Close()
 		}
@@ -430,7 +430,7 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 	}
 
 	resp, err = client.doRequest("POST",
-		fmt.Sprintf("/api/v1/keys/%s/sign?backend=pkcs8", keyID), signReq)
+		fmt.Sprintf("/api/v1/keys/%s/sign?backend=software", keyID), signReq)
 	assertNoError(t, err, "Sign request failed")
 	defer resp.Body.Close()
 
@@ -455,7 +455,7 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 	}
 
 	resp, err = client.doRequest("POST",
-		fmt.Sprintf("/api/v1/keys/%s/verify?backend=pkcs8", keyID), verifyReq)
+		fmt.Sprintf("/api/v1/keys/%s/verify?backend=software", keyID), verifyReq)
 	assertNoError(t, err, "Verify request failed")
 	defer resp.Body.Close()
 
@@ -481,7 +481,7 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 func TestQUIC_DeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -492,7 +492,7 @@ func TestQUIC_DeleteKey(t *testing.T) {
 	// Create a test key
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
@@ -503,7 +503,7 @@ func TestQUIC_DeleteKey(t *testing.T) {
 
 	// Delete the key
 	resp, err = client.doRequest("DELETE",
-		fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+		fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 	assertNoError(t, err, "Delete request failed")
 	defer resp.Body.Close()
 
@@ -526,7 +526,7 @@ func TestQUIC_DeleteKey(t *testing.T) {
 
 	// Verify key is gone
 	resp, err = client.doRequest("GET",
-		fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+		fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 	if err == nil {
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
@@ -539,7 +539,7 @@ func TestQUIC_DeleteKey(t *testing.T) {
 func TestQUIC_ErrorHandling(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -569,13 +569,13 @@ func TestQUIC_ErrorHandling(t *testing.T) {
 		{
 			name:     "Get non-existent key",
 			method:   "GET",
-			path:     "/api/v1/keys/non-existent-key-quic?backend=pkcs8",
+			path:     "/api/v1/keys/non-existent-key-quic?backend=software",
 			wantCode: http.StatusNotFound,
 		},
 		{
 			name:     "Delete non-existent key",
 			method:   "DELETE",
-			path:     "/api/v1/keys/non-existent-key-quic?backend=pkcs8",
+			path:     "/api/v1/keys/non-existent-key-quic?backend=software",
 			wantCode: http.StatusNotFound,
 		},
 	}
@@ -601,7 +601,7 @@ func TestQUIC_ErrorHandling(t *testing.T) {
 func TestQUIC_ConcurrentRequests(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -625,7 +625,7 @@ func TestQUIC_ConcurrentRequests(t *testing.T) {
 
 				reqBody := map[string]interface{}{
 					"key_id":   keyID,
-					"backend":  "pkcs8",
+					"backend":  "software",
 					"key_type": "rsa",
 					"key_size": 2048,
 				}
@@ -659,7 +659,7 @@ func TestQUIC_ConcurrentRequests(t *testing.T) {
 		for _, keyID := range keyIDs {
 			if keyID != "" {
 				resp, _ := client.doRequest("DELETE",
-					fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+					fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 				if resp != nil {
 					resp.Body.Close()
 				}
@@ -682,7 +682,7 @@ func TestQUIC_ConcurrentRequests(t *testing.T) {
 				defer wg.Done()
 
 				resp, err := client.doRequest("GET",
-					fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyIDs[idx]), nil)
+					fmt.Sprintf("/api/v1/keys/%s?backend=software", keyIDs[idx]), nil)
 				if err != nil {
 					errors <- fmt.Errorf("get request %d failed: %w", idx, err)
 					return

@@ -1,5 +1,3 @@
-//go:build tpm2
-
 package tpm2
 
 import (

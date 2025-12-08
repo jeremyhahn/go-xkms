@@ -989,3 +989,28 @@ func TestExportKey_ClosedBackend(t *testing.T) {
 	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	assert.ErrorIs(t, err, ErrStorageClosed)
 }
+
+// TestExportKey_NonExportable tests ExportKey with non-exportable key
+func TestExportKey_NonExportable(t *testing.T) {
+	b := createTestBackend(t)
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "non-exportable-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         false, // NOT exportable
+		AESAttributes: &types.AESAttributes{
+			KeySize: 256,
+		},
+	}
+
+	// Generate the key
+	_, err := b.GenerateSymmetricKey(attrs)
+	require.NoError(t, err)
+
+	// Try to export - should fail
+	_, err = b.ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	assert.ErrorIs(t, err, backend.ErrKeyNotExportable)
+}

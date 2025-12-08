@@ -14,6 +14,7 @@
 package software
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -158,14 +159,15 @@ func (b *SoftwareBackend) Capabilities() types.Capabilities {
 	return types.Capabilities{
 		Keys:                true,
 		HardwareBacked:      false,
-		Signing:             true, // Asymmetric signing via PKCS8
-		Decryption:          true, // Asymmetric decryption via PKCS8
-		KeyRotation:         true, // Supported by PKCS8
-		SymmetricEncryption: true, // Symmetric operations via AES
-		Import:              true, // Software backend supports key import
-		Export:              true, // Software backend supports key export
-		KeyAgreement:        true, // ECDH key agreement via PKCS8 (X25519, P-256, P-384, P-521)
-		ECIES:               false,
+		Signing:             true,  // Asymmetric signing via PKCS8
+		Decryption:          true,  // Asymmetric decryption via PKCS8
+		KeyRotation:         true,  // Supported by PKCS8
+		SymmetricEncryption: true,  // Symmetric operations via AES
+		Import:              true,  // Software backend supports key import
+		Export:              true,  // Software backend supports key export
+		KeyAgreement:        true,  // ECDH key agreement via PKCS8 (X25519, P-256, P-384, P-521)
+		ECIES:               false, // Not currently supported
+		Sealing:             true,  // Sealing via PKCS8 (HKDF-derived key + AES-GCM)
 	}
 }
 
@@ -772,9 +774,79 @@ func (b *SoftwareBackend) DeriveSharedSecret(attrs *types.KeyAttributes, publicK
 	return b.pkcs8Backend.DeriveSharedSecret(attrs, publicKey)
 }
 
+// CanSeal returns true if this backend supports sealing operations.
+// Software backend supports sealing via its internal PKCS#8 backend.
+func (b *SoftwareBackend) CanSeal() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return false
+	}
+
+	return b.pkcs8Backend.CanSeal()
+}
+
+// Seal encrypts/protects data using HKDF-derived key and AES-GCM.
+// This operation is delegated to the PKCS8 backend.
+//
+// The sealing process:
+//  1. Load the private key specified in opts.KeyAttributes
+//  2. Derive a sealing key using HKDF from the private key material
+//  3. Encrypt the data using AES-256-GCM with a random nonce
+//
+// Security Note: This is a software-only sealing mechanism. The private key
+// is loaded into memory during the sealing process. For secrets that should
+// never touch system memory, use hardware-backed backends (TPM, HSM).
+func (b *SoftwareBackend) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrStorageClosed
+	}
+
+	// Delegate to PKCS8 backend which implements the sealing logic
+	sealed, err := b.pkcs8Backend.Seal(ctx, data, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update backend type to reflect it came from software backend
+	sealed.Backend = types.BackendTypeSoftware
+
+	return sealed, nil
+}
+
+// Unseal decrypts/recovers data using HKDF-derived key and AES-GCM.
+// This operation is delegated to the PKCS8 backend.
+//
+// This method accepts sealed data from both Software and PKCS8 backends,
+// since Software backend delegates sealing to PKCS8 internally.
+func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	if sealed == nil {
+		return nil, fmt.Errorf("sealed data is required")
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrStorageClosed
+	}
+
+	// Accept both Software and PKCS8 backend types since software delegates to PKCS8
+	if sealed.Backend != types.BackendTypeSoftware && sealed.Backend != types.BackendTypePKCS8 {
+		return nil, fmt.Errorf("sealed data was not created by software/PKCS#8 backend (got %s)", sealed.Backend)
+	}
+
+	return b.pkcs8Backend.Unseal(ctx, sealed, opts)
+}
+
 // Verify interface compliance at compile time
 var _ types.Backend = (*SoftwareBackend)(nil)
 var _ types.SymmetricBackend = (*SoftwareBackend)(nil)
 var _ types.SymmetricBackendWithTracking = (*SoftwareBackend)(nil)
 var _ types.KeyAgreement = (*SoftwareBackend)(nil)
 var _ backend.ImportExportBackend = (*SoftwareBackend)(nil)
+var _ types.Sealer = (*SoftwareBackend)(nil)

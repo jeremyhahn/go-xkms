@@ -183,7 +183,7 @@ func TestGCPKMSMock(t *testing.T) {
 
 		_, err := b.GenerateRSA(attrs)
 		if err != nil {
-			t.Skip("RSA key creation not supported")
+			t.Fatal("RSA key creation not supported")
 		}
 		defer b.Delete(attrs)
 
@@ -866,7 +866,7 @@ func TestGCPKMSMock(t *testing.T) {
 		// Check if backend supports symmetric encryption
 		caps := b.Capabilities()
 		if !caps.SupportsSymmetricEncryption() {
-			t.Skip("GCP KMS backend does not support symmetric encryption")
+			t.Fatal("GCP KMS backend does not support symmetric encryption")
 			return
 		}
 

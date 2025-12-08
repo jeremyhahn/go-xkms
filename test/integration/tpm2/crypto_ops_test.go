@@ -1,4 +1,4 @@
-//go:build integration && tpm2
+//go:build integration
 
 package integration
 
@@ -366,7 +366,7 @@ func TestIntegration_CreateECDSA(t *testing.T) {
 			if err != nil {
 				// Check if this is a curve not supported error
 				if tc.maySkip && isCurveNotSupportedError(err) {
-					t.Skipf("Curve %s not supported by TPM simulator: %v", tc.curve.Params().Name, err)
+					t.Fatalf("Curve %s not supported by TPM simulator: %v", tc.curve.Params().Name, err)
 					return
 				}
 				t.Fatalf("Failed to create ECDSA key: %v", err)
@@ -511,7 +511,7 @@ func TestIntegration_CreateSecretKey(t *testing.T) {
 			if err != nil {
 				// Check if this is an unsupported algorithm error
 				if tc.maySkip && isSymmetricAlgorithmNotSupportedError(err) {
-					t.Skipf("AES-256 symmetric keys not supported by TPM simulator: %v", err)
+					t.Fatalf("AES-256 symmetric keys not supported by TPM simulator: %v", err)
 					return
 				}
 				t.Fatalf("Failed to create secret key: %v", err)

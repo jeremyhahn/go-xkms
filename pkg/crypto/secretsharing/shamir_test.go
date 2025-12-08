@@ -753,3 +753,13 @@ func BenchmarkGFOperations(b *testing.B) {
 		}
 	})
 }
+
+// TestGFInverse_ZeroPanics tests that gfInverse panics when called with zero.
+func TestGFInverse_ZeroPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("gfInverse(0) should panic but did not")
+		}
+	}()
+	_ = gfInverse(0)
+}

@@ -57,6 +57,15 @@ func (m *mockResolver) Close() error {
 	return nil
 }
 
+func (m *mockResolver) Read(p []byte) (n int, err error) {
+	data, err := m.Rand(len(p))
+	if err != nil {
+		return 0, err
+	}
+	copy(p, data)
+	return len(data), nil
+}
+
 // TestAutoResolver_InitWithSoftwareFallback tests initialization fallback to software
 func TestAutoResolver_InitWithSoftwareFallback(t *testing.T) {
 	// Test that newAutoResolver falls back to software when no hardware available

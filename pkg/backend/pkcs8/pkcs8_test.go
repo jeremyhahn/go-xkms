@@ -3121,3 +3121,59 @@ func TestGenerateECDSAKey_EmptyCurve(t *testing.T) {
 		t.Fatal("GenerateKey should fail with empty curve")
 	}
 }
+
+// TestGenerateRSAKey_NilAttributes tests RSA key generation with nil RSA attributes
+func TestGenerateRSAKey_NilAttributes(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	_, err := be.generateRSAKey(nil)
+	if err == nil {
+		t.Fatal("generateRSAKey should fail with nil attributes")
+	}
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("Expected ErrInvalidAttributes, got: %v", err)
+	}
+}
+
+// TestGenerateRSAKey_SmallKeySize tests RSA key generation with key size < 2048
+func TestGenerateRSAKey_SmallKeySize(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	_, err := be.generateRSAKey(&types.RSAAttributes{KeySize: 1024})
+	if err == nil {
+		t.Fatal("generateRSAKey should fail with key size < 2048")
+	}
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("Expected ErrInvalidAttributes, got: %v", err)
+	}
+}
+
+// TestGenerateECDSAKey_NilAttributes tests ECDSA key generation with nil ECC attributes
+func TestGenerateECDSAKey_NilAttributes(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	_, err := be.generateECDSAKey(nil)
+	if err == nil {
+		t.Fatal("generateECDSAKey should fail with nil attributes")
+	}
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("Expected ErrInvalidAttributes, got: %v", err)
+	}
+}
+
+// TestGenerateECDSAKey_DirectNilCurve tests ECDSA key generation with nil curve directly
+func TestGenerateECDSAKey_DirectNilCurve(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	_, err := be.generateECDSAKey(&types.ECCAttributes{Curve: nil})
+	if err == nil {
+		t.Fatal("generateECDSAKey should fail with nil curve")
+	}
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("Expected ErrInvalidAttributes, got: %v", err)
+	}
+}

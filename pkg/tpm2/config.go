@@ -70,9 +70,11 @@ var (
 				KeySize: 2048,
 			},
 		},
-		FileIntegrity: []string{
-			"./",
-		},
+		// FileIntegrity is deprecated - leave empty and use GoldenPCRs with PCR 10 (IMA) instead
+		FileIntegrity: []string{},
+		// GoldenPCRs - leave empty to use deterministic platform seed
+		// For IMA-based file integrity, use: []uint{10}
+		GoldenPCRs: []uint{},
 		IAK: &IAKConfig{
 			Debug:        true,
 			Hash:         crypto.SHA256.String(),
@@ -99,7 +101,7 @@ var (
 		},
 		KeyStore: &KeyStoreConfig{
 			SRKAuth:        "platform",
-			SRKHandle:      0x81000001,
+			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
 		},
 		PlatformPCR:     16,
@@ -118,11 +120,25 @@ var (
 )
 
 type Config struct {
-	CommandAddress               string                  `yaml:"command-address,omitempty" json:"command_address" mapstructure:"command-address"`
-	Device                       string                  `yaml:"device,omitempty" json:"device" mapstructure:"device"`
-	EncryptSession               bool                    `yaml:"encrypt-sessions" json:"encrypt_sessions" mapstructure:"encrypt-sessions"`
-	EK                           *EKConfig               `yaml:"ek" json:"ek" mapstructure:"ek"`
-	FileIntegrity                []string                `yaml:"file-integrity" json:"file_integrity" mapstructure:"file-integrity"`
+	CommandAddress string    `yaml:"command-address,omitempty" json:"command_address" mapstructure:"command-address"`
+	Device         string    `yaml:"device,omitempty" json:"device" mapstructure:"device"`
+	EncryptSession bool      `yaml:"encrypt-sessions" json:"encrypt_sessions" mapstructure:"encrypt-sessions"`
+	EK             *EKConfig `yaml:"ek" json:"ek" mapstructure:"ek"`
+	// FileIntegrity is DEPRECATED. Use Linux IMA (PCR 10) instead by adding 10 to GoldenPCRs.
+	// This custom file integrity monitoring computes a hash of specified directories
+	// and includes it in the golden measurements. Linux IMA provides the same functionality
+	// with hardware-backed measurements stored in PCR 10.
+	FileIntegrity []string `yaml:"file-integrity" json:"file_integrity" mapstructure:"file-integrity"`
+	// GoldenPCRs specifies which PCRs to include in the golden integrity measurement.
+	// Common PCRs:
+	//   0: BIOS/UEFI firmware measurements
+	//   1: BIOS/UEFI configuration
+	//   7: Secure Boot state
+	//   9: Kernel command line
+	//   10: Linux IMA (Integrity Measurement Architecture) - recommended for file integrity
+	// Leave empty to use a deterministic platform seed instead.
+	// Example for IMA-based integrity: [0, 7, 9, 10]
+	GoldenPCRs                   []uint                  `yaml:"golden-pcrs" json:"golden_pcrs" mapstructure:"golden-pcrs"`
 	Hash                         string                  `yaml:"hash" json:"hash" mapstructure:"hash"`
 	IAK                          *IAKConfig              `yaml:"iak" json:"iak" mapstructure:"iak"`
 	IdentityProvisioningStrategy string                  `yaml:"identity-provisioning" json:"identity_provisioning" mapstructure:"identity-provisioning"`

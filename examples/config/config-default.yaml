@@ -1,0 +1,66 @@
+# Default configuration for keychaind
+#
+# This is the minimal configuration that enables only Unix socket
+# for local IPC. Use this when the keychain CLI is the only client.
+#
+# For remote access, copy this file and enable the desired protocols
+# (rest, grpc, quic, mcp) in the protocols section.
+
+server:
+  host: 127.0.0.1
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 9444
+
+# Protocol settings
+# Only Unix socket is enabled by default for local CLI communication.
+protocols:
+  unix: true    # Local Unix socket (always enabled for CLI)
+  rest: false   # REST/HTTP API
+  grpc: false   # gRPC API
+  quic: false   # QUIC/HTTP3 API
+  mcp: false    # MCP JSON-RPC API
+
+# Unix socket configuration
+unix:
+  socket_path: /var/run/keychain/keychain.sock
+  socket_mode: "0660"
+
+logging:
+  level: info
+  format: json
+
+# TLS is not required when only using Unix socket
+tls:
+  enabled: false
+
+# Authentication can be disabled for local Unix socket
+auth:
+  enabled: false
+  type: noop
+
+# Rate limiting is typically not needed for local access
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: true
+  path: /metrics
+  port: 9090
+
+health:
+  enabled: true
+  path: /health
+
+storage:
+  backend: file
+  path: /var/lib/keychain/metadata
+
+# Default backend for key operations
+default_backend: pkcs8
+
+backends:
+  pkcs8:
+    enabled: true
+    path: /var/lib/keychain/keys

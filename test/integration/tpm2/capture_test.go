@@ -1,4 +1,4 @@
-//go:build integration && tpm2
+//go:build integration
 
 package integration
 
@@ -235,7 +235,7 @@ func TestTPMPacketParsing(t *testing.T) {
 
 	packets := capture.GetPackets()
 	if len(packets) == 0 {
-		t.Skip("No packets captured for parsing test")
+		t.Fatal("No packets captured for parsing test")
 	}
 
 	t.Logf("Testing packet parsing with %d captured packets", len(packets))

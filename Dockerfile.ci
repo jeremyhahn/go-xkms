@@ -1,0 +1,144 @@
+# CI Dockerfile for go-keychain
+# Contains all tools needed to run the full CI pipeline locally
+# Matches the GitHub CI workflow environment
+
+FROM golang:1.24.4-bookworm
+
+LABEL maintainer="go-keychain"
+LABEL description="CI environment for go-keychain with all linters, security scanners, and test dependencies"
+
+# Allow Go to automatically download the required toolchain version
+ENV GOTOOLCHAIN=auto
+
+# Install build essentials and required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libsofthsm2 \
+    softhsm2 \
+    opensc \
+    swtpm \
+    swtpm-tools \
+    libtss2-dev \
+    libtss2-esys-3.0.2-0 \
+    libtss2-tcti-device0 \
+    libtss2-tcti-swtpm0 \
+    ca-certificates \
+    git \
+    automake \
+    autoconf \
+    libtool \
+    libgnutls28-dev \
+    libtasn1-6-dev \
+    libssl-dev \
+    cmake \
+    ninja-build \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install golangci-lint (same version as GitHub CI)
+RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2
+
+# Install gosec
+RUN go install github.com/securego/gosec/v2/cmd/gosec@latest && \
+    mv /go/bin/gosec /usr/local/bin/
+
+# Install govulncheck
+RUN go install golang.org/x/vuln/cmd/govulncheck@latest && \
+    mv /go/bin/govulncheck /usr/local/bin/
+
+# Install Trivy
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+# Build liboqs for quantum-safe cryptography
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git && \
+    cd liboqs && \
+    mkdir build && cd build && \
+    cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
+    ninja && \
+    ninja install && \
+    ldconfig
+
+# Create liboqs-go.pc for the Go bindings
+RUN mkdir -p /usr/local/lib/pkgconfig && \
+    echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'exec_prefix=${prefix}' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'libdir=${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'includedir=${prefix}/include' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo '' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Name: liboqs-go' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Description: Open Quantum Safe liboqs library for Go bindings' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Version: 0.9.0' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Libs: -L${libdir} -loqs' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
+    echo 'Cflags: -I${includedir}' >> /usr/local/lib/pkgconfig/liboqs-go.pc
+
+# Cleanup build directory
+RUN rm -rf /build
+
+# Set library paths for CGO
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV CGO_LDFLAGS="-L/usr/local/lib"
+ENV CGO_CFLAGS="-I/usr/local/include"
+
+# Create required directories
+RUN mkdir -p /workspace \
+    /var/lib/softhsm/tokens \
+    /var/lib/swtpm \
+    /etc/softhsm
+
+# Configure SoftHSM2
+RUN echo "directories.tokendir = /var/lib/softhsm/tokens" > /etc/softhsm/softhsm2.conf && \
+    echo "objectstore.backend = file" >> /etc/softhsm/softhsm2.conf && \
+    echo "log.level = INFO" >> /etc/softhsm/softhsm2.conf
+
+ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+
+# Initialize SoftHSM token
+RUN softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
+
+# Configure SWTPM environment
+ENV SWTPM_STATE_DIR=/var/lib/swtpm
+ENV TPM2TOOLS_TCTI=swtpm:path=/var/lib/swtpm/swtpm-sock
+
+RUN mkdir -p ${SWTPM_STATE_DIR}/state
+
+# Set working directory
+WORKDIR /workspace
+
+# Environment variables for CI
+ENV CGO_ENABLED=1
+ENV GOCACHE=/tmp/go-cache
+ENV GOFLAGS="-buildvcs=false"
+
+# Create CI entrypoint script
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+# Start SWTPM in background for TPM tests\n\
+echo "Starting SWTPM simulator..."\n\
+swtpm socket --tpmstate dir=${SWTPM_STATE_DIR}/state \\\n\
+  --tpm2 \\\n\
+  --ctrl type=unixio,path=${SWTPM_STATE_DIR}/swtpm-sock \\\n\
+  --flags startup-clear \\\n\
+  --log level=1 &\n\
+\n\
+SWTPM_PID=$!\n\
+sleep 2\n\
+\n\
+if ! kill -0 ${SWTPM_PID} 2>/dev/null; then\n\
+  echo "ERROR: SWTPM failed to start"\n\
+  exit 1\n\
+fi\n\
+\n\
+echo "SWTPM started with PID: ${SWTPM_PID}"\n\
+\n\
+trap "kill ${SWTPM_PID} 2>/dev/null || true" EXIT\n\
+\n\
+# Run the command passed as arguments\n\
+exec "$@"\n' > /usr/local/bin/ci-entrypoint.sh && chmod +x /usr/local/bin/ci-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/ci-entrypoint.sh"]
+CMD ["make", "ci-local"]

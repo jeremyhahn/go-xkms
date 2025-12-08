@@ -12,6 +12,11 @@ This directory contains guides and tutorials for using go-keychain in your appli
 - [Key Import/Export](key-import-export.md) - Importing and exporting cryptographic keys
 - [Certificate Management](certificate-management.md) - Managing X.509 certificates
 
+## Authentication & Authorization
+
+- [User Management](user.md) - User accounts, roles, and permissions
+- [WebAuthn](webauthn.md) - Passwordless authentication with FIDO2/passkeys
+
 ## Usage Guides
 
 ### Basic Operations

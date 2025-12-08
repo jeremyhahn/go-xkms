@@ -23,9 +23,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
+	"github.com/jeremyhahn/go-keychain/pkg/adapters/rbac"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/metrics"
 	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
+	"github.com/jeremyhahn/go-keychain/pkg/user"
 	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-keychain/pkg/webauthn/http"
 )
@@ -41,6 +43,10 @@ type Server struct {
 	rateLimiter     *ratelimit.Limiter
 	webauthnHandler *webauthnhttp.Handler
 	webauthnStores  *WebAuthnStores
+	userHandlers    *UserHandlers
+	userStore       user.Store
+	rbacAdapter     rbac.RBACAdapter
+	rbacMiddleware  *RBACMiddleware
 }
 
 // BackendRegistry is defined in handlers.go
@@ -82,6 +88,17 @@ type Config struct {
 
 	// RateLimiter is the rate limiter instance (optional, disables rate limiting if not provided)
 	RateLimiter *ratelimit.Limiter
+
+	// UserStore is the user store (optional, enables user management if provided)
+	UserStore user.Store
+
+	// RBACAdapter is the RBAC adapter (optional, enables RBAC if provided)
+	// If UserStore is provided but RBACAdapter is not, a UserRBACAdapter will be created automatically.
+	RBACAdapter rbac.RBACAdapter
+
+	// EnableRBAC enables role-based access control on API endpoints (default: false)
+	// When enabled, users must have appropriate permissions for each operation.
+	EnableRBAC bool
 }
 
 // NewServer creates a new REST API server.
@@ -125,7 +142,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		})
 	}
 
-	// Create handler context (uses keychain facade)
+	// Create handler context (uses keychain service)
 	handlers := NewHandlerContext(cfg.Version)
 
 	// Create server instance
@@ -138,24 +155,74 @@ func NewServer(cfg *Config) (*Server, error) {
 		rateLimiter:   cfg.RateLimiter,
 	}
 
+	// Set up user handlers if user store is configured
+	if cfg.UserStore != nil {
+		server.userStore = cfg.UserStore
+		server.userHandlers = NewUserHandlers(cfg.UserStore)
+		log.Info("User management enabled")
+	}
+
+	// Set up RBAC if enabled
+	if cfg.EnableRBAC {
+		if cfg.RBACAdapter != nil {
+			server.rbacAdapter = cfg.RBACAdapter
+		} else if cfg.UserStore != nil {
+			// Create UserRBACAdapter automatically if user store is provided
+			server.rbacAdapter = user.NewUserRBACAdapter(cfg.UserStore)
+		} else {
+			// Use default in-memory adapter
+			server.rbacAdapter = rbac.NewMemoryRBACAdapter(true)
+		}
+
+		server.rbacMiddleware = NewRBACMiddleware(&RBACConfig{
+			Adapter: server.rbacAdapter,
+			Logger:  log,
+			SkipPaths: map[string]bool{
+				"/health":         true,
+				"/health/live":    true,
+				"/health/ready":   true,
+				"/health/startup": true,
+			},
+		})
+		log.Info("RBAC enabled")
+	}
+
 	// Set up WebAuthn if configured
 	if cfg.WebAuthnConfig != nil {
-		stores := NewWebAuthnStores(&WebAuthnStoresConfig{
-			SessionTTL: 5 * time.Minute,
-		})
+		var webauthnUserStore webauthn.UserStore
+		var sessionStore webauthn.SessionStore
+		var credentialStore webauthn.CredentialStore
+
+		// If user store is configured, use user-backed WebAuthn stores
+		// This ensures WebAuthn users are persisted
+		if cfg.UserStore != nil {
+			webauthnUserStore = user.NewWebAuthnUserAdapter(cfg.UserStore)
+			sessionStore = user.NewWebAuthnSessionAdapter(cfg.UserStore, 5*time.Minute)
+			credentialStore = user.NewWebAuthnCredentialAdapter(cfg.UserStore)
+			log.Info("WebAuthn using user store for persistence")
+		} else {
+			// Fall back to in-memory stores for development/testing
+			stores := NewWebAuthnStores(&WebAuthnStoresConfig{
+				SessionTTL: 5 * time.Minute,
+			})
+			webauthnUserStore = stores.UserStore()
+			sessionStore = stores.SessionStore()
+			credentialStore = stores.CredentialStore()
+			server.webauthnStores = stores
+			log.Info("WebAuthn using in-memory stores")
+		}
 
 		svc, err := webauthn.NewService(webauthn.ServiceParams{
 			Config:          cfg.WebAuthnConfig,
-			UserStore:       stores.UserStore(),
-			SessionStore:    stores.SessionStore(),
-			CredentialStore: stores.CredentialStore(),
+			UserStore:       webauthnUserStore,
+			SessionStore:    sessionStore,
+			CredentialStore: credentialStore,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create webauthn service: %w", err)
 		}
 
 		server.webauthnHandler = webauthnhttp.NewHandler(svc)
-		server.webauthnStores = stores
 
 		log.Info("WebAuthn enabled",
 			logger.String("rpid", cfg.WebAuthnConfig.RPID))
@@ -211,47 +278,140 @@ func (s *Server) setupRouter() *chi.Mux {
 		r.Use(s.AuthenticationMiddleware())
 
 		// Backend endpoints
-		r.Get("/backends", s.handlers.ListBackendsHandler)
-		r.Get("/backends/{id}", s.handlers.GetBackendHandler)
+		if s.rbacMiddleware != nil {
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceBackends, rbac.ActionList)).
+				Get("/backends", s.handlers.ListBackendsHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceBackends, rbac.ActionRead)).
+				Get("/backends/{id}", s.handlers.GetBackendHandler)
+		} else {
+			r.Get("/backends", s.handlers.ListBackendsHandler)
+			r.Get("/backends/{id}", s.handlers.GetBackendHandler)
+		}
 
 		// Key endpoints
-		r.Post("/keys", s.handlers.GenerateKeyHandler)
-		r.Get("/keys", s.handlers.ListKeysHandler)
-		r.Get("/keys/{id}", s.handlers.GetKeyHandler)
-		r.Delete("/keys/{id}", s.handlers.DeleteKeyHandler)
+		if s.rbacMiddleware != nil {
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionCreate)).
+				Post("/keys", s.handlers.GenerateKeyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionList)).
+				Get("/keys", s.handlers.ListKeysHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionRead)).
+				Get("/keys/{id}", s.handlers.GetKeyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionDelete)).
+				Delete("/keys/{id}", s.handlers.DeleteKeyHandler)
 
-		// Crypto operation endpoints
-		r.Post("/keys/{id}/sign", s.handlers.SignHandler)
-		r.Post("/keys/{id}/verify", s.handlers.VerifyHandler)
-		r.Post("/keys/{id}/rotate", s.handlers.RotateKeyHandler)
-		r.Post("/keys/{id}/encrypt", s.handlers.EncryptHandler)
-		r.Post("/keys/{id}/decrypt", s.handlers.DecryptHandler)
+			// Crypto operation endpoints
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionSign)).
+				Post("/keys/{id}/sign", s.handlers.SignHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionVerify)).
+				Post("/keys/{id}/verify", s.handlers.VerifyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionRotate)).
+				Post("/keys/{id}/rotate", s.handlers.RotateKeyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionEncrypt)).
+				Post("/keys/{id}/encrypt", s.handlers.EncryptHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionDecrypt)).
+				Post("/keys/{id}/decrypt", s.handlers.DecryptHandler)
 
-		// Import/Export endpoints
-		r.Post("/keys/import-params", s.handlers.GetImportParametersHandler)
-		r.Post("/keys/wrap", s.handlers.WrapKeyHandler)
-		r.Post("/keys/unwrap", s.handlers.UnwrapKeyHandler)
-		r.Post("/keys/import", s.handlers.ImportKeyHandler)
-		r.Post("/keys/{id}/export", s.handlers.ExportKeyHandler)
-		r.Post("/keys/copy", s.handlers.CopyKeyHandler)
+			// Import/Export endpoints
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionImport)).
+				Post("/keys/import-params", s.handlers.GetImportParametersHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionEncrypt)).
+				Post("/keys/wrap", s.handlers.WrapKeyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionDecrypt)).
+				Post("/keys/unwrap", s.handlers.UnwrapKeyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionImport)).
+				Post("/keys/import", s.handlers.ImportKeyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionExport)).
+				Post("/keys/{id}/export", s.handlers.ExportKeyHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionCreate)).
+				Post("/keys/copy", s.handlers.CopyKeyHandler)
+		} else {
+			r.Post("/keys", s.handlers.GenerateKeyHandler)
+			r.Get("/keys", s.handlers.ListKeysHandler)
+			r.Get("/keys/{id}", s.handlers.GetKeyHandler)
+			r.Delete("/keys/{id}", s.handlers.DeleteKeyHandler)
+
+			// Crypto operation endpoints
+			r.Post("/keys/{id}/sign", s.handlers.SignHandler)
+			r.Post("/keys/{id}/verify", s.handlers.VerifyHandler)
+			r.Post("/keys/{id}/rotate", s.handlers.RotateKeyHandler)
+			r.Post("/keys/{id}/encrypt", s.handlers.EncryptHandler)
+			r.Post("/keys/{id}/decrypt", s.handlers.DecryptHandler)
+			r.Post("/keys/{id}/encrypt-asym", s.handlers.EncryptAsymHandler)
+
+			// Import/Export endpoints
+			r.Post("/keys/import-params", s.handlers.GetImportParametersHandler)
+			r.Post("/keys/wrap", s.handlers.WrapKeyHandler)
+			r.Post("/keys/unwrap", s.handlers.UnwrapKeyHandler)
+			r.Post("/keys/import", s.handlers.ImportKeyHandler)
+			r.Post("/keys/{id}/export", s.handlers.ExportKeyHandler)
+			r.Post("/keys/copy", s.handlers.CopyKeyHandler)
+		}
 
 		// Certificate endpoints
-		r.Post("/certs", s.handlers.SaveCertHandler)
-		r.Get("/certs", s.handlers.ListCertsHandler)
-		r.Get("/certs/{id}", s.handlers.GetCertHandler)
-		r.Delete("/certs/{id}", s.handlers.DeleteCertHandler)
-		r.Head("/certs/{id}", s.handlers.CertExistsHandler)
-		r.Post("/certs/{id}/chain", s.handlers.SaveCertChainHandler)
-		r.Get("/certs/{id}/chain", s.handlers.GetCertChainHandler)
+		if s.rbacMiddleware != nil {
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionCreate)).
+				Post("/certs", s.handlers.SaveCertHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionList)).
+				Get("/certs", s.handlers.ListCertsHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionRead)).
+				Get("/certs/{id}", s.handlers.GetCertHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionDelete)).
+				Delete("/certs/{id}", s.handlers.DeleteCertHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionRead)).
+				Head("/certs/{id}", s.handlers.CertExistsHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionCreate)).
+				Post("/certs/{id}/chain", s.handlers.SaveCertChainHandler)
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionRead)).
+				Get("/certs/{id}/chain", s.handlers.GetCertChainHandler)
 
-		// TLS helper endpoint
-		r.Get("/tls/{id}", s.handlers.GetTLSCertificateHandler)
+			// TLS helper endpoint
+			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceCertificates, rbac.ActionRead)).
+				Get("/tls/{id}", s.handlers.GetTLSCertificateHandler)
+		} else {
+			r.Post("/certs", s.handlers.SaveCertHandler)
+			r.Get("/certs", s.handlers.ListCertsHandler)
+			r.Get("/certs/{id}", s.handlers.GetCertHandler)
+			r.Delete("/certs/{id}", s.handlers.DeleteCertHandler)
+			r.Head("/certs/{id}", s.handlers.CertExistsHandler)
+			r.Post("/certs/{id}/chain", s.handlers.SaveCertChainHandler)
+			r.Get("/certs/{id}/chain", s.handlers.GetCertChainHandler)
+
+			// TLS helper endpoint
+			r.Get("/tls/{id}", s.handlers.GetTLSCertificateHandler)
+		}
 	})
 
 	// WebAuthn routes (no auth required - WebAuthn IS the auth mechanism)
 	if s.webauthnHandler != nil {
 		r.Route("/api/v1/webauthn", func(r chi.Router) {
 			webauthnhttp.MountChi(r, s.webauthnHandler)
+		})
+	}
+
+	// User management routes
+	if s.userHandlers != nil {
+		// Bootstrap status endpoint (unauthenticated - used to check if setup is required)
+		r.Get("/api/v1/users/bootstrap/status", s.userHandlers.BootstrapStatusHandler)
+
+		// Authenticated user management routes
+		r.Route("/api/v1/users", func(r chi.Router) {
+			r.Use(s.AuthenticationMiddleware())
+
+			if s.rbacMiddleware != nil {
+				r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceUsers, rbac.ActionList)).
+					Get("/", s.userHandlers.ListUsersHandler)
+				r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceUsers, rbac.ActionRead)).
+					Get("/{id}", s.userHandlers.GetUserHandler)
+				r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceUsers, rbac.ActionUpdate)).
+					Put("/{id}", s.userHandlers.UpdateUserHandler)
+				r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceUsers, rbac.ActionDelete)).
+					Delete("/{id}", s.userHandlers.DeleteUserHandler)
+			} else {
+				r.Get("/", s.userHandlers.ListUsersHandler)
+				r.Get("/{id}", s.userHandlers.GetUserHandler)
+				r.Put("/{id}", s.userHandlers.UpdateUserHandler)
+				r.Delete("/{id}", s.userHandlers.DeleteUserHandler)
+			}
 		})
 	}
 

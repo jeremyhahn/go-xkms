@@ -66,7 +66,7 @@ func (c *RESTClient) doRequest(method, path string, body interface{}) (*http.Res
 func TestRESTHealth(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -97,7 +97,7 @@ func TestRESTHealth(t *testing.T) {
 func TestRESTListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -106,7 +106,7 @@ func TestRESTListBackends(t *testing.T) {
 	assertNoError(t, err, "List backends request failed")
 	defer resp.Body.Close()
 
-	assertEqual(t, http.StatusOK, resp.StatusCode, "Unexpected status code")
+	assertEqual(t, http.StatusOK, resp.StatusCode, "API endpoint /api/v1/backends should be available")
 
 	var result map[string]interface{}
 	err = json.NewDecoder(resp.Body).Decode(&result)
@@ -118,7 +118,7 @@ func TestRESTListBackends(t *testing.T) {
 	}
 
 	if len(backends) == 0 {
-		t.Fatal("No backends available")
+		t.Fatal("No backends available - server configuration error")
 	}
 
 	t.Logf("Found %d backend(s)", len(backends))
@@ -128,7 +128,7 @@ func TestRESTListBackends(t *testing.T) {
 func TestRESTGenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -166,7 +166,7 @@ func TestRESTGenerateKey(t *testing.T) {
 
 			reqBody := map[string]interface{}{
 				"key_id":   testKeyID,
-				"backend":  "pkcs8",
+				"backend":  "software",
 				"key_type": tt.keyType,
 			}
 
@@ -181,7 +181,7 @@ func TestRESTGenerateKey(t *testing.T) {
 			assertNoError(t, err, "Generate key request failed")
 			defer resp.Body.Close()
 
-			assertEqual(t, tt.wantCode, resp.StatusCode, "Unexpected status code")
+			assertEqual(t, tt.wantCode, resp.StatusCode, "Unexpected status code - API endpoint should be available")
 
 			if resp.StatusCode == http.StatusCreated {
 				var result map[string]interface{}
@@ -206,7 +206,7 @@ func TestRESTGenerateKey(t *testing.T) {
 
 				// Cleanup
 				defer func() {
-					delResp, _ := client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", testKeyID), nil)
+					delResp, _ := client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", testKeyID), nil)
 					if delResp != nil {
 						delResp.Body.Close()
 					}
@@ -220,7 +220,7 @@ func TestRESTGenerateKey(t *testing.T) {
 func TestRESTListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -229,28 +229,29 @@ func TestRESTListKeys(t *testing.T) {
 	// Create a test key first
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
 	assertNoError(t, err, "Failed to create test key")
+	assertEqual(t, http.StatusCreated, resp.StatusCode, "API endpoint should be available")
 	resp.Body.Close()
 
 	defer func() {
-		delResp, _ := client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+		delResp, _ := client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 		if delResp != nil {
 			delResp.Body.Close()
 		}
 	}()
 
 	// List keys
-	resp, err = client.doRequest("GET", "/api/v1/keys?backend=pkcs8", nil)
+	resp, err = client.doRequest("GET", "/api/v1/keys?backend=software", nil)
 	assertNoError(t, err, "List keys request failed")
 	defer resp.Body.Close()
 
-	assertEqual(t, http.StatusOK, resp.StatusCode, "Unexpected status code")
+	assertEqual(t, http.StatusOK, resp.StatusCode, "API endpoint /api/v1/keys should be available")
 
 	var result map[string]interface{}
 	err = json.NewDecoder(resp.Body).Decode(&result)
@@ -285,7 +286,7 @@ func TestRESTListKeys(t *testing.T) {
 func TestRESTSignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -294,7 +295,7 @@ func TestRESTSignVerify(t *testing.T) {
 	// Create a test key
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
@@ -304,7 +305,7 @@ func TestRESTSignVerify(t *testing.T) {
 	resp.Body.Close()
 
 	defer func() {
-		delResp, _ := client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+		delResp, _ := client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 		if delResp != nil {
 			delResp.Body.Close()
 		}
@@ -318,7 +319,7 @@ func TestRESTSignVerify(t *testing.T) {
 		"hash": "SHA256",
 	}
 
-	resp, err = client.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=pkcs8", keyID), signReq)
+	resp, err = client.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/sign?backend=software", keyID), signReq)
 	assertNoError(t, err, "Sign request failed")
 	defer resp.Body.Close()
 
@@ -342,7 +343,7 @@ func TestRESTSignVerify(t *testing.T) {
 		"hash":      "SHA256",
 	}
 
-	resp, err = client.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/verify?backend=pkcs8", keyID), verifyReq)
+	resp, err = client.doRequest("POST", fmt.Sprintf("/api/v1/keys/%s/verify?backend=software", keyID), verifyReq)
 	assertNoError(t, err, "Verify request failed")
 	defer resp.Body.Close()
 
@@ -368,7 +369,7 @@ func TestRESTSignVerify(t *testing.T) {
 func TestRESTDeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -377,7 +378,7 @@ func TestRESTDeleteKey(t *testing.T) {
 	// Create a test key
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
-		"backend":  "pkcs8",
+		"backend":  "software",
 		"key_type": "rsa",
 		"key_size": 2048,
 	}
@@ -387,7 +388,7 @@ func TestRESTDeleteKey(t *testing.T) {
 	resp.Body.Close()
 
 	// Delete the key
-	resp, err = client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+	resp, err = client.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 	assertNoError(t, err, "Delete request failed")
 	defer resp.Body.Close()
 
@@ -409,7 +410,7 @@ func TestRESTDeleteKey(t *testing.T) {
 	t.Logf("Deleted key successfully")
 
 	// Verify key is gone
-	resp, err = client.doRequest("GET", fmt.Sprintf("/api/v1/keys/%s?backend=pkcs8", keyID), nil)
+	resp, err = client.doRequest("GET", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 	if err == nil {
 		defer resp.Body.Close()
 		if resp.StatusCode == http.StatusOK {
@@ -422,7 +423,7 @@ func TestRESTDeleteKey(t *testing.T) {
 func TestRESTErrorHandling(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -451,13 +452,13 @@ func TestRESTErrorHandling(t *testing.T) {
 		{
 			name:     "Get non-existent key",
 			method:   "GET",
-			path:     "/api/v1/keys/non-existent-key?backend=pkcs8",
+			path:     "/api/v1/keys/non-existent-key?backend=software",
 			wantCode: http.StatusNotFound,
 		},
 		{
 			name:     "Delete non-existent key",
 			method:   "DELETE",
-			path:     "/api/v1/keys/non-existent-key?backend=pkcs8",
+			path:     "/api/v1/keys/non-existent-key?backend=software",
 			wantCode: http.StatusNotFound,
 		},
 	}

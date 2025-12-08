@@ -77,7 +77,11 @@ func (tpm *TPM2) CreateRSA(
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = closer() }()
+	defer func() {
+		if err := closer(); err != nil {
+			tpm.logger.Errorf("failed to close session: %v", err)
+		}
+	}()
 
 	response, err := tpm2.CreateLoaded{
 		ParentHandle: tpm2.AuthHandle{
@@ -120,7 +124,11 @@ func (tpm *TPM2) CreateRSA(
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = closer() }()
+			defer func() {
+				if err := closer(); err != nil {
+					tpm.logger.Errorf("failed to close key session: %v", err)
+				}
+			}()
 
 			loadResponse, err := tpm2.Load{
 				ParentHandle: tpm2.AuthHandle{

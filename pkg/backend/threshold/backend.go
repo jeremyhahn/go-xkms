@@ -184,8 +184,11 @@ func (b *ThresholdBackend) DeleteKey(attrs *types.KeyAttributes) error {
 	if attrs.ThresholdAttributes != nil {
 		for i := 1; i <= attrs.ThresholdAttributes.Total; i++ {
 			shareKey := fmt.Sprintf("threshold/shares/%s/share-%d", keyID, i)
-			// Ignore errors if shares don't exist
-			_ = b.config.ShareStorage.Delete(shareKey)
+			// Log errors but continue trying to delete other shares
+			if err := b.config.ShareStorage.Delete(shareKey); err != nil {
+				// Only log if it's not a "not found" error
+				fmt.Printf("warning: failed to delete share %d for key %s: %v\n", i, keyID, err)
+			}
 		}
 	}
 

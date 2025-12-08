@@ -696,7 +696,8 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 
 	// For Azure Key Vault, we don't return the actual private key material (it stays in the vault)
 	// Instead, we return a reference that can be used via Signer/Decrypter
-	_ = keyID
+	// Log the key ID for debugging purposes
+	fmt.Printf("azurekv: generated key %s (private key material remains in vault)\n", keyID)
 
 	// Return nil for private key since it's not extractable from Azure Key Vault
 	// Callers should use Signer() or Decrypter() instead

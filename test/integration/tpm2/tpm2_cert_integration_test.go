@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build integration && tpm2
+//go:build integration
 
 package integration
 
@@ -649,7 +649,7 @@ func openTPMSimulator(t *testing.T) transport.TPMCloser {
 		}
 
 		if _, err := os.Stat(tpmDevice); os.IsNotExist(err) {
-			t.Skipf("Skipping TPM2 cert integration tests: No TPM available (simulator failed: %v, device %s not found)", err, tpmDevice)
+			t.Fatalf("Skipping TPM2 cert integration tests: No TPM available (simulator failed: %v, device %s not found)", err, tpmDevice)
 		}
 
 		t.Logf("Using hardware TPM device: %s", tpmDevice)

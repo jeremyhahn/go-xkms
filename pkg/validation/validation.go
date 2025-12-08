@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package validation provides centralized input validation for all go-keychain APIs.
-// ALL public interfaces (REST, gRPC, QUIC, CLI, MCP) use the facade which enforces
+// ALL public interfaces (REST, gRPC, QUIC, CLI, MCP) use the KeychainService which enforces
 // these validations, preventing injection attacks across all entry points.
 package validation
 

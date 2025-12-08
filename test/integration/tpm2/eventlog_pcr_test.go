@@ -1,4 +1,4 @@
-//go:build integration && tpm2
+//go:build integration
 
 package integration
 
@@ -1114,7 +1114,7 @@ func TestIntegration_RealEventLog(t *testing.T) {
 
 	// Check if real event log exists
 	if _, err := os.Stat(realEventLogPath); os.IsNotExist(err) {
-		t.Skip("Real event log not available at testdata/real_eventlog.bin")
+		t.Fatal("Real event log not available at testdata/real_eventlog.bin")
 	}
 
 	events, err := tpm2lib.ParseEventLog(realEventLogPath)
@@ -1213,7 +1213,7 @@ func TestIntegration_RealEventLog_PCRCalculation(t *testing.T) {
 	}
 
 	if _, err := os.Stat(realEventLogPath); os.IsNotExist(err) {
-		t.Skip("Real event log not available at testdata/real_eventlog.bin")
+		t.Fatal("Real event log not available at testdata/real_eventlog.bin")
 	}
 
 	events, err := tpm2lib.ParseEventLog(realEventLogPath)
@@ -1274,7 +1274,7 @@ func TestIntegration_RealEventLog_AlgorithmSupport(t *testing.T) {
 	}
 
 	if _, err := os.Stat(realEventLogPath); os.IsNotExist(err) {
-		t.Skip("Real event log not available at testdata/real_eventlog.bin")
+		t.Fatal("Real event log not available at testdata/real_eventlog.bin")
 	}
 
 	events, err := tpm2lib.ParseEventLog(realEventLogPath)
@@ -1322,7 +1322,7 @@ func TestIntegration_RealEventLog_PrintEvents(t *testing.T) {
 	}
 
 	if _, err := os.Stat(realEventLogPath); os.IsNotExist(err) {
-		t.Skip("Real event log not available at testdata/real_eventlog.bin")
+		t.Fatal("Real event log not available at testdata/real_eventlog.bin")
 	}
 
 	events, err := tpm2lib.ParseEventLog(realEventLogPath)

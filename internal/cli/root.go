@@ -33,14 +33,17 @@ var rootCmd = &cobra.Command{
 cryptographic keys across multiple backends including software,
 hardware, and cloud-based key management systems.
 
+By default, the CLI communicates with the keychaind daemon via Unix socket.
+Use --local to bypass the daemon and access backends directly.
+
 Supported backends:
-  - pkcs8:   PKCS#8 software keys
-  - pkcs11:  PKCS#11 HSM keys
-  - tpm2:    TPM 2.0 hardware keys
-  - awskms:  AWS Key Management Service
-  - gcpkms:  Google Cloud KMS
-  - azurekv: Azure Key Vault
-  - vault:   HashiCorp Vault`,
+  - software: Software-based keys (asymmetric + symmetric)
+  - pkcs11:   PKCS#11 HSM keys
+  - tpm2:     TPM 2.0 hardware keys
+  - awskms:   AWS Key Management Service
+  - gcpkms:   Google Cloud KMS
+  - azurekv:  Azure Key Vault
+  - vault:    HashiCorp Vault`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -57,8 +60,8 @@ func init() {
 	// Persistent flags (available to all commands)
 	rootCmd.PersistentFlags().StringVar(&globalConfig.ConfigFile, "config", "",
 		"config file (default is $HOME/.keychain.yaml)")
-	rootCmd.PersistentFlags().StringVar(&globalConfig.Backend, "backend", "pkcs8",
-		"backend to use (pkcs8, pkcs11, tpm2, awskms, gcpkms, azurekv, vault)")
+	rootCmd.PersistentFlags().StringVar(&globalConfig.Backend, "backend", "software",
+		"backend to use (software, pkcs11, tpm2, awskms, gcpkms, azurekv, vault)")
 	rootCmd.PersistentFlags().StringVar(&globalConfig.KeyDir, "key-dir", "/tmp/keystore",
 		"directory for key storage (for file-based backends)")
 	rootCmd.PersistentFlags().StringVarP(&globalConfig.OutputFormat, "output", "o", "text",
@@ -66,12 +69,41 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&globalConfig.Verbose, "verbose", "v", false,
 		"verbose output")
 
+	// Local mode flag - bypass daemon and use backend directly
+	rootCmd.PersistentFlags().BoolVarP(&globalConfig.UseLocal, "local", "l", false,
+		"use local backend directly (bypass keychaind daemon)")
+
+	// Server connection flags
+	rootCmd.PersistentFlags().StringVarP(&globalConfig.Server, "server", "s", "",
+		"keychain server URL (default: unix:///var/run/keychain/keychain.sock)\n"+
+			"Supported formats:\n"+
+			"  unix:///path/to/socket.sock\n"+
+			"  http://host:port or https://host:port (REST)\n"+
+			"  grpc://host:port or grpcs://host:port (gRPC)\n"+
+			"  quic://host:port (QUIC/HTTP3)")
+
+	// TLS flags for remote connections
+	rootCmd.PersistentFlags().BoolVar(&globalConfig.TLSInsecure, "tls-insecure", false,
+		"skip TLS certificate verification (not recommended for production)")
+	rootCmd.PersistentFlags().StringVar(&globalConfig.TLSCert, "tls-cert", "",
+		"path to client certificate file for mTLS authentication")
+	rootCmd.PersistentFlags().StringVar(&globalConfig.TLSKey, "tls-key", "",
+		"path to client key file for mTLS authentication")
+	rootCmd.PersistentFlags().StringVar(&globalConfig.TLSCACert, "tls-ca", "",
+		"path to CA certificate file for server verification")
+
+	// API key for authentication
+	rootCmd.PersistentFlags().StringVar(&globalConfig.APIKey, "api-key", "",
+		"API key for server authentication")
+
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(backendsCmd)
 	rootCmd.AddCommand(keyCmd)
 	rootCmd.AddCommand(certCmd)
 	rootCmd.AddCommand(tlsCmd)
+	rootCmd.AddCommand(fido2Cmd)
+	rootCmd.AddCommand(adminCmd)
 }
 
 // getConfig returns the global configuration

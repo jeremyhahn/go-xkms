@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -425,4 +426,117 @@ func BenchmarkCombine(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = Combine(subset)
 	}
+}
+
+func TestShare_Bytes(t *testing.T) {
+	shares, err := Split([]byte("test secret"), 3, 5)
+	require.NoError(t, err)
+
+	// Test Bytes method
+	for _, share := range shares {
+		b, err := share.Bytes()
+		require.NoError(t, err)
+		assert.NotEmpty(t, b)
+	}
+}
+
+func TestShare_String(t *testing.T) {
+	shares, err := Split([]byte("test secret"), 3, 5)
+	require.NoError(t, err)
+
+	// Test String method
+	for i, share := range shares {
+		s := share.String()
+		assert.Contains(t, s, "Share{Index:")
+		assert.Contains(t, s, fmt.Sprintf("Index: %d", i+1))
+		t.Logf("Share %d: %s", i+1, s)
+	}
+}
+
+func TestMin(t *testing.T) {
+	// Test min function through String method
+	// Create a share with a very short value
+	share := &Share{
+		Index:     1,
+		Threshold: 3,
+		Total:     5,
+		Value:     "abc", // Less than 16 characters
+	}
+	s := share.String()
+	assert.Contains(t, s, "abc")
+
+	// Test with longer value
+	share2 := &Share{
+		Index:     1,
+		Threshold: 3,
+		Total:     5,
+		Value:     "abcdefghijklmnopqrstuvwxyz",
+	}
+	s2 := share2.String()
+	assert.Contains(t, s2, "...")
+}
+
+func TestCombine_NoShares(t *testing.T) {
+	_, err := Combine([]*Share{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no shares provided")
+}
+
+func TestCombine_InvalidShare(t *testing.T) {
+	// Test with invalid share (empty value)
+	invalidShares := []*Share{
+		{Index: 1, Threshold: 3, Total: 5, Value: "dGVzdA=="},
+		{Index: 2, Threshold: 3, Total: 5, Value: ""}, // empty value
+		{Index: 3, Threshold: 3, Total: 5, Value: "dGVzdA=="},
+	}
+	_, err := Combine(invalidShares)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid share")
+}
+
+func TestCombine_DifferentTotal(t *testing.T) {
+	// Test with shares having different total values
+	shares := []*Share{
+		{Index: 1, Threshold: 3, Total: 5, Value: "dGVzdA=="},
+		{Index: 2, Threshold: 3, Total: 7, Value: "dGVzdA=="}, // different total
+		{Index: 3, Threshold: 3, Total: 5, Value: "dGVzdA=="},
+	}
+	_, err := Combine(shares)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "different total")
+}
+
+func TestCombine_InvalidBase64(t *testing.T) {
+	shares, err := Split([]byte("test"), 3, 5)
+	require.NoError(t, err)
+
+	// Corrupt one share's base64 value
+	shares[1].Value = "!!!invalid-base64!!!"
+
+	_, err = Combine([]*Share{shares[0], shares[1], shares[2]})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to decode share")
+}
+
+func TestVerifyShare_TotalMismatch(t *testing.T) {
+	shares, err := Split([]byte("test secret"), 3, 5)
+	require.NoError(t, err)
+
+	// Create share with different total
+	badShare := &Share{
+		Index:     4,
+		Threshold: 3,
+		Total:     9, // Different total
+		Value:     "dGVzdA==",
+	}
+
+	err = VerifyShare(badShare, shares[:3])
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "total mismatch")
+}
+
+func TestShare_UnmarshalJSON_Error(t *testing.T) {
+	var share Share
+	err := share.UnmarshalJSON([]byte("invalid json"))
+	require.Error(t, err)
 }

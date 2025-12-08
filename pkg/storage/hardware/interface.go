@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm2 || pkcs11
-
 // Package hardware provides hardware-backed certificate storage implementations
 // for PKCS#11 HSMs and TPM2 devices.
 package hardware

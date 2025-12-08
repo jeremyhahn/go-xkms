@@ -37,6 +37,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/internal/mcp"
 	"github.com/jeremyhahn/go-keychain/internal/quic"
 	"github.com/jeremyhahn/go-keychain/internal/rest"
+	"github.com/jeremyhahn/go-keychain/internal/unix"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/health"
@@ -44,20 +45,27 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/metrics"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-keychain/pkg/user"
 )
 
 // Server represents the unified keychain server that runs all protocols
 type Server struct {
 	config    *config.Config
+	mu        sync.RWMutex
 	keystores map[string]keychain.KeyStore
 	backends  map[string]types.Backend
 	logger    *slog.Logger
 
 	// Protocol servers
-	restServer *rest.Server
-	grpcServer *grpc.Server
-	quicServer *quic.Server
-	mcpServer  *mcp.Server
+	unixServer     *unix.Server
+	unixGRPCServer *unix.GRPCServer
+	restServer     *rest.Server
+	grpcServer     *grpc.Server
+	quicServer     *quic.Server
+	mcpServer      *mcp.Server
+
+	// User management
+	userStore user.Store
 
 	// Health checker
 	healthChecker *health.Checker
@@ -101,6 +109,13 @@ func New(cfg *config.Config) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, fmt.Errorf("failed to initialize keystore: %w", err)
+	}
+
+	// Initialize user store
+	if err := s.initializeUserStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, fmt.Errorf("failed to initialize user store: %w", err)
 	}
 
 	// Initialize health checker
@@ -184,6 +199,24 @@ func getBuildVersion() string {
 func (s *Server) initializeBackends() error {
 	s.logger.Info("Initializing backends...")
 
+	// Initialize Software backend (uses PKCS#8 internally)
+	if s.config.Backends.Software != nil && s.config.Backends.Software.Enabled {
+		keyStorage, err := file.New(s.config.Backends.Software.Path)
+		if err != nil {
+			return fmt.Errorf("failed to create software key storage: %w", err)
+		}
+
+		softwareBackend, err := pkcs8.NewBackend(&pkcs8.Config{
+			KeyStorage: keyStorage,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create software backend: %w", err)
+		}
+
+		s.backends["software"] = softwareBackend
+		s.logger.Info("Software backend initialized", "backend", "software", "path", s.config.Backends.Software.Path)
+	}
+
 	// Initialize PKCS8 backend (software keys)
 	if s.config.Backends.PKCS8 != nil && s.config.Backends.PKCS8.Enabled {
 		keyStorage, err := file.New(s.config.Backends.PKCS8.Path)
@@ -264,6 +297,61 @@ func (s *Server) initializeKeyStore() error {
 		return fmt.Errorf("no keystores initialized")
 	}
 
+	// Determine default backend
+	defaultBackend := string(s.config.Default)
+	if _, ok := s.keystores[defaultBackend]; !ok {
+		// Fall back to first available backend
+		for name := range s.keystores {
+			defaultBackend = name
+			break
+		}
+	}
+
+	// Initialize the global keychain service with the keystores
+	// This allows REST handlers to access backends via keychain.Backends()
+	serviceConfig := &keychain.ServiceConfig{
+		Backends:       s.keystores,
+		DefaultBackend: defaultBackend,
+	}
+	if err := keychain.Initialize(serviceConfig); err != nil {
+		return fmt.Errorf("failed to initialize keychain service: %w", err)
+	}
+
+	s.logger.Info("Keychain service initialized",
+		"default_backend", defaultBackend,
+		"backends", len(s.keystores))
+
+	return nil
+}
+
+// initializeUserStore creates the user store.
+func (s *Server) initializeUserStore() error {
+	s.logger.Info("Initializing user store...")
+
+	// Create user storage directory
+	userStoragePath := s.config.Storage.Path + "/users"
+	userStorage, err := file.New(userStoragePath)
+	if err != nil {
+		return fmt.Errorf("failed to create user storage: %w", err)
+	}
+
+	// Create user store
+	userStore, err := user.NewFileStore(userStorage)
+	if err != nil {
+		return fmt.Errorf("failed to create user store: %w", err)
+	}
+
+	s.userStore = userStore
+	s.logger.Info("User store initialized", "path", userStoragePath)
+
+	// Check if bootstrap is required
+	hasUsers, err := userStore.HasAnyUsers(s.ctx)
+	if err != nil {
+		s.logger.Warn("Failed to check user status", slog.Any("error", err))
+	} else if !hasUsers {
+		s.logger.Info("No users configured - first user registration required")
+	}
+
 	return nil
 }
 
@@ -338,6 +426,12 @@ func (s *Server) Start() error {
 		}
 	}
 
+	// Start Unix socket server if enabled (default: true)
+	if s.config.Protocols.Unix {
+		s.wg.Add(1)
+		go s.startUnix()
+	}
+
 	// Start REST API if enabled
 	if s.config.Protocols.REST {
 		s.wg.Add(1)
@@ -379,15 +473,89 @@ func (s *Server) Start() error {
 	return nil
 }
 
+// startUnix starts the Unix domain socket server (HTTP or gRPC based on configuration)
+func (s *Server) startUnix() {
+	defer s.wg.Done()
+
+	// Determine socket path
+	socketPath := s.config.Unix.SocketPath
+	if socketPath == "" {
+		socketPath = unix.DefaultSocketPath
+	}
+
+	// Determine protocol (default to gRPC)
+	protocol := s.config.Unix.Protocol
+	if protocol == "" {
+		protocol = "grpc"
+	}
+
+	// Create logger adapter for Unix server
+	unixLogger := logger.NewSlogAdapter(&logger.SlogConfig{
+		Logger: s.logger.With("component", "unix"),
+	})
+
+	// Start either HTTP or gRPC server based on configuration
+	if protocol == "grpc" {
+		s.logger.Info("Starting Unix socket with gRPC protocol", "socket", socketPath)
+
+		// Create Unix gRPC server configuration
+		grpcConfig := &unix.GRPCConfig{
+			SocketPath: socketPath,
+			Logger:     unixLogger,
+		}
+
+		var err error
+		s.unixGRPCServer, err = unix.NewGRPCServer(grpcConfig)
+		if err != nil {
+			s.logger.Error("Failed to create Unix gRPC server", slog.Any("error", err))
+			return
+		}
+
+		if err := s.unixGRPCServer.Start(); err != nil {
+			s.logger.Error("Unix gRPC server error", slog.Any("error", err))
+		}
+	} else {
+		s.logger.Info("Starting Unix socket with HTTP protocol", "socket", socketPath)
+
+		// Create Unix HTTP server configuration
+		unixConfig := &unix.Config{
+			SocketPath:     socketPath,
+			Backends:       s.keystores,
+			DefaultBackend: string(s.config.Default),
+			Version:        getBuildVersion(),
+			Logger:         unixLogger,
+			UserStore:      s.userStore,
+		}
+
+		var err error
+		s.unixServer, err = unix.NewServer(unixConfig)
+		if err != nil {
+			s.logger.Error("Failed to create Unix HTTP server", slog.Any("error", err))
+			return
+		}
+
+		// Configure health checker for Unix HTTP server
+		if s.healthChecker != nil {
+			s.unixServer.SetHealthChecker(s.healthChecker)
+			s.logger.Info("Health checker configured for Unix HTTP server")
+		}
+
+		if err := s.unixServer.Start(); err != nil {
+			s.logger.Error("Unix HTTP server error", slog.Any("error", err))
+		}
+	}
+}
+
 // startREST starts the REST API server
 func (s *Server) startREST() {
 	defer s.wg.Done()
 
 	// Create REST server configuration
 	restConfig := &rest.Config{
-		Port:     s.config.Server.RESTPort,
-		Backends: s.keystores,
-		Version:  getBuildVersion(),
+		Port:      s.config.Server.RESTPort,
+		Backends:  s.keystores,
+		Version:   getBuildVersion(),
+		UserStore: s.userStore,
 	}
 
 	// Create REST server
@@ -425,7 +593,7 @@ func (s *Server) startGRPC() {
 
 	s.grpcServer = grpc.NewServer()
 
-	// Create and register gRPC service (uses keychain facade)
+	// Create and register gRPC service (uses keychain service)
 	service := grpcinternal.NewService()
 	pb.RegisterKeystoreServiceServer(s.grpcServer, service)
 
@@ -721,6 +889,22 @@ func (s *Server) Shutdown() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Shutdown Unix socket server
+	if s.unixServer != nil {
+		s.logger.Info("Shutting down Unix socket server...")
+		if err := s.unixServer.Stop(shutdownCtx); err != nil {
+			s.logger.Error("Error shutting down Unix socket server", slog.Any("error", err))
+		}
+	}
+
+	// Shutdown Unix gRPC socket server
+	if s.unixGRPCServer != nil {
+		s.logger.Info("Shutting down Unix gRPC socket server...")
+		if err := s.unixGRPCServer.Stop(shutdownCtx); err != nil {
+			s.logger.Error("Error shutting down Unix gRPC socket server", slog.Any("error", err))
+		}
+	}
+
 	// Shutdown REST server
 	if s.restServer != nil {
 		s.logger.Info("Shutting down REST server...")
@@ -815,4 +999,14 @@ func (s *Server) QUICServer() *quic.Server {
 // MCPServer returns the MCP server instance
 func (s *Server) MCPServer() *mcp.Server {
 	return s.mcpServer
+}
+
+// UnixServer returns the Unix socket server instance
+func (s *Server) UnixServer() *unix.Server {
+	return s.unixServer
+}
+
+// UnixGRPCServer returns the Unix gRPC socket server instance
+func (s *Server) UnixGRPCServer() *unix.GRPCServer {
+	return s.unixGRPCServer
 }

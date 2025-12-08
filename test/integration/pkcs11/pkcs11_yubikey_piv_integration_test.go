@@ -163,7 +163,7 @@ func cleanupSlot(t *testing.T, ykBackend *yubikey.Backend, cn string) {
 func TestYubiKeyPIV_BackendInfo(t *testing.T) {
 	config, ok := getYubiKeyPIVConfig(t)
 	if !ok {
-		t.Skip("YubiKey not available")
+		t.Fatal("YubiKey not available")
 	}
 
 	ykBackend, err := yubikey.NewBackend(config)
@@ -209,7 +209,7 @@ func TestYubiKeyPIV_BackendInfo(t *testing.T) {
 func TestYubiKeyPIV_RSA(t *testing.T) {
 	config, ok := getYubiKeyPIVConfig(t)
 	if !ok {
-		t.Skip("YubiKey not available")
+		t.Fatal("YubiKey not available")
 	}
 
 	ykBackend, err := yubikey.NewBackend(config)
@@ -236,7 +236,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 		key, err := ykBackend.GenerateRSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -279,7 +279,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 		key, err := ykBackend.GenerateRSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -317,7 +317,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 	t.Run("GenerateAndSign_RSA3072", func(t *testing.T) {
 		if !ykBackend.SupportsRSA3072() {
 			fwVer := ykBackend.GetFirmwareVersion()
-			t.Skipf("RSA 3072 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
+			t.Fatalf("RSA 3072 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
 		}
 
 		attrs := &types.KeyAttributes{
@@ -334,7 +334,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 		key, err := ykBackend.GenerateRSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -362,7 +362,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 	t.Run("GenerateAndSign_RSA3072_PSS", func(t *testing.T) {
 		if !ykBackend.SupportsRSA3072() {
 			fwVer := ykBackend.GetFirmwareVersion()
-			t.Skipf("RSA 3072 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
+			t.Fatalf("RSA 3072 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
 		}
 
 		attrs := &types.KeyAttributes{
@@ -379,7 +379,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 		key, err := ykBackend.GenerateRSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -415,7 +415,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 	t.Run("GenerateAndSign_RSA4096", func(t *testing.T) {
 		if !ykBackend.SupportsRSA4096() {
 			fwVer := ykBackend.GetFirmwareVersion()
-			t.Skipf("RSA 4096 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
+			t.Fatalf("RSA 4096 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
 		}
 
 		attrs := &types.KeyAttributes{
@@ -432,7 +432,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 		key, err := ykBackend.GenerateRSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -460,7 +460,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 	t.Run("GenerateAndSign_RSA4096_PSS", func(t *testing.T) {
 		if !ykBackend.SupportsRSA4096() {
 			fwVer := ykBackend.GetFirmwareVersion()
-			t.Skipf("RSA 4096 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
+			t.Fatalf("RSA 4096 requires firmware 5.7+, have %d.%d", fwVer.Major, fwVer.Minor)
 		}
 
 		attrs := &types.KeyAttributes{
@@ -477,7 +477,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 		key, err := ykBackend.GenerateRSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -515,7 +515,7 @@ func TestYubiKeyPIV_RSA(t *testing.T) {
 func TestYubiKeyPIV_ECDSA(t *testing.T) {
 	config, ok := getYubiKeyPIVConfig(t)
 	if !ok {
-		t.Skip("YubiKey not available")
+		t.Fatal("YubiKey not available")
 	}
 
 	ykBackend, err := yubikey.NewBackend(config)
@@ -542,7 +542,7 @@ func TestYubiKeyPIV_ECDSA(t *testing.T) {
 		key, err := ykBackend.GenerateECDSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -585,7 +585,7 @@ func TestYubiKeyPIV_ECDSA(t *testing.T) {
 		key, err := ykBackend.GenerateECDSA(attrs)
 		if err != nil {
 			t.Logf("Key generation failed: %v", err)
-			t.Skip("YubiKey PIV slot may be in use or require manual configuration")
+			t.Fatal("YubiKey PIV slot may be in use or require manual configuration")
 			return
 		}
 
@@ -617,7 +617,7 @@ func TestYubiKeyPIV_ECDSA(t *testing.T) {
 func TestYubiKeyPIV_KeyRetrieval(t *testing.T) {
 	config, ok := getYubiKeyPIVConfig(t)
 	if !ok {
-		t.Skip("YubiKey not available")
+		t.Fatal("YubiKey not available")
 	}
 
 	ykBackend, err := yubikey.NewBackend(config)
@@ -647,7 +647,7 @@ func TestYubiKeyPIV_KeyRetrieval(t *testing.T) {
 	_, err = ykBackend.GenerateRSA(attrs)
 	if err != nil {
 		t.Logf("Key generation failed: %v", err)
-		t.Skip("YubiKey PIV slot may be in use")
+		t.Fatal("YubiKey PIV slot may be in use")
 		return
 	}
 
@@ -662,7 +662,7 @@ func TestYubiKeyPIV_KeyRetrieval(t *testing.T) {
 func TestYubiKeyPIV_RandomGeneration(t *testing.T) {
 	config, ok := getYubiKeyPIVConfig(t)
 	if !ok {
-		t.Skip("YubiKey not available")
+		t.Fatal("YubiKey not available")
 	}
 
 	ykBackend, err := yubikey.NewBackend(config)

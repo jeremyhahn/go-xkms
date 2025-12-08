@@ -49,8 +49,8 @@ func createBenchmarkHandler(b *testing.B) *HandlerContext {
 		b.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	// Initialize the global keychain facade
-	err = keychain.Initialize(&keychain.FacadeConfig{
+	// Initialize the global keychain service
+	err = keychain.Initialize(&keychain.ServiceConfig{
 		Backends: map[string]keychain.KeyStore{
 			"software": ks,
 		},

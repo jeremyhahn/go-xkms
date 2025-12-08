@@ -149,7 +149,8 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 		return nil, fmt.Errorf("sealed data is required")
 	}
 
-	if sealed.Backend != types.BackendTypePKCS8 {
+	// Accept both PKCS#8 and Software backend types since Software delegates to PKCS#8
+	if sealed.Backend != types.BackendTypePKCS8 && sealed.Backend != types.BackendTypeSoftware {
 		return nil, fmt.Errorf("sealed data was not created by PKCS#8 backend (got %s)", sealed.Backend)
 	}
 

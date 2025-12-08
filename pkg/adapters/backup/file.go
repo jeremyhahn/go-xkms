@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -240,13 +241,17 @@ func (f *FileBackupAdapter) CreateBackup(ctx context.Context, data *BackupData, 
 	metadataBytes, err := json.MarshalIndent(data.Metadata, "", "  ")
 	if err != nil {
 		// Clean up backup file on error
-		_ = os.Remove(backupPath)
+		if removeErr := os.Remove(backupPath); removeErr != nil {
+			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
+		}
 		return nil, fmt.Errorf("failed to serialize metadata: %w", err)
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0600); err != nil {
 		// Clean up backup file on error
-		_ = os.Remove(backupPath)
+		if removeErr := os.Remove(backupPath); removeErr != nil {
+			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
+		}
 		return nil, fmt.Errorf("failed to write metadata file: %w", err)
 	}
 
@@ -608,12 +613,16 @@ func (f *FileBackupAdapter) ImportBackup(ctx context.Context, source string) (*B
 	metadataPath := f.getMetadataPath(backupID)
 	metadataBytes, err := json.MarshalIndent(data.Metadata, "", "  ")
 	if err != nil {
-		_ = os.Remove(backupPath)
+		if removeErr := os.Remove(backupPath); removeErr != nil {
+			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
+		}
 		return nil, fmt.Errorf("failed to serialize metadata: %w", err)
 	}
 
 	if err := os.WriteFile(metadataPath, metadataBytes, 0600); err != nil {
-		_ = os.Remove(backupPath)
+		if removeErr := os.Remove(backupPath); removeErr != nil {
+			log.Printf("failed to clean up backup file %s: %v", backupPath, removeErr)
+		}
 		return nil, fmt.Errorf("failed to write metadata file: %w", err)
 	}
 
@@ -782,7 +791,11 @@ func (f *FileBackupAdapter) decompressData(data []byte, algorithm string) ([]byt
 		if err != nil {
 			return nil, err
 		}
-		defer func() { _ = reader.Close() }()
+		defer func() {
+			if closeErr := reader.Close(); closeErr != nil {
+				log.Printf("failed to close gzip reader: %v", closeErr)
+			}
+		}()
 		return io.ReadAll(reader)
 	default:
 		return nil, fmt.Errorf("unsupported compression algorithm: %s", algorithm)

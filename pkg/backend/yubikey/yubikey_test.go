@@ -21,6 +21,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,65 +125,10 @@ func TestBackend_Capabilities(t *testing.T) {
 	assert.True(t, caps.HardwareBacked, "Should be hardware-backed")
 	assert.True(t, caps.Signing, "Should support signing")
 	assert.True(t, caps.Decryption, "Should support decryption")
-	assert.False(t, caps.SymmetricEncryption, "Should not support symmetric encryption")
+	assert.True(t, caps.SymmetricEncryption, "Should support symmetric encryption via envelope encryption")
+	assert.True(t, caps.Sealing, "Should support sealing")
 	assert.False(t, caps.Import, "Should not support import")
 	assert.False(t, caps.Export, "Should not support export")
-}
-
-// TestBackend_CNToSlot tests CN to PIV slot mapping
-func TestBackend_CNToSlot(t *testing.T) {
-	config, ok := getTestConfig(t)
-	if !ok {
-		t.Skip("YubiKey not available")
-	}
-
-	backend, err := NewBackend(config)
-	require.NoError(t, err)
-
-	tests := []struct {
-		name     string
-		cn       string
-		expected PIVSlot
-	}{
-		{"Authentication prefix", "auth-mykey", SlotAuthentication},
-		{"Authentication full", "authentication-mykey", SlotAuthentication},
-		{"Signature prefix", "sig-mykey", SlotSignature},
-		{"Signature full", "signature-mykey", SlotSignature},
-		{"Key management prefix", "keymgmt-mykey", SlotKeyManagement},
-		{"Key management full", "keymanagement-mykey", SlotKeyManagement},
-		{"Card auth prefix", "card-mykey", SlotCardAuth},
-		{"Card auth full", "cardauth-mykey", SlotCardAuth},
-		{"Retired 1", "retired1-mykey", SlotRetired1},
-		{"Retired 10", "retired10-mykey", SlotRetired10},
-		{"Retired 20", "retired20-mykey", SlotRetired20},
-		{"Default (no prefix)", "mykey", SlotAuthentication},
-		{"Case insensitive", "AUTH-MYKEY", SlotAuthentication},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			slot := backend.cnToSlot(tt.cn)
-			assert.Equal(t, tt.expected, slot, "CN %s should map to slot %s", tt.cn, tt.expected)
-		})
-	}
-}
-
-// TestBackend_PIVSlot tests PIVSlot method
-func TestBackend_PIVSlot(t *testing.T) {
-	config, ok := getTestConfig(t)
-	if !ok {
-		t.Skip("YubiKey not available")
-	}
-
-	backend, err := NewBackend(config)
-	require.NoError(t, err)
-
-	attrs := &types.KeyAttributes{
-		CN: "sig-test-key",
-	}
-
-	slot := backend.PIVSlot(attrs)
-	assert.Equal(t, SlotSignature, slot)
 }
 
 // TestBackend_Initialize tests backend initialization
@@ -268,10 +214,6 @@ func TestBackend_GenerateRSA(t *testing.T) {
 
 	require.NotNil(t, key)
 	defer backend.DeleteKey(attrs)
-
-	// Verify slot mapping
-	slot := backend.PIVSlot(attrs)
-	assert.Equal(t, SlotAuthentication, slot)
 }
 
 // TestBackend_GenerateECDSA tests ECDSA key generation
@@ -305,10 +247,6 @@ func TestBackend_GenerateECDSA(t *testing.T) {
 
 	require.NotNil(t, key)
 	defer backend.DeleteKey(attrs)
-
-	// Verify slot mapping
-	slot := backend.PIVSlot(attrs)
-	assert.Equal(t, SlotSignature, slot)
 }
 
 // TestBackend_AvailableSlots tests slot enumeration

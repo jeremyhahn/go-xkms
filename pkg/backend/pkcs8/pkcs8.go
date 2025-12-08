@@ -208,28 +208,74 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 
-	// For now, we return minimal attributes based on the key ID
-	// A production implementation might store metadata separately
+	// Parse key ID to extract attributes
+	// Format: [partition:]storetype:keytype:cn:algorithm
+	// Example: sw:tls:my-key:rsa or partition:sw:signing:my-key:ecdsa
+	// Also supports format like: pkcs8:tls:my-key:rsa
 	attrs := make([]*types.KeyAttributes, 0, len(keyIDs))
 	for _, id := range keyIDs {
-		// Parse key ID to extract basic attributes
-		// Format: [partition:]storetype:keytype:cn:algorithm
-		// Example: sw:tls:my-key:rsa or partition:sw:signing:my-key:ecdsa
-
 		parts := strings.Split(id, ":")
 		var cn string
+		var keyTypeStr string
+		var storeTypeStr string
+		var algorithmStr string
 
 		if len(parts) >= 4 {
-			// Has all required parts, CN is the second-to-last part
-			cn = parts[len(parts)-2]
+			// Has all required parts
+			// For format without partition: storetype:keytype:cn:algorithm (4 parts)
+			// For format with partition: partition:storetype:keytype:cn:algorithm (5 parts)
+			if len(parts) == 4 {
+				// storetype:keytype:cn:algorithm
+				storeTypeStr = parts[0]
+				keyTypeStr = parts[1]
+				cn = parts[2]
+				algorithmStr = parts[3]
+			} else {
+				// partition:storetype:keytype:cn:algorithm
+				storeTypeStr = parts[1]
+				keyTypeStr = parts[2]
+				cn = parts[3]
+				algorithmStr = parts[4]
+			}
 		} else {
 			// Fallback to using the whole ID as CN
 			cn = id
+			keyTypeStr = "tls"     // Default to TLS
+			storeTypeStr = "pkcs8" // Default to pkcs8
+			algorithmStr = "rsa"   // Default to RSA
 		}
 
 		attr := &types.KeyAttributes{
-			CN: cn,
+			CN:        cn,
+			KeyType:   types.ParseKeyType(keyTypeStr),
+			StoreType: types.ParseStoreType(storeTypeStr),
 		}
+
+		// Parse key algorithm
+		switch strings.ToLower(algorithmStr) {
+		case "rsa":
+			attr.KeyAlgorithm = x509.RSA
+			attr.RSAAttributes = &types.RSAAttributes{KeySize: 2048} // Default
+		case "ecdsa":
+			attr.KeyAlgorithm = x509.ECDSA
+			curve, _ := types.ParseCurve("P-256") // Default curve
+			attr.ECCAttributes = &types.ECCAttributes{Curve: curve}
+		case "ed25519":
+			attr.KeyAlgorithm = x509.Ed25519
+		}
+
+		// Ensure we have valid defaults
+		if attr.KeyType == 0 {
+			attr.KeyType = types.KeyTypeTLS
+		}
+		if attr.StoreType == "" {
+			attr.StoreType = types.StorePKCS8
+		}
+		if attr.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
+			attr.KeyAlgorithm = x509.RSA
+			attr.RSAAttributes = &types.RSAAttributes{KeySize: 2048}
+		}
+
 		attrs = append(attrs, attr)
 	}
 
@@ -386,7 +432,7 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 
 	var privateKey crypto.PrivateKey
 
-	// Try encrypted PKCS#8 first if password provided
+	// Try encrypted PKCS#8 if password provided
 	if len(passwordBytes) > 0 {
 		privateKey, err = pkcs8.ParsePKCS8PrivateKey(keyData, passwordBytes)
 		if err != nil {
@@ -396,6 +442,12 @@ func (b *PKCS8Backend) decodeKey(keyData []byte, password types.Password) (crypt
 		// Try unencrypted PKCS#8
 		privateKey, err = x509.ParsePKCS8PrivateKey(keyData)
 		if err != nil {
+			// If a password interface was provided but returned empty/nil, and
+			// unencrypted parsing failed, this likely means password retrieval
+			// failed (e.g., TPM unseal error) and the key is actually encrypted.
+			if password != nil {
+				return nil, fmt.Errorf("%w: unencrypted parsing failed and password retrieval returned empty (possible TPM unseal failure or key is encrypted): %v", ErrKeyDecodingFailed, err)
+			}
 			return nil, fmt.Errorf("%w: %v", ErrKeyDecodingFailed, err)
 		}
 	}

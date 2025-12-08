@@ -1,0 +1,64 @@
+#!/sbin/openrc-run
+# OpenRC init script for go-keychain server
+# Install to: /etc/init.d/keychain
+#
+# Usage:
+#   rc-update add keychain default
+#   rc-service keychain start
+
+name="keychain"
+description="Go Keychain - Cryptographic Key Management Service"
+command="/usr/bin/keychaind"
+command_args="-config ${KEYCHAIN_CONFIG:-/etc/keychain/config.yaml}"
+command_user="keychain:keychain"
+command_background="yes"
+pidfile="/run/keychain/keychain.pid"
+start_stop_daemon_args="--stdout /var/log/keychain/keychain.log --stderr /var/log/keychain/keychain.log"
+
+# Optional dependencies
+depend() {
+    need net
+    after firewall tpm2-abrmd pcscd
+    use logger
+}
+
+start_pre() {
+    # Create runtime directory
+    checkpath --directory --owner keychain:keychain --mode 0755 /run/keychain
+
+    # Create log directory if it doesn't exist
+    checkpath --directory --owner keychain:keychain --mode 0750 /var/log/keychain
+
+    # Create data directory if it doesn't exist
+    checkpath --directory --owner keychain:keychain --mode 0750 /var/lib/keychain
+    checkpath --directory --owner keychain:keychain --mode 0700 /var/lib/keychain/keys
+    checkpath --directory --owner keychain:keychain --mode 0750 /var/lib/keychain/certs
+
+    # Verify config exists
+    if [ ! -f "${KEYCHAIN_CONFIG:-/etc/keychain/config.yaml}" ]; then
+        eerror "Configuration file not found: ${KEYCHAIN_CONFIG:-/etc/keychain/config.yaml}"
+        return 1
+    fi
+}
+
+stop_post() {
+    # Clean up pid file if it exists
+    rm -f "${pidfile}"
+}
+
+reload() {
+    ebegin "Reloading ${name}"
+    start-stop-daemon --signal HUP --pidfile "${pidfile}"
+    eend $?
+}
+
+status() {
+    if [ -f "${pidfile}" ]; then
+        if kill -0 "$(cat "${pidfile}")" 2>/dev/null; then
+            einfo "status: started"
+            return 0
+        fi
+    fi
+    einfo "status: stopped"
+    return 3
+}
