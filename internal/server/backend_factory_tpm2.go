@@ -16,6 +16,7 @@ package server
 import (
 	"fmt"
 
+	tpm2backend "github.com/jeremyhahn/go-keychain/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
@@ -33,6 +34,7 @@ func createTPM2Backend(config BackendConfig) (types.Backend, error) {
 
 	useSimulator, _ := config.Config["use_simulator"].(bool)
 	encryptSession, _ := config.Config["encrypt_session"].(bool)
+	platformPolicy, _ := config.Config["platform_policy"].(bool)
 
 	srkHandle, ok := config.Config["srk_handle"].(uint32)
 	if !ok {
@@ -43,25 +45,58 @@ func createTPM2Backend(config BackendConfig) (types.Backend, error) {
 		}
 	}
 
-	// Suppress unused variable warnings for config values
-	_ = cn
-	_ = device
-	_ = useSimulator
-	_ = encryptSession
-	_ = srkHandle
-	_ = config.Config["platform_policy"]
+	ekHandle, ok := config.Config["ek_handle"].(uint32)
+	if !ok {
+		if ekHandleInt, ok := config.Config["ek_handle"].(int); ok {
+			ekHandle = uint32(ekHandleInt)
+		} else {
+			ekHandle = 0x81010001 // Default EK handle
+		}
+	}
 
-	// TODO: TPM2 backend not yet fully integrated
-	// The following issues need to be resolved:
-	// 1. Interface conflicts between storage.Backend and store.CertificateStorer
-	//    - Conflicting Delete method signatures prevent type assertions
-	//    - Requires adapter pattern for storage.Backend -> store.BlobStorer/CertificateStorer
-	// 2. Interface conflict between TrustedPlatformModule and types.Backend
-	//    - Missing Capabilities() (types.Capabilities, error) method
-	//    - Conflicting DeleteKey signature
-	//    - Requires adapter wrapper to implement types.Backend interface
-	// 3. TPM2.NewTPM2() panics with nil BlobStore/CertStore
-	//
-	// A proper pkg/backend/tpm2 wrapper should be created similar to awskms, azurekv, etc.
-	return nil, fmt.Errorf("TPM2 backend not yet fully integrated - requires adapter for types.Backend interface")
+	keyDir, _ := config.Config["key_dir"].(string)
+	if keyDir == "" {
+		keyDir = "./tpm2-keys"
+	}
+
+	hash, _ := config.Config["hash"].(string)
+	if hash == "" {
+		hash = "SHA-256"
+	}
+
+	platformPCR, ok := config.Config["platform_pcr"].(uint)
+	if !ok {
+		if pcrInt, ok := config.Config["platform_pcr"].(int); ok {
+			platformPCR = uint(pcrInt)
+		} else {
+			platformPCR = 0
+		}
+	}
+
+	platformPCRBank, _ := config.Config["platform_pcr_bank"].(string)
+	if platformPCRBank == "" {
+		platformPCRBank = "SHA256"
+	}
+
+	// Create TPM2 backend configuration
+	tpmConfig := &tpm2backend.Config{
+		Device:          device,
+		KeyDir:          keyDir,
+		UseSimulator:    useSimulator,
+		EncryptSession:  encryptSession,
+		SRKHandle:       srkHandle,
+		EKHandle:        ekHandle,
+		Hash:            hash,
+		PlatformPolicy:  platformPolicy,
+		PlatformPCR:     platformPCR,
+		PlatformPCRBank: platformPCRBank,
+		CN:              cn,
+	}
+
+	backend, err := tpm2backend.NewBackend(tpmConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TPM2 backend: %w", err)
+	}
+
+	return backend, nil
 }

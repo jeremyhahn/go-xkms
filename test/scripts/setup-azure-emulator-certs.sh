@@ -2,7 +2,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CERTS_DIR="${SCRIPT_DIR}/../.azure-emulator/certs"
+PROJECT_ROOT="${SCRIPT_DIR}/../.."
+CERTS_DIR="${PROJECT_ROOT}/.azure-emulator/certs"
 CERT_PASSWORD="emulator"
 
 echo "→ Setting up Azure Key Vault emulator certificates..."

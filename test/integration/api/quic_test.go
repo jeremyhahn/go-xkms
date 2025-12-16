@@ -31,16 +31,16 @@ import (
 
 // QUICTestClient wraps HTTP/3 client for QUIC testing
 type QUICTestClient struct {
-	baseURL string
-	client  *http.Client
-	apiKey  string
+	baseURL  string
+	client   *http.Client
+	jwtToken string
 }
 
 // newQUICClient creates a new QUIC/HTTP3 test client
 func newQUICClient(baseURL string) *QUICTestClient {
 	return &QUICTestClient{
-		baseURL: baseURL,
-		apiKey:  "test-api-key",
+		baseURL:  baseURL,
+		jwtToken: "test-jwt-token",
 		client: &http.Client{
 			Transport: &http3.Transport{
 				TLSClientConfig: &tls.Config{
@@ -72,8 +72,8 @@ func (c *QUICTestClient) doRequest(method, path string, body interface{}) (*http
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	if c.apiKey != "" {
-		req.Header.Set("X-API-Key", c.apiKey)
+	if c.jwtToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.jwtToken)
 	}
 
 	return c.client.Do(req)

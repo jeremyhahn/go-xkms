@@ -17,6 +17,7 @@ import (
 	"crypto"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -77,7 +78,11 @@ func TestCompositeKeyStore_GenerateRSA(t *testing.T) {
 
 			if tt.expectError {
 				if err == nil {
-					t.Error("expected error, got nil")
+					t.Error("expected error for nil attributes, got nil")
+				}
+				// Verify we get ErrInvalidKeyAttributes for nil attrs
+				if tt.attrs == nil && !errors.Is(err, keychain.ErrInvalidKeyAttributes) {
+					t.Errorf("expected ErrInvalidKeyAttributes, got: %v", err)
 				}
 				return
 			}
@@ -90,9 +95,17 @@ func TestCompositeKeyStore_GenerateRSA(t *testing.T) {
 				t.Fatal("expected key, got nil")
 			}
 
-			// Verify backend was called
+			// Verify backend was called exactly once
 			if len(mockBackend.GenerateKeyCalls) != 1 {
 				t.Errorf("expected 1 GenerateKey call, got %d", len(mockBackend.GenerateKeyCalls))
+			}
+
+			// Verify the key CN was passed correctly (mock stores CN strings)
+			if len(mockBackend.GenerateKeyCalls) > 0 {
+				passedCN := mockBackend.GenerateKeyCalls[0]
+				if passedCN != tt.attrs.CN {
+					t.Errorf("expected CN %q passed to backend, got %q", tt.attrs.CN, passedCN)
+				}
 			}
 		})
 	}
@@ -133,7 +146,11 @@ func TestCompositeKeyStore_GenerateECDSA(t *testing.T) {
 
 			if tt.expectError {
 				if err == nil {
-					t.Error("expected error, got nil")
+					t.Error("expected error for nil attributes, got nil")
+				}
+				// Verify we get ErrInvalidKeyAttributes for nil attrs
+				if tt.attrs == nil && !errors.Is(err, keychain.ErrInvalidKeyAttributes) {
+					t.Errorf("expected ErrInvalidKeyAttributes, got: %v", err)
 				}
 				return
 			}
@@ -146,9 +163,17 @@ func TestCompositeKeyStore_GenerateECDSA(t *testing.T) {
 				t.Fatal("expected key, got nil")
 			}
 
-			// Verify backend was called
+			// Verify backend was called exactly once
 			if len(mockBackend.GenerateKeyCalls) != 1 {
 				t.Errorf("expected 1 GenerateKey call, got %d", len(mockBackend.GenerateKeyCalls))
+			}
+
+			// Verify the key CN was passed correctly (mock stores CN strings)
+			if len(mockBackend.GenerateKeyCalls) > 0 {
+				passedCN := mockBackend.GenerateKeyCalls[0]
+				if passedCN != tt.attrs.CN {
+					t.Errorf("expected CN %q passed to backend, got %q", tt.attrs.CN, passedCN)
+				}
 			}
 		})
 	}
@@ -186,7 +211,11 @@ func TestCompositeKeyStore_GenerateEd25519(t *testing.T) {
 
 			if tt.expectError {
 				if err == nil {
-					t.Error("expected error, got nil")
+					t.Error("expected error for nil attributes, got nil")
+				}
+				// Verify we get ErrInvalidKeyAttributes for nil attrs
+				if tt.attrs == nil && !errors.Is(err, keychain.ErrInvalidKeyAttributes) {
+					t.Errorf("expected ErrInvalidKeyAttributes, got: %v", err)
 				}
 				return
 			}
@@ -199,9 +228,17 @@ func TestCompositeKeyStore_GenerateEd25519(t *testing.T) {
 				t.Fatal("expected key, got nil")
 			}
 
-			// Verify backend was called
+			// Verify backend was called exactly once
 			if len(mockBackend.GenerateKeyCalls) != 1 {
 				t.Errorf("expected 1 GenerateKey call, got %d", len(mockBackend.GenerateKeyCalls))
+			}
+
+			// Verify the key CN was passed correctly (mock stores CN strings)
+			if len(mockBackend.GenerateKeyCalls) > 0 {
+				passedCN := mockBackend.GenerateKeyCalls[0]
+				if passedCN != tt.attrs.CN {
+					t.Errorf("expected CN %q passed to backend, got %q", tt.attrs.CN, passedCN)
+				}
 			}
 		})
 	}
@@ -283,6 +320,13 @@ func TestCompositeKeyStore_GetKey(t *testing.T) {
 				if err == nil {
 					t.Error("expected error, got nil")
 				}
+				// Verify error messages contain expected content
+				if tt.attrs == nil && !contains(err.Error(), "invalid") {
+					t.Errorf("expected error to mention 'invalid' for nil attrs, got: %v", err)
+				}
+				if tt.name == "non-existent key" && !contains(err.Error(), "not found") {
+					t.Errorf("expected error to mention 'not found' for non-existent key, got: %v", err)
+				}
 				return
 			}
 
@@ -292,6 +336,11 @@ func TestCompositeKeyStore_GetKey(t *testing.T) {
 
 			if key == nil {
 				t.Fatal("expected key, got nil")
+			}
+
+			// Verify key implements crypto.Signer
+			if _, ok := key.(crypto.Signer); !ok {
+				t.Error("expected key to implement crypto.Signer")
 			}
 		})
 	}
@@ -372,11 +421,24 @@ func TestCompositeKeyStore_DeleteKey(t *testing.T) {
 				if err == nil {
 					t.Error("expected error, got nil")
 				}
+				// Verify error messages contain expected content
+				if tt.attrs == nil && !contains(err.Error(), "invalid") {
+					t.Errorf("expected error to mention 'invalid' for nil attrs, got: %v", err)
+				}
+				if tt.name == "delete non-existent key" && !contains(err.Error(), "not found") {
+					t.Errorf("expected error to mention 'not found' for non-existent key, got: %v", err)
+				}
 				return
 			}
 
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Verify deletion by attempting to get the key
+			_, getErr := ks.GetKey(tt.attrs)
+			if getErr == nil || !contains(getErr.Error(), "not found") {
+				t.Errorf("expected 'not found' error after deletion, got: %v", getErr)
 			}
 		})
 	}
@@ -492,6 +554,10 @@ func TestCompositeKeyStore_RotateKey(t *testing.T) {
 				if err == nil {
 					t.Error("expected error, got nil")
 				}
+				// Verify specific error types
+				if tt.attrs == nil && !errors.Is(err, keychain.ErrInvalidKeyAttributes) {
+					t.Errorf("expected ErrInvalidKeyAttributes for nil attrs, got: %v", err)
+				}
 				return
 			}
 
@@ -505,10 +571,18 @@ func TestCompositeKeyStore_RotateKey(t *testing.T) {
 
 			// Verify delete and generate were called
 			if len(mockBackend.DeleteKeyCalls) != 1 {
-				t.Errorf("expected 1 DeleteKey call, got %d", len(mockBackend.DeleteKeyCalls))
+				t.Errorf("expected 1 DeleteKey call during rotation, got %d", len(mockBackend.DeleteKeyCalls))
 			}
 			if len(mockBackend.GenerateKeyCalls) != 1 {
-				t.Errorf("expected 1 GenerateKey call, got %d", len(mockBackend.GenerateKeyCalls))
+				t.Errorf("expected 1 GenerateKey call during rotation, got %d", len(mockBackend.GenerateKeyCalls))
+			}
+
+			// Verify the new key CN matches (mock stores CN strings)
+			if len(mockBackend.GenerateKeyCalls) > 0 {
+				rotatedCN := mockBackend.GenerateKeyCalls[0]
+				if rotatedCN != tt.attrs.CN {
+					t.Errorf("rotated key CN mismatch: expected %q, got %q", tt.attrs.CN, rotatedCN)
+				}
 			}
 		})
 	}

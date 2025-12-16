@@ -19,7 +19,9 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
 )
 
-// CreateAuthenticator creates an authenticator from the configuration
+// CreateAuthenticator creates an authenticator from the configuration.
+// Note: For adaptive authentication (which auto-switches based on user existence),
+// use the server's initializeAuthentication method instead.
 func (cfg *AuthConfig) CreateAuthenticator() (auth.Authenticator, error) {
 	if !cfg.Enabled {
 		return auth.NewNoOpAuthenticator(), nil
@@ -29,56 +31,21 @@ func (cfg *AuthConfig) CreateAuthenticator() (auth.Authenticator, error) {
 	case "noop", "none", "":
 		return auth.NewNoOpAuthenticator(), nil
 
-	case "apikey":
-		return cfg.createAPIKeyAuthenticator()
-
 	case "mtls":
 		return cfg.createMTLSAuthenticator()
 
 	case "jwt":
-		return nil, fmt.Errorf("JWT authenticator not yet implemented")
+		// JWT authentication requires additional configuration (public key)
+		// and is typically set up in server initialization
+		return nil, fmt.Errorf("JWT authenticator requires server-level configuration with public key")
+
+	case "adaptive":
+		// Adaptive authentication requires user store and is set up in server initialization
+		return nil, fmt.Errorf("adaptive authenticator requires server-level configuration")
 
 	default:
 		return nil, fmt.Errorf("unknown auth type: %s", cfg.Type)
 	}
-}
-
-// createAPIKeyAuthenticator creates an API key authenticator from config
-func (cfg *AuthConfig) createAPIKeyAuthenticator() (auth.Authenticator, error) {
-	if len(cfg.APIKeys) == 0 {
-		return nil, fmt.Errorf("no API keys configured")
-	}
-
-	// Convert config API keys to authenticator format
-	keys := make(map[string]*auth.Identity)
-	for apiKey, keyConfig := range cfg.APIKeys {
-		identity := &auth.Identity{
-			Subject:    keyConfig.Subject,
-			Claims:     make(map[string]interface{}),
-			Attributes: make(map[string]string),
-		}
-
-		// Add roles
-		if len(keyConfig.Roles) > 0 {
-			identity.Claims["roles"] = keyConfig.Roles
-		}
-
-		// Add permissions
-		if len(keyConfig.Permissions) > 0 {
-			identity.Claims["permissions"] = keyConfig.Permissions
-		}
-
-		// Add additional claims
-		for k, v := range keyConfig.Claims {
-			identity.Claims[k] = v
-		}
-
-		keys[apiKey] = identity
-	}
-
-	return auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-		Keys: keys,
-	}), nil
 }
 
 // createMTLSAuthenticator creates an mTLS authenticator from config

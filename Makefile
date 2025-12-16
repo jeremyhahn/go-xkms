@@ -631,7 +631,7 @@ integration-test: clean-test-containers integration-test-software integration-te
 ## clean-test-containers: Clean up Docker containers from previous test runs
 clean-test-containers:
 	@echo "$(CYAN)→ Cleaning up test containers...$(RESET)"
-	@bash scripts/clean-test-containers.sh >/dev/null 2>&1 || true
+	@bash test/scripts/clean-test-containers.sh >/dev/null 2>&1 || true
 	@echo "$(GREEN)✓ Test containers cleaned$(RESET)"
 
 # ==============================================================================
@@ -752,7 +752,7 @@ EMULATOR_COMPOSE := docker compose -f docker-compose.emulators.yml
 .PHONY: emulator-start
 ## emulator-start: Start cloud service emulators
 emulator-start:
-	@bash scripts/setup-azure-emulator-certs.sh
+	@bash test/scripts/setup-azure-emulator-certs.sh
 	@$(EMULATOR_COMPOSE) up -d
 	@sleep 15
 
@@ -1722,12 +1722,14 @@ lint:
 	fi
 
 # gosec exclusions (documented):
+#   G103: unsafe calls - required for HID ioctls and protobuf generated code
+#   G104: unhandled errors - false positive for hash.Write (never returns error)
 #   G115: Integer overflow conversions - values are bounded by crypto/TPM specs
 #   G304: File path inclusion - internal paths validated at API boundaries
 #   G401: sha1.New() - required for OAEP-SHA1 and RSA-AES-KEY-WRAP-SHA1 (legacy compat)
 #   G407: False positive - gcm.Seal nonce is random (io.ReadFull), not hardcoded
 #   G505: crypto/sha1 import - required for PKCS standards, cert thumbprints, WebAuthn
-GOSEC_EXCLUDE := G115,G304,G401,G407,G505
+GOSEC_EXCLUDE := G103,G104,G115,G304,G401,G407,G505
 
 .PHONY: gosec
 ## gosec: Run gosec security scanner (fails on HIGH/MEDIUM severity issues)

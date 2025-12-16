@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0-alpha] - 2025-12-13
 
 ### Added
+- **Key Versioning API**: Full key version lifecycle management across all client interfaces
+  - `ListKeyVersions` - List all versions of a key with status and metadata
+  - `EnableKeyVersion` / `DisableKeyVersion` - Enable or disable specific key versions
+  - `EnableAllKeyVersions` / `DisableAllKeyVersions` - Bulk version state management
+  - gRPC, REST, QUIC, and Unix socket client support
+  - Proto definitions in `api/proto/keychainv1/keychain.proto`
+- **JWT Authentication Adapter**: `pkg/adapters/auth/jwt.go` for token-based authentication
+  - Configurable issuer, audience, and signing key validation
+  - Support for RS256, ES256, and EdDSA signing algorithms
+- **Adaptive Authentication**: `pkg/adapters/auth/adaptive.go` for multi-method auth
+  - Automatic fallback between authentication methods (mTLS → JWT → API Key)
+  - Configurable authentication chain with priority ordering
+- **WebAuthn JWT Generator**: `pkg/webauthn/jwt_generator.go` for token generation after FIDO2 authentication
+- **CLI Certificate Commands**: `internal/cli/cert.go` for certificate management operations
+- **TPM2 Backend Integration**: Server-side TPM2 backend factory and operations
+  - `internal/server/backend_factory_tpm2.go` - TPM2 backend initialization
+  - `internal/server/backend_tpm2.go` - TPM2 server operations
 - **CanoKey Backend**: Complete PIV-compatible backend for CanoKey hardware tokens
   - `pkg/backend/canokey/` - Full backend implementation with PKCS#11 wrapper
   - Hardware and virtual (QEMU) device support for CI/CD testing
@@ -75,6 +92,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Handlers for all keychain operations
 
 ### Changed
+- **Test Coverage Improvements**: Increased coverage across multiple packages
+  - `pkg/versioning`: 76.1% → 93.9%
+  - `pkg/client`: 79.1% → 86.1%
+  - `internal/config`: 83.1% → 96.0%
+  - Testable code (excluding hardware) now at 93.4% average coverage
+- Extended environment variable configuration support for RNG, rate limiting, and logging
 - **API Naming**: Renamed `KeychainFacade` to `KeychainService` for clarity
   - `FacadeConfig` → `ServiceConfig`
   - `facade.go` → `service.go`
@@ -103,10 +126,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TestPlatformPassword_CacheConcurrency` now passes with race detector enabled
 - Improved error handling and logging for ignored HTTP write errors
 - Integration test stability improvements across all backends
+- **Configuration**: Server socket path now defaults to `/var/run/keychain/keychain.sock` to match client defaults
+- **Configuration**: Added `keychaind-dev.yaml` for development/testing with `/tmp` paths
+- **Configuration**: Added `keychain-client.yaml` example client configuration
+- **Scripts**: Moved test scripts from `scripts/` to `test/scripts/`
 
 ### Removed
+- **API Key Authentication**: Removed `pkg/adapters/auth/apikey.go` (replaced by JWT adapter)
+- **Logo**: Removed `logo.svg` from repository root
 - `test/integration/encoding/README_FIX.md` - Development-only fix notes
 - `pkg/metrics/implementation-summary.md` - Development-only implementation notes
+
+### Known Limitations (Alpha)
+- **TPM2 Server Integration**: The `pkg/tpm2` library is fully functional for direct Go usage, but server-side integration (REST/gRPC/CLI/MCP) is not yet complete. Use `pkg/tpm2` directly for TPM2 operations.
+- **Vault Import/Export**: HashiCorp Vault Transit backend does not support key import/export operations
+- **PKCS#11 Attestation**: Some attestation methods are not yet implemented
 
 ## [0.1.9-alpha] - 2025-12-07
 

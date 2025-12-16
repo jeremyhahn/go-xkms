@@ -349,3 +349,143 @@ func TestNewResolver_AutoMode(t *testing.T) {
 		t.Error("Auto resolver should be available")
 	}
 }
+
+func TestSoftwareResolver_Read(t *testing.T) {
+	resolver, err := NewResolver(ModeSoftware)
+	if err != nil {
+		t.Fatalf("failed to create software resolver: %v", err)
+	}
+	defer func() { _ = resolver.Close() }()
+
+	// Test various sizes
+	sizes := []int{1, 16, 32, 64, 256, 1024}
+	for _, size := range sizes {
+		buf := make([]byte, size)
+		n, err := resolver.Read(buf)
+		if err != nil {
+			t.Fatalf("Read(%d) failed: %v", size, err)
+		}
+		if n != size {
+			t.Fatalf("expected to read %d bytes, got %d", size, n)
+		}
+	}
+}
+
+func TestSoftwareResolver_ReadZeroBytes(t *testing.T) {
+	resolver, _ := NewResolver(ModeSoftware)
+	defer func() { _ = resolver.Close() }()
+
+	buf := make([]byte, 0)
+	n, err := resolver.Read(buf)
+	if err != nil {
+		t.Fatalf("Read(0) failed: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected to read 0 bytes, got %d", n)
+	}
+}
+
+func TestSoftwareResolver_ReadRandomness(t *testing.T) {
+	resolver, _ := NewResolver(ModeSoftware)
+	defer func() { _ = resolver.Close() }()
+
+	// Generate multiple random buffers and verify they're different
+	buf1 := make([]byte, 32)
+	buf2 := make([]byte, 32)
+
+	_, _ = resolver.Read(buf1)
+	_, _ = resolver.Read(buf2)
+
+	if bytes.Equal(buf1, buf2) {
+		t.Fatal("consecutive random reads should not be equal")
+	}
+}
+
+func TestAutoResolver_Read(t *testing.T) {
+	resolver, err := NewResolver(ModeAuto)
+	if err != nil {
+		t.Fatalf("failed to create auto resolver: %v", err)
+	}
+	defer func() { _ = resolver.Close() }()
+
+	// Test various sizes
+	sizes := []int{1, 16, 32, 64, 256, 1024}
+	for _, size := range sizes {
+		buf := make([]byte, size)
+		n, err := resolver.Read(buf)
+		if err != nil {
+			t.Fatalf("Read(%d) failed: %v", size, err)
+		}
+		if n != size {
+			t.Fatalf("expected to read %d bytes, got %d", size, n)
+		}
+	}
+}
+
+func TestAutoResolver_ReadRandomness(t *testing.T) {
+	resolver, _ := NewResolver(ModeAuto)
+	defer func() { _ = resolver.Close() }()
+
+	// Generate multiple random buffers and verify they're different
+	buf1 := make([]byte, 32)
+	buf2 := make([]byte, 32)
+
+	_, _ = resolver.Read(buf1)
+	_, _ = resolver.Read(buf2)
+
+	if bytes.Equal(buf1, buf2) {
+		t.Fatal("consecutive random reads should not be equal")
+	}
+}
+
+func TestAutoResolver_ReadAsIOReader(t *testing.T) {
+	resolver, err := NewResolver(ModeAuto)
+	if err != nil {
+		t.Fatalf("failed to create auto resolver: %v", err)
+	}
+	defer func() { _ = resolver.Close() }()
+
+	// Test using the resolver as an io.Reader
+	buf := make([]byte, 64)
+	n, err := resolver.Read(buf)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	if n != 64 {
+		t.Fatalf("expected to read 64 bytes, got %d", n)
+	}
+
+	// Verify it's not all zeros
+	allZeros := true
+	for _, b := range buf {
+		if b != 0 {
+			allZeros = false
+			break
+		}
+	}
+	if allZeros {
+		t.Fatal("Read should not return all zeros")
+	}
+}
+
+func BenchmarkSoftwareResolver_Read32(b *testing.B) {
+	resolver, _ := NewResolver(ModeSoftware)
+	defer func() { _ = resolver.Close() }()
+	buf := make([]byte, 32)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = resolver.Read(buf)
+	}
+}
+
+func BenchmarkAutoResolver_Read32(b *testing.B) {
+	resolver, _ := NewResolver(ModeAuto)
+	defer func() { _ = resolver.Close() }()
+	buf := make([]byte, 32)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = resolver.Read(buf)
+	}
+}

@@ -153,8 +153,11 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 	}
 	defer tpm.Flush(ekLoadRsp.ObjectHandle)
 
+	// Always log the IAK name for debugging credential activation issues
+	tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: IAK name (hex): %x", readPubRsp.Name.Buffer)
+	tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: IAK pub bytes len: %d", len(iakPubBytes))
+
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: IAK name: 0x%x", readPubRsp.Name.Buffer)
 		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: secret: 0x%x", secret)
 	}
 
@@ -230,6 +233,12 @@ func (tpm *TPM2) ActivateCredential(
 	// Activate the credential, proving the AK and EK are both loaded
 	// into the same TPM, and the EK is able to decrypt the secret.
 	tpm.logger.Debug("tpm2: activating credential")
+	tpm.logger.Debugf("tpm2: ActivateCredential IAK handle=0x%x, name=%x",
+		keyAttrs.TPMAttributes.Handle, keyAttrs.TPMAttributes.Name.Buffer)
+	tpm.logger.Debugf("tpm2: ActivateCredential EK handle=0x%x, name=%x",
+		ekAttrs.TPMAttributes.Handle, ekAttrs.TPMAttributes.Name.Buffer)
+	tpm.logger.Debugf("tpm2: ActivateCredential credentialBlob len=%d, encryptedSecret len=%d",
+		len(credentialBlob), len(encryptedSecret))
 	activateCredentialsResponse, err := tpm2.ActivateCredential{
 		ActivateHandle: tpm2.NamedHandle{
 			Handle: keyAttrs.TPMAttributes.Handle,

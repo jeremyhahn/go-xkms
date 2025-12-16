@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
+	"github.com/jeremyhahn/go-keychain/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/client"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
@@ -64,15 +65,31 @@ type Config struct {
 	// TLSCACert is the path to the CA certificate file
 	TLSCACert string
 
-	// APIKey is the API key for authentication
-	APIKey string
+	// JWTToken is the JWT token for authentication (obtained via FIDO2 login)
+	JWTToken string
+
+	// TPM2 configuration options
+	// TPM2Device is the path to the TPM device (e.g., "/dev/tpmrm0")
+	TPM2Device string
+
+	// TPM2UseSimulator enables use of the TPM simulator instead of hardware
+	TPM2UseSimulator bool
+
+	// TPM2EncryptSession enables encrypted sessions for CPU<->TPM communication
+	TPM2EncryptSession bool
+
+	// TPM2SRKHandle is the persistent handle for the Storage Root Key
+	TPM2SRKHandle uint32
+
+	// TPM2EKHandle is the persistent handle for the Endorsement Key
+	TPM2EKHandle uint32
 }
 
 // NewConfig creates a new Config with default values
 func NewConfig() *Config {
 	return &Config{
 		Backend:      "software",
-		KeyDir:       "/tmp/keystore",
+		KeyDir:       "keychain-data/keys",
 		OutputFormat: "text",
 		Verbose:      false,
 		UseLocal:     false,
@@ -88,7 +105,7 @@ func (c *Config) CreateBackend() (types.Backend, error) {
 	case "pkcs11":
 		return nil, fmt.Errorf("PKCS11 backend not yet supported in CLI")
 	case "tpm2":
-		return nil, fmt.Errorf("TPM2 backend not yet supported in CLI")
+		return c.createTPM2Backend()
 	case "awskms":
 		return nil, fmt.Errorf("AWS KMS backend not yet supported in CLI")
 	case "gcpkms":
@@ -119,6 +136,33 @@ func (c *Config) createSoftwareBackend() (types.Backend, error) {
 	return software.NewBackend(backendConfig)
 }
 
+// createTPM2Backend creates a TPM2 backend with file storage for key blobs.
+func (c *Config) createTPM2Backend() (types.Backend, error) {
+	// Determine TPM device path
+	device := c.TPM2Device
+	if device == "" && !c.TPM2UseSimulator {
+		device = "/dev/tpmrm0" // Default device
+	}
+
+	// Use key directory for TPM key blob storage
+	keyDir := c.KeyDir
+	if keyDir == "" {
+		keyDir = "keychain-data/tpm2"
+	}
+
+	// Set up TPM2 backend configuration
+	tpmConfig := &tpm2.Config{
+		Device:         device,
+		KeyDir:         keyDir,
+		UseSimulator:   c.TPM2UseSimulator,
+		EncryptSession: c.TPM2EncryptSession,
+		SRKHandle:      c.TPM2SRKHandle, // 0 will use default 0x81000001
+		EKHandle:       c.TPM2EKHandle,  // 0 will use default 0x81010001
+	}
+
+	return tpm2.NewBackend(tpmConfig)
+}
+
 // CreateCertStorage creates certificate storage based on the configuration
 func (c *Config) CreateCertStorage() (*storage.CertAdapter, error) {
 	// Create file-based storage backend
@@ -144,6 +188,7 @@ func (c *Config) IsRemote() bool {
 
 // CreateClient creates a client for communicating with keychaind.
 // If Server is empty, it defaults to the local Unix socket with gRPC.
+// Uses .keychain/keychain.sock in the current working directory.
 func (c *Config) CreateClient() (client.Client, error) {
 	if c.Server == "" {
 		// Default to Unix socket with gRPC (server uses gRPC on Unix socket)
@@ -160,7 +205,7 @@ func (c *Config) CreateClient() (client.Client, error) {
 	}
 
 	// If we need to set TLS options, we need to create a new client with full config
-	if c.TLSInsecure || c.TLSCert != "" || c.TLSKey != "" || c.TLSCACert != "" || c.APIKey != "" {
+	if c.TLSInsecure || c.TLSCert != "" || c.TLSKey != "" || c.TLSCACert != "" || c.JWTToken != "" {
 		// We need to recreate with full config - parse the URL ourselves
 		return c.createClientWithTLS()
 	}
@@ -175,7 +220,7 @@ func (c *Config) createClientWithTLS() (client.Client, error) {
 		TLSCertFile:           c.TLSCert,
 		TLSKeyFile:            c.TLSKey,
 		TLSCAFile:             c.TLSCACert,
-		APIKey:                c.APIKey,
+		JWTToken:              c.JWTToken,
 	}
 
 	// Parse the server URL

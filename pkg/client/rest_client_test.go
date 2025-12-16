@@ -194,6 +194,45 @@ func mockRESTServer(t *testing.T) *httptest.Server {
 		_, _ = w.Write([]byte(`{"key_id":"test-key","private_key_pem":"-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----","certificate_pem":"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----","chain_pem":"-----BEGIN CERTIFICATE-----\nroot\n-----END CERTIFICATE-----"}`))
 	})
 
+	// Key versions endpoint - use trailing slash to match all subpaths
+	mux.HandleFunc("/api/v1/keys/test-key/versions/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+
+		// Handle enable-all
+		if strings.Contains(path, "/enable-all") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","count":3,"message":"all versions enabled"}`))
+			return
+		}
+
+		// Handle disable-all
+		if strings.Contains(path, "/disable-all") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","count":3,"message":"all versions disabled"}`))
+			return
+		}
+
+		// Handle enable specific version
+		if strings.Contains(path, "/enable") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","version":1,"status":"enabled"}`))
+			return
+		}
+
+		// Handle disable specific version
+		if strings.Contains(path, "/disable") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","version":1,"status":"disabled"}`))
+			return
+		}
+
+		// List versions (exact match without trailing slash or just /versions/)
+		_, _ = w.Write([]byte(`{"key_id":"test-key","versions":[{"version":1,"status":"enabled","created_at":"2025-01-01T00:00:00Z"},{"version":2,"status":"enabled","created_at":"2025-01-02T00:00:00Z"},{"version":3,"status":"disabled","created_at":"2025-01-03T00:00:00Z"}],"total":3}`))
+	})
+
+	// Exact match for list versions (without trailing slash)
+	mux.HandleFunc("/api/v1/keys/test-key/versions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_id":"test-key","versions":[{"version":1,"status":"enabled","created_at":"2025-01-01T00:00:00Z"},{"version":2,"status":"enabled","created_at":"2025-01-02T00:00:00Z"},{"version":3,"status":"disabled","created_at":"2025-01-03T00:00:00Z"}],"total":3}`))
+	})
+
 	return httptest.NewServer(mux)
 }
 
@@ -784,7 +823,7 @@ func TestRESTClient_Headers(t *testing.T) {
 	client, _ := New(&Config{
 		Protocol: ProtocolREST,
 		Address:  server.URL,
-		APIKey:   "test-api-key",
+		JWTToken: "test-jwt-token",
 		Headers: map[string]string{
 			"X-Custom-Header": "custom-value",
 		},
@@ -795,8 +834,8 @@ func TestRESTClient_Headers(t *testing.T) {
 
 	_, _ = rc.Health(context.Background())
 
-	if receivedHeaders.Get("X-API-Key") != "test-api-key" {
-		t.Errorf("X-API-Key = %v, want test-api-key", receivedHeaders.Get("X-API-Key"))
+	if receivedHeaders.Get("Authorization") != "Bearer test-jwt-token" {
+		t.Errorf("Authorization = %v, want Bearer test-jwt-token", receivedHeaders.Get("Authorization"))
 	}
 	if receivedHeaders.Get("X-Custom-Header") != "custom-value" {
 		t.Errorf("X-Custom-Header = %v, want custom-value", receivedHeaders.Get("X-Custom-Header"))
@@ -1605,6 +1644,227 @@ func TestRESTClient_NewMethodsJSONParseErrors(t *testing.T) {
 		})
 		if err == nil {
 			t.Error("Expected error for invalid JSON")
+		}
+	})
+}
+
+func TestRESTClient_ListKeyVersions(t *testing.T) {
+	server := mockRESTServer(t)
+	defer server.Close()
+
+	client, err := New(&Config{
+		Protocol: ProtocolREST,
+		Address:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	rc := client.(*restClient)
+	_ = rc.Connect(context.Background())
+
+	resp, err := rc.ListKeyVersions(context.Background(), &ListKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("ListKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("ListKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if len(resp.Versions) != 3 {
+		t.Errorf("ListKeyVersions() version count = %d, want 3", len(resp.Versions))
+	}
+}
+
+func TestRESTClient_EnableKeyVersion(t *testing.T) {
+	server := mockRESTServer(t)
+	defer server.Close()
+
+	client, err := New(&Config{
+		Protocol: ProtocolREST,
+		Address:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	rc := client.(*restClient)
+	_ = rc.Connect(context.Background())
+
+	resp, err := rc.EnableKeyVersion(context.Background(), &EnableKeyVersionRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+		Version: 1,
+	})
+	if err != nil {
+		t.Fatalf("EnableKeyVersion() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("EnableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Status != "enabled" {
+		t.Errorf("EnableKeyVersion().Status = %v, want enabled", resp.Status)
+	}
+}
+
+func TestRESTClient_DisableKeyVersion(t *testing.T) {
+	server := mockRESTServer(t)
+	defer server.Close()
+
+	client, err := New(&Config{
+		Protocol: ProtocolREST,
+		Address:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	rc := client.(*restClient)
+	_ = rc.Connect(context.Background())
+
+	resp, err := rc.DisableKeyVersion(context.Background(), &DisableKeyVersionRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+		Version: 1,
+	})
+	if err != nil {
+		t.Fatalf("DisableKeyVersion() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("DisableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Status != "disabled" {
+		t.Errorf("DisableKeyVersion().Status = %v, want disabled", resp.Status)
+	}
+}
+
+func TestRESTClient_EnableAllKeyVersions(t *testing.T) {
+	server := mockRESTServer(t)
+	defer server.Close()
+
+	client, err := New(&Config{
+		Protocol: ProtocolREST,
+		Address:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	rc := client.(*restClient)
+	_ = rc.Connect(context.Background())
+
+	resp, err := rc.EnableAllKeyVersions(context.Background(), &EnableAllKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("EnableAllKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("EnableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Count != 3 {
+		t.Errorf("EnableAllKeyVersions().Count = %d, want 3", resp.Count)
+	}
+}
+
+func TestRESTClient_DisableAllKeyVersions(t *testing.T) {
+	server := mockRESTServer(t)
+	defer server.Close()
+
+	client, err := New(&Config{
+		Protocol: ProtocolREST,
+		Address:  server.URL,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	rc := client.(*restClient)
+	_ = rc.Connect(context.Background())
+
+	resp, err := rc.DisableAllKeyVersions(context.Background(), &DisableAllKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("DisableAllKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("DisableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Count != 3 {
+		t.Errorf("DisableAllKeyVersions().Count = %d, want 3", resp.Count)
+	}
+}
+
+func TestRESTClient_NotConnected_KeyVersions(t *testing.T) {
+	client, err := New(&Config{
+		Protocol: ProtocolREST,
+		Address:  "http://localhost:9999",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	rc := client.(*restClient)
+
+	t.Run("ListKeyVersions not connected", func(t *testing.T) {
+		_, err := rc.ListKeyVersions(context.Background(), &ListKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != ErrNotConnected {
+			t.Errorf("ListKeyVersions() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("EnableKeyVersion not connected", func(t *testing.T) {
+		_, err := rc.EnableKeyVersion(context.Background(), &EnableKeyVersionRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+			Version: 1,
+		})
+		if err != ErrNotConnected {
+			t.Errorf("EnableKeyVersion() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("DisableKeyVersion not connected", func(t *testing.T) {
+		_, err := rc.DisableKeyVersion(context.Background(), &DisableKeyVersionRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+			Version: 1,
+		})
+		if err != ErrNotConnected {
+			t.Errorf("DisableKeyVersion() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("EnableAllKeyVersions not connected", func(t *testing.T) {
+		_, err := rc.EnableAllKeyVersions(context.Background(), &EnableAllKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != ErrNotConnected {
+			t.Errorf("EnableAllKeyVersions() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("DisableAllKeyVersions not connected", func(t *testing.T) {
+		_, err := rc.DisableAllKeyVersions(context.Background(), &DisableAllKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != ErrNotConnected {
+			t.Errorf("DisableAllKeyVersions() error = %v, want ErrNotConnected", err)
 		}
 	})
 }

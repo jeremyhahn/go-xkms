@@ -224,7 +224,21 @@ jobs:
         run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
       - name: Run gosec security scanner
-        run: gosec -fmt sarif -out gosec-results.sarif ./...
+        # Exclusions (documented in Makefile):
+        #   G103: unsafe calls - required for HID ioctls and protobuf generated code
+        #   G104: unhandled errors - false positive for hash.Write (never returns error)
+        #   G115: Integer overflow conversions - values are bounded by crypto/TPM specs
+        #   G304: File path inclusion - internal paths validated at API boundaries
+        #   G401: sha1.New() - required for OAEP-SHA1 and RSA-AES-KEY-WRAP-SHA1 (legacy compat)
+        #   G407: False positive - gcm.Seal nonce is random (io.ReadFull), not hardcoded
+        #   G505: crypto/sha1 import - required for PKCS standards, cert thumbprints, WebAuthn
+        run: |
+          gosec -exclude=G103,G104,G115,G304,G401,G407,G505 \
+            -exclude-generated \
+            -severity medium \
+            -confidence medium \
+            -exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor \
+            -fmt sarif -out gosec-results.sarif ./...
         continue-on-error: true
 
       - name: Upload gosec results to GitHub Security

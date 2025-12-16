@@ -149,6 +149,11 @@ func (c *restClient) doRequest(ctx context.Context, method, path string, body in
 		req.Header.Set("X-API-Key", c.config.APIKey)
 	}
 
+	// Add JWT token if configured
+	if c.config.JWTToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.config.JWTToken)
+	}
+
 	// Add custom headers
 	for k, v := range c.config.Headers {
 		req.Header.Set(k, v)
@@ -496,6 +501,91 @@ func (c *restClient) RotateKey(ctx context.Context, req *RotateKeyRequest) (*Rot
 	}
 
 	var resp RotateKeyResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// ListKeyVersions lists all versions of a key.
+func (c *restClient) ListKeyVersions(ctx context.Context, req *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error) {
+	path := fmt.Sprintf("/api/v1/keys/%s/versions?backend=%s", url.PathEscape(req.KeyID), url.QueryEscape(req.Backend))
+
+	data, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp ListKeyVersionsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// EnableKeyVersion enables a specific version of a key.
+func (c *restClient) EnableKeyVersion(ctx context.Context, req *EnableKeyVersionRequest) (*EnableKeyVersionResponse, error) {
+	path := fmt.Sprintf("/api/v1/keys/%s/versions/%d/enable?backend=%s", url.PathEscape(req.KeyID), req.Version, url.QueryEscape(req.Backend))
+
+	data, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp EnableKeyVersionResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// DisableKeyVersion disables a specific version of a key.
+func (c *restClient) DisableKeyVersion(ctx context.Context, req *DisableKeyVersionRequest) (*DisableKeyVersionResponse, error) {
+	path := fmt.Sprintf("/api/v1/keys/%s/versions/%d/disable?backend=%s", url.PathEscape(req.KeyID), req.Version, url.QueryEscape(req.Backend))
+
+	data, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp DisableKeyVersionResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// EnableAllKeyVersions enables all versions of a key.
+func (c *restClient) EnableAllKeyVersions(ctx context.Context, req *EnableAllKeyVersionsRequest) (*EnableAllKeyVersionsResponse, error) {
+	path := fmt.Sprintf("/api/v1/keys/%s/versions/enable-all?backend=%s", url.PathEscape(req.KeyID), url.QueryEscape(req.Backend))
+
+	data, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp EnableAllKeyVersionsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// DisableAllKeyVersions disables all versions of a key.
+func (c *restClient) DisableAllKeyVersions(ctx context.Context, req *DisableAllKeyVersionsRequest) (*DisableAllKeyVersionsResponse, error) {
+	path := fmt.Sprintf("/api/v1/keys/%s/versions/disable-all?backend=%s", url.PathEscape(req.KeyID), url.QueryEscape(req.Backend))
+
+	data, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp DisableAllKeyVersionsResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}

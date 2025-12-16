@@ -39,7 +39,6 @@ package ecdh
 import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -125,49 +124,23 @@ func DeriveKey(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
 }
 
 // ecdsaToECDH converts an ECDSA private key to crypto/ecdh private key
+// Uses the native ECDH() method available in Go 1.20+
 func ecdsaToECDH(key *ecdsa.PrivateKey) (*ecdh.PrivateKey, error) {
-	curve, err := curveToECDH(key.Curve)
+	// Use the native ECDH() method for conversion (Go 1.20+)
+	ecdhKey, err := key.ECDH()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to convert ECDSA to ECDH private key: %w", err)
 	}
-
-	// Serialize private key as bytes
-	keyBytes := key.D.Bytes()
-
-	// Pad to the correct size for the curve
-	curveByteLen := (key.Curve.Params().BitSize + 7) / 8
-	if len(keyBytes) < curveByteLen {
-		padded := make([]byte, curveByteLen)
-		copy(padded[curveByteLen-len(keyBytes):], keyBytes)
-		keyBytes = padded
-	}
-
-	return curve.NewPrivateKey(keyBytes)
+	return ecdhKey, nil
 }
 
 // ecdsaPublicToECDH converts an ECDSA public key to crypto/ecdh public key
+// Uses the native ECDH() method available in Go 1.20+
 func ecdsaPublicToECDH(key *ecdsa.PublicKey) (*ecdh.PublicKey, error) {
-	curve, err := curveToECDH(key.Curve)
+	// Use the native ECDH() method for conversion (Go 1.20+)
+	ecdhKey, err := key.ECDH()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to convert ECDSA to ECDH public key: %w", err)
 	}
-
-	// Serialize public key in uncompressed form
-	keyBytes := elliptic.Marshal(key.Curve, key.X, key.Y) //nolint:staticcheck // SA1019: TODO refactor to crypto/ecdh
-
-	return curve.NewPublicKey(keyBytes)
-}
-
-// curveToECDH maps elliptic.Curve to ecdh.Curve
-func curveToECDH(curve elliptic.Curve) (ecdh.Curve, error) {
-	switch curve.Params().Name {
-	case "P-256":
-		return ecdh.P256(), nil
-	case "P-384":
-		return ecdh.P384(), nil
-	case "P-521":
-		return ecdh.P521(), nil
-	default:
-		return nil, fmt.Errorf("unsupported curve: %s", curve.Params().Name)
-	}
+	return ecdhKey, nil
 }

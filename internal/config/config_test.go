@@ -1365,3 +1365,823 @@ func TestApplyEnvOverrides_StorageWithAbsolutePath(t *testing.T) {
 			cfg.Backends.PKCS8.Path, absolutePath)
 	}
 }
+
+// TestGetRateLimitConfig tests the GetRateLimitConfig method
+func TestGetRateLimitConfig(t *testing.T) {
+	cfg := Config{
+		RateLimit: RateLimitConfig{
+			Enabled:            true,
+			RequestsPerMin:     6000,
+			Burst:              200,
+			CleanupIntervalSec: 300,
+		},
+	}
+
+	rlCfg := cfg.GetRateLimitConfig()
+
+	if rlCfg == nil {
+		t.Fatal("GetRateLimitConfig() returned nil")
+	}
+
+	if !rlCfg.Enabled {
+		t.Error("GetRateLimitConfig().Enabled = false, want true")
+	}
+
+	if rlCfg.RequestsPerMin != 6000 {
+		t.Errorf("GetRateLimitConfig().RequestsPerMin = %v, want 6000", rlCfg.RequestsPerMin)
+	}
+
+	if rlCfg.Burst != 200 {
+		t.Errorf("GetRateLimitConfig().Burst = %v, want 200", rlCfg.Burst)
+	}
+
+	if rlCfg.CleanupIntervalSec != 300 {
+		t.Errorf("GetRateLimitConfig().CleanupIntervalSec = %v, want 300", rlCfg.CleanupIntervalSec)
+	}
+}
+
+// TestGetRateLimitConfig_Disabled tests GetRateLimitConfig with disabled rate limiting
+func TestGetRateLimitConfig_Disabled(t *testing.T) {
+	cfg := Config{
+		RateLimit: RateLimitConfig{
+			Enabled: false,
+		},
+	}
+
+	rlCfg := cfg.GetRateLimitConfig()
+
+	if rlCfg == nil {
+		t.Fatal("GetRateLimitConfig() returned nil")
+	}
+
+	if rlCfg.Enabled {
+		t.Error("GetRateLimitConfig().Enabled = true, want false")
+	}
+}
+
+// TestGetRNGConfig tests the GetRNGConfig method
+func TestGetRNGConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        RNGConfig
+		wantMode     string
+		wantFallback string
+	}{
+		{
+			name:         "empty config - defaults applied",
+			input:        RNGConfig{},
+			wantMode:     "auto",
+			wantFallback: "software",
+		},
+		{
+			name: "explicit mode - no fallback",
+			input: RNGConfig{
+				Mode: "tpm2",
+			},
+			wantMode:     "tpm2",
+			wantFallback: "software",
+		},
+		{
+			name: "explicit mode and fallback",
+			input: RNGConfig{
+				Mode:         "tpm2",
+				FallbackMode: "pkcs11",
+			},
+			wantMode:     "tpm2",
+			wantFallback: "pkcs11",
+		},
+		{
+			name: "software mode",
+			input: RNGConfig{
+				Mode: "software",
+			},
+			wantMode:     "software",
+			wantFallback: "software",
+		},
+		{
+			name: "auto mode explicitly set",
+			input: RNGConfig{
+				Mode:         "auto",
+				FallbackMode: "software",
+			},
+			wantMode:     "auto",
+			wantFallback: "software",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{RNG: tt.input}
+			rngCfg := cfg.GetRNGConfig()
+
+			if rngCfg == nil {
+				t.Fatal("GetRNGConfig() returned nil")
+			}
+
+			if rngCfg.Mode != tt.wantMode {
+				t.Errorf("GetRNGConfig().Mode = %v, want %v", rngCfg.Mode, tt.wantMode)
+			}
+
+			if rngCfg.FallbackMode != tt.wantFallback {
+				t.Errorf("GetRNGConfig().FallbackMode = %v, want %v", rngCfg.FallbackMode, tt.wantFallback)
+			}
+		})
+	}
+}
+
+// TestGetRNGConfig_TPM2Settings tests GetRNGConfig preserves TPM2 settings
+func TestGetRNGConfig_TPM2Settings(t *testing.T) {
+	cfg := Config{
+		RNG: RNGConfig{
+			Mode:         "tpm2",
+			FallbackMode: "software",
+			TPM2: &RNGTPM2Config{
+				Device:        "/dev/tpmrm0",
+				UseSimulator:  false,
+				SimulatorHost: "localhost",
+				SimulatorPort: 2321,
+			},
+		},
+	}
+
+	rngCfg := cfg.GetRNGConfig()
+
+	if rngCfg.TPM2 == nil {
+		t.Fatal("GetRNGConfig().TPM2 should not be nil")
+	}
+
+	if rngCfg.TPM2.Device != "/dev/tpmrm0" {
+		t.Errorf("GetRNGConfig().TPM2.Device = %v, want /dev/tpmrm0", rngCfg.TPM2.Device)
+	}
+
+	if rngCfg.TPM2.UseSimulator {
+		t.Error("GetRNGConfig().TPM2.UseSimulator = true, want false")
+	}
+}
+
+// TestApplyEnvOverrides_NewKeychainEnvVars tests KEYCHAIN_* environment variable overrides
+func TestApplyEnvOverrides_NewKeychainEnvVars(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		initial  Config
+		expected Config
+	}{
+		{
+			name: "KEYCHAIN_HOST override",
+			env: map[string]string{
+				"KEYCHAIN_HOST": "192.168.1.1",
+			},
+			initial: Config{
+				Server: ServerConfig{Host: "localhost"},
+			},
+			expected: Config{
+				Server: ServerConfig{Host: "192.168.1.1"},
+			},
+		},
+		{
+			name: "KEYCHAIN_REST_PORT override",
+			env: map[string]string{
+				"KEYCHAIN_REST_PORT": "7443",
+			},
+			initial: Config{
+				Server: ServerConfig{RESTPort: 8443},
+			},
+			expected: Config{
+				Server: ServerConfig{RESTPort: 7443},
+			},
+		},
+		{
+			name: "KEYCHAIN_GRPC_PORT override",
+			env: map[string]string{
+				"KEYCHAIN_GRPC_PORT": "7444",
+			},
+			initial: Config{
+				Server: ServerConfig{GRPCPort: 9443},
+			},
+			expected: Config{
+				Server: ServerConfig{GRPCPort: 7444},
+			},
+		},
+		{
+			name: "KEYCHAIN_QUIC_PORT override",
+			env: map[string]string{
+				"KEYCHAIN_QUIC_PORT": "7445",
+			},
+			initial: Config{
+				Server: ServerConfig{QUICPort: 8444},
+			},
+			expected: Config{
+				Server: ServerConfig{QUICPort: 7445},
+			},
+		},
+		{
+			name: "KEYCHAIN_MCP_PORT override",
+			env: map[string]string{
+				"KEYCHAIN_MCP_PORT": "7446",
+			},
+			initial: Config{
+				Server: ServerConfig{MCPPort: 9444},
+			},
+			expected: Config{
+				Server: ServerConfig{MCPPort: 7446},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set environment variables
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := tt.initial
+			applyEnvOverrides(&cfg)
+
+			if cfg.Server.Host != tt.expected.Server.Host && tt.expected.Server.Host != "" {
+				t.Errorf("Server.Host = %v, want %v", cfg.Server.Host, tt.expected.Server.Host)
+			}
+			if cfg.Server.RESTPort != tt.expected.Server.RESTPort && tt.expected.Server.RESTPort != 0 {
+				t.Errorf("Server.RESTPort = %v, want %v", cfg.Server.RESTPort, tt.expected.Server.RESTPort)
+			}
+			if cfg.Server.GRPCPort != tt.expected.Server.GRPCPort && tt.expected.Server.GRPCPort != 0 {
+				t.Errorf("Server.GRPCPort = %v, want %v", cfg.Server.GRPCPort, tt.expected.Server.GRPCPort)
+			}
+			if cfg.Server.QUICPort != tt.expected.Server.QUICPort && tt.expected.Server.QUICPort != 0 {
+				t.Errorf("Server.QUICPort = %v, want %v", cfg.Server.QUICPort, tt.expected.Server.QUICPort)
+			}
+			if cfg.Server.MCPPort != tt.expected.Server.MCPPort && tt.expected.Server.MCPPort != 0 {
+				t.Errorf("Server.MCPPort = %v, want %v", cfg.Server.MCPPort, tt.expected.Server.MCPPort)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_UnixSocketSettings tests Unix socket environment overrides
+func TestApplyEnvOverrides_UnixSocketSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		initial  UnixConfig
+		expected UnixConfig
+	}{
+		{
+			name: "socket path override",
+			env: map[string]string{
+				"KEYCHAIN_SOCKET_PATH": "/var/run/keychain.sock",
+			},
+			initial:  UnixConfig{SocketPath: "/tmp/keychain.sock"},
+			expected: UnixConfig{SocketPath: "/var/run/keychain.sock"},
+		},
+		{
+			name: "socket mode override",
+			env: map[string]string{
+				"KEYCHAIN_SOCKET_MODE": "0660",
+			},
+			initial:  UnixConfig{SocketMode: "0600"},
+			expected: UnixConfig{SocketMode: "0660"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{Unix: tt.initial}
+			applyEnvOverrides(&cfg)
+
+			if tt.expected.SocketPath != "" && cfg.Unix.SocketPath != tt.expected.SocketPath {
+				t.Errorf("Unix.SocketPath = %v, want %v", cfg.Unix.SocketPath, tt.expected.SocketPath)
+			}
+			if tt.expected.SocketMode != "" && cfg.Unix.SocketMode != tt.expected.SocketMode {
+				t.Errorf("Unix.SocketMode = %v, want %v", cfg.Unix.SocketMode, tt.expected.SocketMode)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_InvalidPortRanges tests port out of range handling
+func TestApplyEnvOverrides_InvalidPortRanges(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     map[string]string
+		initial int
+		field   string
+	}{
+		{
+			name:    "REST port too high",
+			env:     map[string]string{"KEYSTORE_REST_PORT": "70000"},
+			initial: 8443,
+			field:   "REST",
+		},
+		{
+			name:    "gRPC port too high",
+			env:     map[string]string{"KEYSTORE_GRPC_PORT": "99999"},
+			initial: 9443,
+			field:   "gRPC",
+		},
+		{
+			name:    "QUIC port too high",
+			env:     map[string]string{"KEYSTORE_QUIC_PORT": "100000"},
+			initial: 8444,
+			field:   "QUIC",
+		},
+		{
+			name:    "MCP port too high",
+			env:     map[string]string{"KEYSTORE_MCP_PORT": "65536"},
+			initial: 9444,
+			field:   "MCP",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{
+				Server: ServerConfig{
+					RESTPort: 8443,
+					GRPCPort: 9443,
+					QUICPort: 8444,
+					MCPPort:  9444,
+				},
+			}
+			applyEnvOverrides(&cfg)
+
+			// Port should remain at original value when out of range
+			var actualPort int
+			switch tt.field {
+			case "REST":
+				actualPort = cfg.Server.RESTPort
+			case "gRPC":
+				actualPort = cfg.Server.GRPCPort
+			case "QUIC":
+				actualPort = cfg.Server.QUICPort
+			case "MCP":
+				actualPort = cfg.Server.MCPPort
+			}
+
+			if actualPort != tt.initial {
+				t.Errorf("Server.%sPort = %v, want %v (should not change for out of range)", tt.field, actualPort, tt.initial)
+			}
+		})
+	}
+}
+
+// TestValidate_SoftwareBackend tests validation of software backend
+func TestValidate_SoftwareBackend(t *testing.T) {
+	cfg := Config{
+		Protocols: ProtocolsConfig{REST: true},
+		Server:    ServerConfig{RESTPort: 8443},
+		Logging:   LoggingConfig{Level: "info", Format: "json"},
+		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Default:   "software",
+		Backends: BackendsConfig{
+			Software: &SoftwareConfig{Enabled: true, Path: "/data/software"},
+		},
+	}
+
+	err := cfg.Validate()
+	if err != nil {
+		t.Errorf("Validate() error = %v, want nil for software backend", err)
+	}
+}
+
+// TestGetEnabledBackends_SoftwareBackend tests GetEnabledBackends with software backend
+func TestGetEnabledBackends_SoftwareBackend(t *testing.T) {
+	cfg := Config{
+		Backends: BackendsConfig{
+			Software: &SoftwareConfig{Enabled: true},
+			PKCS8:    &PKCS8Config{Enabled: true},
+		},
+	}
+
+	backends := cfg.GetEnabledBackends()
+
+	if len(backends) != 2 {
+		t.Errorf("GetEnabledBackends() returned %d backends, want 2", len(backends))
+		return
+	}
+
+	// Check software is first
+	if backends[0] != "software" {
+		t.Errorf("GetEnabledBackends()[0] = %v, want software", backends[0])
+	}
+
+	if backends[1] != "pkcs8" {
+		t.Errorf("GetEnabledBackends()[1] = %v, want pkcs8", backends[1])
+	}
+}
+
+// TestApplyEnvOverrides_UnixProtocol tests KEYCHAIN_UNIX_PROTOCOL environment variable
+func TestApplyEnvOverrides_UnixProtocol(t *testing.T) {
+	if err := os.Setenv("KEYCHAIN_UNIX_PROTOCOL", "http"); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Unsetenv("KEYCHAIN_UNIX_PROTOCOL") }()
+
+	cfg := Config{
+		Unix: UnixConfig{Protocol: "grpc"},
+	}
+	applyEnvOverrides(&cfg)
+
+	if cfg.Unix.Protocol != "http" {
+		t.Errorf("Unix.Protocol = %v, want http", cfg.Unix.Protocol)
+	}
+}
+
+// TestApplyEnvOverrides_LoggingSettings tests logging environment variables
+func TestApplyEnvOverrides_LoggingSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		initial  LoggingConfig
+		expected LoggingConfig
+	}{
+		{
+			name: "KEYCHAIN_LOG_LEVEL override",
+			env: map[string]string{
+				"KEYCHAIN_LOG_LEVEL": "debug",
+			},
+			initial:  LoggingConfig{Level: "info"},
+			expected: LoggingConfig{Level: "debug"},
+		},
+		{
+			name: "KEYSTORE_LOG_LEVEL legacy override",
+			env: map[string]string{
+				"KEYSTORE_LOG_LEVEL": "warn",
+			},
+			initial:  LoggingConfig{Level: "info"},
+			expected: LoggingConfig{Level: "warn"},
+		},
+		{
+			name: "KEYCHAIN_LOG_FORMAT override",
+			env: map[string]string{
+				"KEYCHAIN_LOG_FORMAT": "text",
+			},
+			initial:  LoggingConfig{Format: "json"},
+			expected: LoggingConfig{Format: "text"},
+		},
+		{
+			name: "KEYSTORE_LOG_FORMAT legacy override",
+			env: map[string]string{
+				"KEYSTORE_LOG_FORMAT": "text",
+			},
+			initial:  LoggingConfig{Format: "json"},
+			expected: LoggingConfig{Format: "text"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{Logging: tt.initial}
+			applyEnvOverrides(&cfg)
+
+			if tt.expected.Level != "" && cfg.Logging.Level != tt.expected.Level {
+				t.Errorf("Logging.Level = %v, want %v", cfg.Logging.Level, tt.expected.Level)
+			}
+			if tt.expected.Format != "" && cfg.Logging.Format != tt.expected.Format {
+				t.Errorf("Logging.Format = %v, want %v", cfg.Logging.Format, tt.expected.Format)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_DataDir tests KEYCHAIN_DATA_DIR and KEYSTORE_DATA_DIR
+func TestApplyEnvOverrides_DataDir(t *testing.T) {
+	tests := []struct {
+		name            string
+		env             map[string]string
+		initialStorage  string
+		initialPKCS8    string
+		expectedStorage string
+		expectedPKCS8   string
+	}{
+		{
+			name:            "KEYCHAIN_DATA_DIR override",
+			env:             map[string]string{"KEYCHAIN_DATA_DIR": "/new/data"},
+			initialStorage:  "/old/data",
+			initialPKCS8:    "pkcs8", // relative path
+			expectedStorage: "/new/data",
+			expectedPKCS8:   "/new/data/pkcs8",
+		},
+		{
+			name:            "KEYSTORE_DATA_DIR legacy override",
+			env:             map[string]string{"KEYSTORE_DATA_DIR": "/legacy/data"},
+			initialStorage:  "/old/data",
+			initialPKCS8:    "pkcs8", // relative path
+			expectedStorage: "/legacy/data",
+			expectedPKCS8:   "/legacy/data/pkcs8",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{
+				Storage: StorageConfig{Path: tt.initialStorage},
+				Backends: BackendsConfig{
+					PKCS8: &PKCS8Config{Path: tt.initialPKCS8},
+				},
+			}
+			applyEnvOverrides(&cfg)
+
+			if cfg.Storage.Path != tt.expectedStorage {
+				t.Errorf("Storage.Path = %v, want %v", cfg.Storage.Path, tt.expectedStorage)
+			}
+			if cfg.Backends.PKCS8.Path != tt.expectedPKCS8 {
+				t.Errorf("Backends.PKCS8.Path = %v, want %v", cfg.Backends.PKCS8.Path, tt.expectedPKCS8)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_RateLimitSettings tests rate limiting environment variables
+func TestApplyEnvOverrides_RateLimitSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		initial  RateLimitConfig
+		expected RateLimitConfig
+	}{
+		{
+			name:     "KEYCHAIN_RATELIMIT_ENABLED true",
+			env:      map[string]string{"KEYCHAIN_RATELIMIT_ENABLED": "true"},
+			initial:  RateLimitConfig{Enabled: false},
+			expected: RateLimitConfig{Enabled: true},
+		},
+		{
+			name:     "KEYSTORE_RATELIMIT_ENABLED legacy",
+			env:      map[string]string{"KEYSTORE_RATELIMIT_ENABLED": "true"},
+			initial:  RateLimitConfig{Enabled: false},
+			expected: RateLimitConfig{Enabled: true},
+		},
+		{
+			name:     "KEYCHAIN_RATELIMIT_REQUESTS_PER_MIN",
+			env:      map[string]string{"KEYCHAIN_RATELIMIT_REQUESTS_PER_MIN": "100"},
+			initial:  RateLimitConfig{RequestsPerMin: 60},
+			expected: RateLimitConfig{RequestsPerMin: 100},
+		},
+		{
+			name:     "KEYSTORE_RATELIMIT_REQUESTS_PER_MIN legacy",
+			env:      map[string]string{"KEYSTORE_RATELIMIT_REQUESTS_PER_MIN": "200"},
+			initial:  RateLimitConfig{RequestsPerMin: 60},
+			expected: RateLimitConfig{RequestsPerMin: 200},
+		},
+		{
+			name:     "KEYCHAIN_RATELIMIT_BURST",
+			env:      map[string]string{"KEYCHAIN_RATELIMIT_BURST": "50"},
+			initial:  RateLimitConfig{Burst: 10},
+			expected: RateLimitConfig{Burst: 50},
+		},
+		{
+			name:     "KEYSTORE_RATELIMIT_BURST legacy",
+			env:      map[string]string{"KEYSTORE_RATELIMIT_BURST": "75"},
+			initial:  RateLimitConfig{Burst: 10},
+			expected: RateLimitConfig{Burst: 75},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{RateLimit: tt.initial}
+			applyEnvOverrides(&cfg)
+
+			if tt.expected.Enabled != cfg.RateLimit.Enabled {
+				t.Errorf("RateLimit.Enabled = %v, want %v", cfg.RateLimit.Enabled, tt.expected.Enabled)
+			}
+			if tt.expected.RequestsPerMin != 0 && cfg.RateLimit.RequestsPerMin != tt.expected.RequestsPerMin {
+				t.Errorf("RateLimit.RequestsPerMin = %v, want %v", cfg.RateLimit.RequestsPerMin, tt.expected.RequestsPerMin)
+			}
+			if tt.expected.Burst != 0 && cfg.RateLimit.Burst != tt.expected.Burst {
+				t.Errorf("RateLimit.Burst = %v, want %v", cfg.RateLimit.Burst, tt.expected.Burst)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_RNGSettings tests RNG environment variables
+func TestApplyEnvOverrides_RNGSettings(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		initial  RNGConfig
+		expected RNGConfig
+	}{
+		{
+			name:     "KEYCHAIN_RNG_MODE",
+			env:      map[string]string{"KEYCHAIN_RNG_MODE": "hardware"},
+			initial:  RNGConfig{Mode: "software"},
+			expected: RNGConfig{Mode: "hardware"},
+		},
+		{
+			name:     "KEYCHAIN_RNG_FALLBACK",
+			env:      map[string]string{"KEYCHAIN_RNG_FALLBACK": "software"},
+			initial:  RNGConfig{FallbackMode: ""},
+			expected: RNGConfig{FallbackMode: "software"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{RNG: tt.initial}
+			applyEnvOverrides(&cfg)
+
+			if tt.expected.Mode != "" && cfg.RNG.Mode != tt.expected.Mode {
+				t.Errorf("RNG.Mode = %v, want %v", cfg.RNG.Mode, tt.expected.Mode)
+			}
+			if tt.expected.FallbackMode != "" && cfg.RNG.FallbackMode != tt.expected.FallbackMode {
+				t.Errorf("RNG.FallbackMode = %v, want %v", cfg.RNG.FallbackMode, tt.expected.FallbackMode)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_RNGTPM2Settings tests RNG TPM2 environment variables
+func TestApplyEnvOverrides_RNGTPM2Settings(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		validate func(t *testing.T, cfg *Config)
+	}{
+		{
+			name: "KEYCHAIN_RNG_TPM2_DEVICE creates config",
+			env:  map[string]string{"KEYCHAIN_RNG_TPM2_DEVICE": "/dev/tpm0"},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.RNG.TPM2 == nil {
+					t.Fatal("RNG.TPM2 should not be nil")
+				}
+				if cfg.RNG.TPM2.Device != "/dev/tpm0" {
+					t.Errorf("RNG.TPM2.Device = %v, want /dev/tpm0", cfg.RNG.TPM2.Device)
+				}
+			},
+		},
+		{
+			name: "KEYCHAIN_RNG_TPM2_SIMULATOR_HOST creates config",
+			env:  map[string]string{"KEYCHAIN_RNG_TPM2_SIMULATOR_HOST": "localhost"},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.RNG.TPM2 == nil {
+					t.Fatal("RNG.TPM2 should not be nil")
+				}
+				if cfg.RNG.TPM2.SimulatorHost != "localhost" {
+					t.Errorf("RNG.TPM2.SimulatorHost = %v, want localhost", cfg.RNG.TPM2.SimulatorHost)
+				}
+				if !cfg.RNG.TPM2.UseSimulator {
+					t.Error("RNG.TPM2.UseSimulator should be true")
+				}
+			},
+		},
+		{
+			name: "KEYCHAIN_RNG_TPM2_SIMULATOR_PORT creates config",
+			env:  map[string]string{"KEYCHAIN_RNG_TPM2_SIMULATOR_PORT": "2321"},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.RNG.TPM2 == nil {
+					t.Fatal("RNG.TPM2 should not be nil")
+				}
+				if cfg.RNG.TPM2.SimulatorPort != 2321 {
+					t.Errorf("RNG.TPM2.SimulatorPort = %v, want 2321", cfg.RNG.TPM2.SimulatorPort)
+				}
+				if !cfg.RNG.TPM2.UseSimulator {
+					t.Error("RNG.TPM2.UseSimulator should be true")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{}
+			applyEnvOverrides(&cfg)
+			tt.validate(t, &cfg)
+		})
+	}
+}
+
+// TestApplyEnvOverrides_RNGPKCS11Settings tests RNG PKCS#11 environment variables
+func TestApplyEnvOverrides_RNGPKCS11Settings(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		validate func(t *testing.T, cfg *Config)
+	}{
+		{
+			name: "KEYCHAIN_RNG_PKCS11_MODULE creates config",
+			env:  map[string]string{"KEYCHAIN_RNG_PKCS11_MODULE": "/usr/lib/libp11.so"},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.RNG.PKCS11 == nil {
+					t.Fatal("RNG.PKCS11 should not be nil")
+				}
+				if cfg.RNG.PKCS11.Module != "/usr/lib/libp11.so" {
+					t.Errorf("RNG.PKCS11.Module = %v, want /usr/lib/libp11.so", cfg.RNG.PKCS11.Module)
+				}
+			},
+		},
+		{
+			name: "KEYCHAIN_RNG_PKCS11_SLOT creates config",
+			env:  map[string]string{"KEYCHAIN_RNG_PKCS11_SLOT": "1"},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.RNG.PKCS11 == nil {
+					t.Fatal("RNG.PKCS11 should not be nil")
+				}
+				if cfg.RNG.PKCS11.SlotID != 1 {
+					t.Errorf("RNG.PKCS11.SlotID = %v, want 1", cfg.RNG.PKCS11.SlotID)
+				}
+			},
+		},
+		{
+			name: "KEYCHAIN_RNG_PKCS11_PIN creates config",
+			env:  map[string]string{"KEYCHAIN_RNG_PKCS11_PIN": "1234"},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.RNG.PKCS11 == nil {
+					t.Fatal("RNG.PKCS11 should not be nil")
+				}
+				if cfg.RNG.PKCS11.PIN != "1234" {
+					t.Errorf("RNG.PKCS11.PIN = %v, want 1234", cfg.RNG.PKCS11.PIN)
+				}
+				if !cfg.RNG.PKCS11.PINRequired {
+					t.Error("RNG.PKCS11.PINRequired should be true")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				if err := os.Setenv(key, value); err != nil {
+					t.Fatal(err)
+				}
+				defer func(k string) { _ = os.Unsetenv(k) }(key)
+			}
+
+			cfg := Config{}
+			applyEnvOverrides(&cfg)
+			tt.validate(t, &cfg)
+		})
+	}
+}
+
+// TestValidate_InvalidDefaultBackend tests validation with invalid default backend
+func TestValidate_InvalidDefaultBackend(t *testing.T) {
+	cfg := Config{
+		Protocols: ProtocolsConfig{REST: true},
+		Server:    ServerConfig{RESTPort: 8443},
+		Logging:   LoggingConfig{Level: "info", Format: "json"},
+		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Default:   "nonexistent",
+		Backends:  BackendsConfig{},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Error("Validate() should return error for invalid default backend")
+	}
+}

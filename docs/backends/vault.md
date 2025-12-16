@@ -1043,7 +1043,7 @@ services:
 
 ```bash
 #!/bin/bash
-# scripts/setup-vault-transit.sh
+# test/scripts/setup-vault-transit.sh
 
 VAULT_ADDR="${VAULT_ADDR:-http://localhost:8200}"
 VAULT_TOKEN="${VAULT_TOKEN:-root}"

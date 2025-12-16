@@ -13,30 +13,38 @@
 
 package server
 
+import (
+	"fmt"
+
+	tpm2backend "github.com/jeremyhahn/go-keychain/pkg/backend/tpm2"
+)
+
 // initTPM2Backend initializes the TPM2 backend if enabled in configuration
 func (s *Server) initTPM2Backend() error {
 	if s.config.Backends.TPM2 == nil || !s.config.Backends.TPM2.Enabled {
 		return nil
 	}
 
-	// Get device path for logging
+	// Get device path with default
 	devicePath := s.config.Backends.TPM2.DevicePath
 	if devicePath == "" {
 		devicePath = "/dev/tpmrm0"
 	}
 
-	// TODO: TPM2 backend not yet fully integrated
-	// The following issues need to be resolved:
-	// 1. Interface conflicts between storage.Backend and store.CertificateStorer
-	//    - Conflicting Delete method signatures prevent type assertions
-	//    - Requires adapter pattern for storage.Backend -> store.BlobStorer/CertificateStorer
-	// 2. Interface conflict between TrustedPlatformModule and types.Backend
-	//    - Missing Capabilities() (types.Capabilities, error) method
-	//    - Conflicting DeleteKey signature
-	//    - Requires adapter wrapper to implement types.Backend interface
-	// 3. TPM2.NewTPM2() panics with nil BlobStore/CertStore
-	//
-	// A proper pkg/backend/tpm2 wrapper should be created similar to awskms, azurekv, etc.
-	s.logger.Info("TPM2 backend not enabled (not yet integrated)", "backend", "tpm2", "device", devicePath)
+	// Create TPM2 backend configuration
+	tpmConfig := &tpm2backend.Config{
+		Device: devicePath,
+		KeyDir: s.config.Storage.Path + "/tpm2-keys",
+		CN:     "keychain",
+	}
+
+	// Create TPM2 backend
+	tpmBackend, err := tpm2backend.NewBackend(tpmConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create TPM2 backend: %w", err)
+	}
+
+	s.backends["tpm2"] = tpmBackend
+	s.logger.Info("TPM2 backend initialized", "backend", "tpm2", "device", devicePath)
 	return nil
 }

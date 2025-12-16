@@ -62,7 +62,7 @@ func init() {
 		"config file (default is $HOME/.keychain.yaml)")
 	rootCmd.PersistentFlags().StringVar(&globalConfig.Backend, "backend", "software",
 		"backend to use (software, pkcs11, tpm2, awskms, gcpkms, azurekv, vault)")
-	rootCmd.PersistentFlags().StringVar(&globalConfig.KeyDir, "key-dir", "/tmp/keystore",
+	rootCmd.PersistentFlags().StringVar(&globalConfig.KeyDir, "key-dir", "keychain-data/keys",
 		"directory for key storage (for file-based backends)")
 	rootCmd.PersistentFlags().StringVarP(&globalConfig.OutputFormat, "output", "o", "text",
 		"output format (text, json, table)")
@@ -75,7 +75,7 @@ func init() {
 
 	// Server connection flags
 	rootCmd.PersistentFlags().StringVarP(&globalConfig.Server, "server", "s", "",
-		"keychain server URL (default: unix:///var/run/keychain/keychain.sock)\n"+
+		"keychain server URL (default: keychain-data/keychain.sock)\n"+
 			"Supported formats:\n"+
 			"  unix:///path/to/socket.sock\n"+
 			"  http://host:port or https://host:port (REST)\n"+
@@ -92,9 +92,9 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&globalConfig.TLSCACert, "tls-ca", "",
 		"path to CA certificate file for server verification")
 
-	// API key for authentication
-	rootCmd.PersistentFlags().StringVar(&globalConfig.APIKey, "api-key", "",
-		"API key for server authentication")
+	// JWT token for authentication (obtained via 'user login' command)
+	rootCmd.PersistentFlags().StringVar(&globalConfig.JWTToken, "token", "",
+		"JWT token for server authentication (use 'user login' to obtain)")
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
@@ -104,6 +104,7 @@ func init() {
 	rootCmd.AddCommand(tlsCmd)
 	rootCmd.AddCommand(fido2Cmd)
 	rootCmd.AddCommand(adminCmd)
+	rootCmd.AddCommand(userCmd)
 }
 
 // getConfig returns the global configuration

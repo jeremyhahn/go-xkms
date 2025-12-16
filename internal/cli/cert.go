@@ -15,10 +15,21 @@ package cli
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/client"
 	"github.com/spf13/cobra"
@@ -657,6 +668,600 @@ func getChainRemote(cfg *Config, printer *Printer, keyID string) {
 	}
 }
 
+// Helper functions for certificate generation
+
+// generateCA creates a self-signed CA certificate
+func generateCA(cn, org, ou, country, province, locality string, validityDays int, keyAlg string, keySize int) (*x509.Certificate, crypto.PrivateKey, error) {
+	// Generate key pair
+	privKey, err := generateKeyPair(keyAlg, keySize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
+	}
+
+	// Generate serial number
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	// Build subject
+	subject := pkix.Name{
+		CommonName: cn,
+	}
+	if org != "" {
+		subject.Organization = []string{org}
+	}
+	if ou != "" {
+		subject.OrganizationalUnit = []string{ou}
+	}
+	if country != "" {
+		subject.Country = []string{country}
+	}
+	if province != "" {
+		subject.Province = []string{province}
+	}
+	if locality != "" {
+		subject.Locality = []string{locality}
+	}
+
+	// Create certificate template
+	notBefore := time.Now()
+	notAfter := notBefore.Add(time.Duration(validityDays) * 24 * time.Hour)
+
+	template := &x509.Certificate{
+		SerialNumber:          serialNumber,
+		Subject:               subject,
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            2,
+		MaxPathLenZero:        false,
+	}
+
+	// Get public key
+	pubKey := getPublicKey(privKey)
+
+	// Self-sign the certificate
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, pubKey, privKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Parse the certificate
+	cert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	return cert, privKey, nil
+}
+
+// issueCertificate creates a certificate signed by a CA
+func issueCertificate(
+	caCert *x509.Certificate, caKey interface{},
+	cn, certType, org, ou, country, province, locality string,
+	validityDays int, keyAlg string, keySize int,
+	dnsNames []string, ipAddresses []net.IP, emailAddresses []string,
+) (*x509.Certificate, crypto.PrivateKey, error) {
+	// Generate key pair
+	privKey, err := generateKeyPair(keyAlg, keySize)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate key pair: %w", err)
+	}
+
+	// Generate serial number
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	// Build subject
+	subject := pkix.Name{
+		CommonName: cn,
+	}
+	if org != "" {
+		subject.Organization = []string{org}
+	}
+	if ou != "" {
+		subject.OrganizationalUnit = []string{ou}
+	}
+	if country != "" {
+		subject.Country = []string{country}
+	}
+	if province != "" {
+		subject.Province = []string{province}
+	}
+	if locality != "" {
+		subject.Locality = []string{locality}
+	}
+
+	// Create certificate template
+	notBefore := time.Now()
+	notAfter := notBefore.Add(time.Duration(validityDays) * 24 * time.Hour)
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject:      subject,
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		DNSNames:     dnsNames,
+		IPAddresses:  ipAddresses,
+	}
+
+	// Set extended key usage based on certificate type
+	switch strings.ToLower(certType) {
+	case "server":
+		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		// Add CN to DNS names if not already present
+		if len(dnsNames) == 0 {
+			template.DNSNames = []string{cn}
+		}
+	case "client":
+		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+		template.EmailAddresses = emailAddresses
+		if len(emailAddresses) == 0 && strings.Contains(cn, "@") {
+			template.EmailAddresses = []string{cn}
+		}
+	default:
+		// Both server and client auth
+		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
+	}
+
+	// Get public key
+	pubKey := getPublicKey(privKey)
+
+	// Sign the certificate with CA
+	certBytes, err := x509.CreateCertificate(rand.Reader, template, caCert, pubKey, caKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Parse the certificate
+	cert, err := x509.ParseCertificate(certBytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+
+	return cert, privKey, nil
+}
+
+// generateKeyPair generates a key pair based on the algorithm
+func generateKeyPair(algorithm string, size int) (crypto.PrivateKey, error) {
+	switch strings.ToLower(algorithm) {
+	case "rsa":
+		if size < 2048 {
+			size = 2048
+		}
+		return rsa.GenerateKey(rand.Reader, size)
+	case "ecdsa", "ec":
+		var curve elliptic.Curve
+		switch size {
+		case 384:
+			curve = elliptic.P384()
+		case 521:
+			curve = elliptic.P521()
+		default:
+			curve = elliptic.P256()
+		}
+		return ecdsa.GenerateKey(curve, rand.Reader)
+	case "ed25519":
+		_, privKey, err := ed25519.GenerateKey(rand.Reader)
+		return privKey, err
+	default:
+		// Default to ECDSA P-256
+		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	}
+}
+
+// getPublicKey extracts the public key from a private key
+func getPublicKey(privKey crypto.PrivateKey) crypto.PublicKey {
+	switch k := privKey.(type) {
+	case *rsa.PrivateKey:
+		return &k.PublicKey
+	case *ecdsa.PrivateKey:
+		return &k.PublicKey
+	case ed25519.PrivateKey:
+		return k.Public()
+	default:
+		return nil
+	}
+}
+
+// splitAndTrim splits a comma-separated string and trims whitespace
+func splitAndTrim(s string) []string {
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// certGenerateCACmd generates a Certificate Authority
+var certGenerateCACmd = &cobra.Command{
+	Use:   "generate-ca",
+	Short: "Generate a Certificate Authority",
+	Long: `Generate a self-signed Certificate Authority (CA) certificate.
+
+This creates a new CA that can be used to sign server and client certificates.
+The CA private key and certificate will be stored in the keychain.
+
+Example:
+  keychain cert generate-ca --cn "My Root CA" --org "My Company"
+  keychain cert generate-ca --cn "My Root CA" --output ca.crt --key-output ca.key`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		cn, _ := cmd.Flags().GetString("cn")
+		org, _ := cmd.Flags().GetString("org")
+		ou, _ := cmd.Flags().GetString("ou")
+		country, _ := cmd.Flags().GetString("country")
+		province, _ := cmd.Flags().GetString("province")
+		locality, _ := cmd.Flags().GetString("locality")
+		validityDays, _ := cmd.Flags().GetInt("validity")
+		keyAlg, _ := cmd.Flags().GetString("key-algorithm")
+		keySize, _ := cmd.Flags().GetInt("key-size")
+		outputFile, _ := cmd.Flags().GetString("output")
+		keyOutputFile, _ := cmd.Flags().GetString("key-output")
+
+		if cn == "" {
+			handleError(fmt.Errorf("common name (--cn) is required"))
+			return
+		}
+
+		printVerbose("Generating CA certificate for: %s", cn)
+
+		// Generate CA using local keychain
+		caCert, caKey, err := generateCA(cn, org, ou, country, province, locality, validityDays, keyAlg, keySize)
+		if err != nil {
+			handleError(fmt.Errorf("failed to generate CA: %w", err))
+			return
+		}
+
+		// Output certificate
+		certPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: caCert.Raw,
+		})
+
+		// Output private key
+		keyBytes, err := x509.MarshalPKCS8PrivateKey(caKey)
+		if err != nil {
+			handleError(fmt.Errorf("failed to marshal private key: %w", err))
+			return
+		}
+		keyPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: keyBytes,
+		})
+
+		// Write to files if specified
+		if outputFile != "" {
+			// #nosec G306 - Certificate files need to be readable
+			if err := os.WriteFile(outputFile, certPEM, 0644); err != nil {
+				handleError(fmt.Errorf("failed to write certificate: %w", err))
+				return
+			}
+			printVerbose("Certificate written to: %s", outputFile)
+		}
+
+		if keyOutputFile != "" {
+			// #nosec G306 - Key files should be protected
+			if err := os.WriteFile(keyOutputFile, keyPEM, 0600); err != nil {
+				handleError(fmt.Errorf("failed to write private key: %w", err))
+				return
+			}
+			printVerbose("Private key written to: %s", keyOutputFile)
+		}
+
+		if err := printer.PrintSuccess("CA certificate generated successfully"); err != nil {
+			handleError(err)
+			return
+		}
+
+		if cfg.OutputFormat == "json" {
+			result := map[string]interface{}{
+				"success":       true,
+				"subject":       caCert.Subject.String(),
+				"issuer":        caCert.Issuer.String(),
+				"serial":        caCert.SerialNumber.String(),
+				"not_before":    caCert.NotBefore.Format("2006-01-02T15:04:05Z07:00"),
+				"not_after":     caCert.NotAfter.Format("2006-01-02T15:04:05Z07:00"),
+				"is_ca":         caCert.IsCA,
+				"key_algorithm": keyAlg,
+			}
+			if outputFile != "" {
+				result["cert_file"] = outputFile
+			}
+			if keyOutputFile != "" {
+				result["key_file"] = keyOutputFile
+			}
+			if outputFile == "" {
+				result["certificate"] = string(certPEM)
+			}
+			if keyOutputFile == "" {
+				result["private_key"] = string(keyPEM)
+			}
+			if err := printer.PrintJSON(result); err != nil {
+				handleError(err)
+			}
+		} else {
+			fmt.Printf("\nCA Certificate Details:\n")
+			fmt.Printf("  Subject: %s\n", caCert.Subject.String())
+			fmt.Printf("  Serial: %s\n", caCert.SerialNumber.String())
+			fmt.Printf("  Valid From: %s\n", caCert.NotBefore.Format("2006-01-02"))
+			fmt.Printf("  Valid Until: %s\n", caCert.NotAfter.Format("2006-01-02"))
+			fmt.Printf("  Is CA: %t\n", caCert.IsCA)
+
+			if outputFile == "" {
+				fmt.Printf("\n--- CA Certificate (PEM) ---\n%s", string(certPEM))
+			} else {
+				fmt.Printf("\n  Certificate: %s\n", outputFile)
+			}
+
+			if keyOutputFile == "" {
+				fmt.Printf("\n--- CA Private Key (PEM) ---\n%s", string(keyPEM))
+				fmt.Printf("\nWARNING: Keep this private key secure!\n")
+			} else {
+				fmt.Printf("  Private Key: %s\n", keyOutputFile)
+			}
+		}
+	},
+}
+
+// certIssueCmd issues a certificate signed by a CA
+var certIssueCmd = &cobra.Command{
+	Use:   "issue",
+	Short: "Issue a certificate signed by a CA",
+	Long: `Issue a new certificate signed by an existing CA.
+
+This creates a server or client certificate signed by the specified CA.
+You must provide the CA certificate and private key.
+
+Examples:
+  # Issue a server certificate
+  keychain cert issue --ca-cert ca.crt --ca-key ca.key --cn server.example.com --type server
+
+  # Issue a client certificate for mTLS
+  keychain cert issue --ca-cert ca.crt --ca-key ca.key --cn client@example.com --type client
+
+  # Issue with custom SANs
+  keychain cert issue --ca-cert ca.crt --ca-key ca.key --cn myserver --dns "*.example.com,example.com" --ip "192.168.1.1"`,
+	Run: func(cmd *cobra.Command, args []string) {
+		cfg := getConfig()
+		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
+
+		caCertFile, _ := cmd.Flags().GetString("ca-cert")
+		caKeyFile, _ := cmd.Flags().GetString("ca-key")
+		cn, _ := cmd.Flags().GetString("cn")
+		certType, _ := cmd.Flags().GetString("type")
+		org, _ := cmd.Flags().GetString("org")
+		ou, _ := cmd.Flags().GetString("ou")
+		country, _ := cmd.Flags().GetString("country")
+		province, _ := cmd.Flags().GetString("province")
+		locality, _ := cmd.Flags().GetString("locality")
+		validityDays, _ := cmd.Flags().GetInt("validity")
+		keyAlg, _ := cmd.Flags().GetString("key-algorithm")
+		keySize, _ := cmd.Flags().GetInt("key-size")
+		dnsNames, _ := cmd.Flags().GetString("dns")
+		ipAddrs, _ := cmd.Flags().GetString("ip")
+		emails, _ := cmd.Flags().GetString("email")
+		outputFile, _ := cmd.Flags().GetString("output")
+		keyOutputFile, _ := cmd.Flags().GetString("key-output")
+
+		if caCertFile == "" {
+			handleError(fmt.Errorf("CA certificate file (--ca-cert) is required"))
+			return
+		}
+		if caKeyFile == "" {
+			handleError(fmt.Errorf("CA private key file (--ca-key) is required"))
+			return
+		}
+		if cn == "" {
+			handleError(fmt.Errorf("common name (--cn) is required"))
+			return
+		}
+
+		printVerbose("Issuing %s certificate for: %s", certType, cn)
+
+		// Load CA certificate
+		caCertPEM, err := os.ReadFile(caCertFile)
+		if err != nil {
+			handleError(fmt.Errorf("failed to read CA certificate: %w", err))
+			return
+		}
+		caCertBlock, _ := pem.Decode(caCertPEM)
+		if caCertBlock == nil {
+			handleError(fmt.Errorf("failed to decode CA certificate PEM"))
+			return
+		}
+		caCert, err := x509.ParseCertificate(caCertBlock.Bytes)
+		if err != nil {
+			handleError(fmt.Errorf("failed to parse CA certificate: %w", err))
+			return
+		}
+
+		// Load CA private key
+		caKeyPEM, err := os.ReadFile(caKeyFile)
+		if err != nil {
+			handleError(fmt.Errorf("failed to read CA private key: %w", err))
+			return
+		}
+		caKeyBlock, _ := pem.Decode(caKeyPEM)
+		if caKeyBlock == nil {
+			handleError(fmt.Errorf("failed to decode CA private key PEM"))
+			return
+		}
+		caKey, err := x509.ParsePKCS8PrivateKey(caKeyBlock.Bytes)
+		if err != nil {
+			// Try PKCS1 for RSA keys
+			caKey, err = x509.ParsePKCS1PrivateKey(caKeyBlock.Bytes)
+			if err != nil {
+				// Try EC private key
+				caKey, err = x509.ParseECPrivateKey(caKeyBlock.Bytes)
+				if err != nil {
+					handleError(fmt.Errorf("failed to parse CA private key: %w", err))
+					return
+				}
+			}
+		}
+
+		// Parse SANs
+		var dnsList []string
+		if dnsNames != "" {
+			dnsList = append(dnsList, splitAndTrim(dnsNames)...)
+		}
+
+		var ipList []net.IP
+		if ipAddrs != "" {
+			for _, ipStr := range splitAndTrim(ipAddrs) {
+				ip := net.ParseIP(ipStr)
+				if ip == nil {
+					handleError(fmt.Errorf("invalid IP address: %s", ipStr))
+					return
+				}
+				ipList = append(ipList, ip)
+			}
+		}
+
+		var emailList []string
+		if emails != "" {
+			emailList = splitAndTrim(emails)
+		}
+
+		// Issue certificate
+		cert, key, err := issueCertificate(
+			caCert, caKey,
+			cn, certType, org, ou, country, province, locality,
+			validityDays, keyAlg, keySize,
+			dnsList, ipList, emailList,
+		)
+		if err != nil {
+			handleError(fmt.Errorf("failed to issue certificate: %w", err))
+			return
+		}
+
+		// Output certificate
+		certPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert.Raw,
+		})
+
+		// Output private key
+		keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
+		if err != nil {
+			handleError(fmt.Errorf("failed to marshal private key: %w", err))
+			return
+		}
+		keyPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "PRIVATE KEY",
+			Bytes: keyBytes,
+		})
+
+		// Write to files if specified
+		if outputFile != "" {
+			// #nosec G306 - Certificate files need to be readable
+			if err := os.WriteFile(outputFile, certPEM, 0644); err != nil {
+				handleError(fmt.Errorf("failed to write certificate: %w", err))
+				return
+			}
+			printVerbose("Certificate written to: %s", outputFile)
+		}
+
+		if keyOutputFile != "" {
+			// #nosec G306 - Key files should be protected
+			if err := os.WriteFile(keyOutputFile, keyPEM, 0600); err != nil {
+				handleError(fmt.Errorf("failed to write private key: %w", err))
+				return
+			}
+			printVerbose("Private key written to: %s", keyOutputFile)
+		}
+
+		if err := printer.PrintSuccess(fmt.Sprintf("%s certificate issued successfully", certType)); err != nil {
+			handleError(err)
+			return
+		}
+
+		if cfg.OutputFormat == "json" {
+			result := map[string]interface{}{
+				"success":       true,
+				"type":          certType,
+				"subject":       cert.Subject.String(),
+				"issuer":        cert.Issuer.String(),
+				"serial":        cert.SerialNumber.String(),
+				"not_before":    cert.NotBefore.Format("2006-01-02T15:04:05Z07:00"),
+				"not_after":     cert.NotAfter.Format("2006-01-02T15:04:05Z07:00"),
+				"key_algorithm": keyAlg,
+			}
+			if len(cert.DNSNames) > 0 {
+				result["dns_names"] = cert.DNSNames
+			}
+			if len(cert.IPAddresses) > 0 {
+				ips := make([]string, len(cert.IPAddresses))
+				for i, ip := range cert.IPAddresses {
+					ips[i] = ip.String()
+				}
+				result["ip_addresses"] = ips
+			}
+			if len(cert.EmailAddresses) > 0 {
+				result["email_addresses"] = cert.EmailAddresses
+			}
+			if outputFile != "" {
+				result["cert_file"] = outputFile
+			}
+			if keyOutputFile != "" {
+				result["key_file"] = keyOutputFile
+			}
+			if outputFile == "" {
+				result["certificate"] = string(certPEM)
+			}
+			if keyOutputFile == "" {
+				result["private_key"] = string(keyPEM)
+			}
+			if err := printer.PrintJSON(result); err != nil {
+				handleError(err)
+			}
+		} else {
+			fmt.Printf("\nCertificate Details:\n")
+			fmt.Printf("  Type: %s\n", certType)
+			fmt.Printf("  Subject: %s\n", cert.Subject.String())
+			fmt.Printf("  Issuer: %s\n", cert.Issuer.String())
+			fmt.Printf("  Serial: %s\n", cert.SerialNumber.String())
+			fmt.Printf("  Valid From: %s\n", cert.NotBefore.Format("2006-01-02"))
+			fmt.Printf("  Valid Until: %s\n", cert.NotAfter.Format("2006-01-02"))
+			if len(cert.DNSNames) > 0 {
+				fmt.Printf("  DNS Names: %v\n", cert.DNSNames)
+			}
+			if len(cert.IPAddresses) > 0 {
+				fmt.Printf("  IP Addresses: %v\n", cert.IPAddresses)
+			}
+			if len(cert.EmailAddresses) > 0 {
+				fmt.Printf("  Email Addresses: %v\n", cert.EmailAddresses)
+			}
+
+			if outputFile == "" {
+				fmt.Printf("\n--- Certificate (PEM) ---\n%s", string(certPEM))
+			} else {
+				fmt.Printf("\n  Certificate: %s\n", outputFile)
+			}
+
+			if keyOutputFile == "" {
+				fmt.Printf("\n--- Private Key (PEM) ---\n%s", string(keyPEM))
+				fmt.Printf("\nWARNING: Keep this private key secure!\n")
+			} else {
+				fmt.Printf("  Private Key: %s\n", keyOutputFile)
+			}
+		}
+	},
+}
+
 func init() {
 	// Add certificate subcommands
 	certCmd.AddCommand(certSaveCmd)
@@ -666,4 +1271,42 @@ func init() {
 	certCmd.AddCommand(certExistsCmd)
 	certCmd.AddCommand(certSaveChainCmd)
 	certCmd.AddCommand(certGetChainCmd)
+	certCmd.AddCommand(certGenerateCACmd)
+	certCmd.AddCommand(certIssueCmd)
+
+	// generate-ca flags
+	certGenerateCACmd.Flags().String("cn", "", "common name for the CA (required)")
+	certGenerateCACmd.Flags().String("org", "Go Keychain", "organization name")
+	certGenerateCACmd.Flags().String("ou", "", "organizational unit")
+	certGenerateCACmd.Flags().String("country", "", "country code (e.g., US)")
+	certGenerateCACmd.Flags().String("province", "", "state/province")
+	certGenerateCACmd.Flags().String("locality", "", "city/locality")
+	certGenerateCACmd.Flags().Int("validity", 3650, "validity period in days (default: 10 years)")
+	certGenerateCACmd.Flags().String("key-algorithm", "ecdsa", "key algorithm: rsa, ecdsa, ed25519")
+	certGenerateCACmd.Flags().Int("key-size", 256, "key size (RSA: 2048/4096, ECDSA: 256/384/521)")
+	certGenerateCACmd.Flags().String("output", "", "output file for certificate (PEM)")
+	certGenerateCACmd.Flags().String("key-output", "", "output file for private key (PEM)")
+	_ = certGenerateCACmd.MarkFlagRequired("cn")
+
+	// issue flags
+	certIssueCmd.Flags().String("ca-cert", "", "CA certificate file (PEM)")
+	certIssueCmd.Flags().String("ca-key", "", "CA private key file (PEM)")
+	certIssueCmd.Flags().String("cn", "", "common name for the certificate (required)")
+	certIssueCmd.Flags().String("type", "server", "certificate type: server, client")
+	certIssueCmd.Flags().String("org", "", "organization name")
+	certIssueCmd.Flags().String("ou", "", "organizational unit")
+	certIssueCmd.Flags().String("country", "", "country code (e.g., US)")
+	certIssueCmd.Flags().String("province", "", "state/province")
+	certIssueCmd.Flags().String("locality", "", "city/locality")
+	certIssueCmd.Flags().Int("validity", 365, "validity period in days (default: 1 year)")
+	certIssueCmd.Flags().String("key-algorithm", "ecdsa", "key algorithm: rsa, ecdsa, ed25519")
+	certIssueCmd.Flags().Int("key-size", 256, "key size (RSA: 2048/4096, ECDSA: 256/384/521)")
+	certIssueCmd.Flags().String("dns", "", "DNS names (comma-separated)")
+	certIssueCmd.Flags().String("ip", "", "IP addresses (comma-separated)")
+	certIssueCmd.Flags().String("email", "", "email addresses (comma-separated)")
+	certIssueCmd.Flags().String("output", "", "output file for certificate (PEM)")
+	certIssueCmd.Flags().String("key-output", "", "output file for private key (PEM)")
+	_ = certIssueCmd.MarkFlagRequired("ca-cert")
+	_ = certIssueCmd.MarkFlagRequired("ca-key")
+	_ = certIssueCmd.MarkFlagRequired("cn")
 }

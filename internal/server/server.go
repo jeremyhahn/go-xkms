@@ -14,9 +14,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -38,6 +40,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/internal/quic"
 	"github.com/jeremyhahn/go-keychain/internal/rest"
 	"github.com/jeremyhahn/go-keychain/internal/unix"
+	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/health"
@@ -46,6 +49,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/jeremyhahn/go-keychain/pkg/user"
+	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
 )
 
 // Server represents the unified keychain server that runs all protocols
@@ -66,6 +70,10 @@ type Server struct {
 
 	// User management
 	userStore user.Store
+
+	// Authentication
+	authenticator  auth.Authenticator
+	webauthnConfig *webauthn.Config
 
 	// Health checker
 	healthChecker *health.Checker
@@ -116,6 +124,13 @@ func New(cfg *config.Config) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, fmt.Errorf("failed to initialize user store: %w", err)
+	}
+
+	// Initialize authentication
+	if err := s.initializeAuthentication(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, fmt.Errorf("failed to initialize authentication: %w", err)
 	}
 
 	// Initialize health checker
@@ -355,6 +370,240 @@ func (s *Server) initializeUserStore() error {
 	return nil
 }
 
+// initializeAuthentication sets up the authentication subsystem.
+// It configures adaptive authentication that automatically switches between:
+// - NoOp mode (when no users exist) - allows all requests for bootstrap
+// - Required auth mode (when users exist) - requires JWT or mTLS authentication
+func (s *Server) initializeAuthentication() error {
+	s.logger.Info("Initializing authentication...")
+
+	// If auth is disabled, use NoOp authenticator
+	if !s.config.Auth.Enabled {
+		s.authenticator = auth.NewNoOpAuthenticator()
+		s.logger.Info("Authentication disabled, using NoOp authenticator")
+		return nil
+	}
+
+	// Build WebAuthn config if enabled
+	if s.config.WebAuthn != nil && s.config.WebAuthn.Enabled {
+		s.webauthnConfig = &webauthn.Config{
+			RPID:                    s.config.WebAuthn.RPID,
+			RPOrigins:               s.config.WebAuthn.RPOrigins,
+			RPDisplayName:           s.config.WebAuthn.RPDisplayName,
+			AttestationPreference:   s.config.WebAuthn.AttestationPreference,
+			AuthenticatorAttachment: s.config.WebAuthn.AuthenticatorAttachment,
+			ResidentKeyRequirement:  s.config.WebAuthn.ResidentKey,
+			UserVerification:        s.config.WebAuthn.UserVerification,
+		}
+
+		// Set defaults for any unset values
+		s.webauthnConfig.SetDefaults()
+
+		s.logger.Info("WebAuthn configured",
+			"rp_id", s.config.WebAuthn.RPID,
+			"rp_display_name", s.config.WebAuthn.RPDisplayName)
+	}
+
+	// Determine the required authenticator based on config type
+	var requiredAuth auth.Authenticator
+	switch s.config.Auth.Type {
+	case "jwt":
+		// JWT authenticator requires a public key
+		if s.config.Auth.JWT == nil || s.config.Auth.JWT.PublicKeyFile == "" {
+			return fmt.Errorf("JWT authentication requires public_key_file configuration")
+		}
+		jwtAuth, err := s.createJWTAuthenticator()
+		if err != nil {
+			return fmt.Errorf("failed to create JWT authenticator: %w", err)
+		}
+		requiredAuth = jwtAuth
+		s.logger.Info("JWT authentication configured",
+			"issuer", s.config.Auth.JWT.Issuer)
+
+	case "mtls":
+		// mTLS authentication uses client certificates
+		if !s.config.TLS.Enabled {
+			return fmt.Errorf("mTLS authentication requires TLS to be enabled")
+		}
+		mtlsAuth := auth.NewMTLSAuthenticator(nil)
+		requiredAuth = mtlsAuth
+		s.logger.Info("mTLS authentication configured")
+
+	case "adaptive":
+		// Adaptive mode will be configured below
+		s.logger.Info("Adaptive authentication mode enabled")
+
+	default:
+		// Default to NoOp if type is not recognized
+		s.authenticator = auth.NewNoOpAuthenticator()
+		s.logger.Warn("Unknown auth type, using NoOp authenticator", "type", s.config.Auth.Type)
+		return nil
+	}
+
+	// If adaptive mode is enabled or explicitly configured, wrap the authenticator
+	if s.config.Auth.Adaptive || s.config.Auth.Type == "adaptive" {
+		// For adaptive mode, we need a required authenticator
+		// If none was configured, default to JWT (for WebAuthn flow)
+		if requiredAuth == nil {
+			// Try to create JWT authenticator if WebAuthn is configured
+			if s.config.WebAuthn != nil && s.config.WebAuthn.Enabled {
+				if s.config.Auth.JWT != nil && s.config.Auth.JWT.PublicKeyFile != "" {
+					jwtAuth, err := s.createJWTAuthenticator()
+					if err != nil {
+						s.logger.Warn("Failed to create JWT authenticator for adaptive mode, falling back to NoOp",
+							slog.Any("error", err))
+						requiredAuth = auth.NewNoOpAuthenticator()
+					} else {
+						requiredAuth = jwtAuth
+					}
+				} else {
+					// No JWT config, use NoOp for now
+					s.logger.Warn("Adaptive mode enabled but no JWT config, using NoOp for required auth")
+					requiredAuth = auth.NewNoOpAuthenticator()
+				}
+			} else {
+				requiredAuth = auth.NewNoOpAuthenticator()
+			}
+		}
+
+		adaptiveAuth, err := auth.NewAdaptiveAuthenticator(&auth.AdaptiveConfig{
+			UserChecker:           s.userStore,
+			RequiredAuthenticator: requiredAuth,
+			CacheExpiry:           30 * time.Second,
+			Logger:                s.logger.With("component", "auth"),
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create adaptive authenticator: %w", err)
+		}
+
+		s.authenticator = adaptiveAuth
+		s.logger.Info("Adaptive authentication initialized",
+			"required_auth", requiredAuth.Name())
+	} else if requiredAuth != nil {
+		s.authenticator = requiredAuth
+	} else {
+		s.authenticator = auth.NewNoOpAuthenticator()
+	}
+
+	return nil
+}
+
+// createJWTAuthenticator creates a JWT authenticator from configuration.
+func (s *Server) createJWTAuthenticator() (*auth.JWTAuthenticator, error) {
+	if s.config.Auth.JWT == nil {
+		return nil, fmt.Errorf("JWT configuration is required")
+	}
+
+	// Load public key from file
+	pubKeyData, err := os.ReadFile(s.config.Auth.JWT.PublicKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read public key file: %w", err)
+	}
+
+	// Parse the public key (supports PEM-encoded ECDSA or RSA keys)
+	pubKey, err := parsePublicKey(pubKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
+	}
+
+	return auth.NewJWTAuthenticator(&auth.JWTConfig{
+		PublicKey:  pubKey,
+		Issuer:     s.config.Auth.JWT.Issuer,
+		Audience:   s.config.Auth.JWT.Audience,
+		HeaderName: "Authorization",
+	})
+}
+
+// parsePublicKey parses a PEM-encoded public key.
+func parsePublicKey(data []byte) (interface{}, error) {
+	// Try parsing as PEM first
+	block, _ := pemDecode(data)
+	if block != nil {
+		key, err := x509.ParsePKIXPublicKey(block.Bytes)
+		if err == nil {
+			return key, nil
+		}
+		// Try parsing as certificate
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err == nil {
+			return cert.PublicKey, nil
+		}
+	}
+
+	// Try parsing as raw DER
+	key, err := x509.ParsePKIXPublicKey(data)
+	if err == nil {
+		return key, nil
+	}
+
+	return nil, fmt.Errorf("unable to parse public key")
+}
+
+// pemDecode decodes a PEM block.
+func pemDecode(data []byte) (*pemBlock, []byte) {
+	// Simple PEM decoder
+	const pemHeader = "-----BEGIN "
+	const pemFooter = "-----END "
+
+	start := bytes.Index(data, []byte(pemHeader))
+	if start < 0 {
+		return nil, data
+	}
+
+	rest := data[start+len(pemHeader):]
+	endOfType := bytes.IndexByte(rest, '-')
+	if endOfType < 0 {
+		return nil, data
+	}
+
+	blockType := string(rest[:endOfType])
+	rest = rest[endOfType:]
+
+	// Find end of header line
+	headerEnd := bytes.IndexByte(rest, '\n')
+	if headerEnd < 0 {
+		return nil, data
+	}
+	rest = rest[headerEnd+1:]
+
+	// Find footer
+	footer := []byte(pemFooter + blockType)
+	footerStart := bytes.Index(rest, footer)
+	if footerStart < 0 {
+		return nil, data
+	}
+
+	base64Data := rest[:footerStart]
+	// Remove newlines and decode base64
+	base64Data = bytes.ReplaceAll(base64Data, []byte("\n"), nil)
+	base64Data = bytes.ReplaceAll(base64Data, []byte("\r"), nil)
+
+	decoded := make([]byte, base64Encoding.DecodedLen(len(base64Data)))
+	n, err := base64Encoding.Decode(decoded, base64Data)
+	if err != nil {
+		return nil, data
+	}
+
+	// Find end of footer line
+	rest = rest[footerStart+len(footer):]
+	if len(rest) > 0 && rest[0] == '\n' {
+		rest = rest[1:]
+	}
+
+	return &pemBlock{
+		Type:  blockType,
+		Bytes: decoded[:n],
+	}, rest
+}
+
+type pemBlock struct {
+	Type  string
+	Bytes []byte
+}
+
+// base64Encoding is the standard base64 encoding for PEM data
+var base64Encoding = base64.StdEncoding
+
 // initializeHealth creates and configures the health checker.
 func (s *Server) initializeHealth() error {
 	s.logger.Info("Initializing health checker...")
@@ -552,10 +801,29 @@ func (s *Server) startREST() {
 
 	// Create REST server configuration
 	restConfig := &rest.Config{
-		Port:      s.config.Server.RESTPort,
-		Backends:  s.keystores,
-		Version:   getBuildVersion(),
-		UserStore: s.userStore,
+		Port:          s.config.Server.RESTPort,
+		Backends:      s.keystores,
+		Version:       getBuildVersion(),
+		UserStore:     s.userStore,
+		Authenticator: s.authenticator,
+		EnableRBAC:    s.config.Auth.EnableRBAC,
+	}
+
+	// Add WebAuthn config if enabled
+	if s.webauthnConfig != nil {
+		restConfig.WebAuthnConfig = s.webauthnConfig
+		s.logger.Info("WebAuthn enabled for REST server",
+			"rp_id", s.webauthnConfig.RPID)
+	}
+
+	// Add TLS config if enabled
+	if s.config.TLS.Enabled {
+		tlsConfig, err := s.buildTLSConfig()
+		if err != nil {
+			s.logger.Error("Failed to build TLS config for REST server", slog.Any("error", err))
+			return
+		}
+		restConfig.TLSConfig = tlsConfig
 	}
 
 	// Create REST server
@@ -572,7 +840,10 @@ func (s *Server) startREST() {
 		s.logger.Info("Health checker configured for REST server")
 	}
 
-	s.logger.Info("Starting REST server", "port", s.config.Server.RESTPort)
+	s.logger.Info("Starting REST server",
+		"port", s.config.Server.RESTPort,
+		"auth", s.authenticator.Name(),
+		"rbac", s.config.Auth.EnableRBAC)
 
 	if err := s.restServer.Start(); err != nil {
 		s.logger.Error("REST server error", slog.Any("error", err))

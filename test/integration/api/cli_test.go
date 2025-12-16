@@ -24,11 +24,13 @@ import (
 	"testing"
 )
 
-// execCLI executes the CLI binary with given arguments
+// execCLI executes the CLI binary with given arguments, using the configured Unix socket
 func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, error) {
 	t.Helper()
 
-	cmd := exec.Command(cfg.CLIBinPath, args...)
+	// Prepend --server flag to use the configured Unix socket path
+	allArgs := append([]string{"--server", "unix://" + cfg.UnixSocketPath}, args...)
+	cmd := exec.Command(cfg.CLIBinPath, allArgs...)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

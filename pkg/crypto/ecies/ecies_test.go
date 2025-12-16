@@ -374,10 +374,10 @@ func TestDecrypt_InvalidEphemeralKey(t *testing.T) {
 	copy(corrupted, ciphertext)
 	corrupted[0] = 0xFF // Invalid format byte
 
-	// Should fail to unmarshal
+	// Should fail to parse ephemeral public key
 	_, err = Decrypt(recipientPriv, corrupted, nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to unmarshal ephemeral public key")
+	assert.Contains(t, err.Error(), "failed to parse ephemeral public key")
 }
 
 // TestEncryptDecrypt_MixedCurves tests encryption on one curve, decryption attempt on another
@@ -553,8 +553,8 @@ func TestDecrypt_InvalidPublicKeyPoint(t *testing.T) {
 
 	_, err = Decrypt(priv, corruptedCiphertext, nil)
 	assert.Error(t, err)
-	// Should fail to unmarshal the ephemeral public key
-	assert.Contains(t, err.Error(), "failed to unmarshal ephemeral public key")
+	// Should fail to parse the ephemeral public key
+	assert.Contains(t, err.Error(), "failed to parse ephemeral public key")
 }
 
 // TestEncrypt_EmptyPlaintextEdgeCase tests the edge case of encrypting empty plaintext

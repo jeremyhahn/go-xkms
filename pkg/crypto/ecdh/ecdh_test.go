@@ -329,3 +329,107 @@ func TestDeriveSharedSecret_AllCurvesRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// TestDeriveKey_ExcessiveLength tests HKDF with excessive key length request
+// HKDF-SHA256 can output at most 255 * 32 = 8160 bytes
+func TestDeriveKey_ExcessiveLength(t *testing.T) {
+	sharedSecret := []byte("test-secret")
+
+	// Request more than HKDF can produce (255 * 32 bytes for SHA-256)
+	_, err := DeriveKey(sharedSecret, nil, []byte("info"), 8161)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "HKDF derivation failed")
+}
+
+// TestDeriveKey_LargeButValidLength tests HKDF with large but valid key length
+func TestDeriveKey_LargeButValidLength(t *testing.T) {
+	sharedSecret := []byte("test-secret")
+
+	// Request exactly the maximum HKDF output
+	key, err := DeriveKey(sharedSecret, nil, []byte("info"), 8160)
+	require.NoError(t, err)
+	assert.Len(t, key, 8160)
+}
+
+// TestDeriveKey_VariousLengths tests key derivation with various lengths
+func TestDeriveKey_VariousLengths(t *testing.T) {
+	alicePriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	bobPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	sharedSecret, err := DeriveSharedSecret(alicePriv, &bobPriv.PublicKey)
+	require.NoError(t, err)
+
+	// Test various key lengths
+	lengths := []int{1, 8, 16, 24, 32, 48, 64, 128, 256, 512, 1024, 2048, 4096}
+	for _, length := range lengths {
+		t.Run(string(rune(length)), func(t *testing.T) {
+			key, err := DeriveKey(sharedSecret, nil, []byte("test"), length)
+			require.NoError(t, err)
+			assert.Len(t, key, length)
+		})
+	}
+}
+
+// TestDeriveKey_SameInputsSameOutput tests that same inputs produce same output
+func TestDeriveKey_SameInputsSameOutput(t *testing.T) {
+	sharedSecret := []byte("consistent-secret")
+	salt := []byte("consistent-salt")
+	info := []byte("consistent-info")
+
+	key1, err := DeriveKey(sharedSecret, salt, info, 32)
+	require.NoError(t, err)
+
+	key2, err := DeriveKey(sharedSecret, salt, info, 32)
+	require.NoError(t, err)
+
+	assert.Equal(t, key1, key2)
+}
+
+// TestDeriveKey_DifferentSecretsProduceDifferentKeys tests that different secrets produce different keys
+func TestDeriveKey_DifferentSecretsProduceDifferentKeys(t *testing.T) {
+	key1, err := DeriveKey([]byte("secret1"), nil, []byte("info"), 32)
+	require.NoError(t, err)
+
+	key2, err := DeriveKey([]byte("secret2"), nil, []byte("info"), 32)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, key1, key2)
+}
+
+// TestDeriveSharedSecret_StressTest performs stress testing with many iterations
+func TestDeriveSharedSecret_StressTest(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		alicePriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+
+		bobPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+
+		aliceShared, err := DeriveSharedSecret(alicePriv, &bobPriv.PublicKey)
+		require.NoError(t, err)
+
+		bobShared, err := DeriveSharedSecret(bobPriv, &alicePriv.PublicKey)
+		require.NoError(t, err)
+
+		assert.Equal(t, aliceShared, bobShared)
+	}
+}
+
+// TestEcdsaPublicToECDH_UnsupportedCurve tests public key conversion with unsupported curve
+func TestEcdsaPublicToECDH_UnsupportedCurve(t *testing.T) {
+	// Create a P-224 key (not supported)
+	priv, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	require.NoError(t, err)
+
+	// Also create another P-224 key to test both conversion paths
+	priv2, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	require.NoError(t, err)
+
+	// Try to derive shared secret - should fail at private key conversion
+	_, err = DeriveSharedSecret(priv, &priv2.PublicKey)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported curve")
+}

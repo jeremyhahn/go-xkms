@@ -25,8 +25,8 @@ func TestNewConfig_Defaults(t *testing.T) {
 	if cfg.Backend != "software" {
 		t.Errorf("Backend = %v, want software", cfg.Backend)
 	}
-	if cfg.KeyDir != "/tmp/keystore" {
-		t.Errorf("KeyDir = %v, want /tmp/keystore", cfg.KeyDir)
+	if cfg.KeyDir != "keychain-data/keys" {
+		t.Errorf("KeyDir = %v, want keychain-data/keys", cfg.KeyDir)
 	}
 	if cfg.OutputFormat != "text" {
 		t.Errorf("OutputFormat = %v, want text", cfg.OutputFormat)
@@ -173,10 +173,10 @@ func TestConfig_CreateClient_WithTLS(t *testing.T) {
 	}
 }
 
-func TestConfig_CreateClient_WithAPIKey(t *testing.T) {
+func TestConfig_CreateClient_WithJWTToken(t *testing.T) {
 	cfg := NewConfig()
 	cfg.Server = "http://localhost:8443"
-	cfg.APIKey = "test-api-key"
+	cfg.JWTToken = "test-jwt-token"
 
 	cl, err := cfg.CreateClient()
 	if err != nil {

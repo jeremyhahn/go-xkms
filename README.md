@@ -1,5 +1,3 @@
-[logo]: https://github.com/jeremyhahn/go-keychain/raw/main/logo.png "go-keychain"
-
 # go-keychain
 
 [![Go Version](https://img.shields.io/badge/Go-1.25.1-blue.svg)](https://golang.org)

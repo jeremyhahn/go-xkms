@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"google.golang.org/grpc/metadata"
 )
 
 // createTestKeyStore creates a simple in-memory keystore for testing
@@ -171,28 +173,53 @@ func TestRESTServer_NoOpAuthenticator_HTTP(t *testing.T) {
 	}
 }
 
-func TestRESTServer_APIKeyAuthenticator_HTTP(t *testing.T) {
+// testBearerAuthenticator is a simple authenticator for testing that validates
+// requests based on a Bearer token header
+type testBearerAuthenticator struct {
+	validToken string
+}
+
+func (a *testBearerAuthenticator) Name() string {
+	return "test-bearer"
+}
+
+func (a *testBearerAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return nil, fmt.Errorf("no authorization header")
+	}
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, fmt.Errorf("invalid authorization header format")
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token != a.validToken {
+		return nil, fmt.Errorf("invalid token")
+	}
+	return &auth.Identity{
+		Subject: "test-user",
+		Claims: map[string]interface{}{
+			"roles": []string{"admin"},
+		},
+		Attributes: map[string]string{
+			"scope": "full",
+		},
+	}, nil
+}
+
+func (a *testBearerAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func TestRESTServer_BearerTokenAuthenticator_HTTP(t *testing.T) {
 	// Create test keystore
 	ks := createTestKeyStore(t)
 	defer func() { _ = ks.Close() }()
 
-	// Create API key authenticator with test keys
-	validAPIKey := "test-api-key-12345"
-	invalidAPIKey := "invalid-api-key"
+	// Create test Bearer token authenticator
+	validToken := "test-token-12345"
+	invalidToken := "invalid-token"
 
-	authenticator := auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-		Keys: map[string]*auth.Identity{
-			validAPIKey: {
-				Subject: "test-user",
-				Claims: map[string]interface{}{
-					"roles": []string{"admin"},
-				},
-				Attributes: map[string]string{
-					"scope": "full",
-				},
-			},
-		},
-	})
+	authenticator := &testBearerAuthenticator{validToken: validToken}
 
 	// Create REST server
 	cfg := &Config{
@@ -222,13 +249,13 @@ func TestRESTServer_APIKeyAuthenticator_HTTP(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	waitForServer(t, baseURL+"/health", client, 5*time.Second)
 
-	// Test with valid API key
-	t.Run("ValidAPIKey", func(t *testing.T) {
+	// Test with valid Bearer token
+	t.Run("ValidToken", func(t *testing.T) {
 		req, err := http.NewRequest("GET", baseURL+"/api/v1/backends", nil)
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
 		}
-		req.Header.Set("X-API-Key", validAPIKey)
+		req.Header.Set("Authorization", "Bearer "+validToken)
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -241,13 +268,13 @@ func TestRESTServer_APIKeyAuthenticator_HTTP(t *testing.T) {
 		}
 	})
 
-	// Test with invalid API key
-	t.Run("InvalidAPIKey", func(t *testing.T) {
+	// Test with invalid Bearer token
+	t.Run("InvalidToken", func(t *testing.T) {
 		req, err := http.NewRequest("GET", baseURL+"/api/v1/backends", nil)
 		if err != nil {
 			t.Fatalf("Failed to create request: %v", err)
 		}
-		req.Header.Set("X-API-Key", invalidAPIKey)
+		req.Header.Set("Authorization", "Bearer "+invalidToken)
 
 		resp, err := client.Do(req)
 		if err != nil {
@@ -260,8 +287,8 @@ func TestRESTServer_APIKeyAuthenticator_HTTP(t *testing.T) {
 		}
 	})
 
-	// Test without API key
-	t.Run("NoAPIKey", func(t *testing.T) {
+	// Test without Authorization header
+	t.Run("NoToken", func(t *testing.T) {
 		resp, err := client.Get(baseURL + "/api/v1/backends")
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
@@ -270,25 +297,6 @@ func TestRESTServer_APIKeyAuthenticator_HTTP(t *testing.T) {
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("Expected status 401, got %d", resp.StatusCode)
-		}
-	})
-
-	// Test with API key in Authorization header
-	t.Run("BearerToken", func(t *testing.T) {
-		req, err := http.NewRequest("GET", baseURL+"/api/v1/backends", nil)
-		if err != nil {
-			t.Fatalf("Failed to create request: %v", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+validAPIKey)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("Request failed: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("Expected status 200, got %d", resp.StatusCode)
 		}
 	})
 
@@ -576,46 +584,34 @@ func TestRESTServer_AuthenticationFailureScenarios(t *testing.T) {
 		description  string
 	}{
 		{
-			name: "APIKey_EmptyKey",
+			name: "Bearer_EmptyToken",
 			setupAuth: func() auth.Authenticator {
-				return auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-					Keys: map[string]*auth.Identity{
-						"valid-key": {Subject: "test"},
-					},
-				})
+				return &testBearerAuthenticator{validToken: "valid-token"}
 			},
 			setupRequest: func(req *http.Request) {
-				req.Header.Set("X-API-Key", "")
+				req.Header.Set("Authorization", "Bearer ")
 			},
 			expectedCode: http.StatusUnauthorized,
-			description:  "Empty API key should be rejected",
+			description:  "Empty Bearer token should be rejected",
 		},
 		{
-			name: "APIKey_WrongKey",
+			name: "Bearer_WrongToken",
 			setupAuth: func() auth.Authenticator {
-				return auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-					Keys: map[string]*auth.Identity{
-						"valid-key": {Subject: "test"},
-					},
-				})
+				return &testBearerAuthenticator{validToken: "valid-token"}
 			},
 			setupRequest: func(req *http.Request) {
-				req.Header.Set("X-API-Key", "wrong-key")
+				req.Header.Set("Authorization", "Bearer wrong-token")
 			},
 			expectedCode: http.StatusUnauthorized,
-			description:  "Wrong API key should be rejected",
+			description:  "Wrong Bearer token should be rejected",
 		},
 		{
-			name: "APIKey_MalformedBearer",
+			name: "Bearer_MalformedHeader",
 			setupAuth: func() auth.Authenticator {
-				return auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-					Keys: map[string]*auth.Identity{
-						"valid-key": {Subject: "test"},
-					},
-				})
+				return &testBearerAuthenticator{validToken: "valid-token"}
 			},
 			setupRequest: func(req *http.Request) {
-				req.Header.Set("Authorization", "InvalidScheme valid-key")
+				req.Header.Set("Authorization", "InvalidScheme valid-token")
 			},
 			expectedCode: http.StatusUnauthorized,
 			description:  "Malformed Authorization header should be rejected",

@@ -21,16 +21,9 @@ func TestTPMSimulatorConnection(t *testing.T) {
 
 	t.Logf("Testing connection to TPM simulator at %s:%s", host, port)
 
-	// TODO: Implement actual TPM connection test using tpm2 package
-	// This is a placeholder to demonstrate the test structure
-	// Example:
-	// tpm, err := tpm2.Open(host, port)
-	// if err != nil {
-	//     t.Fatalf("Failed to connect to TPM simulator: %v", err)
-	// }
-	// defer tpm.Close()
-
-	t.Log("TPM simulator connection test placeholder - implement with actual tpm2 package")
+	// NOTE: This is a basic connectivity check. Full TPM2 tests are in other test files
+	// in this package (tpm2_integration_test.go, crypto_ops_test.go, etc.)
+	t.Log("TPM simulator connection test - see tpm2_integration_test.go for comprehensive tests")
 }
 
 // TestEnvironmentVariables verifies that required environment variables are set

@@ -1156,7 +1156,16 @@ func (tpm *TPM2) CreateIDevID(
 		return nil, nil, err
 	}
 
-	akPub, err := primaryKey.OutPublic.Contents()
+	// Read the AK's public key from the TPM to determine the signature algorithm
+	// The AK signs the certification, so we need its type to extract the signature correctly
+	akPubResp, err := tpm2.ReadPublic{
+		ObjectHandle: akAttrs.TPMAttributes.Handle,
+	}.Execute(tpm.transport)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	akPub, err := akPubResp.OutPublic.Contents()
 	if err != nil {
 		return nil, nil, err
 	}

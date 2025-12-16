@@ -563,6 +563,133 @@ func (c *unixGRPCClient) RotateKey(ctx context.Context, req *RotateKeyRequest) (
 	}, nil
 }
 
+// ListKeyVersions lists all versions of a key.
+func (c *unixGRPCClient) ListKeyVersions(ctx context.Context, req *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error) {
+	if c.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	pbReq := &pb.ListKeyVersionsRequest{
+		KeyId:   req.KeyID,
+		Backend: req.Backend,
+	}
+
+	resp, err := c.client.ListKeyVersions(ctx, pbReq)
+	if err != nil {
+		return nil, err
+	}
+
+	versions := make([]*KeyVersion, len(resp.Versions))
+	for i, v := range resp.Versions {
+		versions[i] = &KeyVersion{
+			Version:   uint64(v.Version),
+			Status:    v.Status,
+			CreatedAt: v.CreatedAt,
+			CreatedBy: v.CreatedBy,
+		}
+	}
+
+	return &ListKeyVersionsResponse{
+		KeyID:    resp.KeyId,
+		Versions: versions,
+		Total:    int(resp.Total),
+	}, nil
+}
+
+// EnableKeyVersion enables a specific version of a key.
+func (c *unixGRPCClient) EnableKeyVersion(ctx context.Context, req *EnableKeyVersionRequest) (*EnableKeyVersionResponse, error) {
+	if c.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	pbReq := &pb.EnableKeyVersionRequest{
+		KeyId:   req.KeyID,
+		Backend: req.Backend,
+		Version: int32(req.Version),
+	}
+
+	resp, err := c.client.EnableKeyVersion(ctx, pbReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &EnableKeyVersionResponse{
+		KeyID:   resp.KeyId,
+		Version: uint64(resp.Version),
+		Status:  resp.Status,
+	}, nil
+}
+
+// DisableKeyVersion disables a specific version of a key.
+func (c *unixGRPCClient) DisableKeyVersion(ctx context.Context, req *DisableKeyVersionRequest) (*DisableKeyVersionResponse, error) {
+	if c.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	pbReq := &pb.DisableKeyVersionRequest{
+		KeyId:   req.KeyID,
+		Backend: req.Backend,
+		Version: int32(req.Version),
+	}
+
+	resp, err := c.client.DisableKeyVersion(ctx, pbReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DisableKeyVersionResponse{
+		KeyID:   resp.KeyId,
+		Version: uint64(resp.Version),
+		Status:  resp.Status,
+	}, nil
+}
+
+// EnableAllKeyVersions enables all versions of a key.
+func (c *unixGRPCClient) EnableAllKeyVersions(ctx context.Context, req *EnableAllKeyVersionsRequest) (*EnableAllKeyVersionsResponse, error) {
+	if c.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	pbReq := &pb.EnableAllKeyVersionsRequest{
+		KeyId:   req.KeyID,
+		Backend: req.Backend,
+	}
+
+	resp, err := c.client.EnableAllKeyVersions(ctx, pbReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &EnableAllKeyVersionsResponse{
+		KeyID:   resp.KeyId,
+		Count:   int(resp.Count),
+		Message: resp.Message,
+	}, nil
+}
+
+// DisableAllKeyVersions disables all versions of a key.
+func (c *unixGRPCClient) DisableAllKeyVersions(ctx context.Context, req *DisableAllKeyVersionsRequest) (*DisableAllKeyVersionsResponse, error) {
+	if c.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	pbReq := &pb.DisableAllKeyVersionsRequest{
+		KeyId:   req.KeyID,
+		Backend: req.Backend,
+	}
+
+	resp, err := c.client.DisableAllKeyVersions(ctx, pbReq)
+	if err != nil {
+		return nil, err
+	}
+
+	return &DisableAllKeyVersionsResponse{
+		KeyID:   resp.KeyId,
+		Count:   int(resp.Count),
+		Message: resp.Message,
+	}, nil
+}
+
 // GetImportParameters gets the parameters needed to import a key.
 func (c *unixGRPCClient) GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error) {
 	if c.client == nil {

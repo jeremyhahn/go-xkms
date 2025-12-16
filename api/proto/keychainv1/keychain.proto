@@ -41,6 +41,21 @@ service KeystoreService {
   // RotateKey rotates an existing key
   rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
 
+  // ListKeyVersions lists all versions of a key
+  rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse);
+
+  // EnableKeyVersion enables a specific version of a key
+  rpc EnableKeyVersion(EnableKeyVersionRequest) returns (EnableKeyVersionResponse);
+
+  // DisableKeyVersion disables a specific version of a key
+  rpc DisableKeyVersion(DisableKeyVersionRequest) returns (DisableKeyVersionResponse);
+
+  // EnableAllKeyVersions enables all versions of a key
+  rpc EnableAllKeyVersions(EnableAllKeyVersionsRequest) returns (EnableAllKeyVersionsResponse);
+
+  // DisableAllKeyVersions disables all versions of a key
+  rpc DisableAllKeyVersions(DisableAllKeyVersionsRequest) returns (DisableAllKeyVersionsResponse);
+
   // Encrypt encrypts data with the specified key (symmetric encryption)
   rpc Encrypt(EncryptRequest) returns (EncryptResponse);
 
@@ -244,6 +259,81 @@ message RotateKeyResponse {
   string key_type = 3;
   string public_key_pem = 4;
   google.protobuf.Timestamp rotated_at = 5;
+}
+
+// KeyVersionInfo contains information about a key version
+message KeyVersionInfo {
+  int32 version = 1;
+  string status = 2;
+  string created_at = 3;
+  string created_by = 4;
+}
+
+// ListKeyVersionsRequest requests listing of key versions
+message ListKeyVersionsRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// ListKeyVersionsResponse contains the list of key versions
+message ListKeyVersionsResponse {
+  string key_id = 1;
+  repeated KeyVersionInfo versions = 2;
+  int32 total = 3;
+}
+
+// EnableKeyVersionRequest requests enabling of a key version
+message EnableKeyVersionRequest {
+  string key_id = 1;
+  string backend = 2;
+  int32 version = 3;
+}
+
+// EnableKeyVersionResponse contains the result of enabling a key version
+message EnableKeyVersionResponse {
+  string key_id = 1;
+  int32 version = 2;
+  string status = 3;
+}
+
+// DisableKeyVersionRequest requests disabling of a key version
+message DisableKeyVersionRequest {
+  string key_id = 1;
+  string backend = 2;
+  int32 version = 3;
+}
+
+// DisableKeyVersionResponse contains the result of disabling a key version
+message DisableKeyVersionResponse {
+  string key_id = 1;
+  int32 version = 2;
+  string status = 3;
+}
+
+// EnableAllKeyVersionsRequest requests enabling of all key versions
+message EnableAllKeyVersionsRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// EnableAllKeyVersionsResponse contains the result of enabling all key versions
+message EnableAllKeyVersionsResponse {
+  string key_id = 1;
+  int32 count = 2;
+  string message = 3;
+}
+
+// DisableAllKeyVersionsRequest requests disabling of all key versions
+message DisableAllKeyVersionsRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// DisableAllKeyVersionsResponse contains the result of disabling all key versions
+message DisableAllKeyVersionsResponse {
+  string key_id = 1;
+  int32 count = 2;
+  string message = 3;
 }
 
 // EncryptRequest requests encryption of data (symmetric encryption)

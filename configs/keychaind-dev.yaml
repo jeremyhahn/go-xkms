@@ -1,0 +1,60 @@
+# Development keychaind configuration
+# Uses keychain-data/ in current working directory with debug logging
+
+server:
+  host: "127.0.0.1"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 8445
+
+protocols:
+  unix: true
+  rest: false
+  grpc: false
+  quic: false
+  mcp: false
+
+unix:
+  enabled: true
+  socket_path: "keychain-data/keychain.sock"
+  socket_mode: "0660"
+  protocol: "grpc"
+
+logging:
+  level: "debug"
+  format: "text"
+
+tls:
+  enabled: false
+
+auth:
+  enabled: false
+  type: "noop"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+  path: "/metrics"
+  port: 9090
+
+health:
+  enabled: true
+  path: "/health"
+
+storage:
+  backend: "file"
+  path: "keychain-data/storage"
+
+rng:
+  mode: "software"
+  fallback_mode: "software"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "keychain-data/keys"

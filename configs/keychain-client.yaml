@@ -1,0 +1,45 @@
+# Keychain CLI client configuration
+# Place in ~/.keychain/config.yaml or specify with --config flag
+
+# Server connection
+# Default: keychain-data/keychain.sock (relative to current working directory)
+#
+# Supported formats:
+#   unix:///path/to/socket.sock  - Unix socket (default)
+#   grpc://host:port             - gRPC (plaintext)
+#   grpcs://host:port            - gRPC with TLS
+#   http://host:port             - REST (plaintext)
+#   https://host:port            - REST with TLS
+#   quic://host:port             - QUIC/HTTP3
+#
+# Leave empty for default (keychain-data/keychain.sock):
+# server: ""
+
+# TLS configuration (for grpcs/https connections)
+tls:
+  # Skip certificate verification (NOT recommended for production)
+  insecure: false
+
+  # Client certificate for mTLS authentication
+  # cert: "/path/to/client.crt"
+  # key: "/path/to/client.key"
+
+  # CA certificate for server verification
+  # ca_cert: "/path/to/ca.crt"
+
+# Authentication
+auth:
+  # JWT token authentication (obtained via 'keychain user login')
+  # token: "your-jwt-token-here"
+
+# Output formatting: text, json, table
+output_format: "text"
+
+# Enable verbose output
+verbose: false
+
+# Default backend for local operations (when using --local flag)
+default_backend: "software"
+
+# Local key storage directory (when using --local flag)
+key_dir: "keychain-data/keys"

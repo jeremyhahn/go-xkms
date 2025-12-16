@@ -244,6 +244,50 @@ func (s *mockKeystoreServer) GetTLSCertificate(ctx context.Context, req *pb.GetT
 	}, nil
 }
 
+func (s *mockKeystoreServer) ListKeyVersions(ctx context.Context, req *pb.ListKeyVersionsRequest) (*pb.ListKeyVersionsResponse, error) {
+	return &pb.ListKeyVersionsResponse{
+		KeyId: req.KeyId,
+		Versions: []*pb.KeyVersionInfo{
+			{Version: 1, Status: "enabled", CreatedAt: "2025-01-01T00:00:00Z"},
+			{Version: 2, Status: "enabled", CreatedAt: "2025-01-02T00:00:00Z"},
+			{Version: 3, Status: "disabled", CreatedAt: "2025-01-03T00:00:00Z"},
+		},
+		Total: 3,
+	}, nil
+}
+
+func (s *mockKeystoreServer) EnableKeyVersion(ctx context.Context, req *pb.EnableKeyVersionRequest) (*pb.EnableKeyVersionResponse, error) {
+	return &pb.EnableKeyVersionResponse{
+		KeyId:   req.KeyId,
+		Version: req.Version,
+		Status:  "enabled",
+	}, nil
+}
+
+func (s *mockKeystoreServer) DisableKeyVersion(ctx context.Context, req *pb.DisableKeyVersionRequest) (*pb.DisableKeyVersionResponse, error) {
+	return &pb.DisableKeyVersionResponse{
+		KeyId:   req.KeyId,
+		Version: req.Version,
+		Status:  "disabled",
+	}, nil
+}
+
+func (s *mockKeystoreServer) EnableAllKeyVersions(ctx context.Context, req *pb.EnableAllKeyVersionsRequest) (*pb.EnableAllKeyVersionsResponse, error) {
+	return &pb.EnableAllKeyVersionsResponse{
+		KeyId:   req.KeyId,
+		Count:   3,
+		Message: "all versions enabled",
+	}, nil
+}
+
+func (s *mockKeystoreServer) DisableAllKeyVersions(ctx context.Context, req *pb.DisableAllKeyVersionsRequest) (*pb.DisableAllKeyVersionsResponse, error) {
+	return &pb.DisableAllKeyVersionsResponse{
+		KeyId:   req.KeyId,
+		Count:   3,
+		Message: "all versions disabled",
+	}, nil
+}
+
 // setupMockGRPCServer creates a mock gRPC server using bufconn
 func setupMockGRPCServer(t *testing.T) (*grpc.Server, *bufconn.Listener) {
 	lis := bufconn.Listen(bufSize)
@@ -1038,6 +1082,213 @@ func TestGRPCClient_WithMockServer_GetTLSCertificate(t *testing.T) {
 	}
 }
 
+func TestGRPCClient_WithMockServer_ListKeyVersions(t *testing.T) {
+	server, lis := setupMockGRPCServer(t)
+	defer server.Stop()
+
+	client := createMockGRPCClient(t, lis)
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.ListKeyVersions(context.Background(), &ListKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("ListKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("ListKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if len(resp.Versions) != 3 {
+		t.Errorf("ListKeyVersions() version count = %d, want 3", len(resp.Versions))
+	}
+	if resp.Versions[0].Version != 1 {
+		t.Errorf("ListKeyVersions().Versions[0].Version = %d, want 1", resp.Versions[0].Version)
+	}
+	if resp.Versions[0].Status != "enabled" {
+		t.Errorf("ListKeyVersions().Versions[0].Status = %v, want enabled", resp.Versions[0].Status)
+	}
+}
+
+func TestGRPCClient_WithMockServer_EnableKeyVersion(t *testing.T) {
+	server, lis := setupMockGRPCServer(t)
+	defer server.Stop()
+
+	client := createMockGRPCClient(t, lis)
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.EnableKeyVersion(context.Background(), &EnableKeyVersionRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+		Version: 3,
+	})
+	if err != nil {
+		t.Fatalf("EnableKeyVersion() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("EnableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Version != 3 {
+		t.Errorf("EnableKeyVersion().Version = %d, want 3", resp.Version)
+	}
+	if resp.Status != "enabled" {
+		t.Errorf("EnableKeyVersion().Status = %v, want enabled", resp.Status)
+	}
+}
+
+func TestGRPCClient_WithMockServer_DisableKeyVersion(t *testing.T) {
+	server, lis := setupMockGRPCServer(t)
+	defer server.Stop()
+
+	client := createMockGRPCClient(t, lis)
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.DisableKeyVersion(context.Background(), &DisableKeyVersionRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+		Version: 1,
+	})
+	if err != nil {
+		t.Fatalf("DisableKeyVersion() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("DisableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Version != 1 {
+		t.Errorf("DisableKeyVersion().Version = %d, want 1", resp.Version)
+	}
+	if resp.Status != "disabled" {
+		t.Errorf("DisableKeyVersion().Status = %v, want disabled", resp.Status)
+	}
+}
+
+func TestGRPCClient_WithMockServer_EnableAllKeyVersions(t *testing.T) {
+	server, lis := setupMockGRPCServer(t)
+	defer server.Stop()
+
+	client := createMockGRPCClient(t, lis)
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.EnableAllKeyVersions(context.Background(), &EnableAllKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("EnableAllKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("EnableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Count != 3 {
+		t.Errorf("EnableAllKeyVersions().Count = %d, want 3", resp.Count)
+	}
+}
+
+func TestGRPCClient_WithMockServer_DisableAllKeyVersions(t *testing.T) {
+	server, lis := setupMockGRPCServer(t)
+	defer server.Stop()
+
+	client := createMockGRPCClient(t, lis)
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.DisableAllKeyVersions(context.Background(), &DisableAllKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("DisableAllKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("DisableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Count != 3 {
+		t.Errorf("DisableAllKeyVersions().Count = %d, want 3", resp.Count)
+	}
+}
+
+func TestGRPCClient_NotConnected_ListKeyVersions(t *testing.T) {
+	client := &grpcClient{
+		config: &Config{
+			Address:  "test",
+			Protocol: ProtocolGRPC,
+		},
+		connected: false,
+	}
+
+	_, err := client.ListKeyVersions(context.Background(), &ListKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != ErrNotConnected {
+		t.Errorf("ListKeyVersions() error = %v, want ErrNotConnected", err)
+	}
+}
+
+func TestGRPCClient_NotConnected_EnableKeyVersion(t *testing.T) {
+	client := &grpcClient{
+		config: &Config{
+			Address:  "test",
+			Protocol: ProtocolGRPC,
+		},
+		connected: false,
+	}
+
+	_, err := client.EnableKeyVersion(context.Background(), &EnableKeyVersionRequest{})
+	if err != ErrNotConnected {
+		t.Errorf("EnableKeyVersion() error = %v, want ErrNotConnected", err)
+	}
+}
+
+func TestGRPCClient_NotConnected_DisableKeyVersion(t *testing.T) {
+	client := &grpcClient{
+		config: &Config{
+			Address:  "test",
+			Protocol: ProtocolGRPC,
+		},
+		connected: false,
+	}
+
+	_, err := client.DisableKeyVersion(context.Background(), &DisableKeyVersionRequest{})
+	if err != ErrNotConnected {
+		t.Errorf("DisableKeyVersion() error = %v, want ErrNotConnected", err)
+	}
+}
+
+func TestGRPCClient_NotConnected_EnableAllKeyVersions(t *testing.T) {
+	client := &grpcClient{
+		config: &Config{
+			Address:  "test",
+			Protocol: ProtocolGRPC,
+		},
+		connected: false,
+	}
+
+	_, err := client.EnableAllKeyVersions(context.Background(), &EnableAllKeyVersionsRequest{})
+	if err != ErrNotConnected {
+		t.Errorf("EnableAllKeyVersions() error = %v, want ErrNotConnected", err)
+	}
+}
+
+func TestGRPCClient_NotConnected_DisableAllKeyVersions(t *testing.T) {
+	client := &grpcClient{
+		config: &Config{
+			Address:  "test",
+			Protocol: ProtocolGRPC,
+		},
+		connected: false,
+	}
+
+	_, err := client.DisableAllKeyVersions(context.Background(), &DisableAllKeyVersionsRequest{})
+	if err != ErrNotConnected {
+		t.Errorf("DisableAllKeyVersions() error = %v, want ErrNotConnected", err)
+	}
+}
+
 func TestGRPCClient_NotConnected_RotateKey(t *testing.T) {
 	client := &grpcClient{
 		config: &Config{
@@ -1305,6 +1556,26 @@ func (s *errorKeystoreServer) GetTLSCertificate(ctx context.Context, req *pb.Get
 	return nil, status.Error(codes.Internal, "mock error")
 }
 
+func (s *errorKeystoreServer) ListKeyVersions(ctx context.Context, req *pb.ListKeyVersionsRequest) (*pb.ListKeyVersionsResponse, error) {
+	return nil, status.Error(codes.Internal, "mock error")
+}
+
+func (s *errorKeystoreServer) EnableKeyVersion(ctx context.Context, req *pb.EnableKeyVersionRequest) (*pb.EnableKeyVersionResponse, error) {
+	return nil, status.Error(codes.Internal, "mock error")
+}
+
+func (s *errorKeystoreServer) DisableKeyVersion(ctx context.Context, req *pb.DisableKeyVersionRequest) (*pb.DisableKeyVersionResponse, error) {
+	return nil, status.Error(codes.Internal, "mock error")
+}
+
+func (s *errorKeystoreServer) EnableAllKeyVersions(ctx context.Context, req *pb.EnableAllKeyVersionsRequest) (*pb.EnableAllKeyVersionsResponse, error) {
+	return nil, status.Error(codes.Internal, "mock error")
+}
+
+func (s *errorKeystoreServer) DisableAllKeyVersions(ctx context.Context, req *pb.DisableAllKeyVersionsRequest) (*pb.DisableAllKeyVersionsResponse, error) {
+	return nil, status.Error(codes.Internal, "mock error")
+}
+
 func setupErrorGRPCServer(t *testing.T) (*grpc.Server, *bufconn.Listener) {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
@@ -1526,6 +1797,41 @@ func TestGRPCClient_ErrorPaths(t *testing.T) {
 		_, err := client.GetTLSCertificate(ctx, "software", "test-key")
 		if err == nil {
 			t.Error("GetTLSCertificate() should return error")
+		}
+	})
+
+	t.Run("ListKeyVersions error", func(t *testing.T) {
+		_, err := client.ListKeyVersions(ctx, &ListKeyVersionsRequest{KeyID: "test", Backend: "software"})
+		if err == nil {
+			t.Error("ListKeyVersions() should return error")
+		}
+	})
+
+	t.Run("EnableKeyVersion error", func(t *testing.T) {
+		_, err := client.EnableKeyVersion(ctx, &EnableKeyVersionRequest{KeyID: "test", Backend: "software", Version: 1})
+		if err == nil {
+			t.Error("EnableKeyVersion() should return error")
+		}
+	})
+
+	t.Run("DisableKeyVersion error", func(t *testing.T) {
+		_, err := client.DisableKeyVersion(ctx, &DisableKeyVersionRequest{KeyID: "test", Backend: "software", Version: 1})
+		if err == nil {
+			t.Error("DisableKeyVersion() should return error")
+		}
+	})
+
+	t.Run("EnableAllKeyVersions error", func(t *testing.T) {
+		_, err := client.EnableAllKeyVersions(ctx, &EnableAllKeyVersionsRequest{KeyID: "test", Backend: "software"})
+		if err == nil {
+			t.Error("EnableAllKeyVersions() should return error")
+		}
+	})
+
+	t.Run("DisableAllKeyVersions error", func(t *testing.T) {
+		_, err := client.DisableAllKeyVersions(ctx, &DisableAllKeyVersionsRequest{KeyID: "test", Backend: "software"})
+		if err == nil {
+			t.Error("DisableAllKeyVersions() should return error")
 		}
 	})
 }

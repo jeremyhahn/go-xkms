@@ -1054,7 +1054,7 @@ func TestUnixClient_Headers(t *testing.T) {
 	client, _ := New(&Config{
 		Protocol: ProtocolUnix,
 		Address:  socketPath,
-		APIKey:   "test-api-key",
+		JWTToken: "test-jwt-token",
 		Headers: map[string]string{
 			"X-Custom-Header": "custom-value",
 		},
@@ -1065,8 +1065,8 @@ func TestUnixClient_Headers(t *testing.T) {
 
 	_, _ = uc.Health(context.Background())
 
-	if receivedHeaders.Get("X-API-Key") != "test-api-key" {
-		t.Errorf("X-API-Key = %v, want test-api-key", receivedHeaders.Get("X-API-Key"))
+	if receivedHeaders.Get("Authorization") != "Bearer test-jwt-token" {
+		t.Errorf("Authorization = %v, want Bearer test-jwt-token", receivedHeaders.Get("Authorization"))
 	}
 	if receivedHeaders.Get("X-Custom-Header") != "custom-value" {
 		t.Errorf("X-Custom-Header = %v, want custom-value", receivedHeaders.Get("X-Custom-Header"))

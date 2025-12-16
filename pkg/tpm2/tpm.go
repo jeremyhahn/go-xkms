@@ -705,6 +705,13 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 	}.Execute(tpm.transport)
 	if err != nil {
 		tpm.logger.Error(err)
+		// Try certificate store first (fallback for swtpm with large certs)
+		if tpm.certStore != nil {
+			tpm.logger.Debug("NVRAM read failed, trying certificate store fallback")
+			if ekCert, certErr := tpm.certStore.Get(ekAttrs); certErr == nil {
+				return ekCert, nil
+			}
+		}
 		// As a last resort, try downloading from the manufacturer EK certificate service
 		return tpm.downloadEKCertFromManufacturer(ekCertIndex)
 	}
@@ -718,7 +725,13 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 
 	// Check if the area is readable
 	if nvPublic.DataSize == 0 {
-		tpm.logger.Warn("NV area has zero size, trying manufacturer download")
+		tpm.logger.Warn("NV area has zero size, trying certificate store fallback")
+		// Try certificate store first (fallback for swtpm with large certs)
+		if tpm.certStore != nil {
+			if ekCert, certErr := tpm.certStore.Get(ekAttrs); certErr == nil {
+				return ekCert, nil
+			}
+		}
 		return tpm.downloadEKCertFromManufacturer(ekCertIndex)
 	}
 
@@ -739,6 +752,13 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 
 	if err != nil {
 		tpm.logger.Error(err)
+		// Try certificate store first (fallback for swtpm with large certs)
+		if tpm.certStore != nil {
+			tpm.logger.Debug("NVRAM read failed, trying certificate store fallback")
+			if ekCert, certErr := tpm.certStore.Get(ekAttrs); certErr == nil {
+				return ekCert, nil
+			}
+		}
 		// As a last resort, try downloading from the manufacturer EK certificate service
 		return tpm.downloadEKCertFromManufacturer(ekCertIndex)
 	}

@@ -1727,6 +1727,159 @@ func TestFileBackupAdapter_DecompressData_UnsupportedAlgorithm(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported compression algorithm")
 }
 
+func TestFileBackupAdapter_LoadIndexWithInvalidJSON(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create invalid JSON files in the directory before creating adapter
+	invalidJSON := []byte("{invalid json}")
+	validJSON, _ := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+
+	err := os.WriteFile(filepath.Join(tempDir, "invalid.json"), invalidJSON, 0600)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(tempDir, "valid.json"), validJSON, 0600)
+	require.NoError(t, err)
+
+	// Create adapter - should skip invalid files and load valid ones
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+	require.NotNil(t, adapter)
+
+	// Should have loaded the valid backup
+	_, exists := adapter.index["valid-backup"]
+	assert.True(t, exists, "Should have loaded valid backup")
+}
+
+func TestFileBackupAdapter_LoadIndexWithUnreadableFiles(t *testing.T) {
+	skipIfRoot(t)
+
+	tempDir := t.TempDir()
+
+	// Create a valid JSON file
+	validJSON, _ := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+	validPath := filepath.Join(tempDir, "valid.json")
+	err := os.WriteFile(validPath, validJSON, 0600)
+	require.NoError(t, err)
+
+	// Create an unreadable JSON file
+	unreadablePath := filepath.Join(tempDir, "unreadable.json")
+	err = os.WriteFile(unreadablePath, []byte("content"), 0000)
+	require.NoError(t, err)
+	defer func() { _ = os.Chmod(unreadablePath, 0600) }()
+
+	// Create adapter - should skip unreadable files
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+	require.NotNil(t, adapter)
+
+	// Should have loaded the valid backup
+	_, exists := adapter.index["valid-backup"]
+	assert.True(t, exists, "Should have loaded valid backup")
+}
+
+func TestFileBackupAdapter_LoadIndexSkipsDirectories(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create a subdirectory
+	subDir := filepath.Join(tempDir, "subdir")
+	err := os.MkdirAll(subDir, 0755)
+	require.NoError(t, err)
+
+	// Create a valid JSON file in the main directory
+	validJSON, _ := json.Marshal(&BackupMetadata{ID: "valid-backup", Version: "1.0"})
+	err = os.WriteFile(filepath.Join(tempDir, "valid.json"), validJSON, 0600)
+	require.NoError(t, err)
+
+	// Create adapter - should skip directories
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+	require.NotNil(t, adapter)
+
+	// Should have loaded the valid backup
+	_, exists := adapter.index["valid-backup"]
+	assert.True(t, exists, "Should have loaded valid backup")
+}
+
+func TestFileBackupAdapter_DecompressData_InvalidGzip(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	// Try to decompress invalid gzip data
+	invalidGzip := []byte("not valid gzip data")
+	_, err = adapter.decompressData(invalidGzip, "gzip")
+	assert.Error(t, err)
+}
+
+func TestFileBackupAdapter_ImportExportRoundTrip(t *testing.T) {
+	tempDir1 := t.TempDir()
+	adapter1, err := NewFileBackupAdapter(tempDir1)
+	require.NoError(t, err)
+
+	tempDir2 := t.TempDir()
+	adapter2, err := NewFileBackupAdapter(tempDir2)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create backup in adapter1
+	data := createTestBackupData(t, 3)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	metadata, err := adapter1.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+
+	// Export from adapter1
+	exportPath := filepath.Join(t.TempDir(), "exported.backup")
+	_, err = adapter1.ExportBackup(ctx, metadata.ID, exportPath)
+	require.NoError(t, err)
+
+	// Import into adapter2
+	importedMetadata, err := adapter2.ImportBackup(ctx, exportPath)
+	require.NoError(t, err)
+
+	// Verify the backup is now in adapter2
+	retrieved, err := adapter2.GetBackup(ctx, importedMetadata.ID)
+	require.NoError(t, err)
+	assert.Equal(t, 3, retrieved.KeyCount)
+}
+
+func TestFileBackupAdapter_CreateBackup_EmptyKeys(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create backup with empty keys
+	data := &BackupData{
+		Keys:       []*BackupKey{},
+		Attributes: []*types.KeyAttributes{},
+	}
+
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 0, metadata.KeyCount)
+}
+
+func TestFileBackupAdapter_ListBackups_Empty(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// List backups in empty directory
+	backups, err := adapter.ListBackups(ctx, nil)
+	require.NoError(t, err)
+	assert.Empty(t, backups)
+}
+
 // Helper functions
 
 // marshalBackupDataSafe safely marshals BackupData by temporarily clearing SessionCloser

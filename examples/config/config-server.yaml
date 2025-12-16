@@ -48,7 +48,7 @@ tls:
 
 auth:
   enabled: true
-  type: mtls  # noop, apikey, mtls, jwt
+  type: mtls  # noop, mtls, jwt, adaptive
   mtls: true
 
 ratelimit:

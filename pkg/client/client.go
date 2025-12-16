@@ -85,6 +85,9 @@ type Config struct {
 	// APIKey is the API key for authentication (optional)
 	APIKey string
 
+	// JWTToken is a JWT token for authentication (optional)
+	JWTToken string
+
 	// Headers are additional HTTP headers to include in requests
 	Headers map[string]string
 }
@@ -160,6 +163,21 @@ type Client interface {
 
 	// RotateKey rotates a key by generating a new version.
 	RotateKey(ctx context.Context, req *RotateKeyRequest) (*RotateKeyResponse, error)
+
+	// ListKeyVersions lists all versions of a key.
+	ListKeyVersions(ctx context.Context, req *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error)
+
+	// EnableKeyVersion enables a specific version of a key.
+	EnableKeyVersion(ctx context.Context, req *EnableKeyVersionRequest) (*EnableKeyVersionResponse, error)
+
+	// DisableKeyVersion disables a specific version of a key.
+	DisableKeyVersion(ctx context.Context, req *DisableKeyVersionRequest) (*DisableKeyVersionResponse, error)
+
+	// EnableAllKeyVersions enables all versions of a key.
+	EnableAllKeyVersions(ctx context.Context, req *EnableAllKeyVersionsRequest) (*EnableAllKeyVersionsResponse, error)
+
+	// DisableAllKeyVersions disables all versions of a key.
+	DisableAllKeyVersions(ctx context.Context, req *DisableAllKeyVersionsRequest) (*DisableAllKeyVersionsResponse, error)
 
 	// GetImportParameters gets the parameters needed to import a key.
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
@@ -502,6 +520,81 @@ type RotateKeyResponse struct {
 	KeyID        string `json:"key_id"`
 	Message      string `json:"message,omitempty"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+}
+
+// KeyVersion represents a specific version of a key.
+type KeyVersion struct {
+	Version   uint64 `json:"version"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	CreatedBy string `json:"created_by,omitempty"`
+}
+
+// ListKeyVersionsRequest contains parameters for listing key versions.
+type ListKeyVersionsRequest struct {
+	Backend string `json:"backend"`
+	KeyID   string `json:"key_id"`
+}
+
+// ListKeyVersionsResponse contains the list of key versions.
+type ListKeyVersionsResponse struct {
+	KeyID    string        `json:"key_id"`
+	Versions []*KeyVersion `json:"versions"`
+	Total    int           `json:"total"`
+}
+
+// EnableKeyVersionRequest contains parameters for enabling a key version.
+type EnableKeyVersionRequest struct {
+	Backend string `json:"backend"`
+	KeyID   string `json:"key_id"`
+	Version uint64 `json:"version"`
+}
+
+// EnableKeyVersionResponse contains the result of enabling a key version.
+type EnableKeyVersionResponse struct {
+	KeyID   string `json:"key_id"`
+	Version uint64 `json:"version"`
+	Status  string `json:"status"`
+}
+
+// DisableKeyVersionRequest contains parameters for disabling a key version.
+type DisableKeyVersionRequest struct {
+	Backend string `json:"backend"`
+	KeyID   string `json:"key_id"`
+	Version uint64 `json:"version"`
+}
+
+// DisableKeyVersionResponse contains the result of disabling a key version.
+type DisableKeyVersionResponse struct {
+	KeyID   string `json:"key_id"`
+	Version uint64 `json:"version"`
+	Status  string `json:"status"`
+}
+
+// EnableAllKeyVersionsRequest contains parameters for enabling all key versions.
+type EnableAllKeyVersionsRequest struct {
+	Backend string `json:"backend"`
+	KeyID   string `json:"key_id"`
+}
+
+// EnableAllKeyVersionsResponse contains the result of enabling all key versions.
+type EnableAllKeyVersionsResponse struct {
+	KeyID   string `json:"key_id"`
+	Count   int    `json:"count"`
+	Message string `json:"message,omitempty"`
+}
+
+// DisableAllKeyVersionsRequest contains parameters for disabling all key versions.
+type DisableAllKeyVersionsRequest struct {
+	Backend string `json:"backend"`
+	KeyID   string `json:"key_id"`
+}
+
+// DisableAllKeyVersionsResponse contains the result of disabling all key versions.
+type DisableAllKeyVersionsResponse struct {
+	KeyID   string `json:"key_id"`
+	Count   int    `json:"count"`
+	Message string `json:"message,omitempty"`
 }
 
 // GetImportParametersRequest contains parameters for getting import parameters.

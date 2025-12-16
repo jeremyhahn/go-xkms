@@ -1,4 +1,5 @@
-# Minimal keychaind configuration for development/testing
+# Default keychaind configuration
+# Uses keychain-data/ in current working directory (no root required)
 
 server:
   host: "127.0.0.1"
@@ -16,7 +17,7 @@ protocols:
 
 unix:
   enabled: true
-  socket_path: "/tmp/keychain.sock"
+  socket_path: "keychain-data/keychain.sock"
   socket_mode: "0660"
   protocol: "grpc"
 
@@ -45,7 +46,7 @@ health:
 
 storage:
   backend: "file"
-  path: "/tmp/keychain-data"
+  path: "keychain-data/storage"
 
 rng:
   mode: "software"
@@ -54,6 +55,57 @@ rng:
 default_backend: "software"
 
 backends:
+  # Software backends (always available)
   software:
     enabled: true
-    path: "/tmp/keychain-data/keys"
+    key_dir: "keychain-data/keys/software"
+
+  pkcs8:
+    enabled: true
+    key_dir: "keychain-data/keys/pkcs8"
+
+  aes:
+    enabled: true
+    key_dir: "keychain-data/keys/aes"
+
+  # Hardware backends (may not be available in all environments)
+  tpm2:
+    enabled: true
+    device: "/dev/tpmrm0"
+    key_dir: "keychain-data/keys/tpm2"
+    use_simulator: false
+    encrypt_session: false
+
+  pkcs11:
+    enabled: true
+    library_path: "/usr/lib/softhsm/libsofthsm2.so"
+    token_label: "keychain"
+    pin: "1234"
+
+  smartcardhsm:
+    enabled: true
+    library_path: "/usr/lib/opensc-pkcs11.so"
+    token_label: "SmartCard-HSM"
+    pin: "648219"
+    dkek_shares: 5
+    dkek_threshold: 3
+
+  # Cloud backends (will fail if credentials not available)
+  awskms:
+    enabled: true
+    region: "us-east-1"
+
+  gcpkms:
+    enabled: true
+    project_id: ""
+    location_id: "us-east1"
+    key_ring_id: "keychain"
+
+  azurekv:
+    enabled: true
+    # Will use environment variables for Azure authentication
+
+  vault:
+    enabled: true
+    address: "http://localhost:8200"
+    # Will use VAULT_TOKEN env var

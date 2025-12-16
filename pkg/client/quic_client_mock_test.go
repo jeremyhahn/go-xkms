@@ -233,6 +233,45 @@ func createMockQUICHandler() http.Handler {
 		_, _ = w.Write([]byte(`{"key_id":"test-key","private_key_pem":"-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----","certificate_pem":"-----BEGIN CERTIFICATE-----\ncert\n-----END CERTIFICATE-----","chain_pem":"-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----"}`))
 	})
 
+	// Key versions endpoint - use trailing slash to match all subpaths
+	mux.HandleFunc("/api/v1/keys/test-key/versions/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		path := r.URL.Path
+
+		// Handle enable-all
+		if strings.Contains(path, "/enable-all") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","count":3,"message":"all versions enabled"}`))
+			return
+		}
+
+		// Handle disable-all
+		if strings.Contains(path, "/disable-all") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","count":3,"message":"all versions disabled"}`))
+			return
+		}
+
+		// Handle enable specific version
+		if strings.Contains(path, "/enable") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","version":1,"status":"enabled"}`))
+			return
+		}
+
+		// Handle disable specific version
+		if strings.Contains(path, "/disable") {
+			_, _ = w.Write([]byte(`{"key_id":"test-key","version":1,"status":"disabled"}`))
+			return
+		}
+
+		// List versions
+		_, _ = w.Write([]byte(`{"key_id":"test-key","versions":[{"version":1,"status":"enabled","created_at":"2025-01-01T00:00:00Z"},{"version":2,"status":"enabled","created_at":"2025-01-02T00:00:00Z"},{"version":3,"status":"disabled","created_at":"2025-01-03T00:00:00Z"}],"total":3}`))
+	})
+
+	// Exact match for list versions (without trailing slash)
+	mux.HandleFunc("/api/v1/keys/test-key/versions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_id":"test-key","versions":[{"version":1,"status":"enabled","created_at":"2025-01-01T00:00:00Z"},{"version":2,"status":"enabled","created_at":"2025-01-02T00:00:00Z"},{"version":3,"status":"disabled","created_at":"2025-01-03T00:00:00Z"}],"total":3}`))
+	})
+
 	return mux
 }
 
@@ -650,11 +689,11 @@ func TestQUICClient_WithMockServer_ExportKey(t *testing.T) {
 	}
 }
 
-// Test error handling
-func TestQUICClient_WithMockServer_doRequest_APIKey(t *testing.T) {
+// Test JWT token authentication
+func TestQUICClient_WithMockServer_doRequest_JWTToken(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		apiKey := r.Header.Get("X-API-Key")
-		if apiKey != "test-api-key" {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "Bearer test-jwt-token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
 			return
@@ -668,7 +707,7 @@ func TestQUICClient_WithMockServer_doRequest_APIKey(t *testing.T) {
 		config: &Config{
 			Address:  "mock-server:443",
 			Protocol: ProtocolQUIC,
-			APIKey:   "test-api-key",
+			JWTToken: "test-jwt-token",
 		},
 		httpClient: &http.Client{
 			Transport: transport,
@@ -680,7 +719,7 @@ func TestQUICClient_WithMockServer_doRequest_APIKey(t *testing.T) {
 	ctx := context.Background()
 	data, err := client.doRequest(ctx, http.MethodGet, "/test", nil)
 	if err != nil {
-		t.Fatalf("doRequest() with API key error = %v", err)
+		t.Fatalf("doRequest() with JWT token error = %v", err)
 	}
 
 	if !strings.Contains(string(data), "ok") {
@@ -1831,6 +1870,177 @@ func TestQUICClient_JSONParseErrors(t *testing.T) {
 		_, err := client.GetTLSCertificate(ctx, "software", "test-key")
 		if err == nil {
 			t.Error("Expected error for invalid JSON")
+		}
+	})
+}
+
+func TestQUICClient_WithMockServer_ListKeyVersions(t *testing.T) {
+	client := createMockQUICClient(t)
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	resp, err := client.ListKeyVersions(ctx, &ListKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("ListKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("ListKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if len(resp.Versions) != 3 {
+		t.Errorf("ListKeyVersions() version count = %d, want 3", len(resp.Versions))
+	}
+}
+
+func TestQUICClient_WithMockServer_EnableKeyVersion(t *testing.T) {
+	client := createMockQUICClient(t)
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	resp, err := client.EnableKeyVersion(ctx, &EnableKeyVersionRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+		Version: 1,
+	})
+	if err != nil {
+		t.Fatalf("EnableKeyVersion() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("EnableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Status != "enabled" {
+		t.Errorf("EnableKeyVersion().Status = %v, want enabled", resp.Status)
+	}
+}
+
+func TestQUICClient_WithMockServer_DisableKeyVersion(t *testing.T) {
+	client := createMockQUICClient(t)
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	resp, err := client.DisableKeyVersion(ctx, &DisableKeyVersionRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+		Version: 1,
+	})
+	if err != nil {
+		t.Fatalf("DisableKeyVersion() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("DisableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Status != "disabled" {
+		t.Errorf("DisableKeyVersion().Status = %v, want disabled", resp.Status)
+	}
+}
+
+func TestQUICClient_WithMockServer_EnableAllKeyVersions(t *testing.T) {
+	client := createMockQUICClient(t)
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	resp, err := client.EnableAllKeyVersions(ctx, &EnableAllKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("EnableAllKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("EnableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Count != 3 {
+		t.Errorf("EnableAllKeyVersions().Count = %d, want 3", resp.Count)
+	}
+}
+
+func TestQUICClient_WithMockServer_DisableAllKeyVersions(t *testing.T) {
+	client := createMockQUICClient(t)
+	defer func() { _ = client.Close() }()
+
+	ctx := context.Background()
+	resp, err := client.DisableAllKeyVersions(ctx, &DisableAllKeyVersionsRequest{
+		Backend: "software",
+		KeyID:   "test-key",
+	})
+	if err != nil {
+		t.Fatalf("DisableAllKeyVersions() error = %v", err)
+	}
+
+	if resp.KeyID != "test-key" {
+		t.Errorf("DisableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+	}
+	if resp.Count != 3 {
+		t.Errorf("DisableAllKeyVersions().Count = %d, want 3", resp.Count)
+	}
+}
+
+func TestQUICClient_NotConnected_KeyVersions(t *testing.T) {
+	client := &quicClient{
+		config: &Config{
+			Address:  "mock-server:443",
+			Protocol: ProtocolQUIC,
+		},
+		connected: false,
+	}
+
+	ctx := context.Background()
+
+	t.Run("ListKeyVersions not connected", func(t *testing.T) {
+		_, err := client.ListKeyVersions(ctx, &ListKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != ErrNotConnected {
+			t.Errorf("ListKeyVersions() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("EnableKeyVersion not connected", func(t *testing.T) {
+		_, err := client.EnableKeyVersion(ctx, &EnableKeyVersionRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+			Version: 1,
+		})
+		if err != ErrNotConnected {
+			t.Errorf("EnableKeyVersion() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("DisableKeyVersion not connected", func(t *testing.T) {
+		_, err := client.DisableKeyVersion(ctx, &DisableKeyVersionRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+			Version: 1,
+		})
+		if err != ErrNotConnected {
+			t.Errorf("DisableKeyVersion() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("EnableAllKeyVersions not connected", func(t *testing.T) {
+		_, err := client.EnableAllKeyVersions(ctx, &EnableAllKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != ErrNotConnected {
+			t.Errorf("EnableAllKeyVersions() error = %v, want ErrNotConnected", err)
+		}
+	})
+
+	t.Run("DisableAllKeyVersions not connected", func(t *testing.T) {
+		_, err := client.DisableAllKeyVersions(ctx, &DisableAllKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != ErrNotConnected {
+			t.Errorf("DisableAllKeyVersions() error = %v, want ErrNotConnected", err)
 		}
 	})
 }

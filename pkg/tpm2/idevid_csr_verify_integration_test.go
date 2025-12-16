@@ -1,3 +1,5 @@
+//go:build tpm_simulator
+
 //nolint:staticcheck // Style warnings suppressed
 package tpm2
 

@@ -17,12 +17,14 @@ package integration
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -178,6 +180,51 @@ func assertNotEmpty(t *testing.T, s string, msg string) {
 func assertNotNil(t *testing.T, v interface{}, msg string) {
 	t.Helper()
 	if v == nil {
+		t.Fatal(msg)
+	}
+}
+
+// assertErrorIs fails the test if err does not wrap the target error
+func assertErrorIs(t *testing.T, err, target error, msg string) {
+	t.Helper()
+	if !errors.Is(err, target) {
+		t.Fatalf("%s: expected error %v, got %v", msg, target, err)
+	}
+}
+
+// assertLen fails the test if the length of v does not match expected
+func assertLen(t *testing.T, v interface{}, expected int, msg string) {
+	t.Helper()
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array && rv.Kind() != reflect.Map && rv.Kind() != reflect.String {
+		t.Fatalf("%s: cannot determine length of %T", msg, v)
+	}
+	actual := rv.Len()
+	if actual != expected {
+		t.Fatalf("%s: expected length %d, got %d", msg, expected, actual)
+	}
+}
+
+// assertGreaterThan fails the test if actual <= expected
+func assertGreaterThan(t *testing.T, actual, expected int, msg string) {
+	t.Helper()
+	if actual <= expected {
+		t.Fatalf("%s: expected > %d, got %d", msg, expected, actual)
+	}
+}
+
+// assertTrue fails the test if condition is false
+func assertTrue(t *testing.T, condition bool, msg string) {
+	t.Helper()
+	if !condition {
+		t.Fatal(msg)
+	}
+}
+
+// assertFalse fails the test if condition is true
+func assertFalse(t *testing.T, condition bool, msg string) {
+	t.Helper()
+	if condition {
 		t.Fatal(msg)
 	}
 }

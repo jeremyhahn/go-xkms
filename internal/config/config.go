@@ -32,6 +32,7 @@ type Config struct {
 	Logging   LoggingConfig   `yaml:"logging"`
 	TLS       TLSConfig       `yaml:"tls"`
 	Auth      AuthConfig      `yaml:"auth"`
+	WebAuthn  *WebAuthnConfig `yaml:"webauthn,omitempty"`
 	RateLimit RateLimitConfig `yaml:"ratelimit"`
 	Metrics   MetricsConfig   `yaml:"metrics"`
 	Health    HealthConfig    `yaml:"health"`
@@ -104,24 +105,51 @@ type TLSConfig struct {
 // AuthConfig controls authentication and authorization
 type AuthConfig struct {
 	Enabled bool   `yaml:"enabled"`
-	Type    string `yaml:"type"` // noop, apikey, mtls, jwt, custom
-
-	// API Key authentication
-	APIKeys map[string]APIKeyConfig `yaml:"api_keys,omitempty"` // key -> config mapping
+	Type    string `yaml:"type"` // noop, mtls, jwt, adaptive
 
 	// JWT authentication
 	JWT *JWTConfig `yaml:"jwt,omitempty"`
 
 	// mTLS authentication
 	MTLS bool `yaml:"mtls"` // Use mTLS from client certificates
+
+	// Adaptive authentication (auto-switches between noop and required auth)
+	// When no users exist: allow all requests (bootstrap mode)
+	// When users exist: require authentication
+	Adaptive bool `yaml:"adaptive"`
+
+	// RBAC enables role-based access control
+	EnableRBAC bool `yaml:"enable_rbac"`
 }
 
-// APIKeyConfig represents an API key and its associated identity
-type APIKeyConfig struct {
-	Subject     string                 `yaml:"subject"`
-	Roles       []string               `yaml:"roles,omitempty"`
-	Permissions []string               `yaml:"permissions,omitempty"`
-	Claims      map[string]interface{} `yaml:"claims,omitempty"`
+// WebAuthnConfig controls WebAuthn/FIDO2 authentication
+type WebAuthnConfig struct {
+	// Enabled controls whether WebAuthn is active
+	Enabled bool `yaml:"enabled"`
+
+	// RPID is the relying party identifier (e.g., "localhost" or "example.com")
+	RPID string `yaml:"rp_id"`
+
+	// RPOrigins are the allowed origins for WebAuthn requests
+	RPOrigins []string `yaml:"rp_origins"`
+
+	// RPDisplayName is the human-readable name shown to users
+	RPDisplayName string `yaml:"rp_display_name"`
+
+	// AttestationPreference controls attestation requirements
+	// Values: "none", "indirect", "direct", "enterprise"
+	AttestationPreference string `yaml:"attestation_preference"`
+
+	// AuthenticatorSelection controls which authenticators are allowed
+	AuthenticatorAttachment string `yaml:"authenticator_attachment"` // "platform", "cross-platform", ""
+	ResidentKey             string `yaml:"resident_key"`             // "discouraged", "preferred", "required"
+	UserVerification        string `yaml:"user_verification"`        // "discouraged", "preferred", "required"
+
+	// JWT settings for token generation after successful authentication
+	JWTKeyID     string   `yaml:"jwt_key_id"`     // Key ID in keychain for JWT signing
+	JWTIssuer    string   `yaml:"jwt_issuer"`     // JWT issuer claim
+	JWTAudience  []string `yaml:"jwt_audience"`   // JWT audience claim
+	JWTExpiresIn string   `yaml:"jwt_expires_in"` // JWT expiration duration (e.g., "24h")
 }
 
 // JWTConfig controls JWT authentication

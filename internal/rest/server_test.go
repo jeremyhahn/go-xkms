@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/metadata"
 )
 
 // mockHealthChecker implements HealthChecker for testing
@@ -46,6 +47,35 @@ func (m *mockHealthChecker) Ready(ctx context.Context) []health.CheckResult {
 
 func (m *mockHealthChecker) Startup(ctx context.Context) health.CheckResult {
 	return health.CheckResult{Status: health.StatusHealthy}
+}
+
+// testAuthenticator is a simple authenticator for testing that validates
+// requests based on a Bearer token header
+type testAuthenticator struct {
+	validToken string
+}
+
+func (a *testAuthenticator) Name() string {
+	return "test"
+}
+
+func (a *testAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return nil, fmt.Errorf("no authorization header")
+	}
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, fmt.Errorf("invalid authorization header format")
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token != a.validToken {
+		return nil, fmt.Errorf("invalid token")
+	}
+	return &auth.Identity{Subject: "test-user"}, nil
+}
+
+func (a *testAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 // Helper to create a test logger
@@ -428,12 +458,8 @@ func TestSetupRouter_WebAuthnNotMountedWithoutConfig(t *testing.T) {
 func TestSetupRouter_APIRoutes(t *testing.T) {
 	ks := newMockKeyStore()
 
-	// Use API key authenticator to verify auth middleware is applied
-	authenticator := auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-		Keys: map[string]*auth.Identity{
-			"valid-key": {Subject: "test-user"},
-		},
-	})
+	// Use test authenticator to verify auth middleware is applied
+	authenticator := &testAuthenticator{validToken: "valid-token"}
 
 	cfg := &Config{
 		Backends: map[string]keychain.KeyStore{
@@ -457,7 +483,7 @@ func TestSetupRouter_APIRoutes(t *testing.T) {
 
 	t.Run("Authenticated request succeeds", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-		req.Header.Set("X-API-Key", "valid-key")
+		req.Header.Set("Authorization", "Bearer valid-token")
 		w := httptest.NewRecorder()
 
 		server.server.Handler.ServeHTTP(w, req)

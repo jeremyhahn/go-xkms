@@ -38,7 +38,7 @@ tls:
 
 auth:
   enabled: true
-  type: "apikey"  # apikey, oauth2, custom, none
+  type: "adaptive"  # noop, mtls, jwt, adaptive
 
 # Rate limiting configuration
 # Applied uniformly across all APIs (REST, gRPC, QUIC, MCP)

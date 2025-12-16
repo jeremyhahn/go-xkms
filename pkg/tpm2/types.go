@@ -39,10 +39,11 @@ const (
 	ekCertIndexECCP521 = 0x01C00018
 
 	// Defined in "Registry of reserved TPM 2.0 handles and localities".
+	// These constants are used in test files with tpm_simulator build tag.
 
-	nvramPlatformIndex    = 0x01400001
-	nvramEndorsementIndex = 0x01C00001
-	nvramOwnerIndex       = 0x01800001
+	nvramPlatformIndex    = 0x01400001 //nolint:unused // used in tests
+	nvramEndorsementIndex = 0x01C00001 //nolint:unused // used in tests
+	nvramOwnerIndex       = 0x01800001 //nolint:unused // used in tests
 
 	// Trusted Platform EK and SRK stored under the Platform Hierarchy
 	// Registry of Reserved TPM 2.0 Handles and Localities, Section 2.3.1 - Key Handle Assignments
@@ -64,8 +65,9 @@ const (
 )
 
 var (
-	debugPCR     = uint(16)
-	debugPCRBank = PCRBankSHA256
+	// debugPCR and debugPCRBank are used in test files with tpm_simulator build tag.
+	debugPCR     = uint(16)      //nolint:unused // used in tests
+	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
 
 	ErrInvalidAKAttributes          = errors.New("tpm: invalid AK attributes")
 	ErrInvalidEKCertFormat          = errors.New("tpm: invalid endorsement certificate format")

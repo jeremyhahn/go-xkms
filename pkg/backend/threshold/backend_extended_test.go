@@ -1099,3 +1099,186 @@ func TestThresholdSigner_unmarshalPrivateKey_ECDSA(t *testing.T) {
 	pubKey := signer.Public()
 	require.NotNil(t, pubKey)
 }
+
+// TestThresholdBackend_ListKeys_UnreadableEntry tests ListKeys skipping unreadable entries
+func TestThresholdBackend_ListKeys_UnreadableEntry(t *testing.T) {
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
+	backend, err := NewBackend(config)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	// Generate a valid key
+	attrs := &types.KeyAttributes{
+		CN:           "test-valid-key",
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreThreshold,
+		KeyAlgorithm: x509.Ed25519,
+		ThresholdAttributes: &types.ThresholdAttributes{
+			Threshold: 2,
+			Total:     3,
+		},
+	}
+	_, err = backend.GenerateKey(attrs)
+	require.NoError(t, err)
+
+	// Add an entry that cannot be unmarshaled
+	err = keyStorage.Put("threshold/metadata/bad-json-key", []byte("not json"), nil)
+	require.NoError(t, err)
+
+	// ListKeys should return valid keys and skip invalid ones
+	keys, err := backend.ListKeys()
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(keys), 1)
+}
+
+// TestThresholdBackend_Signer_LoadShareFallback tests that Signer falls back to loadAnyShare
+func TestThresholdBackend_Signer_LoadShareFallback(t *testing.T) {
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
+	backend, err := NewBackend(config)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-fallback-share",
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreThreshold,
+		KeyAlgorithm: x509.Ed25519,
+		ThresholdAttributes: &types.ThresholdAttributes{
+			Threshold: 2,
+			Total:     3,
+		},
+	}
+
+	// Generate key
+	_, err = backend.GenerateKey(attrs)
+	require.NoError(t, err)
+
+	// Delete the local share (share-1) from cache and storage
+	keyID := backend.getKeyID(attrs)
+	backend.cacheMu.Lock()
+	delete(backend.shareCache, keyID)
+	backend.cacheMu.Unlock()
+	shareKey := "threshold/shares/" + keyID + "/share-1"
+	_ = keyStorage.Delete(shareKey)
+
+	// Get signer - local share doesn't exist, so it should fallback to loadAnyShare
+	signer, err := backend.Signer(attrs)
+	require.NoError(t, err)
+	require.NotNil(t, signer)
+}
+
+// TestThresholdSigner_Sign_InsufficientShares tests signing with insufficient shares
+func TestThresholdSigner_Sign_InsufficientShares(t *testing.T) {
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
+	backend, err := NewBackend(config)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-sign-insufficient",
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreThreshold,
+		KeyAlgorithm: x509.Ed25519,
+		ThresholdAttributes: &types.ThresholdAttributes{
+			Threshold: 4, // Need 4 shares
+			Total:     5,
+		},
+	}
+
+	// Generate key
+	_, err = backend.GenerateKey(attrs)
+	require.NoError(t, err)
+
+	// Delete shares to leave only 2 (need 4)
+	keyID := backend.getKeyID(attrs)
+	for i := 2; i <= 4; i++ {
+		shareKey := "threshold/shares/" + keyID + "/share-" + string(rune('0'+i))
+		_ = keyStorage.Delete(shareKey)
+	}
+
+	// Get signer with remaining share
+	signer, err := backend.Signer(attrs)
+	require.NoError(t, err)
+
+	// Sign should fail due to insufficient shares
+	digest := []byte("test message")
+	_, err = signer.Sign(nil, digest, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to reconstruct key")
+}
+
+// TestThresholdBackend_loadShare_InvalidShare tests loading an invalid share
+func TestThresholdBackend_loadShare_InvalidShare(t *testing.T) {
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
+	backend, err := NewBackend(config)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-invalid-share-validate",
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreThreshold,
+		KeyAlgorithm: x509.Ed25519,
+		ThresholdAttributes: &types.ThresholdAttributes{
+			Threshold: 2,
+			Total:     3,
+		},
+	}
+
+	// Store invalid share data (valid JSON but invalid share)
+	keyID := backend.getKeyID(attrs)
+	shareKey := "threshold/shares/" + keyID + "/share-1"
+	invalidShare := `{"index": 0, "data": ""}`
+	err = keyStorage.Put(shareKey, []byte(invalidShare), nil)
+	require.NoError(t, err)
+
+	// Try to load invalid share - should fail validation
+	_, err = backend.loadShare(attrs, 1)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid share")
+}
+
+// TestThresholdSigner_reconstructKey_SkipsCorruptedShares tests that reconstruction skips corrupted shares
+func TestThresholdSigner_reconstructKey_SkipsCorruptedShares(t *testing.T) {
+	keyStorage := storage.New()
+	config := DefaultConfig(keyStorage)
+	backend, err := NewBackend(config)
+	require.NoError(t, err)
+	defer func() { _ = backend.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:           "test-reconstruct-corrupt",
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreThreshold,
+		KeyAlgorithm: x509.Ed25519,
+		ThresholdAttributes: &types.ThresholdAttributes{
+			Threshold: 2,
+			Total:     5, // More shares so we can corrupt some and still have enough
+		},
+	}
+
+	// Generate key
+	_, err = backend.GenerateKey(attrs)
+	require.NoError(t, err)
+
+	// Get signer before corrupting shares
+	signer, err := backend.Signer(attrs)
+	require.NoError(t, err)
+
+	// Corrupt one share - reconstructKey should skip it and use others
+	keyID := backend.getKeyID(attrs)
+	shareKey := "threshold/shares/" + keyID + "/share-2"
+	err = keyStorage.Put(shareKey, []byte("corrupted"), nil)
+	require.NoError(t, err)
+
+	// Sign should still work - it has share-1 cached and can use share-3, 4, or 5
+	// Ed25519 expects unhashed message and nil opts (or crypto.Hash(0))
+	digest := []byte("test message to sign")
+	sig, err := signer.Sign(nil, digest, crypto.Hash(0))
+	require.NoError(t, err)
+	require.NotNil(t, sig)
+}

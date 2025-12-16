@@ -349,6 +349,12 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 	_, stderr, err := execCLI(t, cfg, genArgs...)
 	if err != nil {
 		t.Logf("stderr: %s", stderr)
+		// Check for connection errors - skip if server not available
+		if strings.Contains(stderr, "connection failed") ||
+			strings.Contains(stderr, "connection error") ||
+			strings.Contains(stderr, "no such file or directory") {
+			t.Skip("Server not available for encrypt/decrypt test")
+		}
 		// AES key generation not yet supported via gRPC/REST for software backend
 		if strings.Contains(stderr, "unsupported key type") ||
 			strings.Contains(stderr, "does not support symmetric key generation") ||

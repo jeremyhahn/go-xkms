@@ -413,11 +413,11 @@ func TestConfig_TLSSettings(t *testing.T) {
 	}
 }
 
-func TestConfig_APIKey(t *testing.T) {
+func TestConfig_JWTToken(t *testing.T) {
 	cfg := &Config{
 		Protocol: ProtocolREST,
 		Address:  "http://localhost:8443",
-		APIKey:   "test-api-key",
+		JWTToken: "test-jwt-token",
 	}
 
 	client, err := New(cfg)
@@ -430,8 +430,8 @@ func TestConfig_APIKey(t *testing.T) {
 		t.Fatalf("Expected restClient, got %T", client)
 	}
 
-	if rc.config.APIKey != "test-api-key" {
-		t.Errorf("APIKey = %v, want test-api-key", rc.config.APIKey)
+	if rc.config.JWTToken != "test-jwt-token" {
+		t.Errorf("JWTToken = %v, want test-jwt-token", rc.config.JWTToken)
 	}
 }
 

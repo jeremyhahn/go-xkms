@@ -136,8 +136,12 @@ func Encrypt(random io.Reader, publicKey *ecdsa.PublicKey, plaintext, aad []byte
 	ciphertext := ciphertextWithTag[:len(ciphertextWithTag)-tagSize]
 	tag := ciphertextWithTag[len(ciphertextWithTag)-tagSize:]
 
-	// Serialize ephemeral public key (uncompressed format)
-	ephemeralPubBytes := elliptic.Marshal(ephemeralPriv.Curve, ephemeralPriv.X, ephemeralPriv.Y) //nolint:staticcheck // SA1019: TODO refactor to crypto/ecdh
+	// Serialize ephemeral public key using modern crypto/ecdh (Go 1.20+)
+	ecdhPub, err := ephemeralPriv.PublicKey.ECDH()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert ephemeral public key: %w", err)
+	}
+	ephemeralPubBytes := ecdhPub.Bytes()
 
 	// Build final output: ephemeral_pub || nonce || tag || ciphertext
 	result := make([]byte, 0, len(ephemeralPubBytes)+nonceSize+tagSize+len(ciphertext))
@@ -187,20 +191,20 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 	tag := ciphertext[pubKeySize+nonceSize : pubKeySize+nonceSize+tagSize]
 	encryptedData := ciphertext[pubKeySize+nonceSize+tagSize:]
 
-	// Deserialize ephemeral public key
-	ephemeralX, ephemeralY := elliptic.Unmarshal(privateKey.Curve, ephemeralPubBytes) //nolint:staticcheck // SA1019: TODO refactor to crypto/ecdh
-	if ephemeralX == nil {
-		return nil, fmt.Errorf("failed to unmarshal ephemeral public key")
+	// Convert recipient private key to ECDH using modern Go 1.20+ API
+	recipientECDH, err := privateKey.ECDH()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert recipient private key: %w", err)
 	}
 
-	ephemeralPub := &ecdsa.PublicKey{
-		Curve: privateKey.Curve,
-		X:     ephemeralX,
-		Y:     ephemeralY,
+	// Parse ephemeral public key using modern crypto/ecdh API
+	ephemeralPub, err := recipientECDH.Curve().NewPublicKey(ephemeralPubBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ephemeral public key: %w", err)
 	}
 
-	// Perform ECDH: recipient_private × ephemeral_public
-	sharedSecret, err := ecdh.DeriveSharedSecret(privateKey, ephemeralPub)
+	// Perform ECDH: recipient_private × ephemeral_public using modern API
+	sharedSecret, err := recipientECDH.ECDH(ephemeralPub)
 	if err != nil {
 		return nil, fmt.Errorf("ECDH failed: %w", err)
 	}

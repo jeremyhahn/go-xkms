@@ -20,6 +20,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,28 +172,74 @@ func TestGRPCServer_NoOpAuthenticator_NoTLS(t *testing.T) {
 	})
 }
 
-func TestGRPCServer_APIKeyAuthenticator_Metadata(t *testing.T) {
+// testBearerAuthenticator is a simple authenticator for testing that validates
+// requests based on a Bearer token header
+type testBearerAuthenticator struct {
+	validToken string
+}
+
+func (a *testBearerAuthenticator) Name() string {
+	return "test-bearer"
+}
+
+func (a *testBearerAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return nil, fmt.Errorf("no authorization header")
+	}
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, fmt.Errorf("invalid authorization header format")
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token != a.validToken {
+		return nil, fmt.Errorf("invalid token")
+	}
+	return &auth.Identity{
+		Subject: "test-user",
+		Claims: map[string]interface{}{
+			"roles": []string{"admin"},
+		},
+		Attributes: map[string]string{
+			"scope": "full",
+		},
+	}, nil
+}
+
+func (a *testBearerAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
+	authValues := md.Get("authorization")
+	if len(authValues) == 0 {
+		return nil, fmt.Errorf("no authorization metadata")
+	}
+
+	authHeader := authValues[0]
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return nil, fmt.Errorf("invalid authorization header format")
+	}
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	if token != a.validToken {
+		return nil, fmt.Errorf("invalid token")
+	}
+	return &auth.Identity{
+		Subject: "test-user",
+		Claims: map[string]interface{}{
+			"roles": []string{"admin"},
+		},
+		Attributes: map[string]string{
+			"scope": "full",
+		},
+	}, nil
+}
+
+func TestGRPCServer_BearerTokenAuthenticator_Metadata(t *testing.T) {
 	// Create test backend manager
 	manager := createTestBackendRegistry(t)
 	defer func() { _ = manager.Close() }()
 
-	// Create API key authenticator with test keys
-	validAPIKey := "test-api-key-12345"
-	invalidAPIKey := "invalid-api-key"
+	// Create Bearer token authenticator
+	validToken := "test-token-12345"
+	invalidToken := "invalid-token"
 
-	authenticator := auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-		Keys: map[string]*auth.Identity{
-			validAPIKey: {
-				Subject: "test-user",
-				Claims: map[string]interface{}{
-					"roles": []string{"admin"},
-				},
-				Attributes: map[string]string{
-					"scope": "full",
-				},
-			},
-		},
-	})
+	authenticator := &testBearerAuthenticator{validToken: validToken}
 
 	// Create gRPC server
 	cfg := &ServerConfig{
@@ -236,18 +284,18 @@ func TestGRPCServer_APIKeyAuthenticator_Metadata(t *testing.T) {
 
 	client := pb.NewKeystoreServiceClient(conn)
 
-	// Test with valid API key in metadata
-	t.Run("ValidAPIKey", func(t *testing.T) {
+	// Test with valid Bearer token in metadata
+	t.Run("ValidToken", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		// Add API key to metadata
-		md := metadata.Pairs("x-api-key", validAPIKey)
+		// Add Bearer token to metadata
+		md := metadata.Pairs("authorization", "Bearer "+validToken)
 		ctx = metadata.NewOutgoingContext(ctx, md)
 
 		resp, err := client.ListBackends(ctx, &pb.ListBackendsRequest{})
 		if err != nil {
-			t.Fatalf("Request with valid API key failed: %v", err)
+			t.Fatalf("Request with valid Bearer token failed: %v", err)
 		}
 
 		if resp.Count == 0 {
@@ -255,17 +303,17 @@ func TestGRPCServer_APIKeyAuthenticator_Metadata(t *testing.T) {
 		}
 	})
 
-	// Test with invalid API key
-	t.Run("InvalidAPIKey", func(t *testing.T) {
+	// Test with invalid Bearer token
+	t.Run("InvalidToken", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		md := metadata.Pairs("x-api-key", invalidAPIKey)
+		md := metadata.Pairs("authorization", "Bearer "+invalidToken)
 		ctx = metadata.NewOutgoingContext(ctx, md)
 
 		_, err := client.ListBackends(ctx, &pb.ListBackendsRequest{})
 		if err == nil {
-			t.Fatal("Expected error with invalid API key, got nil")
+			t.Fatal("Expected error with invalid Bearer token, got nil")
 		}
 
 		st, ok := status.FromError(err)
@@ -278,14 +326,14 @@ func TestGRPCServer_APIKeyAuthenticator_Metadata(t *testing.T) {
 		}
 	})
 
-	// Test without API key
-	t.Run("NoAPIKey", func(t *testing.T) {
+	// Test without Authorization header
+	t.Run("NoToken", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		_, err := client.ListBackends(ctx, &pb.ListBackendsRequest{})
 		if err == nil {
-			t.Fatal("Expected error without API key, got nil")
+			t.Fatal("Expected error without Bearer token, got nil")
 		}
 
 		st, ok := status.FromError(err)
@@ -295,24 +343,6 @@ func TestGRPCServer_APIKeyAuthenticator_Metadata(t *testing.T) {
 
 		if st.Code() != codes.Unauthenticated {
 			t.Errorf("Expected code Unauthenticated, got %v", st.Code())
-		}
-	})
-
-	// Test with API key in authorization metadata
-	t.Run("BearerToken", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		md := metadata.Pairs("authorization", "Bearer "+validAPIKey)
-		ctx = metadata.NewOutgoingContext(ctx, md)
-
-		resp, err := client.ListBackends(ctx, &pb.ListBackendsRequest{})
-		if err != nil {
-			t.Fatalf("Request with Bearer token failed: %v", err)
-		}
-
-		if resp.Count == 0 {
-			t.Error("Expected at least one backend")
 		}
 	})
 }
@@ -568,51 +598,39 @@ func TestGRPCServer_AuthenticationFailureScenarios(t *testing.T) {
 		description   string
 	}{
 		{
-			name: "APIKey_EmptyKey",
+			name: "Bearer_EmptyToken",
 			setupAuth: func() auth.Authenticator {
-				return auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-					Keys: map[string]*auth.Identity{
-						"valid-key": {Subject: "test"},
-					},
-				})
+				return &testBearerAuthenticator{validToken: "valid-token"}
 			},
 			setupMetadata: func(ctx context.Context) context.Context {
-				md := metadata.Pairs("x-api-key", "")
+				md := metadata.Pairs("authorization", "Bearer ")
 				return metadata.NewOutgoingContext(ctx, md)
 			},
 			expectedCode: codes.Unauthenticated,
-			description:  "Empty API key should be rejected",
+			description:  "Empty Bearer token should be rejected",
 		},
 		{
-			name: "APIKey_WrongKey",
+			name: "Bearer_WrongToken",
 			setupAuth: func() auth.Authenticator {
-				return auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-					Keys: map[string]*auth.Identity{
-						"valid-key": {Subject: "test"},
-					},
-				})
+				return &testBearerAuthenticator{validToken: "valid-token"}
 			},
 			setupMetadata: func(ctx context.Context) context.Context {
-				md := metadata.Pairs("x-api-key", "wrong-key")
+				md := metadata.Pairs("authorization", "Bearer wrong-token")
 				return metadata.NewOutgoingContext(ctx, md)
 			},
 			expectedCode: codes.Unauthenticated,
-			description:  "Wrong API key should be rejected",
+			description:  "Wrong Bearer token should be rejected",
 		},
 		{
-			name: "APIKey_MissingKey",
+			name: "Bearer_MissingToken",
 			setupAuth: func() auth.Authenticator {
-				return auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-					Keys: map[string]*auth.Identity{
-						"valid-key": {Subject: "test"},
-					},
-				})
+				return &testBearerAuthenticator{validToken: "valid-token"}
 			},
 			setupMetadata: func(ctx context.Context) context.Context {
 				return ctx // No metadata
 			},
 			expectedCode: codes.Unauthenticated,
-			description:  "Missing API key should be rejected",
+			description:  "Missing Bearer token should be rejected",
 		},
 	}
 
