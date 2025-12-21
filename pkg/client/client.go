@@ -40,8 +40,8 @@ const (
 	ProtocolQUIC Protocol = "quic"
 )
 
-// DefaultUnixSocketPath is the default Unix socket path
-const DefaultUnixSocketPath = "/var/run/keychain/keychain.sock"
+// DefaultUnixSocketPath is the default Unix socket path (relative to current working directory)
+const DefaultUnixSocketPath = "keychain-data/keychain.sock"
 
 var (
 	// ErrUnsupportedProtocol is returned when an unsupported protocol is specified
@@ -82,10 +82,8 @@ type Config struct {
 	// TLSCAFile is the path to the CA certificate file
 	TLSCAFile string
 
-	// APIKey is the API key for authentication (optional)
-	APIKey string
-
-	// JWTToken is a JWT token for authentication (optional)
+	// JWTToken is the JWT token for authentication (optional)
+	// Obtained via FIDO2/WebAuthn login flow
 	JWTToken string
 
 	// Headers are additional HTTP headers to include in requests

@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha1" // #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
-	"math"
 
 	// #nosec G505 -- SHA-1 required for TPM 2.0 specification compatibility
 	"crypto/sha256"
@@ -235,8 +234,20 @@ type TPM2 struct {
 // returns the TPM is ready for use.
 func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 
-	if params.Config == nil || params.Config.Device == "" {
-		params.Config.Device = "/dev/tpmrm0"
+	// Ensure Config is not nil
+	if params.Config == nil {
+		cfg := DefaultConfig // Copy default config
+		params.Config = &cfg
+	}
+
+	// Set default device if not specified
+	if params.Config.Device == "" {
+		params.Config.Device = DefaultConfig.Device
+	}
+
+	// Ensure EK config is set with defaults
+	if params.Config.EK == nil {
+		params.Config.EK = DefaultConfig.EK
 	}
 
 	if params.Config.EK.KeyAlgorithm == "" {
@@ -245,8 +256,14 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		} else if params.Config.EK.ECCConfig != nil {
 			params.Config.EK.KeyAlgorithm = x509.ECDSA.String()
 		} else {
-			return nil, store.ErrInvalidKeyAttributes
+			// Use default EK config if no algorithm specified
+			params.Config.EK = DefaultConfig.EK
 		}
+	}
+
+	// Set default Hash if not specified
+	if params.Config.Hash == "" {
+		params.Config.Hash = DefaultConfig.Hash
 	}
 
 	// Create default logger if none provided
@@ -1434,7 +1451,7 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 			Algorithm: name,
 			PCRs:      make([]PCR, 0),
 		}
-		for i, pcr := range pcrList {
+		for _, pcr := range pcrList {
 			if pcr > maxPCR {
 				tpm.logger.Errorf("tpm/ReadPCRs: invalid PCR index %s:%d", strings.ToLower(name), pcr)
 				return nil, ErrInvalidPCRIndex
@@ -1468,17 +1485,11 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 				continue
 			}
 			buf := response.PCRValues.Digests[0].Buffer
-			encoded := []byte(Encode(buf))
 			bank.PCRs = append(bank.PCRs, PCR{
-				ID: func() int32 {
-					if i > math.MaxInt32 {
-						panic("PCR index too large")
-					}
-					return int32(i) // #nosec G115 -- Bounds checked above
-				}(),
-				Value: encoded,
+				ID:    int32(pcr), // Use actual PCR index, not iteration index
+				Value: buf,        // Store raw bytes, not double-encoded
 			})
-			tpm.logger.Debugf("  %d: 0x%s", pcr, encoded)
+			tpm.logger.Debugf("  PCR[%d]: %x", pcr, buf)
 		}
 		banks = append(banks, bank)
 	}

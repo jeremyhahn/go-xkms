@@ -28,7 +28,15 @@ import (
 //
 // Format: backend:type:algo:keyname
 //
-// Examples:
+// All segments except keyname are optional. Users can omit segments by leaving them empty:
+//   - "my-key" - shorthand for just keyname (uses defaults)
+//   - ":::my-key" - explicit form of above
+//   - "pkcs11:::my-key" - specify backend only
+//   - "pkcs11:signing::my-key" - specify backend and type
+//   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
+//   - "::rsa:my-key" - specify algorithm only
+//
+// Examples of full Key IDs:
 //   - pkcs8:signing:rsa:server-key
 //   - pkcs11:signing:ecdsa-p256:hsm-key
 //   - tpm2:attestation:rsa:device-attestation
@@ -85,21 +93,50 @@ var keynameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 // ParseKeyID parses an extended Key ID into its components.
 //
 // The Key ID format is: backend:type:algo:keyname
-// - backend: One of the supported backend types (case-insensitive)
-// - type: The key type (signing, encryption, attestation, etc.)
-// - algo: The algorithm (rsa, ecdsa-p256, ed25519, aes256-gcm, etc.)
+// - backend: One of the supported backend types (case-insensitive), or empty for default
+// - type: The key type (signing, encryption, attestation, etc.), or empty for any
+// - algo: The algorithm (rsa, ecdsa-p256, ed25519, aes256-gcm, etc.), or empty for any
 // - keyname: The key's identifier within that backend (alphanumeric, hyphens, underscores)
 //
+// Shorthand: If the input contains no colons, it is treated as just the keyname.
+// This allows users to specify "my-key" instead of ":::my-key".
+//
+// Optional segments: Any segment except keyname can be empty (e.g., "pkcs11:::my-key").
+// Empty segments are returned as empty strings, allowing the caller to apply defaults.
+//
 // Returns the components (backend, type, algo, keyname) and any error.
+// Empty strings indicate the segment was omitted and should use defaults.
 //
-// Example:
+// Examples:
 //
+//	// Full specification
 //	backend, keyType, algo, keyname, err := ParseKeyID("pkcs11:signing:ecdsa-p256:my-key")
 //	// backend = "pkcs11", keyType = "signing", algo = "ecdsa-p256", keyname = "my-key"
+//
+//	// Shorthand (just keyname)
+//	backend, keyType, algo, keyname, err := ParseKeyID("my-key")
+//	// backend = "", keyType = "", algo = "", keyname = "my-key"
+//
+//	// Backend only
+//	backend, keyType, algo, keyname, err := ParseKeyID("pkcs11:::my-key")
+//	// backend = "pkcs11", keyType = "", algo = "", keyname = "my-key"
 func ParseKeyID(keyID string) (backend, keyType, algo, keyname string, err error) {
+	if keyID == "" {
+		return "", "", "", "", fmt.Errorf("%w: key ID cannot be empty", ErrInvalidKeyIDFormat)
+	}
+
 	// Length check
 	if len(keyID) > maxKeyIDLength {
 		return "", "", "", "", ErrKeyIDTooLong
+	}
+
+	// Check for shorthand (no colons = just keyname)
+	if !strings.Contains(keyID, ":") {
+		keyname = strings.TrimSpace(keyID)
+		if err := validateKeyName(keyname); err != nil {
+			return "", "", "", "", err
+		}
+		return "", "", "", keyname, nil
 	}
 
 	// Split on colons - expect exactly 4 parts
@@ -108,35 +145,32 @@ func ParseKeyID(keyID string) (backend, keyType, algo, keyname string, err error
 		return "", "", "", "", fmt.Errorf("%w: expected format backend:type:algo:keyname, got %s", ErrInvalidKeyIDFormat, keyID)
 	}
 
-	// Extract and normalize components
+	// Extract and normalize components (empty strings are valid for optional segments)
 	backend = strings.ToLower(strings.TrimSpace(parts[0]))
 	keyType = strings.ToLower(strings.TrimSpace(parts[1]))
 	algo = strings.ToLower(strings.TrimSpace(parts[2]))
 	keyname = strings.TrimSpace(parts[3])
 
-	// Validate non-empty
-	if backend == "" {
-		return "", "", "", "", fmt.Errorf("%w: backend cannot be empty", ErrInvalidKeyIDFormat)
-	}
-	if keyType == "" {
-		return "", "", "", "", fmt.Errorf("%w: key type cannot be empty", ErrInvalidKeyIDFormat)
-	}
-	if algo == "" {
-		return "", "", "", "", fmt.Errorf("%w: algorithm cannot be empty", ErrInvalidKeyIDFormat)
-	}
+	// Keyname is required
 	if keyname == "" {
 		return "", "", "", "", fmt.Errorf("%w: keyname cannot be empty", ErrInvalidKeyIDFormat)
 	}
 
-	// Validate each component
-	if err := validateBackend(backend); err != nil {
-		return "", "", "", "", err
+	// Validate non-empty components only
+	if backend != "" {
+		if err := validateBackend(backend); err != nil {
+			return "", "", "", "", err
+		}
 	}
-	if err := validateKeyType(keyType); err != nil {
-		return "", "", "", "", err
+	if keyType != "" {
+		if err := validateKeyType(keyType); err != nil {
+			return "", "", "", "", err
+		}
 	}
-	if err := validateAlgorithm(algo); err != nil {
-		return "", "", "", "", err
+	if algo != "" {
+		if err := validateAlgorithm(algo); err != nil {
+			return "", "", "", "", err
+		}
 	}
 	if err := validateKeyName(keyname); err != nil {
 		return "", "", "", "", err
@@ -147,11 +181,17 @@ func ParseKeyID(keyID string) (backend, keyType, algo, keyname string, err error
 
 // NewKeyID creates a new KeyID from components.
 // It validates all components and returns a properly formatted extended KeyID.
+// Empty strings are allowed for backend, keyType, and algo to indicate defaults.
 //
 // Example:
 //
+//	// Full specification
 //	keyID, err := NewKeyID("pkcs11", "signing", "ecdsa-p256", "my-key")
 //	// keyID = "pkcs11:signing:ecdsa-p256:my-key"
+//
+//	// With optional components
+//	keyID, err := NewKeyID("pkcs11", "", "", "my-key")
+//	// keyID = "pkcs11:::my-key"
 func NewKeyID(backend, keyType, algo, keyname string) (KeyID, error) {
 	// Normalize components
 	backend = strings.ToLower(strings.TrimSpace(backend))
@@ -159,24 +199,26 @@ func NewKeyID(backend, keyType, algo, keyname string) (KeyID, error) {
 	algo = strings.ToLower(strings.TrimSpace(algo))
 	keyname = strings.TrimSpace(keyname)
 
-	// Validate backend
-	if err := validateBackend(backend); err != nil {
-		return "", err
-	}
-
-	// Validate key type
-	if err := validateKeyType(keyType); err != nil {
-		return "", err
-	}
-
-	// Validate algorithm
-	if err := validateAlgorithm(algo); err != nil {
-		return "", err
-	}
-
-	// Validate keyname
+	// Validate keyname (required)
 	if err := validateKeyName(keyname); err != nil {
 		return "", err
+	}
+
+	// Validate non-empty optional components
+	if backend != "" {
+		if err := validateBackend(backend); err != nil {
+			return "", err
+		}
+	}
+	if keyType != "" {
+		if err := validateKeyType(keyType); err != nil {
+			return "", err
+		}
+	}
+	if algo != "" {
+		if err := validateAlgorithm(algo); err != nil {
+			return "", err
+		}
 	}
 
 	// Construct Key ID
@@ -419,4 +461,62 @@ func backendTypeToStoreType(bt types.BackendType) types.StoreType {
 	default:
 		return types.StorePKCS8
 	}
+}
+
+// ParseKeyIDToAttributes parses a Key ID string and returns KeyAttributes.
+// This is a convenience function that combines ParseKeyID with attribute conversion.
+//
+// The Key ID format is: backend:type:algo:keyname
+// All segments except keyname are optional:
+//   - "my-key" - shorthand for just keyname (uses defaults)
+//   - ":::my-key" - explicit form of above
+//   - "pkcs11:::my-key" - specify backend only
+//   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
+//
+// Returns KeyAttributes populated with the parsed values.
+// Empty segments result in zero values in the attributes.
+func ParseKeyIDToAttributes(keyID string) (*types.KeyAttributes, error) {
+	backend, keyType, algo, keyname, err := ParseKeyID(keyID)
+	if err != nil {
+		return nil, err
+	}
+
+	attrs := &types.KeyAttributes{
+		CN: keyname,
+	}
+
+	// Set StoreType if backend was specified
+	if backend != "" {
+		bt, err := keyIDToBackendType(backend)
+		if err != nil {
+			return nil, err
+		}
+		attrs.StoreType = backendTypeToStoreType(bt)
+	}
+
+	// Set KeyType if type was specified
+	if keyType != "" {
+		kt, err := keyTypeToEnum(keyType)
+		if err != nil {
+			return nil, err
+		}
+		attrs.KeyType = kt
+	}
+
+	// Set algorithm if specified
+	if algo != "" {
+		algoEnum, err := algorithmToEnum(algo)
+		if err != nil {
+			return nil, err
+		}
+
+		switch a := algoEnum.(type) {
+		case x509.PublicKeyAlgorithm:
+			attrs.KeyAlgorithm = a
+		case types.SymmetricAlgorithm:
+			attrs.SymmetricAlgorithm = a
+		}
+	}
+
+	return attrs, nil
 }

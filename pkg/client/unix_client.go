@@ -98,9 +98,9 @@ func (c *unixClient) doRequest(ctx context.Context, method, path string, body in
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	// Add API key if configured
-	if c.config.APIKey != "" {
-		req.Header.Set("X-API-Key", c.config.APIKey)
+	// Add JWT token if configured (Bearer authentication)
+	if c.config.JWTToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.config.JWTToken)
 	}
 
 	// Add JWT token if configured

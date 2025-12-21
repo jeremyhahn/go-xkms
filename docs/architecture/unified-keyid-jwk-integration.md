@@ -2,82 +2,131 @@
 
 ## Overview
 
-go-keychain uses a unified Key ID format (`backend:keyname`) that enables seamless integration across all backends and provides bidirectional integration with JSON Web Keys (JWK).
+go-keychain uses a unified Key ID format (`backend:type:algo:keyname`) that enables seamless integration across all backends and provides bidirectional integration with JSON Web Keys (JWK).
 
 ## Key ID Format
 
-**Format:** `backend:keyname`
+**Format:** `backend:type:algo:keyname`
 
-- **backend**: Backend type (case-insensitive)
+- **backend**: Backend type (case-insensitive) - e.g., `pkcs8`, `pkcs11`, `tpm2`
+- **type**: Key purpose/type - e.g., `signing`, `encryption`, `attestation`
+- **algo**: Algorithm - e.g., `rsa`, `ecdsa-p256`, `ed25519`
 - **keyname**: The key's Common Name (CN) within that backend
+
+### Optional Segments
+
+All segments except keyname are **optional**. Users can omit segments by leaving them empty:
+
+| Format | Description |
+|--------|-------------|
+| `my-key` | Shorthand for just keyname (uses defaults) |
+| `:::my-key` | Explicit form of above |
+| `pkcs11:::my-key` | Specify backend only |
+| `pkcs11:signing::my-key` | Specify backend and type |
+| `::rsa:my-key` | Specify algorithm only |
+| `pkcs11:signing:ecdsa-p256:my-key` | Full specification |
 
 ### Supported Backends
 
-| Backend | Key ID Prefix | Description |
-|---------|---------------|-------------|
-| `pkcs8` | `pkcs8:name` | File-based PKCS#8 asymmetric keys |
-| `aes` | `aes:name` | File-based AES symmetric keys |
-| `software` | `software:name` | Unified software backend (asymmetric + symmetric) |
-| `pkcs11` | `pkcs11:name` | PKCS#11 Hardware Security Module |
-| `smartcardhsm` | `smartcardhsm:name` | CardContact SmartCard-HSM |
-| `yubikey` | `yubikey:name` | YubiKey PIV smart card |
-| `canokey` | `canokey:name` | CanoKey PIV smart card |
-| `tpm2` | `tpm2:name` | Trusted Platform Module 2.0 |
-| `awskms` | `awskms:name` | AWS Key Management Service |
-| `gcpkms` | `gcpkms:name` | Google Cloud KMS |
-| `azurekv` | `azurekv:name` | Azure Key Vault |
-| `vault` | `vault:name` | HashiCorp Vault |
+| Backend | Example | Description |
+|---------|---------|-------------|
+| `pkcs8` | `pkcs8:signing:rsa:my-key` | File-based PKCS#8 asymmetric keys |
+| `aes` | `aes:encryption:aes256-gcm:my-key` | File-based AES symmetric keys |
+| `software` | `software:signing:ecdsa:my-key` | Unified software backend |
+| `pkcs11` | `pkcs11:signing:ecdsa-p256:hsm-key` | PKCS#11 Hardware Security Module |
+| `tpm2` | `tpm2:attestation:rsa:device-key` | Trusted Platform Module 2.0 |
+| `awskms` | `awskms:encryption:rsa:prod-key` | AWS Key Management Service |
+| `gcpkms` | `gcpkms:signing:ecdsa:gcp-key` | Google Cloud KMS |
+| `azurekv` | `azurekv:encryption:rsa:azure-key` | Azure Key Vault |
+| `vault` | `vault:signing:ed25519:vault-key` | HashiCorp Vault |
+
+### Supported Key Types
+
+| Type | Description |
+|------|-------------|
+| `signing` | Digital signature operations |
+| `encryption` | Encryption/decryption operations |
+| `attestation` | TPM attestation keys |
+| `ca` | Certificate Authority keys |
+| `tls` | TLS/SSL keys |
+| `idevid` | IEEE 802.1AR IDevID keys |
+| `storage` | Storage root keys |
+| `endorsement` | TPM endorsement keys |
+
+### Supported Algorithms
+
+| Algorithm | Description |
+|-----------|-------------|
+| `rsa` | RSA (2048, 3072, 4096 bit) |
+| `ecdsa-p256`, `p256` | ECDSA with P-256 curve |
+| `ecdsa-p384`, `p384` | ECDSA with P-384 curve |
+| `ecdsa-p521`, `p521` | ECDSA with P-521 curve |
+| `ed25519` | Edwards-curve Ed25519 |
+| `aes128-gcm` | AES-128 GCM |
+| `aes256-gcm` | AES-256 GCM |
 
 ### Examples
 
 ```
-pkcs8:server-tls-key
-software:development-key
-pkcs11:hsm-signing-key
-yubikey:piv-signing-key
-tpm2:device-attestation
-awskms:prod-encryption-key
+# Full specification
+pkcs11:signing:ecdsa-p256:hsm-signing-key
+tpm2:attestation:rsa:device-attestation
+awskms:encryption:aes256-gcm:prod-encryption-key
+
+# Partial specification (using defaults)
+pkcs11:::my-signing-key        # Backend only
+:::my-key                       # All defaults
+my-key                          # Shorthand for above
 ```
 
 ### Validation Rules
 
-1. Backend must be a supported type
-2. Keyname cannot be empty
-3. Use alphanumeric characters, hyphens, and underscores
-4. Maximum total length: 512 characters
-5. No path traversal characters (`..`, `/`, `\`)
+1. Backend, if specified, must be a supported type
+2. Type, if specified, must be a valid key type
+3. Algorithm, if specified, must be a valid algorithm
+4. Keyname is required and cannot be empty
+5. Keyname: alphanumeric characters, hyphens, and underscores only
+6. Maximum total length: 512 characters
+7. No path traversal characters (`..`, `/`, `\`)
 
 ## Keychain API
 
 ### Key Retrieval Methods
 
 ```go
-// Get key by ID
-key, err := keystore.GetKeyByID("pkcs11:my-signing-key")
+// Get key by ID (full specification)
+key, err := keystore.GetKeyByID("pkcs11:signing:ecdsa-p256:my-signing-key")
+
+// Get key by ID (shorthand - just keyname)
+key, err := keystore.GetKeyByID("my-signing-key")
 
 // Get signer directly
-signer, err := keystore.GetSignerByID("tpm2:attestation-key")
+signer, err := keystore.GetSignerByID("tpm2:attestation:rsa:attestation-key")
 signature, _ := signer.Sign(rand.Reader, digest, crypto.SHA256)
 
 // Get decrypter for RSA keys
-decrypter, err := keystore.GetDecrypterByID("awskms:encryption-key")
+decrypter, err := keystore.GetDecrypterByID("awskms:encryption:rsa:encryption-key")
 plaintext, _ := decrypter.Decrypt(rand.Reader, ciphertext, opts)
 
 // Parse Key ID into components
-backend, keyname, err := keystore.ParseKeyID("pkcs8:server-key")
-// backend = "pkcs8", keyname = "server-key"
+backend, keyType, algo, keyname, err := keychain.ParseKeyID("pkcs11:signing:ecdsa-p256:server-key")
+// backend = "pkcs11", keyType = "signing", algo = "ecdsa-p256", keyname = "server-key"
 
-// Validate Key ID format and optionally check existence
-err := keystore.ValidateKeyID("pkcs8:valid-key", true)
+// Parse with shorthand
+backend, keyType, algo, keyname, err := keychain.ParseKeyID("my-key")
+// backend = "", keyType = "", algo = "", keyname = "my-key"
+
+// Validate Key ID format
+err := keychain.ValidateKeyID("pkcs8:signing:rsa:valid-key")
 ```
 
 ### Error Types
 
 ```go
 var (
-    ErrInvalidKeyIDFormat = errors.New("invalid key ID format: expected 'backend:keyname'")
-    ErrInvalidBackendType = errors.New("invalid backend type")
-    ErrBackendMismatch    = errors.New("key ID backend does not match keystore backend")
+    ErrInvalidKeyIDFormat = errors.New("keystore: invalid key ID format - expected 'backend:type:algo:keyname'")
+    ErrInvalidBackendType = errors.New("keystore: invalid backend type")
+    ErrBackendMismatch    = errors.New("keystore: key ID backend does not match keystore backend")
     ErrKeyNotFound        = errors.New("key not found")
 )
 ```

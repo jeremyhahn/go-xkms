@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"sync"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
@@ -171,6 +170,37 @@ func DefaultBackend() (KeyStore, error) {
 	return ks, nil
 }
 
+// BackendFor returns the appropriate backend for the given key attributes.
+// If StoreType is specified in attrs, returns that backend.
+// Otherwise returns the default backend.
+// This centralizes backend resolution logic to avoid scattered conditionals.
+func BackendFor(attrs *types.KeyAttributes) (KeyStore, error) {
+	if attrs == nil {
+		return DefaultBackend()
+	}
+
+	// If StoreType is specified, use that backend
+	if attrs.StoreType != "" {
+		return Backend(string(attrs.StoreType))
+	}
+
+	// Fall back to default backend
+	return DefaultBackend()
+}
+
+// ParseCertificateID parses a certificate ID string into KeyAttributes.
+// This uses the unified 4-part Key ID format: backend:type:algo:keyname
+// All segments except keyname are optional.
+//
+// Examples:
+//   - "my-key" - shorthand for just keyname (uses defaults)
+//   - ":::my-key" - explicit form of above
+//   - "pkcs11:::my-key" - specify backend only
+//   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
+func ParseCertificateID(kid string) (*types.KeyAttributes, error) {
+	return ParseKeyIDToAttributes(kid)
+}
+
 // Backends returns the names of all registered backends
 func Backends() []string {
 	if !IsInitialized() {
@@ -188,51 +218,48 @@ func Backends() []string {
 	return backends
 }
 
-// parseKeyReference parses a key reference in the format:
-// - "backend:key-id" - use specific backend
-// - "key-id" - use default backend
-func parseKeyReference(keyRef string) (backend, keyID string) {
-	// Split on first colon only
-	parts := strings.SplitN(keyRef, ":", 2)
-	if len(parts) == 2 {
-		// Format: "backend:key-id"
-		return parts[0], parts[1]
-	}
-	// Format: "key-id" (use default backend)
-	return "", keyRef
-}
-
-// getKeystoreForKey determines which keystore to use for a given key reference
-func getKeystoreForKey(keyRef string) (KeyStore, string, error) {
+// getKeystoreForKID determines which keystore to use for a given key ID (kid).
+// It parses the 4-part kid format (backend:type:algo:keyname) and returns the
+// appropriate keystore along with the parsed KeyAttributes.
+//
+// The kid format supports optional segments:
+//   - "my-key" - shorthand for just keyname (uses default backend)
+//   - ":::my-key" - explicit form of above
+//   - "pkcs11:::my-key" - specify backend only
+//   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
+func getKeystoreForKID(kid string) (KeyStore, *types.KeyAttributes, error) {
 	if !IsInitialized() {
-		return nil, "", ErrNotInitialized
+		return nil, nil, ErrNotInitialized
 	}
 
-	backend, keyID := parseKeyReference(keyRef)
+	attrs, err := ParseKeyIDToAttributes(kid)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	var ks KeyStore
-	var err error
 
-	if backend == "" {
+	if attrs.StoreType == "" {
 		// Use default backend
 		ks, err = DefaultBackend()
 	} else {
 		// Use specified backend
-		ks, err = Backend(backend)
+		ks, err = Backend(string(attrs.StoreType))
 	}
 
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
-	return ks, keyID, nil
+	return ks, attrs, nil
 }
 
 // Simplified API - applications use these functions directly
 
-// GenerateKey generates a new key with the given attributes
+// GenerateKey generates a new key with the given attributes.
+// Uses BackendFor(attrs) to resolve the correct backend based on StoreType.
 func GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	ks, err := DefaultBackend()
+	ks, err := BackendFor(attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -250,9 +277,10 @@ func GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	}
 }
 
-// Key retrieves a key by its attributes
+// Key retrieves a key by its attributes.
+// Uses BackendFor(attrs) to resolve the correct backend based on StoreType.
 func Key(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	ks, err := DefaultBackend()
+	ks, err := BackendFor(attrs)
 	if err != nil {
 		return nil, err
 	}
@@ -260,80 +288,179 @@ func Key(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return ks.GetKey(attrs)
 }
 
-// KeyByID retrieves a key by its ID
-// Supports format: "backend:key-id" or just "key-id" (uses default backend)
-func KeyByID(keyRef string) (crypto.PrivateKey, error) {
-	// Validate key reference to prevent injection attacks
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
-	}
-
-	ks, keyID, err := getKeystoreForKey(keyRef)
+// Signer returns a crypto.Signer for the specified key attributes.
+// This is the primary method - use SignerByID for string-based lookups.
+func Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+	ks, err := BackendFor(attrs)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetKeyByID(keyID)
+	return ks.Signer(attrs)
 }
 
-// Signer returns a signer for the specified key
-func Signer(keyRef string) (crypto.Signer, error) {
-	// Validate key reference to prevent injection attacks
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
-	}
-
-	ks, keyID, err := getKeystoreForKey(keyRef)
+// Decrypter returns a crypto.Decrypter for the specified key attributes.
+// This is the primary method - use DecrypterByID for string-based lookups.
+func Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	ks, err := BackendFor(attrs)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetSignerByID(keyID)
+	return ks.Decrypter(attrs)
 }
 
-// Decrypter returns a decrypter for the specified key
-func Decrypter(keyRef string) (crypto.Decrypter, error) {
-	// Validate key reference to prevent injection attacks
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
-	}
-
-	ks, keyID, err := getKeystoreForKey(keyRef)
-	if err != nil {
-		return nil, err
-	}
-
-	return ks.GetDecrypterByID(keyID)
-}
-
-// DeleteKey deletes a key by its ID
-func DeleteKey(keyRef string) error {
-	// Validate key reference to prevent injection attacks
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return fmt.Errorf("invalid key reference: %w", err)
-	}
-
-	ks, keyID, err := getKeystoreForKey(keyRef)
+// DeleteKey deletes a key by its attributes.
+// This is the primary method - use DeleteKeyByID for string-based lookups.
+func DeleteKey(attrs *types.KeyAttributes) error {
+	ks, err := BackendFor(attrs)
 	if err != nil {
 		return err
 	}
 
-	// Look up full key attributes from the backend
-	keys, err := ks.ListKeys()
+	return ks.DeleteKey(attrs)
+}
+
+// Certificate retrieves a certificate by key attributes.
+// This is the primary method - use CertificateByID for string-based lookups.
+func Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error) {
+	ks, err := BackendFor(attrs)
 	if err != nil {
-		return fmt.Errorf("failed to list keys: %w", err)
+		return nil, err
 	}
 
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
+	return ks.GetCert(attrs.CertificateID())
+}
+
+// SaveCertificate saves a certificate using key attributes.
+// This is the primary method - use SaveCertificateByID for string-based lookups.
+func SaveCertificate(attrs *types.KeyAttributes, cert *x509.Certificate) error {
+	ks, err := BackendFor(attrs)
+	if err != nil {
+		return err
 	}
 
-	if attrs == nil {
-		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
+	return ks.SaveCert(attrs.CertificateID(), cert)
+}
+
+// DeleteCertificate deletes a certificate by key attributes.
+// This is the primary method - use DeleteCertificateByID for string-based lookups.
+func DeleteCertificate(attrs *types.KeyAttributes) error {
+	ks, err := BackendFor(attrs)
+	if err != nil {
+		return err
+	}
+
+	return ks.DeleteCert(attrs.CertificateID())
+}
+
+// CertificateChain retrieves a certificate chain by key attributes.
+// This is the primary method - use CertificateChainByID for string-based lookups.
+func CertificateChain(attrs *types.KeyAttributes) ([]*x509.Certificate, error) {
+	ks, err := BackendFor(attrs)
+	if err != nil {
+		return nil, err
+	}
+
+	return ks.GetCertChain(attrs.CertificateID())
+}
+
+// SaveCertificateChain saves a certificate chain using key attributes.
+// This is the primary method - use SaveCertificateChainByID for string-based lookups.
+func SaveCertificateChain(attrs *types.KeyAttributes, chain []*x509.Certificate) error {
+	ks, err := BackendFor(attrs)
+	if err != nil {
+		return err
+	}
+
+	return ks.SaveCertChain(attrs.CertificateID(), chain)
+}
+
+// CertificateExists checks if a certificate exists for the given key attributes.
+// This is the primary method - use CertificateExistsByID for string-based lookups.
+func CertificateExists(attrs *types.KeyAttributes) (bool, error) {
+	ks, err := BackendFor(attrs)
+	if err != nil {
+		return false, err
+	}
+
+	return ks.CertExists(attrs.CertificateID())
+}
+
+// TLSCertificate returns a complete tls.Certificate for the given key attributes.
+// This is the primary method - use TLSCertificateByID for string-based lookups.
+func TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error) {
+	ks, err := BackendFor(attrs)
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	return ks.GetTLSCertificate(attrs.CertificateID(), attrs)
+}
+
+// ========================================================================
+// Secondary API - String-based lookups (use primary KeyAttributes methods when possible)
+// ========================================================================
+
+// KeyByID retrieves a key by its key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer Key(attrs) for type-safe lookups.
+func KeyByID(kid string) (crypto.PrivateKey, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
+	}
+
+	ks, attrs, err := getKeystoreForKID(kid)
+	if err != nil {
+		return nil, err
+	}
+
+	return ks.GetKeyByID(attrs.CN)
+}
+
+// SignerByID returns a signer for the specified key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer Signer(attrs) for type-safe lookups.
+func SignerByID(kid string) (crypto.Signer, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
+	}
+
+	ks, attrs, err := getKeystoreForKID(kid)
+	if err != nil {
+		return nil, err
+	}
+
+	return ks.GetSignerByID(attrs.CN)
+}
+
+// DecrypterByID returns a decrypter for the specified key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer Decrypter(attrs) for type-safe lookups.
+func DecrypterByID(kid string) (crypto.Decrypter, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
+	}
+
+	ks, attrs, err := getKeystoreForKID(kid)
+	if err != nil {
+		return nil, err
+	}
+
+	return ks.GetDecrypterByID(attrs.CN)
+}
+
+// DeleteKeyByID deletes a key by its key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer DeleteKey(attrs) for type-safe lookups.
+func DeleteKeyByID(kid string) error {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return fmt.Errorf("invalid key ID: %w", err)
+	}
+
+	ks, attrs, err := getKeystoreForKID(kid)
+	if err != nil {
+		return err
 	}
 
 	return ks.DeleteKey(attrs)
@@ -380,49 +507,52 @@ func ListKeys(backendName ...string) ([]*types.KeyAttributes, error) {
 	return allKeys, nil
 }
 
-// SaveCertificate saves a certificate
-func SaveCertificate(keyID string, cert *x509.Certificate) error {
-	// Validate key ID to prevent injection attacks
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+// SaveCertificateByID saves a certificate by key ID.
+// Format: "backend:key-id" or just "key-id" (uses default backend).
+// Prefer SaveCertificate(attrs, cert) for type-safe lookups.
+func SaveCertificateByID(kid string, cert *x509.Certificate) error {
+	if err := validation.ValidateKeyReference(kid); err != nil {
 		return fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, parsedKeyID, err := getKeystoreForKey(keyID)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return err
 	}
 
-	return ks.SaveCert(parsedKeyID, cert)
+	return ks.SaveCert(attrs.CN, cert)
 }
 
-// Certificate retrieves a certificate
-func Certificate(keyID string) (*x509.Certificate, error) {
-	// Validate key ID to prevent injection attacks
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+// CertificateByID retrieves a certificate by key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer Certificate(attrs) for type-safe lookups.
+func CertificateByID(kid string) (*x509.Certificate, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, parsedKeyID, err := getKeystoreForKey(keyID)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetCert(parsedKeyID)
+	return ks.GetCert(attrs.CN)
 }
 
-// DeleteCertificate deletes a certificate
-func DeleteCertificate(keyID string) error {
-	// Validate key ID to prevent injection attacks
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+// DeleteCertificateByID deletes a certificate by key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer DeleteCertificate(attrs) for type-safe lookups.
+func DeleteCertificateByID(kid string) error {
+	if err := validation.ValidateKeyReference(kid); err != nil {
 		return fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, parsedKeyID, err := getKeystoreForKey(keyID)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return err
 	}
 
-	return ks.DeleteCert(parsedKeyID)
+	return ks.DeleteCert(attrs.CN)
 }
 
 // ListCertificates lists all certificate IDs across all backends or from a specific backend
@@ -683,32 +813,15 @@ func GenerateKeyWithBackend(backendName string, attrs *types.KeyAttributes) (cry
 }
 
 // RotateKey rotates (replaces) an existing key with a new one.
-// The keyRef supports format: "backend:key-id" or just "key-id" (uses default backend).
-func RotateKey(keyRef string) (crypto.PrivateKey, error) {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
+// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func RotateKey(kid string) (crypto.PrivateKey, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
-	}
-
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	return ks.RotateKey(attrs)
@@ -728,32 +841,15 @@ type SignOptions struct {
 }
 
 // Sign signs data using the specified key.
-// The keyRef supports format: "backend:key-id" or just "key-id" (uses default backend).
-func Sign(keyRef string, data []byte, opts *SignOptions) ([]byte, error) {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
+// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func Sign(kid string, data []byte, opts *SignOptions) ([]byte, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
-	}
-
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	signer, err := ks.Signer(attrs)
@@ -787,32 +883,15 @@ func Sign(keyRef string, data []byte, opts *SignOptions) ([]byte, error) {
 }
 
 // Verify verifies a signature against data using the specified key.
-// The keyRef supports format: "backend:key-id" or just "key-id" (uses default backend).
-func Verify(keyRef string, data, signature []byte, opts *types.VerifyOpts) error {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return fmt.Errorf("invalid key reference: %w", err)
+// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func Verify(kid string, data, signature []byte, opts *types.VerifyOpts) error {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return err
-	}
-
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	privKey, err := ks.GetKey(attrs)
@@ -854,32 +933,15 @@ func Verify(keyRef string, data, signature []byte, opts *types.VerifyOpts) error
 // ========================================================================
 
 // Encrypt encrypts data using a symmetric key.
-// The keyRef supports format: "backend:key-id" or just "key-id" (uses default backend).
-func Encrypt(keyRef string, data []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
+// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func Encrypt(kid string, data []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
-	}
-
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	symBackend, ok := ks.Backend().(types.SymmetricBackend)
@@ -896,32 +958,15 @@ func Encrypt(keyRef string, data []byte, opts *types.EncryptOptions) (*types.Enc
 }
 
 // Decrypt decrypts data using a symmetric key.
-// The keyRef supports format: "backend:key-id" or just "key-id" (uses default backend).
-func Decrypt(keyRef string, data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
+// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func Decrypt(kid string, data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
-	}
-
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	symBackend, ok := ks.Backend().(types.SymmetricBackend)
@@ -938,84 +983,75 @@ func Decrypt(keyRef string, data *types.EncryptedData, opts *types.DecryptOption
 }
 
 // ========================================================================
-// Certificate Chain Operations
+// Certificate Chain Operations (String-based - prefer KeyAttributes versions)
 // ========================================================================
 
-// SaveCertificateChain saves a certificate chain for the given key ID.
-func SaveCertificateChain(keyID string, chain []*x509.Certificate) error {
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+// SaveCertificateChainByID saves a certificate chain by key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer SaveCertificateChain(attrs, chain) for type-safe lookups.
+func SaveCertificateChainByID(kid string, chain []*x509.Certificate) error {
+	if err := validation.ValidateKeyReference(kid); err != nil {
 		return fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, parsedKeyID, err := getKeystoreForKey(keyID)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return err
 	}
 
-	return ks.SaveCertChain(parsedKeyID, chain)
+	return ks.SaveCertChain(attrs.CN, chain)
 }
 
-// CertificateChain retrieves a certificate chain by key ID.
-func CertificateChain(keyID string) ([]*x509.Certificate, error) {
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+// CertificateChainByID retrieves a certificate chain by key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer CertificateChain(attrs) for type-safe lookups.
+func CertificateChainByID(kid string) ([]*x509.Certificate, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
 		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, parsedKeyID, err := getKeystoreForKey(keyID)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetCertChain(parsedKeyID)
+	return ks.GetCertChain(attrs.CN)
 }
 
-// CertificateExists checks if a certificate exists for the given key ID.
-func CertificateExists(keyID string) (bool, error) {
-	if err := validation.ValidateKeyReference(keyID); err != nil {
+// CertificateExistsByID checks if a certificate exists for the given key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer CertificateExists(attrs) for type-safe lookups.
+func CertificateExistsByID(kid string) (bool, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
 		return false, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, parsedKeyID, err := getKeystoreForKey(keyID)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return false, err
 	}
 
-	return ks.CertExists(parsedKeyID)
+	return ks.CertExists(attrs.CN)
 }
 
 // ========================================================================
-// TLS Operations
+// TLS Operations (String-based - prefer KeyAttributes versions)
 // ========================================================================
 
-// GetTLSCertificate returns a complete tls.Certificate ready for use.
-func GetTLSCertificate(keyRef string) (tls.Certificate, error) {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return tls.Certificate{}, fmt.Errorf("invalid key reference: %w", err)
+// TLSCertificateByID returns a complete tls.Certificate by key ID (kid).
+// Format: "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+// Prefer TLSCertificate(attrs) for type-safe lookups.
+func TLSCertificateByID(kid string) (tls.Certificate, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return tls.Certificate{}, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
 
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return tls.Certificate{}, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return tls.Certificate{}, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
-	}
-
-	return ks.GetTLSCertificate(keyID, attrs)
+	return ks.GetTLSCertificate(attrs.CN, attrs)
 }
 
 // ========================================================================
@@ -1099,12 +1135,13 @@ func ImportKey(backendName string, attrs *types.KeyAttributes, wrapped *backend.
 }
 
 // ExportKey exports a key in wrapped form for secure transport.
-func ExportKey(keyRef string, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
+// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func ExportKey(kid string, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
@@ -1112,23 +1149,6 @@ func ExportKey(keyRef string, algorithm backend.WrappingAlgorithm) (*backend.Wra
 	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend does not support import/export operations")
-	}
-
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	return importExportBackend.ExportKey(attrs, algorithm)
@@ -1139,16 +1159,17 @@ func ExportKey(keyRef string, algorithm backend.WrappingAlgorithm) (*backend.Wra
 // ========================================================================
 
 // CopyKey copies a key from one backend to another.
-func CopyKey(sourceKeyRef string, destBackend string, destAttrs *types.KeyAttributes) error {
-	if err := validation.ValidateKeyReference(sourceKeyRef); err != nil {
-		return fmt.Errorf("invalid source key reference: %w", err)
+// The sourceKID format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func CopyKey(sourceKID string, destBackend string, destAttrs *types.KeyAttributes) error {
+	if err := validation.ValidateKeyReference(sourceKID); err != nil {
+		return fmt.Errorf("invalid source key ID: %w", err)
 	}
 
 	if err := validation.ValidateBackendName(destBackend); err != nil {
 		return fmt.Errorf("invalid destination backend name: %w", err)
 	}
 
-	sourceKs, sourceKeyID, err := getKeystoreForKey(sourceKeyRef)
+	sourceKs, sourceAttrs, err := getKeystoreForKID(sourceKID)
 	if err != nil {
 		return fmt.Errorf("failed to get source keystore: %w", err)
 	}
@@ -1166,23 +1187,6 @@ func CopyKey(sourceKeyRef string, destBackend string, destAttrs *types.KeyAttrib
 	destImportExport, ok := destKs.Backend().(backend.ImportExportBackend)
 	if !ok {
 		return fmt.Errorf("destination backend does not support import operations")
-	}
-
-	keys, err := sourceKs.ListKeys()
-	if err != nil {
-		return fmt.Errorf("failed to list source keys: %w", err)
-	}
-
-	var sourceAttrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == sourceKeyID {
-			sourceAttrs = k
-			break
-		}
-	}
-
-	if sourceAttrs == nil {
-		return fmt.Errorf("%w: %s", backend.ErrKeyNotFound, sourceKeyID)
 	}
 
 	if destAttrs == nil {
@@ -1229,31 +1233,15 @@ func GenerateSymmetricKey(backendName string, attrs *types.KeyAttributes) (types
 }
 
 // GetSymmetricKey retrieves an existing symmetric key.
-func GetSymmetricKey(keyRef string) (types.SymmetricKey, error) {
-	if err := validation.ValidateKeyReference(keyRef); err != nil {
-		return nil, fmt.Errorf("invalid key reference: %w", err)
+// The kid format is "backend:type:algo:keyname" with optional segments, or just "keyname" (uses defaults).
+func GetSymmetricKey(kid string) (types.SymmetricKey, error) {
+	if err := validation.ValidateKeyReference(kid); err != nil {
+		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, keyID, err := getKeystoreForKey(keyRef)
+	ks, attrs, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
-	}
-
-	keys, err := ks.ListKeys()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	var attrs *types.KeyAttributes
-	for _, k := range keys {
-		if k.CN == keyID {
-			attrs = k
-			break
-		}
-	}
-
-	if attrs == nil {
-		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, keyID)
 	}
 
 	symBackend, ok := ks.Backend().(types.SymmetricBackend)

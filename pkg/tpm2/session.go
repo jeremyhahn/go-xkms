@@ -131,6 +131,7 @@ func (tpm *TPM2) PlatformPolicySession() (tpm2.Session, func() error, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	tpm.logger.Infof("tpm: PlatformPolicySession - PCR %d digest: %x", tpm.config.PlatformPCR, digest)
 
 	// Create the policy session
 	session, closer, err := tpm2.PolicySession(
@@ -170,8 +171,8 @@ func (tpm *TPM2) PlatformPolicySession() (tpm2.Session, func() error, error) {
 		return nil, nil, err
 	}
 
-	// tpm.logger.Debugf("tpm: platform PCR policy session digest: %x", digest)
-	// tpm.logger.Debugf("tpm: pgd.PolicyDigest.Buffer: %x", pgd.PolicyDigest.Buffer)
+	tpm.logger.Infof("tpm: PlatformPolicySession - PCR policy digest: %x", digest)
+	tpm.logger.Infof("tpm: PlatformPolicySession - session policy digest: %x", pgd.PolicyDigest.Buffer)
 
 	tpm.policyDigest = pgd.PolicyDigest
 

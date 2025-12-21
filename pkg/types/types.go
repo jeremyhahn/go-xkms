@@ -1028,6 +1028,80 @@ func (attrs *KeyAttributes) ID() string {
 		algorithm)
 }
 
+// KeyID returns the unique identifier for this key in the 4-part format:
+// backend:type:algo:keyname (e.g., "tpm2:signing:ecdsa:my-key")
+//
+// If only the CN is set (no backend, type, or algorithm), returns just the keyname
+// as a shorthand. Otherwise returns the full 4-part format with empty segments
+// for unspecified fields.
+//
+// Examples:
+//   - Full: "pkcs11:signing:ecdsa:my-key"
+//   - Backend only: "pkcs11:::my-key"
+//   - Shorthand: "my-key" (when only CN is set)
+//
+// This is the canonical identifier format used throughout the keychain API.
+func (attrs *KeyAttributes) KeyID() string {
+	// If only CN is set, return just the keyname as shorthand
+	if attrs.StoreType == "" && attrs.KeyType == 0 && attrs.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
+		return attrs.CN
+	}
+
+	// Build backend string
+	backendStr := string(attrs.StoreType)
+
+	// Build key type string
+	var keyTypeStr string
+	switch attrs.KeyType {
+	case KeyTypeAttestation:
+		keyTypeStr = "attestation"
+	case KeyTypeCA:
+		keyTypeStr = "ca"
+	case KeyTypeEncryption:
+		keyTypeStr = "encryption"
+	case KeyTypeEndorsement:
+		keyTypeStr = "endorsement"
+	case KeyTypeHMAC:
+		keyTypeStr = "hmac"
+	case KeyTypeIDevID:
+		keyTypeStr = "idevid"
+	case KeyTypeSecret:
+		keyTypeStr = "secret"
+	case KeyTypeSigning:
+		keyTypeStr = "signing"
+	case KeyTypeStorage:
+		keyTypeStr = "storage"
+	case KeyTypeTLS:
+		keyTypeStr = "tls"
+	case KeyTypeTPM:
+		keyTypeStr = "tpm"
+	}
+
+	// Build algorithm string
+	var algoStr string
+	if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
+		switch attrs.KeyAlgorithm {
+		case x509.RSA:
+			algoStr = "rsa"
+		case x509.ECDSA:
+			algoStr = "ecdsa"
+		case x509.Ed25519:
+			algoStr = "ed25519"
+		default:
+			algoStr = strings.ToLower(attrs.KeyAlgorithm.String())
+		}
+	}
+
+	// Return 4-part format: backend:type:algo:keyname
+	return fmt.Sprintf("%s:%s:%s:%s", backendStr, keyTypeStr, algoStr, attrs.CN)
+}
+
+// CertificateID returns the storage identifier for certificates associated with this key.
+// This is an alias for KeyID() since certificates are uniquely tied to their keys.
+func (attrs *KeyAttributes) CertificateID() string {
+	return attrs.KeyID()
+}
+
 // =============================================================================
 // Backend Capabilities
 // =============================================================================

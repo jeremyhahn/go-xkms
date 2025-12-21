@@ -35,14 +35,76 @@ import (
 // Backend implements types.Backend for TPM 2.0 hardware security modules.
 // It wraps the low-level pkg/tpm2 library to provide a unified Backend interface.
 type Backend struct {
-	config     *Config
-	tpm        pkgtpm2.TrustedPlatformModule
-	keyBackend store.KeyBackend
-	logger     *logging.Logger
-	srkAttrs   *types.KeyAttributes
-	tracker    types.AEADSafetyTracker
-	mu         sync.RWMutex
-	closed     bool
+	config      *Config
+	tpm         pkgtpm2.TrustedPlatformModule
+	keyBackend  store.KeyBackend
+	logger      *logging.Logger
+	srkAttrs    *types.KeyAttributes
+	tracker     types.AEADSafetyTracker
+	mu          sync.RWMutex
+	closed      bool
+	externalTPM bool // If true, TPM was provided externally and should not be closed
+}
+
+// ExternalTPMConfig holds configuration for creating a backend with an external TPM.
+type ExternalTPMConfig struct {
+	// TPM is the existing TPM instance to use
+	TPM pkgtpm2.TrustedPlatformModule
+
+	// KeyBackend is the storage backend for TPM key blobs
+	KeyBackend store.KeyBackend
+
+	// Logger is the logger instance to use (optional)
+	Logger *logging.Logger
+
+	// Tracker is the AEAD safety tracker (optional)
+	Tracker types.AEADSafetyTracker
+}
+
+// NewBackendWithTPM creates a new TPM2 backend using an existing TPM instance.
+// This is useful when the TPM has already been initialized and provisioned by
+// another component (e.g., go-trusted-platform's app.TPM).
+//
+// The caller is responsible for managing the TPM lifecycle (closing it when done).
+// The backend will not close the TPM when Backend.Close() is called.
+func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
+	if config == nil {
+		return nil, fmt.Errorf("%w: config is nil", ErrInvalidConfig)
+	}
+	if config.TPM == nil {
+		return nil, fmt.Errorf("%w: TPM is nil", ErrInvalidConfig)
+	}
+	if config.KeyBackend == nil {
+		return nil, fmt.Errorf("%w: KeyBackend is nil", ErrInvalidConfig)
+	}
+
+	// Create logger if not provided
+	logger := config.Logger
+	if logger == nil {
+		logger = logging.DefaultLogger()
+	}
+
+	// Initialize AEAD tracker
+	tracker := config.Tracker
+	if tracker == nil {
+		tracker = backend.NewMemoryAEADTracker()
+	}
+
+	// Get the SRK attributes for key creation
+	srkAttrs, err := config.TPM.SSRKAttributes()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get SRK attributes: %w", err)
+	}
+
+	return &Backend{
+		config:      nil, // No config when using external TPM
+		tpm:         config.TPM,
+		keyBackend:  config.KeyBackend,
+		logger:      logger,
+		srkAttrs:    srkAttrs,
+		tracker:     tracker,
+		externalTPM: true, // Mark as external so Close() doesn't close the TPM
+	}, nil
 }
 
 // NewBackend creates a new TPM2 backend instance.
@@ -337,7 +399,9 @@ func (b *Backend) Close() error {
 
 	b.closed = true
 
-	if b.tpm != nil {
+	// Don't close the TPM if it was provided externally
+	// The caller is responsible for managing its lifecycle
+	if b.tpm != nil && !b.externalTPM {
 		if err := b.tpm.Close(); err != nil {
 			return fmt.Errorf("failed to close TPM: %w", err)
 		}

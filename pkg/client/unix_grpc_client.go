@@ -69,9 +69,9 @@ func (c *unixGRPCClient) Connect(ctx context.Context) error {
 	))
 
 	// Connect to the server
-	// Note: The address parameter is used for identification only;
-	// the actual connection is made via the custom dialer
-	conn, err := grpc.NewClient("unix://"+c.config.Address, opts...)
+	// Use passthrough scheme with custom dialer - this bypasses the resolver
+	// and directly uses our ContextDialer with the Unix socket path
+	conn, err := grpc.NewClient("passthrough:///"+c.config.Address, opts...)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrConnectionFailed, err)
 	}

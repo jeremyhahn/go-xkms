@@ -120,29 +120,39 @@ func TestValidateKeyReference(t *testing.T) {
 		keyRef  string
 		wantErr bool
 	}{
-		// Valid key references
+		// Valid key references - 4-part format: backend:type:algo:keyname
 		{"simple key ID", "my-key", false},
-		{"backend:key format", "pkcs8:my-key", false},
-		{"backend:key with dots", "pkcs8:app.prod.key", false},
-		{"backend:key with numbers", "backend123:key456", false},
+		{"full format", "pkcs8:signing:ecdsa-p256:my-key", false},
+		{"full format with dots in keyname", "pkcs8:signing:ecdsa-p256:app.prod.key", false},
+		{"full format with numbers", "pkcs8:signing:ecdsa-p256:key456", false},
+		{"full format rsa", "pkcs8:encryption:rsa:my-rsa-key", false},
+		{"full format ed25519", "pkcs8:signing:ed25519:my-ed-key", false},
+		{"minimal format empty components", ":::my-key", false},
+		{"backend only", "pkcs8:::my-key", false},
+		{"type only", ":signing::my-key", false},
+		{"algo only", "::ecdsa-p256:my-key", false},
 
 		// Invalid key references
 		{"empty string", "", true},
-		{"null byte in key", "backend:key\x00", true},
-		{"null byte in backend", "backend\x00:key", true},
-		{"invalid backend uppercase", "PKCS8:key", true},
-		{"invalid backend underscore", "my_backend:key", true},
-		{"invalid key path traversal", "backend:../key", true},
-		{"invalid key absolute", "backend:/etc/passwd", true},
-		{"invalid key special char", "backend:key;rm", true},
-		{"control character", "backend:key\n", true},
-		{"too long total", strings.Repeat("a", 321), true},
-		{"too long backend", strings.Repeat("a", 65) + ":key", true},
-		{"too long key", "backend:" + strings.Repeat("a", 256), true},
-		{"multiple colons", "backend:sub:key", true}, // Will be parsed as backend="backend" key="sub:key", key validation should fail on colon
+		{"wrong colon count 1", "backend:key", true},
+		{"wrong colon count 2", "backend:type:key", true},
+		{"null byte in key", "backend:type:algo:key\x00", true},
+		{"null byte in backend", "backend\x00:type:algo:key", true},
+		{"invalid backend uppercase", "PKCS8:signing:ecdsa-p256:key", true},
+		{"invalid backend underscore", "my_backend:signing:ecdsa-p256:key", true},
+		{"invalid key path traversal", "pkcs8:signing:ecdsa-p256:../key", true},
+		{"invalid key absolute", "pkcs8:signing:ecdsa-p256:/etc/passwd", true},
+		{"invalid key special char", "pkcs8:signing:ecdsa-p256:key;rm", true},
+		{"control character", "pkcs8:signing:ecdsa-p256:key\n", true},
+		{"too long total", strings.Repeat("a", 513), true},
+		{"too long backend", strings.Repeat("a", 65) + ":signing:ecdsa-p256:key", true},
+		{"too long key", "pkcs8:signing:ecdsa-p256:" + strings.Repeat("a", 256), true},
+		{"invalid type", "pkcs8:invalid:ecdsa-p256:key", true},
+		{"invalid algo", "pkcs8:signing:invalid-algo:key", true},
 		{"colon only", ":", true},
 		{"colon at start", ":key", true},
 		{"colon at end", "backend:", true},
+		{"empty keyname", "pkcs8:signing:ecdsa-p256:", true},
 	}
 
 	for _, tt := range tests {

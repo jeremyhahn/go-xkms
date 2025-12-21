@@ -190,6 +190,16 @@ func (tpm *TPM2) createIDevIDContent(
 		}
 	}
 
+	// Generate attestation data (Quote + PCRs) for ProdCaData
+	// This carries the device's attestation state to the CA during enrollment
+	prodCaData, prodCaDataSz, err := tpm.createProdCaData()
+	if err != nil {
+		// Log warning but continue - attestation data is optional during enrollment
+		tpm.logger.Warnf("tpm: failed to create ProdCaData attestation: %v", err)
+		prodCaData = nil
+		prodCaDataSz = 0
+	}
+
 	akBPublic := akAttrs.TPMAttributes.BPublic
 	akPublicBytes := akBPublic.Bytes()
 	atCreateTktBytes := akAttrs.TPMAttributes.CreationTicketDigest
@@ -221,7 +231,7 @@ func (tpm *TPM2) createIDevIDContent(
 			}
 			return uint32(len(tpm.config.IDevID.Serial))
 		}(),
-		ProdCaDataSz: uint32(0),
+		ProdCaDataSz: prodCaDataSz,
 		BootEvntLogSz: func() uint32 {
 			if len(bootEventLog) > math.MaxUint32 {
 				panic("bootEventLog too large")
@@ -282,7 +292,7 @@ func (tpm *TPM2) createIDevIDContent(
 		// the structure size a multiple of 16 bytes.
 		ProdModel:         []byte(tpm.config.IDevID.Model),
 		ProdSerial:        []byte(tpm.config.IDevID.Serial),
-		ProdCaData:        nil,
+		ProdCaData:        prodCaData,
 		BootEvntLog:       bootEventLog,
 		EkCert:            ekCert.Raw,
 		AttestPub:         akPublicBytes,
@@ -293,6 +303,64 @@ func (tpm *TPM2) createIDevIDContent(
 		SgnCertifyInfo:    sgnCertifyInfoBytes,
 		SgnCertifyInfoSig: sgnCertifyInfoSig,
 	}, nil
+}
+
+// createProdCaData generates attestation data (TPM Quote + PCRs) for inclusion
+// in the TCG-CSR-IDEVID ProdCaData field. Per TCG TPM 2.0 Keys for Device Identity
+// and Attestation specification, ProdCaData is used for CA-specific required data.
+//
+// This enables the CA to receive and store the device's initial attestation state
+// upon successful IDevID issuance, eliminating the need for local attestation
+// on the client after enrollment.
+//
+// Returns the packed ProdCaData bytes, its size, and any error.
+func (tpm *TPM2) createProdCaData() ([]byte, uint32, error) {
+	// Check if TPM device is available (may be nil in unit tests)
+	if tpm.device == nil {
+		tpm.logger.Debug("tpm: no TPM device available, skipping ProdCaData creation")
+		return nil, 0, nil
+	}
+
+	// Use GoldenPCRs from config, or default to PlatformPCR if not configured
+	pcrs := tpm.config.GoldenPCRs
+	if len(pcrs) == 0 {
+		pcrs = []uint{tpm.config.PlatformPCR}
+	}
+
+	// Generate a random nonce for the quote
+	nonce, err := tpm.Random()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to generate nonce for ProdCaData: %w", err)
+	}
+
+	tpm.logger.Infof("tpm: creating ProdCaData attestation for PCRs %v", pcrs)
+
+	// Perform TPM Quote over the configured PCRs
+	quote, err := tpm.Quote(pcrs, nonce)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create quote for ProdCaData: %w", err)
+	}
+
+	// Create ProdCaData from the quote
+	prodCaData, err := NewProdCaData(&quote)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create ProdCaData: %w", err)
+	}
+
+	// Pack the ProdCaData
+	packedData, err := PackProdCaData(prodCaData)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to pack ProdCaData: %w", err)
+	}
+
+	if len(packedData) > math.MaxUint32 {
+		return nil, 0, ErrProdCaDataTooLarge
+	}
+
+	tpm.logger.Debugf("tpm: ProdCaData created: %d bytes (quoted=%d, sig=%d, nonce=%d, pcrs=%d)",
+		len(packedData), len(quote.Quoted), len(quote.Signature), len(quote.Nonce), len(quote.PCRs))
+
+	return packedData, uint32(len(packedData)), nil // #nosec G115 -- validated above
 }
 
 // Packs the TCG-CSR-IDEVID into a big endian binary byte array

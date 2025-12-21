@@ -197,6 +197,7 @@ func createSim(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
 		},
 		PlatformPCR:     debugPCR,
 		PlatformPCRBank: debugPCRBank,
+		GoldenPCRs:      []uint{0, 7},
 		SSRK: &SRKConfig{
 			Handle:        0x81000001,
 			HierarchyAuth: store.DEFAULT_PASSWORD,

@@ -15,107 +15,31 @@ package keychain
 
 import (
 	"crypto"
-	"crypto/elliptic"
-	"crypto/x509"
 	"fmt"
 
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-// GetKeyByID retrieves a key using the extended Key ID format.
-// The Key ID is parsed to extract all components and mapped to internal storage ID.
+// GetKeyByID retrieves a key using the Key ID format.
 //
 // The Key ID format is: backend:type:algo:keyname
+// All segments except keyname are optional:
+//   - "my-key" - shorthand for just keyname
+//   - ":::my-key" - explicit form of above
+//   - "pkcs11:::my-key" - specify backend only
+//   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
+//
+// If a backend is specified, it must match this keystore's backend.
+// If no backend is specified, this keystore's backend is used.
 //
 // Example:
 //
+//	key, err := keystore.GetKeyByID("my-key")
 //	key, err := keystore.GetKeyByID("pkcs11:signing:ecdsa-p256:my-key")
 func (ks *compositeKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
-	// Parse the extended Key ID
-	backendStr, keyType, algo, keyname, err := ParseKeyID(keyID)
+	attrs, err := ks.parseAndValidateKeyID(keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse key ID: %w", err)
-	}
-
-	// Convert backend string to BackendType
-	backendType, err := keyIDToBackendType(backendStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert backend type: %w", err)
-	}
-
-	// Verify the backend matches the keystore's backend
-	expectedBackend := ks.backend.Type()
-	if backendType != expectedBackend {
-		return nil, fmt.Errorf("%w: expected %s, got %s", ErrBackendMismatch, expectedBackend, backendType)
-	}
-
-	// Convert string components to enums
-	keyTypeEnum, err := keyTypeToEnum(keyType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert key type: %w", err)
-	}
-
-	algoEnum, err := algorithmToEnum(algo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert algorithm: %w", err)
-	}
-
-	// Build KeyAttributes with all required fields
-	attrs := &types.KeyAttributes{
-		CN:        keyname,
-		KeyType:   keyTypeEnum,
-		StoreType: backendTypeToStoreType(backendType),
-	}
-
-	// Populate algorithm-specific attributes for validation
-	switch a := algoEnum.(type) {
-	case x509.PublicKeyAlgorithm:
-		attrs.KeyAlgorithm = a
-		switch a {
-		case x509.RSA:
-			// RSA requires RSAAttributes for validation
-			// Use default key size since we don't know it when retrieving
-			attrs.RSAAttributes = &types.RSAAttributes{
-				KeySize: 2048, // Default, actual size comes from stored key
-			}
-		case x509.ECDSA:
-			// Extract curve from algo string
-			curve, err := extractECDSACurve(algo)
-			if err != nil {
-				return nil, fmt.Errorf("failed to extract ECDSA curve: %w", err)
-			}
-			// Need to convert string to elliptic.Curve
-			var ellipticCurve elliptic.Curve
-			switch curve {
-			case "P-256":
-				ellipticCurve = elliptic.P256()
-			case "P-384":
-				ellipticCurve = elliptic.P384()
-			case "P-521":
-				ellipticCurve = elliptic.P521()
-			default:
-				return nil, fmt.Errorf("unsupported curve: %s", curve)
-			}
-			attrs.ECCAttributes = &types.ECCAttributes{
-				Curve: ellipticCurve,
-			}
-		}
-	case types.SymmetricAlgorithm:
-		attrs.SymmetricAlgorithm = a
-		// AES requires AESAttributes for validation
-		var keySize int
-		switch a {
-		case types.SymmetricAES128GCM:
-			keySize = 128
-		case types.SymmetricAES192GCM:
-			keySize = 192
-		default:
-			keySize = 256
-		}
-		attrs.AESAttributes = &types.AESAttributes{
-			KeySize:   keySize,
-			NonceSize: 12, // Standard GCM nonce size
-		}
+		return nil, err
 	}
 
 	// Retrieve the key from the backend
@@ -127,95 +51,19 @@ func (ks *compositeKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error)
 	return key, nil
 }
 
-// GetSignerByID retrieves a crypto.Signer using the extended Key ID format.
+// GetSignerByID retrieves a crypto.Signer using the Key ID format.
 // This is a convenience method that retrieves the key and ensures it
 // implements the crypto.Signer interface.
 //
 // Example:
 //
+//	signer, err := keystore.GetSignerByID("my-key")
 //	signer, err := keystore.GetSignerByID("tpm2:attestation:rsa:attestation-key")
 //	signature, _ := signer.Sign(rand.Reader, digest, crypto.SHA256)
 func (ks *compositeKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) {
-	// Parse the extended Key ID
-	backendStr, keyType, algo, keyname, err := ParseKeyID(keyID)
+	attrs, err := ks.parseAndValidateKeyID(keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse key ID: %w", err)
-	}
-
-	// Convert backend string to BackendType
-	backendType, err := keyIDToBackendType(backendStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert backend type: %w", err)
-	}
-
-	// Verify backend match
-	expectedBackend := ks.backend.Type()
-	if backendType != expectedBackend {
-		return nil, fmt.Errorf("%w: expected %s, got %s", ErrBackendMismatch, expectedBackend, backendType)
-	}
-
-	// Convert string components to enums
-	keyTypeEnum, err := keyTypeToEnum(keyType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert key type: %w", err)
-	}
-
-	algoEnum, err := algorithmToEnum(algo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert algorithm: %w", err)
-	}
-
-	// Build KeyAttributes
-	attrs := &types.KeyAttributes{
-		CN:        keyname,
-		KeyType:   keyTypeEnum,
-		StoreType: backendTypeToStoreType(backendType),
-	}
-
-	// Populate algorithm-specific attributes for validation
-	switch a := algoEnum.(type) {
-	case x509.PublicKeyAlgorithm:
-		attrs.KeyAlgorithm = a
-		switch a {
-		case x509.RSA:
-			attrs.RSAAttributes = &types.RSAAttributes{
-				KeySize: 2048, // Default, actual size comes from stored key
-			}
-		case x509.ECDSA:
-			curve, err := extractECDSACurve(algo)
-			if err != nil {
-				return nil, fmt.Errorf("failed to extract ECDSA curve: %w", err)
-			}
-			var ellipticCurve elliptic.Curve
-			switch curve {
-			case "P-256":
-				ellipticCurve = elliptic.P256()
-			case "P-384":
-				ellipticCurve = elliptic.P384()
-			case "P-521":
-				ellipticCurve = elliptic.P521()
-			default:
-				return nil, fmt.Errorf("unsupported curve: %s", curve)
-			}
-			attrs.ECCAttributes = &types.ECCAttributes{
-				Curve: ellipticCurve,
-			}
-		}
-	case types.SymmetricAlgorithm:
-		attrs.SymmetricAlgorithm = a
-		var keySize int
-		switch a {
-		case types.SymmetricAES128GCM:
-			keySize = 128
-		case types.SymmetricAES192GCM:
-			keySize = 192
-		default:
-			keySize = 256
-		}
-		attrs.AESAttributes = &types.AESAttributes{
-			KeySize:   keySize,
-			NonceSize: 12,
-		}
+		return nil, err
 	}
 
 	// Get signer from backend
@@ -227,94 +75,18 @@ func (ks *compositeKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) 
 	return signer, nil
 }
 
-// GetDecrypterByID retrieves a crypto.Decrypter using the extended Key ID format.
+// GetDecrypterByID retrieves a crypto.Decrypter using the Key ID format.
 // This is a convenience method for RSA decryption operations.
 //
 // Example:
 //
+//	decrypter, err := keystore.GetDecrypterByID("my-key")
 //	decrypter, err := keystore.GetDecrypterByID("awskms:encryption:rsa:rsa-key")
 //	plaintext, _ := decrypter.Decrypt(rand.Reader, ciphertext, opts)
 func (ks *compositeKeyStore) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
-	// Parse the extended Key ID
-	backendStr, keyType, algo, keyname, err := ParseKeyID(keyID)
+	attrs, err := ks.parseAndValidateKeyID(keyID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse key ID: %w", err)
-	}
-
-	// Convert backend string to BackendType
-	backendType, err := keyIDToBackendType(backendStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert backend type: %w", err)
-	}
-
-	// Verify backend match
-	expectedBackend := ks.backend.Type()
-	if backendType != expectedBackend {
-		return nil, fmt.Errorf("%w: expected %s, got %s", ErrBackendMismatch, expectedBackend, backendType)
-	}
-
-	// Convert string components to enums
-	keyTypeEnum, err := keyTypeToEnum(keyType)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert key type: %w", err)
-	}
-
-	algoEnum, err := algorithmToEnum(algo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert algorithm: %w", err)
-	}
-
-	// Build KeyAttributes
-	attrs := &types.KeyAttributes{
-		CN:        keyname,
-		KeyType:   keyTypeEnum,
-		StoreType: backendTypeToStoreType(backendType),
-	}
-
-	// Populate algorithm-specific attributes for validation
-	switch a := algoEnum.(type) {
-	case x509.PublicKeyAlgorithm:
-		attrs.KeyAlgorithm = a
-		switch a {
-		case x509.RSA:
-			attrs.RSAAttributes = &types.RSAAttributes{
-				KeySize: 2048, // Default, actual size comes from stored key
-			}
-		case x509.ECDSA:
-			curve, err := extractECDSACurve(algo)
-			if err != nil {
-				return nil, fmt.Errorf("failed to extract ECDSA curve: %w", err)
-			}
-			var ellipticCurve elliptic.Curve
-			switch curve {
-			case "P-256":
-				ellipticCurve = elliptic.P256()
-			case "P-384":
-				ellipticCurve = elliptic.P384()
-			case "P-521":
-				ellipticCurve = elliptic.P521()
-			default:
-				return nil, fmt.Errorf("unsupported curve: %s", curve)
-			}
-			attrs.ECCAttributes = &types.ECCAttributes{
-				Curve: ellipticCurve,
-			}
-		}
-	case types.SymmetricAlgorithm:
-		attrs.SymmetricAlgorithm = a
-		var keySize int
-		switch a {
-		case types.SymmetricAES128GCM:
-			keySize = 128
-		case types.SymmetricAES192GCM:
-			keySize = 192
-		default:
-			keySize = 256
-		}
-		attrs.AESAttributes = &types.AESAttributes{
-			KeySize:   keySize,
-			NonceSize: 12,
-		}
+		return nil, err
 	}
 
 	// Get decrypter from backend
@@ -324,4 +96,28 @@ func (ks *compositeKeyStore) GetDecrypterByID(keyID string) (crypto.Decrypter, e
 	}
 
 	return decrypter, nil
+}
+
+// parseAndValidateKeyID parses a key ID and validates the backend matches.
+// If no backend is specified in the keyID, it uses this keystore's backend.
+func (ks *compositeKeyStore) parseAndValidateKeyID(keyID string) (*types.KeyAttributes, error) {
+	// Parse the Key ID using the shared parser
+	attrs, err := ParseKeyIDToAttributes(keyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse key ID: %w", err)
+	}
+
+	// If a backend was specified, verify it matches this keystore
+	if attrs.StoreType != "" {
+		expectedBackend := ks.backend.Type()
+		expectedStoreType := backendTypeToStoreType(expectedBackend)
+		if attrs.StoreType != expectedStoreType {
+			return nil, fmt.Errorf("%w: expected %s, got %s", ErrBackendMismatch, expectedStoreType, attrs.StoreType)
+		}
+	} else {
+		// No backend specified - use this keystore's backend
+		attrs.StoreType = backendTypeToStoreType(ks.backend.Type())
+	}
+
+	return attrs, nil
 }

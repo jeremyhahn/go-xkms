@@ -262,11 +262,15 @@ func TestGetSignerByID(t *testing.T) {
 			errorType:   keychain.ErrKeyNotFound,
 		},
 		{
-			name:        "invalid key ID format - only 1 field",
-			keyID:       "invalid",
-			setupMock:   func(mb *backmocks.MockBackend) {},
+			name:  "simple keyname (valid shorthand) - key not found",
+			keyID: "invalid",
+			setupMock: func(mb *backmocks.MockBackend) {
+				mb.SignerFunc = func(attrs *types.KeyAttributes) (crypto.Signer, error) {
+					return nil, keychain.ErrKeyNotFound
+				}
+			},
 			expectError: true,
-			errorType:   keychain.ErrInvalidKeyIDFormat,
+			errorType:   keychain.ErrKeyNotFound,
 		},
 		{
 			name:        "invalid key ID format - only 2 fields",
@@ -455,11 +459,15 @@ func TestGetDecrypterByID(t *testing.T) {
 			errorType:   keychain.ErrKeyNotFound,
 		},
 		{
-			name:        "invalid key ID format - no colons",
-			keyID:       "no-colon",
-			setupMock:   func(mb *backmocks.MockBackend) {},
+			name:  "simple keyname (valid shorthand) - key not found",
+			keyID: "no-colon",
+			setupMock: func(mb *backmocks.MockBackend) {
+				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+					return nil, keychain.ErrKeyNotFound
+				}
+			},
 			expectError: true,
-			errorType:   keychain.ErrInvalidKeyIDFormat,
+			errorType:   keychain.ErrKeyNotFound,
 		},
 		{
 			name:        "invalid key ID format - only 2 fields",

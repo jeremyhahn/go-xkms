@@ -2,7 +2,7 @@
 # Contains all tools needed to run the full CI pipeline locally
 # Matches the GitHub CI workflow environment
 
-FROM golang:1.24.4-bookworm
+FROM golang:1.25.5-bookworm
 
 LABEL maintainer="go-keychain"
 LABEL description="CI environment for go-keychain with all linters, security scanners, and test dependencies"

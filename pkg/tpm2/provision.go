@@ -5,13 +5,10 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
-	"github.com/spf13/viper"
-	"gopkg.in/yaml.v2"
 )
 
 // Clears the TPM as described in TCG Part 3: Commands - Section 24.6 - TPM2_Clear
@@ -38,15 +35,23 @@ func (tpm *TPM2) Clear(lockoutAuth []byte) error {
 // from scratch, this method will use pre-existing EK and SRK keys and
 // certificates if they already exist. The provided soPIN parameter is used
 // as the new Endorsement and Storage hierarchy authorizations during installation.
-// The current hierarchy authorization is expected to be set to an empty store.
-// You can use the included CLI or TPM2 tools to execute the TPM2_HierarchyChangeAuth
-// command to set the password to an empty store.
+// If the config's EK.HierarchyAuth is set, it is used as the current authorization;
+// otherwise, empty auth is assumed for fresh TPMs. This allows Install to work
+// on both fresh TPMs and already-provisioned TPMs.
 func (tpm *TPM2) Install(soPIN types.Password) error {
 
 	tpm.logger.Info("Installing Platform")
 
+	// Use the config's HierarchyAuth as the current auth if set,
+	// otherwise assume empty auth for fresh TPMs.
+	// This allows Install to work on both fresh TPMs and already-provisioned TPMs.
+	var currentAuth types.Password
+	if tpm.config.EK != nil && tpm.config.EK.HierarchyAuth != "" {
+		currentAuth = store.NewClearPassword([]byte(tpm.config.EK.HierarchyAuth))
+	}
+
 	// Set new hierarchy authorizations
-	if err := tpm.SetHierarchyAuth(nil, soPIN, nil); err != nil {
+	if err := tpm.SetHierarchyAuth(currentAuth, soPIN, nil); err != nil {
 		return err
 	}
 
@@ -372,67 +377,26 @@ func (tpm *TPM2) GoldenMeasurements() []byte {
 	digest := hash.New()
 	digest.Reset()
 
-	// Read only the PCRs specified in the platform configuration.
-	// This allows stable golden measurements that don't change between
-	// boot environments (e.g., ISO installer vs installed system).
-	if len(tpm.config.GoldenPCRs) > 0 {
-		banks, err := tpm.ReadPCRs(tpm.config.GoldenPCRs)
-		if err != nil {
-			tpm.logger.FatalError(err)
-		}
-		// Create golden PCR that stores the final sum of
-		// configured PCR values across all banks.
-		for _, bank := range banks {
-			for _, pcr := range bank.PCRs {
-				extend = append(extend, pcr.Value...)
-				digest.Write(extend)
-				gold = digest.Sum(nil)
-				extend = gold
-				digest.Reset()
-			}
-		}
-		tpm.logger.Debugf("tpm: golden measurement from PCRs %v", tpm.config.GoldenPCRs)
-	} else {
-		// No PCRs configured - use a deterministic seed based on platform identity.
-		// This provides stable golden measurements across different boot environments
-		// without depending on volatile PCR values that differ between ISO and
-		// installed system boots.
-		platformSeed := fmt.Sprintf("trusted-platform:%s:pcr%d:%s",
-			tpm.fqdn,
-			tpm.config.PlatformPCR,
-			tpm.config.PlatformPCRBank)
-		digest.Write([]byte(platformSeed))
-		gold = digest.Sum(nil)
-		digest.Reset()
-		tpm.logger.Debugf("tpm: golden measurement using platform seed (no PCRs configured)")
+	banks, err := tpm.ReadPCRs(tpm.config.GoldenPCRs)
+	if err != nil {
+		tpm.logger.FatalError(err)
 	}
 
-	// Recursively walk each directory configured for
-	// file integrity monitoring and sum each file for
-	// inclusion in the golden measurements.
-	//
-	// DEPRECATED: This custom file integrity monitoring is deprecated in favor of
-	// Linux IMA (Integrity Measurement Architecture) which uses PCR 10.
-	// To use IMA instead:
-	//   1. Enable IMA in the kernel (ima=on ima_policy=tcb ima_hash=sha256)
-	//   2. Configure golden-pcrs to include PCR 10: [0, 7, 9, 10]
-	//   3. Leave file-integrity empty: []
-	//
-	// IMA provides hardware-backed file integrity monitoring with:
-	//   - Automatic measurement of executables, libraries, and kernel modules
-	//   - TPM PCR 10 extended on each measured file access
-	//   - Policy-based control over what gets measured
-	//   - Integration with secure boot signature verification
-	//
-	// This custom FIM is kept for backwards compatibility with existing deployments.
-	if len(tpm.config.FileIntegrity) > 0 {
-		tpm.logger.Warn("tpm: file-integrity config is deprecated, use IMA (PCR 10) via golden-pcrs instead")
-		for _, dir := range tpm.config.FileIntegrity {
-			dirSum := tpm.fileIntegritySum(dir)
-			digest.Write(dirSum)
+	// Create golden PCR that stores the final sum of
+	// configured PCR values across all banks.
+	for _, bank := range banks {
+		tpm.logger.Infof("tpm: processing PCR bank: %s", bank.Algorithm)
+		for _, pcr := range bank.PCRs {
+			tpm.logger.Infof("tpm: PCR[%d] = %x", pcr.ID, pcr.Value)
+			extend = append(extend, pcr.Value...)
+			digest.Write(extend)
 			gold = digest.Sum(nil)
+			extend = gold
+			digest.Reset()
 		}
 	}
+	tpm.logger.Infof("tpm: golden measurement from PCRs %v = %x", tpm.config.GoldenPCRs, gold)
+
 	return gold
 }
 
@@ -485,13 +449,19 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 	// specified in the platform configuration file
 	measurement := tpm.GoldenMeasurements()
 
+	// If no golden PCRs are configured, skip PCR extension
+	if len(measurement) == 0 {
+		tpm.logger.Info("tpm: no golden PCRs configured, skipping platform policy")
+		return nil
+	}
+
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
 		return err
 	}
 
-	tpm.logger.Debugf(
-		"tpm: extending golden integrity measurement %x to PCR %s:%d",
+	tpm.logger.Infof(
+		"tpm: CreatePlatformPolicy - extending golden measurement %x to PCR %s:%d",
 		measurement, tpm.config.PlatformPCRBank, tpm.config.PlatformPCR)
 
 	_, err = tpm2.PCRExtend{
@@ -565,92 +535,11 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		return err
 	}
 
-	tpm.logger.Debugf("tpm: Golden Integrity Measurements: %x", measurement)
-	tpm.logger.Debugf("tpm: pgd.PolicyDigest.Buffer: %x", pgd.PolicyDigest.Buffer)
-	tpm.logger.Debugf("tpm: hash: %x", hash)
+	tpm.logger.Infof("tpm: CreatePlatformPolicy - golden measurement: %x", measurement)
+	tpm.logger.Infof("tpm: CreatePlatformPolicy - policy digest: %x", pgd.PolicyDigest.Buffer)
+	tpm.logger.Infof("tpm: CreatePlatformPolicy - PCR %d hash: %x", tpm.config.PlatformPCR, hash)
 
 	tpm.policyDigest = pgd.PolicyDigest
 
 	return nil
-}
-
-// Recursively sums a directory path using the Hash function
-// specified in the TPM section of the platform configuration
-// file.
-func (tpm *TPM2) fileIntegritySum(dir string) []byte {
-	var sum, extend []byte
-	hash, err := ParsePCRBankCryptoHash(tpm.config.PlatformPCRBank)
-	if err != nil {
-		tpm.logger.FatalError(err)
-	}
-	digest := hash.New()
-	digest.Reset()
-
-	tpm.logger.Info("Processing file integrity checks")
-	fim := viper.GetStringSlice("tpm.file-integrity")
-	if len(fim) == 0 {
-		return []byte{}
-	}
-
-	marshalled, err := yaml.Marshal(fim)
-	if err != nil {
-		tpm.logger.FatalError(err)
-	}
-	tpm.logger.Debug(string(marshalled))
-
-	var extendDir func(string) []byte
-	extendDir = func(dir string) []byte {
-
-		files, err := os.ReadDir(dir)
-		if err != nil {
-			tpm.logger.Fatalf("%s: %s", err, dir)
-		}
-
-		tpm.logger.Debugf(
-			"Calculating %s integrity checksums in %s",
-			hash.String(), dir)
-
-		for _, f := range files {
-			var bytes []byte
-
-			fileName := f.Name()
-			path := fmt.Sprintf("%s/%s", dir, fileName)
-
-			if f.IsDir() {
-				extendDir(path)
-				continue
-			}
-
-			bytes, err = os.ReadFile(path)
-			if err != nil {
-				tpm.logger.FatalError(err)
-			}
-
-			tpm.logger.Debug(path)
-
-			// Rather than creating a digest of the read bytes and
-			// then concatenating this digest with the digest from
-			// the last iteration, save a few cycles here by appending
-			// the new bytes directly into the "extend" hash from the
-			// last iteration and sum them together.
-			extend = append(extend, bytes...)
-			digest.Write(extend)
-			sum = digest.Sum(nil)
-			extend = sum
-			digest.Reset()
-		}
-
-		if len(files) == 0 {
-			// Empty directory. Write a null byte and move on.
-			extend = append(extend, []byte{0x00}...)
-			digest.Write(extend)
-			sum = digest.Sum(nil)
-			extend = sum
-			digest.Reset()
-		}
-		return sum
-	}
-
-	extendDir(dir)
-	return sum
 }

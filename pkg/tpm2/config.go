@@ -72,8 +72,8 @@ var (
 		},
 		// FileIntegrity is deprecated - leave empty and use GoldenPCRs with PCR 10 (IMA) instead
 		FileIntegrity: []string{},
-		// GoldenPCRs - leave empty to use deterministic platform seed
-		// For IMA-based file integrity, use: []uint{10}
+		// GoldenPCRs - leave empty to use defaults: [0, 7, 9, 10]
+		//   PCR 0: BIOS/UEFI firmware, PCR 7: Secure Boot, PCR 9: cmdline, PCR 10: IMA
 		GoldenPCRs: []uint{},
 		IAK: &IAKConfig{
 			Debug:        true,
@@ -130,14 +130,12 @@ type Config struct {
 	// with hardware-backed measurements stored in PCR 10.
 	FileIntegrity []string `yaml:"file-integrity" json:"file_integrity" mapstructure:"file-integrity"`
 	// GoldenPCRs specifies which PCRs to include in the golden integrity measurement.
-	// Common PCRs:
-	//   0: BIOS/UEFI firmware measurements
-	//   1: BIOS/UEFI configuration
-	//   7: Secure Boot state
-	//   9: Kernel command line
-	//   10: Linux IMA (Integrity Measurement Architecture) - recommended for file integrity
-	// Leave empty to use a deterministic platform seed instead.
-	// Example for IMA-based integrity: [0, 7, 9, 10]
+	// Leave empty to use defaults: [0, 7, 9, 10]
+	//   PCR 0: BIOS/UEFI firmware measurements
+	//   PCR 7: Secure Boot state
+	//   PCR 9: Kernel command line
+	//   PCR 10: Linux IMA (file integrity measurements)
+	// To customize, specify an explicit list, e.g., [0, 7, 9, 10, 14]
 	GoldenPCRs                   []uint                  `yaml:"golden-pcrs" json:"golden_pcrs" mapstructure:"golden-pcrs"`
 	Hash                         string                  `yaml:"hash" json:"hash" mapstructure:"hash"`
 	IAK                          *IAKConfig              `yaml:"iak" json:"iak" mapstructure:"iak"`

@@ -479,8 +479,8 @@ func TestErrors(t *testing.T) {
 }
 
 func TestDefaultUnixSocketPath(t *testing.T) {
-	if DefaultUnixSocketPath != "/var/run/keychain/keychain.sock" {
-		t.Errorf("DefaultUnixSocketPath = %v, want /var/run/keychain/keychain.sock",
+	if DefaultUnixSocketPath != "keychain-data/keychain.sock" {
+		t.Errorf("DefaultUnixSocketPath = %v, want keychain-data/keychain.sock",
 			DefaultUnixSocketPath)
 	}
 }

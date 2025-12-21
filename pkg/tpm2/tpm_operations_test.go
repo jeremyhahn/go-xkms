@@ -54,6 +54,7 @@ func TestTPMOperations(t *testing.T) {
 		Device:         "/dev/tpmrm0",
 		UseSimulator:   false,
 		Hash:           "SHA-256",
+		GoldenPCRs:     []uint{0, 7},
 		EK: &EKConfig{
 			CertHandle:    0x01C00002,
 			Handle:        0x81010001,
@@ -433,7 +434,7 @@ func TestTPMOperations(t *testing.T) {
 		for _, bank := range banks {
 			if bank.Algorithm == "SHA256" {
 				for _, pcr := range bank.PCRs {
-					if pcr.ID == 0 {
+					if pcr.ID == 16 {
 						found = true
 						break
 					}

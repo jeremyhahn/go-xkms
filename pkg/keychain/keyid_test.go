@@ -216,6 +216,114 @@ func TestParseKeyID_Valid(t *testing.T) {
 	}
 }
 
+// TestParseKeyID_Shorthand tests parsing of shorthand Key IDs (just keyname).
+func TestParseKeyID_Shorthand(t *testing.T) {
+	tests := []struct {
+		name            string
+		keyID           string
+		expectedKeyname string
+	}{
+		{
+			name:            "simple keyname",
+			keyID:           "my-key",
+			expectedKeyname: "my-key",
+		},
+		{
+			name:            "keyname with underscores",
+			keyID:           "my_test_key",
+			expectedKeyname: "my_test_key",
+		},
+		{
+			name:            "keyname with numbers",
+			keyID:           "key-2024-v1",
+			expectedKeyname: "key-2024-v1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend, keyType, algo, keyname, err := ParseKeyID(tt.keyID)
+			require.NoError(t, err, "ParseKeyID should not return error for shorthand")
+			assert.Empty(t, backend, "Backend should be empty for shorthand")
+			assert.Empty(t, keyType, "KeyType should be empty for shorthand")
+			assert.Empty(t, algo, "Algorithm should be empty for shorthand")
+			assert.Equal(t, tt.expectedKeyname, keyname, "Keyname mismatch")
+		})
+	}
+}
+
+// TestParseKeyID_OptionalSegments tests parsing of Key IDs with optional segments.
+func TestParseKeyID_OptionalSegments(t *testing.T) {
+	tests := []struct {
+		name            string
+		keyID           string
+		expectedBackend string
+		expectedKeyType string
+		expectedAlgo    string
+		expectedKeyname string
+	}{
+		{
+			name:            "all segments empty except keyname",
+			keyID:           ":::my-key",
+			expectedBackend: "",
+			expectedKeyType: "",
+			expectedAlgo:    "",
+			expectedKeyname: "my-key",
+		},
+		{
+			name:            "backend only",
+			keyID:           "pkcs11:::my-key",
+			expectedBackend: "pkcs11",
+			expectedKeyType: "",
+			expectedAlgo:    "",
+			expectedKeyname: "my-key",
+		},
+		{
+			name:            "backend and type only",
+			keyID:           "pkcs11:signing::my-key",
+			expectedBackend: "pkcs11",
+			expectedKeyType: "signing",
+			expectedAlgo:    "",
+			expectedKeyname: "my-key",
+		},
+		{
+			name:            "backend and algo only",
+			keyID:           "pkcs11::rsa:my-key",
+			expectedBackend: "pkcs11",
+			expectedKeyType: "",
+			expectedAlgo:    "rsa",
+			expectedKeyname: "my-key",
+		},
+		{
+			name:            "type and algo only",
+			keyID:           ":signing:rsa:my-key",
+			expectedBackend: "",
+			expectedKeyType: "signing",
+			expectedAlgo:    "rsa",
+			expectedKeyname: "my-key",
+		},
+		{
+			name:            "algo only",
+			keyID:           "::rsa:my-key",
+			expectedBackend: "",
+			expectedKeyType: "",
+			expectedAlgo:    "rsa",
+			expectedKeyname: "my-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend, keyType, algo, keyname, err := ParseKeyID(tt.keyID)
+			require.NoError(t, err, "ParseKeyID should not return error for optional segments")
+			assert.Equal(t, tt.expectedBackend, backend, "Backend mismatch")
+			assert.Equal(t, tt.expectedKeyType, keyType, "KeyType mismatch")
+			assert.Equal(t, tt.expectedAlgo, algo, "Algorithm mismatch")
+			assert.Equal(t, tt.expectedKeyname, keyname, "Keyname mismatch")
+		})
+	}
+}
+
 // TestParseKeyID_Invalid tests parsing of invalid Key IDs.
 func TestParseKeyID_Invalid(t *testing.T) {
 	tests := []struct {
@@ -223,11 +331,6 @@ func TestParseKeyID_Invalid(t *testing.T) {
 		keyID       string
 		expectedErr error
 	}{
-		{
-			name:        "no colon separator",
-			keyID:       "invalid",
-			expectedErr: ErrInvalidKeyIDFormat,
-		},
 		{
 			name:        "only 2 fields (old format)",
 			keyID:       "pkcs8:my-key",
@@ -241,21 +344,6 @@ func TestParseKeyID_Invalid(t *testing.T) {
 		{
 			name:        "5 fields",
 			keyID:       "pkcs8:signing:rsa:my-key:extra",
-			expectedErr: ErrInvalidKeyIDFormat,
-		},
-		{
-			name:        "empty backend",
-			keyID:       ":signing:rsa:keyname",
-			expectedErr: ErrInvalidKeyIDFormat,
-		},
-		{
-			name:        "empty key type",
-			keyID:       "pkcs8::rsa:keyname",
-			expectedErr: ErrInvalidKeyIDFormat,
-		},
-		{
-			name:        "empty algorithm",
-			keyID:       "pkcs8:signing::keyname",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
@@ -329,9 +417,9 @@ func TestParseKeyID_Invalid(t *testing.T) {
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
-			name:        "only whitespace",
+			name:        "shorthand only whitespace",
 			keyID:       "   ",
-			expectedErr: ErrInvalidKeyIDFormat,
+			expectedErr: ErrInvalidKeyName,
 		},
 	}
 
@@ -417,6 +505,59 @@ func TestNewKeyID_Valid(t *testing.T) {
 	}
 }
 
+// TestNewKeyID_OptionalSegments tests creating Key IDs with optional segments.
+func TestNewKeyID_OptionalSegments(t *testing.T) {
+	tests := []struct {
+		name          string
+		backend       string
+		keyType       string
+		algo          string
+		keyname       string
+		expectedKeyID string
+	}{
+		{
+			name:          "empty backend",
+			backend:       "",
+			keyType:       "signing",
+			algo:          "rsa",
+			keyname:       "my-key",
+			expectedKeyID: ":signing:rsa:my-key",
+		},
+		{
+			name:          "empty key type",
+			backend:       "pkcs8",
+			keyType:       "",
+			algo:          "rsa",
+			keyname:       "my-key",
+			expectedKeyID: "pkcs8::rsa:my-key",
+		},
+		{
+			name:          "empty algorithm",
+			backend:       "pkcs8",
+			keyType:       "signing",
+			algo:          "",
+			keyname:       "my-key",
+			expectedKeyID: "pkcs8:signing::my-key",
+		},
+		{
+			name:          "all optional segments empty",
+			backend:       "",
+			keyType:       "",
+			algo:          "",
+			keyname:       "my-key",
+			expectedKeyID: ":::my-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keyID, err := NewKeyID(tt.backend, tt.keyType, tt.algo, tt.keyname)
+			require.NoError(t, err, "NewKeyID should not return error for optional segments")
+			assert.Equal(t, tt.expectedKeyID, keyID.String(), "Key ID mismatch")
+		})
+	}
+}
+
 // TestNewKeyID_Invalid tests creating invalid Key IDs.
 func TestNewKeyID_Invalid(t *testing.T) {
 	tests := []struct {
@@ -436,25 +577,9 @@ func TestNewKeyID_Invalid(t *testing.T) {
 			expectedErr: ErrInvalidBackendType,
 		},
 		{
-			name:        "empty backend",
-			backend:     "",
-			keyType:     "signing",
-			algo:        "rsa",
-			keyname:     "my-key",
-			expectedErr: ErrInvalidBackendType,
-		},
-		{
 			name:        "invalid key type",
 			backend:     "pkcs8",
 			keyType:     "invalid-type",
-			algo:        "rsa",
-			keyname:     "my-key",
-			expectedErr: ErrInvalidKeyIDFormat,
-		},
-		{
-			name:        "empty key type",
-			backend:     "pkcs8",
-			keyType:     "",
 			algo:        "rsa",
 			keyname:     "my-key",
 			expectedErr: ErrInvalidKeyIDFormat,
@@ -464,14 +589,6 @@ func TestNewKeyID_Invalid(t *testing.T) {
 			backend:     "pkcs8",
 			keyType:     "signing",
 			algo:        "invalid-algo",
-			keyname:     "my-key",
-			expectedErr: ErrInvalidKeyIDFormat,
-		},
-		{
-			name:        "empty algorithm",
-			backend:     "pkcs8",
-			keyType:     "signing",
-			algo:        "",
 			keyname:     "my-key",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
@@ -522,6 +639,7 @@ func TestNewKeyID_Invalid(t *testing.T) {
 // TestValidateKeyID tests Key ID validation.
 func TestValidateKeyID(t *testing.T) {
 	validKeyIDs := []string{
+		// Full specification
 		"pkcs8:signing:rsa:server-key",
 		"pkcs11:signing:ecdsa-p256:hsm-key",
 		"tpm2:attestation:rsa:ak-key",
@@ -531,6 +649,15 @@ func TestValidateKeyID(t *testing.T) {
 		"vault:secret:aes256-gcm:transit-key",
 		"aes:secret:aes256-gcm:symmetric-key",
 		"software:signing:rsa:dev-key",
+		// Shorthand (just keyname)
+		"my-key",
+		"server-key",
+		"test_key_123",
+		// Optional segments
+		":::my-key",
+		"pkcs11:::my-key",
+		"pkcs11:signing::my-key",
+		":signing:rsa:my-key",
 	}
 
 	for _, keyID := range validKeyIDs {
@@ -541,14 +668,13 @@ func TestValidateKeyID(t *testing.T) {
 	}
 
 	invalidKeyIDs := []string{
-		"invalid",
 		"pkcs8:my-key",                      // Old 2-field format
 		"pkcs8:signing:my-key",              // Only 3 fields
 		"unknown:signing:rsa:key",           // Invalid backend
 		"pkcs8:invalid-type:rsa:key",        // Invalid key type
 		"pkcs8:signing:invalid-algo:key",    // Invalid algorithm
 		"pkcs8:signing:rsa:",                // Empty keyname
-		":signing:rsa:keyname",              // Empty backend
+		":::",                               // All empty including keyname
 		"pkcs8:signing:rsa:../etc/passwd",   // Path traversal
 		"pkcs8:signing:rsa:key/path",        // Forward slash
 		"pkcs8:signing:rsa:key with spaces", // Spaces in keyname

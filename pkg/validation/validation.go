@@ -80,8 +80,16 @@ func ValidateKeyID(keyID string) error {
 	return nil
 }
 
-// ValidateKeyReference validates a key reference which may include backend prefix.
-// Format: "backend:key-id" or "key-id"
+// ValidateKeyReference validates a key reference using the 4-part Key ID format.
+//
+// Format: "backend:type:algo:keyname" with optional segments
+// - All segments except keyname are optional (can be empty)
+// - Shorthand: "keyname" (no colons) uses defaults
+// - Examples:
+//   - "my-key" - shorthand for just keyname
+//   - ":::my-key" - explicit form of above
+//   - "pkcs11:::my-key" - specify backend only
+//   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
 func ValidateKeyReference(keyRef string) error {
 	if keyRef == "" {
 		return fmt.Errorf("key reference cannot be empty")
@@ -93,8 +101,8 @@ func ValidateKeyReference(keyRef string) error {
 	}
 
 	// Check length
-	if len(keyRef) > 320 { // 64 for backend + 1 for colon + 255 for keyID
-		return fmt.Errorf("key reference too long (max 320 characters)")
+	if len(keyRef) > 512 { // Maximum key ID length
+		return fmt.Errorf("key reference too long (max 512 characters)")
 	}
 
 	// Check for control characters
@@ -104,24 +112,94 @@ func ValidateKeyReference(keyRef string) error {
 		}
 	}
 
-	// Parse and validate components
-	parts := strings.SplitN(keyRef, ":", 2)
-	if len(parts) == 2 {
-		// Format: "backend:key-id"
-		if err := ValidateBackendName(parts[0]); err != nil {
+	// Check for shorthand format (no colons = just keyname)
+	if !strings.Contains(keyRef, ":") {
+		// Validate as a simple keyname
+		return ValidateKeyID(keyRef)
+	}
+
+	// Count colons to determine format
+	colonCount := strings.Count(keyRef, ":")
+	if colonCount != 3 {
+		return fmt.Errorf("key reference must have format 'backend:type:algo:keyname' (got %d colons, expected 3)", colonCount)
+	}
+
+	// Parse 4-part format: backend:type:algo:keyname
+	parts := strings.Split(keyRef, ":")
+	backend := strings.TrimSpace(parts[0])
+	keyType := strings.TrimSpace(parts[1])
+	algo := strings.TrimSpace(parts[2])
+	keyname := strings.TrimSpace(parts[3])
+
+	// Keyname is required
+	if keyname == "" {
+		return fmt.Errorf("keyname cannot be empty")
+	}
+
+	// Validate non-empty components
+	if backend != "" {
+		if err := ValidateBackendName(backend); err != nil {
 			return fmt.Errorf("invalid backend in key reference: %w", err)
-		}
-		if err := ValidateKeyID(parts[1]); err != nil {
-			return fmt.Errorf("invalid key ID in key reference: %w", err)
-		}
-	} else {
-		// Format: "key-id" only
-		if err := ValidateKeyID(keyRef); err != nil {
-			return err
 		}
 	}
 
+	if keyType != "" {
+		if !isValidKeyType(keyType) {
+			return fmt.Errorf("invalid key type in key reference: %s", keyType)
+		}
+	}
+
+	if algo != "" {
+		if !isValidAlgorithm(algo) {
+			return fmt.Errorf("invalid algorithm in key reference: %s", algo)
+		}
+	}
+
+	// Validate keyname
+	if err := ValidateKeyID(keyname); err != nil {
+		return fmt.Errorf("invalid keyname in key reference: %w", err)
+	}
+
 	return nil
+}
+
+// isValidKeyType checks if the key type is valid.
+func isValidKeyType(keyType string) bool {
+	validTypes := []string{
+		"attestation", "ca", "encryption", "endorsement",
+		"hmac", "idevid", "secret",
+		"signing", "storage", "tls", "tpm",
+	}
+	keyType = strings.ToLower(keyType)
+	for _, valid := range validTypes {
+		if keyType == valid {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidAlgorithm checks if the algorithm is valid.
+func isValidAlgorithm(algo string) bool {
+	validAlgos := []string{
+		// Asymmetric algorithms
+		"rsa",
+		"ecdsa-p256", "ecdsa-p-256", "p256", "p-256",
+		"ecdsa-p384", "ecdsa-p-384", "p384", "p-384",
+		"ecdsa-p521", "ecdsa-p-521", "p521", "p-521",
+		"ed25519",
+		// Symmetric algorithms
+		"aes128-gcm", "aes128",
+		"aes192-gcm", "aes192",
+		"aes256-gcm", "aes256",
+	}
+	algo = strings.ToLower(algo)
+	for _, valid := range validAlgos {
+		if algo == valid {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateBackendName validates a backend name.

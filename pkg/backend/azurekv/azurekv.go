@@ -191,10 +191,21 @@ func NewBackendWithClient(config *Config, client KeyVaultClient) (*Backend, erro
 }
 
 // initClient initializes the Azure Key Vault client if not already initialized.
+// Uses double-checked locking pattern to minimize contention.
 func (b *Backend) initClient(ctx context.Context) error {
+	// Fast path: check if client is already initialized with read lock
+	b.mu.RLock()
+	if b.client != nil {
+		b.mu.RUnlock()
+		return nil
+	}
+	b.mu.RUnlock()
+
+	// Slow path: acquire write lock and double-check
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	// Double-check after acquiring write lock
 	if b.client != nil {
 		return nil
 	}

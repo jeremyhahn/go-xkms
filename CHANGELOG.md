@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1-alpha] - 2025-12-21
+
+### Added
+- **TPM2 ProdCaData**: New `ProdCaData` structure for carrying TPM attestation data (Quote, Signature, Nonce, PCRs) from client to server during IDevID enrollment
+  - Enables server-side storage of client attestation state upon successful enrollment
+  - Binary serialization with `PackProdCaData`/`UnpackProdCaData` functions
+  - Conversion to/from `Quote` structure for TPM operations
+
+### Changed
+- **Unified Key ID Format**: Consolidated key ID parsing to 4-part format `backend:type:algo:keyname` with optional segments
+  - Shorthand `my-key` now supported (equivalent to `:::my-key`)
+  - All segments except keyname are optional
+  - Refactored `ParseKeyID`, `ParseKeyIDToAttributes`, and validation to use unified format
+- **Keychain Service API**: Refactored service functions to use unified key ID format
+  - Added `BackendFor(attrs)` helper for backend resolution based on StoreType
+  - Added `ParseCertificateID()` using unified format
+  - Renamed `getKeystoreForKey` to `getKeystoreForKID` with proper 4-part parsing
+  - `Signer()`, `Decrypter()`, `Key()` now use `BackendFor()` for backend resolution
+- **TPM2 Provisioning**: Simplified golden measurement and platform policy handling
+  - Removed deprecated file integrity monitoring code (use IMA via PCR 10 instead)
+  - `Install()` now uses config's `EK.HierarchyAuth` for already-provisioned TPMs
+  - Improved logging with INFO level for provisioning operations
+  - `GoldenMeasurements()` returns empty if no PCRs configured (skip platform policy)
+- **Client Config**: Changed default Unix socket path to `keychain-data/keychain.sock`, removed `APIKey` field (use JWT via FIDO2 flow)
+- **Validation**: Updated `ValidateKeyReference()` to enforce 4-part key ID format
+
+### Fixed
+- **AWS KMS Lock Contention**: Fixed test timeout by implementing double-checked locking in `Backend.initClient()`
+- **Azure Key Vault Lock Contention**: Applied same double-checked locking fix for consistency
+- **CI Go Version**: Updated `Dockerfile.ci` from Go 1.24.4 to 1.25.5
+- **TPM Test Config**: Added missing `GoldenPCRs` to `TestTPMOperations` config
+
 ## [0.2.0-alpha] - 2025-12-13
 
 ### Added

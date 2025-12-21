@@ -4,14 +4,20 @@
 
 ## Key ID Format
 
-**Format:** `backend:keyname`
+**Format:** `backend:type:algo:keyname`
+
+All segments except keyname are optional. Use shorthand `my-key` or explicit `:::my-key`.
 
 **Examples:**
 ```
-pkcs8:server-tls-key
-pkcs11:hsm-signing-key
-tpm2:device-attestation
-awskms:prod-encryption-key
+# Full specification
+pkcs11:signing:ecdsa-p256:hsm-signing-key
+tpm2:attestation:rsa:device-attestation
+awskms:encryption:aes256-gcm:prod-encryption-key
+
+# Partial specification
+pkcs11:::my-key                # Backend only
+my-key                         # Shorthand (keyname only)
 ```
 
 **Supported Backends:**
@@ -19,21 +25,29 @@ awskms:prod-encryption-key
 - `pkcs11` - Hardware Security Module
 - `tpm2` - Trusted Platform Module
 - `awskms`, `gcpkms`, `azurekv`, `vault` - Cloud KMS
-- `yubikey`, `smartcardhsm` - SmartCard-HSM
+
+**Supported Key Types:**
+- `signing`, `encryption`, `attestation`, `ca`, `tls`, `idevid`, `storage`, `endorsement`
+
+**Supported Algorithms:**
+- `rsa`, `ecdsa-p256`, `ecdsa-p384`, `ecdsa-p521`, `ed25519`, `aes128-gcm`, `aes256-gcm`
 
 ## Quick Start
 
 ### 1. Get Key by ID
 
 ```go
-// Get key directly
-key, err := keystore.GetKeyByID("pkcs11:my-signing-key")
+// Get key by full specification
+key, err := keystore.GetKeyByID("pkcs11:signing:ecdsa-p256:my-signing-key")
+
+// Get key by shorthand (keyname only)
+key, err := keystore.GetKeyByID("my-signing-key")
 
 // Get signer
-signer, err := keystore.GetSignerByID("tpm2:attestation-key")
+signer, err := keystore.GetSignerByID("tpm2:attestation:rsa:attestation-key")
 
 // Get decrypter
-decrypter, err := keystore.GetDecrypterByID("awskms:encryption-key")
+decrypter, err := keystore.GetDecrypterByID("awskms:encryption:rsa:encryption-key")
 ```
 
 ### 2. Create JWK from Keychain
@@ -64,12 +78,12 @@ if jwk.IsKeychainBacked() {
 ```yaml
 keys:
   tls_server:
-    id: "pkcs11:server-tls"
+    id: "pkcs11:tls:rsa:server-tls"
     type: "rsa"
     size: 2048
 
 jwt:
-  signing_key: "pkcs11:api-signing"
+  signing_key: "pkcs11:signing:ecdsa-p256:api-signing"
 ```
 
 ## API Summary
@@ -77,12 +91,15 @@ jwt:
 ### KeyStore Interface
 
 ```go
-// New methods
+// Key retrieval by ID
 GetKeyByID(keyID string) (crypto.PrivateKey, error)
 GetSignerByID(keyID string) (crypto.Signer, error)
 GetDecrypterByID(keyID string) (crypto.Decrypter, error)
-ParseKeyID(keyID string) (backend, keyname string, err error)
-ValidateKeyID(keyID string, checkExists bool) error
+
+// Parsing functions (in keychain package)
+ParseKeyID(keyID string) (backend, keyType, algo, keyname string, err error)
+ParseKeyIDToAttributes(keyID string) (*types.KeyAttributes, error)
+ValidateKeyID(keyID string) error
 ```
 
 ### JWK Package
