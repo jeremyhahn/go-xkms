@@ -172,12 +172,17 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 
 	// Parse key algorithm
 	// Support both direct algorithm names (aes-256-gcm) and simple types (aes)
-	keyType := strings.ToLower(req.KeyType)
+	// Use Algorithm field if provided, otherwise fall back to KeyType for backward compatibility
+	algorithmStr := req.Algorithm
+	if algorithmStr == "" {
+		algorithmStr = req.KeyType
+	}
+	keyType := strings.ToLower(algorithmStr)
 	var keyAlgorithm x509.PublicKeyAlgorithm
 	var symmetricAlgorithm types.SymmetricAlgorithm
 
-	// Check if it's a simple "aes" request and use algorithm if provided
-	if keyType == "aes" {
+	// Check if it's a simple "symmetric" request and use algorithm if provided
+	if keyType == "symmetric" {
 		if req.Algorithm == "" {
 			// Default to AES-256-GCM if no algorithm specified
 			symmetricAlgorithm = types.SymmetricAES256GCM
@@ -186,10 +191,10 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		}
 	} else {
 		// Try parsing as asymmetric algorithm
-		keyAlgorithm, _ = types.ParseKeyAlgorithm(req.KeyType)
+		keyAlgorithm, _ = types.ParseKeyAlgorithm(algorithmStr)
 		if keyAlgorithm == x509.UnknownPublicKeyAlgorithm {
 			// Try as symmetric algorithm
-			symmetricAlgorithm = types.SymmetricAlgorithm(strings.ToLower(req.KeyType))
+			symmetricAlgorithm = types.SymmetricAlgorithm(keyType)
 		}
 	}
 
@@ -197,9 +202,10 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 	attrs := &types.KeyAttributes{
 		CN:                 req.KeyID,
 		KeyType:            types.KeyTypeSigning, // Default to signing
-		StoreType:          types.StorePKCS8,     // Will be updated based on backend
+		StoreType:          types.StoreSoftware,     // Will be updated based on backend
 		KeyAlgorithm:       keyAlgorithm,
 		SymmetricAlgorithm: symmetricAlgorithm,
+		Exportable:         req.Exportable,
 	}
 
 	// Set hash algorithm if provided
@@ -220,23 +226,6 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		// Symmetric key generation
 		isSymmetric = true
 		attrs.KeyType = types.KeyTypeEncryption
-
-		// Get key size from algorithm
-		var keySize int
-		switch symmetricAlgorithm {
-		case types.SymmetricAES128GCM:
-			keySize = 128
-		case types.SymmetricAES192GCM:
-			keySize = 192
-		case types.SymmetricAES256GCM:
-			keySize = 256
-		default:
-			keySize = 256 // Default
-		}
-
-		attrs.AESAttributes = &types.AESAttributes{
-			KeySize: keySize,
-		}
 
 		// Check if backend supports symmetric operations
 		symBackend, ok := ks.Backend().(types.SymmetricBackend)
@@ -1199,11 +1188,19 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// List certificates
-	certs, err := ks.ListCerts()
+	certIDs, err := ks.ListCerts()
 	if err != nil {
 		log.Printf("Failed to list certificates: %v", err)
 		handleError(w, err)
 		return
+	}
+
+	// Convert to CertificateInfo objects
+	certs := make([]CertificateInfo, len(certIDs))
+	for i, keyID := range certIDs {
+		certs[i] = CertificateInfo{
+			KeyID: keyID,
+		}
 	}
 
 	resp := ListCertsResponse{
@@ -1762,7 +1759,7 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Try to get public key for asymmetric keys
-	if req.KeyType != "aes" {
+	if req.KeyType != "symmetric" {
 		privKey, err := ks.GetKey(attrs)
 		if err == nil {
 			pubKey := getPublicKey(privKey)
@@ -1983,34 +1980,32 @@ func buildKeyAttributes(keyID, keyType string, keySize int, curve, hash string, 
 	attrs := &types.KeyAttributes{
 		CN:        keyID,
 		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StorePKCS8,
+		StoreType: types.StoreSoftware,
 		Hash:      crypto.SHA256,
 	}
 
 	// Parse key type and set appropriate attributes
-	keyTypeLower := strings.ToLower(keyType)
-
-	switch keyTypeLower {
-	case "rsa":
+	switch {
+	case types.AlgorithmRSA.Equals(keyType):
 		attrs.KeyAlgorithm = x509.RSA
 		if keySize == 0 {
-			keySize = 2048
+			keySize = types.RSAKeySize2048
 		}
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: keySize,
 		}
-	case "ecdsa":
+	case types.AlgorithmECDSA.Equals(keyType):
 		attrs.KeyAlgorithm = x509.ECDSA
 		if curve == "" {
-			curve = "P256"
+			curve = string(types.CurveP256)
 		}
 		parsedCurve2, _ := types.ParseCurve(curve)
 		attrs.ECCAttributes = &types.ECCAttributes{
 			Curve: parsedCurve2,
 		}
-	case "ed25519":
+	case types.AlgorithmEd25519.Equals(keyType):
 		attrs.KeyAlgorithm = x509.Ed25519
-	case "aes":
+	case types.AlgorithmSymmetric.Equals(keyType):
 		attrs.KeyType = types.KeyTypeEncryption
 		if aesKeySize == 0 {
 			aesKeySize = 256
@@ -2027,9 +2022,6 @@ func buildKeyAttributes(keyID, keyType string, keySize int, curve, hash string, 
 			symAlg = types.SymmetricAES256GCM
 		}
 		attrs.SymmetricAlgorithm = symAlg
-		attrs.AESAttributes = &types.AESAttributes{
-			KeySize: aesKeySize,
-		}
 	}
 
 	// Set hash algorithm if provided

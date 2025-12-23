@@ -117,10 +117,10 @@ func TestValidateBackendName(t *testing.T) {
 func TestValidateKeyReference(t *testing.T) {
 	tests := []struct {
 		name    string
-		keyRef  string
+		keyID   string
 		wantErr bool
 	}{
-		// Valid key references - 4-part format: backend:type:algo:keyname
+		// Valid key IDs - 4-part format: backend:type:algo:keyname
 		{"simple key ID", "my-key", false},
 		{"full format", "pkcs8:signing:ecdsa-p256:my-key", false},
 		{"full format with dots in keyname", "pkcs8:signing:ecdsa-p256:app.prod.key", false},
@@ -132,7 +132,7 @@ func TestValidateKeyReference(t *testing.T) {
 		{"type only", ":signing::my-key", false},
 		{"algo only", "::ecdsa-p256:my-key", false},
 
-		// Invalid key references
+		// Invalid key IDs
 		{"empty string", "", true},
 		{"wrong colon count 1", "backend:key", true},
 		{"wrong colon count 2", "backend:type:key", true},
@@ -157,9 +157,9 @@ func TestValidateKeyReference(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateKeyReference(tt.keyRef)
+			err := ValidateKeyReference(tt.keyID)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateKeyReference(%q) error = %v, wantErr %v", tt.keyRef, err, tt.wantErr)
+				t.Errorf("ValidateKeyReference(%q) error = %v, wantErr %v", tt.keyID, err, tt.wantErr)
 			}
 		})
 	}

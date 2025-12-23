@@ -23,6 +23,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
@@ -81,25 +82,34 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		}
 		attrs.StoreType = storeType
 	} else {
-		attrs.StoreType = types.StorePKCS8 // Default to software
+		attrs.StoreType = types.StoreSoftware // Default to software
 	}
 
 	// Generate key based on type
 	var privKey interface{}
 	var err error
 
-	switch params.KeyType {
-	case "rsa":
+	// Determine key type - check KeyType first, then fall back to Algorithm
+	keyType := strings.ToLower(params.KeyType)
+	algorithm := strings.ToLower(params.Algorithm)
+
+	// If no key type specified, try to infer from algorithm
+	if keyType == "" {
+		keyType = algorithm
+	}
+
+	switch {
+	case types.AlgorithmRSA.Equals(keyType):
 		attrs.KeyType = types.KeyTypeTLS
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: params.KeySize,
 		}
 		if attrs.RSAAttributes.KeySize == 0 {
-			attrs.RSAAttributes.KeySize = 2048 // Default
+			attrs.RSAAttributes.KeySize = types.RSAKeySize2048 // Default
 		}
 		privKey, err = s.keystore.GenerateRSA(attrs)
 
-	case "ecdsa":
+	case types.AlgorithmECDSA.Equals(keyType):
 		attrs.KeyType = types.KeyTypeTLS
 		attrs.ECCAttributes = &types.ECCAttributes{}
 		if params.Curve != "" {
@@ -109,37 +119,38 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 			}
 			attrs.ECCAttributes.Curve = curve
 		} else {
-			defaultCurve, curveErr := types.ParseCurve("P-256")
-			if curveErr != nil {
-				return nil, fmt.Errorf("invalid default curve: %v", curveErr)
-			}
-			attrs.ECCAttributes.Curve = defaultCurve
+			attrs.ECCAttributes.Curve, _ = types.ParseCurve(string(types.CurveP256))
 		}
 		privKey, err = s.keystore.GenerateECDSA(attrs)
 
-	case "ed25519":
+	case types.AlgorithmEd25519.Equals(keyType):
 		attrs.KeyType = types.KeyTypeTLS
 		privKey, err = s.keystore.GenerateEd25519(attrs)
 
-	case "aes":
-		// Handle symmetric key generation
-		symBackend, ok := s.keystore.Backend().(types.SymmetricBackend)
+	case types.AlgorithmSymmetric.Equals(keyType):
+		// Get the correct backend for symmetric operations
+		backendName := params.Backend
+		if backendName == "" {
+			backendName = "symmetric" // Default to symmetric backend
+		}
+		ks, ksErr := keychain.Backend(backendName)
+		if ksErr != nil {
+			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
+		}
+		symBackend, ok := ks.Backend().(types.SymmetricBackend)
 		if !ok {
-			return nil, fmt.Errorf("backend does not support symmetric operations")
+			return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
 		}
 
-		// Parse algorithm from params.Algorithm or default to AES256-GCM
-		algorithm := params.Algorithm
-		if algorithm == "" {
-			algorithm = "aes256-gcm" // Default
+		// Use algorithm field or default to AES256-GCM
+		symAlgorithm := algorithm
+		if symAlgorithm == "" || symAlgorithm == "symmetric" {
+			symAlgorithm = "aes256-gcm" // Default
 		}
 
-		keyAlgorithm, algErr := types.ParseKeyAlgorithm(algorithm)
-		if algErr != nil {
-			return nil, fmt.Errorf("invalid algorithm: %s", algorithm)
-		}
-
-		attrs.KeyAlgorithm = keyAlgorithm
+		// Set symmetric algorithm directly (not using ParseKeyAlgorithm which is for asymmetric)
+		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(symAlgorithm)
+		attrs.KeyType = types.KeyTypeEncryption
 
 		// Generate symmetric key
 		_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -152,7 +163,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 			"key_id":    params.KeyID,
 			"backend":   params.Backend,
 			"key_type":  params.KeyType,
-			"algorithm": algorithm,
+			"algorithm": symAlgorithm,
 		})
 
 		// For symmetric keys, no public key to return
@@ -161,7 +172,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported key type: %s", params.KeyType)
+		return nil, fmt.Errorf("unsupported key type: %s", keyType)
 	}
 
 	if err != nil {
@@ -536,20 +547,32 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 		CN: params.KeyID,
 	}
 
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
+	// Get the correct backend - for symmetric decryption, default to symmetric backend
+	backendName := params.Backend
+	if backendName == "" {
+		// If nonce/tag present, this is symmetric decryption
+		if len(params.Nonce) > 0 || len(params.Tag) > 0 {
+			backendName = "symmetric"
+		} else {
+			backendName = "software" // Default for asymmetric
 		}
+	}
+	ks, ksErr := keychain.Backend(backendName)
+	if ksErr != nil {
+		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
+	}
+
+	storeType := types.ParseStoreType(backendName)
+	if storeType != types.StoreUnknown {
 		attrs.StoreType = storeType
 	}
 
 	// Check if this is symmetric decryption (has nonce and tag)
 	if len(params.Nonce) > 0 || len(params.Tag) > 0 {
 		// Symmetric decryption
-		symBackend, ok := s.keystore.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.Backend().(types.SymmetricBackend)
 		if !ok {
-			return nil, fmt.Errorf("backend does not support symmetric operations")
+			return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
 		}
 
 		encrypter, err := symBackend.SymmetricEncrypter(attrs)
@@ -578,7 +601,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Asymmetric decryption
-	decrypter, err := s.keystore.Decrypter(attrs)
+	decrypter, err := ks.Decrypter(attrs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get decrypter: %w", err)
 	}
@@ -612,18 +635,25 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 		CN: params.KeyID,
 	}
 
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
-		}
+	// Get the correct backend for symmetric operations
+	backendName := params.Backend
+	if backendName == "" {
+		backendName = "symmetric" // Default to symmetric backend
+	}
+	ks, ksErr := keychain.Backend(backendName)
+	if ksErr != nil {
+		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
+	}
+
+	storeType := types.ParseStoreType(backendName)
+	if storeType != types.StoreUnknown {
 		attrs.StoreType = storeType
 	}
 
 	// Get symmetric backend
-	symBackend, ok := s.keystore.Backend().(types.SymmetricBackend)
+	symBackend, ok := ks.Backend().(types.SymmetricBackend)
 	if !ok {
-		return nil, fmt.Errorf("backend does not support symmetric operations")
+		return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
 	}
 
 	// Get encrypter

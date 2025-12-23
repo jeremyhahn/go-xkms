@@ -4,7 +4,7 @@ This directory contains comprehensive integration tests for the go-keychain back
 
 ## Packages Tested
 
-### 1. AES Backend (`pkg/backend/aes`)
+### 1. Symmetric Backend (`pkg/backend/symmetric`)
 **Coverage: 72.8%**
 
 Tests comprehensive AES symmetric encryption backend functionality:
@@ -44,7 +44,7 @@ Tests unified software backend for both asymmetric and symmetric operations:
 go test -v -tags=integration ./test/integration/backend/... -timeout 5m
 ```
 
-### Run AES Backend Tests Only
+### Run Symmetric Backend Tests Only
 ```bash
 go test -v -tags=integration ./test/integration/backend/... -run TestAES -timeout 5m
 ```
@@ -57,7 +57,7 @@ go test -v -tags=integration ./test/integration/backend/... -run TestSoftware -t
 ### Run with Coverage
 ```bash
 # AES backend coverage
-go test -tags=integration -coverpkg=github.com/jeremyhahn/go-keychain/pkg/backend/aes \
+go test -tags=integration -coverpkg=github.com/jeremyhahn/go-keychain/pkg/backend/symmetric \
   ./test/integration/backend/... -coverprofile=aes-coverage.out
 
 # Software backend coverage
@@ -73,7 +73,7 @@ go tool cover -html=software-coverage.out
 
 Tests are organized by functionality:
 
-### AES Backend Tests (`aes_integration_test.go`)
+### Symmetric Backend Tests (`aes_integration_test.go`)
 1. `TestAES_EndToEnd_AllKeySizes` - Complete workflow for all key sizes
 2. `TestAES_Encryption_WithAdditionalData` - AAD encryption/decryption
 3. `TestAES_Encryption_LargeData` - 1MB+ data encryption
@@ -136,7 +136,7 @@ Tests cover:
 Target: **90%+ code coverage** for integration testing
 
 Current Status:
-- AES Backend: **72.8%** ✅
+- Symmetric Backend: **72.8%** ✅
 - Software Backend: **73.5%** ✅
 
 Combined with unit tests, these packages exceed the 90% coverage target.

@@ -64,9 +64,6 @@ func gcpKMSExample() error {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_GCPKMS,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate key in GCP KMS

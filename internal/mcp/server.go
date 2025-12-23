@@ -308,6 +308,38 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 	var result interface{}
 	var err error
 
+	// Try FROST methods first
+	if frostResult, frostErr, handled := s.routeFrostMethods(req); handled {
+		result = frostResult
+		err = frostErr
+		if err != nil {
+			if slogAdapter, ok := s.logger.(*logger.SlogAdapter); ok {
+				slogAdapter.WarnContext(ctx, "RPC request failed",
+					logger.String("method", req.Method),
+					logger.String("subject", subject),
+					logger.Error(err))
+			} else {
+				s.logger.Warn("RPC request failed",
+					logger.String("method", req.Method),
+					logger.String("subject", subject),
+					logger.Error(err))
+			}
+			return s.makeErrorResponse(req.ID, correlationID, ErrCodeInternalError, err.Error(), nil)
+		}
+
+		// Don't send response for notifications (no ID)
+		if req.ID == nil {
+			return nil
+		}
+
+		return &JSONRPCResponse{
+			JSONRPC:       "2.0",
+			Result:        result,
+			ID:            req.ID,
+			CorrelationID: correlationID,
+		}
+	}
+
 	switch req.Method {
 	case "health":
 		result, err = s.handleHealth(req)

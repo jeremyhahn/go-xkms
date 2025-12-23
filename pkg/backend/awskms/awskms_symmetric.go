@@ -79,8 +79,8 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	}
 
 	// AWS KMS only supports 256-bit symmetric keys (AES-256-GCM)
-	if attrs.AESAttributes.KeySize != 256 {
-		return nil, fmt.Errorf("%w: AWS KMS only supports AES-256 symmetric keys, got: %d bits", backend.ErrNotSupported, attrs.AESAttributes.KeySize)
+	if attrs.SymmetricAlgorithm.KeySize() != 256 {
+		return nil, fmt.Errorf("%w: AWS KMS only supports AES-256 symmetric keys, got: %d bits", backend.ErrNotSupported, attrs.SymmetricAlgorithm.KeySize())
 	}
 
 	// Check if key already exists

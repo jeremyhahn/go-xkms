@@ -76,8 +76,6 @@ const (
 
 // validBackends contains all supported backend types for Key IDs.
 var validBackends = map[string]bool{
-	"pkcs8":    true, // File-based PKCS#8 asymmetric keys
-	"aes":      true, // File-based AES symmetric keys
 	"software": true, // Unified software backend (asymmetric + symmetric)
 	"pkcs11":   true, // PKCS#11 Hardware Security Module
 	"tpm2":     true, // Trusted Platform Module 2.0
@@ -339,11 +337,7 @@ func keyIDToBackendType(backendStr string) (types.BackendType, error) {
 
 	// Map Key ID backend names to BackendType constants
 	switch backendStr {
-	case "pkcs8", "sw":
-		return types.BackendTypePKCS8, nil
-	case "aes":
-		return types.BackendTypeAES, nil
-	case "software":
+	case "software", "sw":
 		return types.BackendTypeSoftware, nil
 	case "pkcs11":
 		return types.BackendTypePKCS11, nil
@@ -444,8 +438,8 @@ func extractECDSACurve(algo string) (string, error) {
 // backendTypeToStoreType converts a BackendType to StoreType.
 func backendTypeToStoreType(bt types.BackendType) types.StoreType {
 	switch bt {
-	case types.BackendTypePKCS8, types.BackendTypeSoftware, types.BackendTypeAES:
-		return types.StorePKCS8
+	case types.BackendTypeSoftware, types.BackendTypeSymmetric:
+		return types.StoreSoftware
 	case types.BackendTypePKCS11:
 		return types.StorePKCS11
 	case types.BackendTypeTPM2:
@@ -459,7 +453,7 @@ func backendTypeToStoreType(bt types.BackendType) types.StoreType {
 	case types.BackendTypeVault:
 		return types.StoreVault
 	default:
-		return types.StorePKCS8
+		return types.StoreSoftware
 	}
 }
 

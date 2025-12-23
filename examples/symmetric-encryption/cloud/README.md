@@ -6,14 +6,14 @@ This directory contains comprehensive examples demonstrating symmetric encryptio
 
 Symmetric encryption uses the same key for both encryption and decryption. The go-keychain library provides a unified interface for symmetric encryption across multiple backends:
 
-- **AES Backend**: Local AES-GCM encryption with password-protected key storage
+- **Symmetric Backend**: Local AES-GCM encryption with password-protected key storage
 - **AWS KMS**: Hardware-backed encryption using AWS Key Management Service
 - **GCP KMS**: Hardware-backed encryption using Google Cloud KMS
 - **Azure Key Vault**: Envelope encryption using Azure Key Vault for key wrapping
 
 ## Examples
 
-### 1. AES Backend Encryption (`aes-encryption.go`)
+### 1. Symmetric Backend Encryption (`aes-encryption.go`)
 
 Demonstrates symmetric encryption using the AES backend with local key storage.
 
@@ -30,7 +30,7 @@ go run aes-encryption.go
 
 **Output:**
 ```
-=== Symmetric Encryption Example (AES-256-GCM with AES Backend) ===
+=== Symmetric Encryption Example (AES-256-GCM with Symmetric Backend) ===
 
 Key storage location: /tmp/symmetric-encryption-example
 
@@ -211,7 +211,7 @@ attrs := &backend.KeyAttributes{
 
 ### 1. Key Storage Security
 
-**AES Backend:**
+**Symmetric Backend:**
 - Always use password protection for keys at rest
 - Use strong passwords (min 16 characters)
 - Store keys in secure, access-controlled directories

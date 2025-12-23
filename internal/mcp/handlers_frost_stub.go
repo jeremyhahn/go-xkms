@@ -11,14 +11,19 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package aes
+//go:build !frost
 
-import "errors"
+package mcp
 
-var (
-	// ErrStorageClosed is returned when attempting to use a closed backend.
-	ErrStorageClosed = errors.New("storage is closed")
-
-	// ErrInvalidPassword is returned when password decryption fails.
-	ErrInvalidPassword = errors.New("invalid password or corrupted data")
+import (
+	"fmt"
+	"strings"
 )
+
+// routeFrostMethods returns an error for FROST methods when not compiled with frost tag
+func (s *Server) routeFrostMethods(req *JSONRPCRequest) (interface{}, error, bool) {
+	if strings.HasPrefix(req.Method, "frost.") {
+		return nil, fmt.Errorf("FROST support not compiled - rebuild with '-tags frost'"), true
+	}
+	return nil, nil, false
+}

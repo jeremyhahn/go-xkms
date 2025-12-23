@@ -36,7 +36,7 @@ type mockSealerBackendForComposite struct {
 
 func newMockSealerBackendForComposite() *mockSealerBackendForComposite {
 	return &mockSealerBackendForComposite{
-		backendType: types.BackendTypePKCS8,
+		backendType: types.BackendTypeSoftware,
 		canSeal:     true,
 		sealedData:  make(map[string][]byte),
 	}
@@ -162,7 +162,7 @@ func TestCompositeKeyStore_CanSeal_SealerDisabled(t *testing.T) {
 }
 
 func TestCompositeKeyStore_CanSeal_NonSealer(t *testing.T) {
-	backend := &mockNonSealerBackend{backendType: types.BackendTypePKCS8}
+	backend := &mockNonSealerBackend{backendType: types.BackendTypeSoftware}
 
 	ks, err := New(&Config{
 		Backend:     backend,
@@ -191,11 +191,11 @@ func TestCompositeKeyStore_Seal_Success(t *testing.T) {
 	sealed, err := ks.Seal(ctx, data, opts)
 	assert.NoError(t, err)
 	assert.NotNil(t, sealed)
-	assert.Equal(t, types.BackendTypePKCS8, sealed.Backend)
+	assert.Equal(t, types.BackendTypeSoftware, sealed.Backend)
 }
 
 func TestCompositeKeyStore_Seal_NonSealer(t *testing.T) {
-	backend := &mockNonSealerBackend{backendType: types.BackendTypePKCS8}
+	backend := &mockNonSealerBackend{backendType: types.BackendTypeSoftware}
 
 	ks, err := New(&Config{
 		Backend:     backend,
@@ -293,7 +293,7 @@ func TestCompositeKeyStore_Unseal_NilSealedData(t *testing.T) {
 }
 
 func TestCompositeKeyStore_Unseal_NonSealer(t *testing.T) {
-	backend := &mockNonSealerBackend{backendType: types.BackendTypePKCS8}
+	backend := &mockNonSealerBackend{backendType: types.BackendTypeSoftware}
 
 	ks, err := New(&Config{
 		Backend:     backend,
@@ -302,7 +302,7 @@ func TestCompositeKeyStore_Unseal_NonSealer(t *testing.T) {
 	require.NoError(t, err)
 
 	sealed := &types.SealedData{
-		Backend:    types.BackendTypePKCS8,
+		Backend:    types.BackendTypeSoftware,
 		Ciphertext: []byte("encrypted"),
 	}
 
@@ -316,7 +316,7 @@ func TestCompositeKeyStore_Unseal_NonSealer(t *testing.T) {
 
 func TestCompositeKeyStore_Unseal_BackendMismatch(t *testing.T) {
 	backend := newMockSealerBackendForComposite()
-	backend.backendType = types.BackendTypePKCS8
+	backend.backendType = types.BackendTypeSoftware
 
 	ks, err := New(&Config{
 		Backend:     backend,
@@ -349,7 +349,7 @@ func TestCompositeKeyStore_Unseal_BackendError(t *testing.T) {
 	require.NoError(t, err)
 
 	sealed := &types.SealedData{
-		Backend:    types.BackendTypePKCS8,
+		Backend:    types.BackendTypeSoftware,
 		Ciphertext: []byte("encrypted"),
 	}
 

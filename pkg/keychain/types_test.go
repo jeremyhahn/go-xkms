@@ -30,7 +30,6 @@ type (
 	KeyAttributes = types.KeyAttributes
 	RSAAttributes = types.RSAAttributes
 	ECCAttributes = types.ECCAttributes
-	AESAttributes = types.AESAttributes
 	TPMAttributes = types.TPMAttributes
 	FSExtension   = types.FSExtension
 )
@@ -40,7 +39,7 @@ var NewSealData = types.NewSealData
 
 // Constant aliases for backward compatibility in tests
 const (
-	StorePKCS8   = types.StorePKCS8
+	StoreSoftware   = types.StoreSoftware
 	StorePKCS11  = types.StorePKCS11
 	StoreTPM2    = types.StoreTPM2
 	StoreAWSKMS  = types.StoreAWSKMS
@@ -120,7 +119,7 @@ func TestStoreType_String(t *testing.T) {
 		storeType StoreType
 		want      string
 	}{
-		{"PKCS8", StorePKCS8, "pkcs8"},
+		{"Software", StoreSoftware, "software"},
 		{"PKCS11", StorePKCS11, "pkcs11"},
 		{"TPM2", StoreTPM2, "tpm2"},
 		{"AWS KMS", StoreAWSKMS, "awskms"},
@@ -144,7 +143,7 @@ func TestStoreType_IsValid(t *testing.T) {
 		storeType StoreType
 		want      bool
 	}{
-		{"PKCS8 valid", StorePKCS8, true},
+		{"PKCS8 valid", StoreSoftware, true},
 		{"PKCS11 valid", StorePKCS11, true},
 		{"TPM2 valid", StoreTPM2, true},
 		{"AWS KMS valid", StoreAWSKMS, true},
@@ -210,7 +209,7 @@ func TestKeyAttributes_String(t *testing.T) {
 				KeyType:            KeyTypeSigning,
 				PlatformPolicy:     false,
 				SignatureAlgorithm: x509.SHA256WithRSA,
-				StoreType:          StorePKCS8,
+				StoreType:          StoreSoftware,
 				RSAAttributes: &RSAAttributes{
 					KeySize: 2048,
 				},
@@ -256,7 +255,7 @@ func TestKeyAttributes_String(t *testing.T) {
 				KeyAlgorithm:       x509.RSA,
 				KeyType:            KeyTypeEncryption,
 				SignatureAlgorithm: x509.SHA256WithRSA,
-				StoreType:          StorePKCS8,
+				StoreType:          StoreSoftware,
 				Password:           wrapPassword(NewClearPassword([]byte("test-password"))),
 				SealData:           NewSealData([]byte("test-seal-data")),
 				TPMAttributes:      &TPMAttributes{},

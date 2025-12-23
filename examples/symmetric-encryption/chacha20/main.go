@@ -34,7 +34,7 @@ import (
 	"log"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
+	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -44,10 +44,10 @@ func main() {
 	storage := storage.New()
 
 	// Create an AES backend (which supports both AES and ChaCha20)
-	config := &aes.Config{
+	config := &symmetric.Config{
 		KeyStorage: storage,
 	}
-	b, err := aes.NewBackend(config)
+	b, err := symmetric.NewBackend(config)
 	if err != nil {
 		log.Fatalf("Failed to create backend: %v", err)
 	}

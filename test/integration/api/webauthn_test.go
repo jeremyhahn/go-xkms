@@ -97,7 +97,7 @@ func isWebAuthnEnabled(t *testing.T, cfg *TestConfig) bool {
 func TestWebAuthnRegistrationStatus(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server not available for integration tests")
 	}
 
 	if !isWebAuthnEnabled(t, cfg) {
@@ -157,7 +157,7 @@ func TestWebAuthnRegistrationStatus(t *testing.T) {
 func TestWebAuthnBeginRegistration(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server not available for integration tests")
 	}
 
 	if !isWebAuthnEnabled(t, cfg) {
@@ -247,7 +247,7 @@ func TestWebAuthnBeginRegistration(t *testing.T) {
 func TestWebAuthnBeginLogin(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server not available for integration tests")
 	}
 
 	if !isWebAuthnEnabled(t, cfg) {
@@ -306,7 +306,7 @@ func TestWebAuthnBeginLogin(t *testing.T) {
 func TestWebAuthnFinishRegistration(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server not available for integration tests")
 	}
 
 	if !isWebAuthnEnabled(t, cfg) {
@@ -346,7 +346,7 @@ func TestWebAuthnFinishRegistration(t *testing.T) {
 func TestWebAuthnFinishLogin(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server not available for integration tests")
 	}
 
 	if !isWebAuthnEnabled(t, cfg) {
@@ -386,7 +386,7 @@ func TestWebAuthnFinishLogin(t *testing.T) {
 func TestWebAuthnMethodNotAllowed(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server not available for integration tests")
 	}
 
 	if !isWebAuthnEnabled(t, cfg) {
@@ -425,7 +425,12 @@ func TestWebAuthnMethodNotAllowed(t *testing.T) {
 func TestWebAuthnRoutesMounted(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server not available for integration tests")
+		t.Fatal("Server not available for integration tests")
+	}
+
+	// Skip if WebAuthn is not enabled on the server
+	if !isWebAuthnEnabled(t, cfg) {
+		t.Skip("WebAuthn not enabled on server")
 	}
 
 	client := NewWebAuthnClient(cfg.RESTBaseURL)
@@ -442,7 +447,6 @@ func TestWebAuthnRoutesMounted(t *testing.T) {
 		{"POST", "/api/v1/webauthn/login/finish"},
 	}
 
-	webauthnEnabled := false
 	for _, route := range routes {
 		t.Run(fmt.Sprintf("%s %s", route.method, route.path), func(t *testing.T) {
 			var resp *http.Response
@@ -457,18 +461,14 @@ func TestWebAuthnRoutesMounted(t *testing.T) {
 			defer resp.Body.Close()
 
 			if resp.StatusCode == http.StatusNotFound {
-				t.Skipf("WebAuthn not enabled - route %s returned 404", route.path)
-			} else {
-				webauthnEnabled = true
-				// Any other status code means the route is mounted
-				t.Logf("Route %s %s is mounted (status: %d)", route.method, route.path, resp.StatusCode)
+				t.Fatalf("WebAuthn route %s returned 404 but WebAuthn should be enabled", route.path)
 			}
+			// Any other status code means the route is mounted
+			t.Logf("Route %s %s is mounted (status: %d)", route.method, route.path, resp.StatusCode)
 		})
 	}
 
-	if webauthnEnabled {
-		t.Log("WebAuthn routes are properly mounted")
-	}
+	t.Log("WebAuthn routes are properly mounted")
 }
 
 // ioReader is a helper to create an io.Reader from a string

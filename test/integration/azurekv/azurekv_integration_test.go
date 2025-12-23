@@ -1233,10 +1233,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			KeyType:            backend.KEY_TYPE_SECRET,
 			StoreType:          backend.STORE_AZUREKV,
-			AESAttributes: &types.AESAttributes{
-				KeySize:   256,
-				NonceSize: 12, // Standard GCM nonce size
-			},
 		}
 
 		// Clean up if exists from previous test
@@ -1294,10 +1290,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			KeyType:            backend.KEY_TYPE_SECRET,
 			StoreType:          backend.STORE_AZUREKV,
-			AESAttributes: &types.AESAttributes{
-				KeySize:   256,
-				NonceSize: 12,
-			},
 		}
 
 		// Clean up if exists
@@ -1358,10 +1350,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			KeyType:            backend.KEY_TYPE_SECRET,
 			StoreType:          backend.STORE_AZUREKV,
-			AESAttributes: &types.AESAttributes{
-				KeySize:   256,
-				NonceSize: 12,
-			},
 		}
 
 		// Clean up if exists
@@ -1418,10 +1406,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			KeyType:            backend.KEY_TYPE_SECRET,
 			StoreType:          backend.STORE_AZUREKV,
-			AESAttributes: &types.AESAttributes{
-				KeySize:   256,
-				NonceSize: 12,
-			},
 		}
 
 		// Clean up if exists
@@ -1526,10 +1510,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				SymmetricAlgorithm: types.SymmetricAES128GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   128,
-					NonceSize: 12,
-				},
 			}
 
 			_, err := symBackend.GenerateSymmetricKey(attrs)
@@ -1543,10 +1523,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				SymmetricAlgorithm: types.SymmetricAES192GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   192,
-					NonceSize: 12,
-				},
 			}
 
 			_, err := symBackend.GenerateSymmetricKey(attrs)
@@ -1561,10 +1537,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			_, err := symBackend.GetSymmetricKey(attrs)
@@ -1579,10 +1551,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			_, err := symBackend.SymmetricEncrypter(attrs)
@@ -1597,10 +1565,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists
@@ -1648,10 +1612,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists
@@ -1699,10 +1659,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists
@@ -1729,10 +1685,6 @@ func testAzureKVSymmetricEncryption(t *testing.T, b *azurekv.Backend) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			KeyType:            backend.KEY_TYPE_SECRET,
 			StoreType:          backend.STORE_AZUREKV,
-			AESAttributes: &types.AESAttributes{
-				KeySize:   256,
-				NonceSize: 12,
-			},
 		}
 
 		// Clean up if exists

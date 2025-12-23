@@ -6,7 +6,7 @@ go-keychain provides symmetric encryption capabilities using AES-GCM across all 
 
 The following backends implement symmetric encryption:
 
-- **AES Backend** - Software-based AES encryption
+- **Symmetric Backend** - Software-based AES encryption
 - **AWS KMS** - AES-256-GCM using AWS symmetric keys
 - **GCP KMS** - AES-256-GCM using GCP symmetric keys
 - **Azure Key Vault** - AES-256-GCM using Azure symmetric keys

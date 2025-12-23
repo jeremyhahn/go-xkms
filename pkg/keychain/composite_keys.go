@@ -194,6 +194,24 @@ func (ks *compositeKeyStore) RotateKey(attrs *types.KeyAttributes) (crypto.Priva
 		return nil, ErrInvalidKeyAttributes
 	}
 
+	// Handle symmetric keys first
+	if attrs.IsSymmetric() {
+		// Delete the old key
+		if err := ks.DeleteKey(attrs); err != nil {
+			return nil, fmt.Errorf("failed to delete old key during rotation: %w", err)
+		}
+		// Generate a new symmetric key
+		symBackend, ok := ks.backend.(types.SymmetricBackend)
+		if !ok {
+			return nil, fmt.Errorf("backend does not support symmetric operations")
+		}
+		key, err := symBackend.GenerateSymmetricKey(attrs)
+		if err != nil {
+			return nil, err
+		}
+		return key, nil
+	}
+
 	// Delete the old key
 	if err := ks.DeleteKey(attrs); err != nil {
 		return nil, fmt.Errorf("failed to delete old key during rotation: %w", err)

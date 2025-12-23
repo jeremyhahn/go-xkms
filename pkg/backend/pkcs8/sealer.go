@@ -116,7 +116,7 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 
 	// Build the sealed data result
 	sealed := &types.SealedData{
-		Backend:    types.BackendTypePKCS8,
+		Backend:    types.BackendTypeSoftware,
 		Ciphertext: ciphertext,
 		Nonce:      nonce,
 		KeyID:      keyAttrs.ID(),
@@ -149,9 +149,9 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 		return nil, fmt.Errorf("sealed data is required")
 	}
 
-	// Accept both PKCS#8 and Software backend types since Software delegates to PKCS#8
-	if sealed.Backend != types.BackendTypePKCS8 && sealed.Backend != types.BackendTypeSoftware {
-		return nil, fmt.Errorf("sealed data was not created by PKCS#8 backend (got %s)", sealed.Backend)
+	// Verify this is a software backend sealed data
+	if sealed.Backend != types.BackendTypeSoftware {
+		return nil, fmt.Errorf("sealed data was not created by software backend (got %s)", sealed.Backend)
 	}
 
 	if opts == nil || opts.KeyAttributes == nil {

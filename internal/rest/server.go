@@ -379,6 +379,24 @@ func (s *Server) setupRouter() *chi.Mux {
 			// TLS helper endpoint
 			r.Get("/tls/{id}", s.handlers.GetTLSCertificateHandler)
 		}
+
+		// FROST threshold signature endpoints
+		r.Route("/frost", func(r chi.Router) {
+			// Key management
+			r.Post("/keys", s.handlers.FrostGenerateKeyHandler)
+			r.Post("/keys/import", s.handlers.FrostImportKeyHandler)
+			r.Get("/keys", s.handlers.FrostListKeysHandler)
+			r.Get("/keys/{id}", s.handlers.FrostGetKeyHandler)
+			r.Delete("/keys/{id}", s.handlers.FrostDeleteKeyHandler)
+
+			// Signing operations
+			r.Post("/keys/{id}/nonces", s.handlers.FrostGenerateNoncesHandler)
+			r.Post("/keys/{id}/sign", s.handlers.FrostSignRoundHandler)
+
+			// Aggregation and verification
+			r.Post("/aggregate", s.handlers.FrostAggregateHandler)
+			r.Post("/verify", s.handlers.FrostVerifyHandler)
+		})
 	})
 
 	// WebAuthn routes (no auth required - WebAuthn IS the auth mechanism)

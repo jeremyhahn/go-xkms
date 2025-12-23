@@ -29,7 +29,7 @@ func TestStoreType_String(t *testing.T) {
 		st   StoreType
 		want string
 	}{
-		{"PKCS8", StorePKCS8, "pkcs8"},
+		{"Software", StoreSoftware, "software"},
 		{"PKCS11", StorePKCS11, "pkcs11"},
 		{"TPM2", StoreTPM2, "tpm2"},
 		{"AWSKMS", StoreAWSKMS, "awskms"},
@@ -53,7 +53,7 @@ func TestStoreType_IsValid(t *testing.T) {
 		st    StoreType
 		valid bool
 	}{
-		{"PKCS8_Valid", StorePKCS8, true},
+		{"Software_Valid", StoreSoftware, true},
 		{"PKCS11_Valid", StorePKCS11, true},
 		{"TPM2_Valid", StoreTPM2, true},
 		{"AWSKMS_Valid", StoreAWSKMS, true},
@@ -78,18 +78,19 @@ func TestParseStoreType(t *testing.T) {
 		s    string
 		want StoreType
 	}{
-		{"pkcs8", "pkcs8", StorePKCS8},
+		{"software", "software", StoreSoftware},
 		{"pkcs11", "pkcs11", StorePKCS11},
 		{"tpm2", "tpm2", StoreTPM2},
 		{"awskms", "awskms", StoreAWSKMS},
 		{"gcpkms", "gcpkms", StoreGCPKMS},
 		{"azurekv", "azurekv", StoreAzureKV},
 		{"vault", "vault", StoreVault},
-		{"uppercase", "PKCS8", StorePKCS8},
+		{"uppercase", "SOFTWARE", StoreSoftware},
 		{"mixed", "Tpm2", StoreTPM2},
 		{"unknown", "invalid", StoreUnknown},
 		{"empty", "", StoreUnknown},
-		{"whitespace", "  pkcs8  ", StorePKCS8},
+		{"whitespace", "  software  ", StoreSoftware},
+		{"pkcs8_no_longer_valid", "pkcs8", StoreUnknown},
 	}
 
 	for _, tt := range tests {
@@ -248,7 +249,7 @@ func TestKeyAttributes_String(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-key",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 		RSAAttributes: &RSAAttributes{
@@ -259,7 +260,7 @@ func TestKeyAttributes_String(t *testing.T) {
 	str := attrs.String()
 	assert.Contains(t, str, "test-key")
 	assert.Contains(t, str, "TLS")
-	assert.Contains(t, str, "pkcs8")
+	assert.Contains(t, str, "software")
 	assert.Contains(t, str, "2048")
 }
 
@@ -268,7 +269,7 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:           "test-rsa",
 			KeyType:      KeyTypeTLS,
-			StoreType:    StorePKCS8,
+			StoreType:    StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &RSAAttributes{
 				KeySize: 2048,
@@ -283,7 +284,7 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:           "",
 			KeyType:      KeyTypeTLS,
-			StoreType:    StorePKCS8,
+			StoreType:    StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 		}
 		err := attrs.Validate()
@@ -307,7 +308,7 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:           "test-ecdsa",
 			KeyType:      KeyTypeTLS,
-			StoreType:    StorePKCS8,
+			StoreType:    StoreSoftware,
 			KeyAlgorithm: x509.ECDSA,
 			ECCAttributes: &ECCAttributes{
 				Curve: elliptic.P256(),
@@ -322,7 +323,7 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:           "test-ed25519",
 			KeyType:      KeyTypeSigning,
-			StoreType:    StorePKCS8,
+			StoreType:    StoreSoftware,
 			KeyAlgorithm: x509.Ed25519,
 		}
 		err := attrs.Validate()
@@ -333,11 +334,8 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:                 "test-aes",
 			KeyType:            KeyTypeSecret,
-			StoreType:          StorePKCS8,
+			StoreType:          StoreSoftware,
 			SymmetricAlgorithm: SymmetricAES256GCM,
-			AESAttributes: &AESAttributes{
-				KeySize: 256,
-			},
 		}
 		err := attrs.Validate()
 		assert.NoError(t, err)
@@ -347,51 +345,24 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:                 "test-chacha",
 			KeyType:            KeyTypeSecret,
-			StoreType:          StorePKCS8,
+			StoreType:          StoreSoftware,
 			SymmetricAlgorithm: SymmetricChaCha20Poly1305,
 		}
 		err := attrs.Validate()
 		assert.NoError(t, err)
 	})
 
-	t.Run("Invalid_AES_MissingAttributes", func(t *testing.T) {
-		attrs := &KeyAttributes{
-			CN:                 "test-aes",
-			KeyType:            KeyTypeSecret,
-			StoreType:          StorePKCS8,
-			SymmetricAlgorithm: SymmetricAES256GCM,
-			// Missing AESAttributes
-		}
-		err := attrs.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "AES attributes")
-	})
-
-	t.Run("Invalid_AES_InvalidKeySize", func(t *testing.T) {
-		attrs := &KeyAttributes{
-			CN:                 "test-aes",
-			KeyType:            KeyTypeSecret,
-			StoreType:          StorePKCS8,
-			SymmetricAlgorithm: SymmetricAES256GCM,
-			AESAttributes: &AESAttributes{
-				KeySize: 64, // Invalid size
-			},
-		}
-		err := attrs.Validate()
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "AES key size")
-	})
 
 	t.Run("Invalid_NoAlgorithm", func(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:        "test-key",
 			KeyType:   KeyTypeTLS,
-			StoreType: StorePKCS8,
+			StoreType: StoreSoftware,
 			// No KeyAlgorithm or SymmetricAlgorithm
 		}
 		err := attrs.Validate()
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "either KeyAlgorithm, SymmetricAlgorithm, or QuantumAttributes must be set")
+		assert.Contains(t, err.Error(), "either KeyAlgorithm, SymmetricAlgorithm, QuantumAttributes, or FrostAttributes must be set")
 	})
 }
 
@@ -436,57 +407,57 @@ func TestKeyAttributes_ID(t *testing.T) {
 	t.Run("Asymmetric_NoPartition", func(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:           "test-key",
-			StoreType:    StorePKCS8,
+			StoreType:    StoreSoftware,
 			KeyType:      KeyTypeTLS,
 			KeyAlgorithm: x509.RSA,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "pkcs8:tls:test-key:rsa", id)
+		assert.Equal(t, "software:tls:test-key:rsa", id)
 	})
 
 	t.Run("Asymmetric_WithPartition", func(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:           "test-key",
-			StoreType:    StorePKCS8,
+			StoreType:    StoreSoftware,
 			KeyType:      KeyTypeTLS,
 			KeyAlgorithm: x509.RSA,
 			Partition:    PartitionTLS,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "issued:pkcs8:tls:test-key:rsa", id)
+		assert.Equal(t, "issued:software:tls:test-key:rsa", id)
 	})
 
 	t.Run("Symmetric_NoPartition", func(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:                 "test-aes-key",
-			StoreType:          StorePKCS8,
+			StoreType:          StoreSoftware,
 			KeyType:            KeyTypeSecret,
 			SymmetricAlgorithm: SymmetricAES256GCM,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "pkcs8:secret:test-aes-key:aes256-gcm", id)
+		assert.Equal(t, "software:secret:test-aes-key:aes256-gcm", id)
 	})
 
 	t.Run("Symmetric_WithPartition", func(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:                 "test-aes-key",
-			StoreType:          StorePKCS8,
+			StoreType:          StoreSoftware,
 			KeyType:            KeyTypeSecret,
 			SymmetricAlgorithm: SymmetricAES256GCM,
 			Partition:          PartitionSecrets,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "secrets:pkcs8:secret:test-aes-key:aes256-gcm", id)
+		assert.Equal(t, "secrets:software:secret:test-aes-key:aes256-gcm", id)
 	})
 
 	t.Run("NoAlgorithm", func(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:        "test-key",
-			StoreType: StorePKCS8,
+			StoreType: StoreSoftware,
 			KeyType:   KeyTypeTLS,
 		}
 		id := attrs.ID()
-		assert.Equal(t, "pkcs8:tls:test-key:unknown", id)
+		assert.Equal(t, "software:tls:test-key:unknown", id)
 	})
 }
 
@@ -685,14 +656,6 @@ func TestECCAttributes(t *testing.T) {
 	assert.Equal(t, "P-256", attrs.Curve.Params().Name)
 }
 
-func TestAESAttributes(t *testing.T) {
-	attrs := &AESAttributes{
-		KeySize:   256,
-		NonceSize: 12,
-	}
-	assert.Equal(t, 256, attrs.KeySize)
-	assert.Equal(t, 12, attrs.NonceSize)
-}
 
 func TestBackendType(t *testing.T) {
 	tests := []struct {
@@ -700,8 +663,7 @@ func TestBackendType(t *testing.T) {
 		bt   BackendType
 		want string
 	}{
-		{"AES", BackendTypeAES, "aes"},
-		{"PKCS8", BackendTypePKCS8, "pkcs8"},
+		{"Symmetric", BackendTypeSymmetric, "symmetric"},
 		{"Software", BackendTypeSoftware, "software"},
 		{"PKCS11", BackendTypePKCS11, "pkcs11"},
 		{"TPM2", BackendTypeTPM2, "tpm2"},
@@ -1219,7 +1181,7 @@ func TestKeyAttributes_String_WithECCAttributes(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-ecc-key",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		Hash:         crypto.SHA256,
 		ECCAttributes: &ECCAttributes{
@@ -1238,7 +1200,7 @@ func TestKeyAttributes_String_WithX25519Attributes(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:               "test-x25519-key",
 		KeyType:          KeyTypeEncryption,
-		StoreType:        StorePKCS8,
+		StoreType:        StoreSoftware,
 		Hash:             crypto.SHA256,
 		X25519Attributes: &X25519Attributes{},
 	}
@@ -1254,7 +1216,7 @@ func TestKeyAttributes_Validate_X25519(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:               "test-x25519",
 		KeyType:          KeyTypeEncryption,
-		StoreType:        StorePKCS8,
+		StoreType:        StoreSoftware,
 		X25519Attributes: &X25519Attributes{},
 	}
 	err := attrs.Validate()
@@ -1264,7 +1226,7 @@ func TestKeyAttributes_Validate_X25519(t *testing.T) {
 func TestKeyAttributes_Validate_MissingKeyType(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-key",
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &RSAAttributes{
 			KeySize: 2048,
@@ -1279,7 +1241,7 @@ func TestKeyAttributes_Validate_RSA_TooSmall(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-rsa-small",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &RSAAttributes{
 			KeySize: 1024, // Too small
@@ -1294,7 +1256,7 @@ func TestKeyAttributes_Validate_RSA_MissingAttributes(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-rsa",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		// Missing RSAAttributes
 	}
@@ -1307,7 +1269,7 @@ func TestKeyAttributes_Validate_ECDSA_MissingAttributes(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-ecdsa",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		// Missing ECCAttributes
 	}
@@ -1320,7 +1282,7 @@ func TestKeyAttributes_Validate_ECDSA_MissingCurve(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:            "test-ecdsa",
 		KeyType:       KeyTypeTLS,
-		StoreType:     StorePKCS8,
+		StoreType:     StoreSoftware,
 		KeyAlgorithm:  x509.ECDSA,
 		ECCAttributes: &ECCAttributes{
 			// Curve is nil
@@ -1335,7 +1297,7 @@ func TestKeyAttributes_Validate_UnsupportedKeyAlgorithm(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-unsupported",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.DSA, // Unsupported
 	}
 	err := attrs.Validate()
@@ -1343,47 +1305,13 @@ func TestKeyAttributes_Validate_UnsupportedKeyAlgorithm(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported key algorithm")
 }
 
-func TestKeyAttributes_Validate_AES_ValidSizes(t *testing.T) {
-	tests := []struct {
-		name    string
-		keySize int
-		wantErr bool
-	}{
-		{"AES128", 128, false},
-		{"AES192", 192, false},
-		{"AES256", 256, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			attrs := &KeyAttributes{
-				CN:                 "test-aes",
-				KeyType:            KeyTypeSecret,
-				StoreType:          StorePKCS8,
-				SymmetricAlgorithm: SymmetricAES256GCM,
-				AESAttributes: &AESAttributes{
-					KeySize: tt.keySize,
-				},
-			}
-			err := attrs.Validate()
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
 
 func TestKeyAttributes_Validate_UnsupportedSymmetricAlgorithm(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:                 "test-unsupported",
 		KeyType:            KeyTypeSecret,
-		StoreType:          StorePKCS8,
+		StoreType:          StoreSoftware,
 		SymmetricAlgorithm: SymmetricAlgorithm("invalid"),
-		AESAttributes: &AESAttributes{
-			KeySize: 256,
-		},
 	}
 	err := attrs.Validate()
 	assert.Error(t, err)
@@ -1393,24 +1321,24 @@ func TestKeyAttributes_Validate_UnsupportedSymmetricAlgorithm(t *testing.T) {
 func TestKeyAttributes_ID_X25519(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:               "test-x25519",
-		StoreType:        StorePKCS8,
+		StoreType:        StoreSoftware,
 		KeyType:          KeyTypeEncryption,
 		X25519Attributes: &X25519Attributes{},
 	}
 	id := attrs.ID()
-	assert.Equal(t, "pkcs8:encryption:test-x25519:x25519", id)
+	assert.Equal(t, "software:encryption:test-x25519:x25519", id)
 }
 
 func TestKeyAttributes_ID_X25519_WithPartition(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:               "test-x25519",
-		StoreType:        StorePKCS8,
+		StoreType:        StoreSoftware,
 		KeyType:          KeyTypeEncryption,
 		X25519Attributes: &X25519Attributes{},
 		Partition:        PartitionEncryptionKeys,
 	}
 	id := attrs.ID()
-	assert.Equal(t, "crypto:pkcs8:encryption:test-x25519:x25519", id)
+	assert.Equal(t, "crypto:software:encryption:test-x25519:x25519", id)
 }
 
 // TestPassword is a simple test implementation of the Password interface
@@ -1441,7 +1369,7 @@ func TestKeyAttributes_String_WithDebugAndPassword(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-key-debug",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 		Debug:        true,
@@ -1464,7 +1392,7 @@ func TestKeyAttributes_String_WithDebugNoPassword(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-key-debug-no-pw",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 		Debug:        true,
@@ -1485,7 +1413,7 @@ func TestKeyAttributes_String_WithPasswordError(t *testing.T) {
 	attrs := &KeyAttributes{
 		CN:           "test-key-pw-error",
 		KeyType:      KeyTypeTLS,
-		StoreType:    StorePKCS8,
+		StoreType:    StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 		Debug:        true,

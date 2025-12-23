@@ -106,6 +106,35 @@ service KeystoreService {
 
   // CopyKey copies a key from one backend to another
   rpc CopyKey(CopyKeyRequest) returns (CopyKeyResponse);
+
+  // ==================== FROST Threshold Signature Operations ====================
+
+  // FrostGenerateKey generates FROST key packages using trusted dealer model
+  rpc FrostGenerateKey(FrostGenerateKeyRequest) returns (FrostGenerateKeyResponse);
+
+  // FrostImportKey imports a FROST key package
+  rpc FrostImportKey(FrostImportKeyRequest) returns (FrostImportKeyResponse);
+
+  // FrostListKeys lists all FROST keys
+  rpc FrostListKeys(FrostListKeysRequest) returns (FrostListKeysResponse);
+
+  // FrostGetKey retrieves information about a specific FROST key
+  rpc FrostGetKey(FrostGetKeyRequest) returns (FrostGetKeyResponse);
+
+  // FrostDeleteKey deletes a FROST key
+  rpc FrostDeleteKey(FrostDeleteKeyRequest) returns (FrostDeleteKeyResponse);
+
+  // FrostGenerateNonces generates nonces and commitments for Round 1 of FROST signing
+  rpc FrostGenerateNonces(FrostGenerateNoncesRequest) returns (FrostGenerateNoncesResponse);
+
+  // FrostSignRound generates a signature share for Round 2 of FROST signing
+  rpc FrostSignRound(FrostSignRoundRequest) returns (FrostSignRoundResponse);
+
+  // FrostAggregate combines signature shares into a final FROST signature
+  rpc FrostAggregate(FrostAggregateRequest) returns (FrostAggregateResponse);
+
+  // FrostVerify verifies a FROST signature against the group public key
+  rpc FrostVerify(FrostVerifyRequest) returns (FrostVerifyResponse);
 }
 
 // HealthRequest is the request for health check
@@ -152,12 +181,13 @@ message GetBackendInfoResponse {
 message GenerateKeyRequest {
   string key_id = 1;
   string backend = 2;
-  string key_type = 3;  // "rsa", "ecdsa", "ed25519", "aes"
+  string key_type = 3;  // "rsa", "ecdsa", "ed25519", "symmetric"
   int32 key_size = 4;
   string curve = 5;
   string hash = 6;
   string partition = 7;
   string algorithm = 8;  // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+  bool exportable = 9;   // Whether the key can be exported
 }
 
 // GenerateKeyResponse contains the generated key information
@@ -471,7 +501,7 @@ message GetImportParametersRequest {
   string key_id = 1;
   string backend = 2;
   string wrapping_algorithm = 3;  // "RSAES_OAEP_SHA_1", "RSAES_OAEP_SHA_256", "RSA_AES_KEY_WRAP_SHA_1", "RSA_AES_KEY_WRAP_SHA_256"
-  string key_type = 4;  // "rsa", "ecdsa", "ed25519", "aes"
+  string key_type = 4;  // "rsa", "ecdsa", "ed25519", "symmetric"
   int32 key_size = 5;
   string curve = 6;
   string hash = 7;
@@ -527,7 +557,7 @@ message ImportKeyRequest {
   string algorithm = 4;
   bytes import_token = 5;
   map<string, string> metadata = 6;
-  string key_type = 7;  // "rsa", "ecdsa", "ed25519", "aes"
+  string key_type = 7;  // "rsa", "ecdsa", "ed25519", "symmetric"
   int32 key_size = 8;
   string curve = 9;
   string hash = 10;
@@ -570,4 +600,177 @@ message CopyKeyResponse {
   bool success = 1;
   string message = 2;
   string dest_key_id = 3;
+}
+
+// ==================== FROST Threshold Signature Messages ====================
+
+// FrostKeyInfo contains information about a FROST key
+message FrostKeyInfo {
+  string key_id = 1;
+  string algorithm = 2;  // FROST ciphersuite (e.g., "FROST-Ed25519-SHA512")
+  int32 threshold = 3;   // Minimum signers required (M)
+  int32 total = 4;       // Total participants (N)
+  uint32 participant_id = 5;
+  bytes group_public_key = 6;
+  repeated string participants = 7;  // Participant names/identifiers
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// FrostKeyPackage represents a participant's key package for import/export
+message FrostKeyPackage {
+  string key_id = 1;
+  string algorithm = 2;
+  int32 threshold = 3;
+  int32 total = 4;
+  uint32 participant_id = 5;
+  string participant_name = 6;
+  bytes secret_share = 7;
+  bytes group_public_key = 8;
+  map<uint32, bytes> verification_shares = 9;
+}
+
+// FrostCommitment represents a participant's nonce commitments
+message FrostCommitment {
+  uint32 participant_id = 1;
+  bytes hiding_commitment = 2;
+  bytes binding_commitment = 3;
+}
+
+// FrostSignatureShare represents a participant's signature share
+message FrostSignatureShare {
+  uint32 participant_id = 1;
+  string session_id = 2;
+  bytes share = 3;
+}
+
+// FrostGenerateKeyRequest requests generation of FROST key packages
+message FrostGenerateKeyRequest {
+  string key_id = 1;           // Custom key identifier (auto-generated if empty)
+  string algorithm = 2;        // FROST ciphersuite (default: "FROST-Ed25519-SHA512")
+  int32 threshold = 3;         // Minimum signers required (M)
+  int32 total = 4;             // Total participants (N)
+  repeated string participants = 5;  // Participant names/identifiers
+  uint32 participant_id = 6;   // This participant's ID (1 to total); 0 = dealer mode
+  bool dealer_mode = 7;        // Generate all packages (trusted dealer mode)
+}
+
+// FrostGenerateKeyResponse contains the generated key information
+message FrostGenerateKeyResponse {
+  string key_id = 1;
+  string algorithm = 2;
+  int32 threshold = 3;
+  int32 total = 4;
+  bytes group_public_key = 5;
+  uint32 participant_id = 6;   // Only set in participant mode
+  repeated FrostKeyPackage packages = 7;  // All packages in dealer mode
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// FrostImportKeyRequest requests import of a FROST key package
+message FrostImportKeyRequest {
+  FrostKeyPackage package = 1;
+}
+
+// FrostImportKeyResponse contains the result of key package import
+message FrostImportKeyResponse {
+  bool success = 1;
+  string message = 2;
+  string key_id = 3;
+  uint32 participant_id = 4;
+  bytes group_public_key = 5;
+}
+
+// FrostListKeysRequest requests listing of all FROST keys
+message FrostListKeysRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+// FrostListKeysResponse contains the list of FROST keys
+message FrostListKeysResponse {
+  repeated FrostKeyInfo keys = 1;
+  int32 total = 2;
+}
+
+// FrostGetKeyRequest requests information about a specific FROST key
+message FrostGetKeyRequest {
+  string key_id = 1;
+}
+
+// FrostGetKeyResponse contains FROST key information
+message FrostGetKeyResponse {
+  FrostKeyInfo key = 1;
+}
+
+// FrostDeleteKeyRequest requests deletion of a FROST key
+message FrostDeleteKeyRequest {
+  string key_id = 1;
+}
+
+// FrostDeleteKeyResponse contains the result of key deletion
+message FrostDeleteKeyResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// FrostGenerateNoncesRequest requests generation of nonces for Round 1
+message FrostGenerateNoncesRequest {
+  string key_id = 1;
+}
+
+// FrostGenerateNoncesResponse contains the nonces and commitments for Round 1
+message FrostGenerateNoncesResponse {
+  uint32 participant_id = 1;
+  string session_id = 2;
+  bytes hiding_nonce = 3;      // Secret - keep private
+  bytes binding_nonce = 4;     // Secret - keep private
+  bytes hiding_commitment = 5; // Public - share with participants
+  bytes binding_commitment = 6; // Public - share with participants
+}
+
+// FrostSignRoundRequest requests generation of a signature share for Round 2
+message FrostSignRoundRequest {
+  string key_id = 1;
+  bytes message = 2;
+  string session_id = 3;
+  bytes hiding_nonce = 4;      // This participant's hiding nonce
+  bytes binding_nonce = 5;     // This participant's binding nonce
+  bytes hiding_commitment = 6; // This participant's hiding commitment
+  bytes binding_commitment = 7; // This participant's binding commitment
+  repeated FrostCommitment commitments = 8;  // All participants' commitments
+}
+
+// FrostSignRoundResponse contains the signature share
+message FrostSignRoundResponse {
+  uint32 participant_id = 1;
+  string session_id = 2;
+  bytes signature_share = 3;
+}
+
+// FrostAggregateRequest requests aggregation of signature shares
+message FrostAggregateRequest {
+  string key_id = 1;
+  bytes message = 2;
+  repeated FrostCommitment commitments = 3;
+  repeated FrostSignatureShare shares = 4;
+  bool verify = 5;  // Verify signature after aggregation (default: true)
+}
+
+// FrostAggregateResponse contains the final aggregated signature
+message FrostAggregateResponse {
+  bytes signature = 1;
+  bool verified = 2;
+}
+
+// FrostVerifyRequest requests verification of a FROST signature
+message FrostVerifyRequest {
+  string key_id = 1;
+  bytes message = 2;
+  bytes signature = 3;
+}
+
+// FrostVerifyResponse contains the verification result
+message FrostVerifyResponse {
+  bool valid = 1;
+  string message = 2;
 }

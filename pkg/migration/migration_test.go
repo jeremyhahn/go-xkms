@@ -114,7 +114,7 @@ func TestMigrateKeyAfterClose(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:        "test.example.com",
 		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StorePKCS8,
+		StoreType: types.StoreSoftware,
 	}
 
 	err = m.MigrateKey(attrs, nil)
@@ -135,7 +135,7 @@ func TestMigrateKeyWithoutExportSupport(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:        "test.example.com",
 		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StorePKCS8,
+		StoreType: types.StoreSoftware,
 	}
 
 	err = m.MigrateKey(attrs, nil)
@@ -157,7 +157,7 @@ func TestMigrateKeyWithoutImportSupport(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:        "test.example.com",
 		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StorePKCS8,
+		StoreType: types.StoreSoftware,
 	}
 
 	err = m.MigrateKey(attrs, nil)
@@ -196,7 +196,7 @@ func TestValidateMigrationAfterClose(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:        "test",
 		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StorePKCS8,
+		StoreType: types.StoreSoftware,
 	}
 
 	result, err := m.ValidateMigration(attrs)
@@ -269,7 +269,7 @@ func TestMigrationResult(t *testing.T) {
 func TestMigrationPlanStructure(t *testing.T) {
 	plan := &MigrationPlan{
 		Keys:              make([]*types.KeyAttributes, 3),
-		SourceBackendType: types.BackendTypePKCS8,
+		SourceBackendType: types.BackendTypeSoftware,
 		DestBackendType:   types.BackendTypeTPM2,
 		Warnings:          make([]string, 0),
 		Errors:            make([]string, 0),
@@ -279,7 +279,7 @@ func TestMigrationPlanStructure(t *testing.T) {
 	plan.Errors = append(plan.Errors, "test error")
 
 	assert.Len(t, plan.Keys, 3)
-	assert.Equal(t, types.BackendTypePKCS8, plan.SourceBackendType)
+	assert.Equal(t, types.BackendTypeSoftware, plan.SourceBackendType)
 	assert.Equal(t, types.BackendTypeTPM2, plan.DestBackendType)
 	assert.Len(t, plan.Warnings, 1)
 	assert.Len(t, plan.Errors, 1)

@@ -18,6 +18,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -41,19 +42,28 @@ type HealthResponse struct {
 	Status string `json:"status"`
 }
 
+// BackendInfo represents information about a backend
+type BackendInfo struct {
+	ID             string                   `json:"id"`
+	Type           string                   `json:"type"`
+	HardwareBacked bool                     `json:"hardware_backed"`
+	Capabilities   types.Capabilities `json:"capabilities"`
+}
+
 // ListBackendsResponse represents the backends list response
 type ListBackendsResponse struct {
-	Backends []string `json:"backends"`
+	Backends []BackendInfo `json:"backends"`
 }
 
 // GenerateKeyRequest represents a key generation request
 type GenerateKeyRequest struct {
-	KeyID     string `json:"key_id"`
-	Backend   string `json:"backend"`
-	KeyType   string `json:"key_type"`
-	KeySize   int    `json:"key_size,omitempty"`
-	Curve     string `json:"curve,omitempty"`
-	Algorithm string `json:"algorithm,omitempty"` // For symmetric keys (e.g., "aes-128-gcm", "aes-256-gcm")
+	KeyID      string `json:"key_id"`
+	Backend    string `json:"backend"`
+	KeyType    string `json:"key_type"`
+	KeySize    int    `json:"key_size,omitempty"`
+	Curve      string `json:"curve,omitempty"`
+	Algorithm  string `json:"algorithm,omitempty"`  // For symmetric keys (e.g., "aes-128-gcm", "aes-256-gcm")
+	Exportable bool   `json:"exportable,omitempty"` // Whether the key can be exported
 }
 
 // KeyResponse represents a key response
@@ -106,6 +116,7 @@ type DeleteResponse struct {
 type EncryptRequest struct {
 	Plaintext      []byte `json:"plaintext"`
 	AdditionalData []byte `json:"additional_data,omitempty"`
+	Algorithm      string `json:"algorithm,omitempty"` // Symmetric algorithm (e.g., "aes256-gcm")
 }
 
 // EncryptResponse represents an encryption response
@@ -121,6 +132,7 @@ type DecryptRequest struct {
 	AdditionalData []byte `json:"additional_data,omitempty"` // Optional AAD for symmetric decryption
 	Nonce          []byte `json:"nonce,omitempty"`           // Required for symmetric decryption
 	Tag            []byte `json:"tag,omitempty"`             // Required for symmetric decryption (GCM)
+	Algorithm      string `json:"algorithm,omitempty"`       // Symmetric algorithm (e.g., "aes256-gcm")
 }
 
 // DecryptResponse represents a decryption response
@@ -225,7 +237,7 @@ type CopyKeyRequest struct {
 	SourceKeyID   string `json:"source_key_id"`
 	DestBackend   string `json:"dest_backend"` // Destination backend name
 	DestKeyID     string `json:"dest_key_id"`
-	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "symmetric"
 	Algorithm     string `json:"algorithm"` // Wrapping algorithm
 	KeySize       int    `json:"key_size,omitempty"`
 	Curve         string `json:"curve,omitempty"`
@@ -256,9 +268,63 @@ func (s *Server) handleListBackends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backends := keychain.Backends()
+	backendNames := keychain.Backends()
+
+	backends := make([]BackendInfo, 0, len(backendNames))
+	for _, name := range backendNames {
+		ks, err := keychain.Backend(name)
+		if err != nil {
+			continue // Skip backends that can't be retrieved
+		}
+
+		backendImpl := ks.Backend()
+		caps := backendImpl.Capabilities()
+
+		backends = append(backends, BackendInfo{
+			ID:             name,
+			Type:           string(backendImpl.Type()),
+			HardwareBacked: caps.HardwareBacked,
+			Capabilities:   caps,
+		})
+	}
 
 	s.sendJSON(w, http.StatusOK, ListBackendsResponse{Backends: backends})
+}
+
+// handleBackendOperations handles operations on specific backends
+func (s *Server) handleBackendOperations(w http.ResponseWriter, r *http.Request) {
+	// Extract backend ID from path: /api/v1/backends/{backendID}
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/backends/")
+	backendID := strings.TrimSuffix(path, "/")
+
+	if backendID == "" {
+		s.sendError(w, http.StatusBadRequest, "backend_id is required")
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Get the backend
+	ks, err := keychain.Backend(backendID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendID))
+		return
+	}
+
+	backendImpl := ks.Backend()
+	caps := backendImpl.Capabilities()
+
+	info := BackendInfo{
+		ID:             backendID,
+		Type:           string(backendImpl.Type()),
+		HardwareBacked: caps.HardwareBacked,
+		Capabilities:   caps,
+	}
+
+	s.sendJSON(w, http.StatusOK, info)
 }
 
 // handleKeys handles key listing and creation
@@ -277,8 +343,15 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	backendParam := r.URL.Query().Get("backend")
 
+	// Get the keystore for the specified backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	// List keys from keystore
-	attrs, err := s.keystore.ListKeys()
+	attrs, err := ks.ListKeys()
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys: %v", err))
 		return
@@ -313,37 +386,52 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create key attributes
-	attrs := &types.KeyAttributes{
-		CN: req.KeyID,
+	if req.Backend == "" {
+		s.sendError(w, http.StatusBadRequest, "backend is required")
+		return
 	}
 
-	if req.Backend != "" {
-		storeType := types.ParseStoreType(req.Backend)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", req.Backend))
-			return
-		}
-		attrs.StoreType = storeType
-	} else {
-		attrs.StoreType = types.StorePKCS8
+	// Get the keystore for the specified backend
+	ks, err := keychain.Backend(req.Backend)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", req.Backend))
+		return
 	}
+
+	// Create key attributes
+	attrs := &types.KeyAttributes{
+		CN:         req.KeyID,
+		KeyType:    types.KeyTypeSigning, // Default to signing
+		Exportable: req.Exportable,
+	}
+
+	storeType := types.ParseStoreType(req.Backend)
+	if storeType == types.StoreUnknown {
+		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", req.Backend))
+		return
+	}
+	attrs.StoreType = storeType
 
 	// Generate key based on type
 	var privKey interface{}
-	var err error
 
-	switch req.KeyType {
-	case "rsa":
+	// Use Algorithm field if provided, otherwise fall back to KeyType for backward compatibility
+	algorithm := req.Algorithm
+	if algorithm == "" {
+		algorithm = req.KeyType
+	}
+
+	switch {
+	case types.AlgorithmRSA.Equals(algorithm):
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: req.KeySize,
 		}
 		if attrs.RSAAttributes.KeySize == 0 {
-			attrs.RSAAttributes.KeySize = 2048
+			attrs.RSAAttributes.KeySize = types.RSAKeySize2048
 		}
-		privKey, err = s.keystore.GenerateRSA(attrs)
+		privKey, err = ks.GenerateRSA(attrs)
 
-	case "ecdsa":
+	case types.AlgorithmECDSA.Equals(algorithm):
 		attrs.ECCAttributes = &types.ECCAttributes{}
 		if req.Curve != "" {
 			curve, curveErr := types.ParseCurve(req.Curve)
@@ -353,21 +441,16 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 			}
 			attrs.ECCAttributes.Curve = curve
 		} else {
-			defaultCurve, curveErr := types.ParseCurve("P-256")
-			if curveErr != nil {
-				s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("invalid default curve: %v", curveErr))
-				return
-			}
-			attrs.ECCAttributes.Curve = defaultCurve
+			attrs.ECCAttributes.Curve, _ = types.ParseCurve(string(types.CurveP256))
 		}
-		privKey, err = s.keystore.GenerateECDSA(attrs)
+		privKey, err = ks.GenerateECDSA(attrs)
 
-	case "ed25519":
-		privKey, err = s.keystore.GenerateEd25519(attrs)
+	case types.AlgorithmEd25519.Equals(algorithm):
+		privKey, err = ks.GenerateEd25519(attrs)
 
-	case "aes":
+	case types.AlgorithmSymmetric.Equals(algorithm):
 		// For AES keys, check if backend supports symmetric operations
-		symBackend, ok := s.keystore.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.Backend().(types.SymmetricBackend)
 		if !ok {
 			s.sendError(w, http.StatusBadRequest, "backend does not support symmetric encryption")
 			return
@@ -399,21 +482,13 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Set AES attributes
-		attrs.AESAttributes = &types.AESAttributes{
-			KeySize: req.KeySize,
-		}
-		if attrs.AESAttributes.KeySize == 0 {
-			attrs.AESAttributes.KeySize = 256
-		}
-
 		// Generate the symmetric key
 		_, err = symBackend.GenerateSymmetricKey(attrs)
 		// For symmetric keys, we don't return the key material
 		privKey = nil
 
 	default:
-		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("unsupported key type: %s", req.KeyType))
+		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("unsupported algorithm: %s", algorithm))
 		return
 	}
 
@@ -475,7 +550,7 @@ func (s *Server) handleKeyOperations(w http.ResponseWriter, r *http.Request) {
 		s.handleEncrypt(w, r, keyID, backendParam)
 	case "decrypt":
 		s.handleDecrypt(w, r, keyID, backendParam)
-	case "asymmetric-encrypt":
+	case "asymmetric-encrypt", "encrypt-asym":
 		s.handleAsymmetricEncrypt(w, r, keyID, backendParam)
 	case "import-parameters":
 		s.handleGetImportParameters(w, r, keyID, backendParam)
@@ -500,22 +575,47 @@ func (s *Server) handleKeyOperations(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// getKeystoreForBackend returns the keystore for the specified backend, or the default keystore if empty
+func (s *Server) getKeystoreForBackend(backendParam string) (keychain.KeyStore, error) {
+	if backendParam != "" {
+		return keychain.Backend(backendParam)
+	}
+	return s.keystore, nil
+}
+
+// findKeyByID finds a key's attributes by its ID (CN) in the keystore
+// Returns the full key attributes needed for operations like GetKey, Sign, etc.
+func (s *Server) findKeyByID(ks keychain.KeyStore, keyID string) (*types.KeyAttributes, error) {
+	keys, err := ks.ListKeys()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list keys: %w", err)
+	}
+
+	for _, attr := range keys {
+		if attr.CN == keyID {
+			return attr, nil
+		}
+	}
+
+	return nil, fmt.Errorf("key not found: %s", keyID)
+}
+
 // handleGetKey handles retrieving a key
 func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
 	}
 
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
+	// Find the key's full attributes
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
-	privKey, err := s.keystore.GetKey(attrs)
+	privKey, err := ks.GetKey(attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -544,20 +644,20 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request, keyID, bac
 
 // handleDeleteKey handles deleting a key
 func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
 	}
 
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
+	// Find the key's full attributes
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
-	if err := s.keystore.DeleteKey(attrs); err != nil {
+	if err := ks.DeleteKey(attrs); err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("failed to delete key: %v", err))
 		return
 	}
@@ -572,47 +672,59 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backe
 		return
 	}
 
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	var req SignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
 		return
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	// Find the key's full attributes
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
-	}
-
-	signer, err := s.keystore.Signer(attrs)
+	signer, err := ks.Signer(attrs)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get signer: %v", err))
 		return
 	}
 
-	// Hash the data
-	hash, err := parseHashAlgorithm(req.Hash)
-	if err != nil {
-		s.sendError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+	var signature []byte
 
-	hasher := hash.New()
-	hasher.Write(req.Data)
-	digest := hasher.Sum(nil)
+	// Ed25519 signs the raw message, not a hash
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		// Ed25519 uses crypto.Hash(0) to indicate no pre-hashing
+		signature, err = signer.Sign(rand.Reader, req.Data, crypto.Hash(0))
+		if err != nil {
+			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to sign: %v", err))
+			return
+		}
+	} else {
+		// RSA and ECDSA use hashed data
+		hash, err := parseHashAlgorithm(req.Hash)
+		if err != nil {
+			s.sendError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
-	// Sign the digest
-	signature, err := signer.Sign(nil, digest, hash)
-	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to sign: %v", err))
-		return
+		hasher := hash.New()
+		hasher.Write(req.Data)
+		digest := hasher.Sum(nil)
+
+		// Sign the digest
+		signature, err = signer.Sign(rand.Reader, digest, hash)
+		if err != nil {
+			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to sign: %v", err))
+			return
+		}
 	}
 
 	s.sendJSON(w, http.StatusOK, SignResponse{Signature: signature})
@@ -625,27 +737,27 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, keyID, bac
 		return
 	}
 
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	var req VerifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
 		return
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: keyID,
-	}
-
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
+	// Find the key's full attributes
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
 	// Get the key
-	privKey, err := s.keystore.GetKey(attrs)
+	privKey, err := ks.GetKey(attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return
@@ -657,24 +769,20 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, keyID, bac
 		return
 	}
 
-	// Hash the data
-	hash, err := parseHashAlgorithm(req.Hash)
-	if err != nil {
-		s.sendError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	hasher := hash.New()
-	hasher.Write(req.Data)
-	digest := hasher.Sum(nil)
-
 	// Convert signature to bytes
 	var sigBytes []byte
 	switch sig := req.Signature.(type) {
 	case []byte:
 		sigBytes = sig
 	case string:
-		sigBytes = []byte(sig)
+		// Try base64 decoding first (JSON encodes []byte as base64)
+		decoded, err := base64.StdEncoding.DecodeString(sig)
+		if err != nil {
+			// If not base64, use raw bytes
+			sigBytes = []byte(sig)
+		} else {
+			sigBytes = decoded
+		}
 	case []interface{}:
 		sigBytes = make([]byte, len(sig))
 		for i, v := range sig {
@@ -688,11 +796,32 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, keyID, bac
 		_ = json.Unmarshal(sigJSON, &sigBytes) // Best-effort unmarshal
 	}
 
-	// Verify signature
-	valid, err := verifySignature(pubKey, digest, sigBytes, hash)
-	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to verify: %v", err))
-		return
+	var valid bool
+
+	// Ed25519 verifies the raw message, not a hash
+	if attrs.KeyAlgorithm == x509.Ed25519 {
+		valid, err = verifySignature(pubKey, req.Data, sigBytes, crypto.Hash(0))
+		if err != nil {
+			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to verify: %v", err))
+			return
+		}
+	} else {
+		// RSA and ECDSA verify against hashed data
+		hash, err := parseHashAlgorithm(req.Hash)
+		if err != nil {
+			s.sendError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		hasher := hash.New()
+		hasher.Write(req.Data)
+		digest := hasher.Sum(nil)
+
+		valid, err = verifySignature(pubKey, digest, sigBytes, hash)
+		if err != nil {
+			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to verify: %v", err))
+			return
+		}
 	}
 
 	s.sendJSON(w, http.StatusOK, VerifyResponse{Valid: valid})
@@ -705,20 +834,20 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
 	}
 
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
+	// Find the key's full attributes
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
-	privKey, err := s.keystore.RotateKey(attrs)
+	privKey, err := ks.RotateKey(attrs)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to rotate key: %v", err))
 		return
@@ -754,27 +883,27 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	var req EncryptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
 		return
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: keyID,
-	}
-
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
+	// Find the key's full attributes (includes algorithm, key type, etc.)
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
 	// Check if backend supports symmetric operations
-	symBackend, ok := s.keystore.Backend().(types.SymmetricBackend)
+	symBackend, ok := ks.Backend().(types.SymmetricBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support symmetric encryption")
 		return
@@ -820,23 +949,24 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
 	}
 
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
+	// Find the key's full attributes
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
 	// Check if this is symmetric decryption (has nonce and tag)
 	if len(req.Nonce) > 0 && len(req.Tag) > 0 {
 		// Symmetric decryption
-		symBackend, ok := s.keystore.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.Backend().(types.SymmetricBackend)
 		if !ok {
 			s.sendError(w, http.StatusBadRequest, "backend does not support symmetric decryption")
 			return
@@ -869,14 +999,18 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 
 		s.sendJSON(w, http.StatusOK, DecryptResponse{Plaintext: plaintext})
 	} else {
-		// Asymmetric decryption (RSA)
-		decrypter, err := s.keystore.Decrypter(attrs)
+		// Asymmetric decryption (RSA-OAEP with SHA256)
+		decrypter, err := ks.Decrypter(attrs)
 		if err != nil {
 			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get decrypter: %v", err))
 			return
 		}
 
-		plaintext, err := decrypter.Decrypt(nil, req.Ciphertext, nil)
+		// Use RSA-OAEP options matching the encryption (SHA256)
+		opts := &rsa.OAEPOptions{
+			Hash: crypto.SHA256,
+		}
+		plaintext, err := decrypter.Decrypt(rand.Reader, req.Ciphertext, opts)
 		if err != nil {
 			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to decrypt: %v", err))
 			return
@@ -1189,6 +1323,9 @@ func (s *Server) sendJSON(w http.ResponseWriter, status int, data interface{}) {
 
 // sendError sends an error response
 func (s *Server) sendError(w http.ResponseWriter, status int, message string) {
+	s.logger.Warn("QUIC request error",
+		logger.Int("status", status),
+		logger.String("error", message))
 	s.sendJSON(w, status, ErrorResponse{
 		Error:   http.StatusText(status),
 		Message: message,
@@ -1221,8 +1358,15 @@ func (s *Server) handleGetImportParameters(w http.ResponseWriter, r *http.Reques
 		attrs.StoreType = storeType
 	}
 
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1280,8 +1424,15 @@ func (s *Server) handleWrapKey(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1348,8 +1499,15 @@ func (s *Server) handleImportKey(w http.ResponseWriter, r *http.Request, keyID, 
 		attrs.StoreType = storeType
 	}
 
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1398,8 +1556,15 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 		attrs.StoreType = storeType
 	}
 
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1436,21 +1601,22 @@ func (s *Server) handleAsymmetricEncrypt(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
 	}
 
-	if backendParam != "" {
-		storeType := types.ParseStoreType(backendParam)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid backend: %s", backendParam))
-			return
-		}
-		attrs.StoreType = storeType
+	// Find the key's full attributes
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
 	// Get the key
-	privKey, err := s.keystore.GetKey(attrs)
+	privKey, err := ks.GetKey(attrs)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
 		return

@@ -239,12 +239,12 @@ func getKeystoreForKID(kid string) (KeyStore, *types.KeyAttributes, error) {
 
 	var ks KeyStore
 
-	if attrs.StoreType == "" {
+	if attrs.StoreType != "" {
+		// Use StoreType as the backend name
+		ks, err = Backend(string(attrs.StoreType))
+	} else {
 		// Use default backend
 		ks, err = DefaultBackend()
-	} else {
-		// Use specified backend
-		ks, err = Backend(string(attrs.StoreType))
 	}
 
 	if err != nil {

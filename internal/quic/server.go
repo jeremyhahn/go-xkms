@@ -135,12 +135,16 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 
 	// API v1 endpoints
 	mux.HandleFunc("/api/v1/backends", s.handleListBackends)
+	mux.HandleFunc("/api/v1/backends/", s.handleBackendOperations)
 	mux.HandleFunc("/api/v1/keys", s.handleKeys)
 	mux.HandleFunc("/api/v1/keys/", s.handleKeyOperations)
 	mux.HandleFunc("/api/v1/keys/copy", s.handleCopyKey)
 	mux.HandleFunc("/api/v1/certs", s.handleCerts)
 	mux.HandleFunc("/api/v1/certs/", s.handleCertOperations)
 	mux.HandleFunc("/api/v1/tls/", s.handleTLSCertificate)
+
+	// FROST threshold signature endpoints
+	s.setupFrostRoutes(mux)
 }
 
 // Start starts the QUIC server

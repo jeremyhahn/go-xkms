@@ -230,16 +230,16 @@ fi\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 # Switch back to non-root user for security
 USER testuser
 
-# Build the server binary with all backends enabled (including quantum-safe cryptography)
+# Build the server binary with all backends enabled (including quantum-safe cryptography and FROST)
 RUN mkdir -p /app && \
-    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum" \
+    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum,frost" \
     -o /app/keychaind ./cmd/server/main.go
 
 # Validate that the server binary exists
 RUN test -f /app/keychaind || (echo "ERROR: Server binary not built" && exit 1)
 
-# Build the application with all backends enabled (including quantum-safe cryptography)
-RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
+# Build the application with all backends enabled (including quantum-safe cryptography and FROST)
+RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum,frost" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
 
 # Health check to verify SoftHSM is accessible
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

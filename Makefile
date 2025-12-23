@@ -27,6 +27,10 @@ WITH_PKCS11 ?= 0
 # Default: Disabled - requires liboqs C library to be installed
 WITH_QUANTUM ?= 0
 
+# FROST threshold signatures support (RFC 9591)
+# Default: Enabled - FROST threshold signatures compiled in by default
+WITH_FROST ?= 1
+
 # Group variables (convenience flags to enable all backends for a provider)
 # Setting these will override individual backend flags
 WITH_AWS ?= 0
@@ -47,9 +51,9 @@ endif
 
 # All available build tags for release builds
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
-CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault quantum
+CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault quantum frost
 # Server includes all tags including pkcs11
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum frost
 
 # Build tags based on backend flags (for development/testing)
 BUILD_TAGS :=
@@ -76,6 +80,9 @@ ifeq ($(WITH_PKCS11),1)
 endif
 ifeq ($(WITH_QUANTUM),1)
 	BUILD_TAGS += quantum
+endif
+ifeq ($(WITH_FROST),1)
+	BUILD_TAGS += frost
 endif
 
 
@@ -524,12 +531,6 @@ test-software:
 	@echo "$(CYAN)→ Testing unified software backend...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/software/...
 
-.PHONY: test-aes
-## test-aes: Run AES backend unit tests
-test-aes:
-	@echo "$(CYAN)→ Testing AES backend...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/aes/...
-
 .PHONY: test-yubikey
 ## test-yubikey: Run YubiKey backend unit tests (requires physical YubiKey)
 test-yubikey:
@@ -595,8 +596,8 @@ test-importexport:
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/wrapping/...
 	@echo "$(CYAN)→ Testing software backend import/export...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/software/... -run "Test.*Import|Test.*Export"
-	@echo "$(CYAN)→ Testing AES backend import/export...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/aes/... -run "Test.*Import|Test.*Export"
+	@echo "$(CYAN)→ Testing symmetric backend import/export...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/symmetric/... -run "Test.*Import|Test.*Export"
 	@echo "$(CYAN)→ Testing AWS KMS backend import/export...$(RESET)"
 	@$(GO) test -tags=awskms $(TEST_FLAGS) ./pkg/backend/awskms/... -run "Test.*Import|Test.*Export|Test.*Wrap"
 	@echo "$(CYAN)→ Testing GCP KMS backend import/export...$(RESET)"
@@ -623,8 +624,8 @@ coverage-migration:
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/migration.out | grep total
 
 .PHONY: integration-test
-## integration-test: Run all integration tests (all backends)
-integration-test: clean-test-containers integration-test-software integration-test-aes integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-webauthn integration-test-cli
+## integration-test: Run all integration tests (all backends + all API protocols)
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-cli integration-test-api-all
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -805,12 +806,12 @@ integration-test-software:
 	@$(GOTEST) -v ./pkg/backend/software/... -tags=integration
 	@echo "$(GREEN)✓ Unified software backend integration tests complete$(RESET)"
 
-.PHONY: integration-test-aes
-## integration-test-aes: Run AES backend integration tests
-integration-test-aes:
-	@echo "$(CYAN)$(BOLD)→ Running AES backend integration tests...$(RESET)"
-	@$(GOTEST) -v ./pkg/backend/aes/... -tags=integration
-	@echo "$(GREEN)✓ AES backend integration tests complete$(RESET)"
+.PHONY: integration-test-symmetric
+## integration-test-symmetric: Run symmetric backend integration tests
+integration-test-symmetric:
+	@echo "$(CYAN)$(BOLD)→ Running symmetric backend integration tests...$(RESET)"
+	@$(GOTEST) -v ./pkg/backend/symmetric/... -tags=integration
+	@echo "$(GREEN)✓ Symmetric backend integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs8
 ## integration-test-pkcs8: Run PKCS8 asymmetric backend integration tests
@@ -922,6 +923,33 @@ else
 	@echo "$(YELLOW)  To enable, run: make integration-test-quantum WITH_QUANTUM=1$(RESET)"
 endif
 
+.PHONY: test-frost
+## test-frost: Run FROST unit tests
+test-frost:
+ifeq ($(WITH_FROST),1)
+	@echo "$(CYAN)$(BOLD)→ Running FROST unit tests...$(RESET)"
+	@$(GOTEST) -v -tags="frost" ./pkg/backend/frost/...
+	@echo "$(GREEN)✓ FROST unit tests complete$(RESET)"
+else
+	@echo "$(YELLOW)⚠ Skipping FROST unit tests (WITH_FROST=0)$(RESET)"
+	@echo "$(YELLOW)  To enable, run: make test-frost WITH_FROST=1$(RESET)"
+endif
+
+.PHONY: integration-test-frost
+## integration-test-frost: Run FROST threshold signature integration tests
+integration-test-frost:
+ifeq ($(WITH_FROST),1)
+	@echo "$(CYAN)$(BOLD)→ Running FROST threshold signature integration tests...$(RESET)"
+	@echo "$(YELLOW)Note: Testing FROST key generation, signing rounds, and CLI commands$(RESET)"
+	@cd test/integration/frost && docker compose down -v >/dev/null 2>&1 || true
+	@cd test/integration/frost && docker compose build frost-test
+	@cd test/integration/frost && (docker compose run --rm frost-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ FROST integration tests complete$(RESET)"
+else
+	@echo "$(YELLOW)⚠ Skipping FROST integration tests (WITH_FROST=0)$(RESET)"
+	@echo "$(YELLOW)  To enable, run: make integration-test-frost WITH_FROST=1$(RESET)"
+endif
+
 .PHONY: integration-test-webauthn
 ## integration-test-webauthn: Run WebAuthn integration tests with virtual authenticator
 integration-test-webauthn:
@@ -943,7 +971,7 @@ integration-test-cli:
 ## integration-test-cli-local: Run CLI integration tests locally (requires server running)
 integration-test-cli-local:
 	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests locally...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/api/... -timeout 15m
+	@$(GOTEST) -v -tags='integration frost' ./test/integration/api/... -timeout 15m
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: integration-test-signing
@@ -1235,7 +1263,7 @@ coverage-importexport:
 	@echo "$(CYAN)→ Generating import/export coverage report...$(RESET)"
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/wrapping.out -covermode=atomic ./pkg/crypto/wrapping/...
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/software_import.out -covermode=atomic ./pkg/backend/software/... -run "Test.*Import|Test.*Export"
-	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/aes_import.out -covermode=atomic ./pkg/backend/aes/... -run "Test.*Import|Test.*Export"
+	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/symmetric_import.out -covermode=atomic ./pkg/backend/symmetric/... -run "Test.*Import|Test.*Export"
 	@$(GO) test -tags=tpm_simulator -v -coverprofile=$(COVERAGE_DIR)/tpm2_import.out -covermode=atomic ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
 	@echo "$(GREEN)✓ Import/export coverage reports generated$(RESET)"
 	@echo "$(CYAN)Wrapping:$(RESET)"
@@ -2022,7 +2050,7 @@ proto-check:
 ## integration-test-api: Run API integration tests for all interfaces
 integration-test-api:
 	@echo "$(CYAN)$(BOLD)→ Running API integration tests...$(RESET)"
-	@cd test/integration/api && docker compose up --abort-on-container-exit --exit-code-from integration-tests
+	@cd test/integration/api && docker compose up --build --abort-on-container-exit --exit-code-from integration-tests
 	@echo "$(GREEN)$(BOLD)✓ API integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-up
@@ -2051,9 +2079,118 @@ integration-test-api-logs:
 ## integration-test-local-api: Run API tests locally (requires server running)
 integration-test-local-api:
 	@echo "$(CYAN)$(BOLD)→ Running API tests locally...$(RESET)"
-	@$(GO) test -v -tags=integration ./test/integration/api/... -timeout 10m
+	@$(GO) test -v -tags='integration frost' ./test/integration/api/... -timeout 10m
 	@echo "$(GREEN)$(BOLD)✓ API tests complete!$(RESET)"
 
+# ==============================================================================
+# Protocol-Specific API Integration Tests
+# All tests run in the devcontainer image and auto-cleanup on completion
+# ==============================================================================
+
+# Docker configuration for protocol integration tests
+DEVCONTAINER_IMAGE := go-keychain-devcontainer:latest
+API_TEST_NETWORK := keychain-api-test
+API_COMPOSE := cd test/integration/api && docker compose
+
+.PHONY: integration-test-api-all
+## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC, MCP)
+integration-test-api-all: integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-mcp
+	@echo "$(GREEN)$(BOLD)✓ All API protocol integration tests complete!$(RESET)"
+
+.PHONY: integration-test-api-unix
+## integration-test-api-unix: Run Unix socket protocol integration tests
+integration-test-api-unix:
+	@echo "$(CYAN)$(BOLD)→ Running Unix socket protocol integration tests...$(RESET)"
+	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-unix integration-tests \
+		sh -c "go test -v -tags='integration frost' ./test/integration/api/unix/... -timeout 10m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ Unix socket protocol integration tests complete$(RESET)"
+
+.PHONY: integration-test-api-rest
+## integration-test-api-rest: Run REST API protocol integration tests
+integration-test-api-rest:
+	@echo "$(CYAN)$(BOLD)→ Running REST API protocol integration tests...$(RESET)"
+	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-rest integration-tests \
+		sh -c "go test -v -tags='integration frost' ./test/integration/api/rest/... -timeout 10m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ REST API protocol integration tests complete$(RESET)"
+
+.PHONY: integration-test-api-grpc
+## integration-test-api-grpc: Run gRPC protocol integration tests
+integration-test-api-grpc:
+	@echo "$(CYAN)$(BOLD)→ Running gRPC protocol integration tests...$(RESET)"
+	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-grpc integration-tests \
+		sh -c "go test -v -tags='integration frost' ./test/integration/api/grpc/... -timeout 10m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ gRPC protocol integration tests complete$(RESET)"
+
+.PHONY: integration-test-api-quic
+## integration-test-api-quic: Run QUIC/HTTP3 protocol integration tests
+integration-test-api-quic:
+	@echo "$(CYAN)$(BOLD)→ Running QUIC/HTTP3 protocol integration tests...$(RESET)"
+	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-quic integration-tests \
+		sh -c "go test -v -tags='integration frost' ./test/integration/api/quic/... -timeout 10m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ QUIC/HTTP3 protocol integration tests complete$(RESET)"
+
+.PHONY: integration-test-api-mcp
+## integration-test-api-mcp: Run MCP (Model Context Protocol) integration tests
+integration-test-api-mcp:
+	@echo "$(CYAN)$(BOLD)→ Running MCP protocol integration tests...$(RESET)"
+	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-mcp integration-tests \
+		sh -c "go test -v -tags='integration frost' ./test/integration/api/mcp/... -timeout 10m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ MCP protocol integration tests complete$(RESET)"
+
+.PHONY: integration-test-api-frost
+## integration-test-api-frost: Run FROST API integration tests across all protocols
+integration-test-api-frost:
+ifeq ($(WITH_FROST),1)
+	@echo "$(CYAN)$(BOLD)→ Running FROST API integration tests...$(RESET)"
+	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-frost integration-tests \
+		sh -c "go test -v -tags='integration frost' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ FROST API integration tests complete$(RESET)"
+else
+	@echo "$(YELLOW)⚠ Skipping FROST API tests (WITH_FROST=0)$(RESET)"
+	@echo "$(YELLOW)  To enable, run: make integration-test-api-frost WITH_FROST=1$(RESET)"
+endif
+
+.PHONY: integration-test-api-parity
+## integration-test-api-parity: Run protocol parity tests (verifies all protocols have consistent behavior)
+integration-test-api-parity:
+	@echo "$(CYAN)$(BOLD)→ Running API protocol parity tests...$(RESET)"
+	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	@$(API_COMPOSE) run --rm --name keychain-test-parity integration-tests \
+		sh -c "go test -v -tags='integration frost' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
 
 .PHONY: show-backends
 ## show-backends: Display enabled backends for current build configuration
@@ -2105,7 +2242,7 @@ bench-storage:
 bench-backend:
 	@echo "$(CYAN)$(BOLD)→ Running backend benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/backend/aes/... | tee -a $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/backend/symmetric/... | tee -a $(BENCH_OUTPUT)
 	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/backend/software/... | tee -a $(BENCH_OUTPUT)
 	@echo "$(GREEN)✓ Backend benchmarks complete$(RESET)"
 
@@ -2138,7 +2275,7 @@ bench-file:
 bench-aes:
 	@echo "$(CYAN)$(BOLD)→ Running AES benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -benchtime=5s -run=^$$ ./pkg/backend/aes/... | tee $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -benchtime=5s -run=^$$ ./pkg/backend/symmetric/... | tee $(BENCH_OUTPUT)
 
 .PHONY: bench-software
 ## bench-software: Benchmark software backend operations
@@ -2213,7 +2350,7 @@ bench-compare:
 bench-cpu:
 	@echo "$(CYAN)$(BOLD)→ Running benchmarks with CPU profiling...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -cpuprofile=$(BENCH_DIR)/cpu.prof -run=^$$ ./pkg/backend/aes/...
+	@$(GO) test -bench=. -benchmem -cpuprofile=$(BENCH_DIR)/cpu.prof -run=^$$ ./pkg/backend/symmetric/...
 	@echo "$(GREEN)✓ CPU profile saved to: $(BENCH_DIR)/cpu.prof$(RESET)"
 	@echo "$(CYAN)View with: go tool pprof $(BENCH_DIR)/cpu.prof$(RESET)"
 
@@ -2222,7 +2359,7 @@ bench-cpu:
 bench-mem:
 	@echo "$(CYAN)$(BOLD)→ Running benchmarks with memory profiling...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -memprofile=$(BENCH_DIR)/mem.prof -run=^$$ ./pkg/backend/aes/...
+	@$(GO) test -bench=. -benchmem -memprofile=$(BENCH_DIR)/mem.prof -run=^$$ ./pkg/backend/symmetric/...
 	@echo "$(GREEN)✓ Memory profile saved to: $(BENCH_DIR)/mem.prof$(RESET)"
 	@echo "$(CYAN)View with: go tool pprof $(BENCH_DIR)/mem.prof$(RESET)"
 

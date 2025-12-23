@@ -1,0 +1,73 @@
+{
+  "name": "go-keychain Development",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "devcontainer",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "installOhMyZsh": true,
+      "upgradePackages": true
+    },
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "ms-vscode.makefile-tools",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-docker",
+        "zxh404.vscode-proto3",
+        "streetsidesoftware.code-spell-checker"
+      ],
+      "settings": {
+        "go.testTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator",
+        "go.buildTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator",
+        "go.lintTool": "golangci-lint",
+        "go.lintFlags": ["--fast"],
+        "go.useLanguageServer": true,
+        "editor.formatOnSave": true,
+        "[go]": {
+          "editor.defaultFormatter": "golang.go"
+        }
+      }
+    }
+  },
+  "postCreateCommand": "/workspace/.devcontainer/scripts/post-create.sh",
+  "postStartCommand": "/workspace/.devcontainer/scripts/post-start.sh",
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "GOPATH": "/go",
+    "PATH": "/go/bin:/usr/local/go/bin:${PATH}",
+    "CGO_ENABLED": "1",
+    "TPM_USE_SIMULATOR": "true",
+    "SOFTHSM2_CONF": "/etc/softhsm/softhsm2.conf",
+    "PKCS11_LIBRARY": "/usr/lib/softhsm/libsofthsm2.so"
+  },
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "source=go-keychain-go-mod,target=/go/pkg/mod,type=volume",
+    "source=go-keychain-go-cache,target=/home/vscode/.cache/go-build,type=volume"
+  ],
+  "forwardPorts": [
+    8443,
+    9443,
+    8444,
+    9444,
+    9090,
+    2321,
+    2322
+  ],
+  "portsAttributes": {
+    "8443": { "label": "REST API" },
+    "9443": { "label": "gRPC" },
+    "8444": { "label": "QUIC" },
+    "9444": { "label": "MCP" },
+    "9090": { "label": "Metrics" },
+    "2321": { "label": "TPM Command" },
+    "2322": { "label": "TPM Control" }
+  }
+}

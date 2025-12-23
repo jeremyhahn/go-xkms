@@ -1965,9 +1965,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES128GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 128,
-				},
 			}
 
 			// Generate symmetric key on HSM
@@ -2029,9 +2026,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate symmetric key on HSM
@@ -2081,9 +2075,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate key
@@ -2151,9 +2142,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate key
@@ -2201,9 +2189,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate key
@@ -2282,9 +2267,6 @@ func TestPKCS11Integration(t *testing.T) {
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_PKCS11,
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
-					AESAttributes: &types.AESAttributes{
-						KeySize: 256,
-					},
 				}
 
 				_, err := ks.SymmetricEncrypter(nonExistentAttrs)
@@ -2302,9 +2284,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			_, err := ks.GenerateSymmetricKey(attrs)
@@ -2345,9 +2324,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			_, err := ks.GenerateSymmetricKey(attrs)
@@ -2405,9 +2381,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 			_, err := ks.GenerateSymmetricKey(attrs1)
 			if err != nil {
@@ -2421,9 +2394,6 @@ func TestPKCS11Integration(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 			_, err = ks.GenerateSymmetricKey(attrs2)
 			if err != nil {

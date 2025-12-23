@@ -30,8 +30,8 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-// skipIfNoTPM skips the test if no TPM is available
-func skipIfNoTPM(t *testing.T) {
+// requireTPM fails the test if no TPM is available
+func requireTPM(t *testing.T) {
 	t.Helper()
 
 	// Check for simulator mode via environment
@@ -44,13 +44,13 @@ func skipIfNoTPM(t *testing.T) {
 		return // Hardware TPM available
 	}
 
-	t.Skip("No TPM available (set TPM2_SIMULATOR_HOST or have /dev/tpmrm0)")
+	t.Fatal("No TPM available (set TPM2_SIMULATOR_HOST or have /dev/tpmrm0)")
 }
 
 // createTPM2Backend creates a test TPM2 backend
 func createTPM2Backend(t *testing.T) *tpm2.Backend {
 	t.Helper()
-	skipIfNoTPM(t)
+	requireTPM(t)
 
 	keyDir := t.TempDir()
 

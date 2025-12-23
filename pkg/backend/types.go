@@ -65,8 +65,8 @@ const (
 
 // StoreType constant re-exports
 const (
-	// STORE_SW is an alias for software-based PKCS#8 key storage
-	STORE_SW      = types.StorePKCS8
+	// STORE_SW is an alias for software-based key storage
+	STORE_SW      = types.StoreSoftware
 	STORE_TPM2    = types.StoreTPM2
 	STORE_PKCS11  = types.StorePKCS11
 	STORE_AWSKMS  = types.StoreAWSKMS
@@ -77,8 +77,7 @@ const (
 
 // BackendType constant re-exports
 const (
-	BackendTypeAES          = types.BackendTypeAES
-	BackendTypePKCS8        = types.BackendTypePKCS8
+	BackendTypeSymmetric    = types.BackendTypeSymmetric
 	BackendTypeSoftware     = types.BackendTypeSoftware
 	BackendTypePKCS11       = types.BackendTypePKCS11
 	BackendTypeSmartCardHSM = types.BackendTypeSmartCardHSM
@@ -111,10 +110,91 @@ const (
 	PARTITION_SIGNING_KEYS    = types.PartitionSigningKeys
 )
 
+// Algorithm type re-exports from pkg/types/algorithms.go
+type (
+	// KeyAlgorithmString represents asymmetric key algorithm identifiers.
+	KeyAlgorithmString = types.KeyAlgorithmString
+
+	// EllipticCurve represents elliptic curve identifiers.
+	EllipticCurve = types.EllipticCurve
+
+	// HashName represents hash algorithm identifiers.
+	HashName = types.HashName
+
+	// SignatureAlgorithmName represents signature algorithm identifiers.
+	SignatureAlgorithmName = types.SignatureAlgorithmName
+
+	// AEADAlgorithm represents AEAD algorithm identifiers.
+	AEADAlgorithm = types.AEADAlgorithm
+
+	// KeyWrapAlgorithm represents key wrapping algorithm identifiers.
+	KeyWrapAlgorithm = types.KeyWrapAlgorithm
+
+	// CLIKeyType represents key type identifiers for CLI operations.
+	CLIKeyType = types.CLIKeyType
+)
+
+// Algorithm string constants re-exports
+const (
+	// Asymmetric key algorithms
+	AlgorithmRSA     = types.AlgorithmRSA
+	AlgorithmECDSA   = types.AlgorithmECDSA
+	AlgorithmEd25519 = types.AlgorithmEd25519
+
+	// Elliptic curves
+	CurveP224      = types.CurveP224
+	CurveP256      = types.CurveP256
+	CurveP384      = types.CurveP384
+	CurveP521      = types.CurveP521
+	CurveSecp256k1 = types.CurveSecp256k1
+	CurveX25519    = types.CurveX25519
+
+	// Hash algorithms
+	HashSHA256 = types.HashSHA256
+	HashSHA384 = types.HashSHA384
+	HashSHA512 = types.HashSHA512
+
+	// AEAD algorithms
+	AEADAES128GCM         = types.AEADAES128GCM
+	AEADAES192GCM         = types.AEADAES192GCM
+	AEADAES256GCM         = types.AEADAES256GCM
+	AEADChaCha20Poly1305  = types.AEADChaCha20Poly1305
+	AEADXChaCha20Poly1305 = types.AEADXChaCha20Poly1305
+
+	// Key wrapping algorithms
+	WrapRSAOAEPSHA1    = types.WrapRSAOAEPSHA1
+	WrapRSAOAEPSHA256  = types.WrapRSAOAEPSHA256
+	WrapRSAAESKWSHA1   = types.WrapRSAAESKWSHA1
+	WrapRSAAESKWSHA256 = types.WrapRSAAESKWSHA256
+
+	// CLI key types
+	CLIKeyTypeTLS        = types.CLIKeyTypeTLS
+	CLIKeyTypeSigning    = types.CLIKeyTypeSigning
+	CLIKeyTypeEncryption = types.CLIKeyTypeEncryption
+	CLIKeyTypeAES        = types.CLIKeyTypeAES
+
+	// Symmetric algorithm identifiers
+	AlgorithmSymmetric = types.AlgorithmSymmetric
+	AlgorithmAES       = types.AlgorithmAES
+)
+
+// Key size constants
+const (
+	RSAKeySize2048 = types.RSAKeySize2048
+	RSAKeySize3072 = types.RSAKeySize3072
+	RSAKeySize4096 = types.RSAKeySize4096
+
+	AESKeySize128 = types.AESKeySize128
+	AESKeySize192 = types.AESKeySize192
+	AESKeySize256 = types.AESKeySize256
+)
+
 // KeyAlgorithm is a string-based algorithm type for simplified algorithm handling.
+// Deprecated: Use KeyAlgorithmString or AEADAlgorithm for type-safe algorithm handling.
 type KeyAlgorithm string
 
 // KeyAlgorithm constants
+// Deprecated: Use the typed constants from types.AlgorithmRSA, types.AEADAES256GCM, etc.
 const (
 	ALG_RSA                KeyAlgorithm = "rsa"
 	ALG_ECDSA              KeyAlgorithm = "ecdsa"

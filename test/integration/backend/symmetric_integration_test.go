@@ -20,22 +20,22 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
+	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-// createAESBackend creates a test backend with in-memory storage
-func createAESBackend(t *testing.T) (types.SymmetricBackend, storage.Backend) {
+// createSymmetricBackend creates a test backend with in-memory storage
+func createSymmetricBackend(t *testing.T) (types.SymmetricBackend, storage.Backend) {
 	t.Helper()
 
 	keyStorage := storage.New()
-	config := &aes.Config{
+	config := &symmetric.Config{
 		KeyStorage: keyStorage,
 		Tracker:    backend.NewMemoryAEADTracker(),
 	}
 
-	be, err := aes.NewBackend(config)
+	be, err := symmetric.NewBackend(config)
 	if err != nil {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
@@ -43,22 +43,19 @@ func createAESBackend(t *testing.T) (types.SymmetricBackend, storage.Backend) {
 	return be, keyStorage
 }
 
-// createAESAttrs creates AES key attributes
-func createAESAttrs(cn string, keySize int, algorithm types.SymmetricAlgorithm) *types.KeyAttributes {
+// createSymmetricAttrs creates AES key attributes
+func createSymmetricAttrs(cn string, keySize int, algorithm types.SymmetricAlgorithm) *types.KeyAttributes {
 	return &types.KeyAttributes{
 		CN:                 cn,
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: algorithm,
 		Exportable:         true,
-		AESAttributes: &types.AESAttributes{
-			KeySize: keySize,
-		},
 	}
 }
 
-// TestAES_EndToEnd_AllKeySizes tests complete workflow for all AES key sizes
-func TestAES_EndToEnd_AllKeySizes(t *testing.T) {
+// TestSymmetric_EndToEnd_AllKeySizes tests complete workflow for all AES key sizes
+func TestSymmetric_EndToEnd_AllKeySizes(t *testing.T) {
 	tests := []struct {
 		name      string
 		keySize   int
@@ -71,10 +68,10 @@ func TestAES_EndToEnd_AllKeySizes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			be, _ := createAESBackend(t)
+			be, _ := createSymmetricBackend(t)
 			defer func() { _ = be.Close() }()
 
-			attrs := createAESAttrs("test-"+tt.name, tt.keySize, tt.algorithm)
+			attrs := createSymmetricAttrs("test-"+tt.name, tt.keySize, tt.algorithm)
 
 			// Generate key
 			key, err := be.GenerateSymmetricKey(attrs)
@@ -144,12 +141,12 @@ func TestAES_EndToEnd_AllKeySizes(t *testing.T) {
 	}
 }
 
-// TestAES_Encryption_WithAdditionalData tests encryption with AAD
-func TestAES_Encryption_WithAdditionalData(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_Encryption_WithAdditionalData tests encryption with AAD
+func TestSymmetric_Encryption_WithAdditionalData(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
-	attrs := createAESAttrs("test-aad", 256, types.SymmetricAES256GCM)
+	attrs := createSymmetricAttrs("test-aad", 256, types.SymmetricAES256GCM)
 
 	if _, err := be.GenerateSymmetricKey(attrs); err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
@@ -193,12 +190,12 @@ func TestAES_Encryption_WithAdditionalData(t *testing.T) {
 	}
 }
 
-// TestAES_Encryption_LargeData tests encryption of large data
-func TestAES_Encryption_LargeData(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_Encryption_LargeData tests encryption of large data
+func TestSymmetric_Encryption_LargeData(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
-	attrs := createAESAttrs("test-large", 256, types.SymmetricAES256GCM)
+	attrs := createSymmetricAttrs("test-large", 256, types.SymmetricAES256GCM)
 
 	if _, err := be.GenerateSymmetricKey(attrs); err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
@@ -230,13 +227,13 @@ func TestAES_Encryption_LargeData(t *testing.T) {
 	}
 }
 
-// TestAES_PasswordProtection tests password-protected keys
-func TestAES_PasswordProtection(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_PasswordProtection tests password-protected keys
+func TestSymmetric_PasswordProtection(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
 	password := backend.StaticPassword("test-password-123")
-	attrs := createAESAttrs("test-password", 256, types.SymmetricAES256GCM)
+	attrs := createSymmetricAttrs("test-password", 256, types.SymmetricAES256GCM)
 	attrs.Password = password
 
 	// Generate password-protected key
@@ -259,7 +256,7 @@ func TestAES_PasswordProtection(t *testing.T) {
 	}
 
 	// Try to retrieve with wrong password
-	wrongPasswordAttrs := createAESAttrs("test-password", 256, types.SymmetricAES256GCM)
+	wrongPasswordAttrs := createSymmetricAttrs("test-password", 256, types.SymmetricAES256GCM)
 	wrongPasswordAttrs.Password = backend.StaticPassword("wrong-password")
 
 	_, err = be.GetSymmetricKey(wrongPasswordAttrs)
@@ -268,12 +265,12 @@ func TestAES_PasswordProtection(t *testing.T) {
 	}
 }
 
-// TestAES_KeyRotation tests key rotation functionality
-func TestAES_KeyRotation(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_KeyRotation tests key rotation functionality
+func TestSymmetric_KeyRotation(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
-	attrs := createAESAttrs("test-rotation", 256, types.SymmetricAES256GCM)
+	attrs := createSymmetricAttrs("test-rotation", 256, types.SymmetricAES256GCM)
 
 	// Generate initial key
 	originalKey, err := be.GenerateSymmetricKey(attrs)
@@ -307,15 +304,15 @@ func TestAES_KeyRotation(t *testing.T) {
 	}
 }
 
-// TestAES_ListKeys tests key listing functionality
-func TestAES_ListKeys(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_ListKeys tests key listing functionality
+func TestSymmetric_ListKeys(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
 	// Create multiple keys
 	keyNames := []string{"key1", "key2", "key3"}
 	for _, name := range keyNames {
-		attrs := createAESAttrs(name, 256, types.SymmetricAES256GCM)
+		attrs := createSymmetricAttrs(name, 256, types.SymmetricAES256GCM)
 		if _, err := be.GenerateSymmetricKey(attrs); err != nil {
 			t.Fatalf("GenerateSymmetricKey failed for %s: %v", name, err)
 		}
@@ -332,8 +329,8 @@ func TestAES_ListKeys(t *testing.T) {
 	}
 }
 
-// TestAES_ImportExport_RSA_OAEP tests import/export with RSA-OAEP wrapping
-func TestAES_ImportExport_RSA_OAEP(t *testing.T) {
+// TestSymmetric_ImportExport_RSA_OAEP tests import/export with RSA-OAEP wrapping
+func TestSymmetric_ImportExport_RSA_OAEP(t *testing.T) {
 	algorithms := []backend.WrappingAlgorithm{
 		backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
 		backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
@@ -341,7 +338,7 @@ func TestAES_ImportExport_RSA_OAEP(t *testing.T) {
 
 	for _, algorithm := range algorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
-			be, _ := createAESBackend(t)
+			be, _ := createSymmetricBackend(t)
 			defer func() { _ = be.Close() }()
 
 			exportBackend, ok := be.(backend.ImportExportBackend)
@@ -350,7 +347,7 @@ func TestAES_ImportExport_RSA_OAEP(t *testing.T) {
 			}
 
 			// Generate a key to export
-			attrs := createAESAttrs("test-export-"+string(algorithm), 256, types.SymmetricAES256GCM)
+			attrs := createSymmetricAttrs("test-export-"+string(algorithm), 256, types.SymmetricAES256GCM)
 			originalKey, err := be.GenerateSymmetricKey(attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey failed: %v", err)
@@ -374,7 +371,7 @@ func TestAES_ImportExport_RSA_OAEP(t *testing.T) {
 			}
 
 			// Import the key back
-			importAttrs := createAESAttrs("test-import-"+string(algorithm), 256, types.SymmetricAES256GCM)
+			importAttrs := createSymmetricAttrs("test-import-"+string(algorithm), 256, types.SymmetricAES256GCM)
 			if err := exportBackend.ImportKey(importAttrs, wrapped); err != nil {
 				t.Fatalf("ImportKey failed: %v", err)
 			}
@@ -393,8 +390,8 @@ func TestAES_ImportExport_RSA_OAEP(t *testing.T) {
 	}
 }
 
-// TestAES_ImportExport_RSA_AES_KeyWrap tests import/export with RSA-AES key wrapping
-func TestAES_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
+// TestSymmetric_ImportExport_RSA_AES_KeyWrap tests import/export with RSA-AES key wrapping
+func TestSymmetric_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 	algorithms := []backend.WrappingAlgorithm{
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256,
@@ -402,7 +399,7 @@ func TestAES_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 
 	for _, algorithm := range algorithms {
 		t.Run(string(algorithm), func(t *testing.T) {
-			be, _ := createAESBackend(t)
+			be, _ := createSymmetricBackend(t)
 			defer func() { _ = be.Close() }()
 
 			exportBackend, ok := be.(backend.ImportExportBackend)
@@ -411,7 +408,7 @@ func TestAES_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 			}
 
 			// Generate a key to export
-			attrs := createAESAttrs("test-export-wrap-"+string(algorithm), 256, types.SymmetricAES256GCM)
+			attrs := createSymmetricAttrs("test-export-wrap-"+string(algorithm), 256, types.SymmetricAES256GCM)
 			originalKey, err := be.GenerateSymmetricKey(attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey failed: %v", err)
@@ -431,7 +428,7 @@ func TestAES_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 			}
 
 			// Import the key back
-			importAttrs := createAESAttrs("test-import-wrap-"+string(algorithm), 256, types.SymmetricAES256GCM)
+			importAttrs := createSymmetricAttrs("test-import-wrap-"+string(algorithm), 256, types.SymmetricAES256GCM)
 			if err := exportBackend.ImportKey(importAttrs, wrapped); err != nil {
 				t.Fatalf("ImportKey failed: %v", err)
 			}
@@ -450,8 +447,8 @@ func TestAES_ImportExport_RSA_AES_KeyWrap(t *testing.T) {
 	}
 }
 
-// TestAES_ImportExport_AllKeySizes tests import/export for all key sizes
-func TestAES_ImportExport_AllKeySizes(t *testing.T) {
+// TestSymmetric_ImportExport_AllKeySizes tests import/export for all key sizes
+func TestSymmetric_ImportExport_AllKeySizes(t *testing.T) {
 	keySizes := []struct {
 		size      int
 		algorithm types.SymmetricAlgorithm
@@ -463,12 +460,12 @@ func TestAES_ImportExport_AllKeySizes(t *testing.T) {
 
 	for _, ks := range keySizes {
 		t.Run(string(ks.algorithm), func(t *testing.T) {
-			be, _ := createAESBackend(t)
+			be, _ := createSymmetricBackend(t)
 			defer func() { _ = be.Close() }()
 
 			exportBackend := be.(backend.ImportExportBackend)
 
-			attrs := createAESAttrs("test-size-export", ks.size, ks.algorithm)
+			attrs := createSymmetricAttrs("test-size-export", ks.size, ks.algorithm)
 			originalKey, err := be.GenerateSymmetricKey(attrs)
 			if err != nil {
 				t.Fatalf("GenerateSymmetricKey failed: %v", err)
@@ -485,7 +482,7 @@ func TestAES_ImportExport_AllKeySizes(t *testing.T) {
 				t.Fatalf("DeleteKey failed: %v", err)
 			}
 
-			importAttrs := createAESAttrs("test-size-import", ks.size, ks.algorithm)
+			importAttrs := createSymmetricAttrs("test-size-import", ks.size, ks.algorithm)
 			if err := exportBackend.ImportKey(importAttrs, wrapped); err != nil {
 				t.Fatalf("ImportKey failed: %v", err)
 			}
@@ -503,9 +500,9 @@ func TestAES_ImportExport_AllKeySizes(t *testing.T) {
 	}
 }
 
-// TestAES_Capabilities tests backend capabilities
-func TestAES_Capabilities(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_Capabilities tests backend capabilities
+func TestSymmetric_Capabilities(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
 	caps := be.Capabilities()
@@ -514,13 +511,13 @@ func TestAES_Capabilities(t *testing.T) {
 		t.Error("Expected Keys capability to be true")
 	}
 	if caps.HardwareBacked {
-		t.Error("Expected HardwareBacked to be false for AES backend")
+		t.Error("Expected HardwareBacked to be false for symmetric backend")
 	}
 	if caps.Signing {
-		t.Error("Expected Signing to be false for AES backend")
+		t.Error("Expected Signing to be false for symmetric backend")
 	}
 	if caps.Decryption {
-		t.Error("Expected Decryption to be false for AES backend")
+		t.Error("Expected Decryption to be false for symmetric backend")
 	}
 	if !caps.SymmetricEncryption {
 		t.Error("Expected SymmetricEncryption to be true")
@@ -530,9 +527,9 @@ func TestAES_Capabilities(t *testing.T) {
 	}
 }
 
-// TestAES_ErrorHandling_InvalidAttributes tests error handling
-func TestAES_ErrorHandling_InvalidAttributes(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_ErrorHandling_InvalidAttributes tests error handling
+func TestSymmetric_ErrorHandling_InvalidAttributes(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
 	// Test with asymmetric algorithm
@@ -552,12 +549,12 @@ func TestAES_ErrorHandling_InvalidAttributes(t *testing.T) {
 	}
 }
 
-// TestAES_ErrorHandling_NonExistentKey tests error when key doesn't exist
-func TestAES_ErrorHandling_NonExistentKey(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_ErrorHandling_NonExistentKey tests error when key doesn't exist
+func TestSymmetric_ErrorHandling_NonExistentKey(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
-	attrs := createAESAttrs("nonexistent", 256, types.SymmetricAES256GCM)
+	attrs := createSymmetricAttrs("nonexistent", 256, types.SymmetricAES256GCM)
 
 	_, err := be.GetSymmetricKey(attrs)
 	if err != backend.ErrKeyNotFound {
@@ -570,12 +567,12 @@ func TestAES_ErrorHandling_NonExistentKey(t *testing.T) {
 	}
 }
 
-// TestAES_ErrorHandling_TamperedCiphertext tests authentication failure
-func TestAES_ErrorHandling_TamperedCiphertext(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_ErrorHandling_TamperedCiphertext tests authentication failure
+func TestSymmetric_ErrorHandling_TamperedCiphertext(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
-	attrs := createAESAttrs("test-tamper", 256, types.SymmetricAES256GCM)
+	attrs := createSymmetricAttrs("test-tamper", 256, types.SymmetricAES256GCM)
 
 	if _, err := be.GenerateSymmetricKey(attrs); err != nil {
 		t.Fatalf("GenerateSymmetricKey failed: %v", err)
@@ -604,16 +601,16 @@ func TestAES_ErrorHandling_TamperedCiphertext(t *testing.T) {
 	}
 }
 
-// TestAES_ErrorHandling_ClosedBackend tests operations on closed backend
-func TestAES_ErrorHandling_ClosedBackend(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_ErrorHandling_ClosedBackend tests operations on closed backend
+func TestSymmetric_ErrorHandling_ClosedBackend(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 
 	// Close the backend
 	if err := be.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 
-	attrs := createAESAttrs("test-closed", 256, types.SymmetricAES256GCM)
+	attrs := createSymmetricAttrs("test-closed", 256, types.SymmetricAES256GCM)
 
 	// All operations should fail
 	_, err := be.GenerateSymmetricKey(attrs)
@@ -632,9 +629,9 @@ func TestAES_ErrorHandling_ClosedBackend(t *testing.T) {
 	}
 }
 
-// TestAES_ConcurrentOperations tests thread-safety
-func TestAES_ConcurrentOperations(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_ConcurrentOperations tests thread-safety
+func TestSymmetric_ConcurrentOperations(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
 	const numGoroutines = 10
@@ -645,7 +642,7 @@ func TestAES_ConcurrentOperations(t *testing.T) {
 		go func(id int) {
 			defer func() { done <- true }()
 
-			attrs := createAESAttrs(
+			attrs := createSymmetricAttrs(
 				"concurrent-key-"+string(rune(id)),
 				256,
 				types.SymmetricAES256GCM,
@@ -674,12 +671,12 @@ func TestAES_ConcurrentOperations(t *testing.T) {
 	}
 }
 
-// TestAES_Type tests backend type
-func TestAES_Type(t *testing.T) {
-	be, _ := createAESBackend(t)
+// TestSymmetric_Type tests backend type
+func TestSymmetric_Type(t *testing.T) {
+	be, _ := createSymmetricBackend(t)
 	defer func() { _ = be.Close() }()
 
-	if be.Type() != types.BackendTypeAES {
-		t.Errorf("Expected backend type %s, got %s", types.BackendTypeAES, be.Type())
+	if be.Type() != types.BackendTypeSymmetric {
+		t.Errorf("Expected backend type %s, got %s", types.BackendTypeSymmetric, be.Type())
 	}
 }

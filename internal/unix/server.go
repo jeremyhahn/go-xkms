@@ -182,6 +182,24 @@ func (s *Server) setupRoutes() {
 		// Import/Export operations
 		r.Post("/keys/import", handlers.ImportKeyHandler)
 		r.Get("/keys/{id}/export", handlers.ExportKeyHandler)
+
+		// FROST threshold signature endpoints
+		r.Route("/frost", func(r chi.Router) {
+			// Key management
+			r.Post("/keys", handlers.FrostGenerateKeyHandler)
+			r.Post("/keys/import", handlers.FrostImportKeyHandler)
+			r.Get("/keys", handlers.FrostListKeysHandler)
+			r.Get("/keys/{id}", handlers.FrostGetKeyHandler)
+			r.Delete("/keys/{id}", handlers.FrostDeleteKeyHandler)
+
+			// Signing operations
+			r.Post("/keys/{id}/nonces", handlers.FrostGenerateNoncesHandler)
+			r.Post("/keys/{id}/sign", handlers.FrostSignRoundHandler)
+
+			// Aggregation and verification
+			r.Post("/aggregate", handlers.FrostAggregateHandler)
+			r.Post("/verify", handlers.FrostVerifyHandler)
+		})
 	})
 }
 

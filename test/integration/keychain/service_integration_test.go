@@ -124,7 +124,7 @@ func TestServiceIntegration_KeyGeneration(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "test-rsa-service",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -146,7 +146,7 @@ func TestServiceIntegration_KeyGeneration(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "test-ecdsa-service",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.ECDSA,
 			ECCAttributes: &types.ECCAttributes{
 				Curve: elliptic.P256(),
@@ -163,7 +163,7 @@ func TestServiceIntegration_KeyGeneration(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "test-ed25519-service",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.Ed25519,
 		}
 
@@ -182,7 +182,7 @@ func TestServiceIntegration_KeyRetrieval(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "test-retrieve-service",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -236,7 +236,7 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "test-cert-service",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -266,7 +266,7 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "test-delete-cert",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -303,7 +303,7 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 		attrs1 := &types.KeyAttributes{
 			CN:           "test-list-cert-1",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -320,7 +320,7 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 		attrs2 := &types.KeyAttributes{
 			CN:           "test-list-cert-2",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -361,7 +361,7 @@ func TestServiceIntegration_ListKeys(t *testing.T) {
 	attrs1 := &types.KeyAttributes{
 		CN:           "test-list-key-1",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -375,7 +375,7 @@ func TestServiceIntegration_ListKeys(t *testing.T) {
 	attrs2 := &types.KeyAttributes{
 		CN:           "test-list-key-2",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,

@@ -38,13 +38,14 @@ type ListBackendsResponse struct {
 
 // GenerateKeyRequest represents a key generation request.
 type GenerateKeyRequest struct {
-	KeyID     string `json:"key_id"`
-	Backend   string `json:"backend,omitempty"` // Optional, defaults to default backend
-	KeyType   string `json:"key_type"`          // "rsa", "ecdsa", "ed25519", "aes"
-	KeySize   int    `json:"key_size,omitempty"`
-	Curve     string `json:"curve,omitempty"`
-	Hash      string `json:"hash,omitempty"`
-	Algorithm string `json:"algorithm,omitempty"` // "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+	KeyID      string `json:"key_id"`
+	Backend    string `json:"backend,omitempty"` // Optional, defaults to default backend
+	KeyType    string `json:"key_type"`          // "rsa", "ecdsa", "ed25519", "symmetric"
+	KeySize    int    `json:"key_size,omitempty"`
+	Curve      string `json:"curve,omitempty"`
+	Hash       string `json:"hash,omitempty"`
+	Algorithm  string `json:"algorithm,omitempty"` // "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+	Exportable bool   `json:"exportable,omitempty"`
 }
 
 // GenerateKeyResponse represents the response for key generation.
@@ -180,9 +181,20 @@ type GetCertResponse struct {
 	CertificatePEM string `json:"certificate_pem"`
 }
 
+// CertificateInfo represents information about a stored certificate.
+type CertificateInfo struct {
+	KeyID          string `json:"key_id"`
+	Subject        string `json:"subject,omitempty"`
+	Issuer         string `json:"issuer,omitempty"`
+	NotBefore      string `json:"not_before,omitempty"`
+	NotAfter       string `json:"not_after,omitempty"`
+	SerialNumber   string `json:"serial_number,omitempty"`
+	CertificatePEM string `json:"certificate_pem,omitempty"`
+}
+
 // ListCertsResponse represents the response for listing certificates.
 type ListCertsResponse struct {
-	Certificates []string `json:"certificates"`
+	Certificates []CertificateInfo `json:"certificates"`
 }
 
 // CertExistsResponse represents the response for checking certificate existence.
@@ -215,7 +227,7 @@ type GetTLSCertificateResponse struct {
 type GetImportParametersRequest struct {
 	Backend    string `json:"backend"`
 	KeyID      string `json:"key_id"`
-	KeyType    string `json:"key_type"`               // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType    string `json:"key_type"`               // "rsa", "ecdsa", "ed25519", "symmetric"
 	Algorithm  string `json:"algorithm"`              // Wrapping algorithm
 	KeySize    int    `json:"key_size,omitempty"`     // For RSA keys
 	Curve      string `json:"curve,omitempty"`        // For ECDSA keys
@@ -263,7 +275,7 @@ type UnwrapKeyResponse struct {
 type ImportKeyRequest struct {
 	Backend     string `json:"backend"`
 	KeyID       string `json:"key_id"`
-	KeyType     string `json:"key_type"` // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType     string `json:"key_type"` // "rsa", "ecdsa", "ed25519", "symmetric"
 	WrappedKey  []byte `json:"wrapped_key"`
 	ImportToken []byte `json:"import_token,omitempty"`
 	Algorithm   string `json:"algorithm"`              // Wrapping algorithm
@@ -293,7 +305,7 @@ type CopyKeyRequest struct {
 	SourceKeyID   string `json:"source_key_id"`
 	DestBackend   string `json:"dest_backend"` // Destination backend name
 	DestKeyID     string `json:"dest_key_id"`
-	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "symmetric"
 	Algorithm     string `json:"algorithm"` // Wrapping algorithm
 	KeySize       int    `json:"key_size,omitempty"`
 	Curve         string `json:"curve,omitempty"`

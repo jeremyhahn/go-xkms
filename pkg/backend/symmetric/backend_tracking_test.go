@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package aes
+package symmetric
 
 import (
 	"crypto/rand"
@@ -23,7 +23,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
 
-func TestAESBackend_TrackingEnabled(t *testing.T) {
+func TestBackend_TrackingEnabled(t *testing.T) {
 	// Create backend with default tracker (memory-based)
 	storage := storage.New()
 	config := &Config{
@@ -42,9 +42,6 @@ func TestAESBackend_TrackingEnabled(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: nil, // Use defaults
 	}
 
@@ -79,8 +76,8 @@ func TestAESBackend_TrackingEnabled(t *testing.T) {
 	}
 
 	// Verify tracking recorded the nonces
-	aesBackend := b.(*AESBackend)
-	tracker := aesBackend.GetTracker()
+	symmetricBackend := b.(*Backend)
+	tracker := symmetricBackend.GetTracker()
 	keyID := attrs.ID()
 
 	// Check bytes encrypted
@@ -104,7 +101,7 @@ func TestAESBackend_TrackingEnabled(t *testing.T) {
 	}
 }
 
-func TestAESBackend_NonceReuse(t *testing.T) {
+func TestBackend_NonceReuse(t *testing.T) {
 	// Create backend
 	storage := storage.New()
 	config := &Config{
@@ -123,9 +120,6 @@ func TestAESBackend_NonceReuse(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      true,
 			BytesTracking:      false,
@@ -173,7 +167,7 @@ func TestAESBackend_NonceReuse(t *testing.T) {
 	}
 }
 
-func TestAESBackend_BytesLimit(t *testing.T) {
+func TestBackend_BytesLimit(t *testing.T) {
 	// Create backend
 	storage := storage.New()
 	config := &Config{
@@ -193,9 +187,6 @@ func TestAESBackend_BytesLimit(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      false,
 			BytesTracking:      true,
@@ -242,7 +233,7 @@ func TestAESBackend_BytesLimit(t *testing.T) {
 	}
 }
 
-func TestAESBackend_TrackingDisabled(t *testing.T) {
+func TestBackend_TrackingDisabled(t *testing.T) {
 	// Create backend
 	storage := storage.New()
 	config := &Config{
@@ -261,9 +252,6 @@ func TestAESBackend_TrackingDisabled(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      false,
 			BytesTracking:      false,
@@ -305,7 +293,7 @@ func TestAESBackend_TrackingDisabled(t *testing.T) {
 	}
 }
 
-func TestAESBackend_KeyRotation(t *testing.T) {
+func TestBackend_KeyRotation(t *testing.T) {
 	// Create backend
 	storage := storage.New()
 	config := &Config{
@@ -324,9 +312,6 @@ func TestAESBackend_KeyRotation(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      true,
 			BytesTracking:      true,
@@ -354,8 +339,8 @@ func TestAESBackend_KeyRotation(t *testing.T) {
 	}
 
 	// Verify bytes were tracked
-	aesBackend := b.(*AESBackend)
-	tracker := aesBackend.GetTracker()
+	symmetricBackend := b.(*Backend)
+	tracker := symmetricBackend.GetTracker()
 	keyID := attrs.ID()
 
 	total, _ := tracker.GetBytesEncrypted(keyID)
@@ -393,7 +378,7 @@ func TestAESBackend_KeyRotation(t *testing.T) {
 	}
 }
 
-func TestAESBackend_CustomTracker(t *testing.T) {
+func TestBackend_CustomTracker(t *testing.T) {
 	// Create custom tracker
 	customTracker := backend.NewMemoryAEADTracker()
 
@@ -411,8 +396,8 @@ func TestAESBackend_CustomTracker(t *testing.T) {
 	defer func() { _ = b.Close() }()
 
 	// Verify backend uses custom tracker
-	aesBackend := b.(*AESBackend)
-	if aesBackend.GetTracker() != customTracker {
+	symmetricBackend := b.(*Backend)
+	if symmetricBackend.GetTracker() != customTracker {
 		t.Error("Backend should use custom tracker")
 	}
 
@@ -422,9 +407,6 @@ func TestAESBackend_CustomTracker(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err = b.GenerateSymmetricKey(attrs)
@@ -456,34 +438,31 @@ func TestAESBackend_CustomTracker(t *testing.T) {
 	}
 }
 
-func BenchmarkAESBackend_EncryptWithTracking(b *testing.B) {
+func BenchmarkBackend_EncryptWithTracking(b *testing.B) {
 	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
 
-	aesBackend, err := NewBackend(config)
+	symmetricBackend, err := NewBackend(config)
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer func() { _ = aesBackend.Close() }()
+	defer func() { _ = symmetricBackend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "bench-tracking",
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
-	_, err = aesBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
 	if err != nil {
 		b.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := aesBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symmetricBackend.SymmetricEncrypter(attrs)
 	if err != nil {
 		b.Fatalf("Failed to get encrypter: %v", err)
 	}
@@ -500,26 +479,23 @@ func BenchmarkAESBackend_EncryptWithTracking(b *testing.B) {
 	}
 }
 
-func BenchmarkAESBackend_EncryptWithoutTracking(b *testing.B) {
+func BenchmarkBackend_EncryptWithoutTracking(b *testing.B) {
 	storage := storage.New()
 	config := &Config{
 		KeyStorage: storage,
 	}
 
-	aesBackend, err := NewBackend(config)
+	symmetricBackend, err := NewBackend(config)
 	if err != nil {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
-	defer func() { _ = aesBackend.Close() }()
+	defer func() { _ = symmetricBackend.Close() }()
 
 	attrs := &types.KeyAttributes{
 		CN:                 "bench-no-tracking",
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      false,
 			BytesTracking:      false,
@@ -527,12 +503,12 @@ func BenchmarkAESBackend_EncryptWithoutTracking(b *testing.B) {
 		},
 	}
 
-	_, err = aesBackend.GenerateSymmetricKey(attrs)
+	_, err = symmetricBackend.GenerateSymmetricKey(attrs)
 	if err != nil {
 		b.Fatalf("Failed to generate key: %v", err)
 	}
 
-	encrypter, err := aesBackend.SymmetricEncrypter(attrs)
+	encrypter, err := symmetricBackend.SymmetricEncrypter(attrs)
 	if err != nil {
 		b.Fatalf("Failed to get encrypter: %v", err)
 	}

@@ -38,8 +38,8 @@ func TestGetKeyByID(t *testing.T) {
 		errorType   error
 	}{
 		{
-			name:  "valid pkcs8 RSA signing key retrieval",
-			keyID: "pkcs8:signing:rsa:test-rsa-key",
+			name:  "valid software RSA signing key retrieval",
+			keyID: "software:signing:rsa:test-rsa-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Generate a real RSA key for testing
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -53,8 +53,8 @@ func TestGetKeyByID(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:  "valid pkcs8 ECDSA P-256 signing key retrieval",
-			keyID: "pkcs8:signing:ecdsa-p256:test-ecdsa-key",
+			name:  "valid software ECDSA P-256 signing key retrieval",
+			keyID: "software:signing:ecdsa-p256:test-ecdsa-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Generate a real ECDSA key for testing
 				ecKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -69,7 +69,7 @@ func TestGetKeyByID(t *testing.T) {
 		},
 		{
 			name:  "key not found",
-			keyID: "pkcs8:signing:rsa:nonexistent-key",
+			keyID: "software:signing:rsa:nonexistent-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				mb.GetKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 					return nil, keychain.ErrKeyNotFound
@@ -80,14 +80,14 @@ func TestGetKeyByID(t *testing.T) {
 		},
 		{
 			name:        "invalid key ID format - only 2 fields",
-			keyID:       "pkcs8:test-key",
+			keyID:       "software:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 			errorType:   keychain.ErrInvalidKeyIDFormat,
 		},
 		{
 			name:        "invalid key ID format - only 3 fields",
-			keyID:       "pkcs8:signing:test-key",
+			keyID:       "software:signing:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 			errorType:   keychain.ErrInvalidKeyIDFormat,
@@ -110,25 +110,25 @@ func TestGetKeyByID(t *testing.T) {
 		},
 		{
 			name:        "invalid key type",
-			keyID:       "pkcs8:invalid-type:rsa:test-key",
+			keyID:       "software:invalid-type:rsa:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
 		{
 			name:        "invalid algorithm",
-			keyID:       "pkcs8:signing:invalid-algo:test-key",
+			keyID:       "software:signing:invalid-algo:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
 		{
 			name:        "invalid ECDSA curve",
-			keyID:       "pkcs8:signing:ecdsa-invalid:test-key",
+			keyID:       "software:signing:ecdsa-invalid:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
 		{
-			name:  "valid pkcs8 ECDSA P-384 signing key retrieval",
-			keyID: "pkcs8:signing:ecdsa-p384:test-ecdsa-p384-key",
+			name:  "valid software ECDSA P-384 signing key retrieval",
+			keyID: "software:signing:ecdsa-p384:test-ecdsa-p384-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Generate a real ECDSA P-384 key for testing
 				ecKey, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
@@ -142,8 +142,8 @@ func TestGetKeyByID(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:  "valid pkcs8 ECDSA P-521 signing key retrieval",
-			keyID: "pkcs8:signing:ecdsa-p521:test-ecdsa-p521-key",
+			name:  "valid software ECDSA P-521 signing key retrieval",
+			keyID: "software:signing:ecdsa-p521:test-ecdsa-p521-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Generate a real ECDSA P-521 key for testing
 				ecKey, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
@@ -157,8 +157,8 @@ func TestGetKeyByID(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:  "valid pkcs8 secret AES-128-GCM key retrieval",
-			keyID: "pkcs8:secret:aes128-gcm:test-aes-key",
+			name:  "valid software secret AES-128-GCM key retrieval",
+			keyID: "software:secret:aes128-gcm:test-aes-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Return a mock symmetric key (byte slice)
 				mb.GetKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
@@ -171,8 +171,8 @@ func TestGetKeyByID(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:  "valid pkcs8 secret AES-192-GCM key retrieval",
-			keyID: "pkcs8:secret:aes192-gcm:test-aes-192-key",
+			name:  "valid software secret AES-192-GCM key retrieval",
+			keyID: "software:secret:aes192-gcm:test-aes-192-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Return a mock symmetric key (byte slice)
 				mb.GetKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
@@ -185,8 +185,8 @@ func TestGetKeyByID(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:  "valid pkcs8 secret AES-256-GCM key retrieval",
-			keyID: "pkcs8:secret:aes256-gcm:test-aes-256-key",
+			name:  "valid software secret AES-256-GCM key retrieval",
+			keyID: "software:secret:aes256-gcm:test-aes-256-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Return a mock symmetric key (byte slice)
 				mb.GetKeyFunc = func(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
@@ -237,7 +237,7 @@ func TestGetSignerByID(t *testing.T) {
 	}{
 		{
 			name:  "valid RSA signer retrieval",
-			keyID: "pkcs8:signing:rsa:test-signing-key",
+			keyID: "software:signing:rsa:test-signing-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Generate a real RSA key for testing
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -252,7 +252,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:  "signer not found",
-			keyID: "pkcs8:signing:rsa:nonexistent-signer",
+			keyID: "software:signing:rsa:nonexistent-signer",
 			setupMock: func(mb *backmocks.MockBackend) {
 				mb.SignerFunc = func(attrs *types.KeyAttributes) (crypto.Signer, error) {
 					return nil, keychain.ErrKeyNotFound
@@ -274,7 +274,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:        "invalid key ID format - only 2 fields",
-			keyID:       "pkcs8:test-key",
+			keyID:       "software:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 			errorType:   keychain.ErrInvalidKeyIDFormat,
@@ -290,7 +290,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:  "valid ECDSA P-256 signer retrieval",
-			keyID: "pkcs8:signing:ecdsa-p256:test-ecdsa-signer",
+			keyID: "software:signing:ecdsa-p256:test-ecdsa-signer",
 			setupMock: func(mb *backmocks.MockBackend) {
 				ecKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 				mb.SignerFunc = func(attrs *types.KeyAttributes) (crypto.Signer, error) {
@@ -304,7 +304,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:  "valid ECDSA P-384 signer retrieval",
-			keyID: "pkcs8:signing:ecdsa-p384:test-ecdsa-p384-signer",
+			keyID: "software:signing:ecdsa-p384:test-ecdsa-p384-signer",
 			setupMock: func(mb *backmocks.MockBackend) {
 				ecKey, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 				mb.SignerFunc = func(attrs *types.KeyAttributes) (crypto.Signer, error) {
@@ -318,7 +318,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:  "valid ECDSA P-521 signer retrieval",
-			keyID: "pkcs8:signing:ecdsa-p521:test-ecdsa-p521-signer",
+			keyID: "software:signing:ecdsa-p521:test-ecdsa-p521-signer",
 			setupMock: func(mb *backmocks.MockBackend) {
 				ecKey, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 				mb.SignerFunc = func(attrs *types.KeyAttributes) (crypto.Signer, error) {
@@ -332,7 +332,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:  "valid AES-128-GCM signer retrieval",
-			keyID: "pkcs8:secret:aes128-gcm:test-aes128-signer",
+			keyID: "software:secret:aes128-gcm:test-aes128-signer",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Mock signer that returns a signer (not typical but tests the code path)
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -347,7 +347,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:  "valid AES-192-GCM signer retrieval",
-			keyID: "pkcs8:secret:aes192-gcm:test-aes192-signer",
+			keyID: "software:secret:aes192-gcm:test-aes192-signer",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.SignerFunc = func(attrs *types.KeyAttributes) (crypto.Signer, error) {
@@ -361,7 +361,7 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:  "valid AES-256-GCM signer retrieval",
-			keyID: "pkcs8:secret:aes256-gcm:test-aes256-signer",
+			keyID: "software:secret:aes256-gcm:test-aes256-signer",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.SignerFunc = func(attrs *types.KeyAttributes) (crypto.Signer, error) {
@@ -375,19 +375,19 @@ func TestGetSignerByID(t *testing.T) {
 		},
 		{
 			name:        "invalid key type for signer",
-			keyID:       "pkcs8:invalid:rsa:test-key",
+			keyID:       "software:invalid:rsa:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
 		{
 			name:        "invalid algorithm for signer",
-			keyID:       "pkcs8:signing:invalid-algo:test-key",
+			keyID:       "software:signing:invalid-algo:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
 		{
 			name:        "invalid ECDSA curve for signer",
-			keyID:       "pkcs8:signing:ecdsa-p999:test-key",
+			keyID:       "software:signing:ecdsa-p999:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
@@ -434,7 +434,7 @@ func TestGetDecrypterByID(t *testing.T) {
 	}{
 		{
 			name:  "valid RSA decrypter retrieval",
-			keyID: "pkcs8:encryption:rsa:test-rsa-key",
+			keyID: "software:encryption:rsa:test-rsa-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				// Generate a real RSA key for testing
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -449,7 +449,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:  "decrypter not found",
-			keyID: "pkcs8:encryption:rsa:nonexistent-key",
+			keyID: "software:encryption:rsa:nonexistent-key",
 			setupMock: func(mb *backmocks.MockBackend) {
 				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 					return nil, keychain.ErrKeyNotFound
@@ -471,7 +471,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:        "invalid key ID format - only 2 fields",
-			keyID:       "pkcs8:encryption-key",
+			keyID:       "software:encryption-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 			errorType:   keychain.ErrInvalidKeyIDFormat,
@@ -487,7 +487,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:  "valid ECDSA P-256 decrypter retrieval",
-			keyID: "pkcs8:encryption:ecdsa-p256:test-ecdsa-decrypter",
+			keyID: "software:encryption:ecdsa-p256:test-ecdsa-decrypter",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
@@ -501,7 +501,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:  "valid ECDSA P-384 decrypter retrieval",
-			keyID: "pkcs8:encryption:ecdsa-p384:test-ecdsa-p384-decrypter",
+			keyID: "software:encryption:ecdsa-p384:test-ecdsa-p384-decrypter",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
@@ -515,7 +515,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:  "valid ECDSA P-521 decrypter retrieval",
-			keyID: "pkcs8:encryption:ecdsa-p521:test-ecdsa-p521-decrypter",
+			keyID: "software:encryption:ecdsa-p521:test-ecdsa-p521-decrypter",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
@@ -529,7 +529,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:  "valid AES-128-GCM decrypter retrieval",
-			keyID: "pkcs8:secret:aes128-gcm:test-aes128-decrypter",
+			keyID: "software:secret:aes128-gcm:test-aes128-decrypter",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
@@ -543,7 +543,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:  "valid AES-192-GCM decrypter retrieval",
-			keyID: "pkcs8:secret:aes192-gcm:test-aes192-decrypter",
+			keyID: "software:secret:aes192-gcm:test-aes192-decrypter",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
@@ -557,7 +557,7 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:  "valid AES-256-GCM decrypter retrieval",
-			keyID: "pkcs8:secret:aes256-gcm:test-aes256-decrypter",
+			keyID: "software:secret:aes256-gcm:test-aes256-decrypter",
 			setupMock: func(mb *backmocks.MockBackend) {
 				rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 				mb.DecrypterFunc = func(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
@@ -571,19 +571,19 @@ func TestGetDecrypterByID(t *testing.T) {
 		},
 		{
 			name:        "invalid key type for decrypter",
-			keyID:       "pkcs8:invalid:rsa:test-key",
+			keyID:       "software:invalid:rsa:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
 		{
 			name:        "invalid algorithm for decrypter",
-			keyID:       "pkcs8:encryption:invalid-algo:test-key",
+			keyID:       "software:encryption:invalid-algo:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
 		{
 			name:        "invalid ECDSA curve for decrypter",
-			keyID:       "pkcs8:encryption:ecdsa-p111:test-key",
+			keyID:       "software:encryption:ecdsa-p111:test-key",
 			setupMock:   func(mb *backmocks.MockBackend) {},
 			expectError: true,
 		},
@@ -650,7 +650,7 @@ func TestKeyID_IntegrationFlow(t *testing.T) {
 		return nil, keychain.ErrKeyNotFound
 	}
 
-	keyID := "pkcs8:signing:rsa:integration-test-key"
+	keyID := "software:signing:rsa:integration-test-key"
 
 	// Test GetKeyByID
 	key, err := ks.GetKeyByID(keyID)
@@ -672,7 +672,7 @@ func TestKeyID_IntegrationFlow(t *testing.T) {
 	assert.NotEmpty(t, signature)
 
 	// Test GetDecrypterByID with encryption key ID
-	encryptKeyID := "pkcs8:encryption:rsa:integration-test-key"
+	encryptKeyID := "software:encryption:rsa:integration-test-key"
 	decrypter, err := ks.GetDecrypterByID(encryptKeyID)
 	require.NoError(t, err)
 	assert.NotNil(t, decrypter)

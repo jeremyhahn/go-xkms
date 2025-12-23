@@ -1396,7 +1396,9 @@ func (tpm *TPM2) EventLog() ([]byte, error) {
 	}
 	bytes, err := os.ReadFile(cleanPath)
 	if err != nil {
-		tpm.logger.Error(err)
+		// Log at debug level - this is expected in simulator environments
+		// where binary_bios_measurements doesn't exist
+		tpm.logger.Debug(err.Error())
 		return nil, err
 	}
 	return bytes, nil

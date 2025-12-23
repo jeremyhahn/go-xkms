@@ -79,7 +79,7 @@ func (m *MockBackend) Type() types.BackendType {
 	if m.TypeFunc != nil {
 		return m.TypeFunc()
 	}
-	return types.BackendTypePKCS8
+	return types.BackendTypeSoftware
 }
 
 // Capabilities returns backend capabilities.
@@ -207,7 +207,7 @@ func (m *MockBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		attrs = append(attrs, &types.KeyAttributes{
 			CN:           cn,
 			KeyType:      types.KeyTypeTLS,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 		})
 	}

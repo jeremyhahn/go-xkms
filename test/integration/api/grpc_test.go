@@ -58,7 +58,7 @@ func (c *GRPCClient) Close() error {
 func TestGRPCHealth(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -84,7 +84,7 @@ func TestGRPCHealth(t *testing.T) {
 func TestGRPCListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -118,7 +118,7 @@ func TestGRPCListBackends(t *testing.T) {
 func TestGRPCGetBackendInfo(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -147,7 +147,7 @@ func TestGRPCGetBackendInfo(t *testing.T) {
 func TestGRPCGenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -198,7 +198,7 @@ func TestGRPCGenerateKey(t *testing.T) {
 			assertEqual(t, "software", resp.Backend, "Backend mismatch")
 			assertEqual(t, tt.keyType, resp.KeyType, "Key type mismatch")
 
-			if tt.keyType != "ed25519" && tt.keyType != "aes" {
+			if tt.keyType != "ed25519" && tt.keyType != "symmetric" {
 				assertNotEmpty(t, resp.PublicKeyPem, "Public key PEM should not be empty")
 			}
 
@@ -226,7 +226,7 @@ func TestGRPCGenerateKey(t *testing.T) {
 func TestGRPCListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -290,7 +290,7 @@ func TestGRPCListKeys(t *testing.T) {
 func TestGRPCGetKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -342,7 +342,7 @@ func TestGRPCGetKey(t *testing.T) {
 func TestGRPCSignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -427,7 +427,7 @@ func TestGRPCSignVerify(t *testing.T) {
 func TestGRPCDeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)
@@ -488,7 +488,7 @@ func TestGRPCDeleteKey(t *testing.T) {
 func TestGRPCErrorHandling(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewGRPCClient(cfg.GRPCAddr)

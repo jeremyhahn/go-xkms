@@ -126,15 +126,15 @@ func (jwk *JWK) IsKeychainBacked() bool {
 
 	// Check if backend is one of the valid keychain backends
 	validBackends := map[string]bool{
-		"pkcs8":    true,
-		"aes":      true,
-		"software": true,
-		"pkcs11":   true,
-		"tpm2":     true,
-		"awskms":   true,
-		"gcpkms":   true,
-		"azurekv":  true,
-		"vault":    true,
+		"pkcs8":     true,
+		"symmetric": true,
+		"software":  true,
+		"pkcs11":    true,
+		"tpm2":      true,
+		"awskms":    true,
+		"gcpkms":    true,
+		"azurekv":   true,
+		"vault":     true,
 	}
 
 	return validBackends[backend]

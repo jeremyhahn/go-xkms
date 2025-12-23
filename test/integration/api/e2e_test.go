@@ -34,7 +34,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 	hasGRPC := isGRPCServerAvailable(t, cfg)
 
 	if !hasREST && !hasGRPC {
-		t.Skip("Server interfaces required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server interfaces required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-workflow-key")
@@ -211,10 +211,10 @@ func TestE2ERESTToGRPC(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isServerAvailable(t, cfg) {
-		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-rest-to-grpc")
@@ -269,10 +269,10 @@ func TestE2EGRPCToREST(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isServerAvailable(t, cfg) {
-		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-grpc-to-rest")
@@ -331,10 +331,10 @@ func TestE2EConcurrentAccess(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isServerAvailable(t, cfg) {
-		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyID := generateUniqueID("e2e-concurrent")
@@ -425,10 +425,10 @@ func TestE2EMultipleKeyTypes(t *testing.T) {
 	cfg := LoadTestConfig()
 
 	if !isServerAvailable(t, cfg) {
-		t.Skip("REST server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("REST server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 	if !isGRPCServerAvailable(t, cfg) {
-		t.Skip("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("gRPC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyTypes := []struct {

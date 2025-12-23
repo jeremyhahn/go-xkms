@@ -50,7 +50,7 @@ type PKCS8Backend struct {
 
 // Type returns the backend type identifier.
 func (b *PKCS8Backend) Type() types.BackendType {
-	return types.BackendTypePKCS8
+	return types.BackendTypeSoftware
 }
 
 // Capabilities returns what features this backend supports.
@@ -245,6 +245,11 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 			algorithmStr = "rsa"   // Default to RSA
 		}
 
+		// Skip symmetric keys - they are handled by the symmetric backend
+		if strings.ToLower(keyTypeStr) == "secret" {
+			continue
+		}
+
 		attr := &types.KeyAttributes{
 			CN:        cn,
 			KeyType:   types.ParseKeyType(keyTypeStr),
@@ -269,7 +274,7 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 			attr.KeyType = types.KeyTypeTLS
 		}
 		if attr.StoreType == "" {
-			attr.StoreType = types.StorePKCS8
+			attr.StoreType = types.StoreSoftware
 		}
 		if attr.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
 			attr.KeyAlgorithm = x509.RSA

@@ -54,6 +54,15 @@ const (
 	KeystoreService_ImportKey_FullMethodName             = "/keychain.v1.KeystoreService/ImportKey"
 	KeystoreService_ExportKey_FullMethodName             = "/keychain.v1.KeystoreService/ExportKey"
 	KeystoreService_CopyKey_FullMethodName               = "/keychain.v1.KeystoreService/CopyKey"
+	KeystoreService_FrostGenerateKey_FullMethodName      = "/keychain.v1.KeystoreService/FrostGenerateKey"
+	KeystoreService_FrostImportKey_FullMethodName        = "/keychain.v1.KeystoreService/FrostImportKey"
+	KeystoreService_FrostListKeys_FullMethodName         = "/keychain.v1.KeystoreService/FrostListKeys"
+	KeystoreService_FrostGetKey_FullMethodName           = "/keychain.v1.KeystoreService/FrostGetKey"
+	KeystoreService_FrostDeleteKey_FullMethodName        = "/keychain.v1.KeystoreService/FrostDeleteKey"
+	KeystoreService_FrostGenerateNonces_FullMethodName   = "/keychain.v1.KeystoreService/FrostGenerateNonces"
+	KeystoreService_FrostSignRound_FullMethodName        = "/keychain.v1.KeystoreService/FrostSignRound"
+	KeystoreService_FrostAggregate_FullMethodName        = "/keychain.v1.KeystoreService/FrostAggregate"
+	KeystoreService_FrostVerify_FullMethodName           = "/keychain.v1.KeystoreService/FrostVerify"
 )
 
 // KeystoreServiceClient is the client API for KeystoreService service.
@@ -126,6 +135,24 @@ type KeystoreServiceClient interface {
 	ExportKey(ctx context.Context, in *ExportKeyRequest, opts ...grpc.CallOption) (*ExportKeyResponse, error)
 	// CopyKey copies a key from one backend to another
 	CopyKey(ctx context.Context, in *CopyKeyRequest, opts ...grpc.CallOption) (*CopyKeyResponse, error)
+	// FrostGenerateKey generates FROST key packages using trusted dealer model
+	FrostGenerateKey(ctx context.Context, in *FrostGenerateKeyRequest, opts ...grpc.CallOption) (*FrostGenerateKeyResponse, error)
+	// FrostImportKey imports a FROST key package
+	FrostImportKey(ctx context.Context, in *FrostImportKeyRequest, opts ...grpc.CallOption) (*FrostImportKeyResponse, error)
+	// FrostListKeys lists all FROST keys
+	FrostListKeys(ctx context.Context, in *FrostListKeysRequest, opts ...grpc.CallOption) (*FrostListKeysResponse, error)
+	// FrostGetKey retrieves information about a specific FROST key
+	FrostGetKey(ctx context.Context, in *FrostGetKeyRequest, opts ...grpc.CallOption) (*FrostGetKeyResponse, error)
+	// FrostDeleteKey deletes a FROST key
+	FrostDeleteKey(ctx context.Context, in *FrostDeleteKeyRequest, opts ...grpc.CallOption) (*FrostDeleteKeyResponse, error)
+	// FrostGenerateNonces generates nonces and commitments for Round 1 of FROST signing
+	FrostGenerateNonces(ctx context.Context, in *FrostGenerateNoncesRequest, opts ...grpc.CallOption) (*FrostGenerateNoncesResponse, error)
+	// FrostSignRound generates a signature share for Round 2 of FROST signing
+	FrostSignRound(ctx context.Context, in *FrostSignRoundRequest, opts ...grpc.CallOption) (*FrostSignRoundResponse, error)
+	// FrostAggregate combines signature shares into a final FROST signature
+	FrostAggregate(ctx context.Context, in *FrostAggregateRequest, opts ...grpc.CallOption) (*FrostAggregateResponse, error)
+	// FrostVerify verifies a FROST signature against the group public key
+	FrostVerify(ctx context.Context, in *FrostVerifyRequest, opts ...grpc.CallOption) (*FrostVerifyResponse, error)
 }
 
 type keystoreServiceClient struct {
@@ -456,6 +483,96 @@ func (c *keystoreServiceClient) CopyKey(ctx context.Context, in *CopyKeyRequest,
 	return out, nil
 }
 
+func (c *keystoreServiceClient) FrostGenerateKey(ctx context.Context, in *FrostGenerateKeyRequest, opts ...grpc.CallOption) (*FrostGenerateKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostGenerateKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostGenerateKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostImportKey(ctx context.Context, in *FrostImportKeyRequest, opts ...grpc.CallOption) (*FrostImportKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostImportKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostImportKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostListKeys(ctx context.Context, in *FrostListKeysRequest, opts ...grpc.CallOption) (*FrostListKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostListKeysResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostListKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostGetKey(ctx context.Context, in *FrostGetKeyRequest, opts ...grpc.CallOption) (*FrostGetKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostGetKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostGetKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostDeleteKey(ctx context.Context, in *FrostDeleteKeyRequest, opts ...grpc.CallOption) (*FrostDeleteKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostDeleteKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostDeleteKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostGenerateNonces(ctx context.Context, in *FrostGenerateNoncesRequest, opts ...grpc.CallOption) (*FrostGenerateNoncesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostGenerateNoncesResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostGenerateNonces_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostSignRound(ctx context.Context, in *FrostSignRoundRequest, opts ...grpc.CallOption) (*FrostSignRoundResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostSignRoundResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostSignRound_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostAggregate(ctx context.Context, in *FrostAggregateRequest, opts ...grpc.CallOption) (*FrostAggregateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostAggregateResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostAggregate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) FrostVerify(ctx context.Context, in *FrostVerifyRequest, opts ...grpc.CallOption) (*FrostVerifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FrostVerifyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_FrostVerify_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // KeystoreServiceServer is the server API for KeystoreService service.
 // All implementations must embed UnimplementedKeystoreServiceServer
 // for forward compatibility.
@@ -526,6 +643,24 @@ type KeystoreServiceServer interface {
 	ExportKey(context.Context, *ExportKeyRequest) (*ExportKeyResponse, error)
 	// CopyKey copies a key from one backend to another
 	CopyKey(context.Context, *CopyKeyRequest) (*CopyKeyResponse, error)
+	// FrostGenerateKey generates FROST key packages using trusted dealer model
+	FrostGenerateKey(context.Context, *FrostGenerateKeyRequest) (*FrostGenerateKeyResponse, error)
+	// FrostImportKey imports a FROST key package
+	FrostImportKey(context.Context, *FrostImportKeyRequest) (*FrostImportKeyResponse, error)
+	// FrostListKeys lists all FROST keys
+	FrostListKeys(context.Context, *FrostListKeysRequest) (*FrostListKeysResponse, error)
+	// FrostGetKey retrieves information about a specific FROST key
+	FrostGetKey(context.Context, *FrostGetKeyRequest) (*FrostGetKeyResponse, error)
+	// FrostDeleteKey deletes a FROST key
+	FrostDeleteKey(context.Context, *FrostDeleteKeyRequest) (*FrostDeleteKeyResponse, error)
+	// FrostGenerateNonces generates nonces and commitments for Round 1 of FROST signing
+	FrostGenerateNonces(context.Context, *FrostGenerateNoncesRequest) (*FrostGenerateNoncesResponse, error)
+	// FrostSignRound generates a signature share for Round 2 of FROST signing
+	FrostSignRound(context.Context, *FrostSignRoundRequest) (*FrostSignRoundResponse, error)
+	// FrostAggregate combines signature shares into a final FROST signature
+	FrostAggregate(context.Context, *FrostAggregateRequest) (*FrostAggregateResponse, error)
+	// FrostVerify verifies a FROST signature against the group public key
+	FrostVerify(context.Context, *FrostVerifyRequest) (*FrostVerifyResponse, error)
 	mustEmbedUnimplementedKeystoreServiceServer()
 }
 
@@ -631,6 +766,33 @@ func (UnimplementedKeystoreServiceServer) ExportKey(context.Context, *ExportKeyR
 }
 func (UnimplementedKeystoreServiceServer) CopyKey(context.Context, *CopyKeyRequest) (*CopyKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CopyKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostGenerateKey(context.Context, *FrostGenerateKeyRequest) (*FrostGenerateKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostGenerateKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostImportKey(context.Context, *FrostImportKeyRequest) (*FrostImportKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostImportKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostListKeys(context.Context, *FrostListKeysRequest) (*FrostListKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostListKeys not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostGetKey(context.Context, *FrostGetKeyRequest) (*FrostGetKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostGetKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostDeleteKey(context.Context, *FrostDeleteKeyRequest) (*FrostDeleteKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostDeleteKey not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostGenerateNonces(context.Context, *FrostGenerateNoncesRequest) (*FrostGenerateNoncesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostGenerateNonces not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostSignRound(context.Context, *FrostSignRoundRequest) (*FrostSignRoundResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostSignRound not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostAggregate(context.Context, *FrostAggregateRequest) (*FrostAggregateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostAggregate not implemented")
+}
+func (UnimplementedKeystoreServiceServer) FrostVerify(context.Context, *FrostVerifyRequest) (*FrostVerifyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FrostVerify not implemented")
 }
 func (UnimplementedKeystoreServiceServer) mustEmbedUnimplementedKeystoreServiceServer() {}
 func (UnimplementedKeystoreServiceServer) testEmbeddedByValue()                         {}
@@ -1229,6 +1391,168 @@ func _KeystoreService_CopyKey_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_FrostGenerateKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostGenerateKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostGenerateKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostGenerateKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostGenerateKey(ctx, req.(*FrostGenerateKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostImportKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostImportKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostImportKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostImportKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostImportKey(ctx, req.(*FrostImportKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostListKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostListKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostListKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostListKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostListKeys(ctx, req.(*FrostListKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostGetKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostGetKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostGetKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostGetKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostGetKey(ctx, req.(*FrostGetKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostDeleteKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostDeleteKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostDeleteKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostDeleteKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostDeleteKey(ctx, req.(*FrostDeleteKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostGenerateNonces_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostGenerateNoncesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostGenerateNonces(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostGenerateNonces_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostGenerateNonces(ctx, req.(*FrostGenerateNoncesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostSignRound_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostSignRoundRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostSignRound(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostSignRound_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostSignRound(ctx, req.(*FrostSignRoundRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostAggregate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostAggregateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostAggregate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostAggregate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostAggregate(ctx, req.(*FrostAggregateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_FrostVerify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FrostVerifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).FrostVerify(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_FrostVerify_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).FrostVerify(ctx, req.(*FrostVerifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // KeystoreService_ServiceDesc is the grpc.ServiceDesc for KeystoreService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1363,6 +1687,42 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CopyKey",
 			Handler:    _KeystoreService_CopyKey_Handler,
+		},
+		{
+			MethodName: "FrostGenerateKey",
+			Handler:    _KeystoreService_FrostGenerateKey_Handler,
+		},
+		{
+			MethodName: "FrostImportKey",
+			Handler:    _KeystoreService_FrostImportKey_Handler,
+		},
+		{
+			MethodName: "FrostListKeys",
+			Handler:    _KeystoreService_FrostListKeys_Handler,
+		},
+		{
+			MethodName: "FrostGetKey",
+			Handler:    _KeystoreService_FrostGetKey_Handler,
+		},
+		{
+			MethodName: "FrostDeleteKey",
+			Handler:    _KeystoreService_FrostDeleteKey_Handler,
+		},
+		{
+			MethodName: "FrostGenerateNonces",
+			Handler:    _KeystoreService_FrostGenerateNonces_Handler,
+		},
+		{
+			MethodName: "FrostSignRound",
+			Handler:    _KeystoreService_FrostSignRound_Handler,
+		},
+		{
+			MethodName: "FrostAggregate",
+			Handler:    _KeystoreService_FrostAggregate_Handler,
+		},
+		{
+			MethodName: "FrostVerify",
+			Handler:    _KeystoreService_FrostVerify_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

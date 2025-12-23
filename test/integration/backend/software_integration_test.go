@@ -97,9 +97,6 @@ func createSymmetricAttrs(cn string, keySize int, algorithm types.SymmetricAlgor
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: algorithm,
-		AESAttributes: &types.AESAttributes{
-			KeySize: keySize,
-		},
 	}
 }
 

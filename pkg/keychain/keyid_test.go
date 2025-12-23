@@ -35,17 +35,17 @@ func TestParseKeyID_Valid(t *testing.T) {
 		expectedKeyname string
 	}{
 		{
-			name:            "pkcs8 RSA signing key",
-			keyID:           "pkcs8:signing:rsa:my-key",
-			expectedBackend: "pkcs8",
+			name:            "software RSA signing key",
+			keyID:           "software:signing:rsa:my-key",
+			expectedBackend: "software",
 			expectedKeyType: "signing",
 			expectedAlgo:    "rsa",
 			expectedKeyname: "my-key",
 		},
 		{
-			name:            "pkcs8 ECDSA P-256 signing key",
-			keyID:           "pkcs8:signing:ecdsa-p256:api-key",
-			expectedBackend: "pkcs8",
+			name:            "software ECDSA P-256 signing key",
+			keyID:           "software:signing:ecdsa-p256:api-key",
+			expectedBackend: "software",
 			expectedKeyType: "signing",
 			expectedAlgo:    "ecdsa-p256",
 			expectedKeyname: "api-key",
@@ -83,9 +83,9 @@ func TestParseKeyID_Valid(t *testing.T) {
 			expectedKeyname: "data-key",
 		},
 		{
-			name:            "pkcs8 Ed25519 signing key",
-			keyID:           "pkcs8:signing:ed25519:ed-key",
-			expectedBackend: "pkcs8",
+			name:            "software Ed25519 signing key",
+			keyID:           "software:signing:ed25519:ed-key",
+			expectedBackend: "software",
 			expectedKeyType: "signing",
 			expectedAlgo:    "ed25519",
 			expectedKeyname: "ed-key",
@@ -99,17 +99,17 @@ func TestParseKeyID_Valid(t *testing.T) {
 			expectedKeyname: "my-secret",
 		},
 		{
-			name:            "pkcs8 RSA encryption key",
-			keyID:           "pkcs8:encryption:rsa:backup-key",
-			expectedBackend: "pkcs8",
+			name:            "software RSA encryption key",
+			keyID:           "software:encryption:rsa:backup-key",
+			expectedBackend: "software",
 			expectedKeyType: "encryption",
 			expectedAlgo:    "rsa",
 			expectedKeyname: "backup-key",
 		},
 		{
-			name:            "pkcs8 RSA TLS key",
-			keyID:           "pkcs8:tls:rsa:server-tls",
-			expectedBackend: "pkcs8",
+			name:            "software RSA TLS key",
+			keyID:           "software:tls:rsa:server-tls",
+			expectedBackend: "software",
 			expectedKeyType: "tls",
 			expectedAlgo:    "rsa",
 			expectedKeyname: "server-tls",
@@ -148,24 +148,24 @@ func TestParseKeyID_Valid(t *testing.T) {
 		},
 		{
 			name:            "mixed case normalization",
-			keyID:           "Pkcs8:Signing:Rsa:Test-Key",
-			expectedBackend: "pkcs8",
+			keyID:           "Software:Signing:Rsa:Test-Key",
+			expectedBackend: "software",
 			expectedKeyType: "signing",
 			expectedAlgo:    "rsa",
 			expectedKeyname: "Test-Key",
 		},
 		{
 			name:            "keyname with underscores",
-			keyID:           "pkcs8:signing:rsa:my_test_key",
-			expectedBackend: "pkcs8",
+			keyID:           "software:signing:rsa:my_test_key",
+			expectedBackend: "software",
 			expectedKeyType: "signing",
 			expectedAlgo:    "rsa",
 			expectedKeyname: "my_test_key",
 		},
 		{
 			name:            "keyname with numbers",
-			keyID:           "pkcs8:signing:rsa:key-2024-v1",
-			expectedBackend: "pkcs8",
+			keyID:           "software:signing:rsa:key-2024-v1",
+			expectedBackend: "software",
 			expectedKeyType: "signing",
 			expectedAlgo:    "rsa",
 			expectedKeyname: "key-2024-v1",
@@ -180,8 +180,8 @@ func TestParseKeyID_Valid(t *testing.T) {
 		},
 		{
 			name:            "HMAC key type",
-			keyID:           "pkcs8:hmac:aes256-gcm:hmac-key",
-			expectedBackend: "pkcs8",
+			keyID:           "software:hmac:aes256-gcm:hmac-key",
+			expectedBackend: "software",
 			expectedKeyType: "hmac",
 			expectedAlgo:    "aes256-gcm",
 			expectedKeyname: "hmac-key",
@@ -333,22 +333,22 @@ func TestParseKeyID_Invalid(t *testing.T) {
 	}{
 		{
 			name:        "only 2 fields (old format)",
-			keyID:       "pkcs8:my-key",
+			keyID:       "software:my-key",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
 			name:        "only 3 fields",
-			keyID:       "pkcs8:signing:my-key",
+			keyID:       "software:signing:my-key",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
 			name:        "5 fields",
-			keyID:       "pkcs8:signing:rsa:my-key:extra",
+			keyID:       "software:signing:rsa:my-key:extra",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
 			name:        "empty keyname",
-			keyID:       "pkcs8:signing:rsa:",
+			keyID:       "software:signing:rsa:",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
@@ -368,47 +368,47 @@ func TestParseKeyID_Invalid(t *testing.T) {
 		},
 		{
 			name:        "invalid key type",
-			keyID:       "pkcs8:invalid-type:rsa:my-key",
+			keyID:       "software:invalid-type:rsa:my-key",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
 			name:        "invalid algorithm",
-			keyID:       "pkcs8:signing:invalid-algo:my-key",
+			keyID:       "software:signing:invalid-algo:my-key",
 			expectedErr: ErrInvalidKeyIDFormat,
 		},
 		{
 			name:        "keyname with path traversal (..)",
-			keyID:       "pkcs8:signing:rsa:../../../etc/passwd",
+			keyID:       "software:signing:rsa:../../../etc/passwd",
 			expectedErr: ErrInvalidKeyName,
 		},
 		{
 			name:        "keyname with forward slash",
-			keyID:       "pkcs8:signing:rsa:path/to/key",
+			keyID:       "software:signing:rsa:path/to/key",
 			expectedErr: ErrInvalidKeyName,
 		},
 		{
 			name:        "keyname with backslash",
-			keyID:       "pkcs8:signing:rsa:path\\to\\key",
+			keyID:       "software:signing:rsa:path\\to\\key",
 			expectedErr: ErrInvalidKeyName,
 		},
 		{
 			name:        "keyname with special characters",
-			keyID:       "pkcs8:signing:rsa:key@#$%",
+			keyID:       "software:signing:rsa:key@#$%",
 			expectedErr: ErrInvalidKeyName,
 		},
 		{
 			name:        "keyname with spaces",
-			keyID:       "pkcs8:signing:rsa:my key",
+			keyID:       "software:signing:rsa:my key",
 			expectedErr: ErrInvalidKeyName,
 		},
 		{
 			name:        "too long key ID",
-			keyID:       "pkcs8:signing:rsa:" + strings.Repeat("a", 600),
+			keyID:       "software:signing:rsa:" + strings.Repeat("a", 600),
 			expectedErr: ErrKeyIDTooLong,
 		},
 		{
 			name:        "too long keyname",
-			keyID:       "pkcs8:signing:rsa:" + strings.Repeat("a", 300),
+			keyID:       "software:signing:rsa:" + strings.Repeat("a", 300),
 			expectedErr: ErrInvalidKeyName,
 		},
 		{
@@ -447,12 +447,12 @@ func TestNewKeyID_Valid(t *testing.T) {
 		expectedKeyID string
 	}{
 		{
-			name:          "pkcs8 RSA signing",
-			backend:       "pkcs8",
+			name:          "software RSA signing",
+			backend:       "software",
 			keyType:       "signing",
 			algo:          "rsa",
 			keyname:       "my-key",
-			expectedKeyID: "pkcs8:signing:rsa:my-key",
+			expectedKeyID: "software:signing:rsa:my-key",
 		},
 		{
 			name:          "pkcs11 ECDSA P-256",
@@ -480,11 +480,11 @@ func TestNewKeyID_Valid(t *testing.T) {
 		},
 		{
 			name:          "whitespace trimming",
-			backend:       " pkcs8 ",
+			backend:       " software ",
 			keyType:       " signing ",
 			algo:          " rsa ",
 			keyname:       " my-key ",
-			expectedKeyID: "pkcs8:signing:rsa:my-key",
+			expectedKeyID: "software:signing:rsa:my-key",
 		},
 		{
 			name:          "AES encryption key",
@@ -525,19 +525,19 @@ func TestNewKeyID_OptionalSegments(t *testing.T) {
 		},
 		{
 			name:          "empty key type",
-			backend:       "pkcs8",
+			backend:       "software",
 			keyType:       "",
 			algo:          "rsa",
 			keyname:       "my-key",
-			expectedKeyID: "pkcs8::rsa:my-key",
+			expectedKeyID: "software::rsa:my-key",
 		},
 		{
 			name:          "empty algorithm",
-			backend:       "pkcs8",
+			backend:       "software",
 			keyType:       "signing",
 			algo:          "",
 			keyname:       "my-key",
-			expectedKeyID: "pkcs8:signing::my-key",
+			expectedKeyID: "software:signing::my-key",
 		},
 		{
 			name:          "all optional segments empty",
@@ -578,7 +578,7 @@ func TestNewKeyID_Invalid(t *testing.T) {
 		},
 		{
 			name:        "invalid key type",
-			backend:     "pkcs8",
+			backend:     "software",
 			keyType:     "invalid-type",
 			algo:        "rsa",
 			keyname:     "my-key",
@@ -586,7 +586,7 @@ func TestNewKeyID_Invalid(t *testing.T) {
 		},
 		{
 			name:        "invalid algorithm",
-			backend:     "pkcs8",
+			backend:     "software",
 			keyType:     "signing",
 			algo:        "invalid-algo",
 			keyname:     "my-key",
@@ -594,7 +594,7 @@ func TestNewKeyID_Invalid(t *testing.T) {
 		},
 		{
 			name:        "empty keyname",
-			backend:     "pkcs8",
+			backend:     "software",
 			keyType:     "signing",
 			algo:        "rsa",
 			keyname:     "",
@@ -602,7 +602,7 @@ func TestNewKeyID_Invalid(t *testing.T) {
 		},
 		{
 			name:        "keyname with special chars",
-			backend:     "pkcs8",
+			backend:     "software",
 			keyType:     "signing",
 			algo:        "rsa",
 			keyname:     "key@test",
@@ -610,7 +610,7 @@ func TestNewKeyID_Invalid(t *testing.T) {
 		},
 		{
 			name:        "keyname too long",
-			backend:     "pkcs8",
+			backend:     "software",
 			keyType:     "signing",
 			algo:        "rsa",
 			keyname:     strings.Repeat("a", 300),
@@ -618,7 +618,7 @@ func TestNewKeyID_Invalid(t *testing.T) {
 		},
 		{
 			name:        "keyname with path traversal",
-			backend:     "pkcs8",
+			backend:     "software",
 			keyType:     "signing",
 			algo:        "rsa",
 			keyname:     "../etc/passwd",
@@ -640,14 +640,13 @@ func TestNewKeyID_Invalid(t *testing.T) {
 func TestValidateKeyID(t *testing.T) {
 	validKeyIDs := []string{
 		// Full specification
-		"pkcs8:signing:rsa:server-key",
+		"software:signing:rsa:server-key",
 		"pkcs11:signing:ecdsa-p256:hsm-key",
 		"tpm2:attestation:rsa:ak-key",
 		"awskms:encryption:aes256-gcm:prod-key",
 		"gcpkms:signing:ed25519:signing-key",
 		"azurekv:encryption:rsa:master-key",
 		"vault:secret:aes256-gcm:transit-key",
-		"aes:secret:aes256-gcm:symmetric-key",
 		"software:signing:rsa:dev-key",
 		// Shorthand (just keyname)
 		"my-key",
@@ -668,16 +667,16 @@ func TestValidateKeyID(t *testing.T) {
 	}
 
 	invalidKeyIDs := []string{
-		"pkcs8:my-key",                      // Old 2-field format
-		"pkcs8:signing:my-key",              // Only 3 fields
+		"software:my-key",                      // Old 2-field format
+		"software:signing:my-key",              // Only 3 fields
 		"unknown:signing:rsa:key",           // Invalid backend
-		"pkcs8:invalid-type:rsa:key",        // Invalid key type
-		"pkcs8:signing:invalid-algo:key",    // Invalid algorithm
-		"pkcs8:signing:rsa:",                // Empty keyname
+		"software:invalid-type:rsa:key",        // Invalid key type
+		"software:signing:invalid-algo:key",    // Invalid algorithm
+		"software:signing:rsa:",                // Empty keyname
 		":::",                               // All empty including keyname
-		"pkcs8:signing:rsa:../etc/passwd",   // Path traversal
-		"pkcs8:signing:rsa:key/path",        // Forward slash
-		"pkcs8:signing:rsa:key with spaces", // Spaces in keyname
+		"software:signing:rsa:../etc/passwd",   // Path traversal
+		"software:signing:rsa:key/path",        // Forward slash
+		"software:signing:rsa:key with spaces", // Spaces in keyname
 	}
 
 	for _, keyID := range invalidKeyIDs {
@@ -690,8 +689,8 @@ func TestValidateKeyID(t *testing.T) {
 
 // TestKeyID_String tests the String method.
 func TestKeyID_String(t *testing.T) {
-	keyID := KeyID("pkcs8:my-key")
-	assert.Equal(t, "pkcs8:my-key", keyID.String())
+	keyID := KeyID("software:my-key")
+	assert.Equal(t, "software:my-key", keyID.String())
 }
 
 // TestKeyIDToBackendType tests conversion from Key ID backend to BackendType.
@@ -702,23 +701,13 @@ func TestKeyIDToBackendType(t *testing.T) {
 		expectedBackendType types.BackendType
 	}{
 		{
-			name:                "pkcs8 to BackendTypePKCS8",
-			backend:             "pkcs8",
-			expectedBackendType: backend.BackendTypePKCS8,
-		},
-		{
-			name:                "sw to BackendTypePKCS8",
-			backend:             "sw",
-			expectedBackendType: backend.BackendTypePKCS8,
-		},
-		{
-			name:                "aes to BackendTypeAES",
-			backend:             "aes",
-			expectedBackendType: backend.BackendTypeAES,
-		},
-		{
 			name:                "software to BackendTypeSoftware",
 			backend:             "software",
+			expectedBackendType: backend.BackendTypeSoftware,
+		},
+		{
+			name:                "sw to BackendTypeSoftware",
+			backend:             "sw",
 			expectedBackendType: backend.BackendTypeSoftware,
 		},
 		{
@@ -775,16 +764,6 @@ func TestBackendTypeToKeyIDString(t *testing.T) {
 		expectedBackend string
 	}{
 		{
-			name:            "BackendTypePKCS8 to pkcs8",
-			backendType:     backend.BackendTypePKCS8,
-			expectedBackend: "pkcs8",
-		},
-		{
-			name:            "BackendTypeAES to aes",
-			backendType:     backend.BackendTypeAES,
-			expectedBackend: "aes",
-		},
-		{
 			name:            "BackendTypeSoftware to software",
 			backendType:     backend.BackendTypeSoftware,
 			expectedBackend: "software",
@@ -837,12 +816,12 @@ func TestParseKeyID_RoundTrip(t *testing.T) {
 		algo    string
 		keyname string
 	}{
-		{"pkcs8", "signing", "rsa", "my-key"},
+		{"software", "signing", "rsa", "my-key"},
 		{"pkcs11", "signing", "ecdsa-p256", "hsm-signing-key"},
 		{"tpm2", "attestation", "rsa", "attestation"},
 		{"awskms", "encryption", "aes256-gcm", "prod-key"},
 		{"software", "secret", "aes192-gcm", "dev-secret"},
-		{"pkcs8", "tls", "ed25519", "server-key"},
+		{"software", "tls", "ed25519", "server-key"},
 	}
 
 	for _, tc := range testCases {
@@ -867,7 +846,7 @@ func TestParseKeyID_RoundTrip(t *testing.T) {
 // TestValidateBackend tests the validateBackend helper function.
 func TestValidateBackend(t *testing.T) {
 	validBackends := []string{
-		"pkcs8", "aes", "software", "pkcs11", "tpm2",
+		"software", "pkcs11", "tpm2",
 		"awskms", "gcpkms", "azurekv", "vault",
 	}
 
@@ -879,7 +858,7 @@ func TestValidateBackend(t *testing.T) {
 	}
 
 	invalidBackends := []string{
-		"unknown", "pkcs-8", "PKCS8", "tpm", "aws", "",
+		"unknown", "pkcs8", "pkcs-8", "PKCS8", "symmetric", "tpm", "aws", "",
 	}
 
 	for _, backend := range invalidBackends {
@@ -1035,9 +1014,9 @@ func TestBackendTypeToStoreType(t *testing.T) {
 		backendType types.BackendType
 		expected    types.StoreType
 	}{
-		{"PKCS8", backend.BackendTypePKCS8, backend.STORE_SW},
+		{"PKCS8", backend.BackendTypeSoftware, backend.STORE_SW},
 		{"Software", backend.BackendTypeSoftware, backend.STORE_SW},
-		{"AES", backend.BackendTypeAES, backend.STORE_SW},
+		{"AES", backend.BackendTypeSymmetric, backend.STORE_SW},
 		{"PKCS11", backend.BackendTypePKCS11, backend.STORE_PKCS11},
 		{"TPM2", backend.BackendTypeTPM2, backend.STORE_TPM2},
 		{"AWSKMS", backend.BackendTypeAWSKMS, backend.STORE_AWSKMS},

@@ -90,42 +90,42 @@ func ValidateKeyID(keyID string) error {
 //   - ":::my-key" - explicit form of above
 //   - "pkcs11:::my-key" - specify backend only
 //   - "pkcs11:signing:ecdsa-p256:my-key" - full specification
-func ValidateKeyReference(keyRef string) error {
-	if keyRef == "" {
-		return fmt.Errorf("key reference cannot be empty")
+func ValidateKeyReference(keyID string) error {
+	if keyID == "" {
+		return fmt.Errorf("key ID cannot be empty")
 	}
 
 	// Check for null bytes
-	if strings.Contains(keyRef, "\x00") {
-		return fmt.Errorf("key reference contains null byte")
+	if strings.Contains(keyID, "\x00") {
+		return fmt.Errorf("key ID contains null byte")
 	}
 
 	// Check length
-	if len(keyRef) > 512 { // Maximum key ID length
-		return fmt.Errorf("key reference too long (max 512 characters)")
+	if len(keyID) > 512 { // Maximum key ID length
+		return fmt.Errorf("key ID too long (max 512 characters)")
 	}
 
 	// Check for control characters
-	for _, r := range keyRef {
+	for _, r := range keyID {
 		if r < 32 || r == 127 {
-			return fmt.Errorf("key reference contains control characters")
+			return fmt.Errorf("key ID contains control characters")
 		}
 	}
 
 	// Check for shorthand format (no colons = just keyname)
-	if !strings.Contains(keyRef, ":") {
+	if !strings.Contains(keyID, ":") {
 		// Validate as a simple keyname
-		return ValidateKeyID(keyRef)
+		return ValidateKeyID(keyID)
 	}
 
 	// Count colons to determine format
-	colonCount := strings.Count(keyRef, ":")
+	colonCount := strings.Count(keyID, ":")
 	if colonCount != 3 {
-		return fmt.Errorf("key reference must have format 'backend:type:algo:keyname' (got %d colons, expected 3)", colonCount)
+		return fmt.Errorf("key ID must have format 'backend:type:algo:keyname' (got %d colons, expected 3)", colonCount)
 	}
 
 	// Parse 4-part format: backend:type:algo:keyname
-	parts := strings.Split(keyRef, ":")
+	parts := strings.Split(keyID, ":")
 	backend := strings.TrimSpace(parts[0])
 	keyType := strings.TrimSpace(parts[1])
 	algo := strings.TrimSpace(parts[2])

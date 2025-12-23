@@ -108,7 +108,12 @@ func isCLIAvailable(t *testing.T, cfg *TestConfig) bool {
 func isServerAvailable(t *testing.T, cfg *TestConfig) bool {
 	t.Helper()
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
 	resp, err := client.Get(cfg.RESTBaseURL + "/health")
 	if err != nil {
 		return false
@@ -290,23 +295,20 @@ func (cfg *TestConfig) IsProtocolAvailable(t *testing.T, protocol ProtocolType) 
 	case ProtocolGRPC:
 		return isGRPCServerAvailable(t, cfg)
 	case ProtocolQUIC:
-		// QUIC is known to fail in Docker due to UDP buffer size limitations
-		// Skip QUIC tests when running in Docker (detected by DOCKER_ENV or container detection)
-		if os.Getenv("DOCKER_ENV") != "" || isRunningInDocker() {
-			t.Log("Skipping QUIC: Docker environment detected (UDP buffer limitations)")
-			return false
-		}
-		// QUIC availability check - use HTTP client to check QUIC health endpoint
-		// UDP dial alone is insufficient since UDP is connectionless
-		// We use insecure TLS for testing as the server may use self-signed certs
+		// QUIC uses HTTP/3 over UDP - standard HTTP clients can't check it directly.
+		// Instead, we check if the server is running by verifying the REST endpoint
+		// (which shares the same TLS config). If REST is healthy, QUIC should be too.
+		// The actual QUIC tests will verify connectivity via CLI commands.
 		client := &http.Client{
-			Timeout: 2 * time.Second,
+			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
 		}
-		resp, err := client.Get(cfg.QUICBaseURL + "/health")
+		// Check REST health endpoint to verify server is up (QUIC shares same server)
+		resp, err := client.Get(cfg.RESTBaseURL + "/health")
 		if err != nil {
+			t.Logf("Server health check failed (assuming QUIC unavailable): %v", err)
 			return false
 		}
 		defer resp.Body.Close()

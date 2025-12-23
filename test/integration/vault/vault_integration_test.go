@@ -638,10 +638,6 @@ func TestVaultIntegration(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_VAULT,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists from previous test
@@ -692,10 +688,6 @@ func TestVaultIntegration(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_VAULT,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists
@@ -764,10 +756,6 @@ func TestVaultIntegration(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_VAULT,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists
@@ -823,10 +811,6 @@ func TestVaultIntegration(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_VAULT,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists
@@ -924,10 +908,6 @@ func TestVaultIntegration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES128GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_VAULT,
-					AESAttributes: &types.AESAttributes{
-						KeySize:   128,
-						NonceSize: 12,
-					},
 				}
 
 				_, err := symBackend.GenerateSymmetricKey(attrs)
@@ -943,10 +923,6 @@ func TestVaultIntegration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_VAULT,
-					AESAttributes: &types.AESAttributes{
-						KeySize:   256,
-						NonceSize: 12,
-					},
 				}
 
 				_, err := symBackend.GetSymmetricKey(attrs)
@@ -961,10 +937,6 @@ func TestVaultIntegration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_VAULT,
-					AESAttributes: &types.AESAttributes{
-						KeySize:   256,
-						NonceSize: 12,
-					},
 				}
 
 				_, err := symBackend.SymmetricEncrypter(attrs)
@@ -979,10 +951,6 @@ func TestVaultIntegration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_VAULT,
-					AESAttributes: &types.AESAttributes{
-						KeySize:   256,
-						NonceSize: 12,
-					},
 				}
 
 				// Clean up if exists
@@ -1024,10 +992,6 @@ func TestVaultIntegration(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_VAULT,
-					AESAttributes: &types.AESAttributes{
-						KeySize:   256,
-						NonceSize: 12,
-					},
 				}
 
 				// Clean up if exists
@@ -1055,10 +1019,6 @@ func TestVaultIntegration(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_VAULT,
-				AESAttributes: &types.AESAttributes{
-					KeySize:   256,
-					NonceSize: 12,
-				},
 			}
 
 			// Clean up if exists

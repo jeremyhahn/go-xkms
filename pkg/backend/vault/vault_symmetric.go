@@ -77,8 +77,8 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	}
 
 	// Vault Transit only supports AES-256-GCM for symmetric encryption
-	if attrs.AESAttributes.KeySize != 256 {
-		return nil, fmt.Errorf("%w: Vault Transit only supports AES-256 symmetric keys, got: %d bits", backend.ErrInvalidAlgorithm, attrs.AESAttributes.KeySize)
+	if attrs.SymmetricAlgorithm.KeySize() != 256 {
+		return nil, fmt.Errorf("%w: Vault Transit only supports AES-256 symmetric keys, got: %d bits", backend.ErrInvalidAlgorithm, attrs.SymmetricAlgorithm.KeySize())
 	}
 
 	ctx := context.Background()

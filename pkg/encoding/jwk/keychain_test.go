@@ -222,8 +222,8 @@ func TestIsKeychainBacked(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "aes backend",
-			jwk:      &JWK{Kid: "aes:symmetric-key"},
+			name:     "symmetric backend",
+			jwk:      &JWK{Kid: "symmetric:symmetric-key"},
 			expected: true,
 		},
 		{
