@@ -190,9 +190,10 @@ func (p *PlatformPassword) unsealDirect() []byte {
 		len(data), err)
 
 	if err != nil {
-		// Log the error and return nil - this matches the common.Password interface
-		// which doesn't allow Bytes() to return an error
-		p.logger.Errorf("keystore/tpm2: failed to unseal platform password: %v", err)
+		// Log at debug level - this is expected during fresh initialization
+		// when the sealed key doesn't exist yet. The calling code will handle
+		// the nil return by creating/sealing a new key.
+		p.logger.Debugf("keystore/tpm2: failed to unseal platform password: %v", err)
 		return nil
 	}
 

@@ -354,9 +354,6 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			KeyType:            backend.KEY_TYPE_ENCRYPTION,
 			StoreType:          backend.STORE_AZUREKV,
-			AESAttributes: &types.AESAttributes{
-				KeySize: 256,
-			},
 		}
 		createdKeys = append(createdKeys, attrs)
 

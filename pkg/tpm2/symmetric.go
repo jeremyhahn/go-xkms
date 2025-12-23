@@ -71,7 +71,7 @@ type tpm2AESEncrypter struct {
 // implement AES-GCM in software using TPM-protected key material.
 //
 // Parameters:
-//   - attrs: Key attributes including AES key size (128 or 256 bits)
+//   - attrs: Key attributes including symmetric algorithm and key size (128 or 256 bits)
 //
 // Returns:
 //   - SymmetricKey for the generated key
@@ -82,7 +82,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	}
 
 	// TPM 2.0 spec only supports AES-128 and AES-256
-	keySize := attrs.AESAttributes.KeySize
+	keySize := attrs.SymmetricAlgorithm.KeySize()
 	if keySize != 128 && keySize != 256 {
 		return nil, fmt.Errorf("tpm2: unsupported AES key size %d, TPM 2.0 supports 128 or 256 bits", keySize)
 	}
@@ -240,7 +240,7 @@ func (tpm *TPM2) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey
 
 	// Create the symmetric key object (without exposing key material)
 	// Extract key size from algorithm
-	keySize := attrs.AESAttributes.KeySize
+	keySize := attrs.SymmetricAlgorithm.KeySize()
 	symmetricKey := &tpm2SymmetricKey{
 		algorithm: string(attrs.SymmetricAlgorithm),
 		keySize:   keySize,
@@ -511,10 +511,6 @@ func validateSymmetricKeyAttributes(attrs *types.KeyAttributes) error {
 
 	if !attrs.IsSymmetric() {
 		return fmt.Errorf("tpm2: key algorithm is not symmetric: %s", attrs.KeyAlgorithm)
-	}
-
-	if attrs.AESAttributes == nil {
-		return fmt.Errorf("tpm2: AES attributes are required for symmetric keys")
 	}
 
 	return nil

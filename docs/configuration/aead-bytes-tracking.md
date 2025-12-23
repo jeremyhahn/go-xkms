@@ -19,7 +19,7 @@ No configuration needed - just use the backend:
 
 ```go
 // All backends enable AEAD tracking automatically
-backend, err := aes.NewAESBackend(storage, password, nil)
+backend, err := symmetric.NewBackend(storage, password, nil)
 // or
 backend, err := pkcs11.NewBackend(config)
 // or
@@ -40,10 +40,10 @@ import "github.com/jeremyhahn/go-keychain/pkg/backend"
 tracker := backend.NewMemoryAEADTracker()
 
 // For AES backend
-config := &aes.Config{
+config := &symmetric.Config{
     Tracker: tracker,
 }
-backend, err := aes.NewAESBackend(storage, password, config)
+backend, err := symmetric.NewBackend(storage, password, config)
 
 // For PKCS11 backend
 pkcs11Config := &pkcs11.Config{
@@ -96,7 +96,7 @@ opts := &types.AEADOptions{
 err = tracker.SetAEADOptions(keyID, opts)
 
 // Option 2: Use backend without tracker (not recommended)
-config := &aes.Config{
+config := &symmetric.Config{
     Tracker: nil,  // Creates default tracker - cannot fully disable
 }
 // NOTE: Even with nil, a default memory tracker is created for safety
@@ -176,11 +176,11 @@ The default AEAD options enable bytes tracking with a 350GB limit:
 ```go
 import (
     "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/aes"
+    "github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 )
 
 // Create backend with default AEAD safety tracking
-backend, err := aes.NewAESBackend(storage, password, nil)
+backend, err := symmetric.NewBackend(storage, password, nil)
 if err != nil {
     return err
 }

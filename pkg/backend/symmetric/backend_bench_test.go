@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package aes
+package symmetric
 
 import (
 	"crypto/rand"
@@ -56,9 +56,6 @@ func BenchmarkAES_GenerateKey(b *testing.B) {
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_SW,
 					SymmetricAlgorithm: ks.algorithm,
-					AESAttributes: &types.AESAttributes{
-						KeySize: ks.keySize,
-					},
 				}
 
 				_, err := symBackend.GenerateSymmetricKey(attrs)
@@ -96,9 +93,6 @@ func BenchmarkAES_Encrypt(b *testing.B) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_SW,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -157,9 +151,6 @@ func BenchmarkAES_Decrypt(b *testing.B) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_SW,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -214,9 +205,6 @@ func BenchmarkAES_EncryptWithAAD(b *testing.B) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -268,9 +256,6 @@ func BenchmarkAES_ConcurrentEncrypt(b *testing.B) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -320,9 +305,6 @@ func BenchmarkAES_ConcurrentDecrypt(b *testing.B) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -385,9 +367,6 @@ func BenchmarkAES_EncryptDecryptRoundTrip(b *testing.B) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_SW,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -449,9 +428,6 @@ func BenchmarkAES_PasswordProtectedKey(b *testing.B) {
 			StoreType:          backend.STORE_SW,
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			Password:           password,
-			AESAttributes: &types.AESAttributes{
-				KeySize: 256,
-			},
 		}
 
 		_, err := symBackend.GenerateSymmetricKey(attrs)

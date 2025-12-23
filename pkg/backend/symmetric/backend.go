@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package aes
+package symmetric
 
 import (
 	"crypto"
@@ -26,7 +26,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 	chacha20poly1305pkg "github.com/jeremyhahn/go-keychain/pkg/crypto/chacha20poly1305"
 	cryptorand "github.com/jeremyhahn/go-keychain/pkg/crypto/rand"
 	"github.com/jeremyhahn/go-keychain/pkg/crypto/wrapping"
@@ -35,15 +34,19 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// AESBackend implements symmetric AES encryption operations.
-// This backend provides software-based AES key generation and encryption,
-// storing raw AES keys (not PKCS#8 encoded).
+// Backend implements symmetric encryption operations for both AES-GCM and ChaCha20-Poly1305.
+// This backend provides software-based symmetric key generation and encryption,
+// storing raw symmetric keys (not PKCS#8 encoded).
+//
+// Supported algorithms:
+//   - AES-128-GCM, AES-192-GCM, AES-256-GCM
+//   - ChaCha20-Poly1305, XChaCha20-Poly1305
 //
 // Key storage format:
-//   - Unencrypted: Raw AES key bytes (16, 24, or 32 bytes)
+//   - Unencrypted: Raw key bytes (16, 24, or 32 bytes)
 //   - Password-protected: [salt(32)][nonce(12)][ciphertext+tag]
 //
-// File naming convention: [partition:]sw:secret:cn:aes{128,192,256}-gcm
+// File naming convention: [partition:]sw:secret:cn:algorithm
 //
 // Thread-safe: Yes, uses a read-write mutex for concurrent access.
 //
@@ -56,7 +59,7 @@ import (
 //   - Supports configurable random number generation (hardware or software)
 //   - Used for nonce generation in AEAD operations
 //   - Defaults to auto-detection (hardware preferred)
-type AESBackend struct {
+type Backend struct {
 	storage           storage.Backend
 	wrappingKeys      map[string]*rsa.PrivateKey // Maps import token (UUID) to RSA private key
 	tracker           types.AEADSafetyTracker    // AEAD safety tracker for nonce/bytes tracking
@@ -66,7 +69,7 @@ type AESBackend struct {
 	wrappingKeysMutex sync.RWMutex
 }
 
-// Config contains configuration for the AESBackend.
+// Config contains configuration for the symmetric Backend.
 type Config struct {
 	// KeyStorage is the underlying storage for key material.
 	// This can be file-based, memory-based, or any implementation
@@ -96,15 +99,15 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// NewBackend creates a new software AES backend with the given configuration.
+// NewBackend creates a new software symmetric backend with the given configuration.
 //
 // Example usage:
 //
 //	storage := storage.New()
-//	config := &software.Config{
+//	config := &symmetric.Config{
 //	    KeyStorage: storage,
 //	}
-//	backend, err := software.NewBackend(config)
+//	backend, err := symmetric.NewBackend(config)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -112,13 +115,10 @@ func (c *Config) Validate() error {
 //
 //	// Generate a new AES-256 key
 //	attrs := &types.KeyAttributes{
-//	    CN:           "my-secret-key",
-//	    KeyType:      backend.KEY_TYPE_SECRET,
-//	    StoreType:    backend.STORE_SW,
-//	    KeyAlgorithm: backend.ALG_AES256_GCM,
-//	    AESAttributes: &types.AESAttributes{
-//	        KeySize: 256,
-//	    },
+//	    CN:                 "my-secret-key",
+//	    KeyType:            backend.KEY_TYPE_SECRET,
+//	    StoreType:          backend.STORE_SW,
+//	    SymmetricAlgorithm: backend.SymmetricAES256GCM,
 //	}
 //	key, err := backend.GenerateSymmetricKey(attrs)
 func NewBackend(config *Config) (types.SymmetricBackend, error) {
@@ -138,7 +138,7 @@ func NewBackend(config *Config) (types.SymmetricBackend, error) {
 		return nil, fmt.Errorf("failed to initialize RNG: %w", err)
 	}
 
-	return &AESBackend{
+	return &Backend{
 		storage:      config.KeyStorage,
 		tracker:      tracker,
 		rng:          rng,
@@ -148,16 +148,16 @@ func NewBackend(config *Config) (types.SymmetricBackend, error) {
 }
 
 // Type returns the backend type identifier.
-func (b *AESBackend) Type() types.BackendType {
-	return types.BackendTypeAES
+func (b *Backend) Type() types.BackendType {
+	return types.BackendTypeSymmetric
 }
 
 // Capabilities returns what features this backend supports.
-func (b *AESBackend) Capabilities() types.Capabilities {
+func (b *Backend) Capabilities() types.Capabilities {
 	return types.Capabilities{
 		Keys:                true,
 		HardwareBacked:      false,
-		Signing:             false, // Software backend is symmetric-only
+		Signing:             false, // Symmetric backend is symmetric-only
 		Decryption:          false, // No asymmetric decryption
 		KeyRotation:         true,  // Supports key rotation
 		SymmetricEncryption: true,
@@ -166,21 +166,21 @@ func (b *AESBackend) Capabilities() types.Capabilities {
 	}
 }
 
-// GenerateKey is not supported by the software backend (symmetric only).
+// GenerateKey is not supported by the symmetric backend (symmetric only).
 // Use GenerateSymmetricKey instead.
-func (b *AESBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, fmt.Errorf("%w: use GenerateSymmetricKey instead", backend.ErrOperationNotSupported)
 }
 
-// GetKey is not supported by the software backend (symmetric only).
+// GetKey is not supported by the symmetric backend (symmetric only).
 // Use GetSymmetricKey instead.
-func (b *AESBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, fmt.Errorf("%w: use GetSymmetricKey instead", backend.ErrOperationNotSupported)
 }
 
 // DeleteKey removes a symmetric key identified by its attributes.
 // Returns an error if the key does not exist.
-func (b *AESBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -205,7 +205,7 @@ func (b *AESBackend) DeleteKey(attrs *types.KeyAttributes) error {
 
 // ListKeys returns attributes for all keys managed by this backend.
 // Returns an empty slice if no keys exist.
-func (b *AESBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -224,57 +224,76 @@ func (b *AESBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		parts := strings.Split(id, ":")
 		var cn string
 		var keyTypeStr string
+		var algorithmStr string
+		var storeType string
+		var partition string
 
 		if len(parts) >= 4 {
 			// Has all required parts
-			// For format without partition: sw:secret:my-key:aes (4 parts)
-			// For format with partition: partition:sw:secret:my-key:aes (5 parts)
+			// For format without partition: sw:secret:my-key:aes256-gcm (4 parts)
+			// For format with partition: partition:sw:secret:my-key:aes256-gcm (5 parts)
 			if len(parts) == 4 {
 				// storetype:keytype:cn:algorithm
+				storeType = parts[0]
 				keyTypeStr = parts[1]
 				cn = parts[2]
+				algorithmStr = parts[3]
 			} else {
 				// partition:storetype:keytype:cn:algorithm
+				partition = parts[0]
+				storeType = parts[1]
 				keyTypeStr = parts[2]
 				cn = parts[3]
+				algorithmStr = parts[4]
 			}
 		} else {
 			// Fallback to using the whole ID as CN
 			cn = id
-			keyTypeStr = "secret" // Default to SECRET for AES keys
+			keyTypeStr = "secret" // Default to SECRET for symmetric keys
+			storeType = "sw"
+		}
+
+		// Skip asymmetric keys - they are handled by the PKCS8 backend
+		// Only process keys with keyType "secret" (symmetric keys)
+		if strings.ToLower(keyTypeStr) != "secret" {
+			continue
 		}
 
 		attr := &types.KeyAttributes{
-			CN:      cn,
-			KeyType: types.ParseKeyType(keyTypeStr),
+			CN:                 cn,
+			KeyType:            types.ParseKeyType(keyTypeStr),
+			StoreType:          backend.StoreType(storeType),
+			Partition:          types.Partition(partition),
+			SymmetricAlgorithm: types.SymmetricAlgorithm(algorithmStr),
 		}
-		// Ensure we have a valid key type for AES keys
+		// Ensure we have a valid key type for symmetric keys
 		if attr.KeyType == 0 {
 			attr.KeyType = types.KeyTypeSecret // Default to Secret if parsing fails
 		}
+
 		attrs = append(attrs, attr)
 	}
 
 	return attrs, nil
 }
 
-// Signer is not supported by the software backend (symmetric only).
-func (b *AESBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+// Signer is not supported by the symmetric backend (symmetric only).
+func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	return nil, backend.ErrOperationNotSupported
 }
 
-// Decrypter is not supported by the software backend (symmetric only).
-func (b *AESBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+// Decrypter is not supported by the symmetric backend (symmetric only).
+func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, backend.ErrOperationNotSupported
 }
 
 // RotateKey rotates/updates a symmetric key identified by attrs.
-// For AES software keys, rotation means generating a new key and replacing the old one.
+// For symmetric keys, rotation means generating a new key and replacing the old one.
 //
 // AEAD Safety Tracking:
 //   - Tracking state is reset (nonce history cleared, byte counters reset)
 //   - New key starts with fresh tracking state
-func (b *AESBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *Backend) RotateKey(attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return fmt.Errorf("%w: attributes cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -305,7 +324,7 @@ func (b *AESBackend) RotateKey(attrs *types.KeyAttributes) error {
 
 // Close releases any resources held by the backend.
 // After calling Close, the backend should not be used.
-func (b *AESBackend) Close() error {
+func (b *Backend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -326,7 +345,7 @@ func (b *AESBackend) Close() error {
 	return b.storage.Close()
 }
 
-// GenerateSymmetricKey generates a new AES key with the given attributes.
+// GenerateSymmetricKey generates a new symmetric key with the given attributes.
 // The key is stored encrypted with Argon2id-derived key if a password is provided.
 //
 // AEAD Safety Tracking:
@@ -334,9 +353,12 @@ func (b *AESBackend) Close() error {
 //   - Nonce uniqueness and bytes limits are enforced during encryption
 //   - Tracking state is initialized for the new key
 //
-// Supported key sizes: 128, 192, 256 bits
+// Supported algorithms:
+//   - AES-128-GCM, AES-192-GCM, AES-256-GCM (key sizes: 128, 192, 256 bits)
+//   - ChaCha20-Poly1305, XChaCha20-Poly1305 (key size: 256 bits)
+//
 // Storage format: See design doc Appendix B for password-encrypted format
-func (b *AESBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -376,19 +398,8 @@ func (b *AESBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Sym
 		return nil, fmt.Errorf("failed to set AEAD options: %w", err)
 	}
 
-	// Generate random key bytes
-	var keySize int
-	switch attrs.SymmetricAlgorithm {
-	case types.SymmetricChaCha20Poly1305, types.SymmetricXChaCha20Poly1305:
-		// ChaCha20 always uses 256-bit keys
-		keySize = 32
-	default:
-		// AES key sizes
-		if attrs.AESAttributes == nil {
-			return nil, fmt.Errorf("%w: AESAttributes required for %s", backend.ErrInvalidAttributes, attrs.SymmetricAlgorithm)
-		}
-		keySize = attrs.AESAttributes.KeySize / 8 // Convert bits to bytes
-	}
+	// Generate random key bytes based on algorithm
+	keySize := attrs.SymmetricAlgorithm.KeySize() / 8 // Convert bits to bytes
 
 	keyData := make([]byte, keySize)
 	if _, err := rand.Read(keyData); err != nil {
@@ -400,12 +411,12 @@ func (b *AESBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Sym
 	var keyErr error
 	switch attrs.SymmetricAlgorithm {
 	case types.SymmetricChaCha20Poly1305, types.SymmetricXChaCha20Poly1305:
-		symmetricKey, keyErr = symmetric.NewChaCha20Key(string(attrs.SymmetricAlgorithm), keyData)
+		symmetricKey, keyErr = NewChaCha20Key(string(attrs.SymmetricAlgorithm), keyData)
 		if keyErr != nil {
 			return nil, fmt.Errorf("failed to create ChaCha20 key: %w", keyErr)
 		}
 	default:
-		symmetricKey, keyErr = symmetric.NewAESKey(string(attrs.SymmetricAlgorithm), keyData)
+		symmetricKey, keyErr = NewAESKey(string(attrs.SymmetricAlgorithm), keyData)
 		if keyErr != nil {
 			return nil, fmt.Errorf("failed to create AES key: %w", keyErr)
 		}
@@ -421,7 +432,7 @@ func (b *AESBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Sym
 
 // GetSymmetricKey retrieves an existing symmetric key by its attributes.
 // Returns an error if the key does not exist.
-func (b *AESBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -455,15 +466,15 @@ func (b *AESBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.Symmetri
 	// Create appropriate symmetric key based on algorithm
 	switch attrs.SymmetricAlgorithm {
 	case types.SymmetricChaCha20Poly1305, types.SymmetricXChaCha20Poly1305:
-		return symmetric.NewChaCha20Key(string(attrs.SymmetricAlgorithm), rawKey)
+		return NewChaCha20Key(string(attrs.SymmetricAlgorithm), rawKey)
 	default:
-		return symmetric.NewAESKey(string(attrs.SymmetricAlgorithm), rawKey)
+		return NewAESKey(string(attrs.SymmetricAlgorithm), rawKey)
 	}
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the specified key.
 // This allows the key to be used for encryption/decryption operations with AEAD safety tracking.
-func (b *AESBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	key, err := b.GetSymmetricKey(attrs)
 	if err != nil {
 		return nil, err
@@ -477,7 +488,7 @@ func (b *AESBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.Symme
 	}, nil
 }
 
-// softwareSymmetricEncrypter implements types.SymmetricEncrypter for AES-GCM.
+// softwareSymmetricEncrypter implements types.SymmetricEncrypter for symmetric AEAD ciphers.
 type softwareSymmetricEncrypter struct {
 	key     types.SymmetricKey
 	attrs   *types.KeyAttributes
@@ -699,10 +710,10 @@ func (e *softwareSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *ty
 	return plaintext, nil
 }
 
-// storeSymmetricKey stores an AES key, optionally encrypted with a password.
+// storeSymmetricKey stores a symmetric key, optionally encrypted with a password.
 // Uses Argon2id for password-based key derivation with parameters:
 // - time=1, memory=64MB, threads=4, keyLen=32
-func (b *AESBackend) storeSymmetricKey(keyID string, keyData []byte, password types.Password) error {
+func (b *Backend) storeSymmetricKey(keyID string, keyData []byte, password types.Password) error {
 	var storedData []byte
 
 	if password != nil {
@@ -729,7 +740,7 @@ func (b *AESBackend) storeSymmetricKey(keyID string, keyData []byte, password ty
 }
 
 // decodeSymmetricKey decodes a stored symmetric key, decrypting if password-protected.
-func (b *AESBackend) decodeSymmetricKey(storedData []byte, password types.Password) ([]byte, error) {
+func (b *Backend) decodeSymmetricKey(storedData []byte, password types.Password) ([]byte, error) {
 	if password != nil {
 		passwordBytes := password.Bytes()
 		if len(passwordBytes) > 0 {
@@ -833,10 +844,10 @@ func decryptWithPassword(encryptedData, password []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// GetImportParameters generates RSA wrapping key pair for importing AES keys.
+// GetImportParameters generates RSA wrapping key pair for importing symmetric keys.
 // The private key is stored in memory with a UUID token, and the public key
 // is returned for use in wrapping operations.
-func (b *AESBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -876,17 +887,15 @@ func (b *AESBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm b
 	// Set expiration to 24 hours from now
 	expiresAt := time.Now().Add(24 * time.Hour)
 
-	// Determine key spec from attributes
+	// Determine key spec from algorithm
 	keySpec := "AES_256" // Default
-	if attrs.AESAttributes != nil {
-		switch attrs.AESAttributes.KeySize {
-		case 128:
-			keySpec = "AES_128"
-		case 192:
-			keySpec = "AES_192"
-		case 256:
-			keySpec = "AES_256"
-		}
+	switch attrs.SymmetricAlgorithm.KeySize() {
+	case 128:
+		keySpec = "AES_128"
+	case 192:
+		keySpec = "AES_192"
+	case 256:
+		keySpec = "AES_256"
 	}
 
 	return &backend.ImportParameters{
@@ -898,9 +907,9 @@ func (b *AESBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm b
 	}, nil
 }
 
-// WrapKey wraps AES key material for secure transport using the specified parameters.
+// WrapKey wraps symmetric key material for secure transport using the specified parameters.
 // Uses pkg/crypto/wrapping to wrap the key material.
-func (b *AESBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if len(keyMaterial) == 0 {
 		return nil, fmt.Errorf("%w: key material cannot be nil or empty", backend.ErrInvalidAttributes)
 	}
@@ -909,10 +918,10 @@ func (b *AESBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameter
 		return nil, fmt.Errorf("%w: import parameters cannot be nil", backend.ErrInvalidAttributes)
 	}
 
-	// Validate key material is a valid AES key size
+	// Validate key material is a valid symmetric key size
 	keySize := len(keyMaterial)
 	if keySize != 16 && keySize != 24 && keySize != 32 {
-		return nil, fmt.Errorf("%w: invalid AES key size %d bytes (must be 16, 24, or 32)", backend.ErrInvalidAttributes, keySize)
+		return nil, fmt.Errorf("%w: invalid symmetric key size %d bytes (must be 16, 24, or 32)", backend.ErrInvalidAttributes, keySize)
 	}
 
 	// Ensure we have an RSA public key
@@ -928,7 +937,7 @@ func (b *AESBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameter
 	switch params.Algorithm {
 	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
 		backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-		// Direct RSA-OAEP wrapping (suitable for AES keys which are small)
+		// Direct RSA-OAEP wrapping (suitable for symmetric keys which are small)
 		wrapped, err = wrapping.WrapRSAOAEP(keyMaterial, rsaPubKey, params.Algorithm)
 
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1,
@@ -954,7 +963,7 @@ func (b *AESBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameter
 
 // UnwrapKey unwraps key material using the stored RSA private key.
 // The import token is used to retrieve the corresponding private key.
-func (b *AESBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
 	}
@@ -1001,7 +1010,7 @@ func (b *AESBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *back
 		return nil, fmt.Errorf("failed to unwrap key material: %w", err)
 	}
 
-	// Validate unwrapped key is a valid AES key size
+	// Validate unwrapped key is a valid symmetric key size
 	keySize := len(unwrapped)
 	if keySize != 16 && keySize != 24 && keySize != 32 {
 		return nil, fmt.Errorf("%w: unwrapped key has invalid size %d bytes (must be 16, 24, or 32)", backend.ErrInvalidAttributes, keySize)
@@ -1010,9 +1019,9 @@ func (b *AESBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *back
 	return unwrapped, nil
 }
 
-// ImportKey unwraps and imports AES key material into the backend.
+// ImportKey unwraps and imports symmetric key material into the backend.
 // The key material is validated and stored using the backend's storage mechanism.
-func (b *AESBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -1056,7 +1065,7 @@ func (b *AESBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrap
 	}
 
 	// Validate key size matches attributes
-	expectedSize := attrs.AESAttributes.KeySize / 8
+	expectedSize := attrs.SymmetricAlgorithm.KeySize() / 8
 	if len(keyData) != expectedSize {
 		return fmt.Errorf("%w: unwrapped key size (%d bytes) does not match expected size (%d bytes)",
 			backend.ErrInvalidAttributes, len(keyData), expectedSize)
@@ -1078,9 +1087,9 @@ func (b *AESBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrap
 	return nil
 }
 
-// ExportKey exports an AES key in wrapped form for secure transport.
+// ExportKey exports a symmetric key in wrapped form for secure transport.
 // The key is retrieved and wrapped using the specified algorithm.
-func (b *AESBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
 	}
@@ -1143,21 +1152,21 @@ func (b *AESBackend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wra
 
 // GetTracker returns the AEAD safety tracker for this backend.
 // This allows external code to inspect tracking state and configuration.
-func (b *AESBackend) GetTracker() types.AEADSafetyTracker {
+func (b *Backend) GetTracker() types.AEADSafetyTracker {
 	return b.tracker
 }
 
 // GetRNG returns the configured RNG resolver for this backend.
 // This allows external code to use the same RNG source for consistency.
-func (b *AESBackend) GetRNG() cryptorand.Resolver {
+func (b *Backend) GetRNG() cryptorand.Resolver {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.rng
 }
 
 // Verify interface compliance at compile time
-var _ types.Backend = (*AESBackend)(nil)
-var _ types.SymmetricBackend = (*AESBackend)(nil)
-var _ types.SymmetricBackendWithTracking = (*AESBackend)(nil)
-var _ backend.ImportExportBackend = (*AESBackend)(nil)
+var _ types.Backend = (*Backend)(nil)
+var _ types.SymmetricBackend = (*Backend)(nil)
+var _ types.SymmetricBackendWithTracking = (*Backend)(nil)
+var _ backend.ImportExportBackend = (*Backend)(nil)
 var _ types.SymmetricEncrypter = (*softwareSymmetricEncrypter)(nil)

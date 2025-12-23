@@ -107,8 +107,8 @@ func TestNewBackend(t *testing.T) {
 		defer func() { _ = be.Close() }()
 
 		// Verify type
-		if be.Type() != backend.BackendTypePKCS8 {
-			t.Errorf("Expected type %s, got %s", backend.BackendTypePKCS8, be.Type())
+		if be.Type() != backend.BackendTypeSoftware {
+			t.Errorf("Expected type %s, got %s", backend.BackendTypeSoftware, be.Type())
 		}
 	})
 
@@ -136,8 +136,8 @@ func TestType(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	if be.Type() != backend.BackendTypePKCS8 {
-		t.Errorf("Expected type %s, got %s", backend.BackendTypePKCS8, be.Type())
+	if be.Type() != backend.BackendTypeSoftware {
+		t.Errorf("Expected type %s, got %s", backend.BackendTypeSoftware, be.Type())
 	}
 }
 

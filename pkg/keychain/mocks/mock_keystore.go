@@ -259,7 +259,7 @@ func (m *MockKeyStore) ListKeys() ([]*types.KeyAttributes, error) {
 		attrs = append(attrs, &types.KeyAttributes{
 			CN:           cn,
 			KeyType:      types.KeyTypeTLS,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 		})
 	}

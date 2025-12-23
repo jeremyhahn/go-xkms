@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/client"
+	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/spf13/cobra"
 )
 
@@ -830,13 +831,13 @@ func issueCertificate(
 
 // generateKeyPair generates a key pair based on the algorithm
 func generateKeyPair(algorithm string, size int) (crypto.PrivateKey, error) {
-	switch strings.ToLower(algorithm) {
-	case "rsa":
-		if size < 2048 {
-			size = 2048
+	switch {
+	case types.AlgorithmRSA.Equals(algorithm):
+		if size < types.RSAKeySize2048 {
+			size = types.RSAKeySize2048
 		}
 		return rsa.GenerateKey(rand.Reader, size)
-	case "ecdsa", "ec":
+	case types.AlgorithmECDSA.Equals(algorithm) || strings.EqualFold(algorithm, "ec"):
 		var curve elliptic.Curve
 		switch size {
 		case 384:
@@ -847,7 +848,7 @@ func generateKeyPair(algorithm string, size int) (crypto.PrivateKey, error) {
 			curve = elliptic.P256()
 		}
 		return ecdsa.GenerateKey(curve, rand.Reader)
-	case "ed25519":
+	case types.AlgorithmEd25519.Equals(algorithm):
 		_, privKey, err := ed25519.GenerateKey(rand.Reader)
 		return privKey, err
 	default:

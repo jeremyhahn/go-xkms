@@ -200,7 +200,7 @@ func TestKeyID_BackendMismatch(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-backend-mismatch",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -275,7 +275,7 @@ func TestKeyID_AllAlgorithms(t *testing.T) {
 // TestKeyID_AllBackends tests all supported backends
 func TestKeyID_AllBackends(t *testing.T) {
 	backends := []string{
-		"pkcs8", "aes", "software", "pkcs11", "tpm2",
+		"pkcs8", "symmetric", "software", "pkcs11", "tpm2",
 		"awskms", "gcpkms", "azurekv", "vault",
 	}
 
@@ -310,7 +310,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-rsa-keyid",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.RSA,
 					RSAAttributes: &types.RSAAttributes{
 						KeySize: 2048,
@@ -328,7 +328,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-ecdsa-p256-keyid",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.ECDSA,
 					ECCAttributes: &types.ECCAttributes{
 						Curve: elliptic.P256(),
@@ -346,7 +346,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-ecdsa-p384-keyid",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.ECDSA,
 					ECCAttributes: &types.ECCAttributes{
 						Curve: elliptic.P384(),
@@ -364,7 +364,7 @@ func TestKeyID_GetKeyByID_AllAlgorithms(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-ed25519-keyid",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.Ed25519,
 				}
 				_, err := ks.GenerateEd25519(attrs)

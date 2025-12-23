@@ -43,6 +43,7 @@ import (
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
+	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/health"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/metrics"
@@ -214,14 +215,14 @@ func getBuildVersion() string {
 func (s *Server) initializeBackends() error {
 	s.logger.Info("Initializing backends...")
 
-	// Initialize Software backend (uses PKCS#8 internally)
+	// Initialize Software backend (unified asymmetric + symmetric with import/export support)
 	if s.config.Backends.Software != nil && s.config.Backends.Software.Enabled {
 		keyStorage, err := file.New(s.config.Backends.Software.Path)
 		if err != nil {
 			return fmt.Errorf("failed to create software key storage: %w", err)
 		}
 
-		softwareBackend, err := pkcs8.NewBackend(&pkcs8.Config{
+		softwareBackend, err := software.NewBackend(&software.Config{
 			KeyStorage: keyStorage,
 		})
 		if err != nil {

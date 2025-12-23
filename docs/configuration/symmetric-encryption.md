@@ -30,7 +30,7 @@ The following backends support symmetric encryption operations:
 
 ## Quick Start
 
-### 1. AES Backend
+### 1. Symmetric Backend
 
 The simplest way to get started with symmetric encryption using local key storage:
 
@@ -42,7 +42,7 @@ import (
     "log"
 
     "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/aes"
+    "github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
     "github.com/jeremyhahn/go-keychain/pkg/keychain"
     "github.com/jeremyhahn/go-keychain/pkg/storage/file"
 )
@@ -53,7 +53,7 @@ func main() {
     certStorage := file.New("/var/lib/certs")
 
     // Create AES backend
-    aesBackend := aes.NewBackend(keyStorage)
+    aesBackend := symmetric.NewBackend(keyStorage)
 
     // Create keystore
     keystore, err := keychain.New(&keychain.Config{

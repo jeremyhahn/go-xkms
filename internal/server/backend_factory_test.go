@@ -103,17 +103,17 @@ func TestInitialize_WithSoftwareBackend(t *testing.T) {
 	keychain.Reset()
 }
 
-func TestInitialize_WithAESBackend(t *testing.T) {
+func TestInitialize_WithSymmetricBackend(t *testing.T) {
 	keychain.Reset()
 
 	tempDir := t.TempDir()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "aes",
+		DefaultBackend: "symmetric",
 		Backends: []BackendConfig{
 			{
-				Name:    "aes",
-				Type:    "aes",
+				Name:    "symmetric",
+				Type:    "symmetric",
 				Enabled: true,
 				Config: map[string]interface{}{
 					"key_dir":  tempDir + "/keys",
@@ -126,7 +126,7 @@ func TestInitialize_WithAESBackend(t *testing.T) {
 	err := Initialize(config)
 	assert.NoError(t, err)
 
-	ks, err := keychain.Backend("aes")
+	ks, err := keychain.Backend("symmetric")
 	assert.NoError(t, err)
 	assert.NotNil(t, ks)
 
@@ -379,18 +379,18 @@ func TestCreateSoftwareBackend_Success(t *testing.T) {
 	assert.NotNil(t, backend)
 }
 
-func TestCreateAESBackend_Success(t *testing.T) {
+func TestCreateSymmetricBackend_Success(t *testing.T) {
 	tempDir := t.TempDir()
 
 	config := BackendConfig{
-		Name: "aes",
-		Type: "aes",
+		Name: "symmetric",
+		Type: "symmetric",
 		Config: map[string]interface{}{
 			"key_dir": tempDir,
 		},
 	}
 
-	backend, err := createAESBackend(config)
+	backend, err := createSymmetricBackend(config)
 	assert.NoError(t, err)
 	assert.NotNil(t, backend)
 }
@@ -399,7 +399,7 @@ func TestGetDefaultBackendConfigs(t *testing.T) {
 	configs := getDefaultBackendConfigs()
 	assert.NotEmpty(t, configs)
 
-	// Should have at least PKCS8, Software, and AES backends
+	// Should have at least PKCS8, Software, and Symmetric backends
 	types := make(map[string]bool)
 	for _, config := range configs {
 		types[config.Type] = true
@@ -407,7 +407,7 @@ func TestGetDefaultBackendConfigs(t *testing.T) {
 
 	assert.True(t, types["pkcs8"])
 	assert.True(t, types["software"])
-	assert.True(t, types["aes"])
+	assert.True(t, types["symmetric"])
 }
 
 func TestBackendFactory_Integration(t *testing.T) {
@@ -451,7 +451,7 @@ func TestBackendFactory_Integration(t *testing.T) {
 	// Generate keys
 	attrs1 := &types.KeyAttributes{
 		CN:        "pkcs8-key",
-		StoreType: types.StorePKCS8,
+		StoreType: types.StoreSoftware,
 		KeyType:   types.KeyTypeTLS,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -462,7 +462,7 @@ func TestBackendFactory_Integration(t *testing.T) {
 
 	attrs2 := &types.KeyAttributes{
 		CN:        "software-key",
-		StoreType: types.StorePKCS8, // Software backend also uses PKCS8 store type
+		StoreType: types.StoreSoftware, // Software backend also uses PKCS8 store type
 		KeyType:   types.KeyTypeTLS,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,

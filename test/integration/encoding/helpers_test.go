@@ -69,7 +69,7 @@ func (s *testBackendSetup) GetKeyByID(cn string) (crypto.PrivateKey, error) {
 	attrs := &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048, // Default size, actual size doesn't matter for retrieval
@@ -85,7 +85,7 @@ func (s *testBackendSetup) GetKeyByID(cn string) (crypto.PrivateKey, error) {
 	attrs = &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
 			Curve: elliptic.P256(),
@@ -115,7 +115,7 @@ func (s *testBackendSetup) GetKeyByID(cn string) (crypto.PrivateKey, error) {
 	attrs = &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.Ed25519,
 	}
 	return s.backend.GetKey(attrs)
@@ -162,7 +162,7 @@ func createRSAAttrs(cn string, keySize int) *types.KeyAttributes {
 	return &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      types.KeyType(backend.KEY_TYPE_TLS),
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: keySize,
@@ -176,7 +176,7 @@ func createECDSAAttrs(cn string, curve elliptic.Curve) *types.KeyAttributes {
 	return &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      types.KeyType(backend.KEY_TYPE_TLS),
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
 			Curve: curve,
@@ -190,7 +190,7 @@ func createEd25519Attrs(cn string) *types.KeyAttributes {
 	return &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      types.KeyType(backend.KEY_TYPE_TLS),
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.Ed25519,
 	}
 }

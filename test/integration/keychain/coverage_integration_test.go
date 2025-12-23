@@ -61,7 +61,7 @@ func TestKeyStore_Close(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-close",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -123,7 +123,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-rotate-rsa",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.RSA,
 					RSAAttributes: &types.RSAAttributes{
 						KeySize: 2048,
@@ -140,7 +140,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-rotate-ecdsa",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.ECDSA,
 					ECCAttributes: &types.ECCAttributes{
 						Curve: elliptic.P256(),
@@ -157,7 +157,7 @@ func TestKeyStore_RotateKey_AllAlgorithms(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-rotate-ed25519",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.Ed25519,
 				}
 				_, err := ks.GenerateEd25519(attrs)
@@ -209,7 +209,7 @@ func TestKeyStore_RotateKey_InvalidAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-rotate-invalid",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.PublicKeyAlgorithm(999), // Invalid algorithm
 	}
 
@@ -229,7 +229,7 @@ func TestKeyStore_GetDecrypterByID_InvalidKeyType(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-decrypter-ecdsa",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
 			Curve: elliptic.P256(),
@@ -260,7 +260,7 @@ func TestKeyStore_GetTLSCertificate_MissingChain(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           keyID,
 		KeyType:      types.KeyTypeTLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -304,7 +304,7 @@ func TestKeyStore_GetTLSCertificate_ErrorCases(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-tls-errors",
 		KeyType:      types.KeyTypeTLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -433,7 +433,7 @@ func TestKeyStore_GetDecrypterByID_P521(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-p521",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
 			Curve: elliptic.P521(),

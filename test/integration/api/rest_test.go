@@ -17,6 +17,7 @@ package integration
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,7 +36,12 @@ type RESTClient struct {
 func NewRESTClient(baseURL string) *RESTClient {
 	return &RESTClient{
 		baseURL: baseURL,
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
 	}
 }
 
@@ -66,7 +72,7 @@ func (c *RESTClient) doRequest(method, path string, body interface{}) (*http.Res
 func TestRESTHealth(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -97,7 +103,7 @@ func TestRESTHealth(t *testing.T) {
 func TestRESTListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -128,7 +134,7 @@ func TestRESTListBackends(t *testing.T) {
 func TestRESTGenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -195,7 +201,7 @@ func TestRESTGenerateKey(t *testing.T) {
 
 				assertEqual(t, testKeyID, returnedKeyID, "Key ID mismatch")
 
-				if tt.keyType != "ed25519" && tt.keyType != "aes" {
+				if tt.keyType != "ed25519" && tt.keyType != "symmetric" {
 					pubKey, ok := result["public_key_pem"].(string)
 					if !ok || pubKey == "" {
 						t.Fatal("Response missing public_key_pem")
@@ -220,7 +226,7 @@ func TestRESTGenerateKey(t *testing.T) {
 func TestRESTListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -286,7 +292,7 @@ func TestRESTListKeys(t *testing.T) {
 func TestRESTSignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -369,7 +375,7 @@ func TestRESTSignVerify(t *testing.T) {
 func TestRESTDeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)
@@ -423,7 +429,7 @@ func TestRESTDeleteKey(t *testing.T) {
 func TestRESTErrorHandling(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isServerAvailable(t, cfg) {
-		t.Skip("Server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := NewRESTClient(cfg.RESTBaseURL)

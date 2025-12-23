@@ -386,7 +386,7 @@ func BenchmarkREST_EncryptDecryptRoundtrip(b *testing.B) {
 			genReq := GenerateKeyRequest{
 				KeyID:     "bench-encrypt",
 				Backend:   "software",
-				KeyType:   "aes",
+				KeyType:   "symmetric",
 				Algorithm: "aes-256-gcm",
 				KeySize:   256,
 			}

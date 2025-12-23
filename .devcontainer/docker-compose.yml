@@ -1,0 +1,126 @@
+services:
+  devcontainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/home/vscode/.cache/go-build
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - GOPATH=/go
+      - CGO_ENABLED=1
+      - TPM_USE_SIMULATOR=true
+      - TPM_SIMULATOR_HOST=swtpm
+      - TPM_SIMULATOR_PORT=2321
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
+      # Integration test endpoints
+      - KEYSTORE_UNIX_SOCKET=/var/run/keychain/keychain.sock
+      - KEYSTORE_REST_URL=http://keychain-server:8443
+      - KEYSTORE_GRPC_ADDR=keychain-server:9443
+      - KEYSTORE_QUIC_URL=https://keychain-server:8444
+      - KEYSTORE_MCP_ADDR=keychain-server:9444
+    networks:
+      - keychain-dev
+    depends_on:
+      swtpm:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    command: sleep infinity
+
+  # SWTPM TPM 2.0 Simulator (shared across all tests)
+  swtpm:
+    build:
+      context: ../test/docker/swtpm
+      dockerfile: Dockerfile
+    image: go-keychain-swtpm:dev
+    container_name: keychain-dev-swtpm
+    volumes:
+      - swtpm-state:/var/lib/swtpm/tpmstate
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - keychain-dev
+
+  # SoftHSM PKCS#11 Service (shared across all tests)
+  softhsm:
+    build:
+      context: ../test/docker/softhsm
+      dockerfile: Dockerfile
+    image: go-keychain-softhsm:dev
+    container_name: keychain-dev-softhsm
+    volumes:
+      - softhsm-tokens:/tokens
+    environment:
+      - SOFTHSM2_CONF=/home/softhsm/softhsm2.conf
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+    healthcheck:
+      test: ["CMD", "test", "-f", "/usr/local/lib/softhsm/libsofthsm2.so"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - keychain-dev
+
+  # Keychain server for integration tests (optional, started manually)
+  keychain-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: go-keychain-server:dev
+    container_name: keychain-dev-server
+    ports:
+      - "8443:8443"   # REST API
+      - "9443:9443"   # gRPC
+      - "8444:8444"   # QUIC
+      - "9444:9444"   # MCP
+      - "9090:9090"   # Metrics
+    volumes:
+      - keychain-data:/data
+      - keychain-socket:/var/run/keychain
+    environment:
+      - KEYCHAIN_CONFIG=/etc/keychain/keychaind.yaml
+      - KEYSTORE_LOG_LEVEL=debug
+      - KEYSTORE_DATA_DIR=/data
+      - TPM_DEVICE_PATH=tcp://swtpm:2321
+      - TPM_USE_SIMULATOR=true
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+    depends_on:
+      swtpm:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8443/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - keychain-dev
+    profiles:
+      - server
+    command: ["/app/keychaind"]
+
+volumes:
+  go-mod-cache:
+  go-build-cache:
+  swtpm-state:
+  softhsm-tokens:
+  keychain-data:
+  keychain-socket:
+
+networks:
+  keychain-dev:
+    driver: bridge

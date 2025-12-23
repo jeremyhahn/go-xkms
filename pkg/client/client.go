@@ -340,13 +340,14 @@ type ListBackendsResponse struct {
 
 // GenerateKeyRequest contains parameters for key generation.
 type GenerateKeyRequest struct {
-	KeyID     string `json:"key_id"`
-	Backend   string `json:"backend"`
-	KeyType   string `json:"key_type"`
-	KeySize   int    `json:"key_size,omitempty"`
-	Curve     string `json:"curve,omitempty"`
-	Hash      string `json:"hash,omitempty"`
-	Algorithm string `json:"algorithm,omitempty"`
+	KeyID      string `json:"key_id"`
+	Backend    string `json:"backend"`
+	KeyType    string `json:"key_type"`
+	KeySize    int    `json:"key_size,omitempty"`
+	Curve      string `json:"curve,omitempty"`
+	Hash       string `json:"hash,omitempty"`
+	Algorithm  string `json:"algorithm,omitempty"`
+	Exportable bool   `json:"exportable,omitempty"`
 }
 
 // GenerateKeyResponse contains the result of key generation.

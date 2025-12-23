@@ -114,7 +114,7 @@ func TestMCPHealth(t *testing.T) {
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)
@@ -147,7 +147,7 @@ func TestMCPListBackends(t *testing.T) {
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)
@@ -180,7 +180,7 @@ func TestMCPGenerateKey(t *testing.T) {
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)
@@ -224,7 +224,7 @@ func TestMCPGenerateKey(t *testing.T) {
 func TestMCPListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)
@@ -290,7 +290,7 @@ func TestMCPSignVerify(t *testing.T) {
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)
@@ -369,7 +369,7 @@ func TestMCPBatchRequests(t *testing.T) {
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)
@@ -424,7 +424,7 @@ func TestMCPStreamingNotifications(t *testing.T) {
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)
@@ -488,7 +488,7 @@ func TestMCPErrorHandling(t *testing.T) {
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client, err := NewMCPClient(cfg.MCPAddr)

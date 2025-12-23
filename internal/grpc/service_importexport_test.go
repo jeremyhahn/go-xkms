@@ -163,7 +163,7 @@ func TestGetImportParameters(t *testing.T) {
 				KeyId:             "test-key",
 				Backend:           "test-backend",
 				WrappingAlgorithm: "RSAES_OAEP_SHA_256",
-				KeyType:           "aes",
+				KeyType:           "symmetric",
 			},
 			mockSetup:     func(m *MockImportExportBackend) {},
 			expectedError: codes.NotFound, // Backend not found before validation
@@ -401,7 +401,7 @@ func TestImportKey(t *testing.T) {
 				WrappedKey:  []byte("wrapped-key-data"),
 				Algorithm:   "RSAES_OAEP_SHA_256",
 				ImportToken: []byte("test-token"),
-				KeyType:     "aes",
+				KeyType:     "symmetric",
 				KeySize:     256,
 			},
 			expectedError: codes.NotFound,
@@ -469,7 +469,7 @@ func TestImportKey(t *testing.T) {
 				WrappedKey:  []byte("wrapped-key-data"),
 				Algorithm:   "RSAES_OAEP_SHA_256",
 				ImportToken: []byte("test-token"),
-				KeyType:     "aes",
+				KeyType:     "symmetric",
 			},
 			expectedError: codes.NotFound, // Backend not found before validation
 		},
@@ -596,8 +596,8 @@ func TestKeyTypeValidation(t *testing.T) {
 		{"ECDSA with curve", "ecdsa", 0, "P256", true, false},
 		{"ECDSA default curve", "ecdsa", 0, "", true, false},
 		{"Ed25519", "ed25519", 0, "", true, false},
-		{"AES with size", "aes", 256, "", true, false},
-		{"AES without size", "aes", 0, "", false, true},
+		{"Symmetric with size", "symmetric", 256, "", true, false},
+		{"Symmetric without size", "symmetric", 0, "", false, true},
 		{"Invalid type", "invalid", 0, "", false, true},
 	}
 

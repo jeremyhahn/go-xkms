@@ -16,9 +16,9 @@ package server
 import (
 	"fmt"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
+	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
@@ -131,11 +131,11 @@ func getDefaultBackendConfigs() []BackendConfig {
 			},
 		},
 		{
-			Name:    "aes",
-			Type:    "aes",
+			Name:    "symmetric",
+			Type:    "symmetric",
 			Enabled: true,
 			Config: map[string]interface{}{
-				"key_dir": "/tmp/keystore/aes",
+				"key_dir": "/tmp/keystore/symmetric",
 			},
 		},
 		// Hardware backends (may not be available in all environments)
@@ -205,6 +205,22 @@ func getDefaultBackendConfigs() []BackendConfig {
 				"token":   "", // Will use VAULT_TOKEN env var
 			},
 		},
+		// Threshold signature backends (optional, requires build tags)
+		{
+			Name:    "frost",
+			Type:    "frost",
+			Enabled: true,
+			Config: map[string]interface{}{
+				"public_dir":            "/tmp/keystore/frost/public",
+				"secret_dir":            "/tmp/keystore/frost/secrets",
+				"secret_backend":        "pkcs8",
+				"algorithm":             "FROST-Ed25519-SHA512",
+				"threshold":             2,
+				"total":                 3,
+				"participant_id":        1,
+				"enable_nonce_tracking": true,
+			},
+		},
 	}
 }
 
@@ -216,8 +232,8 @@ func createBackend(config BackendConfig) (types.Backend, error) {
 		return createPKCS8Backend(config)
 	case "software":
 		return createSoftwareBackend(config)
-	case "aes":
-		return createAESBackend(config)
+	case "symmetric":
+		return createSymmetricBackend(config)
 	case "pkcs11":
 		return createPKCS11Backend(config)
 	case "smartcardhsm":
@@ -232,6 +248,8 @@ func createBackend(config BackendConfig) (types.Backend, error) {
 		return createAzureKVBackend(config)
 	case "vault":
 		return createVaultBackend(config)
+	case "frost":
+		return createFrostBackend(config)
 	default:
 		return nil, fmt.Errorf("unknown backend type: %s", config.Type)
 	}
@@ -278,10 +296,10 @@ func createSoftwareBackend(config BackendConfig) (types.Backend, error) {
 	return software.NewBackend(softwareConfig)
 }
 
-func createAESBackend(config BackendConfig) (types.Backend, error) {
+func createSymmetricBackend(config BackendConfig) (types.Backend, error) {
 	keyDir, ok := config.Config["key_dir"].(string)
 	if !ok || keyDir == "" {
-		keyDir = "/tmp/keystore/aes"
+		keyDir = "/tmp/keystore/symmetric"
 	}
 
 	keyStorage, err := createKeyStorage(keyDir)
@@ -289,13 +307,13 @@ func createAESBackend(config BackendConfig) (types.Backend, error) {
 		return nil, fmt.Errorf("failed to create key storage: %w", err)
 	}
 
-	aesConfig := &aes.Config{
+	symmetricConfig := &symmetric.Config{
 		KeyStorage: keyStorage,
 		Tracker:    nil, // Use default memory tracker
 		RNGConfig:  nil, // Use default auto-detection
 	}
 
-	return aes.NewBackend(aesConfig)
+	return symmetric.NewBackend(symmetricConfig)
 }
 
 // Helper function to create key storage

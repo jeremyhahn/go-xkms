@@ -28,11 +28,24 @@ import (
 func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...string) (string, string, error) {
 	t.Helper()
 
+	var prefixArgs []string
+
 	// Prepend --server flag if serverURL is not empty
 	if serverURL != "" {
-		args = append([]string{"--server", serverURL}, args...)
+		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
+	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
+	needsTLS := strings.HasPrefix(serverURL, "https://") ||
+		strings.HasPrefix(serverURL, "grpc://") ||
+		strings.HasPrefix(serverURL, "grpcs://") ||
+		strings.HasPrefix(serverURL, "quic://")
+
+	if needsTLS {
+		prefixArgs = append(prefixArgs, "--tls-insecure")
+	}
+
+	args = append(prefixArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, args...)
 
 	var stdout, stderr bytes.Buffer
@@ -48,7 +61,7 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 func TestCLIMultiProtocolVersion(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 
 	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
@@ -76,7 +89,7 @@ func TestCLIMultiProtocolVersion(t *testing.T) {
 func TestCLIMultiProtocolHealth(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 
 	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
@@ -84,7 +97,7 @@ func TestCLIMultiProtocolHealth(t *testing.T) {
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
-				t.Skipf("Server not available for protocol %s", proto)
+				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
 			serverURL := cfg.GetServerURL(proto)
@@ -97,7 +110,7 @@ func TestCLIMultiProtocolHealth(t *testing.T) {
 				t.Logf("stderr: %s", stderr)
 				// Log but don't fail - protocol might not be fully implemented
 				t.Logf("[%s] Command failed (may not be implemented): %v", proto, err)
-				t.Skipf("Protocol may not be fully implemented")
+				t.Fatalf("Protocol may not be fully implemented - check server logs")
 			}
 
 			output := stdout + stderr
@@ -114,7 +127,7 @@ func TestCLIMultiProtocolHealth(t *testing.T) {
 func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 
 	keyDir := "/tmp/keystore-multiproto-test"
@@ -127,7 +140,7 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
-				t.Skipf("Server not available for protocol %s", proto)
+				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
 			serverURL := cfg.GetServerURL(proto)
@@ -137,7 +150,7 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 			args := []string{
 				"key", "generate", keyID,
 				"--backend", "software",
-				"--key-type", "tls",
+				"--key-type", "rsa",
 				"--key-algorithm", "rsa",
 				"--key-size", "2048",
 				"--key-dir", keyDir,
@@ -148,7 +161,7 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
 				t.Logf("[%s] Key generation failed (may not be implemented): %v", proto, err)
-				t.Skipf("Protocol may not be fully implemented")
+				t.Fatalf("Protocol may not be fully implemented - check server logs")
 			}
 
 			t.Logf("[%s] Generated key: %s", proto, keyID)
@@ -157,7 +170,7 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 			delArgs := []string{
 				"key", "delete", keyID,
 				"--backend", "software",
-				"--key-type", "tls",
+				"--key-type", "rsa",
 				"--key-algorithm", "rsa",
 				"--key-dir", keyDir,
 			}
@@ -170,10 +183,10 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 func TestCLIMultiProtocolListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 	if !isUnixSocketAvailable(t, cfg) {
-		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyDir := "/tmp/keystore-multiproto-test"
@@ -186,7 +199,7 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 	genArgs := []string{
 		"key", "generate", keyID,
 		"--backend", "software",
-		"--key-type", "tls",
+		"--key-type", "rsa",
 		"--key-algorithm", "rsa",
 		"--key-size", "2048",
 		"--key-dir", keyDir,
@@ -195,13 +208,13 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 	if err != nil {
 		// If key generation fails, skip the test instead of failing
 		t.Logf("Key generation failed: %v\nstderr: %s", err, stderr)
-		t.Skip("Failed to create test key - server may not be available or key generation not supported")
+		t.Fatal("Failed to create test key - server may not be available or key generation not supported")
 	}
 	defer func() {
 		delArgs := []string{
 			"key", "delete", keyID,
 			"--backend", "software",
-			"--key-type", "tls",
+			"--key-type", "rsa",
 			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
@@ -213,7 +226,7 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
-				t.Skipf("Server not available for protocol %s", proto)
+				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
 			serverURL := cfg.GetServerURL(proto)
@@ -229,7 +242,7 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
 				t.Logf("[%s] List keys failed (may not be implemented): %v", proto, err)
-				t.Skipf("Protocol may not be fully implemented")
+				t.Fatalf("Protocol may not be fully implemented - check server logs")
 			}
 
 			output := stdout + stderr
@@ -244,10 +257,10 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 func TestCLIMultiProtocolSignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 	if !isUnixSocketAvailable(t, cfg) {
-		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyDir := "/tmp/keystore-multiproto-test"
@@ -260,7 +273,7 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 	genArgs := []string{
 		"key", "generate", keyID,
 		"--backend", "software",
-		"--key-type", "tls",
+		"--key-type", "rsa",
 		"--key-algorithm", "rsa",
 		"--key-size", "2048",
 		"--key-dir", keyDir,
@@ -269,13 +282,13 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 	if err != nil {
 		// If key generation fails, skip the test instead of failing
 		t.Logf("Key generation failed: %v\nstderr: %s", err, stderr)
-		t.Skip("Failed to create test key - server may not be available or key generation not supported")
+		t.Fatal("Failed to create test key - server may not be available or key generation not supported")
 	}
 	defer func() {
 		delArgs := []string{
 			"key", "delete", keyID,
 			"--backend", "software",
-			"--key-type", "tls",
+			"--key-type", "rsa",
 			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
@@ -289,7 +302,7 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
-				t.Skipf("Server not available for protocol %s", proto)
+				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
 			serverURL := cfg.GetServerURL(proto)
@@ -297,7 +310,7 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 			signArgs := []string{
 				"key", "sign", keyID, testData,
 				"--backend", "software",
-				"--key-type", "tls",
+				"--key-type", "rsa",
 				"--key-algorithm", "rsa",
 				"--key-dir", keyDir,
 				"--hash", "SHA-256",
@@ -308,7 +321,7 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
 				t.Logf("[%s] Sign failed (may not be implemented): %v", proto, err)
-				t.Skipf("Protocol may not be fully implemented")
+				t.Fatalf("Protocol may not be fully implemented - check server logs")
 			}
 
 			signature := strings.TrimSpace(stdout)
@@ -325,10 +338,10 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 	if !isUnixSocketAvailable(t, cfg) {
-		t.Skip("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
+		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
 
 	keyDir := "/tmp/keystore-multiproto-test"
@@ -343,6 +356,7 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 		"key", "generate", keyID,
 		"--backend", "software",
 		"--key-type", "aes",
+		"--algorithm", "aes-256-gcm",
 		"--key-size", "256",
 		"--key-dir", keyDir,
 	}
@@ -353,14 +367,15 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 		if strings.Contains(stderr, "connection failed") ||
 			strings.Contains(stderr, "connection error") ||
 			strings.Contains(stderr, "no such file or directory") {
-			t.Skip("Server not available for encrypt/decrypt test")
+			t.Fatal("Server not available for encrypt/decrypt test")
 		}
 		// AES key generation not yet supported via gRPC/REST for software backend
 		if strings.Contains(stderr, "unsupported key type") ||
 			strings.Contains(stderr, "does not support symmetric key generation") ||
 			strings.Contains(stderr, "does not support symmetric operations") ||
-			strings.Contains(stderr, "InvalidArgument") {
-			t.Skip("AES key generation not yet supported via Unix socket for software backend")
+			strings.Contains(stderr, "InvalidArgument") ||
+			strings.Contains(stderr, "RSA key size") {
+			t.Fatal("AES key generation not yet supported via Unix socket for software backend")
 		}
 		t.Fatalf("AES key generation failed: %v", err)
 	}
@@ -380,7 +395,7 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
-				t.Skipf("Server not available for protocol %s", proto)
+				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
 			serverURL := cfg.GetServerURL(proto)
@@ -396,7 +411,7 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
 				t.Logf("[%s] Encrypt failed (may not be implemented): %v", proto, err)
-				t.Skipf("Protocol may not be fully implemented")
+				t.Fatalf("Protocol may not be fully implemented - check server logs")
 			}
 
 			ciphertext := strings.TrimSpace(stdout)
@@ -413,7 +428,7 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 func TestCLIUnixSocketDefault(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 
 	// When no --server flag is provided, CLI should use Unix socket
@@ -433,7 +448,7 @@ func TestCLIUnixSocketDefault(t *testing.T) {
 func TestCLIServerFlagFormats(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatal("CLI binary required for integration tests. Run: make build")
 	}
 
 	tests := []struct {

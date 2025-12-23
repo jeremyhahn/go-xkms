@@ -196,10 +196,10 @@ Run the ChaCha20 backend tests:
 make test-backend-aes
 
 # Run specific ChaCha20 tests
-go test -run TestChaCha20 ./pkg/backend/aes/
+go test -run TestChaCha20 ./pkg/backend/symmetric/
 
 # Run with verbose output
-go test -v -run TestChaCha20 ./pkg/backend/aes/
+go test -v -run TestChaCha20 ./pkg/backend/symmetric/
 ```
 
 ## References

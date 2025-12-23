@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package aes
+package symmetric
 
 import (
 	"crypto/rand"
@@ -28,7 +28,7 @@ import (
 
 // testBackendWrapper wraps the backend to provide both ImportExportBackend and SymmetricBackend interfaces.
 type testBackendWrapper struct {
-	*AESBackend
+	*Backend
 }
 
 // createTestBackend is a helper function to create a test backend.
@@ -40,11 +40,11 @@ func createTestBackend(t *testing.T) *testBackendWrapper {
 	b, err := NewBackend(config)
 	require.NoError(t, err)
 
-	// Type assert to AESBackend
-	aesBackend, ok := b.(*AESBackend)
-	require.True(t, ok, "backend is not AESBackend")
+	// Type assert to Backend
+	symmetricBackend, ok := b.(*Backend)
+	require.True(t, ok, "backend is not Backend")
 
-	return &testBackendWrapper{AESBackend: aesBackend}
+	return &testBackendWrapper{Backend: symmetricBackend}
 }
 
 // TestGetImportParameters tests the GetImportParameters method.
@@ -57,9 +57,6 @@ func TestGetImportParameters(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Test with RSA-OAEP SHA-256
@@ -84,9 +81,6 @@ func TestGetImportParameters(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 128,
-		},
 	}
 	params128, err := b.GetImportParameters(attrs128, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
@@ -98,9 +92,6 @@ func TestGetImportParameters(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES192GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 192,
-		},
 	}
 	params192, err := b.GetImportParameters(attrs192, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
@@ -117,9 +108,6 @@ func TestGetImportParametersErrors(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Test with nil attributes
@@ -148,9 +136,6 @@ func TestWrapKey(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate random AES key material
@@ -190,9 +175,6 @@ func TestWrapKeyErrors(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -212,7 +194,7 @@ func TestWrapKeyErrors(t *testing.T) {
 	invalidKey := make([]byte, 15) // Invalid size
 	_, err = b.WrapKey(invalidKey, params)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid AES key size")
+	assert.Contains(t, err.Error(), "invalid symmetric key size")
 
 	// Test with nil parameters
 	validKey := make([]byte, 32)
@@ -231,9 +213,6 @@ func TestUnwrapKey(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate random AES key material
@@ -274,9 +253,6 @@ func TestUnwrapKeyErrors(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -342,9 +318,6 @@ func TestImportKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_SW,
 				SymmetricAlgorithm: tc.algorithm,
-				AESAttributes: &types.AESAttributes{
-					KeySize: tc.keySize,
-				},
 			}
 
 			// Generate random key material
@@ -392,9 +365,6 @@ func TestImportKeyErrors(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	keyMaterial := make([]byte, 32)
@@ -445,9 +415,6 @@ func TestImportKeyErrors(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 128,
-		},
 	}
 	params128, err := b.GetImportParameters(attrs128, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 	require.NoError(t, err)
@@ -471,9 +438,6 @@ func TestExportKey(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 		Exportable:         true,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate a key to export
@@ -513,9 +477,6 @@ func TestExportKeyErrors(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 		Exportable:         true,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Test with nil attributes
@@ -567,9 +528,6 @@ func TestImportExportRoundTrip(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate key in source backend
@@ -632,9 +590,6 @@ func TestImportExportWithPassword(t *testing.T) {
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 		Password:           password,
 		Exportable:         true,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate password-protected key
@@ -679,9 +634,6 @@ func TestGetImportParameters_AllWrappingAlgorithms(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	algorithms := []backend.WrappingAlgorithm{
@@ -712,9 +664,6 @@ func TestWrapKey_AllKeySizes(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -758,9 +707,6 @@ func TestWrapKey_InvalidKeySizes(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -776,7 +722,7 @@ func TestWrapKey_InvalidKeySizes(t *testing.T) {
 
 			_, err = b.WrapKey(invalidKey, params)
 			assert.Error(t, err)
-			assert.Contains(t, err.Error(), "invalid AES key size")
+			assert.Contains(t, err.Error(), "invalid symmetric key size")
 		})
 	}
 }
@@ -791,9 +737,6 @@ func TestUnwrapKey_InvalidAlgorithm(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -824,9 +767,6 @@ func TestUnwrapKey_InvalidKeySize(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -875,9 +815,6 @@ func TestWrapKey_UnsupportedAlgorithm(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	params, err := b.GetImportParameters(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
@@ -905,9 +842,6 @@ func TestImportKey_ClosedBackend(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	keyMaterial := make([]byte, 32)
@@ -936,9 +870,6 @@ func TestImportKey_InvalidAttributes(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	keyMaterial := make([]byte, 32)
@@ -976,9 +907,6 @@ func TestExportKey_ClosedBackend(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 		Exportable:         true,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := b.GenerateSymmetricKey(attrs)
@@ -1001,9 +929,6 @@ func TestExportKey_NonExportable(t *testing.T) {
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 		Exportable:         false, // NOT exportable
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate the key

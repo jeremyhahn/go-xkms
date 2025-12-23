@@ -25,8 +25,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
+	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 	"github.com/jeremyhahn/go-keychain/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -37,18 +37,18 @@ import (
 //
 // This backend uses the Composite/Facade design pattern, delegating:
 //   - Asymmetric operations (RSA, ECDSA, Ed25519) to PKCS8Backend
-//   - Symmetric operations (AES-GCM) to AESBackend
+//   - Symmetric operations (AES-GCM, ChaCha20-Poly1305) to symmetric.Backend
 //
 // This design provides a consistent interface similar to cloud backends
 // (AWS KMS, GCP KMS, Azure Key Vault) which also support both operation types.
 //
 // Thread-safe: Yes, uses a read-write mutex for concurrent access.
 type SoftwareBackend struct {
-	pkcs8Backend *pkcs8.PKCS8Backend // Handles asymmetric operations
-	aesBackend   *aes.AESBackend     // Handles symmetric operations
-	storage      storage.Backend     // Direct access to storage for import operations
-	closed       bool
-	mu           sync.RWMutex
+	pkcs8Backend     *pkcs8.PKCS8Backend  // Handles asymmetric operations
+	symmetricBackend *symmetric.Backend   // Handles symmetric operations
+	storage          storage.Backend      // Direct access to storage for import operations
+	closed           bool
+	mu               sync.RWMutex
 
 	// Import/export state
 	importTokens map[string]*importTokenData // Map of import token UUID to wrapping key data
@@ -98,14 +98,11 @@ type SoftwareBackendWithKeyAgreement interface {
 //
 //	// Generate an AES key (symmetric) with AEAD safety tracking
 //	aesAttrs := &types.KeyAttributes{
-//	    CN:           "my-secret-key",
-//	    KeyType:      backend.KEY_TYPE_SECRET,
-//	    StoreType:    backend.STORE_SW,
-//	    KeyAlgorithm: backend.ALG_AES256_GCM,
-//	    AESAttributes: &types.AESAttributes{
-//	        KeySize: 256,
-//	    },
-//	    AEADOptions: nil, // Use defaults (nonce tracking + bytes tracking enabled)
+//	    CN:                "my-secret-key",
+//	    KeyType:           backend.KEY_TYPE_SECRET,
+//	    StoreType:         backend.STORE_SW,
+//	    SymmetricAlgorithm: types.SymmetricAES256GCM,
+//	    AEADOptions:       nil, // Use defaults (nonce tracking + bytes tracking enabled)
 //	}
 //	aesKey, err := backend.GenerateSymmetricKey(aesAttrs)
 func NewBackend(config *Config) (types.SymmetricBackend, error) {
@@ -129,22 +126,22 @@ func NewBackend(config *Config) (types.SymmetricBackend, error) {
 		tracker = backend.NewMemoryAEADTracker()
 	}
 
-	// Create AES backend for symmetric operations with tracking
-	aesConfig := &aes.Config{
+	// Create symmetric backend for symmetric operations with tracking
+	symmetricConfig := &symmetric.Config{
 		KeyStorage: config.KeyStorage,
 		Tracker:    tracker,
 	}
-	aesBackend, err := aes.NewBackend(aesConfig)
+	symmetricBackend, err := symmetric.NewBackend(symmetricConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES backend: %w", err)
+		return nil, fmt.Errorf("failed to create symmetric backend: %w", err)
 	}
 
 	return &SoftwareBackend{
-		pkcs8Backend: pkcs8Backend.(*pkcs8.PKCS8Backend),
-		aesBackend:   aesBackend.(*aes.AESBackend),
-		storage:      config.KeyStorage,
-		closed:       false,
-		importTokens: make(map[string]*importTokenData),
+		pkcs8Backend:     pkcs8Backend.(*pkcs8.PKCS8Backend),
+		symmetricBackend: symmetricBackend.(*symmetric.Backend),
+		storage:          config.KeyStorage,
+		closed:           false,
+		importTokens:     make(map[string]*importTokenData),
 	}, nil
 }
 
@@ -214,7 +211,7 @@ func (b *SoftwareBackend) DeleteKey(attrs *types.KeyAttributes) error {
 
 	// Determine if this is a symmetric or asymmetric key
 	if attrs.IsSymmetric() {
-		return b.aesBackend.DeleteKey(attrs)
+		return b.symmetricBackend.DeleteKey(attrs)
 	}
 	return b.pkcs8Backend.DeleteKey(attrs)
 }
@@ -235,7 +232,7 @@ func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, fmt.Errorf("failed to list PKCS8 keys: %w", err)
 	}
 
-	aesKeys, err := b.aesBackend.ListKeys()
+	aesKeys, err := b.symmetricBackend.ListKeys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list AES keys: %w", err)
 	}
@@ -276,7 +273,7 @@ func (b *SoftwareBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypte
 
 // RotateKey rotates/updates a key identified by attrs.
 // For asymmetric keys, this is delegated to the PKCS8 backend.
-// For symmetric keys, this is delegated to the AES backend.
+// For symmetric keys, this is delegated to the symmetric backend.
 func (b *SoftwareBackend) RotateKey(attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -286,13 +283,13 @@ func (b *SoftwareBackend) RotateKey(attrs *types.KeyAttributes) error {
 	}
 
 	if attrs.IsSymmetric() {
-		return b.aesBackend.RotateKey(attrs)
+		return b.symmetricBackend.RotateKey(attrs)
 	}
 	return b.pkcs8Backend.RotateKey(attrs)
 }
 
 // Close releases any resources held by the backend.
-// This closes both the PKCS8 and AES backends.
+// This closes both the PKCS8 and symmetric backends.
 func (b *SoftwareBackend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -312,15 +309,15 @@ func (b *SoftwareBackend) Close() error {
 
 	// The storage is already closed by pkcs8Backend.Close(), so this will
 	// return immediately without error.
-	if err := b.aesBackend.Close(); err != nil {
-		return fmt.Errorf("failed to close AES backend: %w", err)
+	if err := b.symmetricBackend.Close(); err != nil {
+		return fmt.Errorf("failed to close symmetric backend: %w", err)
 	}
 
 	return nil
 }
 
 // GenerateSymmetricKey generates a new symmetric AES key with the given attributes.
-// This operation is delegated to the AES backend.
+// This operation is delegated to the symmetric backend.
 //
 // Supported key sizes: 128, 192, 256 bits
 func (b *SoftwareBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
@@ -331,11 +328,11 @@ func (b *SoftwareBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (type
 		return nil, ErrStorageClosed
 	}
 
-	return b.aesBackend.GenerateSymmetricKey(attrs)
+	return b.symmetricBackend.GenerateSymmetricKey(attrs)
 }
 
 // GetSymmetricKey retrieves an existing symmetric key by its attributes.
-// This operation is delegated to the AES backend.
+// This operation is delegated to the symmetric backend.
 func (b *SoftwareBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -344,11 +341,11 @@ func (b *SoftwareBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.Sym
 		return nil, ErrStorageClosed
 	}
 
-	return b.aesBackend.GetSymmetricKey(attrs)
+	return b.symmetricBackend.GetSymmetricKey(attrs)
 }
 
 // SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
-// This operation is delegated to the AES backend.
+// This operation is delegated to the symmetric backend.
 func (b *SoftwareBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -357,7 +354,7 @@ func (b *SoftwareBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.
 		return nil, ErrStorageClosed
 	}
 
-	return b.aesBackend.SymmetricEncrypter(attrs)
+	return b.symmetricBackend.SymmetricEncrypter(attrs)
 }
 
 // GetImportParameters generates a wrapping key pair and returns the public key
@@ -610,7 +607,7 @@ func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backen
 
 	if attrs.IsSymmetric() {
 		// Get symmetric key
-		key, err := b.aesBackend.GetSymmetricKey(attrs)
+		key, err := b.symmetricBackend.GetSymmetricKey(attrs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get symmetric key: %w", err)
 		}
@@ -648,12 +645,12 @@ func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backen
 // importSymmetricKey imports a symmetric key from raw key material
 func (b *SoftwareBackend) importSymmetricKey(attrs *types.KeyAttributes, keyMaterial []byte) error {
 	// Validate key size
-	expectedSize := attrs.AESAttributes.KeySize / 8
+	expectedSize := attrs.SymmetricAlgorithm.KeySize() / 8
 	if len(keyMaterial) != expectedSize {
 		return fmt.Errorf("%w: invalid key material size expected %d bytes, got %d", backend.ErrInvalidAttributes, expectedSize, len(keyMaterial))
 	}
 
-	// Store the raw key material directly (AES backend stores raw bytes)
+	// Store the raw key material directly (symmetric backend stores raw bytes)
 	keyID := attrs.ID()
 	if err := storage.SaveKey(b.storage, keyID, keyMaterial); err != nil {
 		return fmt.Errorf("failed to store symmetric key: %w", err)
@@ -704,8 +701,9 @@ func determineKeySpec(attrs *types.KeyAttributes) string {
 	}
 
 	if attrs.IsSymmetric() {
-		if attrs.AESAttributes != nil {
-			return fmt.Sprintf("AES_%d", attrs.AESAttributes.KeySize)
+		keySize := attrs.SymmetricAlgorithm.KeySize()
+		if keySize > 0 {
+			return fmt.Sprintf("AES_%d", keySize)
 		}
 		return "AES_256" // default
 	}
@@ -756,10 +754,10 @@ func validateKeyType(privateKey crypto.PrivateKey, attrs *types.KeyAttributes) e
 	return nil
 }
 
-// GetTracker returns the AEAD safety tracker from the underlying AES backend.
+// GetTracker returns the AEAD safety tracker from the underlying symmetric backend.
 // This allows external code to inspect tracking state and configuration.
 func (b *SoftwareBackend) GetTracker() types.AEADSafetyTracker {
-	return b.aesBackend.GetTracker()
+	return b.symmetricBackend.GetTracker()
 }
 
 // DeriveSharedSecret performs ECDH key agreement between the private key
@@ -835,9 +833,9 @@ func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, 
 		return nil, ErrStorageClosed
 	}
 
-	// Accept both Software and PKCS8 backend types since software delegates to PKCS8
-	if sealed.Backend != types.BackendTypeSoftware && sealed.Backend != types.BackendTypePKCS8 {
-		return nil, fmt.Errorf("sealed data was not created by software/PKCS#8 backend (got %s)", sealed.Backend)
+	// Verify this is a software backend sealed data
+	if sealed.Backend != types.BackendTypeSoftware {
+		return nil, fmt.Errorf("sealed data was not created by software backend (got %s)", sealed.Backend)
 	}
 
 	return b.pkcs8Backend.Unseal(ctx, sealed, opts)

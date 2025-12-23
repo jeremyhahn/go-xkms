@@ -166,17 +166,17 @@ All service methods accept key references in two formats:
 | | `Backends()` | List all backend names |
 | | `GetBackendInfo(name)` | Get backend type and capabilities |
 | | `GetBackendCapabilities(name)` | Get detailed capabilities |
-| **Keys** | `KeyByID(keyRef)` | Get key by reference |
+| **Keys** | `KeyByID(keyID)` | Get key by reference |
 | | `GenerateKeyWithBackend(backend, attrs)` | Generate key on specific backend |
-| | `RotateKey(keyRef)` | Rotate (replace) a key |
-| | `DeleteKey(keyRef)` | Delete a key |
+| | `RotateKey(keyID)` | Rotate (replace) a key |
+| | `DeleteKey(keyID)` | Delete a key |
 | | `ListKeys(backends...)` | List all keys |
-| **Signing** | `Signer(keyRef)` | Get crypto.Signer |
-| | `Sign(keyRef, data, opts)` | Sign data |
-| | `Verify(keyRef, data, sig, opts)` | Verify signature |
-| **Encryption** | `Decrypter(keyRef)` | Get crypto.Decrypter |
-| | `Encrypt(keyRef, data, opts)` | Symmetric encryption |
-| | `Decrypt(keyRef, encrypted, opts)` | Symmetric decryption |
+| **Signing** | `Signer(keyID)` | Get crypto.Signer |
+| | `Sign(keyID, data, opts)` | Sign data |
+| | `Verify(keyID, data, sig, opts)` | Verify signature |
+| **Encryption** | `Decrypter(keyID)` | Get crypto.Decrypter |
+| | `Encrypt(keyID, data, opts)` | Symmetric encryption |
+| | `Decrypt(keyID, encrypted, opts)` | Symmetric decryption |
 | **Certificates** | `SaveCertificate(keyID, cert)` | Save certificate |
 | | `Certificate(keyID)` | Get certificate |
 | | `DeleteCertificate(keyID)` | Delete certificate |
@@ -184,15 +184,15 @@ All service methods accept key references in two formats:
 | | `CertificateExists(keyID)` | Check if certificate exists |
 | | `SaveCertificateChain(keyID, chain)` | Save certificate chain |
 | | `CertificateChain(keyID)` | Get certificate chain |
-| **TLS** | `GetTLSCertificate(keyRef)` | Get tls.Certificate |
+| **TLS** | `GetTLSCertificate(keyID)` | Get tls.Certificate |
 | **Import/Export** | `GetImportParameters(backend, attrs, alg)` | Get wrapping key |
 | | `WrapKey(backend, material, params)` | Wrap key material |
 | | `UnwrapKey(backend, wrapped, params)` | Unwrap key material |
 | | `ImportKey(backend, attrs, wrapped)` | Import wrapped key |
-| | `ExportKey(keyRef, alg)` | Export key wrapped |
-| | `CopyKey(srcRef, destBackend, attrs)` | Copy key between backends |
+| | `ExportKey(keyID, alg)` | Export key wrapped |
+| | `CopyKey(srcKeyID, destBackend, attrs)` | Copy key between backends |
 | **Symmetric** | `GenerateSymmetricKey(backend, attrs)` | Generate AES key |
-| | `GetSymmetricKey(keyRef)` | Get symmetric key |
+| | `GetSymmetricKey(keyID)` | Get symmetric key |
 | **Sealing** | `CanSeal(backends...)` | Check sealing support |
 | | `Seal(ctx, data, opts)` | Seal data |
 | | `Unseal(ctx, sealed, opts)` | Unseal data |

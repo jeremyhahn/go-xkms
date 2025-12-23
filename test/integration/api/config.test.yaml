@@ -13,7 +13,7 @@ protocols:
   unix: true    # Unix domain socket for local CLI
   rest: true    # REST/HTTP API
   grpc: true    # gRPC API
-  quic: true    # QUIC/HTTP3 API
+  quic: true    # QUIC/HTTP3 API (requires TLS)
   mcp: true     # MCP JSON-RPC API
 
 # Unix socket configuration
@@ -25,13 +25,32 @@ logging:
   level: "debug"
   format: "json"
 
-# TLS disabled for integration tests
+# TLS enabled for QUIC (QUIC requires TLS 1.3)
 tls:
-  enabled: false
+  enabled: true
+  cert_file: /etc/keychain/certs/server.crt
+  key_file: /etc/keychain/certs/server.key
+  ca_file: /etc/keychain/certs/ca.crt
+  min_version: TLS1.3
+  # No client auth for integration tests
+  client_auth: none
 
 # Auth disabled for integration tests
 auth:
   enabled: false
+
+# WebAuthn/FIDO2 authentication enabled for integration tests
+webauthn:
+  enabled: true
+  rp_id: "localhost"
+  rp_origins:
+    - "http://localhost:8443"
+    - "https://localhost:8443"
+  rp_display_name: "Keychain Integration Tests"
+  attestation_preference: "none"
+  authenticator_attachment: ""
+  resident_key: "preferred"
+  user_verification: "preferred"
 
 ratelimit:
   enabled: false

@@ -192,13 +192,14 @@ func (c *grpcClient) GenerateKey(ctx context.Context, req *GenerateKeyRequest) (
 	}
 
 	pbReq := &pb.GenerateKeyRequest{
-		KeyId:     req.KeyID,
-		Backend:   req.Backend,
-		KeyType:   req.KeyType,
-		KeySize:   int32(req.KeySize),
-		Curve:     req.Curve,
-		Hash:      req.Hash,
-		Algorithm: req.Algorithm,
+		KeyId:      req.KeyID,
+		Backend:    req.Backend,
+		KeyType:    req.KeyType,
+		KeySize:    int32(req.KeySize),
+		Curve:      req.Curve,
+		Hash:       req.Hash,
+		Algorithm:  req.Algorithm,
+		Exportable: req.Exportable,
 	}
 
 	resp, err := c.client.GenerateKey(ctx, pbReq)

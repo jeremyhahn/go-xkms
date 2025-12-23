@@ -31,10 +31,12 @@ import (
 // CLITestSuite provides comprehensive testing of all CLI commands across all protocols.
 // This ensures 100% of the keychain service is implemented and working across all interfaces.
 type CLITestSuite struct {
-	t       *testing.T
-	cfg     *TestConfig
-	keyDir  string
-	certDir string
+	t           *testing.T
+	cfg         *TestConfig
+	keyDir      string
+	certDir     string
+	tlsInsecure bool
+	tlsCACert   string
 }
 
 // NewCLITestSuite creates a new CLI test suite
@@ -42,7 +44,7 @@ func NewCLITestSuite(t *testing.T) *CLITestSuite {
 	t.Helper()
 	cfg := LoadTestConfig()
 	if !isCLIAvailable(t, cfg) {
-		t.Skip("CLI binary required for integration tests. Run: make build")
+		t.Fatalf("CLI binary required for integration tests. Run: make build (path: %s)", cfg.CLIBinPath)
 	}
 
 	keyDir := filepath.Join(os.TempDir(), fmt.Sprintf("keychain-test-%d", time.Now().UnixNano()))
@@ -56,10 +58,12 @@ func NewCLITestSuite(t *testing.T) *CLITestSuite {
 	}
 
 	return &CLITestSuite{
-		t:       t,
-		cfg:     cfg,
-		keyDir:  keyDir,
-		certDir: certDir,
+		t:           t,
+		cfg:         cfg,
+		keyDir:      keyDir,
+		certDir:     certDir,
+		tlsInsecure: os.Getenv("KEYSTORE_TLS_INSECURE") != "",
+		tlsCACert:   os.Getenv("KEYSTORE_TLS_CA"),
 	}
 }
 
@@ -72,11 +76,29 @@ func (s *CLITestSuite) Cleanup() {
 func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string, error) {
 	s.t.Helper()
 
+	prefixArgs := []string{}
+
 	// Prepend --server flag if serverURL is not empty
 	if serverURL != "" {
-		args = append([]string{"--server", serverURL}, args...)
+		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
+	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
+	needsTLS := strings.HasPrefix(serverURL, "https://") ||
+		strings.HasPrefix(serverURL, "grpc://") ||
+		strings.HasPrefix(serverURL, "grpcs://") ||
+		strings.HasPrefix(serverURL, "quic://")
+
+	if needsTLS {
+		if s.tlsInsecure {
+			prefixArgs = append(prefixArgs, "--tls-insecure")
+		}
+		if s.tlsCACert != "" {
+			prefixArgs = append(prefixArgs, "--tls-ca", s.tlsCACert)
+		}
+	}
+
+	args = append(prefixArgs, args...)
 	cmd := exec.Command(s.cfg.CLIBinPath, args...)
 
 	var stdout, stderr bytes.Buffer
@@ -274,12 +296,12 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 			})
 
 			// Test key encrypt-asym (RSA OAEP encryption)
-			// Note: Asymmetric encryption is not supported over gRPC/Unix protocols
+			// Note: Asymmetric encryption is only supported via REST and QUIC, not gRPC/Unix
 			var ciphertext string
 			t.Run("key_encrypt_asym", func(t *testing.T) {
-				// Skip for protocols that don't support asymmetric encryption
-				if proto == "unix" || proto == "grpc" {
-					t.Skip("Asymmetric encryption not supported over gRPC protocol")
+				if proto == ProtocolUnix || proto == ProtocolGRPC {
+					t.Log("Asymmetric encryption not supported via this protocol - expected behavior")
+					return
 				}
 
 				plaintext := "secret message"
@@ -309,10 +331,11 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 			})
 
 			// Test key decrypt (asymmetric)
+			// Note: Asymmetric decryption is only supported via REST and QUIC, not gRPC/Unix
 			t.Run("key_decrypt_asym", func(t *testing.T) {
-				// Skip for protocols that don't support asymmetric encryption
-				if proto == "unix" || proto == "grpc" {
-					t.Skip("Asymmetric encryption not supported over gRPC protocol")
+				if proto == ProtocolUnix || proto == ProtocolGRPC {
+					t.Log("Asymmetric decryption not supported via this protocol - expected behavior")
+					return
 				}
 
 				if ciphertext == "" {
@@ -588,12 +611,12 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 			keyID := fmt.Sprintf("test-aes-%s-%d", proto, time.Now().UnixNano())
 
 			// Test key generate (AES-256-GCM)
-			// Note: AES key generation via gRPC/REST is not yet implemented for software backend
 			t.Run("key_generate_aes", func(t *testing.T) {
 				args := []string{
 					"key", "generate", keyID,
 					"--backend", "software",
 					"--key-type", "aes",
+					"--algorithm", "aes-256-gcm",
 					"--key-size", "256",
 					"--key-dir", suite.keyDir,
 				}
@@ -602,13 +625,6 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
-					// AES generation not yet supported via gRPC/REST/unix for software backend
-					if strings.Contains(stderr, "unsupported key type") ||
-						strings.Contains(stderr, "does not support symmetric key generation") ||
-						strings.Contains(stderr, "does not support symmetric operations") ||
-						strings.Contains(stderr, "InvalidArgument") {
-						t.Skip("AES key generation not yet supported via this protocol for software backend")
-					}
 					t.Fatalf("AES key generation failed: %v", err)
 				}
 
@@ -628,7 +644,6 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 				args := []string{
 					"key", "encrypt", keyID, plaintext,
 					"--backend", "software",
-					"--key-type", "encryption",
 					"--key-algorithm", "aes256-gcm",
 					"--key-size", "256",
 					"--key-dir", suite.keyDir,
@@ -639,13 +654,6 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
-					// If the key wasn't created (AES not supported), skip this test
-					if strings.Contains(stderr, "key not found") ||
-						strings.Contains(stderr, "not found") ||
-						strings.Contains(stderr, "does not support symmetric operations") ||
-						strings.Contains(stderr, "InvalidArgument") {
-						t.Skip("AES key was not created or symmetric operations not supported, skipping encryption test")
-					}
 					t.Fatalf("AES symmetric encryption failed: %v", err)
 				}
 
@@ -664,13 +672,12 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 			// Test symmetric decryption
 			t.Run("key_decrypt_symmetric", func(t *testing.T) {
 				if encrypted.Ciphertext == "" || encrypted.Nonce == "" || encrypted.Tag == "" {
-					t.Skip("No encrypted data available from previous test - AES key generation not supported")
+					t.Fatal("No encrypted data available from previous test - encryption must succeed first")
 				}
 
 				args := []string{
 					"key", "decrypt", keyID, encrypted.Ciphertext,
 					"--backend", "software",
-					"--key-type", "encryption",
 					"--key-algorithm", "aes256-gcm",
 					"--key-size", "256",
 					"--key-dir", suite.keyDir,
@@ -691,8 +698,8 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", keyID,
 				"--backend", "software",
-				"--key-type", "encryption",
-				"--key-algorithm", "aes256-gcm",
+				"--key-type", "aes",
+				"--algorithm", "aes-256-gcm",
 				"--key-size", "256",
 				"--key-dir", suite.keyDir)
 		})
@@ -719,7 +726,7 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 				args := []string{
 					"key", "generate", keyID,
 					"--backend", "software",
-					"--key-type", "rsa",
+					"--key-type", "signing",
 					"--key-algorithm", "ecdsa",
 					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
@@ -733,12 +740,11 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 			})
 
 			// Test key export
-			// Note: Import/export operations may not be implemented for all backends
 			t.Run("key_export", func(t *testing.T) {
 				args := []string{
 					"key", "export", keyID, exportFile,
 					"--backend", "software",
-					"--key-type", "rsa",
+					"--key-type", "signing",
 					"--key-algorithm", "ecdsa",
 					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
@@ -749,13 +755,6 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
-					// Import/export not yet implemented for software backend via gRPC/REST
-					if strings.Contains(stderr, "import/export") ||
-						strings.Contains(stderr, "Unimplemented") ||
-						strings.Contains(stderr, "not implemented") ||
-						strings.Contains(stderr, "does not support") {
-						t.Skip("Import/export not yet supported for this backend/protocol combination")
-					}
 					t.Fatalf("key export failed: %v", err)
 				}
 
@@ -773,7 +772,7 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 				args := []string{
 					"key", "get-import-params", keyID,
 					"--backend", "software",
-					"--key-type", "rsa",
+					"--key-type", "signing",
 					"--key-algorithm", "ecdsa",
 					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
@@ -785,15 +784,6 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
-					// Import/export not yet implemented for software backend via gRPC/REST
-					if strings.Contains(stderr, "import/export") ||
-						strings.Contains(stderr, "Unimplemented") ||
-						strings.Contains(stderr, "not implemented") ||
-						strings.Contains(stderr, "does not support") ||
-						strings.Contains(stderr, "key_type is required") ||
-						strings.Contains(stderr, "invalid key type") {
-						t.Skip("Import/export not yet supported for this backend/protocol combination")
-					}
 					t.Fatalf("key get-import-params failed: %v", err)
 				}
 
@@ -803,7 +793,7 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", keyID,
 				"--backend", "software",
-				"--key-type", "rsa",
+				"--key-type", "signing",
 				"--key-algorithm", "ecdsa",
 				"--curve", "P-256",
 				"--key-dir", suite.keyDir)
@@ -815,11 +805,7 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 }
 
 // TestCLICompleteKeyCopy tests key copy between backends
-// SKIP: The current key copy implementation requires the destination backend to provide
-// import parameters (wrapping public key) first, but the CLI copy command doesn't
-// implement this cross-backend workflow correctly yet.
 func TestCLICompleteKeyCopy(t *testing.T) {
-	t.Skip("Key copy across backends requires import token workflow - not yet implemented")
 	suite := NewCLITestSuite(t)
 	defer suite.Cleanup()
 
@@ -842,7 +828,7 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				args := []string{
 					"key", "generate", sourceKeyID,
 					"--backend", "software",
-					"--key-type", "rsa",
+					"--key-type", "signing",
 					"--key-algorithm", "ecdsa",
 					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
@@ -860,7 +846,7 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				args := []string{
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
-					"--key-type", "rsa",
+					"--key-type", "signing",
 					"--key-algorithm", "ecdsa",
 					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
@@ -873,8 +859,8 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
+					t.Fatalf("key copy failed: %v", err)
 				}
-				assertNoError(t, err, "key copy should be supported by software backend")
 
 				t.Logf("[%s] key copy passed", proto)
 			})
@@ -882,7 +868,7 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", sourceKeyID,
 				"--backend", "software",
-				"--key-type", "rsa",
+				"--key-type", "signing",
 				"--key-algorithm", "ecdsa",
 				"--curve", "P-256",
 				"--key-dir", suite.keyDir)
@@ -1113,12 +1099,13 @@ func getAvailableProtocols(t *testing.T, cfg *TestConfig) []ProtocolType {
 		if cfg.IsProtocolAvailable(t, proto) {
 			available = append(available, proto)
 		} else {
-			t.Logf("Protocol %s not available, skipping", proto)
+			t.Errorf("Protocol %s not available - server must be running for integration tests", proto)
 		}
 	}
 
 	if len(available) == 0 {
-		t.Skip("No protocols available for testing - ensure server is running")
+		t.Fatalf("No protocols available for testing - ensure all servers are running (REST on %s, gRPC on %s, QUIC on %s, Unix on %s)",
+			cfg.RESTBaseURL, cfg.GRPCAddr, cfg.QUICBaseURL, cfg.UnixSocketPath)
 	}
 
 	return available

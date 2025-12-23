@@ -139,9 +139,8 @@ type StoreType string
 
 const (
 	// Store type constants
-	StoreSoftware  StoreType = "software"
-	StorePKCS8     StoreType = "pkcs8"
-	StorePKCS11    StoreType = "pkcs11"
+	StoreSoftware StoreType = "software"
+	StorePKCS11   StoreType = "pkcs11"
 	StoreTPM2      StoreType = "tpm2"
 	StoreAWSKMS    StoreType = "awskms"
 	StoreGCPKMS    StoreType = "gcpkms"
@@ -149,6 +148,7 @@ const (
 	StoreVault     StoreType = "vault"
 	StoreQuantum   StoreType = "quantum"
 	StoreThreshold StoreType = "threshold"
+	StoreFrost     StoreType = "frost"
 	StoreUnknown   StoreType = "unknown"
 )
 
@@ -160,7 +160,7 @@ func (st StoreType) String() string {
 // IsValid returns true if the store type is recognized.
 func (st StoreType) IsValid() bool {
 	switch st {
-	case StoreSoftware, StorePKCS8, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum:
+	case StoreSoftware, StorePKCS11, StoreTPM2, StoreAWSKMS, StoreGCPKMS, StoreAzureKV, StoreVault, StoreQuantum, StoreThreshold, StoreFrost:
 		return true
 	default:
 		return false
@@ -174,8 +174,6 @@ func ParseStoreType(s string) StoreType {
 	switch s {
 	case "software":
 		return StoreSoftware
-	case "pkcs8":
-		return StorePKCS8
 	case "pkcs11":
 		return StorePKCS11
 	case "tpm2":
@@ -190,6 +188,10 @@ func ParseStoreType(s string) StoreType {
 		return StoreVault
 	case "quantum":
 		return StoreQuantum
+	case "threshold":
+		return StoreThreshold
+	case "frost":
+		return StoreFrost
 	default:
 		return StoreUnknown
 	}
@@ -203,8 +205,7 @@ func ParseStoreType(s string) StoreType {
 type BackendType string
 
 const (
-	BackendTypeAES          BackendType = "aes"          // AES symmetric encryption (software)
-	BackendTypePKCS8        BackendType = "pkcs8"        // PKCS#8 asymmetric keys (RSA, ECDSA, Ed25519)
+	BackendTypeSymmetric    BackendType = "symmetric"    // Symmetric encryption (AES-GCM, ChaCha20-Poly1305)
 	BackendTypeSoftware     BackendType = "software"     // Unified software backend (asymmetric + symmetric)
 	BackendTypePKCS11       BackendType = "pkcs11"       // PKCS#11 hardware security modules
 	BackendTypeSmartCardHSM BackendType = "smartcardhsm" // SmartCard-HSM with DKEK support
@@ -215,6 +216,7 @@ const (
 	BackendTypeVault        BackendType = "vault"        // HashiCorp Vault
 	BackendTypeQuantum      BackendType = "quantum"      // Quantum-safe cryptography (ML-DSA, ML-KEM)
 	BackendTypeThreshold    BackendType = "threshold"    // Threshold cryptography (Shamir, threshold ECDSA)
+	BackendTypeFrost        BackendType = "frost"        // FROST threshold signatures (RFC 9591)
 )
 
 // =============================================================================
@@ -304,18 +306,32 @@ func (sa SymmetricAlgorithm) IsValid() bool {
 	}
 }
 
-// =============================================================================
-// Key Attribute Types
-// =============================================================================
+// KeySize returns the key size in bits for this symmetric algorithm.
+// Returns 0 for unknown algorithms.
+func (sa SymmetricAlgorithm) KeySize() int {
+	switch sa {
+	case SymmetricAES128GCM:
+		return 128
+	case SymmetricAES192GCM:
+		return 192
+	case SymmetricAES256GCM, SymmetricChaCha20Poly1305, SymmetricXChaCha20Poly1305:
+		return 256
+	default:
+		return 0
+	}
+}
 
-// AESAttributes contains AES-specific key generation parameters.
-type AESAttributes struct {
-	// KeySize is the AES key size in bits (128, 192, or 256)
-	KeySize int
-
-	// NonceSize is the nonce size in bytes (default: 12 for GCM)
-	// Most implementations should use the default of 12 bytes (96 bits)
-	NonceSize int
+// NonceSize returns the nonce size in bytes for this symmetric algorithm.
+// Returns 0 for unknown algorithms.
+func (sa SymmetricAlgorithm) NonceSize() int {
+	switch sa {
+	case SymmetricXChaCha20Poly1305:
+		return 24 // XChaCha20 uses 192-bit (24-byte) nonces
+	case SymmetricAES128GCM, SymmetricAES192GCM, SymmetricAES256GCM, SymmetricChaCha20Poly1305:
+		return 12 // Standard 96-bit (12-byte) nonces for GCM and ChaCha20
+	default:
+		return 0
+	}
 }
 
 // AEADOptions configures AEAD safety tracking for a symmetric key.
@@ -529,6 +545,110 @@ func (ta *ThresholdAttributes) Validate() error {
 	}
 	if ta.ShareID != 0 && (ta.ShareID < 1 || ta.ShareID > ta.Total) {
 		return fmt.Errorf("shareID (%d) must be between 1 and total (%d)", ta.ShareID, ta.Total)
+	}
+	return nil
+}
+
+// =============================================================================
+// FROST Threshold Signature Types (RFC 9591)
+// =============================================================================
+
+// FrostAlgorithm identifies a FROST ciphersuite as defined in RFC 9591.
+type FrostAlgorithm string
+
+const (
+	// FrostAlgorithmEd25519 is FROST-Ed25519-SHA512 (RFC 9591 Section 6.1)
+	// Ed25519 curve with SHA-512 hash - General purpose, high performance
+	FrostAlgorithmEd25519 FrostAlgorithm = "FROST-Ed25519-SHA512"
+
+	// FrostAlgorithmRistretto255 is FROST-ristretto255-SHA512 (RFC 9591 Section 6.2)
+	// ristretto255 group with SHA-512 hash - Enhanced security properties
+	FrostAlgorithmRistretto255 FrostAlgorithm = "FROST-ristretto255-SHA512"
+
+	// FrostAlgorithmEd448 is FROST-Ed448-SHAKE256 (RFC 9591 Section 6.3)
+	// Ed448 curve with SHAKE256 hash - Higher security level (224-bit)
+	FrostAlgorithmEd448 FrostAlgorithm = "FROST-Ed448-SHAKE256"
+
+	// FrostAlgorithmP256 is FROST-P256-SHA256 (RFC 9591 Section 6.4)
+	// NIST P-256 curve with SHA-256 hash - FIPS compliance
+	FrostAlgorithmP256 FrostAlgorithm = "FROST-P256-SHA256"
+
+	// FrostAlgorithmSecp256k1 is FROST-secp256k1-SHA256 (RFC 9591 Section 6.5)
+	// secp256k1 curve with SHA-256 hash - Bitcoin/Ethereum compatibility
+	FrostAlgorithmSecp256k1 FrostAlgorithm = "FROST-secp256k1-SHA256"
+)
+
+// String returns the string representation of the FROST algorithm.
+func (fa FrostAlgorithm) String() string {
+	return string(fa)
+}
+
+// IsValid returns true if the FROST algorithm is recognized.
+func (fa FrostAlgorithm) IsValid() bool {
+	switch fa {
+	case FrostAlgorithmEd25519, FrostAlgorithmRistretto255, FrostAlgorithmEd448, FrostAlgorithmP256, FrostAlgorithmSecp256k1:
+		return true
+	default:
+		return false
+	}
+}
+
+// FrostAttributes contains FROST threshold signature configuration for M-of-N operations.
+// This enables distributed signing where M participants out of N total must collaborate
+// to produce a valid signature without ever reconstructing the private key.
+//
+// Unlike Shamir-based threshold schemes, FROST provides:
+//   - The private key is NEVER reconstructed (even during signing)
+//   - Malicious participant detection (identifiable abort)
+//   - Two-round signing protocol (RFC 9591)
+type FrostAttributes struct {
+	// Threshold is the minimum number of signers required (M)
+	// Must be: 2 <= Threshold <= Total <= 255
+	Threshold int
+
+	// Total is the total number of participants (N)
+	// Must be: Threshold <= Total <= 255
+	Total int
+
+	// Algorithm specifies the FROST ciphersuite to use
+	Algorithm FrostAlgorithm
+
+	// Participants contains identifiers for each share holder
+	// Length must equal Total. Each participant gets one key share.
+	// Example: ["node1", "node2", "node3", "node4", "node5"]
+	Participants []string
+
+	// ParticipantID identifies which participant this node is (1 to Total)
+	// This is the FROST identifier used in the signing protocol
+	ParticipantID uint32
+
+	// GroupPublicKey is the threshold group public key (optional, set after generation)
+	// This is the public key that verifies signatures from any threshold of participants
+	GroupPublicKey []byte
+}
+
+// Validate checks if the FROST attributes are valid
+func (fa *FrostAttributes) Validate() error {
+	if fa.Threshold < 2 {
+		return fmt.Errorf("frost: threshold must be at least 2, got %d", fa.Threshold)
+	}
+	if fa.Total < fa.Threshold {
+		return fmt.Errorf("frost: total (%d) must be >= threshold (%d)", fa.Total, fa.Threshold)
+	}
+	if fa.Threshold > 255 {
+		return fmt.Errorf("frost: threshold cannot exceed 255, got %d", fa.Threshold)
+	}
+	if fa.Total > 255 {
+		return fmt.Errorf("frost: total cannot exceed 255, got %d", fa.Total)
+	}
+	if len(fa.Participants) > 0 && len(fa.Participants) != fa.Total {
+		return fmt.Errorf("frost: participants length (%d) must match total (%d)", len(fa.Participants), fa.Total)
+	}
+	if fa.ParticipantID != 0 && (fa.ParticipantID < 1 || fa.ParticipantID > uint32(fa.Total)) {
+		return fmt.Errorf("frost: participantID (%d) must be between 1 and total (%d)", fa.ParticipantID, fa.Total)
+	}
+	if !fa.Algorithm.IsValid() {
+		return fmt.Errorf("frost: invalid algorithm: %s", fa.Algorithm)
 	}
 	return nil
 }
@@ -804,7 +924,8 @@ type KeyAttributes struct {
 	// SignatureAlgorithm specifies the signature algorithm to use
 	SignatureAlgorithm x509.SignatureAlgorithm
 
-	// StoreType specifies the backend storage type
+	// StoreType specifies the backend storage type (e.g., "software", "tpm2", "pkcs11").
+	// This is both the storage type and the backend name used for registry lookup.
 	StoreType StoreType
 
 	// ECCAttributes contains ECC-specific configuration
@@ -822,8 +943,9 @@ type KeyAttributes struct {
 	// ThresholdAttributes contains threshold cryptography configuration (M-of-N signatures)
 	ThresholdAttributes *ThresholdAttributes
 
-	// AESAttributes contains AES-specific parameters (only for AES keys)
-	AESAttributes *AESAttributes
+	// FrostAttributes contains FROST threshold signature configuration (RFC 9591)
+	// Used for M-of-N threshold signing where the private key is never reconstructed
+	FrostAttributes *FrostAttributes
 
 	// AEADOptions contains AEAD safety tracking options (only for symmetric keys)
 	// If nil, default safety options will be applied (tracking enabled).
@@ -956,22 +1078,17 @@ func (attrs *KeyAttributes) Validate() error {
 			return fmt.Errorf("unsupported key algorithm: %s", attrs.KeyAlgorithm)
 		}
 	} else if attrs.SymmetricAlgorithm != "" {
-		// Symmetric key validation
-		switch attrs.SymmetricAlgorithm {
-		case SymmetricAES128GCM, SymmetricAES192GCM, SymmetricAES256GCM:
-			if attrs.AESAttributes == nil {
-				return fmt.Errorf("AES attributes are required for AES keys")
-			}
-			if attrs.AESAttributes.KeySize != 128 && attrs.AESAttributes.KeySize != 192 && attrs.AESAttributes.KeySize != 256 {
-				return fmt.Errorf("AES key size must be 128, 192, or 256 bits")
-			}
-		case SymmetricChaCha20Poly1305, SymmetricXChaCha20Poly1305:
-			// ChaCha20-Poly1305 uses fixed 256-bit keys, no additional validation needed
-		default:
+		// Symmetric key validation - key size is derived from the algorithm via KeySize() method
+		if !attrs.SymmetricAlgorithm.IsValid() {
 			return fmt.Errorf("unsupported symmetric algorithm: %s", attrs.SymmetricAlgorithm)
 		}
+	} else if attrs.FrostAttributes != nil {
+		// FROST threshold signature validation (RFC 9591)
+		if err := attrs.FrostAttributes.Validate(); err != nil {
+			return err
+		}
 	} else {
-		return fmt.Errorf("either KeyAlgorithm, SymmetricAlgorithm, or QuantumAttributes must be set")
+		return fmt.Errorf("either KeyAlgorithm, SymmetricAlgorithm, QuantumAttributes, or FrostAttributes must be set")
 	}
 
 	return nil

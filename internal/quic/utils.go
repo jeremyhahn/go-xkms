@@ -40,7 +40,9 @@ func extractPublicKey(privKey interface{}) (crypto.PublicKey, error) {
 
 // parseHashAlgorithm parses a hash algorithm string
 func parseHashAlgorithm(hashStr string) (crypto.Hash, error) {
-	switch strings.ToUpper(hashStr) {
+	// Normalize: uppercase and remove hyphens for flexibility
+	normalized := strings.ToUpper(strings.ReplaceAll(hashStr, "-", ""))
+	switch normalized {
 	case "SHA1":
 		return crypto.SHA1, nil
 	case "SHA224":

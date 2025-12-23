@@ -51,7 +51,7 @@ func TestKeyStore_KeyGeneration(t *testing.T) {
 				return &types.KeyAttributes{
 					CN:           "test-rsa-2048",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.RSA,
 					RSAAttributes: &types.RSAAttributes{
 						KeySize: 2048,
@@ -76,7 +76,7 @@ func TestKeyStore_KeyGeneration(t *testing.T) {
 				return &types.KeyAttributes{
 					CN:           "test-rsa-4096",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.RSA,
 					RSAAttributes: &types.RSAAttributes{
 						KeySize: 4096,
@@ -101,7 +101,7 @@ func TestKeyStore_KeyGeneration(t *testing.T) {
 				return &types.KeyAttributes{
 					CN:           "test-ecdsa-p256",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.ECDSA,
 					ECCAttributes: &types.ECCAttributes{
 						Curve: elliptic.P256(),
@@ -126,7 +126,7 @@ func TestKeyStore_KeyGeneration(t *testing.T) {
 				return &types.KeyAttributes{
 					CN:           "test-ecdsa-p384",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.ECDSA,
 					ECCAttributes: &types.ECCAttributes{
 						Curve: elliptic.P384(),
@@ -151,7 +151,7 @@ func TestKeyStore_KeyGeneration(t *testing.T) {
 				return &types.KeyAttributes{
 					CN:           "test-ed25519",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.Ed25519,
 				}
 			},
@@ -225,7 +225,7 @@ func TestKeyStore_KeyRetrieval(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-retrieval",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -275,7 +275,7 @@ func TestKeyStore_KeyDeletion(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-deletion",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -325,7 +325,7 @@ func TestKeyStore_ListKeys(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           name,
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -377,7 +377,7 @@ func TestKeyStore_KeyRotation(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-rotation",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -437,7 +437,7 @@ func TestKeyStore_SigningAndVerification(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-signing-rsa",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.RSA,
 					RSAAttributes: &types.RSAAttributes{
 						KeySize: 2048,
@@ -456,7 +456,7 @@ func TestKeyStore_SigningAndVerification(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-signing-ecdsa",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.ECDSA,
 					ECCAttributes: &types.ECCAttributes{
 						Curve: elliptic.P256(),
@@ -475,7 +475,7 @@ func TestKeyStore_SigningAndVerification(t *testing.T) {
 				attrs := &types.KeyAttributes{
 					CN:           "test-signing-ed25519",
 					KeyType:      types.KeyTypeSigning,
-					StoreType:    types.StorePKCS8,
+					StoreType:    types.StoreSoftware,
 					KeyAlgorithm: x509.Ed25519,
 				}
 				_, err := ks.GenerateEd25519(attrs)
@@ -561,7 +561,7 @@ func TestKeyStore_RSAEncryptionDecryption(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-encryption",
 		KeyType:      types.KeyTypeEncryption,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -621,7 +621,7 @@ func TestKeyStore_CertificateManagement(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-cert.example.com",
 		KeyType:      types.KeyTypeTLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -701,7 +701,7 @@ func TestKeyStore_CertificateChain(t *testing.T) {
 	rootKey, err := ks.GenerateRSA(&types.KeyAttributes{
 		CN:           "root-ca",
 		KeyType:      types.KeyTypeCA,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -715,7 +715,7 @@ func TestKeyStore_CertificateChain(t *testing.T) {
 	intermediateKey, err := ks.GenerateRSA(&types.KeyAttributes{
 		CN:           "intermediate-ca",
 		KeyType:      types.KeyTypeCA,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -729,7 +729,7 @@ func TestKeyStore_CertificateChain(t *testing.T) {
 	leafKey, err := ks.GenerateRSA(&types.KeyAttributes{
 		CN:           "leaf.example.com",
 		KeyType:      types.KeyTypeTLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -782,7 +782,7 @@ func TestKeyStore_TLSCertificate(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           keyID,
 		KeyType:      types.KeyTypeTLS,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -836,7 +836,7 @@ func TestKeyStore_GetKeyByID(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-key-id",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -876,7 +876,7 @@ func TestKeyStore_GetSignerByID(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-signer-id",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		ECCAttributes: &types.ECCAttributes{
 			Curve: elliptic.P256(),
@@ -921,7 +921,7 @@ func TestKeyStore_GetDecrypterByID(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-decrypter-id",
 		KeyType:      types.KeyTypeEncryption,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,
@@ -973,7 +973,7 @@ func TestKeyStore_ErrorHandling(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "nonexistent",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -990,7 +990,7 @@ func TestKeyStore_ErrorHandling(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           "nonexistent",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			RSAAttributes: &types.RSAAttributes{
 				KeySize: 2048,
@@ -1091,7 +1091,7 @@ func TestKeyStore_ConcurrentOperations(t *testing.T) {
 			attrs := &types.KeyAttributes{
 				CN:           "concurrent-" + string(rune('a'+id)),
 				KeyType:      types.KeyTypeSigning,
-				StoreType:    types.StorePKCS8,
+				StoreType:    types.StoreSoftware,
 				KeyAlgorithm: x509.RSA,
 				RSAAttributes: &types.RSAAttributes{
 					KeySize: 2048,
@@ -1146,7 +1146,7 @@ func TestKeyStore_MultipleBackends(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-multi-backend",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		RSAAttributes: &types.RSAAttributes{
 			KeySize: 2048,

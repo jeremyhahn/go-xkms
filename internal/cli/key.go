@@ -80,8 +80,8 @@ func generateKeyLocal(cfg *Config, printer *Printer, keyID, keyType, algorithm, 
 	}
 	defer func() { _ = be.Close() }()
 
-	// Check if this is a symmetric key (AES)
-	if keyType == "aes" || algorithm == "aes-128-gcm" || algorithm == "aes-192-gcm" || algorithm == "aes-256-gcm" {
+	// Check if this is a symmetric key
+	if types.AlgorithmSymmetric.Equals(keyType) || types.AlgorithmAES.Equals(keyType) || types.AEADAES128GCM.Equals(algorithm) || types.AEADAES192GCM.Equals(algorithm) || types.AEADAES256GCM.Equals(algorithm) {
 		// Generate symmetric key
 		attrs, err := buildSymmetricKeyAttributes(keyID, algorithm, keySize)
 		if err != nil {
@@ -151,14 +151,26 @@ func generateKeyRemote(cfg *Config, printer *Printer, keyID, keyType, algorithm,
 
 	printVerbose("Connected to keychaind server")
 
+	// For symmetric keys, don't set algorithm - handlers use defaults based on key_size
+	// For asymmetric keys, use the provided algorithm
+	algoForRequest := keyAlgorithm
+	isSymmetric := types.AlgorithmSymmetric.Equals(keyType) || types.AlgorithmAES.Equals(keyType)
+	if isSymmetric {
+		// Let the server handlers determine the algorithm based on key_size
+		algoForRequest = ""
+		// Normalize key type to "symmetric" for the server
+		keyType = "symmetric"
+	}
+
 	// Prepare generate key request
 	req := &client.GenerateKeyRequest{
-		KeyID:     keyID,
-		Backend:   cfg.Backend,
-		KeyType:   keyType,
-		KeySize:   keySize,
-		Curve:     curve,
-		Algorithm: keyAlgorithm,
+		KeyID:      keyID,
+		Backend:    cfg.Backend,
+		KeyType:    keyType,
+		KeySize:    keySize,
+		Curve:      curve,
+		Algorithm:  algoForRequest,
+		Exportable: exportable,
 	}
 
 	// Generate the key
@@ -2320,7 +2332,7 @@ func init() {
 	keyCmd.AddCommand(keyEncryptAsymCmd)
 
 	// Flags for generate command
-	keyGenerateCmd.Flags().String("key-type", "tls", "Key type (tls, signing, encryption, aes)")
+	keyGenerateCmd.Flags().String("key-type", "tls", "Key type (tls, signing, encryption, symmetric)")
 	keyGenerateCmd.Flags().String("algorithm", "", "Algorithm (aes-128-gcm, aes-192-gcm, aes-256-gcm)")
 	keyGenerateCmd.Flags().String("key-algorithm", "rsa", "Key algorithm (rsa, ecdsa, ed25519)")
 	keyGenerateCmd.Flags().Int("key-size", 2048, "Key size in bits (128, 192, 256 for AES; 2048+ for RSA)")
@@ -2429,7 +2441,7 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 	attrs := &types.KeyAttributes{
 		CN:           keyID,
 		KeyType:      kt,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: ka,
 		Hash:         crypto.SHA256,
 		Exportable:   exportable,
@@ -2494,11 +2506,8 @@ func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*types.K
 	attrs := &types.KeyAttributes{
 		CN:                 keyID,
 		KeyType:            types.KeyTypeEncryption,
-		StoreType:          types.StorePKCS8,
+		StoreType:          types.StoreSoftware,
 		SymmetricAlgorithm: symmetricAlgorithm,
-		AESAttributes: &types.AESAttributes{
-			KeySize: keySize,
-		},
 	}
 
 	// Validate the attributes

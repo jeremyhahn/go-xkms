@@ -22,7 +22,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"strings"
 
 	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
@@ -36,15 +35,14 @@ import (
 // getBackendDescription returns a human-readable description for a backend type
 func getBackendDescription(bt types.BackendType) string {
 	descriptions := map[types.BackendType]string{
-		types.BackendTypePKCS8:        "Software-based PKCS#8 key storage",
+		types.BackendTypeSoftware:     "Software-based key storage",
 		types.BackendTypePKCS11:       "Hardware Security Module (PKCS#11)",
 		types.BackendTypeTPM2:         "Trusted Platform Module 2.0",
 		types.BackendTypeAWSKMS:       "AWS Key Management Service",
 		types.BackendTypeGCPKMS:       "Google Cloud Key Management Service",
 		types.BackendTypeAzureKV:      "Azure Key Vault",
 		types.BackendTypeVault:        "HashiCorp Vault",
-		types.BackendTypeSoftware:     "Software-based key storage with AES encryption",
-		types.BackendTypeAES:          "AES-GCM encrypted key storage",
+		types.BackendTypeSymmetric:    "Symmetric key storage",
 		types.BackendTypeSmartCardHSM: "SmartCard-HSM (Nitrokey, CardContact)",
 	}
 
@@ -161,20 +159,26 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 
 	// Build key attributes
 	attrs := &types.KeyAttributes{
-		CN:        req.KeyId,
-		KeyType:   keyType,
-		StoreType: types.StoreType(req.Backend),
-		Hash:      parseHashAlgorithm(req.Hash),
-		Partition: types.Partition(req.Partition),
+		CN:         req.KeyId,
+		KeyType:    keyType,
+		StoreType:  types.StoreType(req.Backend),
+		Hash:       parseHashAlgorithm(req.Hash),
+		Partition:  types.Partition(req.Partition),
+		Exportable: req.Exportable,
 	}
 
 	// Set algorithm-specific attributes
 	var privKey crypto.PrivateKey
-	switch strings.ToLower(req.KeyType) {
-	case "rsa":
+	// Use Algorithm field if provided, otherwise fall back to KeyType for backward compatibility
+	algorithm := req.Algorithm
+	if algorithm == "" {
+		algorithm = req.KeyType
+	}
+	switch {
+	case types.AlgorithmRSA.Equals(algorithm):
 		keySize := int(req.KeySize)
 		if keySize == 0 {
-			keySize = 2048 // Default
+			keySize = types.RSAKeySize2048 // Default
 		}
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &types.RSAAttributes{
@@ -182,10 +186,10 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		}
 		privKey, err = ks.GenerateRSA(attrs)
 
-	case "ecdsa":
+	case types.AlgorithmECDSA.Equals(algorithm):
 		curve := req.Curve
 		if curve == "" {
-			curve = "P256" // Default
+			curve = string(types.CurveP256) // Default
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
 		parsedCurve, curveErr := types.ParseCurve(curve)
@@ -197,12 +201,53 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		}
 		privKey, err = ks.GenerateECDSA(attrs)
 
-	case "ed25519":
+	case types.AlgorithmEd25519.Equals(algorithm):
 		attrs.KeyAlgorithm = x509.Ed25519
 		privKey, err = ks.GenerateEd25519(attrs)
 
+	case types.AlgorithmSymmetric.Equals(algorithm):
+		// Handle symmetric key generation
+		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		if !ok {
+			return nil, status.Error(codes.Unimplemented, "backend does not support symmetric key generation")
+		}
+
+		// Determine key size and algorithm
+		keySize := int(req.KeySize)
+		symAlgorithm := req.Algorithm
+		if symAlgorithm == "" || symAlgorithm == "symmetric" {
+			// Default based on key size or use AES-256-GCM
+			switch keySize {
+			case 128:
+				symAlgorithm = "aes128-gcm"
+			case 192:
+				symAlgorithm = "aes192-gcm"
+			case 256, 0:
+				symAlgorithm = "aes256-gcm"
+				keySize = 256
+			default:
+				return nil, status.Errorf(codes.InvalidArgument, "invalid key size for symmetric key: %d", keySize)
+			}
+		}
+
+		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(symAlgorithm)
+		attrs.KeyType = types.KeyTypeEncryption
+
+		_, err = symBackend.GenerateSymmetricKey(attrs)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to generate symmetric key: %v", err)
+		}
+
+		// Symmetric keys have no public key
+		return &pb.GenerateKeyResponse{
+			KeyId:     req.KeyId,
+			Backend:   req.Backend,
+			KeyType:   req.KeyType,
+			CreatedAt: timestamppb.Now(),
+		}, nil
+
 	default:
-		return nil, status.Errorf(codes.InvalidArgument, "unsupported key type: %s", req.KeyType)
+		return nil, status.Errorf(codes.InvalidArgument, "unsupported algorithm: %s", algorithm)
 	}
 
 	if err != nil {
@@ -962,21 +1007,21 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		Partition: types.Partition(req.Partition),
 	}
 
-	// Set algorithm-specific attributes
-	switch strings.ToLower(req.KeyType) {
-	case "rsa":
+	// Set algorithm-specific attributes based on key_type field (expected to be algorithm name)
+	switch {
+	case types.AlgorithmRSA.Equals(req.KeyType):
 		keySize := int(req.KeySize)
 		if keySize == 0 {
-			keySize = 2048 // Default
+			keySize = types.RSAKeySize2048 // Default
 		}
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: keySize,
 		}
-	case "ecdsa":
+	case types.AlgorithmECDSA.Equals(req.KeyType):
 		curve := req.Curve
 		if curve == "" {
-			curve = "P256" // Default
+			curve = string(types.CurveP256) // Default
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
 		parsedCurve, curveErr := types.ParseCurve(curve)
@@ -986,15 +1031,20 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		attrs.ECCAttributes = &types.ECCAttributes{
 			Curve: parsedCurve,
 		}
-	case "ed25519":
+	case types.AlgorithmEd25519.Equals(req.KeyType):
 		attrs.KeyAlgorithm = x509.Ed25519
-	case "aes":
-		// For symmetric keys, we'll need to handle differently
-		// Set KeySize for AES keys
-		if req.KeySize == 0 {
-			return nil, status.Error(codes.InvalidArgument, "key_size is required for AES keys")
+	case types.AlgorithmSymmetric.Equals(req.KeyType):
+		// For symmetric keys, set algorithm based on key size
+		switch req.KeySize {
+		case 128:
+			attrs.SymmetricAlgorithm = types.SymmetricAES128GCM
+		case 192:
+			attrs.SymmetricAlgorithm = types.SymmetricAES192GCM
+		case 256:
+			attrs.SymmetricAlgorithm = types.SymmetricAES256GCM
+		default:
+			return nil, status.Errorf(codes.InvalidArgument, "invalid key size for AES keys: %d (must be 128, 192, or 256)", req.KeySize)
 		}
-		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(fmt.Sprintf("AES-%d-GCM", req.KeySize))
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported key type: %s", req.KeyType)
 	}
@@ -1197,20 +1247,20 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 	}
 
 	// Set algorithm-specific attributes
-	switch strings.ToLower(req.KeyType) {
-	case "rsa":
+	switch {
+	case types.AlgorithmRSA.Equals(req.KeyType):
 		keySize := int(req.KeySize)
 		if keySize == 0 {
-			keySize = 2048 // Default
+			keySize = types.RSAKeySize2048 // Default
 		}
 		attrs.KeyAlgorithm = x509.RSA
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: keySize,
 		}
-	case "ecdsa":
+	case types.AlgorithmECDSA.Equals(req.KeyType):
 		curve := req.Curve
 		if curve == "" {
-			curve = "P256" // Default
+			curve = string(types.CurveP256) // Default
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
 		parsedCurve, curveErr := types.ParseCurve(curve)
@@ -1220,13 +1270,20 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 		attrs.ECCAttributes = &types.ECCAttributes{
 			Curve: parsedCurve,
 		}
-	case "ed25519":
+	case types.AlgorithmEd25519.Equals(req.KeyType):
 		attrs.KeyAlgorithm = x509.Ed25519
-	case "aes":
-		if req.KeySize == 0 {
-			return nil, status.Error(codes.InvalidArgument, "key_size is required for AES keys")
+	case types.AlgorithmSymmetric.Equals(req.KeyType):
+		// For symmetric keys, set algorithm based on key size
+		switch req.KeySize {
+		case 128:
+			attrs.SymmetricAlgorithm = types.SymmetricAES128GCM
+		case 192:
+			attrs.SymmetricAlgorithm = types.SymmetricAES192GCM
+		case 256:
+			attrs.SymmetricAlgorithm = types.SymmetricAES256GCM
+		default:
+			return nil, status.Errorf(codes.InvalidArgument, "invalid key size for AES keys: %d (must be 128, 192, or 256)", req.KeySize)
 		}
-		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(fmt.Sprintf("AES-%d-GCM", req.KeySize))
 	default:
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported key type: %s", req.KeyType)
 	}

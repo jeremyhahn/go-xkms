@@ -44,7 +44,7 @@ type MCPOperation struct {
 func TestMCPComprehensiveOperations(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	// Generate unique IDs for test resources
@@ -144,7 +144,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 			Method: "keychain.generateKey",
 			Params: map[string]interface{}{
 				"key_id":    testAESKeyID,
-				"key_type":  "aes",
+				"key_type":  "symmetric",
 				"algorithm": "aes256-gcm",
 				"backend":   "software",
 			},
@@ -689,7 +689,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 	for _, op := range operations {
 		t.Run(op.Name, func(t *testing.T) {
 			if op.SkipReason != "" {
-				t.Skip(op.SkipReason)
+				t.Fatal(op.SkipReason)
 			}
 
 			client, err := NewMCPClient(cfg.MCPAddr)
@@ -752,7 +752,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 func TestMCPAllKeyTypes(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests")
+		t.Fatal("MCP server required for integration tests")
 	}
 
 	keyTypes := []struct {
@@ -772,8 +772,8 @@ func TestMCPAllKeyTypes(t *testing.T) {
 		{"ECDSA-P384", "ecdsa", 0, "P-384", "", true, false, false},
 		{"ECDSA-P521", "ecdsa", 0, "P-521", "", true, false, false},
 		{"Ed25519", "ed25519", 0, "", "", true, false, false},
-		{"AES-128", "aes", 128, "", "aes128-gcm", false, false, true},
-		{"AES-256", "aes", 256, "", "aes256-gcm", false, false, true},
+		{"AES-128", "symmetric", 128, "", "aes128-gcm", false, false, true},
+		{"AES-256", "symmetric", 256, "", "aes256-gcm", false, false, true},
 	}
 
 	for _, kt := range keyTypes {
@@ -808,7 +808,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 					// AES/symmetric key generation may not be supported by MCP backend
 					if kt.canEncryptSym {
 						t.Logf("generateKey failed (symmetric keys may not be supported): %v", err)
-						t.Skip("Symmetric key generation not supported via MCP")
+						t.Fatal("Symmetric key generation not supported via MCP")
 					}
 					t.Fatalf("generateKey failed: %v", err)
 				}
@@ -828,7 +828,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 					if err != nil {
 						// Ed25519 signing with hash may fail if not properly configured
 						t.Logf("sign failed: %v", err)
-						t.Skip("sign operation failed, may need Ed25519 pure signing support")
+						t.Fatal("sign operation failed, may need Ed25519 pure signing support")
 					}
 					result, _ := resp["result"].(map[string]interface{})
 					t.Logf("Signature: %v", result["signature"] != nil)
@@ -888,7 +888,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 func TestMCPErrorScenarios(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
-		t.Skip("MCP server required for integration tests")
+		t.Fatal("MCP server required for integration tests")
 	}
 
 	errorCases := []struct {

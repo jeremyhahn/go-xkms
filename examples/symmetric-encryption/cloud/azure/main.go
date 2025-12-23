@@ -63,9 +63,6 @@ func azureKVExample() error {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate key in Azure Key Vault

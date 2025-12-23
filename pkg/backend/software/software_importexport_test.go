@@ -1119,7 +1119,7 @@ func TestDetermineKeySpec_NoAttributes(t *testing.T) {
 		t.Errorf("expected ECC_NIST_P256 default, got %s", spec)
 	}
 
-	// Symmetric without AESAttributes
+	// Symmetric key
 	attrs = &types.KeyAttributes{
 		KeyType:            backend.KEY_TYPE_SECRET,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,

@@ -48,7 +48,7 @@ func main() {
 	aliceAttrs := &types.KeyAttributes{
 		CN:               "alice.x25519",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	aliceKeyInterface, err := backend.GenerateKey(aliceAttrs)
@@ -64,7 +64,7 @@ func main() {
 	bobAttrs := &types.KeyAttributes{
 		CN:               "bob.x25519",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	bobKeyInterface, err := backend.GenerateKey(bobAttrs)

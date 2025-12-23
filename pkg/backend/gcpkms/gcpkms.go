@@ -563,8 +563,8 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	}
 
 	// GCP KMS only supports 256-bit symmetric keys
-	if attrs.AESAttributes.KeySize != 256 {
-		return nil, fmt.Errorf("%w: GCP KMS only supports AES-256 symmetric keys, got %d", backend.ErrInvalidKeyType, attrs.AESAttributes.KeySize)
+	if attrs.SymmetricAlgorithm.KeySize() != 256 {
+		return nil, fmt.Errorf("%w: GCP KMS only supports AES-256 symmetric keys, got %d-bit", backend.ErrInvalidKeyType, attrs.SymmetricAlgorithm.KeySize())
 	}
 
 	ctx := context.Background()

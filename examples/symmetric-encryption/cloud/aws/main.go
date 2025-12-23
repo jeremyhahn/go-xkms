@@ -62,9 +62,6 @@ func awsKMSExample() error {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_AWSKMS,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256, // AWS KMS requires 256-bit keys
-		},
 	}
 
 	// Generate key in AWS KMS

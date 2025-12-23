@@ -9,15 +9,20 @@ services:
     image: go-keychain-integration:latest
     container_name: keychain-integration-server
     ports:
-      - "8443:8443"   # REST API
-      - "9443:9443"   # gRPC
-      - "8444:8444"   # QUIC
-      - "9444:9444"   # MCP
-      - "9090:9090"   # Metrics
+      - "8443:8443"       # REST API
+      - "9443:9443"       # gRPC
+      - "8444:8444/udp"   # QUIC (UDP)
+      - "8444:8444/tcp"   # QUIC fallback (TCP)
+      - "9444:9444"       # MCP
+      - "9090:9090"       # Metrics
+    # Required for QUIC UDP buffer settings
+    privileged: true
     volumes:
       - keychain-data:/data
       - keychain-socket:/var/run/keychain
+      - keychain-certs:/etc/keychain/certs
       - ./config.test.yaml:/etc/keychain/keychaind.yaml
+      - ./scripts:/scripts:ro
     environment:
       - KEYCHAIN_CONFIG=/etc/keychain/keychaind.yaml
       - KEYSTORE_LOG_LEVEL=debug
@@ -28,20 +33,41 @@ services:
       # PKCS#11 configuration
       - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      # Certificate directory
+      - CERT_DIR=/etc/keychain/certs
     depends_on:
       swtpm:
         condition: service_healthy
       softhsm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:8443/health"]
       interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
     networks:
       - keychain-integration
-    command: ["/app/keychaind"]
+    # Run as root for integration tests (allows cert generation and UDP buffer config)
+    user: root
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # Set UDP buffer sizes for QUIC
+        echo "Configuring UDP buffers for QUIC..."
+        echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo "Warning: Could not set rmem_max"
+        echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo "Warning: Could not set wmem_max"
+        cat /proc/sys/net/core/rmem_max || true
+        # Ensure directories exist
+        mkdir -p /etc/keychain/certs /var/run/keychain /data
+        # Generate TLS certificates for QUIC
+        echo "Generating TLS certificates..."
+        /scripts/generate-test-certs.sh
+        # Verify certificates were created
+        ls -la /etc/keychain/certs/
+        echo "Starting keychain server..."
+        exec /app/keychaind
 
   # SWTPM TPM 2.0 Simulator
   swtpm:
@@ -90,39 +116,53 @@ services:
       dockerfile: Dockerfile
     image: go-keychain-integration:latest
     container_name: keychain-integration-tests
+    # Required for QUIC UDP buffer settings
+    privileged: true
+    user: root
     depends_on:
       keychain-server:
         condition: service_healthy
     volumes:
-      - ../../..:/workspace:ro
+      - ../../..:/workspace
       - keychain-socket:/var/run/keychain
+      - keychain-certs:/etc/keychain/certs:ro
       - cli-build:/app/build
+      - go-cache:/root/go
+      - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
-      # Server endpoints
+      # Server endpoints (all use TLS now)
       - KEYSTORE_UNIX_SOCKET=/var/run/keychain/keychain.sock
-      - KEYSTORE_REST_URL=http://keychain-server:8443
+      - KEYSTORE_REST_URL=https://keychain-server:8443
       - KEYSTORE_GRPC_ADDR=keychain-server:9443
       - KEYSTORE_QUIC_URL=https://keychain-server:8444
       - KEYSTORE_MCP_ADDR=keychain-server:9444
       - KEYSTORE_CLI_BIN=/app/build/bin/keychain
+      # TLS configuration - use insecure for self-signed certs
+      - KEYSTORE_TLS_CA=/etc/keychain/certs/ca.crt
+      - KEYSTORE_TLS_INSECURE=true
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
-      - GO_TEST_FLAGS=-v -tags=integration
+      - GO_TEST_FLAGS=-v -tags=integration,frost
     working_dir: /workspace
     networks:
       - keychain-integration
     command: >
       sh -c "
+      echo 'Configuring UDP buffers for QUIC...' &&
+      echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo 'Warning: Could not set rmem_max' &&
+      echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo 'Warning: Could not set wmem_max' &&
       echo 'Waiting for server to be ready...' &&
       sleep 5 &&
       echo 'Checking Unix socket...' &&
       ls -la /var/run/keychain/ || true &&
+      echo 'Checking TLS certificates...' &&
+      ls -la /etc/keychain/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -o /app/build/bin/keychain ./cmd/cli/main.go &&
+      CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go &&
       echo 'Running integration tests...' &&
-      go test -v -tags=integration ./test/integration/api/... -timeout 15m
+      go test -v -tags=integration,frost ./test/integration/api/... -timeout 15m
       "
 
 volumes:
@@ -130,11 +170,17 @@ volumes:
     driver: local
   keychain-socket:
     driver: local
+  keychain-certs:
+    driver: local
   softhsm-tokens:
     driver: local
   swtpm-data:
     driver: local
   cli-build:
+    driver: local
+  go-cache:
+    driver: local
+  go-build-cache:
     driver: local
 
 networks:

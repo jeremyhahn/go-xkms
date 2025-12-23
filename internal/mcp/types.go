@@ -348,7 +348,7 @@ type CopyKeyParams struct {
 	SourceKeyID   string `json:"source_key_id"`
 	DestBackend   string `json:"dest_backend"` // Destination backend name
 	DestKeyID     string `json:"dest_key_id"`
-	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType       string `json:"key_type"`  // "rsa", "ecdsa", "ed25519", "symmetric"
 	Algorithm     string `json:"algorithm"` // Wrapping algorithm
 	KeySize       int    `json:"key_size,omitempty"`
 	Curve         string `json:"curve,omitempty"`

@@ -773,7 +773,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	}
 
 	// Get key size from attributes
-	keySize := attrs.AESAttributes.KeySize
+	keySize := attrs.SymmetricAlgorithm.KeySize()
 	if keySize != 128 && keySize != 192 && keySize != 256 {
 		return nil, fmt.Errorf("%w: AES key size %d bits (only 128, 192, and 256 are supported)", backend.ErrInvalidAlgorithm, keySize)
 	}
@@ -815,7 +815,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 		return nil, fmt.Errorf("yubikey: wrapping key not found: %w", err)
 	}
 
-	keySize := attrs.AESAttributes.KeySize
+	keySize := attrs.SymmetricAlgorithm.KeySize()
 	if keySize == 0 {
 		// Try to infer from algorithm
 		switch attrs.SymmetricAlgorithm {

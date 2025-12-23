@@ -107,7 +107,7 @@ func isQUICServerAvailable(t *testing.T, cfg *TestConfig) bool {
 func TestQUIC_HealthEndpoint(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -145,7 +145,7 @@ func TestQUIC_HealthEndpoint(t *testing.T) {
 func TestQUIC_ListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -177,7 +177,7 @@ func TestQUIC_ListBackends(t *testing.T) {
 func TestQUIC_GenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -246,7 +246,7 @@ func TestQUIC_GenerateKey(t *testing.T) {
 
 				assertEqual(t, testKeyID, returnedKeyID, "Key ID mismatch")
 
-				if tt.keyType != "ed25519" && tt.keyType != "aes" {
+				if tt.keyType != "ed25519" && tt.keyType != "symmetric" {
 					pubKey, ok := result["public_key_pem"].(string)
 					if !ok || pubKey == "" {
 						t.Fatal("Response missing public_key_pem")
@@ -272,7 +272,7 @@ func TestQUIC_GenerateKey(t *testing.T) {
 func TestQUIC_ListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -340,7 +340,7 @@ func TestQUIC_ListKeys(t *testing.T) {
 func TestQUIC_GetKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -393,7 +393,7 @@ func TestQUIC_GetKey(t *testing.T) {
 func TestQUIC_SignAndVerify(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -481,7 +481,7 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 func TestQUIC_DeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -539,7 +539,7 @@ func TestQUIC_DeleteKey(t *testing.T) {
 func TestQUIC_ErrorHandling(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)
@@ -601,7 +601,7 @@ func TestQUIC_ErrorHandling(t *testing.T) {
 func TestQUIC_ConcurrentRequests(t *testing.T) {
 	cfg := LoadTestConfig()
 	if !isQUICServerAvailable(t, cfg) {
-		t.Skip("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
+		t.Fatal("QUIC server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
 	client := newQUICClient(cfg.QUICBaseURL)

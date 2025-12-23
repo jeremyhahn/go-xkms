@@ -27,7 +27,7 @@ import (
 	"path/filepath"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/aes"
+	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -75,7 +75,7 @@ func main() {
 	}
 
 	// Create AES backend (software-based symmetric encryption)
-	symmetricBackend, err := aes.NewBackend(&aes.Config{
+	symmetricBackend, err := symmetric.NewBackend(&symmetric.Config{
 		KeyStorage: storage,
 	})
 	if err != nil {
@@ -113,9 +113,6 @@ func basicEncryption(b types.SymmetricBackend) error {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256, // 256-bit key
-		},
 	}
 
 	// Generate a new AES-256 symmetric key
@@ -175,10 +172,7 @@ func passwordProtectedEncryption(b types.SymmetricBackend) error {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
-		Password: password, // Key will be encrypted with this password
+		Password:           password, // Key will be encrypted with this password
 	}
 
 	// Generate a password-protected AES-256 key
@@ -229,10 +223,7 @@ func passwordProtectedEncryption(b types.SymmetricBackend) error {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
-		Password: newPassword([]byte("wrong-password")),
+		Password:           newPassword([]byte("wrong-password")),
 	}
 
 	_, err = b.SymmetricEncrypter(wrongAttrs)
@@ -254,9 +245,6 @@ func encryptionWithAAD(b types.SymmetricBackend) error {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate the key

@@ -35,7 +35,7 @@ func TestSoftwareBackend_X25519_GenerateKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:               "test.x25519",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
@@ -60,7 +60,7 @@ func TestSoftwareBackend_X25519_GetKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:               "test.x25519.get",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
@@ -92,7 +92,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
 	aliceAttrs := &types.KeyAttributes{
 		CN:               "alice.x25519",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	aliceKey, err := backend.GenerateKey(aliceAttrs)
@@ -102,7 +102,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecret(t *testing.T) {
 	bobAttrs := &types.KeyAttributes{
 		CN:               "bob.x25519",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	bobKey, err := backend.GenerateKey(bobAttrs)
@@ -141,7 +141,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
 	aliceAttrs := &types.KeyAttributes{
 		CN:               "alice.determ",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	_, err = backend.GenerateKey(aliceAttrs)
@@ -150,7 +150,7 @@ func TestSoftwareBackend_X25519_DeriveSharedSecretDeterministic(t *testing.T) {
 	bobAttrs := &types.KeyAttributes{
 		CN:               "bob.determ",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	bobKey, err := backend.GenerateKey(bobAttrs)
@@ -185,7 +185,7 @@ func TestSoftwareBackend_X25519_PublicKeyFromPrivate(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:               "test.pubkey",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
@@ -233,7 +233,7 @@ func TestSoftwareBackend_X25519_DeleteKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:               "test.delete",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 
@@ -265,7 +265,7 @@ func TestSoftwareBackend_X25519_ListKeys(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:               "test.list.x25519",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	_, err = backend.GenerateKey(attrs)
@@ -300,7 +300,7 @@ func TestSoftwareBackend_X25519_DeriveWithKDF(t *testing.T) {
 	aliceAttrs := &types.KeyAttributes{
 		CN:               "alice.kdf",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	_, err = backend.GenerateKey(aliceAttrs)
@@ -309,7 +309,7 @@ func TestSoftwareBackend_X25519_DeriveWithKDF(t *testing.T) {
 	bobAttrs := &types.KeyAttributes{
 		CN:               "bob.kdf",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 	bobKey, err := backend.GenerateKey(bobAttrs)
@@ -360,7 +360,7 @@ func TestSoftwareBackend_X25519_InvalidPublicKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:               "test.invalid",
 		KeyType:          types.KeyTypeEncryption,
-		StoreType:        types.StorePKCS8,
+		StoreType:        types.StoreSoftware,
 		X25519Attributes: &types.X25519Attributes{},
 	}
 

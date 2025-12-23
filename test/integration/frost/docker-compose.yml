@@ -1,0 +1,25 @@
+services:
+  frost-test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/frost/Dockerfile
+    environment:
+      - GO111MODULE=on
+      - CGO_ENABLED=0
+    volumes:
+      - ../../../:/workspace
+      - go-modules:/go/pkg/mod
+    working_dir: /workspace
+    command: >
+      go test -v -tags="integration frost"
+      -timeout 30m
+      ./test/integration/frost/...
+    networks:
+      - frost-test-network
+
+networks:
+  frost-test-network:
+    driver: bridge
+
+volumes:
+  go-modules:

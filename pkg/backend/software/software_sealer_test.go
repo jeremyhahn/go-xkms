@@ -448,7 +448,7 @@ func TestSoftwareUnsealAcceptsBothBackendTypes(t *testing.T) {
 	}
 
 	// Test unseal with PKCS8 backend type (should also work)
-	sealed.Backend = types.BackendTypePKCS8
+	sealed.Backend = types.BackendTypeSoftware
 	unsealed, err = sb.Unseal(ctx, sealed, &types.UnsealOptions{
 		KeyAttributes: attrs,
 	})

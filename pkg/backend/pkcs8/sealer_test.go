@@ -92,8 +92,8 @@ func TestSealUnsealRSA(t *testing.T) {
 	if sealed == nil {
 		t.Fatal("Seal returned nil sealed data")
 	}
-	if sealed.Backend != types.BackendTypePKCS8 {
-		t.Errorf("Expected backend %s, got %s", types.BackendTypePKCS8, sealed.Backend)
+	if sealed.Backend != types.BackendTypeSoftware {
+		t.Errorf("Expected backend %s, got %s", types.BackendTypeSoftware, sealed.Backend)
 	}
 	if len(sealed.Ciphertext) == 0 {
 		t.Error("Sealed ciphertext should not be empty")
@@ -468,7 +468,7 @@ func TestSealUnsealAfterClose(t *testing.T) {
 
 	// Unseal should fail
 	_, err = pkcs8Backend.Unseal(ctx, &types.SealedData{
-		Backend:    types.BackendTypePKCS8,
+		Backend:    types.BackendTypeSoftware,
 		Ciphertext: []byte("test"),
 		Nonce:      make([]byte, 12),
 		KeyID:      attrs.ID(),

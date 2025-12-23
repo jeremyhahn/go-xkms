@@ -194,7 +194,7 @@ func TestUnseal_WrongBackend(t *testing.T) {
 	}
 
 	sealed := &types.SealedData{
-		Backend:    types.BackendTypePKCS8, // Wrong backend
+		Backend:    types.BackendTypeSoftware, // Wrong backend
 		Ciphertext: []byte("test"),
 		Nonce:      []byte("test-nonce"),
 	}

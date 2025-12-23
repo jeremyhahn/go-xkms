@@ -392,7 +392,7 @@ func TestJWKIntegration_ErrorHandling(t *testing.T) {
 
 	t.Run("IsKeychainBacked_ValidBackends", func(t *testing.T) {
 		backends := []string{
-			"pkcs8", "aes", "software", "pkcs11", "tpm2",
+			"pkcs8", "symmetric", "software", "pkcs11", "tpm2",
 			"awskms", "gcpkms", "azurekv", "vault",
 		}
 

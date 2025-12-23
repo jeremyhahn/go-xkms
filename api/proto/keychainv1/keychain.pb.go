@@ -401,12 +401,13 @@ type GenerateKeyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
 	Backend       string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
-	KeyType       string                 `protobuf:"bytes,3,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType       string                 `protobuf:"bytes,3,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "symmetric"
 	KeySize       int32                  `protobuf:"varint,4,opt,name=key_size,json=keySize,proto3" json:"key_size,omitempty"`
 	Curve         string                 `protobuf:"bytes,5,opt,name=curve,proto3" json:"curve,omitempty"`
 	Hash          string                 `protobuf:"bytes,6,opt,name=hash,proto3" json:"hash,omitempty"`
 	Partition     string                 `protobuf:"bytes,7,opt,name=partition,proto3" json:"partition,omitempty"`
 	Algorithm     string                 `protobuf:"bytes,8,opt,name=algorithm,proto3" json:"algorithm,omitempty"` // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+	Exportable    bool                   `protobuf:"varint,9,opt,name=exportable,proto3" json:"exportable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -495,6 +496,13 @@ func (x *GenerateKeyRequest) GetAlgorithm() string {
 		return x.Algorithm
 	}
 	return ""
+}
+
+func (x *GenerateKeyRequest) GetExportable() bool {
+	if x != nil {
+		return x.Exportable
+	}
+	return false
 }
 
 // GenerateKeyResponse contains the generated key information
@@ -3194,7 +3202,7 @@ type GetImportParametersRequest struct {
 	KeyId             string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
 	Backend           string                 `protobuf:"bytes,2,opt,name=backend,proto3" json:"backend,omitempty"`
 	WrappingAlgorithm string                 `protobuf:"bytes,3,opt,name=wrapping_algorithm,json=wrappingAlgorithm,proto3" json:"wrapping_algorithm,omitempty"` // "RSAES_OAEP_SHA_1", "RSAES_OAEP_SHA_256", "RSA_AES_KEY_WRAP_SHA_1", "RSA_AES_KEY_WRAP_SHA_256"
-	KeyType           string                 `protobuf:"bytes,4,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"`                               // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType           string                 `protobuf:"bytes,4,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"`                               // "rsa", "ecdsa", "ed25519", "symmetric"
 	KeySize           int32                  `protobuf:"varint,5,opt,name=key_size,json=keySize,proto3" json:"key_size,omitempty"`
 	Curve             string                 `protobuf:"bytes,6,opt,name=curve,proto3" json:"curve,omitempty"`
 	Hash              string                 `protobuf:"bytes,7,opt,name=hash,proto3" json:"hash,omitempty"`
@@ -3651,7 +3659,7 @@ type ImportKeyRequest struct {
 	Algorithm     string                 `protobuf:"bytes,4,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
 	ImportToken   []byte                 `protobuf:"bytes,5,opt,name=import_token,json=importToken,proto3" json:"import_token,omitempty"`
 	Metadata      map[string]string      `protobuf:"bytes,6,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	KeyType       string                 `protobuf:"bytes,7,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "aes"
+	KeyType       string                 `protobuf:"bytes,7,opt,name=key_type,json=keyType,proto3" json:"key_type,omitempty"` // "rsa", "ecdsa", "ed25519", "symmetric"
 	KeySize       int32                  `protobuf:"varint,8,opt,name=key_size,json=keySize,proto3" json:"key_size,omitempty"`
 	Curve         string                 `protobuf:"bytes,9,opt,name=curve,proto3" json:"curve,omitempty"`
 	Hash          string                 `protobuf:"bytes,10,opt,name=hash,proto3" json:"hash,omitempty"`
@@ -4096,6 +4104,1484 @@ func (x *CopyKeyResponse) GetDestKeyId() string {
 	return ""
 }
 
+// FrostKeyInfo contains information about a FROST key
+type FrostKeyInfo struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	KeyId          string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Algorithm      string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`  // FROST ciphersuite (e.g., "FROST-Ed25519-SHA512")
+	Threshold      int32                  `protobuf:"varint,3,opt,name=threshold,proto3" json:"threshold,omitempty"` // Minimum signers required (M)
+	Total          int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`         // Total participants (N)
+	ParticipantId  uint32                 `protobuf:"varint,5,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	GroupPublicKey []byte                 `protobuf:"bytes,6,opt,name=group_public_key,json=groupPublicKey,proto3" json:"group_public_key,omitempty"`
+	Participants   []string               `protobuf:"bytes,7,rep,name=participants,proto3" json:"participants,omitempty"` // Participant names/identifiers
+	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FrostKeyInfo) Reset() {
+	*x = FrostKeyInfo{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostKeyInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostKeyInfo) ProtoMessage() {}
+
+func (x *FrostKeyInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostKeyInfo.ProtoReflect.Descriptor instead.
+func (*FrostKeyInfo) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *FrostKeyInfo) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostKeyInfo) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+func (x *FrostKeyInfo) GetThreshold() int32 {
+	if x != nil {
+		return x.Threshold
+	}
+	return 0
+}
+
+func (x *FrostKeyInfo) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *FrostKeyInfo) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostKeyInfo) GetGroupPublicKey() []byte {
+	if x != nil {
+		return x.GroupPublicKey
+	}
+	return nil
+}
+
+func (x *FrostKeyInfo) GetParticipants() []string {
+	if x != nil {
+		return x.Participants
+	}
+	return nil
+}
+
+func (x *FrostKeyInfo) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+// FrostKeyPackage represents a participant's key package for import/export
+type FrostKeyPackage struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	KeyId              string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Algorithm          string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	Threshold          int32                  `protobuf:"varint,3,opt,name=threshold,proto3" json:"threshold,omitempty"`
+	Total              int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	ParticipantId      uint32                 `protobuf:"varint,5,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	ParticipantName    string                 `protobuf:"bytes,6,opt,name=participant_name,json=participantName,proto3" json:"participant_name,omitempty"`
+	SecretShare        []byte                 `protobuf:"bytes,7,opt,name=secret_share,json=secretShare,proto3" json:"secret_share,omitempty"`
+	GroupPublicKey     []byte                 `protobuf:"bytes,8,opt,name=group_public_key,json=groupPublicKey,proto3" json:"group_public_key,omitempty"`
+	VerificationShares map[uint32][]byte      `protobuf:"bytes,9,rep,name=verification_shares,json=verificationShares,proto3" json:"verification_shares,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *FrostKeyPackage) Reset() {
+	*x = FrostKeyPackage{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostKeyPackage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostKeyPackage) ProtoMessage() {}
+
+func (x *FrostKeyPackage) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostKeyPackage.ProtoReflect.Descriptor instead.
+func (*FrostKeyPackage) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *FrostKeyPackage) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostKeyPackage) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+func (x *FrostKeyPackage) GetThreshold() int32 {
+	if x != nil {
+		return x.Threshold
+	}
+	return 0
+}
+
+func (x *FrostKeyPackage) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *FrostKeyPackage) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostKeyPackage) GetParticipantName() string {
+	if x != nil {
+		return x.ParticipantName
+	}
+	return ""
+}
+
+func (x *FrostKeyPackage) GetSecretShare() []byte {
+	if x != nil {
+		return x.SecretShare
+	}
+	return nil
+}
+
+func (x *FrostKeyPackage) GetGroupPublicKey() []byte {
+	if x != nil {
+		return x.GroupPublicKey
+	}
+	return nil
+}
+
+func (x *FrostKeyPackage) GetVerificationShares() map[uint32][]byte {
+	if x != nil {
+		return x.VerificationShares
+	}
+	return nil
+}
+
+// FrostCommitment represents a participant's nonce commitments
+type FrostCommitment struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	ParticipantId     uint32                 `protobuf:"varint,1,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	HidingCommitment  []byte                 `protobuf:"bytes,2,opt,name=hiding_commitment,json=hidingCommitment,proto3" json:"hiding_commitment,omitempty"`
+	BindingCommitment []byte                 `protobuf:"bytes,3,opt,name=binding_commitment,json=bindingCommitment,proto3" json:"binding_commitment,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *FrostCommitment) Reset() {
+	*x = FrostCommitment{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostCommitment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostCommitment) ProtoMessage() {}
+
+func (x *FrostCommitment) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostCommitment.ProtoReflect.Descriptor instead.
+func (*FrostCommitment) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *FrostCommitment) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostCommitment) GetHidingCommitment() []byte {
+	if x != nil {
+		return x.HidingCommitment
+	}
+	return nil
+}
+
+func (x *FrostCommitment) GetBindingCommitment() []byte {
+	if x != nil {
+		return x.BindingCommitment
+	}
+	return nil
+}
+
+// FrostSignatureShare represents a participant's signature share
+type FrostSignatureShare struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ParticipantId uint32                 `protobuf:"varint,1,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Share         []byte                 `protobuf:"bytes,3,opt,name=share,proto3" json:"share,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostSignatureShare) Reset() {
+	*x = FrostSignatureShare{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostSignatureShare) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostSignatureShare) ProtoMessage() {}
+
+func (x *FrostSignatureShare) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostSignatureShare.ProtoReflect.Descriptor instead.
+func (*FrostSignatureShare) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *FrostSignatureShare) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostSignatureShare) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *FrostSignatureShare) GetShare() []byte {
+	if x != nil {
+		return x.Share
+	}
+	return nil
+}
+
+// FrostGenerateKeyRequest requests generation of FROST key packages
+type FrostGenerateKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`                          // Custom key identifier (auto-generated if empty)
+	Algorithm     string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`                               // FROST ciphersuite (default: "FROST-Ed25519-SHA512")
+	Threshold     int32                  `protobuf:"varint,3,opt,name=threshold,proto3" json:"threshold,omitempty"`                              // Minimum signers required (M)
+	Total         int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`                                      // Total participants (N)
+	Participants  []string               `protobuf:"bytes,5,rep,name=participants,proto3" json:"participants,omitempty"`                         // Participant names/identifiers
+	ParticipantId uint32                 `protobuf:"varint,6,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"` // This participant's ID (1 to total); 0 = dealer mode
+	DealerMode    bool                   `protobuf:"varint,7,opt,name=dealer_mode,json=dealerMode,proto3" json:"dealer_mode,omitempty"`          // Generate all packages (trusted dealer mode)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostGenerateKeyRequest) Reset() {
+	*x = FrostGenerateKeyRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[71]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostGenerateKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostGenerateKeyRequest) ProtoMessage() {}
+
+func (x *FrostGenerateKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[71]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostGenerateKeyRequest.ProtoReflect.Descriptor instead.
+func (*FrostGenerateKeyRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{71}
+}
+
+func (x *FrostGenerateKeyRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostGenerateKeyRequest) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+func (x *FrostGenerateKeyRequest) GetThreshold() int32 {
+	if x != nil {
+		return x.Threshold
+	}
+	return 0
+}
+
+func (x *FrostGenerateKeyRequest) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *FrostGenerateKeyRequest) GetParticipants() []string {
+	if x != nil {
+		return x.Participants
+	}
+	return nil
+}
+
+func (x *FrostGenerateKeyRequest) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostGenerateKeyRequest) GetDealerMode() bool {
+	if x != nil {
+		return x.DealerMode
+	}
+	return false
+}
+
+// FrostGenerateKeyResponse contains the generated key information
+type FrostGenerateKeyResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	KeyId          string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Algorithm      string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	Threshold      int32                  `protobuf:"varint,3,opt,name=threshold,proto3" json:"threshold,omitempty"`
+	Total          int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	GroupPublicKey []byte                 `protobuf:"bytes,5,opt,name=group_public_key,json=groupPublicKey,proto3" json:"group_public_key,omitempty"`
+	ParticipantId  uint32                 `protobuf:"varint,6,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"` // Only set in participant mode
+	Packages       []*FrostKeyPackage     `protobuf:"bytes,7,rep,name=packages,proto3" json:"packages,omitempty"`                                 // All packages in dealer mode
+	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FrostGenerateKeyResponse) Reset() {
+	*x = FrostGenerateKeyResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[72]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostGenerateKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostGenerateKeyResponse) ProtoMessage() {}
+
+func (x *FrostGenerateKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[72]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostGenerateKeyResponse.ProtoReflect.Descriptor instead.
+func (*FrostGenerateKeyResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{72}
+}
+
+func (x *FrostGenerateKeyResponse) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostGenerateKeyResponse) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+func (x *FrostGenerateKeyResponse) GetThreshold() int32 {
+	if x != nil {
+		return x.Threshold
+	}
+	return 0
+}
+
+func (x *FrostGenerateKeyResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *FrostGenerateKeyResponse) GetGroupPublicKey() []byte {
+	if x != nil {
+		return x.GroupPublicKey
+	}
+	return nil
+}
+
+func (x *FrostGenerateKeyResponse) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostGenerateKeyResponse) GetPackages() []*FrostKeyPackage {
+	if x != nil {
+		return x.Packages
+	}
+	return nil
+}
+
+func (x *FrostGenerateKeyResponse) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+// FrostImportKeyRequest requests import of a FROST key package
+type FrostImportKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Package       *FrostKeyPackage       `protobuf:"bytes,1,opt,name=package,proto3" json:"package,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostImportKeyRequest) Reset() {
+	*x = FrostImportKeyRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[73]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostImportKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostImportKeyRequest) ProtoMessage() {}
+
+func (x *FrostImportKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[73]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostImportKeyRequest.ProtoReflect.Descriptor instead.
+func (*FrostImportKeyRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{73}
+}
+
+func (x *FrostImportKeyRequest) GetPackage() *FrostKeyPackage {
+	if x != nil {
+		return x.Package
+	}
+	return nil
+}
+
+// FrostImportKeyResponse contains the result of key package import
+type FrostImportKeyResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Success        bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message        string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	KeyId          string                 `protobuf:"bytes,3,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	ParticipantId  uint32                 `protobuf:"varint,4,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	GroupPublicKey []byte                 `protobuf:"bytes,5,opt,name=group_public_key,json=groupPublicKey,proto3" json:"group_public_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FrostImportKeyResponse) Reset() {
+	*x = FrostImportKeyResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[74]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostImportKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostImportKeyResponse) ProtoMessage() {}
+
+func (x *FrostImportKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[74]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostImportKeyResponse.ProtoReflect.Descriptor instead.
+func (*FrostImportKeyResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{74}
+}
+
+func (x *FrostImportKeyResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *FrostImportKeyResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *FrostImportKeyResponse) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostImportKeyResponse) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostImportKeyResponse) GetGroupPublicKey() []byte {
+	if x != nil {
+		return x.GroupPublicKey
+	}
+	return nil
+}
+
+// FrostListKeysRequest requests listing of all FROST keys
+type FrostListKeysRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Limit         int32                  `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset        int32                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostListKeysRequest) Reset() {
+	*x = FrostListKeysRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[75]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostListKeysRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostListKeysRequest) ProtoMessage() {}
+
+func (x *FrostListKeysRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[75]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostListKeysRequest.ProtoReflect.Descriptor instead.
+func (*FrostListKeysRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *FrostListKeysRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *FrostListKeysRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+// FrostListKeysResponse contains the list of FROST keys
+type FrostListKeysResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keys          []*FrostKeyInfo        `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostListKeysResponse) Reset() {
+	*x = FrostListKeysResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[76]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostListKeysResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostListKeysResponse) ProtoMessage() {}
+
+func (x *FrostListKeysResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[76]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostListKeysResponse.ProtoReflect.Descriptor instead.
+func (*FrostListKeysResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{76}
+}
+
+func (x *FrostListKeysResponse) GetKeys() []*FrostKeyInfo {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+func (x *FrostListKeysResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// FrostGetKeyRequest requests information about a specific FROST key
+type FrostGetKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostGetKeyRequest) Reset() {
+	*x = FrostGetKeyRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[77]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostGetKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostGetKeyRequest) ProtoMessage() {}
+
+func (x *FrostGetKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[77]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostGetKeyRequest.ProtoReflect.Descriptor instead.
+func (*FrostGetKeyRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{77}
+}
+
+func (x *FrostGetKeyRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+// FrostGetKeyResponse contains FROST key information
+type FrostGetKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           *FrostKeyInfo          `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostGetKeyResponse) Reset() {
+	*x = FrostGetKeyResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[78]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostGetKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostGetKeyResponse) ProtoMessage() {}
+
+func (x *FrostGetKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[78]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostGetKeyResponse.ProtoReflect.Descriptor instead.
+func (*FrostGetKeyResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *FrostGetKeyResponse) GetKey() *FrostKeyInfo {
+	if x != nil {
+		return x.Key
+	}
+	return nil
+}
+
+// FrostDeleteKeyRequest requests deletion of a FROST key
+type FrostDeleteKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostDeleteKeyRequest) Reset() {
+	*x = FrostDeleteKeyRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[79]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostDeleteKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostDeleteKeyRequest) ProtoMessage() {}
+
+func (x *FrostDeleteKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[79]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostDeleteKeyRequest.ProtoReflect.Descriptor instead.
+func (*FrostDeleteKeyRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{79}
+}
+
+func (x *FrostDeleteKeyRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+// FrostDeleteKeyResponse contains the result of key deletion
+type FrostDeleteKeyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostDeleteKeyResponse) Reset() {
+	*x = FrostDeleteKeyResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[80]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostDeleteKeyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostDeleteKeyResponse) ProtoMessage() {}
+
+func (x *FrostDeleteKeyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[80]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostDeleteKeyResponse.ProtoReflect.Descriptor instead.
+func (*FrostDeleteKeyResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{80}
+}
+
+func (x *FrostDeleteKeyResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *FrostDeleteKeyResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// FrostGenerateNoncesRequest requests generation of nonces for Round 1
+type FrostGenerateNoncesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostGenerateNoncesRequest) Reset() {
+	*x = FrostGenerateNoncesRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[81]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostGenerateNoncesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostGenerateNoncesRequest) ProtoMessage() {}
+
+func (x *FrostGenerateNoncesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[81]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostGenerateNoncesRequest.ProtoReflect.Descriptor instead.
+func (*FrostGenerateNoncesRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{81}
+}
+
+func (x *FrostGenerateNoncesRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+// FrostGenerateNoncesResponse contains the nonces and commitments for Round 1
+type FrostGenerateNoncesResponse struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	ParticipantId     uint32                 `protobuf:"varint,1,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	SessionId         string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	HidingNonce       []byte                 `protobuf:"bytes,3,opt,name=hiding_nonce,json=hidingNonce,proto3" json:"hiding_nonce,omitempty"`                   // Secret - keep private
+	BindingNonce      []byte                 `protobuf:"bytes,4,opt,name=binding_nonce,json=bindingNonce,proto3" json:"binding_nonce,omitempty"`                // Secret - keep private
+	HidingCommitment  []byte                 `protobuf:"bytes,5,opt,name=hiding_commitment,json=hidingCommitment,proto3" json:"hiding_commitment,omitempty"`    // Public - share with participants
+	BindingCommitment []byte                 `protobuf:"bytes,6,opt,name=binding_commitment,json=bindingCommitment,proto3" json:"binding_commitment,omitempty"` // Public - share with participants
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *FrostGenerateNoncesResponse) Reset() {
+	*x = FrostGenerateNoncesResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[82]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostGenerateNoncesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostGenerateNoncesResponse) ProtoMessage() {}
+
+func (x *FrostGenerateNoncesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[82]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostGenerateNoncesResponse.ProtoReflect.Descriptor instead.
+func (*FrostGenerateNoncesResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{82}
+}
+
+func (x *FrostGenerateNoncesResponse) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostGenerateNoncesResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *FrostGenerateNoncesResponse) GetHidingNonce() []byte {
+	if x != nil {
+		return x.HidingNonce
+	}
+	return nil
+}
+
+func (x *FrostGenerateNoncesResponse) GetBindingNonce() []byte {
+	if x != nil {
+		return x.BindingNonce
+	}
+	return nil
+}
+
+func (x *FrostGenerateNoncesResponse) GetHidingCommitment() []byte {
+	if x != nil {
+		return x.HidingCommitment
+	}
+	return nil
+}
+
+func (x *FrostGenerateNoncesResponse) GetBindingCommitment() []byte {
+	if x != nil {
+		return x.BindingCommitment
+	}
+	return nil
+}
+
+// FrostSignRoundRequest requests generation of a signature share for Round 2
+type FrostSignRoundRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	KeyId             string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Message           []byte                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	SessionId         string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	HidingNonce       []byte                 `protobuf:"bytes,4,opt,name=hiding_nonce,json=hidingNonce,proto3" json:"hiding_nonce,omitempty"`                   // This participant's hiding nonce
+	BindingNonce      []byte                 `protobuf:"bytes,5,opt,name=binding_nonce,json=bindingNonce,proto3" json:"binding_nonce,omitempty"`                // This participant's binding nonce
+	HidingCommitment  []byte                 `protobuf:"bytes,6,opt,name=hiding_commitment,json=hidingCommitment,proto3" json:"hiding_commitment,omitempty"`    // This participant's hiding commitment
+	BindingCommitment []byte                 `protobuf:"bytes,7,opt,name=binding_commitment,json=bindingCommitment,proto3" json:"binding_commitment,omitempty"` // This participant's binding commitment
+	Commitments       []*FrostCommitment     `protobuf:"bytes,8,rep,name=commitments,proto3" json:"commitments,omitempty"`                                      // All participants' commitments
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *FrostSignRoundRequest) Reset() {
+	*x = FrostSignRoundRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[83]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostSignRoundRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostSignRoundRequest) ProtoMessage() {}
+
+func (x *FrostSignRoundRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[83]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostSignRoundRequest.ProtoReflect.Descriptor instead.
+func (*FrostSignRoundRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{83}
+}
+
+func (x *FrostSignRoundRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostSignRoundRequest) GetMessage() []byte {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+func (x *FrostSignRoundRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *FrostSignRoundRequest) GetHidingNonce() []byte {
+	if x != nil {
+		return x.HidingNonce
+	}
+	return nil
+}
+
+func (x *FrostSignRoundRequest) GetBindingNonce() []byte {
+	if x != nil {
+		return x.BindingNonce
+	}
+	return nil
+}
+
+func (x *FrostSignRoundRequest) GetHidingCommitment() []byte {
+	if x != nil {
+		return x.HidingCommitment
+	}
+	return nil
+}
+
+func (x *FrostSignRoundRequest) GetBindingCommitment() []byte {
+	if x != nil {
+		return x.BindingCommitment
+	}
+	return nil
+}
+
+func (x *FrostSignRoundRequest) GetCommitments() []*FrostCommitment {
+	if x != nil {
+		return x.Commitments
+	}
+	return nil
+}
+
+// FrostSignRoundResponse contains the signature share
+type FrostSignRoundResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ParticipantId  uint32                 `protobuf:"varint,1,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SignatureShare []byte                 `protobuf:"bytes,3,opt,name=signature_share,json=signatureShare,proto3" json:"signature_share,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *FrostSignRoundResponse) Reset() {
+	*x = FrostSignRoundResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[84]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostSignRoundResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostSignRoundResponse) ProtoMessage() {}
+
+func (x *FrostSignRoundResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[84]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostSignRoundResponse.ProtoReflect.Descriptor instead.
+func (*FrostSignRoundResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{84}
+}
+
+func (x *FrostSignRoundResponse) GetParticipantId() uint32 {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return 0
+}
+
+func (x *FrostSignRoundResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *FrostSignRoundResponse) GetSignatureShare() []byte {
+	if x != nil {
+		return x.SignatureShare
+	}
+	return nil
+}
+
+// FrostAggregateRequest requests aggregation of signature shares
+type FrostAggregateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Message       []byte                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Commitments   []*FrostCommitment     `protobuf:"bytes,3,rep,name=commitments,proto3" json:"commitments,omitempty"`
+	Shares        []*FrostSignatureShare `protobuf:"bytes,4,rep,name=shares,proto3" json:"shares,omitempty"`
+	Verify        bool                   `protobuf:"varint,5,opt,name=verify,proto3" json:"verify,omitempty"` // Verify signature after aggregation (default: true)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostAggregateRequest) Reset() {
+	*x = FrostAggregateRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[85]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostAggregateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostAggregateRequest) ProtoMessage() {}
+
+func (x *FrostAggregateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[85]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostAggregateRequest.ProtoReflect.Descriptor instead.
+func (*FrostAggregateRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{85}
+}
+
+func (x *FrostAggregateRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostAggregateRequest) GetMessage() []byte {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+func (x *FrostAggregateRequest) GetCommitments() []*FrostCommitment {
+	if x != nil {
+		return x.Commitments
+	}
+	return nil
+}
+
+func (x *FrostAggregateRequest) GetShares() []*FrostSignatureShare {
+	if x != nil {
+		return x.Shares
+	}
+	return nil
+}
+
+func (x *FrostAggregateRequest) GetVerify() bool {
+	if x != nil {
+		return x.Verify
+	}
+	return false
+}
+
+// FrostAggregateResponse contains the final aggregated signature
+type FrostAggregateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Signature     []byte                 `protobuf:"bytes,1,opt,name=signature,proto3" json:"signature,omitempty"`
+	Verified      bool                   `protobuf:"varint,2,opt,name=verified,proto3" json:"verified,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostAggregateResponse) Reset() {
+	*x = FrostAggregateResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[86]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostAggregateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostAggregateResponse) ProtoMessage() {}
+
+func (x *FrostAggregateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[86]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostAggregateResponse.ProtoReflect.Descriptor instead.
+func (*FrostAggregateResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{86}
+}
+
+func (x *FrostAggregateResponse) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+func (x *FrostAggregateResponse) GetVerified() bool {
+	if x != nil {
+		return x.Verified
+	}
+	return false
+}
+
+// FrostVerifyRequest requests verification of a FROST signature
+type FrostVerifyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	KeyId         string                 `protobuf:"bytes,1,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Message       []byte                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Signature     []byte                 `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostVerifyRequest) Reset() {
+	*x = FrostVerifyRequest{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[87]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVerifyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVerifyRequest) ProtoMessage() {}
+
+func (x *FrostVerifyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[87]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVerifyRequest.ProtoReflect.Descriptor instead.
+func (*FrostVerifyRequest) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{87}
+}
+
+func (x *FrostVerifyRequest) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *FrostVerifyRequest) GetMessage() []byte {
+	if x != nil {
+		return x.Message
+	}
+	return nil
+}
+
+func (x *FrostVerifyRequest) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+// FrostVerifyResponse contains the verification result
+type FrostVerifyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Valid         bool                   `protobuf:"varint,1,opt,name=valid,proto3" json:"valid,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FrostVerifyResponse) Reset() {
+	*x = FrostVerifyResponse{}
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[88]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FrostVerifyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FrostVerifyResponse) ProtoMessage() {}
+
+func (x *FrostVerifyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_api_proto_keychainv1_keychain_proto_msgTypes[88]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FrostVerifyResponse.ProtoReflect.Descriptor instead.
+func (*FrostVerifyResponse) Descriptor() ([]byte, []int) {
+	return file_api_proto_keychainv1_keychain_proto_rawDescGZIP(), []int{88}
+}
+
+func (x *FrostVerifyResponse) GetValid() bool {
+	if x != nil {
+		return x.Valid
+	}
+	return false
+}
+
+func (x *FrostVerifyResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_api_proto_keychainv1_keychain_proto protoreflect.FileDescriptor
 
 const file_api_proto_keychainv1_keychain_proto_rawDesc = "" +
@@ -4395,7 +5881,122 @@ const file_api_proto_keychainv1_keychain_proto_rawDesc = "" +
 	"\x0fCopyKeyResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1e\n" +
-	"\vdest_key_id\x18\x03 \x01(\tR\tdestKeyId2\xbc\x14\n" +
+	"\vdest_key_id\x18\x03 \x01(\tR\tdestKeyId\"\xa7\x02\n" +
+	"\fFrostKeyInfo\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1c\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
+	"\tthreshold\x18\x03 \x01(\x05R\tthreshold\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\x12%\n" +
+	"\x0eparticipant_id\x18\x05 \x01(\rR\rparticipantId\x12(\n" +
+	"\x10group_public_key\x18\x06 \x01(\fR\x0egroupPublicKey\x12\"\n" +
+	"\fparticipants\x18\a \x03(\tR\fparticipants\x129\n" +
+	"\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xc7\x03\n" +
+	"\x0fFrostKeyPackage\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1c\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
+	"\tthreshold\x18\x03 \x01(\x05R\tthreshold\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\x12%\n" +
+	"\x0eparticipant_id\x18\x05 \x01(\rR\rparticipantId\x12)\n" +
+	"\x10participant_name\x18\x06 \x01(\tR\x0fparticipantName\x12!\n" +
+	"\fsecret_share\x18\a \x01(\fR\vsecretShare\x12(\n" +
+	"\x10group_public_key\x18\b \x01(\fR\x0egroupPublicKey\x12e\n" +
+	"\x13verification_shares\x18\t \x03(\v24.keychain.v1.FrostKeyPackage.VerificationSharesEntryR\x12verificationShares\x1aE\n" +
+	"\x17VerificationSharesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"\x94\x01\n" +
+	"\x0fFrostCommitment\x12%\n" +
+	"\x0eparticipant_id\x18\x01 \x01(\rR\rparticipantId\x12+\n" +
+	"\x11hiding_commitment\x18\x02 \x01(\fR\x10hidingCommitment\x12-\n" +
+	"\x12binding_commitment\x18\x03 \x01(\fR\x11bindingCommitment\"q\n" +
+	"\x13FrostSignatureShare\x12%\n" +
+	"\x0eparticipant_id\x18\x01 \x01(\rR\rparticipantId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05share\x18\x03 \x01(\fR\x05share\"\xee\x01\n" +
+	"\x17FrostGenerateKeyRequest\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1c\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
+	"\tthreshold\x18\x03 \x01(\x05R\tthreshold\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\x12\"\n" +
+	"\fparticipants\x18\x05 \x03(\tR\fparticipants\x12%\n" +
+	"\x0eparticipant_id\x18\x06 \x01(\rR\rparticipantId\x12\x1f\n" +
+	"\vdealer_mode\x18\a \x01(\bR\n" +
+	"dealerMode\"\xc9\x02\n" +
+	"\x18FrostGenerateKeyResponse\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x1c\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\x12\x1c\n" +
+	"\tthreshold\x18\x03 \x01(\x05R\tthreshold\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\x12(\n" +
+	"\x10group_public_key\x18\x05 \x01(\fR\x0egroupPublicKey\x12%\n" +
+	"\x0eparticipant_id\x18\x06 \x01(\rR\rparticipantId\x128\n" +
+	"\bpackages\x18\a \x03(\v2\x1c.keychain.v1.FrostKeyPackageR\bpackages\x129\n" +
+	"\n" +
+	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"O\n" +
+	"\x15FrostImportKeyRequest\x126\n" +
+	"\apackage\x18\x01 \x01(\v2\x1c.keychain.v1.FrostKeyPackageR\apackage\"\xb4\x01\n" +
+	"\x16FrostImportKeyResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x15\n" +
+	"\x06key_id\x18\x03 \x01(\tR\x05keyId\x12%\n" +
+	"\x0eparticipant_id\x18\x04 \x01(\rR\rparticipantId\x12(\n" +
+	"\x10group_public_key\x18\x05 \x01(\fR\x0egroupPublicKey\"D\n" +
+	"\x14FrostListKeysRequest\x12\x14\n" +
+	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x05R\x06offset\"\\\n" +
+	"\x15FrostListKeysResponse\x12-\n" +
+	"\x04keys\x18\x01 \x03(\v2\x19.keychain.v1.FrostKeyInfoR\x04keys\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"+\n" +
+	"\x12FrostGetKeyRequest\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\"B\n" +
+	"\x13FrostGetKeyResponse\x12+\n" +
+	"\x03key\x18\x01 \x01(\v2\x19.keychain.v1.FrostKeyInfoR\x03key\".\n" +
+	"\x15FrostDeleteKeyRequest\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\"L\n" +
+	"\x16FrostDeleteKeyResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"3\n" +
+	"\x1aFrostGenerateNoncesRequest\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\"\x87\x02\n" +
+	"\x1bFrostGenerateNoncesResponse\x12%\n" +
+	"\x0eparticipant_id\x18\x01 \x01(\rR\rparticipantId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12!\n" +
+	"\fhiding_nonce\x18\x03 \x01(\fR\vhidingNonce\x12#\n" +
+	"\rbinding_nonce\x18\x04 \x01(\fR\fbindingNonce\x12+\n" +
+	"\x11hiding_commitment\x18\x05 \x01(\fR\x10hidingCommitment\x12-\n" +
+	"\x12binding_commitment\x18\x06 \x01(\fR\x11bindingCommitment\"\xcb\x02\n" +
+	"\x15FrostSignRoundRequest\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\fR\amessage\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x03 \x01(\tR\tsessionId\x12!\n" +
+	"\fhiding_nonce\x18\x04 \x01(\fR\vhidingNonce\x12#\n" +
+	"\rbinding_nonce\x18\x05 \x01(\fR\fbindingNonce\x12+\n" +
+	"\x11hiding_commitment\x18\x06 \x01(\fR\x10hidingCommitment\x12-\n" +
+	"\x12binding_commitment\x18\a \x01(\fR\x11bindingCommitment\x12>\n" +
+	"\vcommitments\x18\b \x03(\v2\x1c.keychain.v1.FrostCommitmentR\vcommitments\"\x87\x01\n" +
+	"\x16FrostSignRoundResponse\x12%\n" +
+	"\x0eparticipant_id\x18\x01 \x01(\rR\rparticipantId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12'\n" +
+	"\x0fsignature_share\x18\x03 \x01(\fR\x0esignatureShare\"\xda\x01\n" +
+	"\x15FrostAggregateRequest\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\fR\amessage\x12>\n" +
+	"\vcommitments\x18\x03 \x03(\v2\x1c.keychain.v1.FrostCommitmentR\vcommitments\x128\n" +
+	"\x06shares\x18\x04 \x03(\v2 .keychain.v1.FrostSignatureShareR\x06shares\x12\x16\n" +
+	"\x06verify\x18\x05 \x01(\bR\x06verify\"R\n" +
+	"\x16FrostAggregateResponse\x12\x1c\n" +
+	"\tsignature\x18\x01 \x01(\fR\tsignature\x12\x1a\n" +
+	"\bverified\x18\x02 \x01(\bR\bverified\"c\n" +
+	"\x12FrostVerifyRequest\x12\x15\n" +
+	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\fR\amessage\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\fR\tsignature\"E\n" +
+	"\x13FrostVerifyResponse\x12\x14\n" +
+	"\x05valid\x18\x01 \x01(\bR\x05valid\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xef\x1a\n" +
 	"\x0fKeystoreService\x12A\n" +
 	"\x06Health\x12\x1a.keychain.v1.HealthRequest\x1a\x1b.keychain.v1.HealthResponse\x12S\n" +
 	"\fListBackends\x12 .keychain.v1.ListBackendsRequest\x1a!.keychain.v1.ListBackendsResponse\x12Y\n" +
@@ -4430,7 +6031,16 @@ const file_api_proto_keychainv1_keychain_proto_rawDesc = "" +
 	"\tUnwrapKey\x12\x1d.keychain.v1.UnwrapKeyRequest\x1a\x1e.keychain.v1.UnwrapKeyResponse\x12J\n" +
 	"\tImportKey\x12\x1d.keychain.v1.ImportKeyRequest\x1a\x1e.keychain.v1.ImportKeyResponse\x12J\n" +
 	"\tExportKey\x12\x1d.keychain.v1.ExportKeyRequest\x1a\x1e.keychain.v1.ExportKeyResponse\x12D\n" +
-	"\aCopyKey\x12\x1b.keychain.v1.CopyKeyRequest\x1a\x1c.keychain.v1.CopyKeyResponseB8Z6github.com/jeremyhahn/go-keychain/api/proto/keychainv1b\x06proto3"
+	"\aCopyKey\x12\x1b.keychain.v1.CopyKeyRequest\x1a\x1c.keychain.v1.CopyKeyResponse\x12_\n" +
+	"\x10FrostGenerateKey\x12$.keychain.v1.FrostGenerateKeyRequest\x1a%.keychain.v1.FrostGenerateKeyResponse\x12Y\n" +
+	"\x0eFrostImportKey\x12\".keychain.v1.FrostImportKeyRequest\x1a#.keychain.v1.FrostImportKeyResponse\x12V\n" +
+	"\rFrostListKeys\x12!.keychain.v1.FrostListKeysRequest\x1a\".keychain.v1.FrostListKeysResponse\x12P\n" +
+	"\vFrostGetKey\x12\x1f.keychain.v1.FrostGetKeyRequest\x1a .keychain.v1.FrostGetKeyResponse\x12Y\n" +
+	"\x0eFrostDeleteKey\x12\".keychain.v1.FrostDeleteKeyRequest\x1a#.keychain.v1.FrostDeleteKeyResponse\x12h\n" +
+	"\x13FrostGenerateNonces\x12'.keychain.v1.FrostGenerateNoncesRequest\x1a(.keychain.v1.FrostGenerateNoncesResponse\x12Y\n" +
+	"\x0eFrostSignRound\x12\".keychain.v1.FrostSignRoundRequest\x1a#.keychain.v1.FrostSignRoundResponse\x12Y\n" +
+	"\x0eFrostAggregate\x12\".keychain.v1.FrostAggregateRequest\x1a#.keychain.v1.FrostAggregateResponse\x12P\n" +
+	"\vFrostVerify\x12\x1f.keychain.v1.FrostVerifyRequest\x1a .keychain.v1.FrostVerifyResponseB8Z6github.com/jeremyhahn/go-keychain/api/proto/keychainv1b\x06proto3"
 
 var (
 	file_api_proto_keychainv1_keychain_proto_rawDescOnce sync.Once
@@ -4444,7 +6054,7 @@ func file_api_proto_keychainv1_keychain_proto_rawDescGZIP() []byte {
 	return file_api_proto_keychainv1_keychain_proto_rawDescData
 }
 
-var file_api_proto_keychainv1_keychain_proto_msgTypes = make([]protoimpl.MessageInfo, 71)
+var file_api_proto_keychainv1_keychain_proto_msgTypes = make([]protoimpl.MessageInfo, 94)
 var file_api_proto_keychainv1_keychain_proto_goTypes = []any{
 	(*HealthRequest)(nil),                 // 0: keychain.v1.HealthRequest
 	(*HealthResponse)(nil),                // 1: keychain.v1.HealthResponse
@@ -4513,95 +6123,146 @@ var file_api_proto_keychainv1_keychain_proto_goTypes = []any{
 	(*ExportKeyResponse)(nil),             // 64: keychain.v1.ExportKeyResponse
 	(*CopyKeyRequest)(nil),                // 65: keychain.v1.CopyKeyRequest
 	(*CopyKeyResponse)(nil),               // 66: keychain.v1.CopyKeyResponse
-	nil,                                   // 67: keychain.v1.WrapKeyResponse.MetadataEntry
-	nil,                                   // 68: keychain.v1.UnwrapKeyRequest.MetadataEntry
-	nil,                                   // 69: keychain.v1.ImportKeyRequest.MetadataEntry
-	nil,                                   // 70: keychain.v1.ExportKeyResponse.MetadataEntry
-	(*timestamppb.Timestamp)(nil),         // 71: google.protobuf.Timestamp
+	(*FrostKeyInfo)(nil),                  // 67: keychain.v1.FrostKeyInfo
+	(*FrostKeyPackage)(nil),               // 68: keychain.v1.FrostKeyPackage
+	(*FrostCommitment)(nil),               // 69: keychain.v1.FrostCommitment
+	(*FrostSignatureShare)(nil),           // 70: keychain.v1.FrostSignatureShare
+	(*FrostGenerateKeyRequest)(nil),       // 71: keychain.v1.FrostGenerateKeyRequest
+	(*FrostGenerateKeyResponse)(nil),      // 72: keychain.v1.FrostGenerateKeyResponse
+	(*FrostImportKeyRequest)(nil),         // 73: keychain.v1.FrostImportKeyRequest
+	(*FrostImportKeyResponse)(nil),        // 74: keychain.v1.FrostImportKeyResponse
+	(*FrostListKeysRequest)(nil),          // 75: keychain.v1.FrostListKeysRequest
+	(*FrostListKeysResponse)(nil),         // 76: keychain.v1.FrostListKeysResponse
+	(*FrostGetKeyRequest)(nil),            // 77: keychain.v1.FrostGetKeyRequest
+	(*FrostGetKeyResponse)(nil),           // 78: keychain.v1.FrostGetKeyResponse
+	(*FrostDeleteKeyRequest)(nil),         // 79: keychain.v1.FrostDeleteKeyRequest
+	(*FrostDeleteKeyResponse)(nil),        // 80: keychain.v1.FrostDeleteKeyResponse
+	(*FrostGenerateNoncesRequest)(nil),    // 81: keychain.v1.FrostGenerateNoncesRequest
+	(*FrostGenerateNoncesResponse)(nil),   // 82: keychain.v1.FrostGenerateNoncesResponse
+	(*FrostSignRoundRequest)(nil),         // 83: keychain.v1.FrostSignRoundRequest
+	(*FrostSignRoundResponse)(nil),        // 84: keychain.v1.FrostSignRoundResponse
+	(*FrostAggregateRequest)(nil),         // 85: keychain.v1.FrostAggregateRequest
+	(*FrostAggregateResponse)(nil),        // 86: keychain.v1.FrostAggregateResponse
+	(*FrostVerifyRequest)(nil),            // 87: keychain.v1.FrostVerifyRequest
+	(*FrostVerifyResponse)(nil),           // 88: keychain.v1.FrostVerifyResponse
+	nil,                                   // 89: keychain.v1.WrapKeyResponse.MetadataEntry
+	nil,                                   // 90: keychain.v1.UnwrapKeyRequest.MetadataEntry
+	nil,                                   // 91: keychain.v1.ImportKeyRequest.MetadataEntry
+	nil,                                   // 92: keychain.v1.ExportKeyResponse.MetadataEntry
+	nil,                                   // 93: keychain.v1.FrostKeyPackage.VerificationSharesEntry
+	(*timestamppb.Timestamp)(nil),         // 94: google.protobuf.Timestamp
 }
 var file_api_proto_keychainv1_keychain_proto_depIdxs = []int32{
 	2,  // 0: keychain.v1.ListBackendsResponse.backends:type_name -> keychain.v1.BackendInfo
 	2,  // 1: keychain.v1.GetBackendInfoResponse.backend:type_name -> keychain.v1.BackendInfo
-	71, // 2: keychain.v1.GenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
-	71, // 3: keychain.v1.KeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	94, // 2: keychain.v1.GenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
+	94, // 3: keychain.v1.KeyInfo.created_at:type_name -> google.protobuf.Timestamp
 	9,  // 4: keychain.v1.ListKeysResponse.keys:type_name -> keychain.v1.KeyInfo
 	9,  // 5: keychain.v1.GetKeyResponse.key:type_name -> keychain.v1.KeyInfo
-	71, // 6: keychain.v1.RotateKeyResponse.rotated_at:type_name -> google.protobuf.Timestamp
+	94, // 6: keychain.v1.RotateKeyResponse.rotated_at:type_name -> google.protobuf.Timestamp
 	22, // 7: keychain.v1.ListKeyVersionsResponse.versions:type_name -> keychain.v1.KeyVersionInfo
-	71, // 8: keychain.v1.GetImportParametersResponse.expires_at:type_name -> google.protobuf.Timestamp
-	67, // 9: keychain.v1.WrapKeyResponse.metadata:type_name -> keychain.v1.WrapKeyResponse.MetadataEntry
-	68, // 10: keychain.v1.UnwrapKeyRequest.metadata:type_name -> keychain.v1.UnwrapKeyRequest.MetadataEntry
-	69, // 11: keychain.v1.ImportKeyRequest.metadata:type_name -> keychain.v1.ImportKeyRequest.MetadataEntry
-	70, // 12: keychain.v1.ExportKeyResponse.metadata:type_name -> keychain.v1.ExportKeyResponse.MetadataEntry
-	0,  // 13: keychain.v1.KeystoreService.Health:input_type -> keychain.v1.HealthRequest
-	3,  // 14: keychain.v1.KeystoreService.ListBackends:input_type -> keychain.v1.ListBackendsRequest
-	5,  // 15: keychain.v1.KeystoreService.GetBackendInfo:input_type -> keychain.v1.GetBackendInfoRequest
-	7,  // 16: keychain.v1.KeystoreService.GenerateKey:input_type -> keychain.v1.GenerateKeyRequest
-	10, // 17: keychain.v1.KeystoreService.ListKeys:input_type -> keychain.v1.ListKeysRequest
-	12, // 18: keychain.v1.KeystoreService.GetKey:input_type -> keychain.v1.GetKeyRequest
-	14, // 19: keychain.v1.KeystoreService.Sign:input_type -> keychain.v1.SignRequest
-	16, // 20: keychain.v1.KeystoreService.Verify:input_type -> keychain.v1.VerifyRequest
-	18, // 21: keychain.v1.KeystoreService.DeleteKey:input_type -> keychain.v1.DeleteKeyRequest
-	20, // 22: keychain.v1.KeystoreService.RotateKey:input_type -> keychain.v1.RotateKeyRequest
-	23, // 23: keychain.v1.KeystoreService.ListKeyVersions:input_type -> keychain.v1.ListKeyVersionsRequest
-	25, // 24: keychain.v1.KeystoreService.EnableKeyVersion:input_type -> keychain.v1.EnableKeyVersionRequest
-	27, // 25: keychain.v1.KeystoreService.DisableKeyVersion:input_type -> keychain.v1.DisableKeyVersionRequest
-	29, // 26: keychain.v1.KeystoreService.EnableAllKeyVersions:input_type -> keychain.v1.EnableAllKeyVersionsRequest
-	31, // 27: keychain.v1.KeystoreService.DisableAllKeyVersions:input_type -> keychain.v1.DisableAllKeyVersionsRequest
-	33, // 28: keychain.v1.KeystoreService.Encrypt:input_type -> keychain.v1.EncryptRequest
-	35, // 29: keychain.v1.KeystoreService.Decrypt:input_type -> keychain.v1.DecryptRequest
-	37, // 30: keychain.v1.KeystoreService.EncryptAsym:input_type -> keychain.v1.EncryptAsymRequest
-	39, // 31: keychain.v1.KeystoreService.SaveCert:input_type -> keychain.v1.SaveCertRequest
-	41, // 32: keychain.v1.KeystoreService.GetCert:input_type -> keychain.v1.GetCertRequest
-	43, // 33: keychain.v1.KeystoreService.DeleteCert:input_type -> keychain.v1.DeleteCertRequest
-	45, // 34: keychain.v1.KeystoreService.ListCerts:input_type -> keychain.v1.ListCertsRequest
-	47, // 35: keychain.v1.KeystoreService.CertExists:input_type -> keychain.v1.CertExistsRequest
-	49, // 36: keychain.v1.KeystoreService.SaveCertChain:input_type -> keychain.v1.SaveCertChainRequest
-	51, // 37: keychain.v1.KeystoreService.GetCertChain:input_type -> keychain.v1.GetCertChainRequest
-	53, // 38: keychain.v1.KeystoreService.GetTLSCertificate:input_type -> keychain.v1.GetTLSCertificateRequest
-	55, // 39: keychain.v1.KeystoreService.GetImportParameters:input_type -> keychain.v1.GetImportParametersRequest
-	57, // 40: keychain.v1.KeystoreService.WrapKey:input_type -> keychain.v1.WrapKeyRequest
-	59, // 41: keychain.v1.KeystoreService.UnwrapKey:input_type -> keychain.v1.UnwrapKeyRequest
-	61, // 42: keychain.v1.KeystoreService.ImportKey:input_type -> keychain.v1.ImportKeyRequest
-	63, // 43: keychain.v1.KeystoreService.ExportKey:input_type -> keychain.v1.ExportKeyRequest
-	65, // 44: keychain.v1.KeystoreService.CopyKey:input_type -> keychain.v1.CopyKeyRequest
-	1,  // 45: keychain.v1.KeystoreService.Health:output_type -> keychain.v1.HealthResponse
-	4,  // 46: keychain.v1.KeystoreService.ListBackends:output_type -> keychain.v1.ListBackendsResponse
-	6,  // 47: keychain.v1.KeystoreService.GetBackendInfo:output_type -> keychain.v1.GetBackendInfoResponse
-	8,  // 48: keychain.v1.KeystoreService.GenerateKey:output_type -> keychain.v1.GenerateKeyResponse
-	11, // 49: keychain.v1.KeystoreService.ListKeys:output_type -> keychain.v1.ListKeysResponse
-	13, // 50: keychain.v1.KeystoreService.GetKey:output_type -> keychain.v1.GetKeyResponse
-	15, // 51: keychain.v1.KeystoreService.Sign:output_type -> keychain.v1.SignResponse
-	17, // 52: keychain.v1.KeystoreService.Verify:output_type -> keychain.v1.VerifyResponse
-	19, // 53: keychain.v1.KeystoreService.DeleteKey:output_type -> keychain.v1.DeleteKeyResponse
-	21, // 54: keychain.v1.KeystoreService.RotateKey:output_type -> keychain.v1.RotateKeyResponse
-	24, // 55: keychain.v1.KeystoreService.ListKeyVersions:output_type -> keychain.v1.ListKeyVersionsResponse
-	26, // 56: keychain.v1.KeystoreService.EnableKeyVersion:output_type -> keychain.v1.EnableKeyVersionResponse
-	28, // 57: keychain.v1.KeystoreService.DisableKeyVersion:output_type -> keychain.v1.DisableKeyVersionResponse
-	30, // 58: keychain.v1.KeystoreService.EnableAllKeyVersions:output_type -> keychain.v1.EnableAllKeyVersionsResponse
-	32, // 59: keychain.v1.KeystoreService.DisableAllKeyVersions:output_type -> keychain.v1.DisableAllKeyVersionsResponse
-	34, // 60: keychain.v1.KeystoreService.Encrypt:output_type -> keychain.v1.EncryptResponse
-	36, // 61: keychain.v1.KeystoreService.Decrypt:output_type -> keychain.v1.DecryptResponse
-	38, // 62: keychain.v1.KeystoreService.EncryptAsym:output_type -> keychain.v1.EncryptAsymResponse
-	40, // 63: keychain.v1.KeystoreService.SaveCert:output_type -> keychain.v1.SaveCertResponse
-	42, // 64: keychain.v1.KeystoreService.GetCert:output_type -> keychain.v1.GetCertResponse
-	44, // 65: keychain.v1.KeystoreService.DeleteCert:output_type -> keychain.v1.DeleteCertResponse
-	46, // 66: keychain.v1.KeystoreService.ListCerts:output_type -> keychain.v1.ListCertsResponse
-	48, // 67: keychain.v1.KeystoreService.CertExists:output_type -> keychain.v1.CertExistsResponse
-	50, // 68: keychain.v1.KeystoreService.SaveCertChain:output_type -> keychain.v1.SaveCertChainResponse
-	52, // 69: keychain.v1.KeystoreService.GetCertChain:output_type -> keychain.v1.GetCertChainResponse
-	54, // 70: keychain.v1.KeystoreService.GetTLSCertificate:output_type -> keychain.v1.GetTLSCertificateResponse
-	56, // 71: keychain.v1.KeystoreService.GetImportParameters:output_type -> keychain.v1.GetImportParametersResponse
-	58, // 72: keychain.v1.KeystoreService.WrapKey:output_type -> keychain.v1.WrapKeyResponse
-	60, // 73: keychain.v1.KeystoreService.UnwrapKey:output_type -> keychain.v1.UnwrapKeyResponse
-	62, // 74: keychain.v1.KeystoreService.ImportKey:output_type -> keychain.v1.ImportKeyResponse
-	64, // 75: keychain.v1.KeystoreService.ExportKey:output_type -> keychain.v1.ExportKeyResponse
-	66, // 76: keychain.v1.KeystoreService.CopyKey:output_type -> keychain.v1.CopyKeyResponse
-	45, // [45:77] is the sub-list for method output_type
-	13, // [13:45] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	94, // 8: keychain.v1.GetImportParametersResponse.expires_at:type_name -> google.protobuf.Timestamp
+	89, // 9: keychain.v1.WrapKeyResponse.metadata:type_name -> keychain.v1.WrapKeyResponse.MetadataEntry
+	90, // 10: keychain.v1.UnwrapKeyRequest.metadata:type_name -> keychain.v1.UnwrapKeyRequest.MetadataEntry
+	91, // 11: keychain.v1.ImportKeyRequest.metadata:type_name -> keychain.v1.ImportKeyRequest.MetadataEntry
+	92, // 12: keychain.v1.ExportKeyResponse.metadata:type_name -> keychain.v1.ExportKeyResponse.MetadataEntry
+	94, // 13: keychain.v1.FrostKeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	93, // 14: keychain.v1.FrostKeyPackage.verification_shares:type_name -> keychain.v1.FrostKeyPackage.VerificationSharesEntry
+	68, // 15: keychain.v1.FrostGenerateKeyResponse.packages:type_name -> keychain.v1.FrostKeyPackage
+	94, // 16: keychain.v1.FrostGenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
+	68, // 17: keychain.v1.FrostImportKeyRequest.package:type_name -> keychain.v1.FrostKeyPackage
+	67, // 18: keychain.v1.FrostListKeysResponse.keys:type_name -> keychain.v1.FrostKeyInfo
+	67, // 19: keychain.v1.FrostGetKeyResponse.key:type_name -> keychain.v1.FrostKeyInfo
+	69, // 20: keychain.v1.FrostSignRoundRequest.commitments:type_name -> keychain.v1.FrostCommitment
+	69, // 21: keychain.v1.FrostAggregateRequest.commitments:type_name -> keychain.v1.FrostCommitment
+	70, // 22: keychain.v1.FrostAggregateRequest.shares:type_name -> keychain.v1.FrostSignatureShare
+	0,  // 23: keychain.v1.KeystoreService.Health:input_type -> keychain.v1.HealthRequest
+	3,  // 24: keychain.v1.KeystoreService.ListBackends:input_type -> keychain.v1.ListBackendsRequest
+	5,  // 25: keychain.v1.KeystoreService.GetBackendInfo:input_type -> keychain.v1.GetBackendInfoRequest
+	7,  // 26: keychain.v1.KeystoreService.GenerateKey:input_type -> keychain.v1.GenerateKeyRequest
+	10, // 27: keychain.v1.KeystoreService.ListKeys:input_type -> keychain.v1.ListKeysRequest
+	12, // 28: keychain.v1.KeystoreService.GetKey:input_type -> keychain.v1.GetKeyRequest
+	14, // 29: keychain.v1.KeystoreService.Sign:input_type -> keychain.v1.SignRequest
+	16, // 30: keychain.v1.KeystoreService.Verify:input_type -> keychain.v1.VerifyRequest
+	18, // 31: keychain.v1.KeystoreService.DeleteKey:input_type -> keychain.v1.DeleteKeyRequest
+	20, // 32: keychain.v1.KeystoreService.RotateKey:input_type -> keychain.v1.RotateKeyRequest
+	23, // 33: keychain.v1.KeystoreService.ListKeyVersions:input_type -> keychain.v1.ListKeyVersionsRequest
+	25, // 34: keychain.v1.KeystoreService.EnableKeyVersion:input_type -> keychain.v1.EnableKeyVersionRequest
+	27, // 35: keychain.v1.KeystoreService.DisableKeyVersion:input_type -> keychain.v1.DisableKeyVersionRequest
+	29, // 36: keychain.v1.KeystoreService.EnableAllKeyVersions:input_type -> keychain.v1.EnableAllKeyVersionsRequest
+	31, // 37: keychain.v1.KeystoreService.DisableAllKeyVersions:input_type -> keychain.v1.DisableAllKeyVersionsRequest
+	33, // 38: keychain.v1.KeystoreService.Encrypt:input_type -> keychain.v1.EncryptRequest
+	35, // 39: keychain.v1.KeystoreService.Decrypt:input_type -> keychain.v1.DecryptRequest
+	37, // 40: keychain.v1.KeystoreService.EncryptAsym:input_type -> keychain.v1.EncryptAsymRequest
+	39, // 41: keychain.v1.KeystoreService.SaveCert:input_type -> keychain.v1.SaveCertRequest
+	41, // 42: keychain.v1.KeystoreService.GetCert:input_type -> keychain.v1.GetCertRequest
+	43, // 43: keychain.v1.KeystoreService.DeleteCert:input_type -> keychain.v1.DeleteCertRequest
+	45, // 44: keychain.v1.KeystoreService.ListCerts:input_type -> keychain.v1.ListCertsRequest
+	47, // 45: keychain.v1.KeystoreService.CertExists:input_type -> keychain.v1.CertExistsRequest
+	49, // 46: keychain.v1.KeystoreService.SaveCertChain:input_type -> keychain.v1.SaveCertChainRequest
+	51, // 47: keychain.v1.KeystoreService.GetCertChain:input_type -> keychain.v1.GetCertChainRequest
+	53, // 48: keychain.v1.KeystoreService.GetTLSCertificate:input_type -> keychain.v1.GetTLSCertificateRequest
+	55, // 49: keychain.v1.KeystoreService.GetImportParameters:input_type -> keychain.v1.GetImportParametersRequest
+	57, // 50: keychain.v1.KeystoreService.WrapKey:input_type -> keychain.v1.WrapKeyRequest
+	59, // 51: keychain.v1.KeystoreService.UnwrapKey:input_type -> keychain.v1.UnwrapKeyRequest
+	61, // 52: keychain.v1.KeystoreService.ImportKey:input_type -> keychain.v1.ImportKeyRequest
+	63, // 53: keychain.v1.KeystoreService.ExportKey:input_type -> keychain.v1.ExportKeyRequest
+	65, // 54: keychain.v1.KeystoreService.CopyKey:input_type -> keychain.v1.CopyKeyRequest
+	71, // 55: keychain.v1.KeystoreService.FrostGenerateKey:input_type -> keychain.v1.FrostGenerateKeyRequest
+	73, // 56: keychain.v1.KeystoreService.FrostImportKey:input_type -> keychain.v1.FrostImportKeyRequest
+	75, // 57: keychain.v1.KeystoreService.FrostListKeys:input_type -> keychain.v1.FrostListKeysRequest
+	77, // 58: keychain.v1.KeystoreService.FrostGetKey:input_type -> keychain.v1.FrostGetKeyRequest
+	79, // 59: keychain.v1.KeystoreService.FrostDeleteKey:input_type -> keychain.v1.FrostDeleteKeyRequest
+	81, // 60: keychain.v1.KeystoreService.FrostGenerateNonces:input_type -> keychain.v1.FrostGenerateNoncesRequest
+	83, // 61: keychain.v1.KeystoreService.FrostSignRound:input_type -> keychain.v1.FrostSignRoundRequest
+	85, // 62: keychain.v1.KeystoreService.FrostAggregate:input_type -> keychain.v1.FrostAggregateRequest
+	87, // 63: keychain.v1.KeystoreService.FrostVerify:input_type -> keychain.v1.FrostVerifyRequest
+	1,  // 64: keychain.v1.KeystoreService.Health:output_type -> keychain.v1.HealthResponse
+	4,  // 65: keychain.v1.KeystoreService.ListBackends:output_type -> keychain.v1.ListBackendsResponse
+	6,  // 66: keychain.v1.KeystoreService.GetBackendInfo:output_type -> keychain.v1.GetBackendInfoResponse
+	8,  // 67: keychain.v1.KeystoreService.GenerateKey:output_type -> keychain.v1.GenerateKeyResponse
+	11, // 68: keychain.v1.KeystoreService.ListKeys:output_type -> keychain.v1.ListKeysResponse
+	13, // 69: keychain.v1.KeystoreService.GetKey:output_type -> keychain.v1.GetKeyResponse
+	15, // 70: keychain.v1.KeystoreService.Sign:output_type -> keychain.v1.SignResponse
+	17, // 71: keychain.v1.KeystoreService.Verify:output_type -> keychain.v1.VerifyResponse
+	19, // 72: keychain.v1.KeystoreService.DeleteKey:output_type -> keychain.v1.DeleteKeyResponse
+	21, // 73: keychain.v1.KeystoreService.RotateKey:output_type -> keychain.v1.RotateKeyResponse
+	24, // 74: keychain.v1.KeystoreService.ListKeyVersions:output_type -> keychain.v1.ListKeyVersionsResponse
+	26, // 75: keychain.v1.KeystoreService.EnableKeyVersion:output_type -> keychain.v1.EnableKeyVersionResponse
+	28, // 76: keychain.v1.KeystoreService.DisableKeyVersion:output_type -> keychain.v1.DisableKeyVersionResponse
+	30, // 77: keychain.v1.KeystoreService.EnableAllKeyVersions:output_type -> keychain.v1.EnableAllKeyVersionsResponse
+	32, // 78: keychain.v1.KeystoreService.DisableAllKeyVersions:output_type -> keychain.v1.DisableAllKeyVersionsResponse
+	34, // 79: keychain.v1.KeystoreService.Encrypt:output_type -> keychain.v1.EncryptResponse
+	36, // 80: keychain.v1.KeystoreService.Decrypt:output_type -> keychain.v1.DecryptResponse
+	38, // 81: keychain.v1.KeystoreService.EncryptAsym:output_type -> keychain.v1.EncryptAsymResponse
+	40, // 82: keychain.v1.KeystoreService.SaveCert:output_type -> keychain.v1.SaveCertResponse
+	42, // 83: keychain.v1.KeystoreService.GetCert:output_type -> keychain.v1.GetCertResponse
+	44, // 84: keychain.v1.KeystoreService.DeleteCert:output_type -> keychain.v1.DeleteCertResponse
+	46, // 85: keychain.v1.KeystoreService.ListCerts:output_type -> keychain.v1.ListCertsResponse
+	48, // 86: keychain.v1.KeystoreService.CertExists:output_type -> keychain.v1.CertExistsResponse
+	50, // 87: keychain.v1.KeystoreService.SaveCertChain:output_type -> keychain.v1.SaveCertChainResponse
+	52, // 88: keychain.v1.KeystoreService.GetCertChain:output_type -> keychain.v1.GetCertChainResponse
+	54, // 89: keychain.v1.KeystoreService.GetTLSCertificate:output_type -> keychain.v1.GetTLSCertificateResponse
+	56, // 90: keychain.v1.KeystoreService.GetImportParameters:output_type -> keychain.v1.GetImportParametersResponse
+	58, // 91: keychain.v1.KeystoreService.WrapKey:output_type -> keychain.v1.WrapKeyResponse
+	60, // 92: keychain.v1.KeystoreService.UnwrapKey:output_type -> keychain.v1.UnwrapKeyResponse
+	62, // 93: keychain.v1.KeystoreService.ImportKey:output_type -> keychain.v1.ImportKeyResponse
+	64, // 94: keychain.v1.KeystoreService.ExportKey:output_type -> keychain.v1.ExportKeyResponse
+	66, // 95: keychain.v1.KeystoreService.CopyKey:output_type -> keychain.v1.CopyKeyResponse
+	72, // 96: keychain.v1.KeystoreService.FrostGenerateKey:output_type -> keychain.v1.FrostGenerateKeyResponse
+	74, // 97: keychain.v1.KeystoreService.FrostImportKey:output_type -> keychain.v1.FrostImportKeyResponse
+	76, // 98: keychain.v1.KeystoreService.FrostListKeys:output_type -> keychain.v1.FrostListKeysResponse
+	78, // 99: keychain.v1.KeystoreService.FrostGetKey:output_type -> keychain.v1.FrostGetKeyResponse
+	80, // 100: keychain.v1.KeystoreService.FrostDeleteKey:output_type -> keychain.v1.FrostDeleteKeyResponse
+	82, // 101: keychain.v1.KeystoreService.FrostGenerateNonces:output_type -> keychain.v1.FrostGenerateNoncesResponse
+	84, // 102: keychain.v1.KeystoreService.FrostSignRound:output_type -> keychain.v1.FrostSignRoundResponse
+	86, // 103: keychain.v1.KeystoreService.FrostAggregate:output_type -> keychain.v1.FrostAggregateResponse
+	88, // 104: keychain.v1.KeystoreService.FrostVerify:output_type -> keychain.v1.FrostVerifyResponse
+	64, // [64:105] is the sub-list for method output_type
+	23, // [23:64] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_api_proto_keychainv1_keychain_proto_init() }
@@ -4615,7 +6276,7 @@ func file_api_proto_keychainv1_keychain_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_proto_keychainv1_keychain_proto_rawDesc), len(file_api_proto_keychainv1_keychain_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   71,
+			NumMessages:   94,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

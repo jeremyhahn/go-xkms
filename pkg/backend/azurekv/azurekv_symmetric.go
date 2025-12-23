@@ -52,7 +52,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	ctx := context.Background()
 
 	// Determine key size in bytes
-	keySize := attrs.AESAttributes.KeySize
+	keySize := attrs.SymmetricAlgorithm.KeySize()
 	if keySize == 0 {
 		keySize = 256 // Default to 256 bits
 	}
@@ -217,7 +217,7 @@ func (b *Backend) storeSymmetricKeySecret(ctx context.Context, name string, keyD
 		Tags: map[string]*string{
 			"type":      ptrString("symmetric-key"),
 			"algorithm": ptrString(string(attrs.SymmetricAlgorithm)),
-			"keySize":   ptrString(fmt.Sprintf("%d", attrs.AESAttributes.KeySize)),
+			"keySize":   ptrString(fmt.Sprintf("%d", attrs.SymmetricAlgorithm.KeySize())),
 		},
 	}
 

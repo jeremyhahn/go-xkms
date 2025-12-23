@@ -22,7 +22,7 @@ The key material is encrypted (wrapped) before transmission and can only be decr
 - **Use Case**: Development, testing, key migration between systems
 - **Security**: Keys stored in software, not hardware-backed
 
-### AES Backend
+### Symmetric Backend
 - **Import**: ✅ Supported
 - **Export**: ✅ Supported
 - **Unwrap**: ✅ Supported (client-side)
@@ -162,7 +162,7 @@ func transferKeyBetweenBackends() error {
 }
 ```
 
-## AES Backend Import/Export Example
+## Symmetric Backend Import/Export Example
 
 The AES backend supports importing and exporting symmetric keys with optional password protection.
 
@@ -174,7 +174,7 @@ import (
     "fmt"
 
     "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/aes"
+    "github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
 )
 
 func importAESKey() error {
@@ -185,7 +185,7 @@ func importAESKey() error {
     }
 
     // Create AES backend
-    backend, err := aes.NewBackend(&aes.Config{
+    backend, err := symmetric.NewBackend(&symmetric.Config{
         StorageDir: "/tmp/aes-keys",
     })
     if err != nil {

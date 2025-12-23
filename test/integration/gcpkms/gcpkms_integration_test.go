@@ -880,9 +880,6 @@ func TestGCPKMSMock(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate symmetric key
@@ -931,9 +928,6 @@ func TestGCPKMSMock(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate key
@@ -997,9 +991,6 @@ func TestGCPKMSMock(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate key
@@ -1063,9 +1054,6 @@ func TestGCPKMSMock(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate key
@@ -1107,9 +1095,6 @@ func TestGCPKMSMock(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Generate key
@@ -1203,9 +1188,6 @@ func TestGCPKMSMock(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES128GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_GCPKMS,
-					AESAttributes: &types.AESAttributes{
-						KeySize: 128,
-					},
 				}
 
 				_, err := symBackend.GenerateSymmetricKey(attrs)
@@ -1220,9 +1202,6 @@ func TestGCPKMSMock(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_GCPKMS,
-					AESAttributes: &types.AESAttributes{
-						KeySize: 256,
-					},
 				}
 
 				_, err := symBackend.GetSymmetricKey(attrs)
@@ -1241,9 +1220,6 @@ func TestGCPKMSMock(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_GCPKMS,
-					AESAttributes: &types.AESAttributes{
-						KeySize: 256,
-					},
 				}
 
 				_, err := symBackend.SymmetricEncrypter(attrs)
@@ -1262,9 +1238,6 @@ func TestGCPKMSMock(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_GCPKMS,
-					AESAttributes: &types.AESAttributes{
-						KeySize: 256,
-					},
 				}
 
 				// Generate key
@@ -1302,9 +1275,6 @@ func TestGCPKMSMock(t *testing.T) {
 					SymmetricAlgorithm: types.SymmetricAES256GCM,
 					KeyType:            backend.KEY_TYPE_SECRET,
 					StoreType:          backend.STORE_GCPKMS,
-					AESAttributes: &types.AESAttributes{
-						KeySize: 256,
-					},
 				}
 
 				// Generate key first time
@@ -1332,9 +1302,6 @@ func TestGCPKMSMock(t *testing.T) {
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			// Step 1: Generate key

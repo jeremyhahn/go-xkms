@@ -229,7 +229,7 @@ func (m *mockImportExportBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		attrs = append(attrs, &types.KeyAttributes{
 			CN:           cn,
 			KeyType:      types.KeyTypeTLS,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 		})
 	}
@@ -312,7 +312,7 @@ func TestMigrateKey_Success(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 	}
@@ -345,7 +345,7 @@ func TestMigrateKey_WithVerification(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-verify.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA, // Use ECDSA which has better compatibility
 		Hash:         crypto.SHA256,
 	}
@@ -371,7 +371,7 @@ func TestMigrateKey_DeleteSourceAfterVerification(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-delete.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 	}
@@ -405,7 +405,7 @@ func TestMigrateKey_VerificationFailure(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-verify-fail.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 	}
@@ -436,7 +436,7 @@ func TestMigrateKey_ExportFailure(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-export-fail.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
@@ -461,7 +461,7 @@ func TestMigrateKey_ImportFailure(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-import-fail.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
@@ -486,7 +486,7 @@ func TestMigrateKey_CustomWrappingAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-custom-wrap.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.ECDSA,
 		Hash:         crypto.SHA256,
 	}
@@ -527,7 +527,7 @@ func TestMigrateAll_Success(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           k.cn,
 			KeyType:      k.keyType,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: k.algorithm,
 			Hash:         crypto.SHA256,
 		}
@@ -551,7 +551,7 @@ func TestMigrateAll_Success(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           k.cn,
 			KeyType:      k.keyType,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: k.algorithm,
 		}
 		_, err := dest.GetKey(attrs)
@@ -580,7 +580,7 @@ func TestMigrateAll_WithFilter(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           k.cn,
 			KeyType:      k.keyType,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: k.algorithm,
 			Partition:    k.partition,
 			Hash:         crypto.SHA256,
@@ -596,7 +596,7 @@ func TestMigrateAll_WithFilter(t *testing.T) {
 			result = append(result, &types.KeyAttributes{
 				CN:           k.cn,
 				KeyType:      k.keyType,
-				StoreType:    types.StorePKCS8,
+				StoreType:    types.StoreSoftware,
 				KeyAlgorithm: k.algorithm,
 				Partition:    k.partition,
 				Hash:         crypto.SHA256,
@@ -631,7 +631,7 @@ func TestMigrateAll_StopOnError(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           cn,
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Hash:         crypto.SHA256,
 		}
@@ -690,7 +690,7 @@ func TestMigrateAll_Parallel(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           cn,
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Hash:         crypto.SHA256,
 		}
@@ -723,7 +723,7 @@ func TestMigrateAll_WithFailures(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           cn,
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Hash:         crypto.SHA256,
 		}
@@ -778,7 +778,7 @@ func TestMigrationPlan(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           cn,
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 		}
 		key := generateTestKey(t, x509.RSA)
@@ -788,8 +788,8 @@ func TestMigrationPlan(t *testing.T) {
 	plan, err := migrator.MigrationPlan(nil)
 	require.NoError(t, err)
 	assert.Len(t, plan.Keys, numKeys)
-	assert.Equal(t, types.BackendTypePKCS8, plan.SourceBackendType)
-	assert.Equal(t, types.BackendTypePKCS8, plan.DestBackendType)
+	assert.Equal(t, types.BackendTypeSoftware, plan.SourceBackendType)
+	assert.Equal(t, types.BackendTypeSoftware, plan.DestBackendType)
 	assert.True(t, plan.EstimatedDuration > 0)
 	assert.NotZero(t, plan.Timestamp)
 }
@@ -813,7 +813,7 @@ func TestMigrationPlan_WithFilter(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           k.cn,
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: k.algorithm,
 		}
 		key := generateTestKey(t, k.algorithm)
@@ -827,7 +827,7 @@ func TestMigrationPlan_WithFilter(t *testing.T) {
 			result = append(result, &types.KeyAttributes{
 				CN:           k.cn,
 				KeyType:      types.KeyTypeSigning,
-				StoreType:    types.StorePKCS8,
+				StoreType:    types.StoreSoftware,
 				KeyAlgorithm: k.algorithm,
 			})
 		}
@@ -865,7 +865,7 @@ func TestMigrationPlan_CompatibilityWarnings(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 	key := generateTestKey(t, x509.RSA)
@@ -885,7 +885,7 @@ func TestValidateMigration_Success(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-validate.example.com",
 		KeyType:      types.KeyTypeEncryption,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: 0, // Symmetric key
 	}
 
@@ -907,7 +907,7 @@ func TestValidateMigration_KeyNotFound(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "nonexistent.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
@@ -926,7 +926,7 @@ func TestValidateMigration_SignerFailure(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-signer-fail.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 	}
@@ -954,7 +954,7 @@ func TestValidateMigration_SignFailure(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-sign-fail.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 	}
@@ -992,21 +992,21 @@ func TestFilterKeys(t *testing.T) {
 		{
 			CN:           "rsa-signing.example.com",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Partition:    types.PartitionSigningKeys,
 		},
 		{
 			CN:           "ec-signing.example.com",
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.ECDSA,
 			Partition:    types.PartitionSigningKeys,
 		},
 		{
 			CN:           "rsa-encrypt.example.com",
 			KeyType:      types.KeyTypeEncryption,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Partition:    types.PartitionEncryptionKeys,
 		},
@@ -1068,7 +1068,7 @@ func TestFilterKeys(t *testing.T) {
 		{
 			name: "filter by store type",
 			filter: &KeyFilter{
-				StoreTypes: []types.StoreType{types.StorePKCS8},
+				StoreTypes: []types.StoreType{types.StoreSoftware},
 			},
 			expected: 3,
 		},
@@ -1187,7 +1187,7 @@ func TestIsKeyTypeSupported(t *testing.T) {
 		},
 		{
 			name:        "PKCS8 backend supports all",
-			backendType: types.BackendTypePKCS8,
+			backendType: types.BackendTypeSoftware,
 			keyAlg:      x509.Ed25519,
 			expected:    true,
 		},
@@ -1243,8 +1243,8 @@ func TestCheckCompatibility(t *testing.T) {
 		},
 		{
 			name:       "PKCS8 to PKCS8 no warnings",
-			sourceType: types.BackendTypePKCS8,
-			destType:   types.BackendTypePKCS8,
+			sourceType: types.BackendTypeSoftware,
+			destType:   types.BackendTypeSoftware,
 			keys: []*types.KeyAttributes{
 				{CN: "test", KeyAlgorithm: x509.RSA},
 			},
@@ -1252,7 +1252,7 @@ func TestCheckCompatibility(t *testing.T) {
 		},
 		{
 			name:       "Unsupported key type generates warning",
-			sourceType: types.BackendTypePKCS8,
+			sourceType: types.BackendTypeSoftware,
 			destType:   types.BackendTypeAWSKMS,
 			keys: []*types.KeyAttributes{
 				{CN: "test", KeyAlgorithm: x509.Ed25519},
@@ -1302,7 +1302,7 @@ func TestExportKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-export.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
@@ -1331,7 +1331,7 @@ func TestExportKey_AutoSelectAlgorithm(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-auto.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
@@ -1359,7 +1359,7 @@ func TestImportKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-import.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
@@ -1395,7 +1395,7 @@ func TestImportKey_GetParametersFailure(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-params-fail.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 	}
 
@@ -1427,7 +1427,7 @@ func TestMigrateKeysSequential(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           fmt.Sprintf("key%d.example.com", i),
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Hash:         crypto.SHA256,
 		}
@@ -1462,7 +1462,7 @@ func TestMigrateKeysSequential_WithStopOnError(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           fmt.Sprintf("key%d.example.com", i),
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Hash:         crypto.SHA256,
 		}
@@ -1516,7 +1516,7 @@ func TestMigrateKeysParallel(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           fmt.Sprintf("key%d.example.com", i),
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Hash:         crypto.SHA256,
 		}
@@ -1552,7 +1552,7 @@ func TestMigrateKeysParallel_WithFailures(t *testing.T) {
 		attrs := &types.KeyAttributes{
 			CN:           fmt.Sprintf("key%d.example.com", i),
 			KeyType:      types.KeyTypeSigning,
-			StoreType:    types.StorePKCS8,
+			StoreType:    types.StoreSoftware,
 			KeyAlgorithm: x509.RSA,
 			Hash:         crypto.SHA256,
 		}
@@ -1639,7 +1639,7 @@ func TestMatchesFilter(t *testing.T) {
 	key := &types.KeyAttributes{
 		CN:           "test.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Partition:    types.PartitionSigningKeys,
 	}
@@ -1653,7 +1653,7 @@ func TestMatchesFilter(t *testing.T) {
 			name: "matches all criteria",
 			filter: &KeyFilter{
 				KeyTypes:      []types.KeyType{types.KeyTypeSigning},
-				StoreTypes:    []types.StoreType{types.StorePKCS8},
+				StoreTypes:    []types.StoreType{types.StoreSoftware},
 				Partitions:    []types.Partition{types.PartitionSigningKeys},
 				KeyAlgorithms: []x509.PublicKeyAlgorithm{x509.RSA},
 			},
@@ -1705,7 +1705,7 @@ func TestValidateMigration_SymmetricKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "symmetric.example.com",
 		KeyType:      types.KeyTypeEncryption,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: 0, // Symmetric key
 	}
 
@@ -1727,7 +1727,7 @@ func TestMigrateKey_DefaultOptions(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-defaults.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 	}
@@ -1757,7 +1757,7 @@ func TestMigrateAll_DefaultOptions(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:           "test-default-opts.example.com",
 		KeyType:      types.KeyTypeSigning,
-		StoreType:    types.StorePKCS8,
+		StoreType:    types.StoreSoftware,
 		KeyAlgorithm: x509.RSA,
 		Hash:         crypto.SHA256,
 	}

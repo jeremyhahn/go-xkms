@@ -30,6 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -346,9 +347,6 @@ func TestAWSKMSCloudIntegration(t *testing.T) {
 			SymmetricAlgorithm: types.SymmetricAES256GCM,
 			KeyType:            backend.KEY_TYPE_ENCRYPTION,
 			StoreType:          backend.STORE_AWSKMS,
-			AESAttributes: &types.AESAttributes{
-				KeySize: 256,
-			},
 		}
 		createdKeys = append(createdKeys, attrs)
 
