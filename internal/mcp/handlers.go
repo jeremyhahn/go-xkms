@@ -486,8 +486,10 @@ func (s *Server) handleRotateKey(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	if params.Backend != "" {
@@ -543,8 +545,10 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	// Get the correct backend - for symmetric decryption, default to symmetric backend
@@ -631,8 +635,10 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("plaintext is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	// Get the correct backend for symmetric operations
@@ -896,8 +902,10 @@ func (s *Server) handleGetTLSCertificate(req *JSONRPCRequest) (interface{}, erro
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	if params.Backend != "" {
@@ -1121,8 +1129,10 @@ func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	if params.Backend != "" {
@@ -1173,8 +1183,10 @@ func (s *Server) handleAsymmetricEncrypt(req *JSONRPCRequest) (interface{}, erro
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	if params.Backend != "" {
@@ -1225,8 +1237,10 @@ func (s *Server) handleAsymmetricDecrypt(req *JSONRPCRequest) (interface{}, erro
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+	// Look up the key to get full attributes
+	attrs, err := s.findKeyByCN(params.KeyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
 	if params.Backend != "" {

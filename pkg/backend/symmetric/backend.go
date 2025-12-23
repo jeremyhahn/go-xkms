@@ -19,6 +19,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -271,6 +272,17 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 			attr.KeyType = types.KeyTypeSecret // Default to Secret if parsing fails
 		}
 
+		// Load metadata to get exportable flag
+		metaKey := "meta/" + id
+		if metaData, err := b.storage.Get(metaKey); err == nil {
+			var metadata map[string]interface{}
+			if json.Unmarshal(metaData, &metadata) == nil {
+				if exportable, ok := metadata["exportable"].(bool); ok {
+					attr.Exportable = exportable
+				}
+			}
+		}
+
 		attrs = append(attrs, attr)
 	}
 
@@ -425,6 +437,23 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	// Encode and store the key
 	if err := b.storeSymmetricKey(keyID, keyData, attrs.Password); err != nil {
 		return nil, err
+	}
+
+	// Store metadata (including exportable flag)
+	metadata := map[string]interface{}{
+		"cn":         attrs.CN,
+		"key_type":   attrs.KeyType.String(),
+		"store_type": string(attrs.StoreType),
+		"algorithm":  string(attrs.SymmetricAlgorithm),
+		"exportable": attrs.Exportable,
+	}
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+	metaKey := "meta/" + keyID
+	if err := b.storage.Put(metaKey, metadataBytes, nil); err != nil {
+		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
 	return symmetricKey, nil
