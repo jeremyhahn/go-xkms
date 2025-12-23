@@ -1543,8 +1543,18 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
-	attrs := &types.KeyAttributes{
-		CN: keyID,
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(backendParam)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+		return
+	}
+
+	// Find the key's full attributes (includes exportable flag, algorithm, etc.)
+	attrs, err := s.findKeyByID(ks, keyID)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+		return
 	}
 
 	if backendParam != "" {
@@ -1554,13 +1564,6 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 			return
 		}
 		attrs.StoreType = storeType
-	}
-
-	// Get the correct keystore for the backend
-	ks, err := s.getKeystoreForBackend(backendParam)
-	if err != nil {
-		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
-		return
 	}
 
 	// Check if backend supports import/export

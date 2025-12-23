@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -128,6 +129,23 @@ func (b *PKCS8Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 	// Encode and store the key
 	if err := b.storeKey(keyID, privateKey, attrs.Password); err != nil {
 		return nil, err
+	}
+
+	// Store metadata (including exportable flag)
+	metadata := map[string]interface{}{
+		"cn":            attrs.CN,
+		"key_type":      attrs.KeyType.String(),
+		"store_type":    string(attrs.StoreType),
+		"key_algorithm": attrs.KeyAlgorithm.String(),
+		"exportable":    attrs.Exportable,
+	}
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+	metaKey := "meta/" + keyID
+	if err := b.storage.Put(metaKey, metadataBytes, nil); err != nil {
+		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
 	return privateKey, nil
@@ -279,6 +297,17 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 		if attr.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
 			attr.KeyAlgorithm = x509.RSA
 			attr.RSAAttributes = &types.RSAAttributes{KeySize: 2048}
+		}
+
+		// Load metadata to get exportable flag
+		metaKey := "meta/" + id
+		if metaData, err := b.storage.Get(metaKey); err == nil {
+			var metadata map[string]interface{}
+			if json.Unmarshal(metaData, &metadata) == nil {
+				if exportable, ok := metadata["exportable"].(bool); ok {
+					attr.Exportable = exportable
+				}
+			}
 		}
 
 		attrs = append(attrs, attr)
