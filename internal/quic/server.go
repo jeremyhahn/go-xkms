@@ -139,6 +139,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/keys", s.handleKeys)
 	mux.HandleFunc("/api/v1/keys/", s.handleKeyOperations)
 	mux.HandleFunc("/api/v1/keys/copy", s.handleCopyKey)
+	mux.HandleFunc("/api/v1/keys/import-params", s.handleGetImportParams)
 	mux.HandleFunc("/api/v1/certs", s.handleCerts)
 	mux.HandleFunc("/api/v1/certs/", s.handleCertOperations)
 	mux.HandleFunc("/api/v1/tls/", s.handleTLSCertificate)

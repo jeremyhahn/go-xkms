@@ -70,12 +70,13 @@ type ListBackendsResult struct {
 
 // GenerateKeyParams represents parameters for key generation
 type GenerateKeyParams struct {
-	KeyID     string `json:"key_id"`
-	Backend   string `json:"backend"`
-	KeyType   string `json:"key_type"`
-	KeySize   int    `json:"key_size,omitempty"`
-	Curve     string `json:"curve,omitempty"`
-	Algorithm string `json:"algorithm,omitempty"` // For AES: "aes128-gcm", "aes192-gcm", "aes256-gcm"
+	KeyID      string `json:"key_id"`
+	Backend    string `json:"backend"`
+	KeyType    string `json:"key_type"`
+	KeySize    int    `json:"key_size,omitempty"`
+	Curve      string `json:"curve,omitempty"`
+	Algorithm  string `json:"algorithm,omitempty"` // For AES: "aes128-gcm", "aes192-gcm", "aes256-gcm"
+	Exportable bool   `json:"exportable,omitempty"`
 }
 
 // GenerateKeyResult represents the result of key generation
