@@ -47,6 +47,27 @@ func (s *Server) findKeyByCN(keyID string) (*types.KeyAttributes, error) {
 	return nil, fmt.Errorf("key not found: %s", keyID)
 }
 
+// findKeyInBackend searches for a key by CN in a specific backend
+func (s *Server) findKeyInBackend(keyID string, backendName string) (*types.KeyAttributes, error) {
+	ks, err := keychain.Backend(backendName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+	}
+
+	keys, err := ks.ListKeys()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list keys: %w", err)
+	}
+
+	for _, attr := range keys {
+		if attr.CN == keyID {
+			return attr, nil
+		}
+	}
+
+	return nil, fmt.Errorf("key not found: %s", keyID)
+}
+
 // handleHealth handles the health check method
 func (s *Server) handleHealth(req *JSONRPCRequest) (interface{}, error) {
 	return HealthResult{Status: "healthy"}, nil
@@ -71,7 +92,8 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 
 	// Create key attributes based on backend type
 	attrs := &types.KeyAttributes{
-		CN: params.KeyID,
+		CN:         params.KeyID,
+		Exportable: params.Exportable,
 	}
 
 	// Parse backend type
@@ -150,7 +172,7 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 
 		// Set symmetric algorithm directly (not using ParseKeyAlgorithm which is for asymmetric)
 		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(symAlgorithm)
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
 
 		// Generate symmetric key
 		_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -261,13 +283,41 @@ func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	// Get the backend - try to find key in specified backend or search all backends
+	backendName := params.Backend
+	var attrs *types.KeyAttributes
+	var err error
+
+	if backendName != "" {
+		// Search in specified backend
+		attrs, err = s.findKeyInBackend(params.KeyID, backendName)
+	} else {
+		// Try software backend first, then symmetric
+		attrs, err = s.findKeyInBackend(params.KeyID, "software")
+		if err != nil {
+			attrs, err = s.findKeyInBackend(params.KeyID, "symmetric")
+			if err == nil {
+				backendName = "symmetric"
+			}
+		} else {
+			backendName = "software"
+		}
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
-	if err := s.keystore.DeleteKey(attrs); err != nil {
+	// Get the correct keystore
+	ks := s.keystore
+	if backendName != "" {
+		ks, err = keychain.Backend(backendName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+		}
+	}
+
+	if err := ks.DeleteKey(attrs); err != nil {
 		return nil, fmt.Errorf("failed to delete key: %w", err)
 	}
 
@@ -545,22 +595,31 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
-	}
-
-	// Get the correct backend - for symmetric decryption, default to symmetric backend
+	// Get the backend and find the key
 	backendName := params.Backend
-	if backendName == "" {
-		// If nonce/tag present, this is symmetric decryption
-		if len(params.Nonce) > 0 || len(params.Tag) > 0 {
-			backendName = "symmetric"
+	var attrs *types.KeyAttributes
+	var err error
+
+	if backendName != "" {
+		// Backend specified, look up key in that backend
+		attrs, err = s.findKeyInBackend(params.KeyID, backendName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find key: %w", err)
+		}
+	} else {
+		// No backend specified, search both symmetric and software backends
+		attrs, err = s.findKeyInBackend(params.KeyID, "symmetric")
+		if err != nil {
+			attrs, err = s.findKeyInBackend(params.KeyID, "software")
+			if err != nil {
+				return nil, fmt.Errorf("failed to find key: %w", err)
+			}
+			backendName = "software"
 		} else {
-			backendName = "software" // Default for asymmetric
+			backendName = "symmetric"
 		}
 	}
+
 	ks, ksErr := keychain.Backend(backendName)
 	if ksErr != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
@@ -571,8 +630,8 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 		attrs.StoreType = storeType
 	}
 
-	// Check if this is symmetric decryption (has nonce and tag)
-	if len(params.Nonce) > 0 || len(params.Tag) > 0 {
+	// Check if this is a symmetric key based on key attributes
+	if attrs.IsSymmetric() {
 		// Symmetric decryption
 		symBackend, ok := ks.Backend().(types.SymmetricBackend)
 		if !ok {
@@ -635,17 +694,18 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("plaintext is required")
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find key: %w", err)
-	}
-
 	// Get the correct backend for symmetric operations
 	backendName := params.Backend
 	if backendName == "" {
 		backendName = "symmetric" // Default to symmetric backend
 	}
+
+	// Look up the key in the symmetric backend to get full attributes
+	attrs, err := s.findKeyInBackend(params.KeyID, backendName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find key: %w", err)
+	}
+
 	ks, ksErr := keychain.Backend(backendName)
 	if ksErr != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
@@ -1129,22 +1189,31 @@ func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 		return nil, fmt.Errorf("key_id is required")
 	}
 
-	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	// Default to software backend for export operations
+	backendName := params.Backend
+	if backendName == "" {
+		backendName = "software"
+	}
+
+	// Look up the key in the correct backend
+	attrs, err := s.findKeyInBackend(params.KeyID, backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
-	if params.Backend != "" {
-		storeType := types.ParseStoreType(params.Backend)
-		if storeType == types.StoreUnknown {
-			return nil, fmt.Errorf("invalid backend: %s", params.Backend)
-		}
+	storeType := types.ParseStoreType(backendName)
+	if storeType != types.StoreUnknown {
 		attrs.StoreType = storeType
 	}
 
+	// Get the correct keystore
+	ks, err := keychain.Backend(backendName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+	}
+
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend does not support import/export operations")
 	}

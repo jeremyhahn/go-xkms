@@ -1399,7 +1399,7 @@ var keyCopyCmd = &cobra.Command{
 		if cfg.IsLocal() {
 			copyKeyLocal(cfg, printer, sourceKeyID, destKeyID, destBackend, destKeyDir, keyType, keyAlgorithm, keySize, curve, algorithm)
 		} else {
-			copyKeyRemote(cfg, printer, sourceKeyID, destKeyID, destBackend, algorithm)
+			copyKeyRemote(cfg, printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm, keySize, curve, algorithm)
 		}
 	},
 }
@@ -1482,7 +1482,7 @@ func copyKeyLocal(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBac
 }
 
 // copyKeyRemote copies a key using the client
-func copyKeyRemote(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend string, algorithm backend.WrappingAlgorithm) {
+func copyKeyRemote(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm string, keySize int, curve string, algorithm backend.WrappingAlgorithm) {
 	// Create client
 	cl, err := cfg.CreateClient()
 	if err != nil {
@@ -1500,6 +1500,12 @@ func copyKeyRemote(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBa
 
 	printVerbose("Connected to keychaind server")
 
+	// Determine the key type to use (prefer key-algorithm if provided, fall back to key-type)
+	keyTypeForRequest := keyAlgorithm
+	if keyTypeForRequest == "" {
+		keyTypeForRequest = keyType
+	}
+
 	// Prepare copy key request
 	req := &client.CopyKeyRequest{
 		SourceBackend: cfg.Backend,
@@ -1507,6 +1513,9 @@ func copyKeyRemote(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBa
 		DestBackend:   destBackend,
 		DestKeyID:     destKeyID,
 		Algorithm:     string(algorithm),
+		KeyType:       keyTypeForRequest,
+		KeySize:       keySize,
+		Curve:         curve,
 	}
 
 	// Copy the key
@@ -1551,7 +1560,7 @@ var keyGetImportParamsCmd = &cobra.Command{
 		if cfg.IsLocal() {
 			getImportParamsLocal(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve, algorithm, outputFile)
 		} else {
-			getImportParamsRemote(cfg, printer, keyID, algorithm, outputFile)
+			getImportParamsRemote(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve, algorithm, outputFile)
 		}
 	},
 }
@@ -1617,7 +1626,7 @@ func getImportParamsLocal(cfg *Config, printer *Printer, keyID, keyType, keyAlgo
 }
 
 // getImportParamsRemote gets import parameters using the client
-func getImportParamsRemote(cfg *Config, printer *Printer, keyID string, algorithm backend.WrappingAlgorithm, outputFile string) {
+func getImportParamsRemote(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string, algorithm backend.WrappingAlgorithm, outputFile string) {
 	// Create client
 	cl, err := cfg.CreateClient()
 	if err != nil {
@@ -1636,10 +1645,19 @@ func getImportParamsRemote(cfg *Config, printer *Printer, keyID string, algorith
 	printVerbose("Connected to keychaind server")
 
 	// Prepare get import parameters request
+	// Determine the key type to use (use key-algorithm if provided, fall back to key-type)
+	keyTypeForRequest := keyAlgorithm
+	if keyTypeForRequest == "" {
+		keyTypeForRequest = keyType
+	}
+
 	req := &client.GetImportParametersRequest{
 		Backend:   cfg.Backend,
 		KeyID:     keyID,
 		Algorithm: string(algorithm),
+		KeyType:   keyTypeForRequest,
+		KeySize:   keySize,
+		Curve:     curve,
 	}
 
 	// Get import parameters
@@ -2505,7 +2523,7 @@ func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*types.K
 
 	attrs := &types.KeyAttributes{
 		CN:                 keyID,
-		KeyType:            types.KeyTypeEncryption,
+		KeyType:            types.KeyTypeSecret, // Symmetric keys use KeyTypeSecret
 		StoreType:          types.StoreSoftware,
 		SymmetricAlgorithm: symmetricAlgorithm,
 	}

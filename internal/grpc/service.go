@@ -231,7 +231,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		}
 
 		attrs.SymmetricAlgorithm = types.SymmetricAlgorithm(symAlgorithm)
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
 
 		_, err = symBackend.GenerateSymmetricKey(attrs)
 		if err != nil {
@@ -666,16 +666,46 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 		return nil, status.Errorf(codes.NotFound, "key not found: %v", err)
 	}
 
-	// Get decrypter
-	decrypter, err := ks.Decrypter(attrs)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get decrypter: %v", err)
-	}
+	var plaintext []byte
 
-	// Decrypt
-	plaintext, err := decrypter.Decrypt(nil, req.Ciphertext, nil)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to decrypt: %v", err)
+	// Check if this is a symmetric key based on key attributes
+	if attrs.IsSymmetric() {
+		// Symmetric decryption path
+		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		if !ok {
+			return nil, status.Error(codes.InvalidArgument, "backend does not support symmetric decryption")
+		}
+
+		encrypter, err := symBackend.SymmetricEncrypter(attrs)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to get symmetric encrypter: %v", err)
+		}
+
+		encryptedData := &types.EncryptedData{
+			Ciphertext: req.Ciphertext,
+			Nonce:      req.Nonce,
+			Tag:        req.Tag,
+		}
+
+		decryptOpts := &types.DecryptOptions{
+			AdditionalData: req.AdditionalData,
+		}
+
+		plaintext, err = encrypter.Decrypt(encryptedData, decryptOpts)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to decrypt: %v", err)
+		}
+	} else {
+		// Asymmetric decryption path
+		decrypter, err := ks.Decrypter(attrs)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to get decrypter: %v", err)
+		}
+
+		plaintext, err = decrypter.Decrypt(nil, req.Ciphertext, nil)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to decrypt: %v", err)
+		}
 	}
 
 	return &pb.DecryptResponse{

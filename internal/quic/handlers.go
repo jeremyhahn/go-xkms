@@ -177,7 +177,14 @@ type TLSCertificateResponse struct {
 
 // GetImportParametersRequest represents a request to get import parameters
 type GetImportParametersRequest struct {
-	Algorithm string `json:"algorithm"` // Wrapping algorithm
+	Backend    string `json:"backend"`
+	KeyID      string `json:"key_id"`
+	KeyType    string `json:"key_type"`
+	KeySize    int    `json:"key_size,omitempty"`
+	Curve      string `json:"curve,omitempty"`
+	Hash       string `json:"hash,omitempty"`
+	AESKeySize int    `json:"aes_key_size,omitempty"`
+	Algorithm  string `json:"algorithm"` // Wrapping algorithm
 }
 
 // GetImportParametersResponse represents the import parameters response
@@ -481,6 +488,9 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+
+		// Set correct key type for symmetric keys
+		attrs.KeyType = types.KeyTypeSecret
 
 		// Generate the symmetric key
 		_, err = symBackend.GenerateSymmetricKey(attrs)
@@ -883,6 +893,11 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
+	// Default to symmetric backend for encryption operations
+	if backendParam == "" {
+		backendParam = "symmetric"
+	}
+
 	ks, err := s.getKeystoreForBackend(backendParam)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
@@ -949,22 +964,44 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
-	// Get the correct keystore for the backend
-	ks, err := s.getKeystoreForBackend(backendParam)
-	if err != nil {
-		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
-		return
+	// Find the key - search in specified backend or both if not specified
+	var ks keychain.KeyStore
+	var attrs *types.KeyAttributes
+	var err error
+
+	if backendParam != "" {
+		ks, err = s.getKeystoreForBackend(backendParam)
+		if err != nil {
+			s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
+			return
+		}
+		attrs, err = s.findKeyByID(ks, keyID)
+		if err != nil {
+			s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+			return
+		}
+	} else {
+		// No backend specified, search symmetric first, then software
+		ks, err = s.getKeystoreForBackend("symmetric")
+		if err == nil {
+			attrs, err = s.findKeyByID(ks, keyID)
+		}
+		if err != nil {
+			ks, err = s.getKeystoreForBackend("software")
+			if err != nil {
+				s.sendError(w, http.StatusNotFound, "backend not found")
+				return
+			}
+			attrs, err = s.findKeyByID(ks, keyID)
+			if err != nil {
+				s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
+				return
+			}
+		}
 	}
 
-	// Find the key's full attributes
-	attrs, err := s.findKeyByID(ks, keyID)
-	if err != nil {
-		s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %v", err))
-		return
-	}
-
-	// Check if this is symmetric decryption (has nonce and tag)
-	if len(req.Nonce) > 0 && len(req.Tag) > 0 {
+	// Check if this is a symmetric key based on key attributes
+	if attrs.IsSymmetric() {
 		// Symmetric decryption
 		symBackend, ok := ks.Backend().(types.SymmetricBackend)
 		if !ok {
@@ -1370,6 +1407,154 @@ func (s *Server) handleGetImportParameters(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
+	}
+
+	// Parse wrapping algorithm
+	algorithm := backend.WrappingAlgorithm(req.Algorithm)
+
+	// Get import parameters
+	params, err := importExportBackend.GetImportParameters(attrs, algorithm)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get import parameters: %v", err))
+		return
+	}
+
+	// Encode public key to PEM
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(params.WrappingPublicKey)
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to marshal public key: %v", err))
+		return
+	}
+
+	pemBlock := &pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	}
+	pubKeyPEM := string(pem.EncodeToMemory(pemBlock))
+
+	resp := GetImportParametersResponse{
+		WrappingPublicKeyPEM: pubKeyPEM,
+		ImportToken:          params.ImportToken,
+		Algorithm:            string(params.Algorithm),
+		KeySpec:              params.KeySpec,
+	}
+
+	// Add expiration time if present
+	if params.ExpiresAt != nil {
+		expiresAt := params.ExpiresAt.Format("2006-01-02T15:04:05Z07:00")
+		resp.ExpiresAt = &expiresAt
+	}
+
+	s.sendJSON(w, http.StatusOK, resp)
+}
+
+// handleGetImportParams handles POST /api/v1/keys/import-params requests
+// This is the global endpoint (no key ID in path) that takes all params from request body
+func (s *Server) handleGetImportParams(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req GetImportParametersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
+		return
+	}
+
+	// Validate required fields
+	if req.Backend == "" {
+		s.sendError(w, http.StatusBadRequest, "backend is required")
+		return
+	}
+	if req.KeyID == "" {
+		s.sendError(w, http.StatusBadRequest, "key_id is required")
+		return
+	}
+	if req.KeyType == "" {
+		s.sendError(w, http.StatusBadRequest, "key_type is required")
+		return
+	}
+	if req.Algorithm == "" {
+		s.sendError(w, http.StatusBadRequest, "algorithm is required")
+		return
+	}
+
+	// Get the correct keystore for the backend
+	ks, err := s.getKeystoreForBackend(req.Backend)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", req.Backend))
+		return
+	}
+
+	// Check if backend supports import/export
+	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	if !ok {
+		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
+		return
+	}
+
+	// Build key attributes from request
+	attrs := &types.KeyAttributes{
+		CN: req.KeyID,
+	}
+
+	// Set store type
+	storeType := types.ParseStoreType(req.Backend)
+	if storeType != types.StoreUnknown {
+		attrs.StoreType = storeType
+	}
+
+	// Set key type based on the request
+	switch req.KeyType {
+	case "rsa", "RSA":
+		attrs.KeyType = types.KeyTypeTLS
+		attrs.KeyAlgorithm = x509.RSA
+		keySize := req.KeySize
+		if keySize == 0 {
+			keySize = 2048
+		}
+		attrs.RSAAttributes = &types.RSAAttributes{
+			KeySize: keySize,
+		}
+	case "ecdsa", "ECDSA":
+		attrs.KeyType = types.KeyTypeTLS
+		attrs.KeyAlgorithm = x509.ECDSA
+		curve := req.Curve
+		if curve == "" {
+			curve = "P-256"
+		}
+		parsedCurve, err := types.ParseCurve(curve)
+		if err != nil {
+			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid curve: %v", err))
+			return
+		}
+		attrs.ECCAttributes = &types.ECCAttributes{
+			Curve: parsedCurve,
+		}
+	case "ed25519", "Ed25519":
+		attrs.KeyType = types.KeyTypeTLS
+		attrs.KeyAlgorithm = x509.Ed25519
+	case "signing":
+		attrs.KeyType = types.KeyTypeTLS
+	case "encryption":
+		attrs.KeyType = types.KeyTypeEncryption
+	case "aes", "AES", "symmetric":
+		attrs.KeyType = types.KeyTypeSecret
+		keySize := req.AESKeySize
+		if keySize == 0 && req.KeySize > 0 {
+			keySize = req.KeySize
+		}
+		if keySize == 128 {
+			attrs.SymmetricAlgorithm = types.SymmetricAES128GCM
+		} else if keySize == 192 {
+			attrs.SymmetricAlgorithm = types.SymmetricAES192GCM
+		} else {
+			attrs.SymmetricAlgorithm = types.SymmetricAES256GCM
+		}
+	default:
+		// For unknown types, try to determine from other fields
+		attrs.KeyType = types.KeyTypeTLS
 	}
 
 	// Parse wrapping algorithm

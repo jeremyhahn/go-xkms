@@ -225,7 +225,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 	if symmetricAlgorithm != "" {
 		// Symmetric key generation
 		isSymmetric = true
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
 
 		// Check if backend supports symmetric operations
 		symBackend, ok := ks.Backend().(types.SymmetricBackend)
@@ -870,9 +870,9 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Check if this is symmetric decryption (nonce and tag present)
+	// Check if this is a symmetric key based on key attributes
 	var plaintext []byte
-	if len(req.Nonce) > 0 && len(req.Tag) > 0 {
+	if targetAttr.IsSymmetric() {
 		// Symmetric decryption path
 		symBackend, ok := ks.Backend().(types.SymmetricBackend)
 		if !ok {
@@ -2006,7 +2006,7 @@ func buildKeyAttributes(keyID, keyType string, keySize int, curve, hash string, 
 	case types.AlgorithmEd25519.Equals(keyType):
 		attrs.KeyAlgorithm = x509.Ed25519
 	case types.AlgorithmSymmetric.Equals(keyType):
-		attrs.KeyType = types.KeyTypeEncryption
+		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
 		if aesKeySize == 0 {
 			aesKeySize = 256
 		}
