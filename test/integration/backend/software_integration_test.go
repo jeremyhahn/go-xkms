@@ -90,8 +90,8 @@ func createEd25519Attrs(cn string) *types.KeyAttributes {
 	}
 }
 
-// createSymmetricAttrs creates AES key attributes
-func createSymmetricAttrs(cn string, keySize int, algorithm types.SymmetricAlgorithm) *types.KeyAttributes {
+// createSoftwareSymmetricAttrs creates AES key attributes for software backend
+func createSoftwareSymmetricAttrs(cn string, keySize int, algorithm types.SymmetricAlgorithm) *types.KeyAttributes {
 	return &types.KeyAttributes{
 		CN:                 cn,
 		KeyType:            backend.KEY_TYPE_SECRET,

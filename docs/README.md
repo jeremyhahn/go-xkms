@@ -20,7 +20,7 @@ Core architectural concepts, design patterns, and technical specifications:
 
 ### [Backends](backends/)
 Backend-specific documentation for all supported storage systems:
-- **Software**: [PKCS#8](backends/pkcs8.md), [AES](backends/)
+- **Software**: [PKCS#8](backends/pkcs8.md), [AES](architecture/symmetric-encryption.md)
 - **Hardware**: [PKCS#11](backends/pkcs11.md), [SmartCard-HSM](backends/smartcardhsm.md), [TPM 2.0](backends/tpm2.md), [YubiKey](backends/yubikey.md)
 - **Cloud**: [AWS KMS](backends/awskms.md), [GCP KMS](backends/gcpkms.md), [Azure Key Vault](backends/azurekv.md), [HashiCorp Vault](backends/vault.md)
 

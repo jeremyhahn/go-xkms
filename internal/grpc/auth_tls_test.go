@@ -40,9 +40,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// createTestBackendRegistry creates a backend registry with a test keystore
-func createTestBackendRegistry(t *testing.T) *BackendRegistry {
+// setupTestKeychain initializes the global keychain service for tests
+func setupTestKeychain(t *testing.T) {
 	t.Helper()
+
+	// Reset any previous state
+	keychain.Reset()
 
 	// Create in-memory storage
 	keyStorage := storage.New()
@@ -65,13 +68,16 @@ func createTestBackendRegistry(t *testing.T) *BackendRegistry {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	// Create backend registry
-	manager := NewBackendRegistry()
-	if err := manager.Register("test", ks); err != nil {
-		t.Fatalf("Failed to register backend: %v", err)
+	// Initialize global keychain service
+	err = keychain.Initialize(&keychain.ServiceConfig{
+		Backends: map[string]keychain.KeyStore{
+			"test": ks,
+		},
+		DefaultBackend: "test",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize keychain: %v", err)
 	}
-
-	return manager
 }
 
 // waitForGRPCServer waits for the gRPC server to be ready
@@ -90,9 +96,9 @@ func waitForGRPCServer(t *testing.T, server *Server, timeout time.Duration) {
 }
 
 func TestGRPCServer_NoOpAuthenticator_NoTLS(t *testing.T) {
-	// Create test backend registry
-	manager := createTestBackendRegistry(t)
-	defer func() { _ = manager.Close() }()
+	// Setup test keychain
+	setupTestKeychain(t)
+	defer keychain.Reset()
 
 	// Create NoOp authenticator
 	authenticator := auth.NewNoOpAuthenticator()
@@ -100,7 +106,6 @@ func TestGRPCServer_NoOpAuthenticator_NoTLS(t *testing.T) {
 	// Create gRPC server without TLS
 	cfg := &ServerConfig{
 		Port:           0, // Ephemeral port
-		Registry:       manager,
 		Authenticator:  authenticator,
 		EnableLogging:  false,
 		EnableRecovery: true,
@@ -231,9 +236,9 @@ func (a *testBearerAuthenticator) AuthenticateGRPC(ctx context.Context, md metad
 }
 
 func TestGRPCServer_BearerTokenAuthenticator_Metadata(t *testing.T) {
-	// Create test backend manager
-	manager := createTestBackendRegistry(t)
-	defer func() { _ = manager.Close() }()
+	// Setup test keychain
+	setupTestKeychain(t)
+	defer keychain.Reset()
 
 	// Create Bearer token authenticator
 	validToken := "test-token-12345"
@@ -244,7 +249,6 @@ func TestGRPCServer_BearerTokenAuthenticator_Metadata(t *testing.T) {
 	// Create gRPC server
 	cfg := &ServerConfig{
 		Port:           0,
-		Registry:       manager,
 		Authenticator:  authenticator,
 		EnableLogging:  false,
 		EnableRecovery: true,
@@ -359,9 +363,9 @@ func TestGRPCServer_TLS_NoClientCert(t *testing.T) {
 		t.Fatalf("Failed to generate server certificate: %v", err)
 	}
 
-	// Create test backend manager
-	manager := createTestBackendRegistry(t)
-	defer func() { _ = manager.Close() }()
+	// Setup test keychain
+	setupTestKeychain(t)
+	defer keychain.Reset()
 
 	// Create TLS config (no client cert required)
 	tlsConfig := &tls.Config{
@@ -375,7 +379,6 @@ func TestGRPCServer_TLS_NoClientCert(t *testing.T) {
 	// Create gRPC server with TLS
 	cfg := &ServerConfig{
 		Port:           0,
-		Registry:       manager,
 		TLSConfig:      tlsConfig,
 		Authenticator:  authenticator,
 		EnableLogging:  false,
@@ -473,9 +476,9 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 		t.Fatalf("Failed to generate client certificate: %v", err)
 	}
 
-	// Create test backend manager
-	manager := createTestBackendRegistry(t)
-	defer func() { _ = manager.Close() }()
+	// Setup test keychain
+	setupTestKeychain(t)
+	defer keychain.Reset()
 
 	// Create CA cert pool for client verification
 	caCertPool := x509.NewCertPool()
@@ -495,7 +498,6 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 	// Create gRPC server with mTLS
 	cfg := &ServerConfig{
 		Port:           0,
-		Registry:       manager,
 		TLSConfig:      tlsConfig,
 		Authenticator:  authenticator,
 		EnableLogging:  false,
@@ -636,14 +638,13 @@ func TestGRPCServer_AuthenticationFailureScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create test backend manager
-			manager := createTestBackendRegistry(t)
-			defer func() { _ = manager.Close() }()
+			// Setup test keychain
+			setupTestKeychain(t)
+			defer keychain.Reset()
 
 			// Create server with the specified authenticator
 			cfg := &ServerConfig{
 				Port:           0,
-				Registry:       manager,
 				Authenticator:  tt.setupAuth(),
 				EnableLogging:  false,
 				EnableRecovery: true,

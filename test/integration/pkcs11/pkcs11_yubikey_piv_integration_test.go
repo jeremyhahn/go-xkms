@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/yubikey"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	pkcs11lib "github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/assert"

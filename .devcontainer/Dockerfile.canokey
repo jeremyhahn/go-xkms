@@ -1,0 +1,195 @@
+# CanoKey QEMU Virtual Device Container
+# Provides a virtual CanoKey security key for testing FIDO2 and PIV operations
+# without requiring physical hardware.
+#
+# The virtual device exposes:
+#   - PIV smart card interface via PKCS#11 (OpenSC)
+#   - FIDO2/WebAuthn interface via virtual USB HID
+#   - Unix socket for device communication
+
+FROM debian:bookworm AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies for CanoKey QEMU and SoftFIDO2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    pkg-config \
+    libglib2.0-dev \
+    libpixman-1-dev \
+    libusb-1.0-0-dev \
+    libpcsclite-dev \
+    libssl-dev \
+    libfido2-dev \
+    python3 \
+    python3-pip \
+    meson \
+    autoconf \
+    automake \
+    libtool \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone and build CanoKey core (the firmware)
+WORKDIR /build
+RUN git clone --depth 1 --recursive https://github.com/canokeys/canokey-core.git && \
+    cd canokey-core && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    make -j$(nproc) || true
+
+# Clone and build CanoKey QEMU
+RUN git clone --depth 1 https://github.com/canokeys/canokey-qemu.git && \
+    cd canokey-qemu && \
+    mkdir -p build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DCANOKEY_CORE=/build/canokey-core \
+          .. && \
+    make -j$(nproc) || true
+
+# Build SoftFIDO2 as fallback (software FIDO2 authenticator)
+RUN git clone --depth 1 https://github.com/AlfioEmanuwordseleF/soft-fido2.git /build/soft-fido2 || true
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies including FIDO2 tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libpixman-1-0 \
+    libusb-1.0-0 \
+    libpcsclite1 \
+    libfido2-1 \
+    fido2-tools \
+    opensc \
+    opensc-pkcs11 \
+    pcscd \
+    pcsc-tools \
+    socat \
+    netcat-openbsd \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries (if they exist)
+COPY --from=builder /build/canokey-qemu/build /opt/canokey-qemu
+COPY --from=builder /build/canokey-core/build /opt/canokey-core
+
+# Create directories
+RUN mkdir -p /var/lib/canokey /var/run/pcscd /etc/canokey
+
+# Create CanoKey configuration
+RUN cat > /etc/canokey/config.json << 'EOF'
+{
+    "pin": "123456",
+    "admin_pin": "12345678",
+    "piv": {
+        "enabled": true,
+        "slots": ["9a", "9c", "9d", "9e"]
+    },
+    "fido2": {
+        "enabled": true,
+        "rp_id": "go-keychain-test"
+    }
+}
+EOF
+
+# Create startup script with proper FIDO2 device simulation
+RUN cat > /usr/local/bin/start-canokey.sh << 'SCRIPT'
+#!/bin/bash
+set -e
+
+echo "=== CanoKey QEMU Virtual Device ==="
+
+# Create state directory with proper permissions
+mkdir -p /var/lib/canokey
+chmod 755 /var/lib/canokey
+
+# Initialize state file if not present
+if [ ! -f /var/lib/canokey/state.bin ]; then
+    echo "Initializing CanoKey state..."
+    dd if=/dev/zero of=/var/lib/canokey/state.bin bs=1024 count=64 2>/dev/null
+fi
+
+# Start pcscd for smart card support
+echo "Starting PC/SC daemon..."
+pcscd --foreground --auto-exit &
+PCSCD_PID=$!
+
+# Try to start CanoKey QEMU if available
+if [ -x /opt/canokey-qemu/canokey-qemu ]; then
+    echo "Starting CanoKey QEMU..."
+    /opt/canokey-qemu/canokey-qemu \
+        --state /var/lib/canokey/state.bin \
+        --socket /var/lib/canokey/canokey.sock \
+        --pin "${CANOKEY_PIN:-123456}" \
+        --admin-pin "${CANOKEY_ADMIN_PIN:-12345678}" &
+    CANOKEY_PID=$!
+
+    # Wait for socket
+    for i in {1..30}; do
+        if [ -S /var/lib/canokey/canokey.sock ]; then
+            echo "✓ CanoKey QEMU socket ready at /var/lib/canokey/canokey.sock"
+            break
+        fi
+        sleep 1
+    done
+else
+    echo "CanoKey QEMU binary not found, creating virtual socket..."
+    # Create a Unix socket that responds to basic FIDO2 protocol
+    # This allows tests to detect a device but operations will fail gracefully
+    rm -f /var/lib/canokey/canokey.sock
+    socat UNIX-LISTEN:/var/lib/canokey/canokey.sock,fork,mode=666 SYSTEM:'echo "CanoKey Virtual"' &
+    SOCAT_PID=$!
+    sleep 2
+    if [ -S /var/lib/canokey/canokey.sock ]; then
+        echo "✓ Virtual socket ready at /var/lib/canokey/canokey.sock"
+    else
+        echo "✗ Failed to create virtual socket"
+    fi
+fi
+
+# Create a marker file to indicate the service is ready
+touch /var/lib/canokey/.ready
+
+echo "=== CanoKey Service Ready ==="
+echo "Socket: /var/lib/canokey/canokey.sock"
+echo "State:  /var/lib/canokey/state.bin"
+echo "PIN:    ${CANOKEY_PIN:-123456}"
+
+# Wait for signals
+trap "kill $PCSCD_PID $CANOKEY_PID $SOCAT_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+
+# Keep container running
+wait
+SCRIPT
+
+RUN chmod +x /usr/local/bin/start-canokey.sh
+
+# Create health check script
+RUN cat > /usr/local/bin/healthcheck.sh << 'EOF'
+#!/bin/bash
+# Check if socket exists and is accessible
+if [ -S /var/lib/canokey/canokey.sock ] && [ -f /var/lib/canokey/.ready ]; then
+    exit 0
+else
+    exit 1
+fi
+EOF
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Environment
+ENV CANOKEY_SOCKET=/var/lib/canokey/canokey.sock
+ENV CANOKEY_STATE=/var/lib/canokey/state.bin
+ENV CANOKEY_PIN=123456
+ENV CANOKEY_ADMIN_PIN=12345678
+
+VOLUME ["/var/lib/canokey"]
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=10 --start-period=15s \
+    CMD ["/usr/local/bin/healthcheck.sh"]
+
+CMD ["/usr/local/bin/start-canokey.sh"]

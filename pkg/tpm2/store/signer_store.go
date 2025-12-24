@@ -31,20 +31,18 @@ const (
 	FSEXT_SIGNER = ".signer"
 )
 
-// SignerStore implements SignerStorer using storage.Backend
-//
-// Deprecated: Use ObjStoreSignerAdapter instead, which provides direct integration
-// with go-objstore for multi-backend support (S3, Azure, GCS, filesystem).
-// Use NewStorageFactory or NewObjStoreSignerAdapter to create new signer stores.
+// SignerStore implements SignerStorer using storage.Backend.
+// The storage.Backend interface is compatible with external object storage
+// libraries like go-objstore. Higher-level applications can create adapters
+// to use cloud storage (S3, Azure, GCS) by implementing storage.Backend.
 type SignerStore struct {
 	logger  Logger
 	storage storage.Backend
 }
 
-// NewSignerStore creates a new signer store using the storage.Backend interface
-//
-// Deprecated: Use NewObjStoreSignerAdapter or NewStorageFactory instead for
-// direct go-objstore integration with multi-backend support.
+// NewSignerStore creates a new signer store using the storage.Backend interface.
+// The backend can be any implementation of storage.Backend, including custom
+// adapters that wrap external storage libraries like go-objstore.
 func NewSignerStore(logger Logger, backend storage.Backend) SignerStorer {
 	return &SignerStore{
 		logger:  logger,

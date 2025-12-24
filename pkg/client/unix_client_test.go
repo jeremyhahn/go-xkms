@@ -1419,6 +1419,178 @@ func TestUnixClient_JSONParseErrors(t *testing.T) {
 	})
 }
 
+func TestUnixClient_KeyVersionManagement(t *testing.T) {
+	// Create temp directory for socket
+	tmpDir, err := os.MkdirTemp("", "keychain-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	mux := http.NewServeMux()
+
+	// Health endpoint
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	})
+
+	// ListKeyVersions
+	mux.HandleFunc("/api/v1/keys/test-key/versions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_id":"test-key","versions":[{"version":1,"status":"enabled","created_at":"2025-01-01T00:00:00Z"},{"version":2,"status":"disabled","created_at":"2025-01-02T00:00:00Z"}],"total":2}`))
+	})
+
+	// EnableKeyVersion
+	mux.HandleFunc("/api/v1/keys/test-key/versions/2/enable", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_id":"test-key","version":2,"status":"enabled"}`))
+	})
+
+	// DisableKeyVersion
+	mux.HandleFunc("/api/v1/keys/test-key/versions/1/disable", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_id":"test-key","version":1,"status":"disabled"}`))
+	})
+
+	// EnableAllKeyVersions
+	mux.HandleFunc("/api/v1/keys/test-key/versions/enable-all", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_id":"test-key","count":2,"message":"all versions enabled"}`))
+	})
+
+	// DisableAllKeyVersions
+	mux.HandleFunc("/api/v1/keys/test-key/versions/disable-all", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key_id":"test-key","count":2,"message":"all versions disabled"}`))
+	})
+
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Failed to create Unix socket: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	server := &http.Server{Handler: mux}
+	go func() {
+		_ = server.Serve(listener)
+	}()
+	defer func() { _ = server.Close() }()
+
+	client, _ := New(&Config{
+		Protocol: ProtocolUnix,
+		Address:  socketPath,
+	})
+
+	uc := client.(*unixClient)
+	_ = uc.Connect(context.Background())
+
+	t.Run("ListKeyVersions", func(t *testing.T) {
+		resp, err := uc.ListKeyVersions(context.Background(), &ListKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != nil {
+			t.Fatalf("ListKeyVersions() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("ListKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+		}
+		if resp.Total != 2 {
+			t.Errorf("ListKeyVersions().Total = %d, want 2", resp.Total)
+		}
+		if len(resp.Versions) != 2 {
+			t.Errorf("ListKeyVersions() versions count = %d, want 2", len(resp.Versions))
+		}
+		if resp.Versions[0].Version != 1 {
+			t.Errorf("ListKeyVersions().Versions[0].Version = %d, want 1", resp.Versions[0].Version)
+		}
+		if resp.Versions[0].Status != "enabled" {
+			t.Errorf("ListKeyVersions().Versions[0].Status = %s, want enabled", resp.Versions[0].Status)
+		}
+	})
+
+	t.Run("EnableKeyVersion", func(t *testing.T) {
+		resp, err := uc.EnableKeyVersion(context.Background(), &EnableKeyVersionRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+			Version: 2,
+		})
+		if err != nil {
+			t.Fatalf("EnableKeyVersion() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("EnableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+		}
+		if resp.Version != 2 {
+			t.Errorf("EnableKeyVersion().Version = %d, want 2", resp.Version)
+		}
+		if resp.Status != "enabled" {
+			t.Errorf("EnableKeyVersion().Status = %s, want enabled", resp.Status)
+		}
+	})
+
+	t.Run("DisableKeyVersion", func(t *testing.T) {
+		resp, err := uc.DisableKeyVersion(context.Background(), &DisableKeyVersionRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+			Version: 1,
+		})
+		if err != nil {
+			t.Fatalf("DisableKeyVersion() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("DisableKeyVersion().KeyID = %v, want test-key", resp.KeyID)
+		}
+		if resp.Version != 1 {
+			t.Errorf("DisableKeyVersion().Version = %d, want 1", resp.Version)
+		}
+		if resp.Status != "disabled" {
+			t.Errorf("DisableKeyVersion().Status = %s, want disabled", resp.Status)
+		}
+	})
+
+	t.Run("EnableAllKeyVersions", func(t *testing.T) {
+		resp, err := uc.EnableAllKeyVersions(context.Background(), &EnableAllKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != nil {
+			t.Fatalf("EnableAllKeyVersions() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("EnableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+		}
+		if resp.Count != 2 {
+			t.Errorf("EnableAllKeyVersions().Count = %d, want 2", resp.Count)
+		}
+		if resp.Message != "all versions enabled" {
+			t.Errorf("EnableAllKeyVersions().Message = %s, want all versions enabled", resp.Message)
+		}
+	})
+
+	t.Run("DisableAllKeyVersions", func(t *testing.T) {
+		resp, err := uc.DisableAllKeyVersions(context.Background(), &DisableAllKeyVersionsRequest{
+			Backend: "software",
+			KeyID:   "test-key",
+		})
+		if err != nil {
+			t.Fatalf("DisableAllKeyVersions() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("DisableAllKeyVersions().KeyID = %v, want test-key", resp.KeyID)
+		}
+		if resp.Count != 2 {
+			t.Errorf("DisableAllKeyVersions().Count = %d, want 2", resp.Count)
+		}
+		if resp.Message != "all versions disabled" {
+			t.Errorf("DisableAllKeyVersions().Message = %s, want all versions disabled", resp.Message)
+		}
+	})
+}
+
 func TestUnixClient_ErrorResponseHandling(t *testing.T) {
 	// Create temp directory for socket
 	tmpDir, err := os.MkdirTemp("", "keychain-test-*")

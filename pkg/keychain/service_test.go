@@ -1155,6 +1155,9 @@ func (m *mockExtendedBackend) GetKey(attrs *types.KeyAttributes) (crypto.Private
 	return key, nil
 }
 func (m *mockExtendedBackend) DeleteKey(attrs *types.KeyAttributes) error {
+	if _, ok := m.keys[attrs.CN]; !ok {
+		return backend.ErrKeyNotFound
+	}
 	delete(m.keys, attrs.CN)
 	return nil
 }
@@ -2471,4 +2474,372 @@ func TestExportKey_InvalidKeyRef(t *testing.T) {
 	_, err := ExportKey("", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid key ID")
+}
+
+// ========================================================================
+// Test Primary API - Functions with 0% coverage
+// ========================================================================
+
+func TestParseCertificateID_Success(t *testing.T) {
+	setupExtendedService(t)
+
+	tests := []struct {
+		name       string
+		input      string
+		expectCN   string
+		expectType types.StoreType
+	}{
+		{
+			name:     "shorthand - keyname only",
+			input:    "my-key",
+			expectCN: "my-key",
+		},
+		{
+			name:     "explicit empty segments",
+			input:    ":::my-key",
+			expectCN: "my-key",
+		},
+		{
+			name:       "backend only",
+			input:      "pkcs11:::my-key",
+			expectCN:   "my-key",
+			expectType: "pkcs11",
+		},
+		{
+			name:       "full specification",
+			input:      "software:signing:rsa:my-key",
+			expectCN:   "my-key",
+			expectType: "software",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attrs, err := ParseCertificateID(tt.input)
+			assert.NoError(t, err)
+			assert.NotNil(t, attrs)
+			assert.Equal(t, tt.expectCN, attrs.CN)
+			if tt.expectType != "" {
+				assert.Equal(t, tt.expectType, attrs.StoreType)
+			}
+		})
+	}
+}
+
+func TestParseCertificateID_InvalidInput(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := ParseCertificateID("")
+	assert.Error(t, err)
+}
+
+func TestSigner_PrimaryAPI_Success(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key
+	attrs := &types.KeyAttributes{CN: "signer-test-key"}
+	_, err := software.GenerateRSA(attrs)
+	require.NoError(t, err)
+
+	// Get signer using primary API (attrs-based)
+	signer, err := Signer(attrs)
+	assert.NoError(t, err)
+	assert.NotNil(t, signer)
+
+	// Verify we can sign with it
+	data := []byte("test data")
+	hasher := sha256.New()
+	hasher.Write(data)
+	digest := hasher.Sum(nil)
+
+	signature, err := signer.Sign(rand.Reader, digest, crypto.SHA256)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, signature)
+}
+
+func TestSigner_PrimaryAPI_KeyNotFound(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
+	_, err := Signer(attrs)
+	assert.Error(t, err)
+}
+
+func TestDecrypter_PrimaryAPI_Success(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate an RSA key
+	attrs := &types.KeyAttributes{CN: "decrypter-test-key"}
+	_, err := software.GenerateRSA(attrs)
+	require.NoError(t, err)
+
+	// Get decrypter using primary API (attrs-based)
+	decrypter, err := Decrypter(attrs)
+	assert.NoError(t, err)
+	assert.NotNil(t, decrypter)
+}
+
+func TestDecrypter_PrimaryAPI_KeyNotFound(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
+	_, err := Decrypter(attrs)
+	assert.Error(t, err)
+}
+
+func TestDeleteKey_PrimaryAPI_Success(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key
+	attrs := &types.KeyAttributes{CN: "delete-test-key"}
+	_, err := software.GenerateRSA(attrs)
+	require.NoError(t, err)
+
+	// Delete using primary API (attrs-based)
+	err = DeleteKey(attrs)
+	assert.NoError(t, err)
+
+	// Verify key is deleted
+	_, err = software.GetKey(attrs)
+	assert.Error(t, err)
+}
+
+func TestDeleteKey_PrimaryAPI_KeyNotFound(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
+	err := DeleteKey(attrs)
+	assert.Error(t, err)
+}
+
+func TestCertificate_PrimaryAPI_Success(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key and cert
+	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "cert-test-key"})
+	require.NoError(t, err)
+	cert := createTestCert(t, "cert-test-key", key.(crypto.Signer))
+
+	// Save the cert
+	err = software.SaveCert("cert-test-key", cert)
+	require.NoError(t, err)
+
+	// Retrieve using primary API (attrs-based)
+	attrs := &types.KeyAttributes{CN: "cert-test-key"}
+	retrievedCert, err := Certificate(attrs)
+	assert.NoError(t, err)
+	assert.Equal(t, cert, retrievedCert)
+}
+
+func TestCertificate_PrimaryAPI_NotFound(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "nonexistent-cert"}
+	_, err := Certificate(attrs)
+	assert.Error(t, err)
+}
+
+func TestSaveCertificate_PrimaryAPI_Success(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key and cert
+	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "save-cert-key"})
+	require.NoError(t, err)
+	cert := createTestCert(t, "save-cert-key", key.(crypto.Signer))
+
+	// Save using primary API (attrs-based)
+	attrs := &types.KeyAttributes{CN: "save-cert-key"}
+	err = SaveCertificate(attrs, cert)
+	assert.NoError(t, err)
+
+	// Verify it was saved
+	retrievedCert, err := software.GetCert("save-cert-key")
+	assert.NoError(t, err)
+	assert.Equal(t, cert, retrievedCert)
+}
+
+func TestDeleteCertificate_PrimaryAPI_Success(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key and cert
+	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "del-cert-key"})
+	require.NoError(t, err)
+	cert := createTestCert(t, "del-cert-key", key.(crypto.Signer))
+
+	// Save the cert
+	err = software.SaveCert("del-cert-key", cert)
+	require.NoError(t, err)
+
+	// Delete using primary API (attrs-based)
+	attrs := &types.KeyAttributes{CN: "del-cert-key"}
+	err = DeleteCertificate(attrs)
+	assert.NoError(t, err)
+
+	// Verify it was deleted
+	_, err = software.GetCert("del-cert-key")
+	assert.Error(t, err)
+}
+
+func TestCertificateChain_Success_PrimaryAPI(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key and cert
+	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "chain-test-key"})
+	require.NoError(t, err)
+	cert := createTestCert(t, "chain-test-key", key.(crypto.Signer))
+	software.certChains["chain-test-key"] = []*x509.Certificate{cert}
+
+	// Retrieve using primary API (attrs-based)
+	attrs := &types.KeyAttributes{CN: "chain-test-key"}
+	chain, err := CertificateChain(attrs)
+	assert.NoError(t, err)
+	assert.Len(t, chain, 1)
+	assert.Equal(t, cert, chain[0])
+}
+
+func TestSaveCertificateChain_Success_PrimaryAPI(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key and cert
+	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "save-chain-key"})
+	require.NoError(t, err)
+	cert := createTestCert(t, "save-chain-key", key.(crypto.Signer))
+	chain := []*x509.Certificate{cert}
+
+	// Save using primary API (attrs-based)
+	attrs := &types.KeyAttributes{CN: "save-chain-key"}
+	err = SaveCertificateChain(attrs, chain)
+	assert.NoError(t, err)
+
+	// Verify it was saved
+	savedChain, ok := software.certChains["save-chain-key"]
+	assert.True(t, ok)
+	assert.Len(t, savedChain, 1)
+}
+
+func TestCertificateExists_Success_PrimaryAPI(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Generate a key and cert
+	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "exists-key"})
+	require.NoError(t, err)
+	cert := createTestCert(t, "exists-key", key.(crypto.Signer))
+	software.certs["exists-key"] = cert
+
+	// Check using primary API (attrs-based)
+	attrs := &types.KeyAttributes{CN: "exists-key"}
+	exists, err := CertificateExists(attrs)
+	assert.NoError(t, err)
+	assert.True(t, exists)
+}
+
+func TestCertificateExists_False_PrimaryAPI(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
+	exists, err := CertificateExists(attrs)
+	assert.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestTLSCertificate_Success_PrimaryAPI(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Setup TLS certificate in mock
+	key, err := software.GenerateRSA(&types.KeyAttributes{CN: "tls-key"})
+	require.NoError(t, err)
+	cert := createTestCert(t, "tls-key", key.(crypto.Signer))
+	tlsCert := tls.Certificate{
+		Certificate: [][]byte{cert.Raw},
+		PrivateKey:  key,
+		Leaf:        cert,
+	}
+	software.tlsCerts["tls-key"] = tlsCert
+
+	// Retrieve using primary API (attrs-based)
+	attrs := &types.KeyAttributes{CN: "tls-key"}
+	result, err := TLSCertificate(attrs)
+	assert.NoError(t, err)
+	assert.NotNil(t, result.PrivateKey)
+	assert.Equal(t, cert, result.Leaf)
+}
+
+func TestTLSCertificate_NotFound_PrimaryAPI(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{CN: "nonexistent-key"}
+	_, err := TLSCertificate(attrs)
+	assert.Error(t, err)
+}
+
+// ========================================================================
+// Test BackendFor
+// ========================================================================
+
+func TestBackendFor_WithStoreType(t *testing.T) {
+	software, pkcs11 := setupExtendedService(t)
+
+	// Test with PKCS11 StoreType
+	attrs := &types.KeyAttributes{
+		CN:        "test-key",
+		StoreType: "pkcs11",
+	}
+
+	ks, err := BackendFor(attrs)
+	assert.NoError(t, err)
+	assert.Equal(t, pkcs11, ks)
+
+	// Test with Software StoreType
+	attrs.StoreType = "software"
+	ks, err = BackendFor(attrs)
+	assert.NoError(t, err)
+	assert.Equal(t, software, ks)
+}
+
+func TestBackendFor_WithoutStoreType(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Should return default backend when StoreType is empty
+	attrs := &types.KeyAttributes{
+		CN:        "test-key",
+		StoreType: "",
+	}
+
+	ks, err := BackendFor(attrs)
+	assert.NoError(t, err)
+	assert.Equal(t, software, ks) // software is default
+}
+
+func TestBackendFor_NilAttrs(t *testing.T) {
+	software, _ := setupExtendedService(t)
+
+	// Should return default backend when attrs is nil
+	ks, err := BackendFor(nil)
+	assert.NoError(t, err)
+	assert.Equal(t, software, ks)
+}
+
+func TestBackendFor_InvalidStoreType(t *testing.T) {
+	setupExtendedService(t)
+
+	attrs := &types.KeyAttributes{
+		CN:        "test-key",
+		StoreType: "nonexistent",
+	}
+
+	_, err := BackendFor(attrs)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrBackendNotFound)
+}
+
+// ========================================================================
+// Test TLSCertificateByID error paths
+// ========================================================================
+
+func TestTLSCertificateByID_InvalidKeyRef(t *testing.T) {
+	setupExtendedService(t)
+
+	_, err := TLSCertificateByID("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid key")
 }

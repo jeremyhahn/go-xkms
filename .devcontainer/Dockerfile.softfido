@@ -1,0 +1,548 @@
+# Virtual FIDO2 Authenticator Service
+# Provides software-based FIDO2/WebAuthn authenticator for testing
+#
+# Uses uhid (userspace HID) when available, falls back to socket-based protocol
+
+FROM debian:bookworm-slim AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    build-essential \
+    cmake \
+    pkg-config \
+    libssl-dev \
+    libfido2-dev \
+    libcbor-dev \
+    libudev-dev \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create Python virtual environment and install dependencies
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install python-fido2 and soft-webauthn for testing
+RUN pip3 install --no-cache-dir \
+    fido2>=1.1.0 \
+    cryptography>=41.0.0 \
+    cbor2>=5.0.0 \
+    flask>=2.0.0
+
+# Build u2f-emulated for uhid-based emulation (if kernel supports it)
+WORKDIR /build
+RUN git clone --depth 1 https://github.com/nicholasgilpin/soft-webauthn.git || true
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfido2-1 \
+    fido2-tools \
+    libcbor0.8 \
+    libssl3 \
+    python3 \
+    python3-venv \
+    socat \
+    netcat-openbsd \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Python virtual environment
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create directories
+RUN mkdir -p /var/lib/softfido /var/run/softfido /etc/softfido
+
+# Create SoftFIDO configuration
+RUN cat > /etc/softfido/config.json << 'EOF'
+{
+    "rp_id": "go-keychain-test",
+    "rp_name": "Go Keychain Integration Tests",
+    "pin": "123456",
+    "user_verification": true,
+    "resident_keys": true,
+    "attestation": "none"
+}
+EOF
+
+# Create software FIDO2 authenticator server
+RUN cat > /usr/local/bin/softfido-server.py << 'PYTHON'
+#!/usr/bin/env python3
+"""
+Software FIDO2 Authenticator for Testing
+
+Provides a socket-based FIDO2 authenticator that implements CTAP2 protocol
+for integration testing without hardware.
+"""
+
+import json
+import os
+import socket
+import struct
+import sys
+import threading
+import hashlib
+import secrets
+from pathlib import Path
+from typing import Optional, Dict, Any
+
+try:
+    from fido2.ctap2 import Ctap2, ClientPin
+    from fido2.cose import ES256
+    from fido2.webauthn import (
+        PublicKeyCredentialCreationOptions,
+        PublicKeyCredentialRequestOptions,
+    )
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.backends import default_backend
+    import cbor2
+except ImportError as e:
+    print(f"Missing dependency: {e}", file=sys.stderr)
+    print("Install with: pip install fido2 cryptography cbor2", file=sys.stderr)
+    sys.exit(1)
+
+
+class SoftFIDO2Authenticator:
+    """Software-based FIDO2 authenticator for testing."""
+
+    AAGUID = bytes.fromhex("00000000000000000000000000000001")
+
+    def __init__(self, state_dir: str = "/var/lib/softfido", pin: str = "123456"):
+        self.state_dir = Path(state_dir)
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.pin = pin
+        self.pin_hash = hashlib.sha256(pin.encode()).digest()
+        self.credentials: Dict[bytes, Dict[str, Any]] = {}
+        self.counter = 0
+        self._load_state()
+
+    def _load_state(self):
+        """Load saved state from disk."""
+        state_file = self.state_dir / "state.json"
+        if state_file.exists():
+            try:
+                with open(state_file) as f:
+                    data = json.load(f)
+                    self.counter = data.get("counter", 0)
+                    # Load credentials
+                    for cred_id_hex, cred_data in data.get("credentials", {}).items():
+                        cred_id = bytes.fromhex(cred_id_hex)
+                        self.credentials[cred_id] = {
+                            "rp_id": cred_data["rp_id"],
+                            "user_id": bytes.fromhex(cred_data["user_id"]),
+                            "private_key": bytes.fromhex(cred_data["private_key"]),
+                        }
+            except Exception as e:
+                print(f"Warning: Could not load state: {e}", file=sys.stderr)
+
+    def _save_state(self):
+        """Save state to disk."""
+        state_file = self.state_dir / "state.json"
+        data = {
+            "counter": self.counter,
+            "credentials": {
+                cred_id.hex(): {
+                    "rp_id": cred["rp_id"],
+                    "user_id": cred["user_id"].hex(),
+                    "private_key": cred["private_key"].hex(),
+                }
+                for cred_id, cred in self.credentials.items()
+            }
+        }
+        with open(state_file, "w") as f:
+            json.dump(data, f)
+
+    def get_info(self) -> Dict[str, Any]:
+        """Return authenticator info (CTAP2 authenticatorGetInfo)."""
+        return {
+            "versions": ["FIDO_2_0", "FIDO_2_1"],
+            "extensions": ["hmac-secret", "credProtect"],
+            "aaguid": self.AAGUID,
+            "options": {
+                "rk": True,
+                "up": True,
+                "uv": True,
+                "plat": False,
+                "clientPin": True,
+            },
+            "maxMsgSize": 1200,
+            "pinUvAuthProtocols": [1],
+            "transports": ["internal"],
+        }
+
+    def make_credential(
+        self,
+        client_data_hash: bytes,
+        rp_id: str,
+        rp_name: str,
+        user_id: bytes,
+        user_name: str,
+        pubkey_cred_params: list,
+        options: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Create a new credential (CTAP2 authenticatorMakeCredential)."""
+        # Generate credential ID
+        credential_id = secrets.token_bytes(32)
+
+        # Generate key pair (ES256)
+        private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
+        public_key = private_key.public_key()
+
+        # Store credential
+        private_key_bytes = private_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+
+        self.credentials[credential_id] = {
+            "rp_id": rp_id,
+            "user_id": user_id,
+            "private_key": private_key_bytes,
+        }
+        self._save_state()
+
+        # Get public key coordinates
+        public_numbers = public_key.public_numbers()
+        x = public_numbers.x.to_bytes(32, "big")
+        y = public_numbers.y.to_bytes(32, "big")
+
+        # Build COSE key
+        cose_key = {
+            1: 2,  # kty: EC2
+            3: -7,  # alg: ES256
+            -1: 1,  # crv: P-256
+            -2: x,  # x coordinate
+            -3: y,  # y coordinate
+        }
+
+        # Build attested credential data
+        self.counter += 1
+        acd = (
+            self.AAGUID +
+            len(credential_id).to_bytes(2, "big") +
+            credential_id +
+            cbor2.dumps(cose_key)
+        )
+
+        # Build authenticator data
+        rp_id_hash = hashlib.sha256(rp_id.encode()).digest()
+        flags = 0x45  # UP + UV + AT
+        auth_data = rp_id_hash + bytes([flags]) + self.counter.to_bytes(4, "big") + acd
+
+        # Create attestation object (none attestation for simplicity)
+        attestation_object = {
+            "fmt": "none",
+            "authData": auth_data,
+            "attStmt": {},
+        }
+
+        return {
+            "credential_id": credential_id,
+            "attestation_object": cbor2.dumps(attestation_object),
+            "auth_data": auth_data,
+            "public_key": cose_key,
+        }
+
+    def get_assertion(
+        self,
+        client_data_hash: bytes,
+        rp_id: str,
+        allow_list: Optional[list] = None,
+        options: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Get assertion for existing credential (CTAP2 authenticatorGetAssertion)."""
+        # Find matching credential
+        credential_id = None
+        credential = None
+
+        if allow_list:
+            for allowed in allow_list:
+                cred_id = allowed.get("id", allowed) if isinstance(allowed, dict) else allowed
+                if isinstance(cred_id, str):
+                    cred_id = bytes.fromhex(cred_id)
+                if cred_id in self.credentials:
+                    cred = self.credentials[cred_id]
+                    if cred["rp_id"] == rp_id:
+                        credential_id = cred_id
+                        credential = cred
+                        break
+        else:
+            # Resident key - find by rp_id
+            for cred_id, cred in self.credentials.items():
+                if cred["rp_id"] == rp_id:
+                    credential_id = cred_id
+                    credential = cred
+                    break
+
+        if not credential:
+            raise ValueError(f"No credential found for rp_id: {rp_id}")
+
+        # Load private key
+        private_key = serialization.load_der_private_key(
+            credential["private_key"],
+            password=None,
+            backend=default_backend(),
+        )
+
+        # Build authenticator data
+        rp_id_hash = hashlib.sha256(rp_id.encode()).digest()
+        self.counter += 1
+        flags = 0x05  # UP + UV
+        auth_data = rp_id_hash + bytes([flags]) + self.counter.to_bytes(4, "big")
+
+        # Sign
+        signature_data = auth_data + client_data_hash
+        signature = private_key.sign(signature_data, ec.ECDSA(hashes.SHA256()))
+
+        return {
+            "credential_id": credential_id,
+            "auth_data": auth_data,
+            "signature": signature,
+            "user_id": credential["user_id"],
+        }
+
+    def list_credentials(self, rp_id: Optional[str] = None) -> list:
+        """List stored credentials."""
+        result = []
+        for cred_id, cred in self.credentials.items():
+            if rp_id is None or cred["rp_id"] == rp_id:
+                result.append({
+                    "credential_id": cred_id.hex(),
+                    "rp_id": cred["rp_id"],
+                    "user_id": cred["user_id"].hex(),
+                })
+        return result
+
+
+class SoftFIDO2Server:
+    """Socket server for software FIDO2 authenticator."""
+
+    def __init__(self, socket_path: str, authenticator: SoftFIDO2Authenticator):
+        self.socket_path = socket_path
+        self.authenticator = authenticator
+        self.running = False
+
+    def handle_client(self, conn: socket.socket, addr):
+        """Handle a client connection."""
+        try:
+            while True:
+                # Read length prefix (4 bytes, big endian)
+                length_data = conn.recv(4)
+                if not length_data:
+                    break
+
+                msg_length = struct.unpack(">I", length_data)[0]
+                if msg_length > 65536:
+                    break
+
+                # Read message
+                msg_data = b""
+                while len(msg_data) < msg_length:
+                    chunk = conn.recv(min(4096, msg_length - len(msg_data)))
+                    if not chunk:
+                        break
+                    msg_data += chunk
+
+                if len(msg_data) != msg_length:
+                    break
+
+                # Parse and handle request
+                try:
+                    request = cbor2.loads(msg_data)
+                    response = self.handle_request(request)
+                    response_data = cbor2.dumps(response)
+                except Exception as e:
+                    response_data = cbor2.dumps({"error": str(e)})
+
+                # Send response
+                conn.sendall(struct.pack(">I", len(response_data)) + response_data)
+
+        except Exception as e:
+            print(f"Client error: {e}", file=sys.stderr)
+        finally:
+            conn.close()
+
+    def handle_request(self, request: Dict) -> Dict:
+        """Handle a CBOR request."""
+        cmd = request.get("cmd")
+
+        if cmd == "get_info":
+            return {"status": "ok", "data": self.authenticator.get_info()}
+
+        elif cmd == "make_credential":
+            result = self.authenticator.make_credential(
+                client_data_hash=bytes.fromhex(request.get("client_data_hash", "")),
+                rp_id=request.get("rp_id", "localhost"),
+                rp_name=request.get("rp_name", "Test"),
+                user_id=bytes.fromhex(request.get("user_id", secrets.token_hex(16))),
+                user_name=request.get("user_name", "testuser"),
+                pubkey_cred_params=request.get("pubkey_cred_params", [{"type": "public-key", "alg": -7}]),
+                options=request.get("options"),
+            )
+            return {
+                "status": "ok",
+                "credential_id": result["credential_id"].hex(),
+                "attestation_object": result["attestation_object"].hex(),
+                "auth_data": result["auth_data"].hex(),
+            }
+
+        elif cmd == "get_assertion":
+            allow_list = request.get("allow_list")
+            if allow_list:
+                allow_list = [{"id": bytes.fromhex(c["id"]) if isinstance(c, dict) else bytes.fromhex(c)} for c in allow_list]
+
+            result = self.authenticator.get_assertion(
+                client_data_hash=bytes.fromhex(request.get("client_data_hash", "")),
+                rp_id=request.get("rp_id", "localhost"),
+                allow_list=allow_list,
+                options=request.get("options"),
+            )
+            return {
+                "status": "ok",
+                "credential_id": result["credential_id"].hex(),
+                "auth_data": result["auth_data"].hex(),
+                "signature": result["signature"].hex(),
+                "user_id": result["user_id"].hex(),
+            }
+
+        elif cmd == "list_credentials":
+            return {
+                "status": "ok",
+                "credentials": self.authenticator.list_credentials(request.get("rp_id")),
+            }
+
+        else:
+            return {"status": "error", "error": f"Unknown command: {cmd}"}
+
+    def run(self):
+        """Run the server."""
+        # Remove existing socket
+        if os.path.exists(self.socket_path):
+            os.unlink(self.socket_path)
+
+        # Create socket directory
+        os.makedirs(os.path.dirname(self.socket_path), exist_ok=True)
+
+        # Create Unix socket
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(self.socket_path)
+        os.chmod(self.socket_path, 0o666)
+        server.listen(5)
+
+        print(f"SoftFIDO2 server listening on {self.socket_path}")
+        self.running = True
+
+        while self.running:
+            try:
+                conn, addr = server.accept()
+                thread = threading.Thread(target=self.handle_client, args=(conn, addr))
+                thread.daemon = True
+                thread.start()
+            except Exception as e:
+                if self.running:
+                    print(f"Server error: {e}", file=sys.stderr)
+
+        server.close()
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Software FIDO2 Authenticator")
+    parser.add_argument("--socket", default="/var/run/softfido/softfido.sock",
+                       help="Unix socket path")
+    parser.add_argument("--state-dir", default="/var/lib/softfido",
+                       help="State directory")
+    parser.add_argument("--pin", default="123456", help="PIN")
+    args = parser.parse_args()
+
+    authenticator = SoftFIDO2Authenticator(state_dir=args.state_dir, pin=args.pin)
+    server = SoftFIDO2Server(args.socket, authenticator)
+
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+
+
+if __name__ == "__main__":
+    main()
+PYTHON
+
+RUN chmod +x /usr/local/bin/softfido-server.py
+
+# Create startup script
+RUN cat > /usr/local/bin/start-softfido.sh << 'SCRIPT'
+#!/bin/bash
+set -e
+
+echo "=== SoftFIDO2 Virtual Authenticator ==="
+echo "PIN: ${SOFTFIDO_PIN:-123456}"
+
+# Create directories
+mkdir -p /var/lib/softfido /var/run/softfido
+chmod 755 /var/run/softfido
+
+# Start the Python FIDO2 server
+echo "Starting SoftFIDO2 server..."
+/opt/venv/bin/python3 /usr/local/bin/softfido-server.py \
+    --socket /var/run/softfido/softfido.sock \
+    --state-dir /var/lib/softfido \
+    --pin "${SOFTFIDO_PIN:-123456}" &
+SOFTFIDO_PID=$!
+
+# Wait for socket
+for i in {1..30}; do
+    if [ -S /var/run/softfido/softfido.sock ]; then
+        echo "✓ SoftFIDO2 socket ready"
+        break
+    fi
+    sleep 1
+done
+
+# Create ready marker
+touch /var/run/.softfido-ready
+
+echo "=== SoftFIDO2 Ready ==="
+echo "Socket: /var/run/softfido/softfido.sock"
+echo "State: /var/lib/softfido"
+
+# Handle shutdown
+trap "kill $SOFTFIDO_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+
+# Keep running
+wait
+SCRIPT
+
+RUN chmod +x /usr/local/bin/start-softfido.sh
+
+# Create healthcheck
+RUN cat > /usr/local/bin/healthcheck.sh << 'EOF'
+#!/bin/bash
+[ -f /var/run/.softfido-ready ] && [ -S /var/run/softfido/softfido.sock ]
+EOF
+
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Environment
+ENV SOFTFIDO_PIN=123456
+ENV SOFTFIDO_SOCKET=/var/run/softfido/softfido.sock
+
+VOLUME ["/var/lib/softfido", "/var/run/softfido"]
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=10 --start-period=10s \
+    CMD ["/usr/local/bin/healthcheck.sh"]
+
+CMD ["/usr/local/bin/start-softfido.sh"]

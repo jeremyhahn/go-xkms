@@ -52,20 +52,23 @@ Storage backend for public components that don't require protection.
 - Session state for signing
 
 **Supported Backends:**
-- File-based storage
-- Memory storage (testing only)
-- go-objstore backends (S3, GCS, etc.)
-- Custom implementations
+- File-based storage (built-in)
+- Memory storage (built-in, testing only)
+- Custom storage adapters (implement `storage.Backend`)
+
+**Cloud Storage Integration:**
+go-keychain's `storage.Backend` interface is compatible with external object storage libraries like go-objstore. To use cloud storage (S3, GCS, Azure Blob), create an adapter in your application that bridges the external library to go-keychain's interface.
 
 ```go
-// File-based storage
+// File-based storage (built-in)
 publicStorage := file.NewBackend("/var/lib/frost/public")
 
-// Memory storage (testing)
+// Memory storage (built-in, testing only)
 publicStorage := memory.NewBackend()
 
-// S3 storage via go-objstore
-publicStorage := objstore.NewS3Backend(s3Config)
+// Custom cloud storage adapter (implement in your application)
+// See docs/architecture/objstore-integration.md for adapter examples
+publicStorage := myapp.NewS3Adapter(s3Config)
 ```
 
 ### SecretBackend (Required)
@@ -376,19 +379,16 @@ package main
 import (
     "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
     "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
+    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
     "github.com/jeremyhahn/go-keychain/pkg/types"
-    "github.com/jeremyhahn/go-objstore/pkg/s3"
 )
 
 func productionAWSConfig() (*frost.Config, error) {
-    // S3 for public data
-    s3Storage, err := s3.NewBackend(&s3.Config{
-        Bucket: "my-frost-public",
-        Region: "us-east-1",
-    })
-    if err != nil {
-        return nil, err
-    }
+    // File storage for public data
+    // NOTE: For S3 storage, create an adapter in your application that
+    // implements storage.Backend. go-keychain's interface is compatible
+    // with external libraries like go-objstore.
+    publicStorage := file.NewBackend("/var/lib/frost/public")
 
     // AWS KMS for secrets
     kmsBackend, err := awskms.NewBackend(&awskms.Config{
@@ -400,7 +400,7 @@ func productionAWSConfig() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage: s3Storage,
+        PublicStorage: publicStorage,
         SecretBackend: kmsBackend,
         Algorithm:     types.FrostAlgorithmP256,
 

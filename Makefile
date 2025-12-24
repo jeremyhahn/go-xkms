@@ -53,7 +53,9 @@ endif
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
 CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault quantum frost
 # Server includes all tags including pkcs11
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum frost
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum frost tpm_simulator
+# All tags for integration testing (includes all possible build tags)
+ALL_TAGS := integration frost pkcs8 pkcs11 quantum awskms gcpkms azurekv vault tpm_simulator yubikey nitrokey canokey fido2 webauthn
 
 # Build tags based on backend flags (for development/testing)
 BUILD_TAGS :=
@@ -110,6 +112,7 @@ PKG_DIR := ./pkg/...
 CMD_DIR := ./cmd/...
 TEST_DIR := ./test/...
 INTEGRATION_TEST_DIR := .
+API_TEST_DIR := $(CURDIR)/test/integration/api
 
 # Build artifacts
 BUILD_DIR := build
@@ -625,7 +628,8 @@ coverage-migration:
 
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends + all API protocols)
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-cli integration-test-api-all
+## Note: CanoKey tests require physical hardware - run separately with `make integration-test-canokey`
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-virtualfido integration-test-cli integration-test-api-all
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -761,7 +765,7 @@ emulator-start:
 ## emulator-stop: Stop and remove emulator containers
 emulator-stop:
 	@$(EMULATOR_COMPOSE) down -v 2>/dev/null || true
-	@cd test/integration/api && docker compose down -v 2>/dev/null || true
+	@cd $(API_TEST_DIR) && docker compose down -v 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=localstack") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=keychain") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=azure") 2>/dev/null || true
@@ -800,18 +804,14 @@ emulator-clean: emulator-stop
 # ==============================================================================
 
 .PHONY: integration-test-software
-## integration-test-software: Run unified software backend integration tests
+## integration-test-software: Run unified software backend integration tests (runs in devcontainer)
 integration-test-software:
-	@echo "$(CYAN)$(BOLD)→ Running unified software backend integration tests...$(RESET)"
-	@$(GOTEST) -v ./pkg/backend/software/... -tags=integration
-	@echo "$(GREEN)✓ Unified software backend integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./pkg/backend/software/... -timeout 5m,integration-test-software)
 
 .PHONY: integration-test-symmetric
-## integration-test-symmetric: Run symmetric backend integration tests
+## integration-test-symmetric: Run symmetric backend integration tests (runs in devcontainer)
 integration-test-symmetric:
-	@echo "$(CYAN)$(BOLD)→ Running symmetric backend integration tests...$(RESET)"
-	@$(GOTEST) -v ./pkg/backend/symmetric/... -tags=integration
-	@echo "$(GREEN)✓ Symmetric backend integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./pkg/backend/symmetric/... -timeout 5m,integration-test-symmetric)
 
 .PHONY: integration-test-pkcs8
 ## integration-test-pkcs8: Run PKCS8 asymmetric backend integration tests
@@ -951,77 +951,140 @@ else
 endif
 
 .PHONY: integration-test-webauthn
-## integration-test-webauthn: Run WebAuthn integration tests with virtual authenticator
+## integration-test-webauthn: Run WebAuthn integration tests with virtual authenticator (runs in devcontainer)
 integration-test-webauthn:
-	@echo "$(CYAN)$(BOLD)→ Running WebAuthn integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./pkg/webauthn/...
-	@echo "$(GREEN)✓ WebAuthn integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./pkg/webauthn/... -timeout 5m,integration-test-webauthn)
+
+# Comma for use in function calls (Make escapes commas in function args)
+comma := ,
+
+# Docker compose command for devcontainer
+DOCKER_COMPOSE := docker compose -f .devcontainer/docker-compose.yml
+
+# Helper to run command in devcontainer (auto-starts if needed)
+define run_in_devcontainer
+	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
+		$(1); \
+	else \
+		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
+		$(DOCKER_COMPOSE) up -d --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d; \
+		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && $(1)"; \
+	fi
+endef
+
+.PHONY: integration-test-canokey
+## integration-test-canokey: Run CanoKey/PIV PKCS#11 integration tests
+## Requires physical CanoKey hardware connected via USB
+## Tests will SKIP if no hardware is detected
+integration-test-canokey:
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)canokey$(comma)pkcs11' ./test/integration/pkcs11/... -run 'CanoKey' -timeout 10m,integration-test-canokey)
+
+.PHONY: integration-test-fido2
+## integration-test-fido2: Run all FIDO2 integration tests (runs in devcontainer)
+integration-test-fido2:
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+
+.PHONY: integration-test-fido2-cli
+## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
+integration-test-fido2-cli:
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+
+.PHONY: integration-test-fido2-webauthn
+## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
+integration-test-fido2-webauthn:
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+
+.PHONY: integration-test-fido2-multiprotocol
+## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests (runs in devcontainer)
+integration-test-fido2-multiprotocol:
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+
+.PHONY: integration-test-canokey-qemu
+## integration-test-canokey-qemu: Run CanoKey QEMU smoke tests (verifies QEMU has CanoKey support)
+## Runs in devcontainer where qemu-system-x86_64-canokey is built
+integration-test-canokey-qemu:
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CanoKeyQEMU' -timeout 5m,integration-test-canokey-qemu)
+
+.PHONY: integration-test-virtualfido
+## integration-test-virtualfido: Run VirtualFIDO backend integration tests (runs in devcontainer)
+integration-test-virtualfido:
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/virtualfido/... -timeout 5m,integration-test-virtualfido)
+
+.PHONY: test-virtualfido
+## test-virtualfido: Run VirtualFIDO unit tests
+test-virtualfido:
+	@echo "$(CYAN)$(BOLD)→ Running VirtualFIDO unit tests...$(RESET)"
+	@$(GOTEST) -v ./pkg/backend/virtualfido/... ./pkg/fido2/...
+	@echo "$(GREEN)✓ VirtualFIDO unit tests complete$(RESET)"
+
+.PHONY: coverage-virtualfido
+## coverage-virtualfido: Generate VirtualFIDO test coverage report
+coverage-virtualfido:
+	@echo "$(CYAN)$(BOLD)→ Generating VirtualFIDO coverage report...$(RESET)"
+	@$(GOTEST) -v -tags=integration -coverprofile=coverage-virtualfido.out -coverpkg=./pkg/backend/virtualfido/...,./pkg/fido2/... ./test/integration/virtualfido/... ./pkg/backend/virtualfido/... ./pkg/fido2/...
+	@$(GO) tool cover -html=coverage-virtualfido.out -o coverage-virtualfido.html
+	@$(GO) tool cover -func=coverage-virtualfido.out | tail -1
+	@echo "$(GREEN)✓ VirtualFIDO coverage report generated: coverage-virtualfido.html$(RESET)"
+
+.PHONY: coverage-fido2
+## coverage-fido2: Generate FIDO2 integration test coverage report
+coverage-fido2:
+	@echo "$(CYAN)$(BOLD)→ Generating FIDO2 coverage report...$(RESET)"
+	@$(GOTEST) -v -tags='integration,fido2' -coverprofile=coverage-fido2.out ./test/integration/fido2/...
+	@$(GO) tool cover -html=coverage-fido2.out -o coverage-fido2.html
+	@echo "$(GREEN)✓ FIDO2 coverage report generated: coverage-fido2.html$(RESET)"
 
 .PHONY: integration-test-cli
 ## integration-test-cli: Run CLI integration tests across all protocols (Unix, REST, gRPC, QUIC)
 integration-test-cli:
 	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests...$(RESET)"
 	@echo "$(CYAN)  Testing all protocols: Unix, REST, gRPC, QUIC$(RESET)"
-	@cd test/integration/api && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/api && docker compose build
-	@cd test/integration/api && (docker compose run --rm integration-tests; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
+	@cd $(API_TEST_DIR) && docker compose down -v >/dev/null 2>&1 || true
+	@cd $(API_TEST_DIR) && docker compose build
+	@cd $(API_TEST_DIR) && (docker compose run --rm integration-tests; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: integration-test-cli-local
-## integration-test-cli-local: Run CLI integration tests locally (requires server running)
+## integration-test-cli-local: Run CLI integration tests locally (runs in devcontainer)
 integration-test-cli-local:
-	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests locally...$(RESET)"
-	@$(GOTEST) -v -tags='integration frost' ./test/integration/api/... -timeout 15m
-	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)frost' ./test/integration/api/... -timeout 15m,integration-test-cli-local)
 
 .PHONY: integration-test-signing
-## integration-test-signing: Run signing package integration tests
+## integration-test-signing: Run signing package integration tests (runs in devcontainer)
 integration-test-signing:
-	@echo "$(CYAN)$(BOLD)→ Running signing package integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/signing/...
-	@echo "$(GREEN)✓ Signing integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/signing/... -timeout 5m,integration-test-signing)
 
 .PHONY: integration-test-opaque
-## integration-test-opaque: Run opaque key package integration tests
+## integration-test-opaque: Run opaque key package integration tests (runs in devcontainer)
 integration-test-opaque:
-	@echo "$(CYAN)$(BOLD)→ Running opaque key package integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/opaque/...
-	@echo "$(GREEN)✓ Opaque key integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/opaque/... -timeout 5m,integration-test-opaque)
 
 .PHONY: integration-test-metrics
-## integration-test-metrics: Run metrics package integration tests
+## integration-test-metrics: Run metrics package integration tests (runs in devcontainer)
 integration-test-metrics:
-	@echo "$(CYAN)$(BOLD)→ Running metrics package integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/metrics/...
-	@echo "$(GREEN)✓ Metrics integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/metrics/... -timeout 5m,integration-test-metrics)
 
 .PHONY: integration-test-health
-## integration-test-health: Run health check package integration tests
+## integration-test-health: Run health check package integration tests (runs in devcontainer)
 integration-test-health:
-	@echo "$(CYAN)$(BOLD)→ Running health check package integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/health/...
-	@echo "$(GREEN)✓ Health check integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/health/... -timeout 5m,integration-test-health)
 
 .PHONY: integration-test-ratelimit
-## integration-test-ratelimit: Run rate limit package integration tests
+## integration-test-ratelimit: Run rate limit package integration tests (runs in devcontainer)
 integration-test-ratelimit:
-	@echo "$(CYAN)$(BOLD)→ Running rate limit package integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/ratelimit/...
-	@echo "$(GREEN)✓ Rate limit integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/ratelimit/... -timeout 5m,integration-test-ratelimit)
 
 .PHONY: integration-test-crypto-rand
-## integration-test-crypto-rand: Run crypto/rand package integration tests
+## integration-test-crypto-rand: Run crypto/rand package integration tests (runs in devcontainer)
 integration-test-crypto-rand:
-	@echo "$(CYAN)$(BOLD)→ Running crypto/rand package integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/crypto/... -run '.*Rand.*'
-	@echo "$(GREEN)✓ Crypto/rand integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/crypto/... -run '.*Rand.*' -timeout 5m,integration-test-crypto-rand)
 
 .PHONY: integration-test-rand-hardware
-## integration-test-rand-hardware: Run crypto/rand hardware integration tests (SWTPM + SoftHSM)
+## integration-test-rand-hardware: Run crypto/rand hardware integration tests (runs in devcontainer with SWTPM + SoftHSM)
 integration-test-rand-hardware:
-	@echo "$(CYAN)$(BOLD)→ Running crypto/rand hardware integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/crypto/... -run 'TestRand.*Hardware.*'
-	@echo "$(GREEN)✓ Crypto/rand hardware integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/crypto/... -run 'TestRand.*Hardware.*' -timeout 5m,integration-test-rand-hardware)
 
 .PHONY: integration-test-rand-yubikey
 ## integration-test-rand-yubikey: Run crypto/rand YubiKey integration tests (requires physical YubiKey)
@@ -1081,11 +1144,9 @@ integration-test-rand-all: integration-test-crypto-rand integration-test-rand-ha
 	@echo "$(GREEN)$(BOLD)✓ All crypto/rand integration tests complete!$(RESET)"
 
 .PHONY: integration-test-crypto-wrapping
-## integration-test-crypto-wrapping: Run crypto/wrapping package integration tests
+## integration-test-crypto-wrapping: Run crypto/wrapping package integration tests (runs in devcontainer)
 integration-test-crypto-wrapping:
-	@echo "$(CYAN)$(BOLD)→ Running crypto/wrapping package integration tests...$(RESET)"
-	@$(GOTEST) -v -tags=integration ./test/integration/crypto/... -run '.*Wrap.*'
-	@echo "$(GREEN)✓ Crypto/wrapping integration tests complete$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/crypto/... -run '.*Wrap.*' -timeout 5m,integration-test-crypto-wrapping)
 
 .PHONY: integration-test-utils
 ## integration-test-utils: Run all utility package integration tests
@@ -1938,8 +1999,7 @@ clean:
 	@$(GOCLEAN)
 	@rm -rf $(BUILD_DIR)
 	@rm -rf $(COVERAGE_DIR)
-	@rm -f coverage.out
-	@rm -f *.out *.test *.prof
+	@rm -f *.out *.log *.test *.prof
 	@rm -f $(SHARED_LIB)
 	@rm -f server cli keychain keychaind
 	@rm -f COMMIT_SUMMARY.md
@@ -2050,14 +2110,16 @@ proto-check:
 ## integration-test-api: Run API integration tests for all interfaces
 integration-test-api:
 	@echo "$(CYAN)$(BOLD)→ Running API integration tests...$(RESET)"
-	@cd test/integration/api && docker compose up --build --abort-on-container-exit --exit-code-from integration-tests
+	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
+	@$(API_COMPOSE) up --build --abort-on-container-exit --exit-code-from integration-tests
 	@echo "$(GREEN)$(BOLD)✓ API integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-up
 ## integration-test-api-up: Start API test environment
 integration-test-api-up:
 	@echo "$(CYAN)$(BOLD)→ Starting API test environment...$(RESET)"
-	@cd test/integration/api && docker compose up -d keychain-server swtpm softhsm
+	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
+	@$(API_COMPOSE) up -d keychain-server swtpm softhsm
 	@echo "$(GREEN)✓ API test environment started$(RESET)"
 	@echo "$(CYAN)REST API: http://localhost:8443$(RESET)"
 	@echo "$(CYAN)gRPC:     localhost:9443$(RESET)"
@@ -2067,13 +2129,15 @@ integration-test-api-up:
 ## integration-test-api-down: Stop API test environment
 integration-test-api-down:
 	@echo "$(CYAN)→ Stopping API test environment...$(RESET)"
-	@cd test/integration/api && docker compose down -v
+	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
+	@$(API_COMPOSE) down -v
 	@echo "$(GREEN)✓ API test environment stopped$(RESET)"
 
 .PHONY: integration-test-api-logs
 ## integration-test-api-logs: View API test logs
 integration-test-api-logs:
-	@cd test/integration/api && docker compose logs -f
+	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
+	@$(API_COMPOSE) logs -f
 
 .PHONY: integration-test-local-api
 ## integration-test-local-api: Run API tests locally (requires server running)
@@ -2090,7 +2154,7 @@ integration-test-local-api:
 # Docker configuration for protocol integration tests
 DEVCONTAINER_IMAGE := go-keychain-devcontainer:latest
 API_TEST_NETWORK := keychain-api-test
-API_COMPOSE := cd test/integration/api && docker compose
+API_COMPOSE := cd $(API_TEST_DIR) && docker compose
 
 # Force kill and remove all keychain integration containers
 define kill_integration_containers
@@ -2099,7 +2163,7 @@ define kill_integration_containers
 	@docker rm -f keychain-integration-server keychain-integration-swtpm keychain-integration-softhsm keychain-integration-tests 2>/dev/null || true
 	@docker kill keychain-test-unix keychain-test-rest keychain-test-grpc keychain-test-quic keychain-test-mcp keychain-test-frost keychain-test-parity 2>/dev/null || true
 	@docker rm -f keychain-test-unix keychain-test-rest keychain-test-grpc keychain-test-quic keychain-test-mcp keychain-test-frost keychain-test-parity 2>/dev/null || true
-	@$(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true
+	@if [ -d $(API_TEST_DIR) ]; then $(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true; fi
 endef
 
 .PHONY: integration-test-api-kill

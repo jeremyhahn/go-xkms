@@ -130,9 +130,6 @@ func TestSeal_NotInitialized(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:                 "test-seal",
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	ctx := context.Background()
@@ -306,9 +303,6 @@ func TestUnseal_KeyMismatch(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:                 "different-key", // Different from KeyID
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	ctx := context.Background()
@@ -343,9 +337,6 @@ func TestUnseal_NotInitialized(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:                 "test-unseal",
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	sealed := &types.SealedData{

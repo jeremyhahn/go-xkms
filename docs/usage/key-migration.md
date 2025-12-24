@@ -128,13 +128,13 @@ Before executing a migration, always create a plan to see what will be migrated:
 
 ```bash
 keychain migrate plan --from pkcs8 --to pkcs11 \
-  --key-types signing encryption
+  --key-types signing encryption hmac
 ```
 
 Options:
 - `--from` - Source backend (required)
 - `--to` - Destination backend (required)
-- `--key-types` - Filter by key type (signing, encryption, ca, tls)
+- `--key-types` - Filter by key type (signing, encryption, hmac, secret, tls, ca, endorsement, attestation, storage, idevid, ldevid, tpm)
 - `--store-types` - Filter by store type
 - `--partitions` - Filter by partition
 - `--cn-pattern` - Regex pattern for Common Names
@@ -387,5 +387,4 @@ if err != nil {
 ## See Also
 
 - [Backend Configuration Guide](../backends/README.md)
-- [Key Management API](../api/keys.md)
-- [Security Best Practices](../security/best-practices.md)
+- [Backend Registry](../architecture/backend-registry.md)

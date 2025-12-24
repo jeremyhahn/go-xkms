@@ -7,9 +7,19 @@ Comprehensive architecture documentation for the go-keychain multi-protocol serv
 
 This directory contains the complete architecture and implementation guidance for building the go-keychain server that exposes the KeyStore interface via multiple protocols.
 
-### Documents
+### Core Documents
 
-1. **[server-architecture.md](./server-architecture.md)** (30KB)
+1. **[quick-reference.md](./quick-reference.md)** (1-page)
+   - **Purpose:** One-page developer cheat sheet
+   - **Audience:** All developers
+   - **Contents:** Quick API reference, common patterns, key commands
+
+2. **[overview.md](./overview.md)** (14KB)
+   - **Purpose:** High-level architecture overview
+   - **Audience:** Project stakeholders, managers, new developers
+   - **Contents:** System overview, key features, component relationships
+
+3. **[server-architecture.md](./server-architecture.md)** (30KB)
    - **Purpose:** Complete technical architecture document
    - **Audience:** Architects, senior developers
    - **Contents:**
@@ -23,7 +33,7 @@ This directory contains the complete architecture and implementation guidance fo
      - Common patterns and best practices
      - Deployment considerations
 
-2. **[api-specifications.md](./api-specifications.md)** (22KB)
+4. **[api-specifications.md](./api-specifications.md)** (22KB)
    - **Purpose:** Complete API reference for all protocols
    - **Audience:** API users, integrators, frontend developers
    - **Contents:**
@@ -37,12 +47,28 @@ This directory contains the complete architecture and implementation guidance fo
      - Rate limits
      - Complete usage examples
 
-3. **[overview.md](./overview.md)** (14KB)
-   - **Purpose:** High-level architecture overview
-   - **Audience:** Project stakeholders, managers
-   - **Contents:** Existing overview document
+### Feature & Component Documentation
 
-4. **[rbac.md](./rbac.md)** (12KB)
+5. **[storage.md](./storage.md)**
+   - **Purpose:** Consolidated storage architecture
+   - **Audience:** Backend developers, platform engineers
+   - **Contents:**
+     - Storage abstraction layer design
+     - BlobStorer interface specifications
+     - Backend implementations (filesystem, memory, cloud)
+     - Integration patterns
+     - Migration guides
+
+6. **[adapter-framework.md](./adapter-framework.md)**
+   - **Purpose:** Authentication, logging, and adapter patterns
+   - **Audience:** Platform developers
+   - **Contents:**
+     - Adapter architecture
+     - Auth adapters (API key, JWT, mTLS)
+     - Logging adapters
+     - Custom adapter development
+
+7. **[rbac.md](./rbac.md)** (12KB)
    - **Purpose:** Role-based access control documentation
    - **Audience:** Developers implementing authorization
    - **Contents:**
@@ -52,34 +78,101 @@ This directory contains the complete architecture and implementation guidance fo
      - Integration with user management
      - HTTP middleware examples
 
+8. **[unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md)**
+   - **Purpose:** Key ID format and JWK integration guide
+   - **Audience:** Key management developers
+   - **Contents:**
+     - Key ID format specifications
+     - JWK integration patterns
+     - Quick reference for common operations
+     - Best practices
+
+9. **[hardware-certificate-storage.md](./hardware-certificate-storage.md)**
+   - **Purpose:** Hardware-backed certificate storage
+   - **Audience:** Security engineers, PKI developers
+   - **Contents:**
+     - HSM/TPM integration
+     - Certificate chain storage
+     - Hardware key attestation
+
+10. **[correlation-ids.md](./correlation-ids.md)**
+    - **Purpose:** Request tracing and correlation
+    - **Audience:** Platform developers, SREs
+    - **Contents:**
+      - Correlation ID propagation
+      - Distributed tracing patterns
+      - Logging integration
+
+11. **[objstore-integration.md](./objstore-integration.md)**
+    - **Purpose:** Cloud object storage integration
+    - **Audience:** Platform engineers
+    - **Contents:**
+      - go-objstore integration
+      - Cloud provider backends
+      - Migration strategies
+
+12. **[post-quantum-cryptography.md](./post-quantum-cryptography.md)**
+    - **Purpose:** Post-quantum cryptography support
+    - **Audience:** Cryptography engineers
+    - **Contents:**
+      - PQC algorithm support
+      - Hybrid key schemes
+      - Migration planning
+
+13. **[symmetric-encryption.md](./symmetric-encryption.md)**
+    - **Purpose:** Symmetric encryption capabilities
+    - **Audience:** Security developers
+    - **Contents:**
+      - AES-GCM support
+      - ChaCha20-Poly1305 implementation
+      - Key derivation patterns
+
 ## Quick Start
+
+### For Developers (Quick Reference)
+
+**Start here:** [quick-reference.md](./quick-reference.md) - One-page cheat sheet with:
+- Common API patterns
+- Key generation examples
+- Configuration snippets
+- Essential commands
 
 ### For Developers Starting Implementation
 
-1. **Read first:** [server-architecture.md](./server-architecture.md)
+1. **Read first:** [overview.md](./overview.md)
+   - Understand the system at a high level
+   - Learn about key components and their relationships
+
+2. **Deep dive:** [server-architecture.md](./server-architecture.md)
    - Understand the overall design
    - Review the architecture diagrams
    - Familiarize yourself with design principles
    - Use the development workflow guidelines
    - Follow the testing strategy
 
-2. **Reference:** [api-specifications.md](./api-specifications.md)
+3. **Reference:** [api-specifications.md](./api-specifications.md)
    - Implement APIs according to specifications
    - Ensure consistency across all protocols
    - Validate against provided examples
 
+4. **Component-specific:** Review relevant feature documents
+   - [storage.md](./storage.md) - For storage layer work
+   - [rbac.md](./rbac.md) - For authorization implementation
+   - [unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md) - For key management
+
 ### For API Users / Integrators
 
-Start with [api-specifications.md](./api-specifications.md) to understand:
-- Available endpoints and methods
-- Request/response formats
-- Authentication requirements
-- Error handling
-- Rate limits
+1. **Quick start:** [quick-reference.md](./quick-reference.md)
+2. **Complete reference:** [api-specifications.md](./api-specifications.md)
+   - Available endpoints and methods
+   - Request/response formats
+   - Authentication requirements
+   - Error handling
+   - Rate limits
 
 ### For Project Managers / Stakeholders
 
-Read [overview.md](./overview.md) and the "Overview" section of [server-architecture.md](./server-architecture.md) for high-level understanding.
+Read [overview.md](./overview.md) for high-level understanding of the system architecture and capabilities.
 
 
 ## Architecture Summary
@@ -458,11 +551,36 @@ make docker-test       # Run integration tests in Docker
 5. **Review Regularly:** Ensure consistency across protocols
 
 
+## Documentation History
+
+### Consolidated Documents (2025-12)
+
+The following documents have been consolidated to reduce duplication and improve maintainability:
+
+**Merged into [storage.md](./storage.md):**
+- `storage-abstraction.md` - Storage abstraction concepts
+- `storage-interfaces.md` - BlobStorer interface details
+
+**Merged into [unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md):**
+- `keyid-jwk-quick-reference.md` - Quick reference content
+
+**Removed (outdated):**
+- `backend-registry.md` - Superseded by server-architecture.md
+- `blobstorer-refactoring.md` - Internal development notes
+
+**Condensed:**
+- `hardware-certificate-storage.md` - Streamlined for clarity
+
+
 ## Support Resources
 
 ### Internal Documentation
+- [Quick Reference](./quick-reference.md) - One-page cheat sheet
+- [Overview](./overview.md) - High-level architecture
 - [Server Architecture](./server-architecture.md) - Complete technical design
 - [API Specifications](./api-specifications.md) - Complete API reference
+- [Storage Architecture](./storage.md) - Storage layer design
+- [RBAC](./rbac.md) - Role-based access control
 - [KeyStore Interface](../../pkg/keychain/keystore.go) - Core interface
 - [Backend Interface](../../pkg/backend/backend.go) - Backend contract
 - [Existing Tests](../../test/integration/api/) - Integration test suite
@@ -499,14 +617,24 @@ When implementing components, ensure:
 
 These architecture documents should be updated when:
 
-- Adding new protocols or endpoints
-- Changing error handling strategies
-- Modifying configuration structure
-- Updating security requirements
-- Adding new features or capabilities
+- Adding new protocols or endpoints → Update [api-specifications.md](./api-specifications.md) and [quick-reference.md](./quick-reference.md)
+- Changing error handling strategies → Update [server-architecture.md](./server-architecture.md)
+- Modifying configuration structure → Update [server-architecture.md](./server-architecture.md) and [quick-reference.md](./quick-reference.md)
+- Updating security requirements → Update [rbac.md](./rbac.md) and [adapter-framework.md](./adapter-framework.md)
+- Adding new features or capabilities → Update [overview.md](./overview.md) and relevant feature documents
+- Changing storage implementation → Update [storage.md](./storage.md)
+- Modifying key management → Update [unified-keyid-jwk-integration.md](./unified-keyid-jwk-integration.md)
 
-**Architecture Version:** 1.0
+### Documentation Structure Guidelines
+
+- **Keep it DRY:** Avoid duplicating content across documents. Link to authoritative sources.
+- **Single source of truth:** Each topic should have one primary document.
+- **Progressive disclosure:** Start simple (quick-reference), then detailed (feature docs).
+- **Consolidate when needed:** Merge documents that overlap significantly.
+
+**Architecture Version:** 1.1 (2025-12-24)
 **Document Owner:** Architecture Team
+**Last Consolidated:** 2025-12-24
 
 
-**Ready to begin development? Start with [server-architecture.md](./server-architecture.md)!**
+**Ready to begin development? Start with [quick-reference.md](./quick-reference.md) or [overview.md](./overview.md)!**

@@ -3,11 +3,31 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Privileged mode required for QEMU with KVM acceleration
+    privileged: true
+    # Capabilities for QEMU/KVM and hardware testing
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN        # For mount operations
+      - NET_ADMIN        # For network configuration
+      - IPC_LOCK         # For TPM memory locking
+    # Device access for KVM acceleration
+    devices:
+      - /dev/kvm:/dev/kvm
+    # Shared memory for QEMU
+    shm_size: '2gb'
+    # Memory limits for TPM operations
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
     volumes:
       - ..:/workspace:cached
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/home/vscode/.cache/go-build
       - /var/run/docker.sock:/var/run/docker.sock
+      # CanoKey QEMU state directory (for VM-based FIDO2 testing)
+      - canokey-state:/var/lib/canokey
     environment:
       - GOPATH=/go
       - CGO_ENABLED=1
@@ -22,6 +42,16 @@ services:
       - KEYSTORE_GRPC_ADDR=keychain-server:9443
       - KEYSTORE_QUIC_URL=https://keychain-server:8444
       - KEYSTORE_MCP_ADDR=keychain-server:9444
+      # CanoKey QEMU configuration (for VM-based FIDO2 testing)
+      - QEMU_CANOKEY_BIN=/usr/local/bin/qemu-system-x86_64-canokey
+      - CANOKEY_STATE_DIR=/var/lib/canokey
+      # CanoKey hardware configuration (uses OpenSC PKCS#11)
+      - CANOKEY_PKCS11_LIBRARY=/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
+      - CANOKEY_PIN=123456
+      - CANOKEY_SOPIN=12345678
+      # FIDO2 configuration (auto-detect device or use FIDO2_DEVICE_PATH)
+      - FIDO2_PIN=123456
+      - FIDO2_DEVICE_PATH=
     networks:
       - keychain-dev
     depends_on:
@@ -29,8 +59,6 @@ services:
         condition: service_healthy
       softhsm:
         condition: service_healthy
-    cap_add:
-      - SYS_PTRACE
     security_opt:
       - seccomp:unconfined
     command: sleep infinity
@@ -109,17 +137,40 @@ services:
       start_period: 10s
     networks:
       - keychain-dev
-    profiles:
-      - server
     command: ["/app/keychaind"]
+
+  # Virtual FIDO2 Authenticator Service (for WebAuthn testing without hardware)
+  # Uses software CTAP2 implementation with socket-based interface
+  softfido:
+    build:
+      context: .
+      dockerfile: Dockerfile.softfido
+    image: go-keychain-softfido:dev
+    container_name: keychain-dev-softfido
+    volumes:
+      - softfido-state:/var/lib/softfido
+      - softfido-run:/var/run/softfido
+    environment:
+      - SOFTFIDO_PIN=123456
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - keychain-dev
 
 volumes:
   go-mod-cache:
   go-build-cache:
   swtpm-state:
   softhsm-tokens:
+  canokey-state:
   keychain-data:
   keychain-socket:
+  softfido-state:
+  softfido-run:
 
 networks:
   keychain-dev:

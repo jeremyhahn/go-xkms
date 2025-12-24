@@ -1,301 +1,247 @@
-# go-objstore Integration for go-keychain
+# Storage Interface Compatibility with go-objstore
 
-## Summary
+## Overview
 
-This document describes the integration between go-keychain and go-objstore, enabling TPM blob storage to use any go-objstore backend (local filesystem, S3, Azure, GCS, etc.).
+go-keychain uses its own `storage.Backend` interface for all storage operations. This interface is intentionally designed to be **compatible** with external object storage libraries like [go-objstore](https://github.com/jeremyhahn/go-objstore), enabling higher-level applications to compose both libraries together.
 
-## Architecture Decision
+**Key Design Principles:**
+- go-keychain has **no direct dependency** on go-objstore
+- go-keychain provides built-in file and memory storage backends
+- The `storage.Backend` interface is simple and adapter-friendly
+- Higher-level applications can create adapters to use any storage backend
 
-### Problem
-go-keychain's `BlobStorer` interface uses simple `[]byte` operations:
+## go-keychain Storage Interface
+
 ```go
-type BlobStorer interface {
-    Read(name string) ([]byte, error)
-    Write(name string, data []byte) error
-    Delete(name string) error
+// storage.Backend - go-keychain's storage abstraction
+type Backend interface {
+    Get(key string) ([]byte, error)
+    Put(key string, data []byte, opts *Options) error
+    Delete(key string) error
+    List(prefix string) ([]string, error)
+    Exists(key string) (bool, error)
+    Close() error
 }
 ```
 
-go-objstore's `common.Storage` interface uses `io.Reader/io.ReadCloser`:
+## go-objstore Storage Interface
+
 ```go
+// common.Storage - go-objstore's storage abstraction
 type Storage interface {
     GetWithContext(ctx context.Context, key string) (io.ReadCloser, error)
     PutWithContext(ctx context.Context, key string, data io.Reader) error
     DeleteWithContext(ctx context.Context, key string) error
-    // ... additional methods
+    ListWithContext(ctx context.Context, prefix string) ([]string, error)
+    ExistsWithContext(ctx context.Context, key string) (bool, error)
+    Close() error
 }
 ```
 
-### Solution: Adapter Pattern
+## Interface Compatibility
 
-Created `ObjStoreBlobAdapter` that:
-1. Wraps `common.Storage` to implement `BlobStorer`
-2. Converts between `[]byte` and `io.Reader/io.ReadCloser`
-3. Handles context propagation
-4. Translates error types appropriately
-5. Maintains backward compatibility
+Both interfaces follow similar patterns:
 
-### Benefits
+| Operation | go-keychain | go-objstore |
+|-----------|-------------|-------------|
+| Read | `Get(key) ([]byte, error)` | `GetWithContext(ctx, key) (io.ReadCloser, error)` |
+| Write | `Put(key, data, opts) error` | `PutWithContext(ctx, key, reader) error` |
+| Delete | `Delete(key) error` | `DeleteWithContext(ctx, key) error` |
+| List | `List(prefix) ([]string, error)` | `ListWithContext(ctx, prefix) ([]string, error)` |
+| Exists | `Exists(key) (bool, error)` | `ExistsWithContext(ctx, key) (bool, error)` |
+| Close | `Close() error` | `Close() error` |
 
-1. **Flexibility**: Use any go-objstore backend (S3, Azure, GCS, local, etc.)
-2. **No Breaking Changes**: Existing code using `BlobStorer` continues to work
-3. **Optional Integration**: Uses build tags (`objstore`) for optional compilation
-4. **Cloud Ready**: Easy migration to cloud storage when needed
-5. **Tested**: >90% test coverage with comprehensive test suite
+The main differences:
+- go-keychain uses `[]byte` for data, go-objstore uses `io.Reader/io.ReadCloser`
+- go-objstore includes `context.Context` for cancellation and timeouts
+- go-keychain includes `Options` for permissions and metadata
 
-## Files Created
+## Creating an Adapter
 
-### Core Implementation
-- `/home/jhahn/sources/go-keychain/pkg/tpm2/store/objstore_adapter.go`
-  - Main adapter implementation
-  - 110 lines of code
-  - Build tag: `objstore`
+A higher-level application can create an adapter to use go-objstore backends with go-keychain:
 
-### Testing
-- `/home/jhahn/sources/go-keychain/pkg/tpm2/store/objstore_adapter_test.go`
-  - Comprehensive unit tests
-  - Tests all success and error paths
-  - Context propagation tests
-  - Round-trip data integrity tests
-  - 441 lines of test code
-  - Coverage: 91.7% - 100% on all methods
-
-### Documentation
-- `/home/jhahn/sources/go-keychain/pkg/tpm2/store/OBJSTORE_ADAPTER.md`
-  - Complete usage guide
-  - Examples for all major backends
-  - Security considerations
-  - Migration guide
-  - Troubleshooting section
-
-### Examples
-- `/home/jhahn/sources/go-keychain/pkg/tpm2/store/objstore_adapter_example_test.go`
-  - Runnable examples
-  - Basic usage
-  - Context usage
-  - Cloud storage concepts
-  - Hierarchical organization
-
-## Dependencies
-
-### go.mod Updates
 ```go
-require github.com/jeremyhahn/go-objstore v0.0.0
-replace github.com/jeremyhahn/go-objstore => /home/jhahn/sources/go-objstore
-```
+package adapter
 
-### Build Tags
-All objstore-related files use build tags to make them optional:
-```go
-//go:build objstore
-// +build objstore
-```
-
-## Usage Examples
-
-### Basic Local Storage
-```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-    "github.com/jeremyhahn/go-objstore/pkg/local"
+    "bytes"
+    "context"
+    "io"
+
+    "github.com/jeremyhahn/go-keychain/pkg/storage"
+    "github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-// Create local filesystem backend
-backend := local.New()
-backend.Configure(map[string]string{
-    "path": "/var/lib/tpm/blobs",
-})
+// ObjStoreAdapter wraps go-objstore's Storage to implement go-keychain's Backend
+type ObjStoreAdapter struct {
+    store common.Storage
+    ctx   context.Context
+}
 
-// Create adapter
-blobStore := store.NewObjStoreBlobAdapter(logger, backend)
+// NewObjStoreAdapter creates an adapter from a go-objstore backend
+func NewObjStoreAdapter(store common.Storage) storage.Backend {
+    return &ObjStoreAdapter{
+        store: store,
+        ctx:   context.Background(),
+    }
+}
 
-// Use as BlobStorer
-blobStore.Write("srk.blob", privateKeyData)
-data, _ := blobStore.Read("srk.blob")
-blobStore.Delete("srk.blob")
+// NewObjStoreAdapterWithContext creates an adapter with custom context
+func NewObjStoreAdapterWithContext(store common.Storage, ctx context.Context) storage.Backend {
+    return &ObjStoreAdapter{
+        store: store,
+        ctx:   ctx,
+    }
+}
+
+func (a *ObjStoreAdapter) Get(key string) ([]byte, error) {
+    reader, err := a.store.GetWithContext(a.ctx, key)
+    if err != nil {
+        return nil, err
+    }
+    defer reader.Close()
+    return io.ReadAll(reader)
+}
+
+func (a *ObjStoreAdapter) Put(key string, data []byte, opts *storage.Options) error {
+    return a.store.PutWithContext(a.ctx, key, bytes.NewReader(data))
+}
+
+func (a *ObjStoreAdapter) Delete(key string) error {
+    return a.store.DeleteWithContext(a.ctx, key)
+}
+
+func (a *ObjStoreAdapter) List(prefix string) ([]string, error) {
+    return a.store.ListWithContext(a.ctx, prefix)
+}
+
+func (a *ObjStoreAdapter) Exists(key string) (bool, error) {
+    return a.store.ExistsWithContext(a.ctx, key)
+}
+
+func (a *ObjStoreAdapter) Close() error {
+    return a.store.Close()
+}
 ```
 
-### S3 Cloud Storage
+## Usage in Higher-Level Applications
+
+### Example: Using S3 Storage with go-keychain
+
 ```go
+package main
+
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
+    "github.com/jeremyhahn/go-keychain/pkg/keychain"
     "github.com/jeremyhahn/go-objstore/pkg/s3"
+
+    "myapp/adapter" // Your adapter package
 )
 
-// Create S3 backend
-backend := s3.New()
-backend.Configure(map[string]string{
-    "region": "us-west-2",
-    "bucket": "tpm-secure-storage",
+func main() {
+    // Create go-objstore S3 backend
+    s3Backend := s3.New()
+    s3Backend.Configure(map[string]string{
+        "region": "us-west-2",
+        "bucket": "my-keychain-storage",
+    })
+
+    // Wrap with adapter to implement go-keychain's Backend interface
+    storageBackend := adapter.NewObjStoreAdapter(s3Backend)
+
+    // Use with go-keychain
+    kc, err := keychain.New(&keychain.Config{
+        Storage: storageBackend,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer kc.Close()
+
+    // Now go-keychain stores everything in S3
+}
+```
+
+### Example: Using Azure Blob Storage
+
+```go
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/azure"
+)
+
+// Create Azure backend
+azureBackend := azure.New()
+azureBackend.Configure(map[string]string{
+    "account":   "myaccount",
+    "container": "keychain-storage",
 })
 
-blobStore := store.NewObjStoreBlobAdapter(logger, backend)
+// Wrap with adapter
+storageBackend := adapter.NewObjStoreAdapter(azureBackend)
 ```
 
-### With Context
+### Example: Using Google Cloud Storage
+
 ```go
-import "context"
-import "time"
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/gcs"
+)
 
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
+// Create GCS backend
+gcsBackend := gcs.New()
+gcsBackend.Configure(map[string]string{
+    "project": "my-project",
+    "bucket":  "keychain-storage",
+})
 
-blobStore := store.NewObjStoreBlobAdapterWithContext(logger, backend, ctx)
+// Wrap with adapter
+storageBackend := adapter.NewObjStoreAdapter(gcsBackend)
 ```
 
-## Testing
+## Built-in Storage Backends
 
-### Run Tests
-```bash
-# All adapter tests
-go test -v -tags=objstore ./pkg/tpm2/store -run TestObjStoreBlobAdapter
+go-keychain includes these storage backends out of the box:
 
-# With coverage
-go test -v -tags=objstore -coverprofile=coverage.out ./pkg/tpm2/store
+### File Storage
 
-# View coverage
-go tool cover -html=coverage.out
-```
-
-### Test Results
-```
-=== RUN   TestObjStoreBlobAdapter_Read
-    --- PASS: successful_read
-    --- PASS: blob_not_found
-    --- PASS: storage_error
-    --- PASS: empty_blob
-=== RUN   TestObjStoreBlobAdapter_Write
-    --- PASS: successful_write
-    --- PASS: storage_error
-    --- PASS: empty_data
-    --- PASS: large_blob
-=== RUN   TestObjStoreBlobAdapter_Delete
-    --- PASS: successful_delete
-    --- PASS: idempotent_delete
-    --- PASS: storage_error
-=== RUN   TestObjStoreBlobAdapter_WithContext
-    --- PASS: custom_context_propagation
-    --- PASS: context_cancellation
-=== RUN   TestObjStoreBlobAdapter_RoundTrip
-    --- PASS: write_and_read_same_data
-=== RUN   TestObjStoreBlobAdapter_Interface
-    --- PASS: implements_BlobStorer_interface
-
-PASS
-Coverage: 91.7% - 100%
-```
-
-## Implementation Details
-
-### Adapter Methods
-
-#### Read(name string) ([]byte, error)
-- Calls `GetWithContext(ctx, name)` on underlying storage
-- Reads entire stream into memory using `io.ReadAll`
-- Wraps `common.ErrKeyNotFound` in error message
-- Returns byte slice for compatibility
-
-#### Write(name string, data []byte) error
-- Wraps data in `bytes.NewReader` to create `io.Reader`
-- Calls `PutWithContext(ctx, name, reader)` on underlying storage
-- Propagates errors with context
-
-#### Delete(name string) error
-- Calls `DeleteWithContext(ctx, name)` on underlying storage
-- Treats `ErrKeyNotFound` as success (idempotent delete)
-- Returns errors for actual failures
-
-### Context Handling
-- Default: Uses `context.Background()` for operations
-- Custom: Accepts custom context via `NewObjStoreBlobAdapterWithContext`
-- Enables: Timeout control, cancellation, tracing, metadata
-
-### Error Translation
-- `common.ErrKeyNotFound` → Wrapped with blob name
-- Delete with `ErrKeyNotFound` → Success (idempotent)
-- All other errors → Propagated with context
-
-## Migration Path
-
-### From storage.Backend
-If currently using go-keychain's `storage.Backend`:
-
-**Before:**
 ```go
-blobStore := store.NewFSBlobStore(logger, storageBackend)
+import "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+
+storage, err := file.New("/var/lib/keychain")
 ```
 
-**After:**
+### Memory Storage
+
 ```go
-// Use go-objstore local backend
-localBackend := local.New()
-localBackend.Configure(map[string]string{"path": "/path/to/storage"})
+import "github.com/jeremyhahn/go-keychain/pkg/storage"
 
-blobStore := store.NewObjStoreBlobAdapter(logger, localBackend)
+storage := storage.NewMemory()
 ```
 
-### Gradual Migration
-1. Build with `-tags=objstore` to include adapter
-2. Test with local backend first
-3. Migrate to cloud backend when ready
-4. Update configuration only (code unchanged)
+## Benefits of This Architecture
 
-## Performance Characteristics
+1. **No Vendor Lock-in**: go-keychain doesn't depend on any specific storage library
+2. **Flexibility**: Use any storage backend by implementing a simple adapter
+3. **Simplicity**: go-keychain's interface is minimal and easy to implement
+4. **Composability**: Higher-level applications choose their storage strategy
+5. **Testability**: Use memory storage for tests, cloud storage for production
 
-### Memory
-- Read: Loads entire blob into memory
-- Write: Buffers entire blob in memory
-- For multi-MB blobs, monitor memory usage
+## go-objstore Backends
 
-### Network
-- Local: Direct filesystem I/O
-- Cloud: HTTP(S) network calls
-- Context timeout recommended for cloud backends
+When using go-objstore through an adapter, these backends are available:
 
-### Optimization
-- Reuse adapter instances
-- Pool contexts when possible
-- Configure backend-specific performance settings
-- Consider compression for large blobs
+| Backend | Use Case |
+|---------|----------|
+| Local | Development, testing, local archives |
+| Amazon S3 | AWS object storage |
+| MinIO | Self-hosted S3-compatible storage |
+| Google Cloud Storage | GCP object storage |
+| Azure Blob Storage | Azure object storage |
+| AWS Glacier | Long-term cold storage |
+| Azure Archive | Long-term cold storage |
 
-## Security Considerations
+## See Also
 
-1. **Encryption at Rest**: Configure backend encryption (S3 SSE, Azure encryption, etc.)
-2. **Access Control**: Use IAM/RBAC policies for cloud backends
-3. **Audit Logging**: Enable backend audit logs
-4. **TLS/HTTPS**: Ensure encrypted transport for cloud backends
-5. **Credential Management**: Use secure credential storage (AWS Secrets Manager, etc.)
-
-## Future Enhancements
-
-Potential future improvements:
-1. Streaming support for large blobs (avoid full memory load)
-2. Batch operations adapter
-3. Compression middleware
-4. Encryption middleware
-5. Metrics/observability integration
-6. Retry logic with exponential backoff
-
-## Compatibility
-
-- Go Version: 1.21+
-- Build Tags: `objstore` (optional)
-- Backward Compatible: Yes (no breaking changes)
-- go-keychain Version: All versions with `BlobStorer` interface
-- go-objstore Version: Compatible with `common.Storage` interface
-
-## References
-
-- BlobStorer Interface: `/home/jhahn/sources/go-keychain/pkg/tpm2/store/interfaces.go`
-- Storage Interface: `/home/jhahn/sources/go-objstore/pkg/common/storage.go`
-- Adapter Implementation: `/home/jhahn/sources/go-keychain/pkg/tpm2/store/objstore_adapter.go`
-- Test Suite: `/home/jhahn/sources/go-keychain/pkg/tpm2/store/objstore_adapter_test.go`
-- Usage Guide: `/home/jhahn/sources/go-keychain/pkg/tpm2/store/OBJSTORE_ADAPTER.md`
-
-## Maintainers
-
-- Implementation follows Go best practices
-- Comprehensive test coverage (>90%)
-- Full documentation provided
-- Examples demonstrate all major use cases
-- Build tags ensure optional compilation
+- [Storage Architecture](./storage.md)
+- [go-objstore Repository](https://github.com/jeremyhahn/go-objstore)
+- [Getting Started Guide](../usage/getting-started.md)

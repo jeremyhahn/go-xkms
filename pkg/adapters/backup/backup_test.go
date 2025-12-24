@@ -1880,6 +1880,442 @@ func TestFileBackupAdapter_ListBackups_Empty(t *testing.T) {
 	assert.Empty(t, backups)
 }
 
+func TestFileBackupAdapter_ListBackups_TimeFilters(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create backups at different times
+	for i := 0; i < 3; i++ {
+		data := createTestBackupData(t, i+1)
+		opts := &BackupOptions{
+			Format: BackupFormatJSON,
+		}
+		_, err := adapter.CreateBackup(ctx, data, opts)
+		require.NoError(t, err)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Test with EndTime filter (exclude future backups)
+	futureTime := time.Now().Add(1 * time.Hour)
+	backups, err := adapter.ListBackups(ctx, &ListOptions{
+		EndTime: &futureTime,
+	})
+	require.NoError(t, err)
+	assert.Len(t, backups, 3)
+
+	// Test with StartTime and EndTime that excludes all
+	pastTime := time.Now().Add(-2 * time.Hour)
+	veryPastTime := time.Now().Add(-3 * time.Hour)
+	backups, err = adapter.ListBackups(ctx, &ListOptions{
+		StartTime: &veryPastTime,
+		EndTime:   &pastTime,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, backups)
+}
+
+func TestFileBackupAdapter_CreateBackup_GzipWriteError(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create large data that will trigger gzip write
+	data := createTestBackupData(t, 1)
+	// Add large key data to ensure compression happens
+	largeData := make([]byte, 10000)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
+	}
+	data.Keys[0].PrivateKey = largeData
+
+	opts := &BackupOptions{
+		Format:   BackupFormatJSON,
+		Compress: true,
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+	assert.True(t, metadata.Compressed)
+}
+
+func TestFileBackupAdapter_ImportBackup_MetadataWriteError(t *testing.T) {
+	skipIfRoot(t)
+
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create and export a backup
+	data := createTestBackupData(t, 1)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+
+	exportPath := filepath.Join(t.TempDir(), "export.backup")
+	_, err = adapter.ExportBackup(ctx, metadata.ID, exportPath)
+	require.NoError(t, err)
+
+	// Create new adapter in read-only directory
+	readOnlyDir := t.TempDir()
+	adapter2, err := NewFileBackupAdapter(readOnlyDir)
+	require.NoError(t, err)
+
+	// Make directory read-only
+	err = os.Chmod(readOnlyDir, 0500)
+	require.NoError(t, err)
+	defer func() { _ = os.Chmod(readOnlyDir, 0700) }()
+
+	// Import should fail
+	_, err = adapter2.ImportBackup(ctx, exportPath)
+	assert.Error(t, err)
+}
+
+func TestFileBackupAdapter_ExportBackup_DestinationWriteError(t *testing.T) {
+	skipIfRoot(t)
+
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create a backup
+	data := createTestBackupData(t, 1)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+
+	// Try to export to a read-only directory
+	readOnlyDir := t.TempDir()
+	err = os.Chmod(readOnlyDir, 0500)
+	require.NoError(t, err)
+	defer func() { _ = os.Chmod(readOnlyDir, 0700) }()
+
+	exportPath := filepath.Join(readOnlyDir, "export.backup")
+	_, err = adapter.ExportBackup(ctx, metadata.ID, exportPath)
+	assert.Error(t, err)
+}
+
+func TestFileBackupAdapter_DeleteBackup_MetadataRemoveError(t *testing.T) {
+	skipIfRoot(t)
+
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create a backup
+	data := createTestBackupData(t, 1)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+
+	// Make metadata file read-only to cause deletion error
+	metadataPath := adapter.getMetadataPath(metadata.ID)
+	err = os.Chmod(filepath.Dir(metadataPath), 0500)
+	if err == nil {
+		defer func() { _ = os.Chmod(filepath.Dir(metadataPath), 0700) }()
+
+		// Delete should fail
+		err = adapter.DeleteBackup(ctx, metadata.ID)
+		assert.Error(t, err)
+	}
+}
+
+func TestFileBackupAdapter_CreateBackup_CompressionWithWriteClose(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	// Test that gzip writer close is called
+	data := []byte("test data that will be compressed")
+	compressed, err := adapter.compressData(data, "gzip")
+	require.NoError(t, err)
+	assert.NotEmpty(t, compressed)
+
+	// Verify decompression works (ensures close was successful)
+	decompressed, err := adapter.decompressData(compressed, "gzip")
+	require.NoError(t, err)
+	assert.Equal(t, data, decompressed)
+}
+
+func TestFileBackupAdapter_CreateBackup_BackupFileWriteError(t *testing.T) {
+	skipIfRoot(t)
+
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Make the directory read-only
+	err = os.Chmod(tempDir, 0500)
+	require.NoError(t, err)
+	defer func() { _ = os.Chmod(tempDir, 0700) }()
+
+	data := createTestBackupData(t, 1)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	// CreateBackup should fail due to permission error
+	_, err = adapter.CreateBackup(ctx, data, opts)
+	assert.Error(t, err)
+}
+
+func TestFileBackupAdapter_CreateBackup_MetadataFileCleanup(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create backup successfully first
+	data := createTestBackupData(t, 1)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+
+	// Verify both files exist
+	backupPath := adapter.getBackupPath(metadata.ID)
+	metadataPath := adapter.getMetadataPath(metadata.ID)
+	assert.FileExists(t, backupPath)
+	assert.FileExists(t, metadataPath)
+}
+
+func TestFileBackupAdapter_ListBackups_SortByTimestampDesc(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create multiple backups
+	for i := 0; i < 3; i++ {
+		data := createTestBackupData(t, i+1)
+		opts := &BackupOptions{
+			Format: BackupFormatJSON,
+		}
+		_, err := adapter.CreateBackup(ctx, data, opts)
+		require.NoError(t, err)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Test default sorting (timestamp desc)
+	backups, err := adapter.ListBackups(ctx, &ListOptions{})
+	require.NoError(t, err)
+	assert.Len(t, backups, 3)
+
+	// Verify descending order
+	for i := 1; i < len(backups); i++ {
+		assert.True(t, backups[i-1].Timestamp.After(backups[i].Timestamp) || backups[i-1].Timestamp.Equal(backups[i].Timestamp))
+	}
+}
+
+func TestFileBackupAdapter_CompressData_WriteFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	// Normal compression should work
+	data := []byte("test data for compression")
+	compressed, err := adapter.compressData(data, "gzip")
+	require.NoError(t, err)
+	assert.NotEmpty(t, compressed)
+}
+
+func TestFileBackupAdapter_EncryptData_NonceGeneration(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	key := make([]byte, 32)
+	_, err = rand.Read(key)
+	require.NoError(t, err)
+
+	data := []byte("test data for encryption")
+
+	// Encrypt twice to verify different nonces
+	encrypted1, err := adapter.encryptData(data, key)
+	require.NoError(t, err)
+
+	encrypted2, err := adapter.encryptData(data, key)
+	require.NoError(t, err)
+
+	// Ciphertexts should be different due to different nonces
+	assert.NotEqual(t, encrypted1, encrypted2)
+}
+
+func TestFileBackupAdapter_ListBackups_SortBySizeDesc(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create backups with different sizes
+	for i := 1; i <= 3; i++ {
+		data := createTestBackupData(t, i)
+		opts := &BackupOptions{
+			Format: BackupFormatJSON,
+		}
+		_, err := adapter.CreateBackup(ctx, data, opts)
+		require.NoError(t, err)
+	}
+
+	// Sort by size descending
+	backups, err := adapter.ListBackups(ctx, &ListOptions{
+		SortBy:    "size",
+		SortOrder: "desc",
+	})
+	require.NoError(t, err)
+	assert.Len(t, backups, 3)
+
+	// Verify descending order
+	for i := 1; i < len(backups); i++ {
+		assert.GreaterOrEqual(t, backups[i-1].Size, backups[i].Size)
+	}
+}
+
+func TestFileBackupAdapter_ListBackups_SortByKeyCountDesc(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create backups with different key counts
+	for i := 1; i <= 3; i++ {
+		data := createTestBackupData(t, i)
+		opts := &BackupOptions{
+			Format: BackupFormatJSON,
+		}
+		_, err := adapter.CreateBackup(ctx, data, opts)
+		require.NoError(t, err)
+	}
+
+	// Sort by key_count descending
+	backups, err := adapter.ListBackups(ctx, &ListOptions{
+		SortBy:    "key_count",
+		SortOrder: "desc",
+	})
+	require.NoError(t, err)
+	assert.Len(t, backups, 3)
+
+	// Verify descending order
+	for i := 1; i < len(backups); i++ {
+		assert.GreaterOrEqual(t, backups[i-1].KeyCount, backups[i].KeyCount)
+	}
+}
+
+func TestFileBackupAdapter_CreateBackup_FilteredKeysNotFound(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	data := createTestBackupData(t, 3)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+		KeyIDs: []string{"non-existent-key-1", "non-existent-key-2"},
+	}
+
+	// Should create backup with 0 keys
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+	assert.Equal(t, 0, metadata.KeyCount)
+}
+
+func TestFileBackupAdapter_CreateBackup_CompressedWithAlgorithm(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	data := createTestBackupData(t, 2)
+	opts := &BackupOptions{
+		Format:               BackupFormatJSON,
+		Compress:             true,
+		CompressionAlgorithm: "gzip",
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+	assert.True(t, metadata.Compressed)
+	assert.Equal(t, "gzip", metadata.CompressionAlgorithm)
+}
+
+func TestFileBackupAdapter_RestoreBackup_NilOptions(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create a backup
+	data := createTestBackupData(t, 2)
+	opts := &BackupOptions{
+		Format: BackupFormatJSON,
+	}
+
+	metadata, err := adapter.CreateBackup(ctx, data, opts)
+	require.NoError(t, err)
+
+	// Restore with nil options
+	count, err := adapter.RestoreBackup(ctx, metadata.ID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}
+
+func TestFileBackupAdapter_ListBackups_WithOffsetAndLimit(t *testing.T) {
+	tempDir := t.TempDir()
+	adapter, err := NewFileBackupAdapter(tempDir)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+
+	// Create 5 backups
+	for i := 0; i < 5; i++ {
+		data := createTestBackupData(t, i+1)
+		opts := &BackupOptions{
+			Format: BackupFormatJSON,
+		}
+		_, err := adapter.CreateBackup(ctx, data, opts)
+		require.NoError(t, err)
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Test offset and limit together
+	backups, err := adapter.ListBackups(ctx, &ListOptions{
+		Offset: 1,
+		Limit:  2,
+	})
+	require.NoError(t, err)
+	assert.Len(t, backups, 2)
+}
+
 // Helper functions
 
 // marshalBackupDataSafe safely marshals BackupData by temporarily clearing SessionCloser

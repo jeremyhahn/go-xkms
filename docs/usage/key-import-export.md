@@ -632,7 +632,6 @@ func handleImportErrors() {
 
 ## Related Documentation
 
-- [Backend Architecture](./backend-architecture.md)
-- [AWS KMS Backend](./backends/awskms.md)
-- [GCP KMS Backend](./backends/gcpkms.md)
-- [Key Management Best Practices](./key-management.md)
+- [Backend Registry](../architecture/backend-registry.md)
+- [AWS KMS Backend](../backends/awskms.md)
+- [GCP KMS Backend](../backends/gcpkms.md)

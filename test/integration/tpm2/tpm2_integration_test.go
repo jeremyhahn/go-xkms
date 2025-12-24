@@ -183,7 +183,7 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 	// Create logger
 	logger := logging.DefaultLogger()
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend using the factory
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		conn.Close()

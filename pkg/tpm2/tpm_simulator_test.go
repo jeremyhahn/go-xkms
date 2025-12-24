@@ -603,7 +603,7 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		b.Fatal(err)

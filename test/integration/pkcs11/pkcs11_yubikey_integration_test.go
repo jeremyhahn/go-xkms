@@ -31,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	pkcs11lib "github.com/miekg/pkcs11"
 	"github.com/stretchr/testify/assert"

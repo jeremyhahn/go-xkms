@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     automake \
     autoconf \
     libtool \
-    # CMake and Ninja for liboqs
+    # CMake and Ninja for liboqs and CanoKey
     cmake \
     ninja-build \
     # SSL/TLS development
@@ -53,6 +53,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-x86 \
     qemu-utils \
     libusb-1.0-0-dev \
+    # QEMU build dependencies for CanoKey support
+    python3 \
+    python3-pip \
+    python3-venv \
+    libglib2.0-dev \
+    libfdt-dev \
+    libpixman-1-dev \
+    zlib1g-dev \
+    libgtk-3-dev \
+    libsdl2-dev \
+    libspice-server-dev \
+    libusbredirparser-dev \
+    libcap-ng-dev \
+    libattr1-dev \
+    libseccomp-dev \
+    libaio-dev \
+    libcurl4-gnutls-dev \
+    libnuma-dev \
+    libepoxy-dev \
+    libgbm-dev \
+    libdrm-dev \
+    libvirglrenderer-dev \
+    libslirp-dev \
+    flex \
+    bison \
+    curl \
+    xz-utils \
+    # FIDO2/WebAuthn support
+    libfido2-dev \
     # Protobuf
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
@@ -79,8 +108,49 @@ RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /build/l
     ninja && \
     DESTDIR=/build/liboqs-install ninja install
 
-# Clone CanoKey QEMU for virtual device testing
-RUN git clone --depth 1 https://github.com/canokeys/canokey-qemu.git /build/canokey-qemu
+# CanoKey QEMU build is disabled by default to save CI disk space (~2GB)
+# Set BUILD_CANOKEY_QEMU=true to enable (requires significant disk space and build time)
+ARG BUILD_CANOKEY_QEMU=false
+ARG QEMU_VERSION=8.2.0
+
+# Build CanoKey QEMU only if explicitly enabled
+RUN mkdir -p /build/qemu-install/usr/local/bin && \
+    if [ "${BUILD_CANOKEY_QEMU}" = "true" ]; then \
+        echo "Building CanoKey QEMU (BUILD_CANOKEY_QEMU=true)..." && \
+        git clone --recursive https://github.com/canokeys/canokey-qemu.git /build/canokey-qemu && \
+        cd /build/canokey-qemu && \
+        mkdir build && cd build && \
+        cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local && \
+        make -j$(nproc) && \
+        make install && \
+        ldconfig && \
+        export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH && \
+        cd /build && \
+        curl -sSL "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" -o qemu.tar.xz && \
+        tar xf qemu.tar.xz && \
+        cd qemu-${QEMU_VERSION} && \
+        ./configure \
+            --prefix=/usr/local \
+            --target-list=x86_64-softmmu \
+            --enable-kvm \
+            --enable-canokey \
+            --enable-slirp \
+            --enable-usb-redir \
+            --enable-libusb \
+            --enable-virtfs \
+            --enable-spice \
+            --enable-gtk \
+            --enable-sdl \
+            --enable-opengl \
+            --enable-virglrenderer \
+            --disable-docs && \
+        make -j$(nproc) && \
+        cp build/qemu-system-x86_64 /build/qemu-install/usr/local/bin/qemu-system-x86_64-canokey && \
+        rm -rf /build/qemu-${QEMU_VERSION} /build/qemu.tar.xz /build/canokey-qemu; \
+    else \
+        echo "Skipping CanoKey QEMU build (BUILD_CANOKEY_QEMU=${BUILD_CANOKEY_QEMU})"; \
+        touch /build/qemu-install/usr/local/bin/.qemu-canokey-not-built; \
+    fi
 
 # Stage 2: Development runtime environment
 FROM golang:1.25.5-bookworm
@@ -127,6 +197,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system-x86 \
     qemu-utils \
     libusb-1.0-0 \
+    # FIDO2/WebAuthn support
+    libfido2-1 \
+    libfido2-dev \
+    fido2-tools \
     # Protobuf
     protobuf-compiler \
     # Networking and testing tools
@@ -189,6 +263,9 @@ RUN DPKG_ARCH=$(dpkg --print-architecture) && \
 # Copy built liboqs from builder stage
 COPY --from=builder /build/liboqs-install/usr/local /usr/local
 
+# Copy built libcanokey and QEMU binary from builder stage (optional - may not exist if build failed)
+COPY --from=builder /build/qemu-install/usr/local/bin/ /usr/local/bin/
+
 # Create liboqs-go.pc for the Go bindings
 RUN mkdir -p /usr/local/lib/pkgconfig && \
     printf '%s\n' \
@@ -203,9 +280,6 @@ RUN mkdir -p /usr/local/lib/pkgconfig && \
         'Libs: -L${libdir} -loqs' \
         'Cflags: -I${includedir}' \
     > /usr/local/lib/pkgconfig/liboqs-go.pc
-
-# Copy CanoKey QEMU sources for virtual device testing
-COPY --from=builder /build/canokey-qemu /opt/canokey-qemu
 
 # Copy Go protobuf tools from builder
 COPY --from=builder /go/bin/protoc-gen-go /go/bin/protoc-gen-go
@@ -235,6 +309,17 @@ RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
 
 # Update library cache
 RUN ldconfig
+
+# Verify CanoKey QEMU installation (optional - may not be available)
+RUN echo "=== CanoKey QEMU Verification ===" && \
+    echo "Standard QEMU: $(qemu-system-x86_64 --version 2>/dev/null | head -1 || echo 'not installed')" && \
+    if [ -x /usr/local/bin/qemu-system-x86_64-canokey ]; then \
+        echo "CanoKey QEMU: $(/usr/local/bin/qemu-system-x86_64-canokey --version | head -1)"; \
+    else \
+        echo "CanoKey QEMU: not available (optional feature)"; \
+    fi && \
+    echo "libcanokey: $(ldconfig -p | grep canokey || echo 'not installed (optional)')" && \
+    echo "================================="
 
 # Create non-root user for VS Code
 ARG USERNAME=vscode
@@ -274,6 +359,18 @@ RUN echo "directories.tokendir = /var/lib/softhsm/tokens" > /etc/softhsm/softhsm
     echo "objectstore.backend = file" >> /etc/softhsm/softhsm2.conf && \
     echo "log.level = INFO" >> /etc/softhsm/softhsm2.conf
 
+# Ensure OpenSC PKCS#11 library is at expected location
+RUN OPENSC_LIB=$(find /usr -name "opensc-pkcs11.so" 2>/dev/null | head -1) && \
+    if [ -n "$OPENSC_LIB" ]; then \
+        echo "OpenSC PKCS#11 found at: $OPENSC_LIB"; \
+    else \
+        echo "WARNING: OpenSC PKCS#11 library not found"; \
+    fi
+
+# Create CanoKey directories
+RUN mkdir -p /var/lib/canokey && \
+    chown -R $USERNAME:$USERNAME /var/lib/canokey
+
 # Set environment variables
 ENV GOPATH=/go
 ENV PATH=/go/bin:/usr/local/go/bin:/usr/local/bin:$PATH
@@ -281,9 +378,19 @@ ENV CGO_ENABLED=1
 ENV GOCACHE=/home/$USERNAME/.cache/go-build
 ENV GOFLAGS="-buildvcs=false"
 
-# PKCS#11 configuration
+# PKCS#11 configuration (SoftHSM)
 ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
 ENV PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
+
+# CanoKey PKCS#11 configuration (OpenSC)
+ENV CANOKEY_PKCS11_LIBRARY=/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
+ENV CANOKEY_PIN=123456
+ENV CANOKEY_SOPIN=12345678
+
+# FIDO2/CanoKey QEMU configuration
+ENV CANOKEY_QEMU=/var/lib/canokey/canokey.sock
+ENV FIDO2_DEVICE_PATH=/var/lib/canokey/canokey.sock
+ENV FIDO2_PIN=123456
 
 # TPM2 configuration
 ENV SWTPM_STATE_DIR=/var/lib/swtpm

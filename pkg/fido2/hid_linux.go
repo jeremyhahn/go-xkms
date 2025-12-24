@@ -226,18 +226,18 @@ func readVendorProductID(sysPath string) (uint16, uint16) {
 		}
 	}
 
-	var vid, pid uint16
+	var vid, pid uint32
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, "HID_ID=") {
-			// Format: HID_ID=0003:0000XXXX:0000YYYY
-			// where XXXX is vendor ID and YYYY is product ID
+			// Format: HID_ID=0003:00001050:00000407
+			// where the second field is vendor ID (8 hex chars) and third is product ID (8 hex chars)
 			parts := strings.Split(strings.TrimPrefix(line, "HID_ID="), ":")
 			if len(parts) >= 3 {
-				n, err := fmt.Sscanf(parts[1], "%04X", &vid)
+				n, err := fmt.Sscanf(parts[1], "%08X", &vid)
 				if err != nil || n != 1 {
 					log.Printf("failed to parse vendor ID from '%s': %v", parts[1], err)
 				}
-				n, err = fmt.Sscanf(parts[2], "%04X", &pid)
+				n, err = fmt.Sscanf(parts[2], "%08X", &pid)
 				if err != nil || n != 1 {
 					log.Printf("failed to parse product ID from '%s': %v", parts[2], err)
 				}
@@ -245,7 +245,7 @@ func readVendorProductID(sysPath string) (uint16, uint16) {
 		}
 	}
 
-	return vid, pid
+	return uint16(vid), uint16(pid)
 }
 
 func isFIDODevice(sysPath string) bool {

@@ -99,8 +99,8 @@ func tpm2Available() bool {
 }
 
 func (t *tpm2Resolver) Rand(n int) ([]byte, error) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
 	if t.rwc == nil {
 		return nil, fmt.Errorf("TPM2 resolver closed")

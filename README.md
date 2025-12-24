@@ -754,8 +754,7 @@ go-keychain/
        └──────> CertificateStorage Interface
                 ├── File storage
                 ├── Memory Storage
-                ├── go-objstore backends
-                └── Custom implementation
+                └── Custom adapters (interface compatible with go-objstore)
 ```
 
 ---

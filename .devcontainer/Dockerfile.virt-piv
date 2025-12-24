@@ -1,0 +1,201 @@
+# Virtual PIV Card Service
+# Uses SoftHSM2 to provide PKCS#11 interface for testing
+# This provides a software-based PIV-like environment without requiring hardware
+#
+# Note: This replaces the virt_cacard approach which was too complex for containers
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    softhsm2 \
+    libsofthsm2 \
+    opensc \
+    opensc-pkcs11 \
+    openssl \
+    ca-certificates \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create required directories
+RUN mkdir -p /var/lib/softhsm/tokens \
+    /var/lib/virt-piv/certs
+
+# Create SoftHSM configuration
+RUN cat > /etc/softhsm/softhsm2.conf << 'EOF'
+directories.tokendir = /var/lib/softhsm/tokens
+objectstore.backend = file
+log.level = INFO
+slots.removable = true
+EOF
+
+# Create PIV certificate and key generation script
+RUN cat > /usr/local/bin/init-piv-certs.sh << 'SCRIPT'
+#!/bin/bash
+set -e
+
+CERT_DIR=/var/lib/virt-piv/certs
+SOFTHSM_PIN="${PIV_PIN:-123456}"
+SOFTHSM_SO_PIN="${PIV_SO_PIN:-12345678}"
+
+# Skip if already initialized
+if [ -f "$CERT_DIR/.initialized" ]; then
+    echo "PIV certificates already initialized"
+    exit 0
+fi
+
+echo "Generating PIV certificates..."
+
+mkdir -p "$CERT_DIR"
+
+# Generate CA key and certificate
+openssl genpkey -algorithm RSA -out "$CERT_DIR/ca.key" -pkeyopt rsa_keygen_bits:2048
+openssl req -new -x509 -days 3650 -key "$CERT_DIR/ca.key" \
+    -out "$CERT_DIR/ca.crt" \
+    -subj "/CN=Virtual PIV CA/O=go-keychain/OU=Testing"
+
+# Generate PIV Authentication key (slot 9a)
+openssl genpkey -algorithm RSA -out "$CERT_DIR/piv-auth.key" -pkeyopt rsa_keygen_bits:2048
+openssl req -new -key "$CERT_DIR/piv-auth.key" -out "$CERT_DIR/piv-auth.csr" \
+    -subj "/CN=PIV Authentication/O=go-keychain/OU=Testing"
+openssl x509 -req -days 365 -in "$CERT_DIR/piv-auth.csr" \
+    -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+    -out "$CERT_DIR/piv-auth.crt"
+
+# Generate Digital Signature key (slot 9c)
+openssl genpkey -algorithm RSA -out "$CERT_DIR/piv-sign.key" -pkeyopt rsa_keygen_bits:2048
+openssl req -new -key "$CERT_DIR/piv-sign.key" -out "$CERT_DIR/piv-sign.csr" \
+    -subj "/CN=Digital Signature/O=go-keychain/OU=Testing"
+openssl x509 -req -days 365 -in "$CERT_DIR/piv-sign.csr" \
+    -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+    -out "$CERT_DIR/piv-sign.crt"
+
+# Generate Key Management key (slot 9d)
+openssl genpkey -algorithm RSA -out "$CERT_DIR/piv-keymgmt.key" -pkeyopt rsa_keygen_bits:2048
+openssl req -new -key "$CERT_DIR/piv-keymgmt.key" -out "$CERT_DIR/piv-keymgmt.csr" \
+    -subj "/CN=Key Management/O=go-keychain/OU=Testing"
+openssl x509 -req -days 365 -in "$CERT_DIR/piv-keymgmt.csr" \
+    -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+    -out "$CERT_DIR/piv-keymgmt.crt"
+
+# Generate Card Authentication key (slot 9e) - EC key
+openssl genpkey -algorithm EC -out "$CERT_DIR/piv-cardauth.key" \
+    -pkeyopt ec_paramgen_curve:P-256
+openssl req -new -key "$CERT_DIR/piv-cardauth.key" -out "$CERT_DIR/piv-cardauth.csr" \
+    -subj "/CN=Card Authentication/O=go-keychain/OU=Testing"
+openssl x509 -req -days 365 -in "$CERT_DIR/piv-cardauth.csr" \
+    -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+    -out "$CERT_DIR/piv-cardauth.crt"
+
+echo "Initializing SoftHSM token..."
+
+# Initialize SoftHSM token with --free to use first available slot
+softhsm2-util --init-token --free --label "virt-piv" \
+    --so-pin "$SOFTHSM_SO_PIN" --pin "$SOFTHSM_PIN"
+
+# Get the slot number
+SLOT=$(softhsm2-util --show-slots | grep -m1 "Slot " | awk '{print $2}')
+echo "Using SoftHSM slot: $SLOT"
+
+# Import keys into SoftHSM using pkcs11-tool
+echo "Importing keys into SoftHSM..."
+
+# Import PIV Auth key (RSA)
+openssl pkcs8 -topk8 -nocrypt -in "$CERT_DIR/piv-auth.key" -out "$CERT_DIR/piv-auth.pk8"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-auth.pk8" --type privkey --id 9a --label "PIV Authentication"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-auth.crt" --type cert --id 9a --label "PIV Authentication"
+
+# Import Sign key (RSA)
+openssl pkcs8 -topk8 -nocrypt -in "$CERT_DIR/piv-sign.key" -out "$CERT_DIR/piv-sign.pk8"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-sign.pk8" --type privkey --id 9c --label "Digital Signature"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-sign.crt" --type cert --id 9c --label "Digital Signature"
+
+# Import Key Management key (RSA)
+openssl pkcs8 -topk8 -nocrypt -in "$CERT_DIR/piv-keymgmt.key" -out "$CERT_DIR/piv-keymgmt.pk8"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-keymgmt.pk8" --type privkey --id 9d --label "Key Management"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-keymgmt.crt" --type cert --id 9d --label "Key Management"
+
+# Import Card Auth key (EC P-256)
+openssl pkcs8 -topk8 -nocrypt -in "$CERT_DIR/piv-cardauth.key" -out "$CERT_DIR/piv-cardauth.pk8"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-cardauth.pk8" --type privkey --id 9e --label "Card Authentication"
+pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so \
+    --slot "$SLOT" --login --pin "$SOFTHSM_PIN" \
+    --write-object "$CERT_DIR/piv-cardauth.crt" --type cert --id 9e --label "Card Authentication"
+
+# Save the slot number for reference
+echo "$SLOT" > "$CERT_DIR/slot"
+
+touch "$CERT_DIR/.initialized"
+echo "PIV certificates and keys initialized successfully"
+echo "Slot: $SLOT, PIN: $SOFTHSM_PIN"
+SCRIPT
+
+RUN chmod +x /usr/local/bin/init-piv-certs.sh
+
+# Create startup script
+RUN cat > /usr/local/bin/start-virt-piv.sh << 'SCRIPT'
+#!/bin/bash
+set -e
+
+echo "=== Virtual PIV Card Service (SoftHSM) ==="
+echo "PIN: ${PIV_PIN:-123456}"
+
+# Initialize certificates and keys
+/usr/local/bin/init-piv-certs.sh
+
+# Create ready marker
+touch /var/run/.virt-piv-ready
+
+echo "=== Virtual PIV Card Ready ==="
+echo "PKCS#11 Library: /usr/lib/softhsm/libsofthsm2.so"
+echo "Test with: pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so -L"
+
+# Keep container running
+exec sleep infinity
+SCRIPT
+
+RUN chmod +x /usr/local/bin/start-virt-piv.sh
+
+# Create healthcheck script
+RUN cat > /usr/local/bin/healthcheck.sh << 'EOF'
+#!/bin/bash
+# Check if virtual PIV is ready
+if [ -f /var/run/.virt-piv-ready ]; then
+    # Try to list slots
+    if pkcs11-tool --module /usr/lib/softhsm/libsofthsm2.so -L 2>/dev/null | grep -q "virt-piv"; then
+        exit 0
+    fi
+fi
+exit 1
+EOF
+
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Environment
+ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+ENV PIV_PIN=123456
+ENV PIV_SO_PIN=12345678
+ENV PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
+
+VOLUME ["/var/lib/softhsm", "/var/lib/virt-piv"]
+
+HEALTHCHECK --interval=5s --timeout=5s --retries=10 --start-period=15s \
+    CMD ["/usr/local/bin/healthcheck.sh"]
+
+CMD ["/usr/local/bin/start-virt-piv.sh"]

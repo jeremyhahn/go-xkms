@@ -44,4 +44,11 @@ docker network prune -f 2>/dev/null || true
 # Clean up any orphaned containers from compose
 docker compose -f test/integration/api/docker-compose.yml down -v --remove-orphans 2>/dev/null || true
 
+# Clean up dangling images and build cache to free disk space (CI)
+if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+    echo "CI environment detected - performing aggressive cleanup..."
+    docker image prune -f 2>/dev/null || true
+    docker builder prune -f 2>/dev/null || true
+fi
+
 echo "Cleanup complete!"

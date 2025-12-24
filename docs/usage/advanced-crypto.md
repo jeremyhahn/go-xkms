@@ -29,27 +29,27 @@ ECIES integrates four cryptographic operations:
 ┌─────────────────────────────────────────────────────────────┐
 │                    ECIES Architecture                       │
 ├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Sender                             Recipient              │
-│  ──────                             ──────────             │
-│                                                              │
-│  1. Generate ephemeral key pair                           │
-│  2. Perform ECDH with recipient's public key             │
-│                     ├──────────────────────────┐           │
-│                     │   Shared Secret (X)      │           │
-│                     └──────────────────────────┘           │
-│  3. Derive AES key using HKDF                            │
-│  4. Encrypt message using AES-256-GCM                    │
-│  5. Send: [ephemeral_pub || nonce || tag || ciphertext]  │
-│                                                              │
-│                                                              │
-│                  Recipient receives message                  │
-│                                                              │
-│                     1. Extract ephemeral public key        │
-│                     2. Perform ECDH with private key      │
-│                     3. Derive same AES key                │
-│                     4. Decrypt and verify                 │
-│                                                              │
+│                                                             │
+│  Sender                             Recipient               │
+│  ──────                             ──────────              │
+│                                                             │
+│  1. Generate ephemeral key pair                             │
+│  2. Perform ECDH with recipient's public key                │
+│                     ├──────────────────────────┐            │
+│                     │   Shared Secret (X)      │            │
+│                     └──────────────────────────┘            │
+│  3. Derive AES key using HKDF                               │
+│  4. Encrypt message using AES-256-GCM                       │
+│  5. Send: [ephemeral_pub || nonce || tag || ciphertext]     │
+│                                                             │
+│                                                             │
+│                  Recipient receives message                 │
+│                                                             │
+│                     1. Extract ephemeral public key         │
+│                     2. Perform ECDH with private key        │
+│                     3. Derive same AES key                  │
+│                     4. Decrypt and verify                   │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 

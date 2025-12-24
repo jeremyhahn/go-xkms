@@ -94,8 +94,8 @@ func pkcs11Available() bool {
 }
 
 func (p *pkcs11Resolver) Rand(n int) ([]byte, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	if p.ctx == nil {
 		return nil, fmt.Errorf("PKCS#11 resolver closed")
