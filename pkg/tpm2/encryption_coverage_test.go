@@ -27,9 +27,6 @@ func TestTPM2_SymmetricEncryptDecrypt_Success(t *testing.T) {
 		KeyType:            types.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := tpm.GenerateSymmetricKey(attrs)
@@ -66,9 +63,6 @@ func TestTPM2_SymmetricEncrypt_WithAdditionalData(t *testing.T) {
 		KeyType:            types.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := tpm.GenerateSymmetricKey(attrs)
@@ -112,9 +106,6 @@ func TestTPM2_SymmetricDecrypt_InvalidTag(t *testing.T) {
 		KeyType:            types.KeyTypeEncryption,
 		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := tpm.GenerateSymmetricKey(attrs)

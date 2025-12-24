@@ -36,7 +36,7 @@ func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	require.NoError(t, err)
 

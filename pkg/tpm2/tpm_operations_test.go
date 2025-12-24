@@ -38,7 +38,7 @@ func TestTPMOperations(t *testing.T) {
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		t.Fatalf("Failed to create storage factory: %v", err)
@@ -1473,7 +1473,7 @@ func TestTPMOperationsECC(t *testing.T) {
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		t.Fatalf("Failed to create storage factory: %v", err)
@@ -1622,7 +1622,7 @@ func TestTPMOperationsMultipleRandomReads(t *testing.T) {
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		t.Fatalf("Failed to create storage factory: %v", err)

@@ -190,9 +190,6 @@ func TestSealUnseal_Success(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AWSKMS,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Pre-populate metadata
@@ -372,9 +369,6 @@ func TestUnseal_KeyMismatch(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AWSKMS,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	ctx := context.Background()
@@ -444,9 +438,6 @@ func TestSealUnseal_WithAAD(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AWSKMS,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Pre-populate metadata

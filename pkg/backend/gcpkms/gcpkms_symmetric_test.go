@@ -43,9 +43,6 @@ func TestBackend_GenerateSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.CreateCryptoKeyFunc = func(ctx context.Context, req *kmspb.CreateCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
@@ -94,9 +91,6 @@ func TestBackend_GenerateSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES128GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 128,
-				},
 			},
 			wantErr: true,
 		},
@@ -107,9 +101,6 @@ func TestBackend_GenerateSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.CreateCryptoKeyFunc = func(ctx context.Context, req *kmspb.CreateCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
@@ -190,9 +181,6 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetCryptoKeyFunc = func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
@@ -216,9 +204,6 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetCryptoKeyFunc = func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
@@ -235,9 +220,6 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetCryptoKeyFunc = func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
@@ -315,9 +297,6 @@ func TestBackend_SymmetricEncrypter(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetCryptoKeyFunc = func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
@@ -341,9 +320,6 @@ func TestBackend_SymmetricEncrypter(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			mockFunc: func(m *MockKMSClient) {
 				m.GetCryptoKeyFunc = func(ctx context.Context, req *kmspb.GetCryptoKeyRequest, opts ...interface{}) (*kmspb.CryptoKey, error) {
@@ -512,9 +488,6 @@ func TestSymmetricEncrypter_Encrypt(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			encrypter, err := b.SymmetricEncrypter(attrs)
@@ -678,9 +651,6 @@ func TestSymmetricEncrypter_Decrypt(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_GCPKMS,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			}
 
 			encrypter, err := b.SymmetricEncrypter(attrs)
@@ -748,9 +718,6 @@ func TestSymmetricEncrypter_RoundTrip(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_GCPKMS,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	encrypter, err := b.SymmetricEncrypter(attrs)
@@ -872,9 +839,6 @@ func TestGCPKMSBackend_BytesLimit(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_GCPKMS,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      false, // GCP KMS manages nonces
 			BytesTracking:      true,

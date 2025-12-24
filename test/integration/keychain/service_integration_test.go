@@ -251,11 +251,11 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 		cert := createTestCert(t, "test-cert-service", key.(crypto.Signer))
 
 		// Save certificate
-		err = keychain.SaveCertificate("test-cert-service", cert)
+		err = keychain.SaveCertificate(attrs, cert)
 		assert.NoError(t, err)
 
 		// Retrieve certificate
-		retrievedCert, err := keychain.Certificate("test-cert-service")
+		retrievedCert, err := keychain.Certificate(attrs)
 		assert.NoError(t, err)
 		assert.NotNil(t, retrievedCert)
 		assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
@@ -279,15 +279,15 @@ func TestServiceIntegration_CertificateOperations(t *testing.T) {
 
 		cert := createTestCert(t, "test-delete-cert", key.(crypto.Signer))
 
-		err = keychain.SaveCertificate("test-delete-cert", cert)
+		err = keychain.SaveCertificate(attrs, cert)
 		require.NoError(t, err)
 
 		// Delete certificate
-		err = keychain.DeleteCertificate("test-delete-cert")
+		err = keychain.DeleteCertificate(attrs)
 		assert.NoError(t, err)
 
 		// Verify it's deleted
-		_, err = keychain.Certificate("test-delete-cert")
+		_, err = keychain.Certificate(attrs)
 		assert.Error(t, err)
 	})
 

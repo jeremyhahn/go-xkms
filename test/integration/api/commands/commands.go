@@ -25,6 +25,7 @@ const (
 	CategoryCert     CommandCategory = "cert"
 	CategoryTLS      CommandCategory = "tls"
 	CategoryFrost    CommandCategory = "frost"
+	CategoryFIDO2    CommandCategory = "fido2"
 	CategoryUser     CommandCategory = "user"
 	CategoryAdmin    CommandCategory = "admin"
 	CategoryVersion  CommandCategory = "version"
@@ -91,12 +92,13 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
-	return append(append(append(append(append(
+	return append(append(append(append(append(append(
 		BackendCommands(),
 		KeyCommands()...),
 		CertCommands()...),
 		TLSCommands()...),
 		FrostCommands()...),
+		FIDO2Commands()...),
 		VersionCommands()...)
 }
 
@@ -395,6 +397,93 @@ func FrostCommands() []CommandDefinition {
 			},
 			OptionalArgs: []ArgDefinition{
 				{Flag: "force", Value: "", Description: "Skip confirmation"},
+			},
+		},
+	}
+}
+
+// FIDO2Commands returns FIDO2/WebAuthn-related commands
+// These commands interact with FIDO2 security keys (CanoKey, YubiKey, etc.)
+func FIDO2Commands() []CommandDefinition {
+	return []CommandDefinition{
+		// List devices
+		{
+			Name:                   "fido2-list-devices",
+			Category:               CategoryFIDO2,
+			Command:                []string{"fido2", "list-devices"},
+			Description:            "List connected FIDO2 security keys",
+			RequiresServer:         false,
+			RequiresLocal:          true,
+			BuildTags:              []string{"fido2"},
+			ExpectedOutputContains: []string{},
+		},
+		// Wait for device
+		{
+			Name:           "fido2-wait-device",
+			Category:       CategoryFIDO2,
+			Command:        []string{"fido2", "wait-device"},
+			Description:    "Wait for a FIDO2 device to be connected",
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"fido2"},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "timeout", Value: "30s", Description: "Timeout for device wait"},
+			},
+		},
+		// Register credential
+		{
+			Name:           "fido2-register",
+			Category:       CategoryFIDO2,
+			Command:        []string{"fido2", "register"},
+			Description:    "Register a new FIDO2 credential",
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"fido2"},
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "testuser", Description: "Username", IsPositional: true},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "rp-id", Value: "go-keychain.local", Description: "Relying party ID"},
+				{Flag: "rp-name", Value: "Go Keychain Test", Description: "Relying party name"},
+				{Flag: "display-name", Value: "Test User", Description: "User display name"},
+				{Flag: "timeout", Value: "60s", Description: "User presence timeout"},
+				{Flag: "device", Value: "", Description: "Specific device path"},
+				{Flag: "user-verification", Value: "", Description: "Require PIN verification"},
+			},
+		},
+		// Authenticate
+		{
+			Name:           "fido2-authenticate",
+			Category:       CategoryFIDO2,
+			Command:        []string{"fido2", "authenticate"},
+			Description:    "Authenticate using a registered FIDO2 credential",
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"fido2"},
+			RequiresSetup:  true, // Requires credential to be registered first
+			RequiredArgs: []ArgDefinition{
+				{Flag: "credential-id", Value: "", Description: "Credential ID from registration"},
+				{Flag: "salt", Value: "", Description: "Salt from registration"},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "rp-id", Value: "go-keychain.local", Description: "Relying party ID"},
+				{Flag: "timeout", Value: "60s", Description: "User presence timeout"},
+				{Flag: "device", Value: "", Description: "Specific device path"},
+				{Flag: "user-verification", Value: "", Description: "Require PIN verification"},
+				{Flag: "hex", Value: "", Description: "Output in hex instead of base64"},
+			},
+		},
+		// Device info
+		{
+			Name:           "fido2-info",
+			Category:       CategoryFIDO2,
+			Command:        []string{"fido2", "info"},
+			Description:    "Show information about a connected FIDO2 device",
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"fido2"},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "device", Value: "", Description: "Specific device path"},
 			},
 		},
 	}

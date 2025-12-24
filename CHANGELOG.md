@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2-alpha] - 2025-12-24
+
+### Added
+- **Unified Symmetric Backend**: New `pkg/backend/symmetric/` consolidating AES and ChaCha20-Poly1305
+  - Single backend supporting AES-128-GCM, AES-192-GCM, AES-256-GCM
+  - ChaCha20-Poly1305 and XChaCha20-Poly1305 support
+  - Password-protected key storage with Argon2 key derivation
+  - AEAD nonce tracking and bytes limit enforcement
+  - Import/export functionality for key portability
+- **Algorithm Type System**: New `pkg/types/algorithms.go` with comprehensive type definitions
+  - `KeyAlgorithmString` for asymmetric key algorithm identifiers (RSA, ECDSA, Ed25519)
+  - `EllipticCurve` constants (P224, P256, P384, P521, Curve25519)
+  - `HashName` constants matching Go crypto standards
+  - `SignatureAlgorithmName` for signature algorithm identifiers
+  - `AEADAlgorithm` and `KeyWrapAlgorithm` for encryption operations
+  - `CLIKeyType` for CLI key type parsing
+  - Parsing and validation functions for all algorithm types
+- **FROST Protocol Stubs**: Infrastructure for future FROST threshold signature support
+  - Handler stubs for REST, gRPC, QUIC, Unix, and MCP protocols
+  - Backend factory stubs for FROST initialization
+  - CLI command stubs for FROST operations
+
+### Changed
+- **Test Coverage Improvements**: Increased coverage across 7 packages to 90%+ target
+  - `pkg/types`: 66.6% → 97.0% (+30.4%)
+  - `pkg/keychain`: 86.8% → 90.6% (+3.8%)
+  - `pkg/backend/symmetric`: 88.4% → 90.0% (+1.6%)
+  - `pkg/client`: 86.3% → 90.1% (+3.8%)
+  - `pkg/crypto/ecies`: 89.6% (all reachable code covered)
+  - `pkg/adapters/backup`: 89.7% → 91.0% (+1.3%)
+  - `pkg/webauthn/http`: 87.9% (improved edge case coverage)
+- **Consolidated AESAttributes**: Removed deprecated `AESAttributes` type, using `KeyAttributes` with `SymmetricAlgorithm` field
+- **TPM2 Symmetric Tests**: Updated tests for symmetric key generation and encryption validation
+- **Cloud Backend Tests**: Cleaned up symmetric encryption tests for AWS KMS, Azure Key Vault, GCP KMS, and Vault backends
+
+### Removed
+- **pkg/backend/aes/**: Deprecated AES-only backend (functionality moved to `pkg/backend/symmetric/`)
+  - `aes.go`, `aes_test.go`, `aes_bench_test.go`
+  - `aes_importexport_test.go`, `aes_tracking_test.go`
+  - `errors.go`
+- **test/integration/backend/aes_integration_test.go**: Replaced by symmetric backend integration tests
+
+### Fixed
+- **Code Formatting**: Fixed gofmt issues in test files blocking CI
+- **Linting Errors**: Resolved staticcheck and ineffassign warnings
+- **Build Errors**: Fixed undefined `AESAttributes` references after consolidation
+
 ## [0.2.1-alpha] - 2025-12-21
 
 ### Added
@@ -499,6 +546,8 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - Commercial Licensing: licensing@automatethethings.com
 - AGPL-3.0 License: https://www.gnu.org/licenses/agpl-3.0.html
 
+[0.2.2-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.2-alpha
+[0.2.1-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.1-alpha
 [0.2.0-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.0-alpha
 [0.1.9-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.9-alpha
 [0.1.8-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.8-alpha

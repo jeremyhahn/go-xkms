@@ -288,9 +288,6 @@ func TestImportKey(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		SymmetricAlgorithm: types.SymmetricAlgorithm(backend.ALG_AES256_GCM),
 		StoreType:          backend.STORE_PKCS11,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Get import parameters
@@ -400,9 +397,6 @@ func TestImportExportRoundTrip(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
 		SymmetricAlgorithm: types.SymmetricAlgorithm(backend.ALG_AES256_GCM),
 		StoreType:          backend.STORE_PKCS11,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Get import parameters

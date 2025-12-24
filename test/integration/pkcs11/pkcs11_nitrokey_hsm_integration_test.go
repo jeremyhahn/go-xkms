@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -58,7 +59,7 @@ func TestNitrokeyHSM(t *testing.T) {
 
 	// Create storage backends
 	keyStorage := storage.New()
-	certStorage := storage.New()
+	certStorageBackend := storage.New()
 
 	// Create PKCS11 backend configuration for Nitrokey HSM
 	// The Nitrokey HSM uses the "SmartCard-HSM" token label by default
@@ -68,7 +69,7 @@ func TestNitrokeyHSM(t *testing.T) {
 		TokenLabel:  "go-keychain-test (UserPIN)",
 		PIN:         "648219",
 		KeyStorage:  keyStorage,
-		CertStorage: certStorage,
+		CertStorage: certStorageBackend,
 	}
 
 	// Create backend
@@ -336,9 +337,10 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		MaxCertificates:       100,  // Limit to prevent token exhaustion
 	}
 
-	certStorage, err := backend.CreateCertificateStorage(certConfig)
+	certStorageBackend, err := backend.CreateCertificateStorage(certConfig)
 	require.NoError(t, err, "Failed to create hardware certificate storage")
-	defer certStorage.Close()
+	defer certStorageBackend.Close()
+	certStorage := storage.NewCertAdapter(certStorageBackend)
 
 	t.Log("✓ Created hardware-backed certificate storage on Nitrokey HSM (stores certs ON the HSM)")
 

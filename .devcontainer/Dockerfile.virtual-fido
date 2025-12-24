@@ -1,0 +1,108 @@
+# Virtual FIDO2 Authenticator Service
+# Uses bulwarkid/virtual-fido for USB/IP based FIDO2 emulation
+#
+# This creates a real virtual USB device that libfido2 can detect
+
+FROM golang:1.23-bookworm AS builder
+
+WORKDIR /build
+
+# Clone and build virtual-fido
+RUN git clone --depth 1 https://github.com/bulwarkid/virtual-fido.git && \
+    cd virtual-fido && \
+    go build -o /virtual-fido ./cmd/demo
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfido2-1 \
+    fido2-tools \
+    usbip \
+    linux-tools-generic \
+    kmod \
+    ca-certificates \
+    procps \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual-fido binary
+COPY --from=builder /virtual-fido /usr/local/bin/virtual-fido
+
+# Create directories
+RUN mkdir -p /var/lib/virtual-fido /var/run/virtual-fido
+
+# Create configuration file
+RUN cat > /etc/virtual-fido.json << 'EOF'
+{
+    "pin": "123456",
+    "state_file": "/var/lib/virtual-fido/state.json"
+}
+EOF
+
+# Create startup script
+RUN cat > /usr/local/bin/start-virtual-fido.sh << 'SCRIPT'
+#!/bin/bash
+set -e
+
+echo "=== Virtual FIDO2 Authenticator ==="
+echo "Using bulwarkid/virtual-fido USB/IP emulation"
+
+# Load USB/IP kernel module if available
+if [ -f /sys/module/vhci_hcd/initstate ] || modprobe vhci-hcd 2>/dev/null; then
+    echo "✓ USB/IP kernel module loaded"
+else
+    echo "⚠ USB/IP kernel module not available - using socket mode"
+fi
+
+# Create state directory
+mkdir -p /var/lib/virtual-fido
+chmod 755 /var/lib/virtual-fido
+
+# Start virtual-fido
+echo "Starting Virtual FIDO2..."
+cd /var/lib/virtual-fido
+
+# Run virtual-fido in background
+/usr/local/bin/virtual-fido start &
+VFIDO_PID=$!
+
+# Wait for startup
+sleep 3
+
+# Create ready marker
+touch /var/run/.virtual-fido-ready
+
+echo "=== Virtual FIDO2 Ready ==="
+echo "PID: $VFIDO_PID"
+
+# Handle shutdown
+trap "kill $VFIDO_PID 2>/dev/null; exit 0" SIGTERM SIGINT
+
+# Keep running
+wait
+SCRIPT
+
+RUN chmod +x /usr/local/bin/start-virtual-fido.sh
+
+# Create healthcheck
+RUN cat > /usr/local/bin/healthcheck.sh << 'EOF'
+#!/bin/bash
+[ -f /var/run/.virtual-fido-ready ] && pgrep -f virtual-fido > /dev/null
+EOF
+
+RUN chmod +x /usr/local/bin/healthcheck.sh
+
+# Environment
+ENV VIRTUAL_FIDO_PIN=123456
+ENV VIRTUAL_FIDO_STATE=/var/lib/virtual-fido/state.json
+
+VOLUME ["/var/lib/virtual-fido"]
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=10 --start-period=15s \
+    CMD ["/usr/local/bin/healthcheck.sh"]
+
+CMD ["/usr/local/bin/start-virtual-fido.sh"]

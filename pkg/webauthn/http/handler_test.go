@@ -929,3 +929,138 @@ func TestHandler_BeginLogin_ServiceError(t *testing.T) {
 	// Should fail because user has no credentials
 	assert.True(t, rec.Code >= 400)
 }
+
+func TestHandler_BeginLogin_EmailWithCredentials(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Register a user first
+	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
+		strings.NewReader(`{"email":"login-with-creds@example.com"}`))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRec := httptest.NewRecorder()
+	h.BeginRegistration(regRec, regReq)
+	require.Equal(t, http.StatusOK, regRec.Code)
+
+	// Get the user to retrieve the user ID
+	user, err := h.service.GetUserByEmail(regReq.Context(), "login-with-creds@example.com")
+	require.NoError(t, err)
+
+	// Test BeginLogin by email
+	loginReq := httptest.NewRequest(http.MethodPost, "/login/begin",
+		strings.NewReader(`{"email":"login-with-creds@example.com"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+
+	h.BeginLogin(loginRec, loginReq)
+
+	// Should fail (no credentials), but we've covered the GetUserByEmail success path
+	assert.True(t, loginRec.Code >= 400)
+	assert.NotNil(t, user)
+}
+
+func TestHandler_FinishRegistration_ParseError(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Begin registration to get a valid session
+	beginReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
+		strings.NewReader(`{"email":"parse-error@example.com"}`))
+	beginReq.Header.Set("Content-Type", "application/json")
+	beginRec := httptest.NewRecorder()
+	h.BeginRegistration(beginRec, beginReq)
+	require.Equal(t, http.StatusOK, beginRec.Code)
+	sessionID := beginRec.Header().Get(HeaderSessionID)
+
+	// Send malformed credential creation response
+	req := httptest.NewRequest(http.MethodPost, "/registration/finish",
+		strings.NewReader(`{"id":"test","type":"public-key"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSessionID, sessionID)
+	rec := httptest.NewRecorder()
+
+	h.FinishRegistration(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	var errResp ErrorResponse
+	err := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, err)
+	assert.Equal(t, ErrorCodeInvalidRequest, errResp.Error)
+}
+
+func TestHandler_FinishLogin_ParseError(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Send malformed credential request response
+	req := httptest.NewRequest(http.MethodPost, "/login/finish",
+		strings.NewReader(`{"id":"test","type":"public-key"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSessionID, "test-session")
+	rec := httptest.NewRecorder()
+
+	h.FinishLogin(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	var errResp ErrorResponse
+	err := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, err)
+	assert.Equal(t, ErrorCodeInvalidRequest, errResp.Error)
+}
+
+func TestHandler_RegistrationStatus_UserIDInQueryParam(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Register a user
+	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
+		strings.NewReader(`{"email":"queryparam@example.com"}`))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRec := httptest.NewRecorder()
+	h.BeginRegistration(regRec, regReq)
+	require.Equal(t, http.StatusOK, regRec.Code)
+
+	// Get the user
+	user, err := h.service.GetUserByEmail(regReq.Context(), "queryparam@example.com")
+	require.NoError(t, err)
+	userID := base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
+
+	// Test with query param
+	req := httptest.NewRequest(http.MethodGet, "/registration/status?user_id="+userID, nil)
+	rec := httptest.NewRecorder()
+
+	h.RegistrationStatus(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var resp RegistrationStatusResponse
+	err = json.NewDecoder(rec.Body).Decode(&resp)
+	require.NoError(t, err)
+	assert.False(t, resp.Registered) // No credentials yet
+}
+
+func TestHandler_BeginLogin_UserIDNotNil(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Register a user
+	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
+		strings.NewReader(`{"email":"userid-header@example.com"}`))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRec := httptest.NewRecorder()
+	h.BeginRegistration(regRec, regReq)
+	require.Equal(t, http.StatusOK, regRec.Code)
+
+	// Get user ID from service
+	user, err := h.service.GetUserByEmail(regReq.Context(), "userid-header@example.com")
+	require.NoError(t, err)
+	userIDStr := base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
+
+	// Test BeginLogin with user ID - this should set the X-User-Id header if userID != nil
+	loginReq := BeginLoginRequest{
+		UserID: userIDStr,
+	}
+	b, _ := json.Marshal(loginReq)
+	req := httptest.NewRequest(http.MethodPost, "/login/begin", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.BeginLogin(rec, req)
+
+	// Should fail due to no credentials but we test the userID != nil path (line 182-184)
+	assert.True(t, rec.Code >= 400)
+}

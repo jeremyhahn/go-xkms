@@ -92,9 +92,6 @@ func TestGenerateSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_AZUREKV,
 				SymmetricAlgorithm: tt.algorithm,
-				AESAttributes: &types.AESAttributes{
-					KeySize: tt.keySize,
-				},
 			}
 
 			// Generate symmetric key
@@ -144,9 +141,6 @@ func TestGenerateSymmetricKeyIdempotent(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate first time
@@ -182,9 +176,6 @@ func TestGetSymmetricKey(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate key first
@@ -222,9 +213,6 @@ func TestGetSymmetricKeyNotFound(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Try to get a key that doesn't exist
@@ -245,9 +233,6 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate symmetric key
@@ -313,9 +298,6 @@ func TestSymmetricEncryptDecryptWithAAD(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate symmetric key
@@ -374,9 +356,6 @@ func TestSymmetricEncryptEmptyData(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate symmetric key
@@ -420,9 +399,6 @@ func TestSymmetricEncryptLargeData(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate symmetric key
@@ -491,13 +467,12 @@ func TestSymmetricInvalidAttributes(t *testing.T) {
 			},
 		},
 		{
-			name: "Missing AES attributes",
+			name: "Missing symmetric algorithm",
 			attrs: &types.KeyAttributes{
-				CN:                 "test-missing-attrs",
-				KeyType:            backend.KEY_TYPE_SECRET,
-				StoreType:          backend.STORE_AZUREKV,
-				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes:      nil, // Missing
+				CN:        "test-missing-attrs",
+				KeyType:   backend.KEY_TYPE_SECRET,
+				StoreType: backend.STORE_AZUREKV,
+				// No SymmetricAlgorithm set
 			},
 		},
 	}
@@ -539,9 +514,6 @@ func TestAzureKVBackend_NonceReuse(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      true,
 			BytesTracking:      false,
@@ -600,9 +572,6 @@ func TestAzureKVBackend_BytesLimit(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_AZUREKV,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      false,
 			BytesTracking:      true,

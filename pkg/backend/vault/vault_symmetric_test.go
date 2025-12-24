@@ -73,10 +73,6 @@ func TestVaultBackend_GenerateSymmetricKey(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if key exists from previous test
@@ -111,10 +107,6 @@ func TestVaultBackend_GenerateSymmetricKey_InvalidKeySize(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES128GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   128,
-			NonceSize: 12,
-		},
 	}
 
 	_, err = b.GenerateSymmetricKey(attrs)
@@ -155,10 +147,6 @@ func TestVaultBackend_GetSymmetricKey(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if exists
@@ -191,10 +179,6 @@ func TestVaultBackend_GetSymmetricKey_NotFound(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	_, err = b.GetSymmetricKey(attrs)
@@ -213,10 +197,6 @@ func TestVaultBackend_SymmetricEncrypter_EncryptDecrypt(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if exists
@@ -266,10 +246,6 @@ func TestVaultBackend_SymmetricEncrypter_WithAAD(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if exists
@@ -326,10 +302,6 @@ func TestVaultBackend_SymmetricEncrypter_EmptyPlaintext(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if exists
@@ -369,10 +341,6 @@ func TestVaultBackend_SymmetricEncrypter_LargePlaintext(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if exists
@@ -415,10 +383,6 @@ func TestVaultBackend_SymmetricEncrypter_MultipleRoundTrips(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if exists
@@ -472,10 +436,6 @@ func TestVaultBackend_SymmetricEncrypter_NotFound(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	_, err = b.SymmetricEncrypter(attrs)
@@ -494,10 +454,6 @@ func TestVaultBackend_SymmetricKey_DuplicateGeneration(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 	}
 
 	// Clean up if exists
@@ -532,10 +488,6 @@ func TestVaultBackend_BytesLimit(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_VAULT,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize:   256,
-			NonceSize: 12,
-		},
 		AEADOptions: &types.AEADOptions{
 			NonceTracking:      false, // Vault manages nonces
 			BytesTracking:      true,

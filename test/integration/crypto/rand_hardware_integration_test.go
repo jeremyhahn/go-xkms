@@ -18,6 +18,7 @@ package crypto_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -117,51 +118,57 @@ func TestRandTPM2HardwareIntegration(t *testing.T) {
 	})
 
 	t.Run("ConcurrentAccess", func(t *testing.T) {
-		// Test thread safety with TPM2 hardware
-		numGoroutines := 50
-		bytesPerGoroutine := 32
+		// Test concurrent access to TPM2 RNG - the library should be thread-safe
+		numGoroutines := 10
+		iterationsPerGoroutine := 10
+
 		var wg sync.WaitGroup
-		errors := make(chan error, numGoroutines)
-		results := make(chan []byte, numGoroutines)
+		errChan := make(chan error, numGoroutines*iterationsPerGoroutine)
+		results := make(chan []byte, numGoroutines*iterationsPerGoroutine)
 
-		wg.Add(numGoroutines)
-		for i := 0; i < numGoroutines; i++ {
-			go func() {
+		// Launch goroutines that concurrently access TPM2 RNG
+		for g := 0; g < numGoroutines; g++ {
+			wg.Add(1)
+			go func(goroutineID int) {
 				defer wg.Done()
-
-				randomBytes, err := resolver.Rand(bytesPerGoroutine)
-				if err != nil {
-					errors <- err
-					return
+				for i := 0; i < iterationsPerGoroutine; i++ {
+					randomBytes, err := resolver.Rand(32)
+					if err != nil {
+						errChan <- fmt.Errorf("goroutine %d, iteration %d: %w", goroutineID, i, err)
+						return
+					}
+					results <- randomBytes
 				}
-
-				results <- randomBytes
-			}()
+			}(g)
 		}
 
+		// Wait for all goroutines to complete
 		wg.Wait()
-		close(errors)
+		close(errChan)
 		close(results)
 
 		// Check for errors
-		for err := range errors {
-			t.Errorf("TPM2 concurrent access error: %v", err)
+		var errors []error
+		for err := range errChan {
+			errors = append(errors, err)
 		}
+		require.Empty(t, errors, "Concurrent TPM2 access should not produce errors: %v", errors)
 
-		// Verify uniqueness
+		// Verify all results are unique (collect and deduplicate)
 		seen := make(map[string]bool)
-		duplicates := 0
-		for result := range results {
-			require.Len(t, result, bytesPerGoroutine)
-
-			key := string(result)
-			if seen[key] {
-				duplicates++
-			}
+		totalResults := 0
+		for r := range results {
+			totalResults++
+			hash := sha256.Sum256(r)
+			key := string(hash[:])
+			assert.False(t, seen[key], "TPM2 concurrent access should produce unique values")
 			seen[key] = true
 		}
 
-		assert.Equal(t, 0, duplicates, "TPM2 RNG should not produce duplicates under concurrent access")
+		expectedResults := numGoroutines * iterationsPerGoroutine
+		assert.Equal(t, expectedResults, totalResults, "Should have all results")
+		t.Logf("✓ TPM2 concurrent access: %d goroutines × %d iterations = %d unique results",
+			numGoroutines, iterationsPerGoroutine, totalResults)
 	})
 
 	t.Run("Entropy", func(t *testing.T) {

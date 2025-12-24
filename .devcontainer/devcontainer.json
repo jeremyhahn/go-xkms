@@ -24,8 +24,8 @@
         "streetsidesoftware.code-spell-checker"
       ],
       "settings": {
-        "go.testTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator",
-        "go.buildTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator",
+        "go.testTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator,yubikey,nitrokey,canokey,fido2,webauthn",
+        "go.buildTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator,yubikey,nitrokey,canokey,fido2,webauthn",
         "go.lintTool": "golangci-lint",
         "go.lintFlags": ["--fast"],
         "go.useLanguageServer": true,
@@ -45,7 +45,10 @@
     "CGO_ENABLED": "1",
     "TPM_USE_SIMULATOR": "true",
     "SOFTHSM2_CONF": "/etc/softhsm/softhsm2.conf",
-    "PKCS11_LIBRARY": "/usr/lib/softhsm/libsofthsm2.so"
+    "PKCS11_LIBRARY": "/usr/lib/softhsm/libsofthsm2.so",
+    "CANOKEY_PKCS11_LIBRARY": "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so",
+    "CANOKEY_PIN": "123456",
+    "FIDO2_PIN": "123456"
   },
   "mounts": [
     "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",

@@ -39,7 +39,7 @@ func setupTPM2WithCapture(t *testing.T, encryptSession bool) (tpm2lib.TrustedPla
 	// Create logger
 	logger := logging.DefaultLogger()
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend using the factory
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		t.Fatalf("Failed to create storage factory: %v", err)

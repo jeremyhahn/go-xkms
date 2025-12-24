@@ -43,9 +43,6 @@ func TestGenerateSymmetricKey(t *testing.T) {
 		StoreType:          types.StoreTPM2,
 		KeyAlgorithm:       x509.PublicKeyAlgorithm(0), // Will be treated as symmetric
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	key, err := tpm2Instance.GenerateSymmetricKey(attrs)
@@ -80,9 +77,6 @@ func TestGetSymmetricKey(t *testing.T) {
 		StoreType:          types.StoreTPM2,
 		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// Generate key first
@@ -114,9 +108,6 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 		StoreType:          types.StoreTPM2,
 		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := tpm2Instance.GenerateSymmetricKey(attrs)
@@ -173,9 +164,6 @@ func TestSymmetricEncryptWithAAD(t *testing.T) {
 		StoreType:          types.StoreTPM2,
 		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := tpm2Instance.GenerateSymmetricKey(attrs)
@@ -231,9 +219,6 @@ func TestNonceReuse(t *testing.T) {
 		StoreType:          types.StoreTPM2,
 		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := tpm2Instance.GenerateSymmetricKey(attrs)
@@ -284,9 +269,6 @@ func TestBytesLimit(t *testing.T) {
 		StoreType:          types.StoreTPM2,
 		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, err := tpm2Instance.GenerateSymmetricKey(attrs)
@@ -354,33 +336,26 @@ func TestGenerateSymmetricKeyErrors(t *testing.T) {
 	// Test missing CN
 	_, err = tpm2Instance.GenerateSymmetricKey(&types.KeyAttributes{
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	})
 	if err == nil {
 		t.Error("Expected error for missing CN")
 	}
 
-	// Test invalid key size
+	// Test missing symmetric algorithm
 	_, err = tpm2Instance.GenerateSymmetricKey(&types.KeyAttributes{
-		CN:                 "test-invalid-size",
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 192, // Not supported by TPM 2.0
-		},
+		CN: "test-no-algorithm",
 	})
 	if err == nil {
-		t.Error("Expected error for unsupported key size")
+		t.Error("Expected error for missing symmetric algorithm")
 	}
 
-	// Test missing AES attributes
+	// Test invalid symmetric algorithm
 	_, err = tpm2Instance.GenerateSymmetricKey(&types.KeyAttributes{
-		CN:                 "test-no-aes-attrs",
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		CN:                 "test-invalid-algorithm",
+		SymmetricAlgorithm: "invalid-algorithm",
 	})
 	if err == nil {
-		t.Error("Expected error for missing AES attributes")
+		t.Error("Expected error for invalid symmetric algorithm")
 	}
 }
 
@@ -396,9 +371,6 @@ func TestKeyAlreadyExists(t *testing.T) {
 		StoreType:          types.StoreTPM2,
 		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	// First generation should succeed
@@ -439,7 +411,7 @@ func createSimWithTracker(encrypt, entropy bool) (*logging.Logger, TrustedPlatfo
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		logger.FatalError(err)

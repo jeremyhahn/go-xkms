@@ -155,7 +155,7 @@ func createSim(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
 
-	// Create go-objstore backed storage using the factory
+	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
 		logger.FatalError(err)

@@ -2,15 +2,21 @@
 
 ## Overview
 
-The go-keychain library provides comprehensive symmetric encryption capabilities using AES-GCM (Advanced Encryption Standard with Galois/Counter Mode) for authenticated encryption. This guide covers how to generate, store, and use symmetric keys across different backend providers.
+The go-keychain library provides comprehensive symmetric encryption capabilities using AEAD (Authenticated Encryption with Associated Data) algorithms. This guide covers how to generate, store, and use symmetric keys across different backend providers.
+
+**Supported Algorithms:**
+- **AES-GCM** (128, 192, 256-bit) - Hardware-accelerated with AES-NI, FIPS compliant
+- **ChaCha20-Poly1305** (256-bit) - Software-optimized, RFC 8439 compliant
+- **XChaCha20-Poly1305** (256-bit, 192-bit nonce) - Extended nonce variant
 
 **Key Features:**
-- AES-GCM authenticated encryption with additional data (AEAD)
-- Support for 128, 192, and 256-bit keys
+- AEAD authenticated encryption with additional data
+- Automatic algorithm selection based on hardware capabilities
 - Multiple backend support (software, AWS KMS, GCP KMS, Azure Key Vault)
-- Password-protected key storage
+- Password-protected key storage with Argon2id
 - Thread-safe operations
 - Hardware-backed key storage (TPM2, PKCS#11)
+- AEAD safety tracking (nonce reuse prevention, bytes limits)
 
 ## Supported Backends
 
@@ -447,16 +453,31 @@ if caps.SupportsSymmetricEncryption() {
 ### Key Types and Algorithms
 
 ```go
-// Key algorithms
+// Symmetric algorithms (AEAD)
 const (
-    ALG_AES128_GCM KeyAlgorithm = "aes128-gcm" // 128-bit AES-GCM
-    ALG_AES192_GCM KeyAlgorithm = "aes192-gcm" // 192-bit AES-GCM
-    ALG_AES256_GCM KeyAlgorithm = "aes256-gcm" // 256-bit AES-GCM
+    // AES-GCM algorithms
+    SymmetricAES128GCM SymmetricAlgorithm = "aes128-gcm" // 128-bit AES-GCM
+    SymmetricAES192GCM SymmetricAlgorithm = "aes192-gcm" // 192-bit AES-GCM
+    SymmetricAES256GCM SymmetricAlgorithm = "aes256-gcm" // 256-bit AES-GCM (recommended)
+
+    // ChaCha20-Poly1305 algorithms (RFC 8439)
+    SymmetricChaCha20Poly1305  SymmetricAlgorithm = "chacha20-poly1305"  // 256-bit, 96-bit nonce
+    SymmetricXChaCha20Poly1305 SymmetricAlgorithm = "xchacha20-poly1305" // 256-bit, 192-bit nonce
 )
 
 // Key type for symmetric keys
-KEY_TYPE_SECRET KeyType = "secret"
+KeyTypeSecret KeyType = "secret"
 ```
+
+**Algorithm Comparison:**
+
+| Algorithm | Key Size | Nonce Size | Best For |
+|-----------|----------|------------|----------|
+| `aes128-gcm` | 128-bit | 96-bit | General purpose |
+| `aes192-gcm` | 192-bit | 96-bit | Extended security |
+| `aes256-gcm` | 256-bit | 96-bit | Maximum security, FIPS compliance |
+| `chacha20-poly1305` | 256-bit | 96-bit | Software-only (no AES-NI) |
+| `xchacha20-poly1305` | 256-bit | 192-bit | Safe random nonce generation |
 
 ### Core Interfaces
 

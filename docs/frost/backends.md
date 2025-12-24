@@ -178,19 +178,16 @@ aws kms create-key --description "FROST master key"
 import (
     "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
     "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-objstore/pkg/s3"
+    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
 )
 
 func awsConfig() (*frost.Config, error) {
-    // S3 for public storage
-    s3Storage, err := s3.NewBackend(&s3.Config{
-        Bucket: "my-frost-public-bucket",
-        Region: "us-east-1",
-        Prefix: "frost/",
-    })
-    if err != nil {
-        return nil, err
-    }
+    // File storage for public data (or use a custom adapter for S3)
+    // NOTE: For cloud object storage (S3, GCS, etc.), create an adapter
+    // that implements storage.Backend. go-keychain's interface is compatible
+    // with libraries like go-objstore, allowing you to pass cloud backends
+    // from your application.
+    publicStorage := file.NewBackend("/var/lib/frost/public")
 
     // AWS KMS for secret storage
     kmsBackend, err := awskms.NewBackend(&awskms.Config{
@@ -207,7 +204,7 @@ func awsConfig() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage:       s3Storage,
+        PublicStorage:       publicStorage,
         SecretBackend:       kmsBackend,
         Algorithm:           types.FrostAlgorithmP256,
         EnableNonceTracking: true,
@@ -283,19 +280,15 @@ gcloud kms keys create frost-master-key \
 import (
     "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
     "github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
-    "github.com/jeremyhahn/go-objstore/pkg/gcs"
+    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
 )
 
 func gcpConfig() (*frost.Config, error) {
-    // GCS for public storage
-    gcsStorage, err := gcs.NewBackend(&gcs.Config{
-        Bucket:    "my-frost-public-bucket",
-        Prefix:    "frost/",
-        ProjectID: "my-project",
-    })
-    if err != nil {
-        return nil, err
-    }
+    // File storage for public data (or use a custom adapter for GCS)
+    // NOTE: For cloud object storage, create an adapter that implements
+    // storage.Backend. go-keychain's interface is compatible with libraries
+    // like go-objstore, allowing you to pass cloud backends from your app.
+    publicStorage := file.NewBackend("/var/lib/frost/public")
 
     // GCP KMS for secret storage
     kmsBackend, err := gcpkms.NewBackend(&gcpkms.Config{
@@ -309,7 +302,7 @@ func gcpConfig() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage:       gcsStorage,
+        PublicStorage:       publicStorage,
         SecretBackend:       kmsBackend,
         Algorithm:           types.FrostAlgorithmP256,
         EnableNonceTracking: true,
@@ -353,18 +346,15 @@ az keyvault create \
 import (
     "github.com/jeremyhahn/go-keychain/pkg/backend/azurekv"
     "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-objstore/pkg/azureblob"
+    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
 )
 
 func azureConfig() (*frost.Config, error) {
-    // Azure Blob for public storage
-    blobStorage, err := azureblob.NewBackend(&azureblob.Config{
-        AccountName:   "mystorageaccount",
-        ContainerName: "frost-public",
-    })
-    if err != nil {
-        return nil, err
-    }
+    // File storage for public data (or use a custom adapter for Azure Blob)
+    // NOTE: For cloud object storage, create an adapter that implements
+    // storage.Backend. go-keychain's interface is compatible with libraries
+    // like go-objstore, allowing you to pass cloud backends from your app.
+    publicStorage := file.NewBackend("/var/lib/frost/public")
 
     // Azure Key Vault for secret storage
     kvBackend, err := azurekv.NewBackend(&azurekv.Config{
@@ -379,7 +369,7 @@ func azureConfig() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage:       blobStorage,
+        PublicStorage:       publicStorage,
         SecretBackend:       kvBackend,
         Algorithm:           types.FrostAlgorithmP256,
         EnableNonceTracking: true,

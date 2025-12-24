@@ -263,9 +263,6 @@ func TestUnseal_KeyMismatch(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:                 "different-key", // Different from KeyID
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	ctx := context.Background()

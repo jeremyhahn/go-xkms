@@ -360,7 +360,7 @@ If your binary is larger than expected:
 
 ## See Also
 
-- [Getting Started](getting-started.md)
-- [Backend Registry](backend-registry.md)
-- [Storage Abstraction](storage-abstraction.md)
-- [Architecture Overview](architecture/overview.md)
+- [Getting Started](../usage/getting-started.md)
+- [Backend Registry](../architecture/backend-registry.md)
+- [Storage Abstraction](../architecture/storage-abstraction.md)
+- [Architecture Overview](../architecture/overview.md)

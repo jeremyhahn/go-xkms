@@ -114,9 +114,6 @@ func TestBackend_GenerateSymmetricKey(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: tt.algorithm,
-				AESAttributes: &types.AESAttributes{
-					KeySize: tt.keySize,
-				},
 			}
 
 			// Skip validation for invalid test cases
@@ -154,9 +151,6 @@ func TestBackend_GetSymmetricKey(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_PKCS11,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	if err := attrs.Validate(); err != nil {
@@ -185,9 +179,6 @@ func TestBackend_SymmetricEncrypter(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_PKCS11,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	if err := attrs.Validate(); err != nil {
@@ -482,23 +473,19 @@ func TestBackend_GenerateSymmetricKey_AllKeySizes(t *testing.T) {
 
 	b := newTestBackend(tempLib)
 
-	keySizes := []int{128, 192, 256}
 	algorithms := []types.SymmetricAlgorithm{
 		types.SymmetricAES128GCM,
 		types.SymmetricAES192GCM,
 		types.SymmetricAES256GCM,
 	}
 
-	for i, keySize := range keySizes {
-		t.Run(string(algorithms[i]), func(t *testing.T) {
+	for _, algorithm := range algorithms {
+		t.Run(string(algorithm), func(t *testing.T) {
 			attrs := &types.KeyAttributes{
-				CN:                 "test-" + string(algorithms[i]),
+				CN:                 "test-" + string(algorithm),
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
-				SymmetricAlgorithm: algorithms[i],
-				AESAttributes: &types.AESAttributes{
-					KeySize: keySize,
-				},
+				SymmetricAlgorithm: algorithm,
 			}
 
 			if err := attrs.Validate(); err != nil {
@@ -530,9 +517,6 @@ func TestBackend_GetSymmetricKey_KeySizeInference(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_PKCS11,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 0, // Not specified
-		},
 	}
 
 	// Should fail at not initialized, but tests inference logic
@@ -600,9 +584,6 @@ func TestBackend_SymmetricInterface(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_PKCS11,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AESAttributes: &types.AESAttributes{
-			KeySize: 256,
-		},
 	}
 
 	_, _ = b.GenerateSymmetricKey(attrs)
@@ -634,9 +615,6 @@ func TestBackend_GenerateSymmetricKey_InvalidAttributes(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_PKCS11,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				AESAttributes: &types.AESAttributes{
-					KeySize: 256,
-				},
 			},
 			wantErr: "CN is required",
 		},

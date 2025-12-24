@@ -4583,3 +4583,480 @@ func TestPasswordEncryptionEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// TestListKeys_WithPartitionedKeys tests ListKeys with partitioned key format
+func TestListKeys_WithPartitionedKeys(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	// Generate keys with partition
+	partitionedAttrs := &types.KeyAttributes{
+		CN:                 "partitioned-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Partition:          "test-partition",
+	}
+
+	_, err = b.GenerateSymmetricKey(partitionedAttrs)
+	if err != nil {
+		t.Fatalf("Failed to generate partitioned key: %v", err)
+	}
+
+	// Generate key without partition
+	nonPartitionedAttrs := &types.KeyAttributes{
+		CN:                 "non-partitioned-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES128GCM,
+	}
+
+	_, err = b.GenerateSymmetricKey(nonPartitionedAttrs)
+	if err != nil {
+		t.Fatalf("Failed to generate non-partitioned key: %v", err)
+	}
+
+	// List keys
+	keys, err := b.ListKeys()
+	if err != nil {
+		t.Fatalf("ListKeys failed: %v", err)
+	}
+
+	if len(keys) != 2 {
+		t.Errorf("Expected 2 keys, got %d", len(keys))
+	}
+
+	// Verify partitioned key
+	var foundPartitioned bool
+	var foundNonPartitioned bool
+	for _, key := range keys {
+		if key.CN == "partitioned-key" {
+			foundPartitioned = true
+			if key.Partition != "test-partition" {
+				t.Errorf("Expected partition 'test-partition', got '%s'", key.Partition)
+			}
+		}
+		if key.CN == "non-partitioned-key" {
+			foundNonPartitioned = true
+			if key.Partition != "" {
+				t.Errorf("Expected empty partition, got '%s'", key.Partition)
+			}
+		}
+	}
+
+	if !foundPartitioned {
+		t.Error("Partitioned key not found in list")
+	}
+	if !foundNonPartitioned {
+		t.Error("Non-partitioned key not found in list")
+	}
+}
+
+// TestListKeys_WithMalformedKeyIDs tests ListKeys with various key ID formats
+func TestListKeys_WithMalformedKeyIDs(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	// Manually insert a key with < 4 parts (malformed)
+	malformedKeyID := "malformed:key"
+	keyData := make([]byte, 32)
+	if _, err := rand.Read(keyData); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.SaveKey(s, malformedKeyID, keyData); err != nil {
+		t.Fatal(err)
+	}
+
+	// Manually insert a key with non-secret keytype (should be skipped)
+	asymmetricKeyID := "sw:rsa:test-rsa:rsa-2048"
+	if err := storage.SaveKey(s, asymmetricKeyID, keyData); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generate a normal symmetric key
+	normalAttrs := &types.KeyAttributes{
+		CN:                 "normal-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	_, err = b.GenerateSymmetricKey(normalAttrs)
+	if err != nil {
+		t.Fatalf("Failed to generate normal key: %v", err)
+	}
+
+	// List keys - should handle malformed IDs gracefully
+	keys, err := b.ListKeys()
+	if err != nil {
+		t.Fatalf("ListKeys failed: %v", err)
+	}
+
+	// Should only return the normal symmetric key
+	// Malformed ID should be treated as fallback with CN=full ID
+	// Asymmetric key should be filtered out
+	foundNormal := false
+	foundMalformed := false
+	foundAsymmetric := false
+
+	for _, key := range keys {
+		if key.CN == "normal-key" {
+			foundNormal = true
+		}
+		if key.CN == malformedKeyID {
+			foundMalformed = true
+			// Should use default values for malformed keys
+			if key.KeyType != types.KeyTypeSecret {
+				t.Errorf("Expected KeyTypeSecret for malformed key, got %v", key.KeyType)
+			}
+		}
+		if key.CN == "test-rsa" {
+			foundAsymmetric = true
+		}
+	}
+
+	if !foundNormal {
+		t.Error("Normal key not found")
+	}
+	if !foundMalformed {
+		t.Error("Malformed key should be included with fallback handling")
+	}
+	if foundAsymmetric {
+		t.Error("Asymmetric key should be filtered out")
+	}
+}
+
+// TestListKeys_WithMetadataLoading tests ListKeys loads exportable flag from metadata
+func TestListKeys_WithMetadataLoading(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	// Generate exportable key
+	exportableAttrs := &types.KeyAttributes{
+		CN:                 "exportable-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
+	}
+	_, err = b.GenerateSymmetricKey(exportableAttrs)
+	if err != nil {
+		t.Fatalf("Failed to generate exportable key: %v", err)
+	}
+
+	// Generate non-exportable key
+	nonExportableAttrs := &types.KeyAttributes{
+		CN:                 "non-exportable-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES128GCM,
+		Exportable:         false,
+	}
+	_, err = b.GenerateSymmetricKey(nonExportableAttrs)
+	if err != nil {
+		t.Fatalf("Failed to generate non-exportable key: %v", err)
+	}
+
+	// List keys and verify exportable flags
+	keys, err := b.ListKeys()
+	if err != nil {
+		t.Fatalf("ListKeys failed: %v", err)
+	}
+
+	for _, key := range keys {
+		if key.CN == "exportable-key" {
+			if !key.Exportable {
+				t.Error("Exportable key should have Exportable=true")
+			}
+		}
+		if key.CN == "non-exportable-key" {
+			if key.Exportable {
+				t.Error("Non-exportable key should have Exportable=false")
+			}
+		}
+	}
+}
+
+// TestListKeys_WithInvalidMetadata tests ListKeys handles invalid metadata gracefully
+func TestListKeys_WithInvalidMetadata(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	// Generate a key
+	attrs := &types.KeyAttributes{
+		CN:                 "test-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+	_, err = b.GenerateSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	// Corrupt the metadata
+	keyID := attrs.ID()
+	metaKey := "meta/" + keyID
+	invalidJSON := []byte("not valid json")
+	if err := s.Put(metaKey, invalidJSON, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// List keys - should handle invalid metadata gracefully
+	keys, err := b.ListKeys()
+	if err != nil {
+		t.Fatalf("ListKeys failed: %v", err)
+	}
+
+	if len(keys) != 1 {
+		t.Errorf("Expected 1 key, got %d", len(keys))
+	}
+
+	// Key should still be listed, just without metadata
+	if keys[0].CN != "test-key" {
+		t.Errorf("Expected CN 'test-key', got '%s'", keys[0].CN)
+	}
+}
+
+// TestGenerateSymmetricKey_WithNilPassword tests GenerateSymmetricKey with nil password
+func TestGenerateSymmetricKey_WithNilPassword(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Password:           nil, // Explicitly nil
+	}
+
+	key, err := b.GenerateSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("GenerateSymmetricKey failed: %v", err)
+	}
+
+	if key == nil {
+		t.Fatal("Generated key is nil")
+	}
+
+	// Verify key can be retrieved without password
+	retrievedKey, err := b.GetSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("GetSymmetricKey failed: %v", err)
+	}
+
+	rawOriginal, _ := key.Raw()
+	rawRetrieved, _ := retrievedKey.Raw()
+
+	if !bytes.Equal(rawOriginal, rawRetrieved) {
+		t.Error("Retrieved key does not match original")
+	}
+}
+
+// TestEncrypt_WithNilOptions tests Encrypt with nil options
+func TestEncrypt_WithNilOptions(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err = b.GenerateSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	encrypter, err := b.SymmetricEncrypter(attrs)
+	if err != nil {
+		t.Fatalf("Failed to get encrypter: %v", err)
+	}
+
+	plaintext := []byte("test data")
+
+	// Test with nil options - should use defaults
+	encrypted, err := encrypter.Encrypt(plaintext, nil)
+	if err != nil {
+		t.Fatalf("Encrypt with nil options failed: %v", err)
+	}
+
+	if encrypted == nil {
+		t.Fatal("Encrypted data is nil")
+	}
+
+	// Verify decryption works
+	decrypted, err := encrypter.Decrypt(encrypted, nil)
+	if err != nil {
+		t.Fatalf("Decrypt failed: %v", err)
+	}
+
+	if !bytes.Equal(plaintext, decrypted) {
+		t.Error("Decrypted data does not match plaintext")
+	}
+}
+
+// TestDecrypt_WithNilOptions tests Decrypt with nil options
+func TestDecrypt_WithNilOptions(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-key",
+		KeyType:            backend.KEY_TYPE_SECRET,
+		StoreType:          backend.STORE_SW,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err = b.GenerateSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	encrypter, err := b.SymmetricEncrypter(attrs)
+	if err != nil {
+		t.Fatalf("Failed to get encrypter: %v", err)
+	}
+
+	plaintext := []byte("test data")
+	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{})
+	if err != nil {
+		t.Fatalf("Encrypt failed: %v", err)
+	}
+
+	// Test decrypt with nil options
+	decrypted, err := encrypter.Decrypt(encrypted, nil)
+	if err != nil {
+		t.Fatalf("Decrypt with nil options failed: %v", err)
+	}
+
+	if !bytes.Equal(plaintext, decrypted) {
+		t.Error("Decrypted data does not match plaintext")
+	}
+}
+
+// TestStoreSymmetricKey_WithEmptyPasswordBytes tests storeSymmetricKey with empty password bytes
+func TestStoreSymmetricKey_WithEmptyPasswordBytes(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	backend := b.(*Backend)
+
+	keyData := make([]byte, 32)
+	if _, err := rand.Read(keyData); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a password with empty bytes
+	emptyPassword := &mockPassword{data: []byte{}}
+
+	// Should store without encryption (treats empty as no password)
+	keyID := "test:key:id"
+	err = backend.storeSymmetricKey(keyID, keyData, emptyPassword)
+	if err != nil {
+		t.Fatalf("storeSymmetricKey failed: %v", err)
+	}
+
+	// Retrieve and verify it's stored unencrypted
+	storedData, err := storage.GetKey(s, keyID)
+	if err != nil {
+		t.Fatalf("Failed to retrieve key: %v", err)
+	}
+
+	// Should be exactly the same as original (not encrypted)
+	if !bytes.Equal(storedData, keyData) {
+		t.Error("Key should be stored unencrypted when password is empty")
+	}
+}
+
+// mockPassword implements types.Password for testing
+type mockPassword struct {
+	data []byte
+}
+
+func (m *mockPassword) Bytes() []byte {
+	return m.data
+}
+
+func (m *mockPassword) Clear() {
+	for i := range m.data {
+		m.data[i] = 0
+	}
+}
+
+func (m *mockPassword) String() (string, error) {
+	return string(m.data), nil
+}
+
+// TestDecodeSymmetricKey_WithEmptyPasswordBytes tests decodeSymmetricKey with empty password bytes
+func TestDecodeSymmetricKey_WithEmptyPasswordBytes(t *testing.T) {
+	s := storage.New()
+	config := &Config{KeyStorage: s}
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+	defer func() { _ = b.Close() }()
+
+	backend := b.(*Backend)
+
+	keyData := make([]byte, 32)
+	if _, err := rand.Read(keyData); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a password with empty bytes
+	emptyPassword := &mockPassword{data: []byte{}}
+
+	// Decode should return data as-is when password is empty
+	decoded, err := backend.decodeSymmetricKey(keyData, emptyPassword)
+	if err != nil {
+		t.Fatalf("decodeSymmetricKey failed: %v", err)
+	}
+
+	if !bytes.Equal(decoded, keyData) {
+		t.Error("Decoded data should match original when password is empty")
+	}
+}

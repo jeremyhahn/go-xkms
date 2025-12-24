@@ -732,6 +732,97 @@ func TestUnixGRPCClient_Operations(t *testing.T) {
 			t.Error("EncryptAsym() should return error")
 		}
 	})
+
+	t.Run("ListKeyVersions", func(t *testing.T) {
+		resp, err := client.ListKeyVersions(ctx, &ListKeyVersionsRequest{
+			Backend: "test-backend",
+			KeyID:   "test-key",
+		})
+		if err != nil {
+			t.Errorf("ListKeyVersions() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("ListKeyVersions().KeyID = %q, want %q", resp.KeyID, "test-key")
+		}
+		if len(resp.Versions) != 3 {
+			t.Errorf("ListKeyVersions() versions count = %d, want 3", len(resp.Versions))
+		}
+		if resp.Total != 3 {
+			t.Errorf("ListKeyVersions().Total = %d, want 3", resp.Total)
+		}
+	})
+
+	t.Run("EnableKeyVersion", func(t *testing.T) {
+		resp, err := client.EnableKeyVersion(ctx, &EnableKeyVersionRequest{
+			Backend: "test-backend",
+			KeyID:   "test-key",
+			Version: 3,
+		})
+		if err != nil {
+			t.Errorf("EnableKeyVersion() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("EnableKeyVersion().KeyID = %q, want %q", resp.KeyID, "test-key")
+		}
+		if resp.Version != 3 {
+			t.Errorf("EnableKeyVersion().Version = %d, want 3", resp.Version)
+		}
+		if resp.Status != "enabled" {
+			t.Errorf("EnableKeyVersion().Status = %q, want %q", resp.Status, "enabled")
+		}
+	})
+
+	t.Run("DisableKeyVersion", func(t *testing.T) {
+		resp, err := client.DisableKeyVersion(ctx, &DisableKeyVersionRequest{
+			Backend: "test-backend",
+			KeyID:   "test-key",
+			Version: 1,
+		})
+		if err != nil {
+			t.Errorf("DisableKeyVersion() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("DisableKeyVersion().KeyID = %q, want %q", resp.KeyID, "test-key")
+		}
+		if resp.Version != 1 {
+			t.Errorf("DisableKeyVersion().Version = %d, want 1", resp.Version)
+		}
+		if resp.Status != "disabled" {
+			t.Errorf("DisableKeyVersion().Status = %q, want %q", resp.Status, "disabled")
+		}
+	})
+
+	t.Run("EnableAllKeyVersions", func(t *testing.T) {
+		resp, err := client.EnableAllKeyVersions(ctx, &EnableAllKeyVersionsRequest{
+			Backend: "test-backend",
+			KeyID:   "test-key",
+		})
+		if err != nil {
+			t.Errorf("EnableAllKeyVersions() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("EnableAllKeyVersions().KeyID = %q, want %q", resp.KeyID, "test-key")
+		}
+		if resp.Count != 3 {
+			t.Errorf("EnableAllKeyVersions().Count = %d, want 3", resp.Count)
+		}
+	})
+
+	t.Run("DisableAllKeyVersions", func(t *testing.T) {
+		resp, err := client.DisableAllKeyVersions(ctx, &DisableAllKeyVersionsRequest{
+			Backend: "test-backend",
+			KeyID:   "test-key",
+		})
+		if err != nil {
+			t.Errorf("DisableAllKeyVersions() error = %v", err)
+		}
+		if resp.KeyID != "test-key" {
+			t.Errorf("DisableAllKeyVersions().KeyID = %q, want %q", resp.KeyID, "test-key")
+		}
+		if resp.Count != 3 {
+			t.Errorf("DisableAllKeyVersions().Count = %d, want 3", resp.Count)
+		}
+	})
 }
 
 func TestUnixGRPCClient_Close(t *testing.T) {
