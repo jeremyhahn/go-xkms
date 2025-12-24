@@ -43,14 +43,14 @@ type FrostGenerateKeyRequest struct {
 
 // FrostGenerateKeyResponse represents the response from key generation
 type FrostGenerateKeyResponse struct {
-	KeyID          string             `json:"key_id"`
-	Algorithm      string             `json:"algorithm"`
-	Threshold      int                `json:"threshold"`
-	Total          int                `json:"total"`
-	GroupPublicKey string             `json:"group_public_key"`
-	ParticipantID  uint32             `json:"participant_id,omitempty"`
-	Packages       []FrostKeyPackage  `json:"packages,omitempty"`
-	CreatedAt      time.Time          `json:"created_at"`
+	KeyID          string            `json:"key_id"`
+	Algorithm      string            `json:"algorithm"`
+	Threshold      int               `json:"threshold"`
+	Total          int               `json:"total"`
+	GroupPublicKey string            `json:"group_public_key"`
+	ParticipantID  uint32            `json:"participant_id,omitempty"`
+	Packages       []FrostKeyPackage `json:"packages,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
 }
 
 // FrostKeyPackage represents a participant's key package

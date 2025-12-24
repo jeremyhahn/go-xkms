@@ -224,7 +224,6 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 				symAlgorithm = "aes192-gcm"
 			case 256, 0:
 				symAlgorithm = "aes256-gcm"
-				keySize = 256
 			default:
 				return nil, status.Errorf(codes.InvalidArgument, "invalid key size for symmetric key: %d", keySize)
 			}

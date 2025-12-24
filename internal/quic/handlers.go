@@ -44,9 +44,9 @@ type HealthResponse struct {
 
 // BackendInfo represents information about a backend
 type BackendInfo struct {
-	ID             string                   `json:"id"`
-	Type           string                   `json:"type"`
-	HardwareBacked bool                     `json:"hardware_backed"`
+	ID             string             `json:"id"`
+	Type           string             `json:"type"`
+	HardwareBacked bool               `json:"hardware_backed"`
 	Capabilities   types.Capabilities `json:"capabilities"`
 }
 
@@ -1545,11 +1545,12 @@ func (s *Server) handleGetImportParams(w http.ResponseWriter, r *http.Request) {
 		if keySize == 0 && req.KeySize > 0 {
 			keySize = req.KeySize
 		}
-		if keySize == 128 {
+		switch keySize {
+		case 128:
 			attrs.SymmetricAlgorithm = types.SymmetricAES128GCM
-		} else if keySize == 192 {
+		case 192:
 			attrs.SymmetricAlgorithm = types.SymmetricAES192GCM
-		} else {
+		default:
 			attrs.SymmetricAlgorithm = types.SymmetricAES256GCM
 		}
 	default:
@@ -1896,22 +1897,36 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build source key attributes
-	sourceAttrs := &types.KeyAttributes{
-		CN: req.SourceKeyID,
-	}
-	if req.SourceBackend != "" {
-		storeType := types.ParseStoreType(req.SourceBackend)
-		if storeType == types.StoreUnknown {
-			s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid source backend: %s", req.SourceBackend))
-			return
-		}
-		sourceAttrs.StoreType = storeType
+	// Find the source key by listing keys from the source backend
+	sourceKeyAttrs, err := sourceKS.ListKeys()
+	if err != nil {
+		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys from source backend: %v", err))
+		return
 	}
 
-	// Build destination key attributes
+	var sourceAttrs *types.KeyAttributes
+	for _, attr := range sourceKeyAttrs {
+		if attr.CN == req.SourceKeyID {
+			sourceAttrs = attr
+			break
+		}
+	}
+
+	if sourceAttrs == nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("source key not found: %s", req.SourceKeyID))
+		return
+	}
+
+	// Build destination key attributes - copy from source but with new ID
 	destAttrs := &types.KeyAttributes{
-		CN: req.DestKeyID,
+		CN:                 req.DestKeyID,
+		KeyType:            sourceAttrs.KeyType,
+		KeyAlgorithm:       sourceAttrs.KeyAlgorithm,
+		Hash:               sourceAttrs.Hash,
+		Partition:          sourceAttrs.Partition,
+		RSAAttributes:      sourceAttrs.RSAAttributes,
+		ECCAttributes:      sourceAttrs.ECCAttributes,
+		SymmetricAlgorithm: sourceAttrs.SymmetricAlgorithm,
 	}
 	if req.DestBackend != "" {
 		storeType := types.ParseStoreType(req.DestBackend)

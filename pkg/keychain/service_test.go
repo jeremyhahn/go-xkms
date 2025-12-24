@@ -243,8 +243,8 @@ func setupService(t *testing.T) (*mockKeyStore, *mockKeyStore) {
 
 	config := &ServiceConfig{
 		Backends: map[string]KeyStore{
-			"software":  software,
-			"pkcs11": pkcs11,
+			"software": software,
+			"pkcs11":   pkcs11,
 		},
 		DefaultBackend: "software",
 	}
@@ -935,8 +935,8 @@ func setupSealerService(t *testing.T) (*mockKeyStore, *mockKeyStore) {
 
 	err := Initialize(&ServiceConfig{
 		Backends: map[string]KeyStore{
-			"software":  software,
-			"pkcs11": pkcs11,
+			"software": software,
+			"pkcs11":   pkcs11,
 		},
 		DefaultBackend: "software",
 	})
@@ -1498,8 +1498,8 @@ func setupExtendedService(t *testing.T) (*mockExtendedKeyStore, *mockExtendedKey
 
 	err := Initialize(&ServiceConfig{
 		Backends: map[string]KeyStore{
-			"software":  software,
-			"pkcs11": pkcs11,
+			"software": software,
+			"pkcs11":   pkcs11,
 		},
 		DefaultBackend: "software",
 	})

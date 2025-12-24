@@ -27,9 +27,7 @@ import (
 // TestGRPC_Health tests the gRPC health endpoint
 func TestGRPC_Health(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolGRPC, "backends", "list")
 	if err != nil {
@@ -48,9 +46,7 @@ func TestGRPC_Health(t *testing.T) {
 // TestGRPC_KeyOperations tests key operations via gRPC
 func TestGRPC_KeyOperations(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	keyDir := commands.CreateTempKeyDir(t)
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")
@@ -133,9 +129,7 @@ func TestGRPC_KeyOperations(t *testing.T) {
 // TestGRPC_AllCommands runs all CLI commands via gRPC protocol
 func TestGRPC_AllCommands(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	keyDir := commands.CreateTempKeyDir(t)
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")

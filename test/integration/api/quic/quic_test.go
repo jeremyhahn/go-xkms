@@ -41,9 +41,7 @@ func checkQUICAvailable(t *testing.T, runner *commands.TestRunner) bool {
 // TestQUIC_Health tests the QUIC health endpoint
 func TestQUIC_Health(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	if !checkQUICAvailable(t, runner) {
 		t.Fatal("QUIC server not available - server must be running")
@@ -66,9 +64,7 @@ func TestQUIC_Health(t *testing.T) {
 // TestQUIC_KeyOperations tests key operations via QUIC
 func TestQUIC_KeyOperations(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	if !checkQUICAvailable(t, runner) {
 		t.Fatal("QUIC server not available - server must be running")
@@ -155,9 +151,7 @@ func TestQUIC_KeyOperations(t *testing.T) {
 // TestQUIC_AllCommands runs all CLI commands via QUIC protocol
 func TestQUIC_AllCommands(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	if !checkQUICAvailable(t, runner) {
 		t.Fatal("QUIC server not available - server must be running")

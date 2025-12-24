@@ -44,14 +44,14 @@ type FrostGenerateKeyRequest struct {
 
 // FrostGenerateKeyResponse represents the response from key generation
 type FrostGenerateKeyResponse struct {
-	KeyID          string             `json:"key_id"`
-	Algorithm      string             `json:"algorithm"`
-	Threshold      int                `json:"threshold"`
-	Total          int                `json:"total"`
-	GroupPublicKey string             `json:"group_public_key"` // hex-encoded
-	ParticipantID  uint32             `json:"participant_id,omitempty"`
-	Packages       []FrostKeyPackage  `json:"packages,omitempty"` // dealer mode only
-	CreatedAt      time.Time          `json:"created_at"`
+	KeyID          string            `json:"key_id"`
+	Algorithm      string            `json:"algorithm"`
+	Threshold      int               `json:"threshold"`
+	Total          int               `json:"total"`
+	GroupPublicKey string            `json:"group_public_key"` // hex-encoded
+	ParticipantID  uint32            `json:"participant_id,omitempty"`
+	Packages       []FrostKeyPackage `json:"packages,omitempty"` // dealer mode only
+	CreatedAt      time.Time         `json:"created_at"`
 }
 
 // FrostKeyPackage represents a participant's key package
@@ -130,7 +130,7 @@ type FrostCommitment struct {
 // FrostSignRoundRequest represents a request for Round 2 signing
 type FrostSignRoundRequest struct {
 	KeyID             string            `json:"key_id"`
-	Message           string            `json:"message"`            // hex-encoded
+	Message           string            `json:"message"` // hex-encoded
 	SessionID         string            `json:"session_id"`
 	HidingNonce       string            `json:"hiding_nonce"`       // hex-encoded
 	BindingNonce      string            `json:"binding_nonce"`      // hex-encoded
@@ -148,9 +148,9 @@ type FrostSignRoundResponse struct {
 
 // FrostSignatureShare represents a participant's signature share
 type FrostSignatureShare struct {
-	ParticipantID  uint32 `json:"participant_id"`
-	SessionID      string `json:"session_id"`
-	Share          string `json:"share"` // hex-encoded
+	ParticipantID uint32 `json:"participant_id"`
+	SessionID     string `json:"session_id"`
+	Share         string `json:"share"` // hex-encoded
 }
 
 // FrostAggregateRequest represents a request to aggregate signature shares

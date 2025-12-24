@@ -104,6 +104,17 @@ func isCLIAvailable(t *testing.T, cfg *TestConfig) bool {
 	return true
 }
 
+// requireCLI checks if CLI is available and skips the test if not.
+// Integration tests should be run in Docker where CLI is built automatically.
+// For local runs, use 'make build' to build the CLI first.
+func requireCLI(t *testing.T, cfg *TestConfig) {
+	t.Helper()
+
+	if !isCLIAvailable(t, cfg) {
+		t.Skipf("CLI binary not available (path: %s). Run 'make build' for local testing or use 'make integration-test-cli' for Docker-based tests.", cfg.CLIBinPath)
+	}
+}
+
 // isServerAvailable checks if the REST server is available
 func isServerAvailable(t *testing.T, cfg *TestConfig) bool {
 	t.Helper()

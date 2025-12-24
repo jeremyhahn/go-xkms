@@ -43,9 +43,7 @@ type CLITestSuite struct {
 func NewCLITestSuite(t *testing.T) *CLITestSuite {
 	t.Helper()
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatalf("CLI binary required for integration tests. Run: make build (path: %s)", cfg.CLIBinPath)
-	}
+	requireCLI(t, cfg)
 
 	keyDir := filepath.Join(os.TempDir(), fmt.Sprintf("keychain-test-%d", time.Now().UnixNano()))
 	certDir := filepath.Join(keyDir, "certs")

@@ -173,6 +173,8 @@ func generateKeyRemote(cfg *Config, printer *Printer, keyID, keyType, algorithm,
 		Exportable: exportable,
 	}
 
+	printVerbose("CLI generateKeyRemote: creating request with exportable=%v", exportable)
+
 	// Generate the key
 	resp, err := cl.GenerateKey(ctx, req)
 	if err != nil {

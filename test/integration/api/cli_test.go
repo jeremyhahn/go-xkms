@@ -44,9 +44,7 @@ func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, err
 // TestCLIVersion tests the CLI version command
 func TestCLIVersion(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	stdout, stderr, err := execCLI(t, cfg, "version")
 	if err != nil {
@@ -65,9 +63,7 @@ func TestCLIVersion(t *testing.T) {
 // TestCLIListBackends tests the CLI backends list command
 func TestCLIListBackends(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -93,9 +89,7 @@ func TestCLIListBackends(t *testing.T) {
 // TestCLIBackendInfo tests the CLI backend info command
 func TestCLIBackendInfo(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -120,9 +114,7 @@ func TestCLIBackendInfo(t *testing.T) {
 // TestCLIHelp tests the CLI help command
 func TestCLIHelp(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	tests := []struct {
 		name string
@@ -154,9 +146,7 @@ func TestCLIHelp(t *testing.T) {
 // TestCLIInvalidCommand tests CLI error handling for invalid commands
 func TestCLIInvalidCommand(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	_, stderr, err := execCLI(t, cfg, "invalid-command")
 	if err == nil {
@@ -174,9 +164,7 @@ func TestCLIInvalidCommand(t *testing.T) {
 // TestCLIGenerateKey tests key generation via CLI
 func TestCLIGenerateKey(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -246,9 +234,7 @@ func TestCLIGenerateKey(t *testing.T) {
 // TestCLIListKeys tests listing keys via CLI
 func TestCLIListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -302,9 +288,7 @@ func TestCLIListKeys(t *testing.T) {
 // TestCLISignVerify tests sign and verify operations via CLI
 func TestCLISignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -380,9 +364,7 @@ func TestCLISignVerify(t *testing.T) {
 // TestCLIDeleteKey tests key deletion via CLI
 func TestCLIDeleteKey(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -438,9 +420,7 @@ func TestCLIDeleteKey(t *testing.T) {
 // TestCLIGetKey tests getting key details via CLI
 func TestCLIGetKey(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}

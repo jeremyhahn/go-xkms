@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 	"sync"
 
@@ -147,6 +148,9 @@ func (b *PKCS8Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 	if err := b.storage.Put(metaKey, metadataBytes, nil); err != nil {
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
+
+	// Log metadata storage for debugging
+	log.Printf("PKCS8.GenerateKey: stored metadata for key %s at %s with exportable=%v", keyID, metaKey, attrs.Exportable)
 
 	return privateKey, nil
 }
@@ -308,6 +312,9 @@ func (b *PKCS8Backend) ListKeys() ([]*types.KeyAttributes, error) {
 					attr.Exportable = exportable
 				}
 			}
+		} else {
+			// Log metadata loading failure for debugging
+			log.Printf("PKCS8.ListKeys: failed to load metadata for key %s from %s: %v", id, metaKey, err)
 		}
 
 		attrs = append(attrs, attr)

@@ -202,7 +202,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 	attrs := &types.KeyAttributes{
 		CN:                 req.KeyID,
 		KeyType:            types.KeyTypeSigning, // Default to signing
-		StoreType:          types.StoreSoftware,     // Will be updated based on backend
+		StoreType:          types.StoreSoftware,  // Will be updated based on backend
 		KeyAlgorithm:       keyAlgorithm,
 		SymmetricAlgorithm: symmetricAlgorithm,
 		Exportable:         req.Exportable,

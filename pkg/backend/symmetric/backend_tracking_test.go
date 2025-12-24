@@ -42,7 +42,7 @@ func TestBackend_TrackingEnabled(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		AEADOptions: nil, // Use defaults
+		AEADOptions:        nil, // Use defaults
 	}
 
 	_, err = b.GenerateSymmetricKey(attrs)

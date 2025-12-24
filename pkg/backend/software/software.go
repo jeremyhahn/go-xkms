@@ -44,9 +44,9 @@ import (
 //
 // Thread-safe: Yes, uses a read-write mutex for concurrent access.
 type SoftwareBackend struct {
-	pkcs8Backend     *pkcs8.PKCS8Backend  // Handles asymmetric operations
-	symmetricBackend *symmetric.Backend   // Handles symmetric operations
-	storage          storage.Backend      // Direct access to storage for import operations
+	pkcs8Backend     *pkcs8.PKCS8Backend // Handles asymmetric operations
+	symmetricBackend *symmetric.Backend  // Handles symmetric operations
+	storage          storage.Backend     // Direct access to storage for import operations
 	closed           bool
 	mu               sync.RWMutex
 

@@ -378,14 +378,8 @@ func (s *Server) initializeUserStore() error {
 func (s *Server) initializeAuthentication() error {
 	s.logger.Info("Initializing authentication...")
 
-	// If auth is disabled, use NoOp authenticator
-	if !s.config.Auth.Enabled {
-		s.authenticator = auth.NewNoOpAuthenticator()
-		s.logger.Info("Authentication disabled, using NoOp authenticator")
-		return nil
-	}
-
-	// Build WebAuthn config if enabled
+	// Build WebAuthn config if enabled (do this first as WebAuthn can work independently
+	// of the general auth system - it IS a form of authentication)
 	if s.config.WebAuthn != nil && s.config.WebAuthn.Enabled {
 		s.webauthnConfig = &webauthn.Config{
 			RPID:                    s.config.WebAuthn.RPID,
@@ -403,6 +397,13 @@ func (s *Server) initializeAuthentication() error {
 		s.logger.Info("WebAuthn configured",
 			"rp_id", s.config.WebAuthn.RPID,
 			"rp_display_name", s.config.WebAuthn.RPDisplayName)
+	}
+
+	// If auth is disabled, use NoOp authenticator
+	if !s.config.Auth.Enabled {
+		s.authenticator = auth.NewNoOpAuthenticator()
+		s.logger.Info("Authentication disabled, using NoOp authenticator")
+		return nil
 	}
 
 	// Determine the required authenticator based on config type

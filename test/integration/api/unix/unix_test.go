@@ -27,9 +27,7 @@ import (
 // TestUnix_Health tests the Unix socket health endpoint
 func TestUnix_Health(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolUnix, "backends", "list")
 	if err != nil {
@@ -48,9 +46,7 @@ func TestUnix_Health(t *testing.T) {
 // TestUnix_KeyOperations tests key operations via Unix socket
 func TestUnix_KeyOperations(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	keyDir := commands.CreateTempKeyDir(t)
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")
@@ -133,9 +129,7 @@ func TestUnix_KeyOperations(t *testing.T) {
 // TestUnix_AllCommands runs all CLI commands via Unix socket protocol
 func TestUnix_AllCommands(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	keyDir := commands.CreateTempKeyDir(t)
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")

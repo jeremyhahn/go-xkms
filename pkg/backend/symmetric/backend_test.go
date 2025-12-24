@@ -3099,7 +3099,7 @@ func TestPasswordEncryption_ErrorPaths(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		Password: password,
+		Password:           password,
 	}
 
 	// Generate key with password
@@ -3121,7 +3121,7 @@ func TestPasswordEncryption_ErrorPaths(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		Password: wrongPassword,
+		Password:           wrongPassword,
 	}
 
 	_, err = b.GetSymmetricKey(wrongAttrs)
@@ -3147,8 +3147,8 @@ func TestExportKey_WithPasswordAndValidation(t *testing.T) {
 		KeyType:            backend.KEY_TYPE_SECRET,
 		StoreType:          backend.STORE_SW,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
-		Password:   password,
-		Exportable: true,
+		Password:           password,
+		Exportable:         true,
 	}
 
 	// Generate exportable key with password
@@ -3200,7 +3200,7 @@ func TestImportExport_MultipleAlgorithms(t *testing.T) {
 				KeyType:            backend.KEY_TYPE_SECRET,
 				StoreType:          backend.STORE_SW,
 				SymmetricAlgorithm: types.SymmetricAES256GCM,
-				Exportable: true,
+				Exportable:         true,
 			}
 
 			// Get import parameters

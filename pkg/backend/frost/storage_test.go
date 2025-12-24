@@ -250,13 +250,13 @@ func TestKeyStore_KeyExists(t *testing.T) {
 
 	// Store key
 	pkg := &KeyPackage{
-		ParticipantID: 1,
-		SecretShare:   &SecretKeyShare{Value: []byte{1}},
-		GroupPublicKey: []byte{2},
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1}},
+		GroupPublicKey:     []byte{2},
 		VerificationShares: map[uint32][]byte{1: {3}},
-		MinSigners: 2,
-		MaxSigners: 2,
-		Algorithm:  types.FrostAlgorithmEd25519,
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
 	}
 	metadata := &KeyMetadata{
 		KeyID:     "test-key",
@@ -285,13 +285,13 @@ func TestKeyStore_ListKeys(t *testing.T) {
 	// Store some keys
 	for _, keyID := range []string{"key1", "key2", "key3"} {
 		pkg := &KeyPackage{
-			ParticipantID: 1,
-			SecretShare:   &SecretKeyShare{Value: []byte{1}},
-			GroupPublicKey: []byte{2},
+			ParticipantID:      1,
+			SecretShare:        &SecretKeyShare{Value: []byte{1}},
+			GroupPublicKey:     []byte{2},
 			VerificationShares: map[uint32][]byte{1: {3}},
-			MinSigners: 2,
-			MaxSigners: 2,
-			Algorithm:  types.FrostAlgorithmEd25519,
+			MinSigners:         2,
+			MaxSigners:         2,
+			Algorithm:          types.FrostAlgorithmEd25519,
 		}
 		metadata := &KeyMetadata{
 			KeyID:     keyID,
@@ -320,13 +320,13 @@ func TestKeyStore_ListKeysWithMetadata(t *testing.T) {
 	for i, algo := range []types.FrostAlgorithm{types.FrostAlgorithmEd25519, types.FrostAlgorithmP256} {
 		keyID := string(rune('A' + i))
 		pkg := &KeyPackage{
-			ParticipantID: 1,
-			SecretShare:   &SecretKeyShare{Value: []byte{1}},
-			GroupPublicKey: []byte{2},
+			ParticipantID:      1,
+			SecretShare:        &SecretKeyShare{Value: []byte{1}},
+			GroupPublicKey:     []byte{2},
 			VerificationShares: map[uint32][]byte{1: {3}},
-			MinSigners: 2,
-			MaxSigners: 3,
-			Algorithm:  algo,
+			MinSigners:         2,
+			MaxSigners:         3,
+			Algorithm:          algo,
 		}
 		metadata := &KeyMetadata{
 			KeyID:     keyID,
@@ -401,13 +401,13 @@ func TestKeyStore_ListKeysWithMetadata_CorruptMetadata(t *testing.T) {
 
 	// Store a valid key
 	pkg := &KeyPackage{
-		ParticipantID:  1,
-		SecretShare:    &SecretKeyShare{Value: []byte{1}},
-		GroupPublicKey: []byte{2},
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1}},
+		GroupPublicKey:     []byte{2},
 		VerificationShares: map[uint32][]byte{1: {3}},
-		MinSigners:     2,
-		MaxSigners:     2,
-		Algorithm:      types.FrostAlgorithmEd25519,
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
 	}
 	metadata := &KeyMetadata{
 		KeyID:     "good-key",
@@ -435,13 +435,13 @@ func TestKeyStore_LoadKeyPackage_InsufficientVerificationShares(t *testing.T) {
 
 	// Store a key package
 	pkg := &KeyPackage{
-		ParticipantID:  1,
-		SecretShare:    &SecretKeyShare{Value: []byte{1}},
-		GroupPublicKey: []byte{2},
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1}},
+		GroupPublicKey:     []byte{2},
 		VerificationShares: map[uint32][]byte{1: {3}},
-		MinSigners:     2,
-		MaxSigners:     3,
-		Algorithm:      types.FrostAlgorithmEd25519,
+		MinSigners:         2,
+		MaxSigners:         3,
+		Algorithm:          types.FrostAlgorithmEd25519,
 	}
 	metadata := &KeyMetadata{
 		KeyID:     "test-key",
@@ -468,13 +468,13 @@ func TestKeyStore_LoadKeyPackage_MissingGroupPublicKey(t *testing.T) {
 
 	// Store a key package
 	pkg := &KeyPackage{
-		ParticipantID:  1,
-		SecretShare:    &SecretKeyShare{Value: []byte{1}},
-		GroupPublicKey: []byte{2},
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1}},
+		GroupPublicKey:     []byte{2},
 		VerificationShares: map[uint32][]byte{1: {3}, 2: {4}},
-		MinSigners:     2,
-		MaxSigners:     2,
-		Algorithm:      types.FrostAlgorithmEd25519,
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
 	}
 	metadata := &KeyMetadata{
 		KeyID:     "test-key",
@@ -501,13 +501,13 @@ func TestKeyStore_LoadPublicKeyPackage_MissingGroupPublicKey(t *testing.T) {
 
 	// Store a key package
 	pkg := &KeyPackage{
-		ParticipantID:  1,
-		SecretShare:    &SecretKeyShare{Value: []byte{1}},
-		GroupPublicKey: []byte{2},
+		ParticipantID:      1,
+		SecretShare:        &SecretKeyShare{Value: []byte{1}},
+		GroupPublicKey:     []byte{2},
 		VerificationShares: map[uint32][]byte{1: {3}, 2: {4}},
-		MinSigners:     2,
-		MaxSigners:     2,
-		Algorithm:      types.FrostAlgorithmEd25519,
+		MinSigners:         2,
+		MaxSigners:         2,
+		Algorithm:          types.FrostAlgorithmEd25519,
 	}
 	metadata := &KeyMetadata{
 		KeyID:     "test-key",

@@ -643,8 +643,8 @@ var frostDeleteCmd = &cobra.Command{
 
 // CommitmentFile represents the JSON structure for round1 output
 type CommitmentFile struct {
-	ParticipantID uint32                   `json:"participant_id"`
-	SessionID     string                   `json:"session_id"`
+	ParticipantID uint32                    `json:"participant_id"`
+	SessionID     string                    `json:"session_id"`
 	Commitments   *frost.SigningCommitments `json:"commitments"`
 	// Nonces are stored separately and kept secret
 	nonces *frost.SigningNonces
@@ -1160,12 +1160,12 @@ func (b *fileSecretBackend) Type() types.BackendType {
 
 func (b *fileSecretBackend) Capabilities() types.Capabilities {
 	return types.Capabilities{
-		Keys:         true,
-		Signing:      false,
-		Decryption:   false,
-		KeyRotation:  true,
-		Import:       true,
-		Export:       true,
+		Keys:           true,
+		Signing:        false,
+		Decryption:     false,
+		KeyRotation:    true,
+		Import:         true,
+		Export:         true,
 		HardwareBacked: false,
 	}
 }

@@ -60,8 +60,15 @@ type CommandDefinition struct {
 	// RequiresServer indicates if this command requires a server connection
 	RequiresServer bool
 
+	// RequiresLocal indicates if this command needs --local flag (no server connection)
+	RequiresLocal bool
+
 	// BuildTags are build tags required for this command (e.g., "frost")
 	BuildTags []string
+
+	// RequiresSetup indicates this command needs prior setup (e.g., key must exist)
+	// Commands with RequiresSetup=true are skipped in standalone tests but run in workflow tests
+	RequiresSetup bool
 
 	// ExpectedOutputContains are strings that should be in successful output
 	ExpectedOutputContains []string
@@ -97,11 +104,11 @@ func AllCommands() []CommandDefinition {
 func VersionCommands() []CommandDefinition {
 	return []CommandDefinition{
 		{
-			Name:           "version",
-			Category:       CategoryVersion,
-			Command:        []string{"version"},
-			Description:    "Show version information",
-			RequiresServer: false,
+			Name:                   "version",
+			Category:               CategoryVersion,
+			Command:                []string{"version"},
+			Description:            "Show version information",
+			RequiresServer:         false,
 			ExpectedOutputContains: []string{"version"},
 		},
 	}
@@ -111,11 +118,11 @@ func VersionCommands() []CommandDefinition {
 func BackendCommands() []CommandDefinition {
 	return []CommandDefinition{
 		{
-			Name:           "backends-list",
-			Category:       CategoryBackends,
-			Command:        []string{"backends", "list"},
-			Description:    "List available backends",
-			RequiresServer: true,
+			Name:                   "backends-list",
+			Category:               CategoryBackends,
+			Command:                []string{"backends", "list"},
+			Description:            "List available backends",
+			RequiresServer:         true,
 			ExpectedOutputContains: []string{"software"},
 		},
 	}
@@ -293,16 +300,102 @@ func TLSCommands() []CommandDefinition {
 // NOTE: FROST commands are local-only operations that work directly with the FROST backend.
 // They do not require server connections - they use local file storage for key packages.
 // These command definitions are for testing the CLI argument parsing and local operations.
+//
+// Commands included:
+// - frost-keygen-participant: Generate key for a single participant
+// - frost-keygen-dealer: Generate all participant keys (trusted dealer mode)
+// - frost-list: List all FROST keys
+// - frost-info: Show FROST key details
+// - frost-delete: Delete a FROST key
+//
+// Signing ceremony commands (round1, round2, aggregate, verify) are tested as
+// workflow tests in frost_parity_test.go since they require coordinated state.
 func FrostCommands() []CommandDefinition {
 	return []CommandDefinition{
+		// Keygen - Participant mode
+		{
+			Name:           "frost-keygen-participant",
+			Category:       CategoryFrost,
+			Command:        []string{"frost", "keygen"},
+			Description:    "Generate FROST key (participant mode)",
+			RequiresKeyDir: true,
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"frost"},
+			RequiredArgs: []ArgDefinition{
+				{Flag: "key-id", Value: "frost-test-key", Description: "Key ID"},
+				{Flag: "threshold", Value: "2", Description: "Threshold"},
+				{Flag: "total", Value: "3", Description: "Total participants"},
+				{Flag: "participant-id", Value: "1", Description: "Participant ID"},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "algorithm", Value: "FROST-Ed25519-SHA512", Description: "Algorithm"},
+			},
+		},
+		// Keygen - Dealer mode (generates all participant keys)
+		{
+			Name:           "frost-keygen-dealer",
+			Category:       CategoryFrost,
+			Command:        []string{"frost", "keygen"},
+			Description:    "Generate FROST keys (dealer mode)",
+			RequiresKeyDir: true,
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"frost"},
+			RequiredArgs: []ArgDefinition{
+				{Flag: "key-id", Value: "frost-dealer-key", Description: "Key ID"},
+				{Flag: "threshold", Value: "2", Description: "Threshold"},
+				{Flag: "total", Value: "3", Description: "Total participants"},
+				{Flag: "export-dir", Value: "/tmp/frost-packages", Description: "Export directory"},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "algorithm", Value: "FROST-Ed25519-SHA512", Description: "Algorithm"},
+				{Flag: "participants", Value: "alice,bob,charlie", Description: "Participant names"},
+			},
+		},
+		// List keys
 		{
 			Name:           "frost-list",
 			Category:       CategoryFrost,
 			Command:        []string{"frost", "list"},
 			Description:    "List FROST keys",
 			RequiresKeyDir: true,
-			RequiresServer: false, // FROST commands are local-only
+			RequiresServer: false,
+			RequiresLocal:  true,
 			BuildTags:      []string{"frost"},
+		},
+		// Info - show key details (requires key to exist first)
+		{
+			Name:           "frost-info",
+			Category:       CategoryFrost,
+			Command:        []string{"frost", "info"},
+			Description:    "Show FROST key details",
+			RequiresKeyDir: true,
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"frost"},
+			RequiresSetup:  true, // Requires key to exist
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "frost-test-key", Description: "Key ID", IsPositional: true},
+			},
+		},
+		// Delete key (requires key to exist first)
+		{
+			Name:           "frost-delete",
+			Category:       CategoryFrost,
+			Command:        []string{"frost", "delete"},
+			Description:    "Delete FROST key",
+			RequiresKeyDir: true,
+			RequiresServer: false,
+			RequiresLocal:  true,
+			BuildTags:      []string{"frost"},
+			RequiresSetup:  true, // Requires key to exist
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "frost-test-key", Description: "Key ID", IsPositional: true},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "force", Value: "", Description: "Skip confirmation"},
+			},
 		},
 	}
 }
