@@ -352,7 +352,6 @@ func TestKeyAttributes_Validate(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
-
 	t.Run("Invalid_NoAlgorithm", func(t *testing.T) {
 		attrs := &KeyAttributes{
 			CN:        "test-key",
@@ -655,7 +654,6 @@ func TestECCAttributes(t *testing.T) {
 	assert.NotNil(t, attrs.Curve)
 	assert.Equal(t, "P-256", attrs.Curve.Params().Name)
 }
-
 
 func TestBackendType(t *testing.T) {
 	tests := []struct {
@@ -1304,7 +1302,6 @@ func TestKeyAttributes_Validate_UnsupportedKeyAlgorithm(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported key algorithm")
 }
-
 
 func TestKeyAttributes_Validate_UnsupportedSymmetricAlgorithm(t *testing.T) {
 	attrs := &KeyAttributes{

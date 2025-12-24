@@ -39,14 +39,14 @@ var NewSealData = types.NewSealData
 
 // Constant aliases for backward compatibility in tests
 const (
-	StoreSoftware   = types.StoreSoftware
-	StorePKCS11  = types.StorePKCS11
-	StoreTPM2    = types.StoreTPM2
-	StoreAWSKMS  = types.StoreAWSKMS
-	StoreGCPKMS  = types.StoreGCPKMS
-	StoreAzureKV = types.StoreAzureKV
-	StoreVault   = types.StoreVault
-	StoreUnknown = types.StoreUnknown
+	StoreSoftware = types.StoreSoftware
+	StorePKCS11   = types.StorePKCS11
+	StoreTPM2     = types.StoreTPM2
+	StoreAWSKMS   = types.StoreAWSKMS
+	StoreGCPKMS   = types.StoreGCPKMS
+	StoreAzureKV  = types.StoreAzureKV
+	StoreVault    = types.StoreVault
+	StoreUnknown  = types.StoreUnknown
 
 	KeyTypeAttestation = types.KeyTypeAttestation
 	KeyTypeCA          = types.KeyTypeCA

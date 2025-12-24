@@ -2092,21 +2092,38 @@ DEVCONTAINER_IMAGE := go-keychain-devcontainer:latest
 API_TEST_NETWORK := keychain-api-test
 API_COMPOSE := cd test/integration/api && docker compose
 
+# Force kill and remove all keychain integration containers
+define kill_integration_containers
+	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
+	@docker kill keychain-integration-server keychain-integration-swtpm keychain-integration-softhsm keychain-integration-tests 2>/dev/null || true
+	@docker rm -f keychain-integration-server keychain-integration-swtpm keychain-integration-softhsm keychain-integration-tests 2>/dev/null || true
+	@docker kill keychain-test-unix keychain-test-rest keychain-test-grpc keychain-test-quic keychain-test-mcp keychain-test-frost keychain-test-parity 2>/dev/null || true
+	@docker rm -f keychain-test-unix keychain-test-rest keychain-test-grpc keychain-test-quic keychain-test-mcp keychain-test-frost keychain-test-parity 2>/dev/null || true
+	@$(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true
+endef
+
+.PHONY: integration-test-api-kill
+## integration-test-api-kill: Force kill all integration test containers
+integration-test-api-kill:
+	@echo "$(CYAN)$(BOLD)→ Killing all integration test containers...$(RESET)"
+	$(call kill_integration_containers)
+	@echo "$(GREEN)✓ All integration test containers killed$(RESET)"
+
 .PHONY: integration-test-api-all
 ## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC, MCP)
-integration-test-api-all: integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-mcp
+integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-mcp
 	@echo "$(GREEN)$(BOLD)✓ All API protocol integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-unix
 ## integration-test-api-unix: Run Unix socket protocol integration tests
 integration-test-api-unix:
 	@echo "$(CYAN)$(BOLD)→ Running Unix socket protocol integration tests...$(RESET)"
-	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-unix integration-tests \
-		sh -c "go test -v -tags='integration frost' ./test/integration/api/unix/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/unix/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ Unix socket protocol integration tests complete$(RESET)"
 
@@ -2114,12 +2131,12 @@ integration-test-api-unix:
 ## integration-test-api-rest: Run REST API protocol integration tests
 integration-test-api-rest:
 	@echo "$(CYAN)$(BOLD)→ Running REST API protocol integration tests...$(RESET)"
-	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-rest integration-tests \
-		sh -c "go test -v -tags='integration frost' ./test/integration/api/rest/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/rest/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ REST API protocol integration tests complete$(RESET)"
 
@@ -2127,12 +2144,12 @@ integration-test-api-rest:
 ## integration-test-api-grpc: Run gRPC protocol integration tests
 integration-test-api-grpc:
 	@echo "$(CYAN)$(BOLD)→ Running gRPC protocol integration tests...$(RESET)"
-	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-grpc integration-tests \
-		sh -c "go test -v -tags='integration frost' ./test/integration/api/grpc/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/grpc/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ gRPC protocol integration tests complete$(RESET)"
 
@@ -2140,12 +2157,12 @@ integration-test-api-grpc:
 ## integration-test-api-quic: Run QUIC/HTTP3 protocol integration tests
 integration-test-api-quic:
 	@echo "$(CYAN)$(BOLD)→ Running QUIC/HTTP3 protocol integration tests...$(RESET)"
-	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-quic integration-tests \
-		sh -c "go test -v -tags='integration frost' ./test/integration/api/quic/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/quic/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ QUIC/HTTP3 protocol integration tests complete$(RESET)"
 
@@ -2153,12 +2170,12 @@ integration-test-api-quic:
 ## integration-test-api-mcp: Run MCP (Model Context Protocol) integration tests
 integration-test-api-mcp:
 	@echo "$(CYAN)$(BOLD)→ Running MCP protocol integration tests...$(RESET)"
-	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-mcp integration-tests \
-		sh -c "go test -v -tags='integration frost' ./test/integration/api/mcp/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ MCP protocol integration tests complete$(RESET)"
 
@@ -2167,12 +2184,12 @@ integration-test-api-mcp:
 integration-test-api-frost:
 ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST API integration tests...$(RESET)"
-	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-frost integration-tests \
-		sh -c "go test -v -tags='integration frost' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
 		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ FROST API integration tests complete$(RESET)"
 else
@@ -2184,11 +2201,12 @@ endif
 ## integration-test-api-parity: Run protocol parity tests (verifies all protocols have consistent behavior)
 integration-test-api-parity:
 	@echo "$(CYAN)$(BOLD)→ Running API protocol parity tests...$(RESET)"
-	@$(API_COMPOSE) down -v >/dev/null 2>&1 || true
+	$(call kill_integration_containers)
+	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-parity integration-tests \
-		sh -c "go test -v -tags='integration frost' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
 		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
 

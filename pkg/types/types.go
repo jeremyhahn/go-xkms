@@ -139,8 +139,8 @@ type StoreType string
 
 const (
 	// Store type constants
-	StoreSoftware StoreType = "software"
-	StorePKCS11   StoreType = "pkcs11"
+	StoreSoftware  StoreType = "software"
+	StorePKCS11    StoreType = "pkcs11"
 	StoreTPM2      StoreType = "tpm2"
 	StoreAWSKMS    StoreType = "awskms"
 	StoreGCPKMS    StoreType = "gcpkms"

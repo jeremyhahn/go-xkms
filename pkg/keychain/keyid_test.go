@@ -669,11 +669,11 @@ func TestValidateKeyID(t *testing.T) {
 	invalidKeyIDs := []string{
 		"software:my-key",                      // Old 2-field format
 		"software:signing:my-key",              // Only 3 fields
-		"unknown:signing:rsa:key",           // Invalid backend
+		"unknown:signing:rsa:key",              // Invalid backend
 		"software:invalid-type:rsa:key",        // Invalid key type
 		"software:signing:invalid-algo:key",    // Invalid algorithm
 		"software:signing:rsa:",                // Empty keyname
-		":::",                               // All empty including keyname
+		":::",                                  // All empty including keyname
 		"software:signing:rsa:../etc/passwd",   // Path traversal
 		"software:signing:rsa:key/path",        // Forward slash
 		"software:signing:rsa:key with spaces", // Spaces in keyname

@@ -60,9 +60,7 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 // TestCLIMultiProtocolVersion tests the version command across all protocols
 func TestCLIMultiProtocolVersion(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
 
@@ -88,9 +86,7 @@ func TestCLIMultiProtocolVersion(t *testing.T) {
 // TestCLIMultiProtocolHealth tests health check via all available protocols
 func TestCLIMultiProtocolHealth(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
 
@@ -126,9 +122,7 @@ func TestCLIMultiProtocolHealth(t *testing.T) {
 // TestCLIMultiProtocolKeyGenerate tests key generation across all protocols
 func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	keyDir := "/tmp/keystore-multiproto-test"
 	os.RemoveAll(keyDir)
@@ -182,9 +176,7 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 // TestCLIMultiProtocolListKeys tests listing keys across all protocols
 func TestCLIMultiProtocolListKeys(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -256,9 +248,7 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 // TestCLIMultiProtocolSignVerify tests sign/verify across all protocols
 func TestCLIMultiProtocolSignVerify(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -337,9 +327,7 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 // TestCLIMultiProtocolEncryptDecrypt tests encrypt/decrypt across all protocols
 func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 	if !isUnixSocketAvailable(t, cfg) {
 		t.Fatal("Unix socket server required for CLI tests. Run: make integration-test (uses Docker)")
 	}
@@ -427,9 +415,7 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 // TestCLIUnixSocketDefault tests that CLI uses Unix socket by default
 func TestCLIUnixSocketDefault(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	// When no --server flag is provided, CLI should use Unix socket
 	// This test verifies the default behavior
@@ -447,9 +433,7 @@ func TestCLIUnixSocketDefault(t *testing.T) {
 // TestCLIServerFlagFormats tests various --server flag formats
 func TestCLIServerFlagFormats(t *testing.T) {
 	cfg := LoadTestConfig()
-	if !isCLIAvailable(t, cfg) {
-		t.Fatal("CLI binary required for integration tests. Run: make build")
-	}
+	requireCLI(t, cfg)
 
 	tests := []struct {
 		name   string

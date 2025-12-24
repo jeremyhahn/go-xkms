@@ -406,8 +406,8 @@ type GenerateKeyRequest struct {
 	Curve         string                 `protobuf:"bytes,5,opt,name=curve,proto3" json:"curve,omitempty"`
 	Hash          string                 `protobuf:"bytes,6,opt,name=hash,proto3" json:"hash,omitempty"`
 	Partition     string                 `protobuf:"bytes,7,opt,name=partition,proto3" json:"partition,omitempty"`
-	Algorithm     string                 `protobuf:"bytes,8,opt,name=algorithm,proto3" json:"algorithm,omitempty"` // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
-	Exportable    bool                   `protobuf:"varint,9,opt,name=exportable,proto3" json:"exportable,omitempty"`
+	Algorithm     string                 `protobuf:"bytes,8,opt,name=algorithm,proto3" json:"algorithm,omitempty"`    // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+	Exportable    bool                   `protobuf:"varint,9,opt,name=exportable,proto3" json:"exportable,omitempty"` // Whether the key can be exported
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5607,7 +5607,7 @@ const file_api_proto_keychainv1_keychain_proto_rawDesc = "" +
 	"\x15GetBackendInfoRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\"L\n" +
 	"\x16GetBackendInfoResponse\x122\n" +
-	"\abackend\x18\x01 \x01(\v2\x18.keychain.v1.BackendInfoR\abackend\"\xe1\x01\n" +
+	"\abackend\x18\x01 \x01(\v2\x18.keychain.v1.BackendInfoR\abackend\"\x81\x02\n" +
 	"\x12GenerateKeyRequest\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +
@@ -5616,7 +5616,10 @@ const file_api_proto_keychainv1_keychain_proto_rawDesc = "" +
 	"\x05curve\x18\x05 \x01(\tR\x05curve\x12\x12\n" +
 	"\x04hash\x18\x06 \x01(\tR\x04hash\x12\x1c\n" +
 	"\tpartition\x18\a \x01(\tR\tpartition\x12\x1c\n" +
-	"\talgorithm\x18\b \x01(\tR\talgorithm\"\xc2\x01\n" +
+	"\talgorithm\x18\b \x01(\tR\talgorithm\x12\x1e\n" +
+	"\n" +
+	"exportable\x18\t \x01(\bR\n" +
+	"exportable\"\xc2\x01\n" +
 	"\x13GenerateKeyResponse\x12\x15\n" +
 	"\x06key_id\x18\x01 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x02 \x01(\tR\abackend\x12\x19\n" +

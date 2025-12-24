@@ -27,9 +27,7 @@ import (
 // TestRESTAPI_Health tests the REST health endpoint
 func TestRESTAPI_Health(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolREST, "backends", "list")
 	if err != nil {
@@ -48,9 +46,7 @@ func TestRESTAPI_Health(t *testing.T) {
 // TestRESTAPI_KeyOperations tests key operations via REST
 func TestRESTAPI_KeyOperations(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	keyDir := commands.CreateTempKeyDir(t)
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")
@@ -133,9 +129,7 @@ func TestRESTAPI_KeyOperations(t *testing.T) {
 // TestRESTAPI_AllCommands runs all CLI commands via REST protocol
 func TestRESTAPI_AllCommands(t *testing.T) {
 	runner := commands.NewTestRunner()
-	if !runner.IsCLIAvailable(t) {
-		t.Fatal("CLI binary required. Run: make build")
-	}
+	runner.RequireCLI(t)
 
 	keyDir := commands.CreateTempKeyDir(t)
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")

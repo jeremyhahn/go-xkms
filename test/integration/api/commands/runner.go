@@ -133,6 +133,17 @@ func (r *TestRunner) IsCLIAvailable(t *testing.T) bool {
 	return cmd.Run() == nil
 }
 
+// RequireCLI checks if CLI is available and skips the test if not.
+// Integration tests should be run in Docker where CLI is built automatically.
+// For local runs, use 'make build' to build the CLI first.
+func (r *TestRunner) RequireCLI(t *testing.T) {
+	t.Helper()
+
+	if !r.IsCLIAvailable(t) {
+		t.Skip("CLI binary not available. Run 'make build' for local testing or use 'make integration-test-cli' for Docker-based tests.")
+	}
+}
+
 // RunCommand executes a CLI command and returns stdout, stderr, and error
 func (r *TestRunner) RunCommand(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
@@ -188,17 +199,22 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 func (r *TestRunner) BuildCommandArgs(cmd CommandDefinition, overrides map[string]string) []string {
 	args := make([]string, 0)
 
+	// Add --local flag first if required (for FROST and other local-only commands)
+	if cmd.RequiresLocal {
+		args = append(args, "--local")
+	}
+
+	// Add key directory if required (before command for local mode)
+	if cmd.RequiresKeyDir && r.KeyDir != "" {
+		args = append(args, "--key-dir", r.KeyDir)
+	}
+
 	// Add command parts
 	args = append(args, cmd.Command...)
 
 	// Add backend if required
 	if cmd.RequiresBackend && r.Backend != "" {
 		args = append(args, "--backend", r.Backend)
-	}
-
-	// Add key directory if required
-	if cmd.RequiresKeyDir && r.KeyDir != "" {
-		args = append(args, "--key-dir", r.KeyDir)
 	}
 
 	// Add required positional args
@@ -315,6 +331,7 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 		"test-ed25519-key": fmt.Sprintf("test-ed25519-key-%d", runID),
 		"test-key":         fmt.Sprintf("test-rsa-key-%d", runID), // Use RSA key for sign/verify/delete
 		"frost-test-key":   fmt.Sprintf("frost-test-key-%d", runID),
+		"frost-dealer-key": fmt.Sprintf("frost-dealer-key-%d", runID),
 	}
 
 	// Track signature from key-sign for use in key-verify
@@ -324,6 +341,12 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 		// Skip commands that require unavailable build tags
 		if !r.commandTagsAvailable(cmd, enabledTags) {
 			t.Logf("Skipping %s: requires build tags %v", cmd.Name, cmd.BuildTags)
+			continue
+		}
+
+		// Skip commands that require prior setup (tested in workflow tests instead)
+		if cmd.RequiresSetup {
+			t.Logf("Skipping %s: requires prior setup (tested in workflow tests)", cmd.Name)
 			continue
 		}
 
