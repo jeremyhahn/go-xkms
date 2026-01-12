@@ -30,7 +30,7 @@ require (
 	github.com/hashicorp/vault/api v1.22.0
 	github.com/miekg/pkcs11 v1.1.1
 	github.com/prometheus/client_golang v1.23.2
-	github.com/quic-go/quic-go v0.57.1
+	github.com/quic-go/quic-go v0.59.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
