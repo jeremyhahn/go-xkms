@@ -1,7 +1,11 @@
 package tpm2
 
 import (
+	"errors"
+	"log/slog"
+
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -60,7 +64,7 @@ func (tpm *TPM2) sealKeyInternal(
 	}
 
 	if keyAttrs.SealData == nil {
-		tpm.logger.Infof("Generating %s HMAC seal data", keyAttrs.CN)
+		tpm.logger.Info("Generating HMAC seal data", slog.String("cn", keyAttrs.CN))
 		secretBytes = make([]byte, 32) // AES-256 key
 		if _, err := tpm.random.Read(secretBytes); err != nil {
 			return nil, err
@@ -74,14 +78,14 @@ func (tpm *TPM2) sealKeyInternal(
 	}
 
 	if tpm.debugSecrets {
-		tpm.logger.Debugf(
-			"tpm: sealing %s HMAC secret: %s",
-			keyAttrs.CN, secretBytes)
+		tpm.logger.Debug("tpm: sealing HMAC secret",
+			slog.String("cn", keyAttrs.CN),
+			slog.String("secret", string(secretBytes)))
 	}
 
 	session, closer, err = tpm.CreateSession(keyAttrs)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create session for seal", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -107,22 +111,22 @@ func (tpm *TPM2) sealKeyInternal(
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create seal key", slog.String("error", err.Error()))
 		return nil, err
 	}
 	if err := closer(); err != nil {
-		tpm.logger.Errorf("failed to close session: %v", err)
+		tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 	} // tpm2.Create CreateSession
 
 	// Create a new tpm2.Load session
 	session, closer, err = tpm.CreateSession(keyAttrs)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create load session", slog.String("error", err.Error()))
 		return nil, err
 	}
 	defer func() {
 		if err := closer(); err != nil {
-			tpm.logger.Errorf("failed to close load session: %v", err)
+			tpm.logger.Error("failed to close load session", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -137,18 +141,18 @@ func (tpm *TPM2) sealKeyInternal(
 		InPrivate: sealKeyResponse.OutPrivate,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to load sealed key", slog.String("error", err.Error()))
 		return nil, err
 	}
 	defer tpm.Flush(loadResponse.ObjectHandle)
 
-	tpm.logger.Debugf(
-		"tpm: %s key loaded to transient handle 0x%x",
-		keyAttrs.CN, loadResponse.ObjectHandle)
+	tpm.logger.Debug("tpm: key loaded to transient handle",
+		slog.String("cn", keyAttrs.CN),
+		slog.String("handle", Encode([]byte{byte(loadResponse.ObjectHandle >> 24), byte(loadResponse.ObjectHandle >> 16), byte(loadResponse.ObjectHandle >> 8), byte(loadResponse.ObjectHandle)})))
 
-	tpm.logger.Debugf(
-		"tpm: %s key Name: %s",
-		keyAttrs.CN, Encode(loadResponse.Name.Buffer))
+	tpm.logger.Debug("tpm: key Name",
+		slog.String("cn", keyAttrs.CN),
+		slog.String("name", Encode(loadResponse.Name.Buffer)))
 
 	if keyAttrs.TPMAttributes == nil {
 		keyAttrs.TPMAttributes = &types.TPMAttributes{
@@ -195,10 +199,10 @@ func (tpm *TPM2) unsealKeyInternal(
 	if err != nil {
 		if closer != nil {
 			if err := closer(); err != nil {
-				tpm.logger.Errorf("failed to close: %v", err)
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 			}
 		}
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create session for unseal", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -211,14 +215,19 @@ func (tpm *TPM2) unsealKeyInternal(
 	if err != nil {
 		if closer != nil {
 			if err := closer(); err != nil {
-				tpm.logger.Errorf("failed to close: %v", err)
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 			}
 		}
-		tpm.logger.Error(err)
+		// Log at debug level for "not found" errors - expected during fresh initialization
+		if errors.Is(err, storage.ErrNotFound) {
+			tpm.logger.Debug("key not found (expected during initialization)", slog.String("error", err.Error()))
+		} else {
+			tpm.logger.Error("failed to load key pair for unseal", slog.String("error", err.Error()))
+		}
 		return nil, err
 	}
 	if err := closer(); err != nil {
-		tpm.logger.Errorf("failed to close: %v", err)
+		tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 	}
 	defer tpm.Flush(sealKey.ObjectHandle)
 
@@ -226,11 +235,11 @@ func (tpm *TPM2) unsealKeyInternal(
 	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
 	defer func() {
 		if err := closer2(); err != nil {
-			tpm.logger.Errorf("failed to close key session: %v", err)
+			tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))
 		}
 	}()
 	if err2 != nil {
-		tpm.logger.Error(err2)
+		tpm.logger.Error("failed to create key session", slog.String("error", err2.Error()))
 		return nil, err2
 	}
 
@@ -243,7 +252,7 @@ func (tpm *TPM2) unsealKeyInternal(
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to unseal data", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -261,9 +270,9 @@ func (tpm *TPM2) unsealKeyInternal(
 	secret := unseal.OutData.Buffer
 
 	if tpm.debugSecrets {
-		tpm.logger.Debugf(
-			"Retrieved sealed HMAC secret: %s:%s",
-			keyAttrs.CN, secret)
+		tpm.logger.Debug("Retrieved sealed HMAC secret",
+			slog.String("cn", keyAttrs.CN),
+			slog.String("secret", string(secret)))
 	}
 
 	return secret, nil
@@ -292,10 +301,10 @@ func (tpm *TPM2) unsealFromBlobs(
 	if err != nil {
 		if closer != nil {
 			if err := closer(); err != nil {
-				tpm.logger.Errorf("failed to close: %v", err)
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 			}
 		}
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create session for unseal from blobs", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -308,14 +317,14 @@ func (tpm *TPM2) unsealFromBlobs(
 	if err != nil {
 		if closer != nil {
 			if err := closer(); err != nil {
-				tpm.logger.Errorf("failed to close: %v", err)
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 			}
 		}
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to load key pair from blobs", slog.String("error", err.Error()))
 		return nil, err
 	}
 	if err := closer(); err != nil {
-		tpm.logger.Errorf("failed to close: %v", err)
+		tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 	}
 	defer tpm.Flush(sealKey.ObjectHandle)
 
@@ -323,11 +332,11 @@ func (tpm *TPM2) unsealFromBlobs(
 	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
 	defer func() {
 		if err := closer2(); err != nil {
-			tpm.logger.Errorf("failed to close key session: %v", err)
+			tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))
 		}
 	}()
 	if err2 != nil {
-		tpm.logger.Error(err2)
+		tpm.logger.Error("failed to create key session for unseal from blobs", slog.String("error", err2.Error()))
 		return nil, err2
 	}
 
@@ -340,7 +349,7 @@ func (tpm *TPM2) unsealFromBlobs(
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to unseal data from blobs", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -358,9 +367,9 @@ func (tpm *TPM2) unsealFromBlobs(
 	secret := unseal.OutData.Buffer
 
 	if tpm.debugSecrets {
-		tpm.logger.Debugf(
-			"Retrieved sealed HMAC secret from blobs: %s:%s",
-			keyAttrs.CN, secret)
+		tpm.logger.Debug("Retrieved sealed HMAC secret from blobs",
+			slog.String("cn", keyAttrs.CN),
+			slog.String("secret", string(secret)))
 	}
 
 	return secret, nil

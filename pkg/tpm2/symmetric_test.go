@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm_simulator
-
 package tpm2
 
 import (
@@ -22,10 +20,10 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"testing"
 
 	kbackend "github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -209,7 +207,7 @@ func TestSymmetricEncryptWithAAD(t *testing.T) {
 
 // TestNonceReuse tests that the TPM2 backend detects and prevents nonce reuse
 func TestNonceReuse(t *testing.T) {
-	_, tpm := createSim(false, false)
+	_, tpm := createSimWithTracker(false, false)
 	defer func() { _ = tpm.Close() }()
 
 	tpm2Instance := tpm.(*TPM2)
@@ -400,13 +398,14 @@ func TestTracker(t *testing.T) {
 }
 
 // createSimWithTracker creates a simulated TPM with a custom AEAD tracker
-func createSimWithTracker(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
-	logger := logging.DefaultLogger()
+func createSimWithTracker(encrypt, entropy bool) (*slog.Logger, TrustedPlatformModule) {
+	logger := slog.Default()
 
 	buf := make([]byte, 8)
 	_, err := rand.Reader.Read(buf)
 	if err != nil {
-		logger.FatalError(err)
+		logger.Error("failed to read random bytes", "error", err)
+		panic(err)
 	}
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
@@ -414,7 +413,8 @@ func createSimWithTracker(encrypt, entropy bool) (*logging.Logger, TrustedPlatfo
 	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
-		logger.FatalError(err)
+		logger.Error("failed to create storage factory", "error", err)
+		panic(err)
 	}
 	// Note: In a real test, we'd defer storageFactory.Close() but this helper
 	// doesn't return a cleanup function. The temp dir will be cleaned up on program exit.
@@ -473,7 +473,7 @@ func createSimWithTracker(encrypt, entropy bool) (*logging.Logger, TrustedPlatfo
 	}
 
 	params := &Params{
-		Logger:       logging.DefaultLogger(),
+		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
 		BlobStore:    blobStore,
@@ -486,10 +486,12 @@ func createSimWithTracker(encrypt, entropy bool) (*logging.Logger, TrustedPlatfo
 	if err != nil {
 		if err == ErrNotInitialized {
 			if err = tpm.Provision(nil); err != nil {
-				logger.FatalError(err)
+				logger.Error("failed to provision TPM", "error", err)
+				panic(err)
 			}
 		} else {
-			logger.FatalError(err)
+			logger.Error("failed to create TPM2", "error", err)
+			panic(err)
 		}
 	}
 

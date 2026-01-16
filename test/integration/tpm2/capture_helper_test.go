@@ -4,12 +4,12 @@ package integration
 
 import (
 	"crypto/x509"
+	"log/slog"
 	"net"
 	"testing"
 	"time"
 
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 )
@@ -37,7 +37,7 @@ func setupTPM2WithCapture(t *testing.T, encryptSession bool) (tpm2lib.TrustedPla
 	captureTransport := NewTPMCapture(baseTransport)
 
 	// Create logger
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	// Create storage backend using the factory
 	storageFactory, err := store.NewStorageFactory(logger, "")

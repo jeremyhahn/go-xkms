@@ -32,7 +32,6 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
 	kbackend "github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/threshold/shamir"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -45,7 +44,7 @@ type SimulatorInterface interface {
 	ReadWriter() io.ReadWriter
 }
 
-// simulatorOpener is set by tpm_simulator.go or tpm_no_simulator.go
+// simulatorOpener opens the TPM simulator for unit testing
 var simulatorOpener func() (SimulatorInterface, error)
 
 type TrustedPlatformModule interface {
@@ -105,6 +104,7 @@ type TrustedPlatformModule interface {
 	Info() (string, error)
 	IsFIPS140_2() (bool, error)
 	IsPlatformPCRExtended() (bool, error)
+	ExtendPCR(pcrIndex int, hashAlg string, data []byte) error
 	Install(soPIN types.Password) error
 	KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, error)
 	LoadKeyPair(
@@ -121,6 +121,13 @@ type TrustedPlatformModule interface {
 	NonceSession(secret types.Password) (tpm2.Session, func() error, error)
 	NVRead(keyAttrs *types.KeyAttributes, dataSize uint16) ([]byte, error)
 	NVWrite(keyAttrs *types.KeyAttributes) error
+	NVDefineCounter(keyAttrs *types.KeyAttributes) error
+	NVDefineExtend(keyAttrs *types.KeyAttributes) error
+	NVIncrement(keyAttrs *types.KeyAttributes) (uint64, error)
+	NVExtend(keyAttrs *types.KeyAttributes, data []byte) error
+	NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error)
+	NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error)
+	NVUndefine(keyAttrs *types.KeyAttributes) error
 	Open() error
 	ParseEKCertificate(ekCert []byte) (*x509.Certificate, error)
 	ParsedEventLog() ([]Event, error)
@@ -170,6 +177,14 @@ type TrustedPlatformModule interface {
 	CanSeal() bool
 	WriteEKCert(ekCert []byte) error
 
+	// IDevID/IAK Certificate management
+	ReadIDevIDCertificate() (*x509.Certificate, error)
+	WriteIDevIDCertificate(cert *x509.Certificate) error
+	DeleteIDevIDCertificate() error
+	ReadIAKCertificate() (*x509.Certificate, error)
+	WriteIAKCertificate(cert *x509.Certificate) error
+	DeleteIAKCertificate() error
+
 	VerifyTCGCSR(
 		csr *TCG_CSR_IDEVID,
 		sigAlgo x509.SignatureAlgorithm) (*types.KeyAttributes, *UNPACKED_TCG_CSR_IDEVID, error)
@@ -197,7 +212,7 @@ type Params struct {
 	Config       *Config
 	DebugSecrets bool
 	FQDN         string
-	Logger       *logging.Logger
+	Logger       *slog.Logger
 	SignerStore  store.SignerStorer
 	Tracker      types.AEADSafetyTracker // Optional: AEAD safety tracker for symmetric encryption
 	Transport    transport.TPM           // Optional: custom transport for testing
@@ -218,7 +233,7 @@ type TPM2 struct {
 	// hash         crypto.Hash
 	iakAttrs     *types.KeyAttributes
 	idevidAttrs  *types.KeyAttributes
-	logger       *logging.Logger
+	logger       *slog.Logger
 	policyDigest tpm2.TPM2BDigest
 	random       io.Reader
 	signerStore  store.SignerStorer
@@ -268,7 +283,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 
 	// Create default logger if none provided
 	if params.Logger == nil {
-		params.Logger = logging.DefaultLogger()
+		params.Logger = slog.Default()
 	}
 
 	var sim SimulatorInterface
@@ -284,23 +299,22 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		params.Logger.Info(infoOpeningSimulator)
 		sim, err = simulatorOpener()
 		if err != nil {
-			params.Logger.Error(err)
+			params.Logger.Error("failed to open simulator", slog.String("error", err.Error()))
 			return nil, err
 		}
 		tpmTransport = sim.Transport()
 	} else if params.Config.Device != "" {
-		params.Logger.Info(infoOpeningDevice,
-			slog.String("device", params.Config.Device))
+		params.Logger.Info(infoOpeningDevice, slog.String("device", params.Config.Device))
 		if strings.HasSuffix(params.Config.Device, ".sock") {
 			tpmTransport, err = linuxudstpm.Open(params.Config.Device)
 			if err != nil {
-				params.Logger.Error(err)
+				params.Logger.Error("failed to open unix socket", slog.String("error", err.Error()))
 				return nil, err
 			}
 		} else {
 			device, err = os.OpenFile(params.Config.Device, os.O_RDWR, 0)
 			if err != nil {
-				params.Logger.Error(err)
+				params.Logger.Error("failed to open device", slog.String("error", err.Error()))
 				return nil, ErrOpeningDevice
 			}
 			tpmTransport = transport.FromReadWriter(device)
@@ -362,7 +376,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 			// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
 			return tpm, ErrNotInitialized
 		} else {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to read EK public", slog.String("error", err.Error()))
 			return nil, err
 		}
 	}
@@ -383,7 +397,7 @@ func (tpm *TPM2) Open() error {
 		tpm.logger.Info(infoOpeningSimulator)
 		sim, err := simulatorOpener()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to open simulator", slog.String("error", err.Error()))
 			return err
 		}
 		tpm.simulator = sim
@@ -392,7 +406,7 @@ func (tpm *TPM2) Open() error {
 		// tpm.logger.Info(infoOpeningDevice, slog.String("device", tpm.config.Device))
 		// f, err := os.OpenFile(tpm.config.Device, os.O_RDWR, 0)
 		// if err != nil {
-		// 	tpm.logger.Error(err)
+		// 	tpm.logger.Error(err.Error())
 		// 	return ErrOpeningDevice
 		// }
 		// tpm.device = f
@@ -400,13 +414,13 @@ func (tpm *TPM2) Open() error {
 		if strings.HasSuffix(tpm.config.Device, ".sock") {
 			t, err = linuxudstpm.Open(tpm.config.Device)
 			if err != nil {
-				tpm.logger.Error(err)
+				tpm.logger.Error("failed to open unix socket", slog.String("error", err.Error()))
 				return err
 			}
 		} else {
 			f, err := os.OpenFile(tpm.config.Device, os.O_RDWR, 0)
 			if err != nil {
-				tpm.logger.Error(err)
+				tpm.logger.Error("failed to open device", slog.String("error", err.Error()))
 				return ErrOpeningDevice
 			}
 			tpm.device = f
@@ -418,6 +432,13 @@ func (tpm *TPM2) Open() error {
 
 	tpm.transport = t
 	return nil
+}
+
+// OpenUnixSocketTransport opens a connection to a TPM via Unix domain socket.
+// This is typically used for connecting to swtpm instances. The returned transport
+// should be closed when no longer needed.
+func OpenUnixSocketTransport(socketPath string) (transport.TPM, error) {
+	return linuxudstpm.Open(socketPath)
 }
 
 // Parses a tpm2.TPM2BPublic byte array and returns the crypto.PublicKey
@@ -436,7 +457,7 @@ func (tpm *TPM2) ParsePublicKey(tpm2BPublic []byte) (crypto.PublicKey, error) {
 		ObjectHandle: loadRsp.ObjectHandle,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read public key", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -501,11 +522,12 @@ func (tpm *TPM2) PlatformPolicyDigest() tpm2.TPM2BDigest {
 	if tpm.policyDigest.Buffer == nil {
 		_, closer, err := tpm.PlatformPolicySession()
 		if err != nil {
-			tpm.logger.FatalError(err)
+			tpm.logger.Error("fatal error getting platform policy session", slog.String("error", err.Error()))
+			panic(err)
 		}
 		defer func() {
 			if err := closer(); err != nil {
-				tpm.logger.Errorf("failed to close session: %v", err)
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 			}
 		}()
 	}
@@ -537,13 +559,13 @@ func (tpm *TPM2) getActiveTransientHandles() []tpm2.TPMHandle {
 	}.Execute(tpm.transport)
 	if err != nil {
 		// If we can't query capabilities, return empty list
-		tpm.logger.Debugf("tpm: unable to query active handles: %v", err)
+		tpm.logger.Debug("unable to query active handles", slog.String("error", err.Error()))
 		return nil
 	}
 
 	handles, err := response.CapabilityData.Data.Handles()
 	if err != nil {
-		tpm.logger.Debugf("tpm: unable to parse handle list: %v", err)
+		tpm.logger.Debug("unable to parse handle list", slog.String("error", err.Error()))
 		return nil
 	}
 
@@ -553,10 +575,12 @@ func (tpm *TPM2) getActiveTransientHandles() []tpm2.TPMHandle {
 // flushSilent flushes a handle without logging errors (for cleanup operations)
 // flushSilent flushes a handle without logging errors (for cleanup operations)
 func (tpm *TPM2) flushSilent(handle tpm2.TPMHandle) {
-	tpm.logger.Debugf("tpm: flushing handle: 0x%x", handle)
+	tpm.logger.Debug("flushing handle", slog.String("handle", fmt.Sprintf("0x%x", handle)))
 	_, err := tpm2.FlushContext{FlushHandle: handle}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Debugf("tpm: failed to flush handle 0x%x: %v", handle, err)
+		tpm.logger.Debug("failed to flush handle",
+			slog.String("handle", fmt.Sprintf("0x%x", handle)),
+			slog.String("error", err.Error()))
 	}
 }
 func (tpm *TPM2) Close() error {
@@ -571,14 +595,14 @@ func (tpm *TPM2) Close() error {
 
 	if tpm.device != nil {
 		if err := tpm.device.Close(); err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to close device", slog.String("error", err.Error()))
 		}
 		tpm.device = nil
 		tpm.transport = nil
 	}
 	if tpm.simulator != nil {
 		if err := tpm.simulator.Close(); err != nil {
-			tpm.logger.Errorf("failed to close simulator: %v", err)
+			tpm.logger.Error("failed to close simulator", slog.String("error", err.Error()))
 		}
 		tpm.simulator = nil
 	}
@@ -612,9 +636,9 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 		case tpm2.TPMRHOwner:
 			sHierarchy = "Owner"
 		}
-		tpm.logger.Debugf("tpm: Setting hierarchy authorization password: hierarchy=%s", sHierarchy)
+		tpm.logger.Debug("setting hierarchy authorization password", slog.String("hierarchy", sHierarchy))
 	} else {
-		tpm.logger.Debug("tpm: Setting hierarchy authorization passwords")
+		tpm.logger.Debug("setting hierarchy authorization passwords")
 	}
 	var oldPassword, newPassword []byte
 	if oldPasswd != nil {
@@ -624,7 +648,9 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 		newPassword = newPasswd.Bytes()
 	}
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: passwords: old=%s, new=%s", string(oldPassword), string(newPassword))
+		tpm.logger.Debug("hierarchy passwords",
+			slog.String("old", string(oldPassword)),
+			slog.String("new", string(newPassword)))
 	}
 	var hierarchies []tpm2.TPMHandle
 	if hierarchy != nil {
@@ -650,7 +676,7 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 			},
 		}.Execute(tpm.transport)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to change hierarchy auth", slog.String("error", err.Error()))
 			return err
 		}
 	}
@@ -663,7 +689,7 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 // attempt is made to download the certificate from the Manufacturer's EK cert service.
 func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 
-	tpm.logger.Debug("tpm: retrieving EK certificate")
+	tpm.logger.Debug("retrieving EK certificate")
 
 	policyDigest := tpm.PlatformPolicyDigest()
 	ekAttrs, err := EKAttributesFromConfig(*tpm.config.EK, &policyDigest, tpm.config.IDevID)
@@ -672,6 +698,9 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 	}
 
 	if tpm.config.EK.CertHandle == 0 {
+		if tpm.certStore == nil {
+			return nil, ErrEndorsementCertNotFound
+		}
 		ekCert, err := tpm.certStore.Get(ekAttrs)
 		if err != nil {
 			if err == store.ErrCertNotFound {
@@ -721,7 +750,7 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		NVIndex: ekCertIndex,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read NV public", slog.String("error", err.Error()))
 		// Try certificate store first (fallback for swtpm with large certs)
 		if tpm.certStore != nil {
 			tpm.logger.Debug("NVRAM read failed, trying certificate store fallback")
@@ -736,7 +765,7 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 	// Get the NV public contents
 	nvPublic, err := nvPub.NVPublic.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get NV public contents", slog.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to get NV public contents: %w", err)
 	}
 
@@ -768,7 +797,7 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 	}.Execute(tpm.transport)
 
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read NV data", slog.String("error", err.Error()))
 		// Try certificate store first (fallback for swtpm with large certs)
 		if tpm.certStore != nil {
 			tpm.logger.Debug("NVRAM read failed, trying certificate store fallback")
@@ -780,12 +809,12 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		return tpm.downloadEKCertFromManufacturer(ekCertIndex)
 	}
 
-	tpm.logger.Debugf("raw NVRAM EK certificate: cert=%s", string(response.Data.Buffer))
+	tpm.logger.Debug("raw NVRAM EK certificate", slog.String("cert", string(response.Data.Buffer)))
 
 	// Try to parse as PEM first, then DER
 	cert, err := store.DecodePEM(response.Data.Buffer)
 	if err != nil {
-		tpm.logger.Warnf("error decoding PEM certificate, trying DER: error=%v", err)
+		tpm.logger.Warn("error decoding PEM certificate, trying DER", slog.String("error", err.Error()))
 		return x509.ParseCertificate(response.Data.Buffer)
 	}
 
@@ -822,14 +851,14 @@ func (tpm *TPM2) Sign(
 	if err != nil {
 		if closer != nil {
 			if err := closer(); err != nil {
-				tpm.logger.Errorf("failed to close: %v", err)
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 			}
 		}
 		return nil, err
 	}
 	defer func() {
 		if err := closer(); err != nil {
-			tpm.logger.Errorf("failed to close session: %v", err)
+			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -870,13 +899,13 @@ func (tpm *TPM2) Sign(
 			ObjectHandle: handle,
 		}.Execute(tpm.Transport())
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to read public key", slog.String("error", err.Error()))
 			return nil, err
 		}
 
 		outPub, err := pub.OutPublic.Contents()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get public contents", slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -891,15 +920,16 @@ func (tpm *TPM2) Sign(
 			} else if opts.HashFunc() == crypto.SHA512 {
 				algo = tpm2.TPMAlgSHA512
 			} else {
-				tpm.logger.Errorf("%s: %s",
-					store.ErrInvalidHashFunction, opts.HashFunc())
+				tpm.logger.Error("invalid hash function",
+					slog.String("error", store.ErrInvalidHashFunction.Error()),
+					slog.String("hash", opts.HashFunc().String()))
 				return nil, store.ErrInvalidHashFunction
 			}
 		}
 
 		rsaDetails, err := outPub.Parameters.RSADetail()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get RSA details", slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -943,7 +973,7 @@ func (tpm *TPM2) Sign(
 		// Load the keyed hash from saved context file and priv, pub keys
 		key, err := tpm.LoadKeyPair(keyAttrs, &session, backend)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to load key pair", slog.String("error", err.Error()))
 			return nil, err
 		}
 		defer tpm.Flush(key.ObjectHandle)
@@ -954,13 +984,13 @@ func (tpm *TPM2) Sign(
 		ObjectHandle: handle,
 	}.Execute(tpm.Transport())
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read public key", slog.String("error", err.Error()))
 		return nil, err
 	}
 
 	outPub, err := pub.OutPublic.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get public contents", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -975,8 +1005,9 @@ func (tpm *TPM2) Sign(
 		} else if opts.HashFunc() == crypto.SHA512 {
 			algo = tpm2.TPMAlgSHA512
 		} else {
-			tpm.logger.Errorf("%s: %s",
-				store.ErrInvalidHashFunction, opts.HashFunc())
+			tpm.logger.Error("invalid hash function",
+				slog.String("error", store.ErrInvalidHashFunction.Error()),
+				slog.String("hash", opts.HashFunc().String()))
 			return nil, store.ErrInvalidHashFunction
 		}
 	}
@@ -984,12 +1015,12 @@ func (tpm *TPM2) Sign(
 	// Create key session to sign with
 	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
 	if err2 != nil {
-		tpm.logger.Error(err)
-		return nil, err
+		tpm.logger.Error("failed to create key session", slog.String("error", err2.Error()))
+		return nil, err2
 	}
 	defer func() {
 		if err := closer2(); err != nil {
-			tpm.logger.Errorf("failed to close session: %v", err)
+			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -997,7 +1028,7 @@ func (tpm *TPM2) Sign(
 
 		rsaDetails, err := outPub.Parameters.RSADetail()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get RSA details", slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -1020,7 +1051,7 @@ func (tpm *TPM2) Sign(
 			Validation: validation,
 		}.Execute(tpm.transport)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to sign with RSA", slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -1232,6 +1263,10 @@ func (tpm *TPM2) SignValidate(
 	keyAttrs *types.KeyAttributes,
 	digest, validationDigest []byte) ([]byte, error) {
 
+	if keyAttrs == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
+
 	var akAuth []byte
 
 	if keyAttrs.Password != nil {
@@ -1252,7 +1287,7 @@ func (tpm *TPM2) SignValidate(
 		// rsaDetails, err := keyAttrs.TPMAttributes.Public.Parameters.RSADetail()
 		rsaDetails, err := public.Parameters.RSADetail()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get RSA details", slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -1281,7 +1316,7 @@ func (tpm *TPM2) SignValidate(
 			},
 		}.Execute(tpm.transport)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to sign with RSA", slog.String("error", err.Error()))
 			return nil, err
 		}
 
@@ -1398,7 +1433,7 @@ func (tpm *TPM2) EventLog() ([]byte, error) {
 	if err != nil {
 		// Log at debug level - this is expected in simulator environments
 		// where binary_bios_measurements doesn't exist
-		tpm.logger.Debug(err.Error())
+		tpm.logger.Debug("failed to read event log", slog.String("error", err.Error()))
 		return nil, err
 	}
 	return bytes, nil
@@ -1434,7 +1469,7 @@ func (tpm *TPM2) ReadHandle(handle tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPub
 // parsed without an error.
 func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 
-	tpm.logger.Debugf("tpm/ReadPCRs: Reading PCR values across all supported banks")
+	tpm.logger.Debug("reading PCR values across all supported banks")
 
 	maxPCR := uint(23)
 	banks := make([]PCRBank, 0)
@@ -1455,7 +1490,9 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 		}
 		for _, pcr := range pcrList {
 			if pcr > maxPCR {
-				tpm.logger.Errorf("tpm/ReadPCRs: invalid PCR index %s:%d", strings.ToLower(name), pcr)
+				tpm.logger.Error("invalid PCR index",
+					slog.String("bank", strings.ToLower(name)),
+					slog.Uint64("pcr", uint64(pcr)))
 				return nil, ErrInvalidPCRIndex
 			}
 			pcrRead := tpm2.PCRRead{
@@ -1471,7 +1508,9 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 			response, err := pcrRead.Execute(tpm.transport)
 			if err != nil {
 				if strings.Contains(err.Error(), ErrHashAlgorithmNotSupported.Error()) {
-					tpm.logger.Warnf("tpm/ReadPCRs: error reading PCR Bank %v: %s", algo, err)
+					tpm.logger.Warn("error reading PCR bank",
+						slog.String("algorithm", fmt.Sprintf("%v", algo)),
+						slog.String("error", err.Error()))
 					return banks, nil
 				}
 			}
@@ -1479,7 +1518,9 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 				if strings.Contains(err.Error(), "hash algorithm not supported or not appropriate") {
 					continue
 				}
-				tpm.logger.Errorf("tpm/ReadPCRs: error reading PCR bank %s: %s", name, err)
+				tpm.logger.Error("error reading PCR bank",
+					slog.String("bank", name),
+					slog.String("error", err.Error()))
 				return banks, nil
 			}
 			if len(response.PCRValues.Digests) == 0 {
@@ -1491,7 +1532,9 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 				ID:    int32(pcr), // Use actual PCR index, not iteration index
 				Value: buf,        // Store raw bytes, not double-encoded
 			})
-			tpm.logger.Debugf("  PCR[%d]: %x", pcr, buf)
+			tpm.logger.Debug("PCR value",
+				slog.Int("pcr", int(pcr)),
+				slog.String("value", fmt.Sprintf("%x", buf)))
 		}
 		banks = append(banks, bank)
 	}
@@ -1501,10 +1544,10 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 
 // Flushes a handle from TPM memory
 func (tpm *TPM2) Flush(handle tpm2.TPMHandle) {
-	tpm.logger.Debugf("tpm: flushing handle: 0x%x", handle)
+	tpm.logger.Debug("flushing handle", slog.String("handle", fmt.Sprintf("0x%x", handle)))
 	_, err := tpm2.FlushContext{FlushHandle: handle}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to flush handle", slog.String("error", err.Error()))
 	}
 }
 
@@ -1534,22 +1577,22 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 
 	rsaDetail, err := ekPub.Parameters.RSADetail()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get RSA details", slog.String("error", err.Error()))
 		return nil, err
 	}
 	rsaUnique, err := ekPub.Unique.RSA()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get RSA unique", slog.String("error", err.Error()))
 		return nil, err
 	}
 	rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create RSA public key", slog.String("error", err.Error()))
 		return nil, err
 	}
 
 	ekURL := intelEKURL(rsaPub)
-	tpm.logger.Infof("tpm: downloading EK certificate from %s", ekURL)
+	tpm.logger.Info("downloading EK certificate", slog.String("url", ekURL))
 
 	// Validate URL before making HTTP request
 	parsedURL, err := url.Parse(ekURL)
@@ -1561,7 +1604,7 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 	}
 	resp, err := /* #nosec G107 */ http.Get(ekURL) // URL validated above
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to download EK certificate", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -1569,17 +1612,18 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 		body := new(strings.Builder)
 		_, err := io.Copy(body, resp.Body)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to read response body", slog.String("error", err.Error()))
 			return nil, err
 		}
-		tpm.logger.Errorf("tpm: error downloading EK certificate: httpm.StatusCode: %d, body: %s",
-			resp.StatusCode, body)
+		tpm.logger.Error("error downloading EK certificate",
+			slog.Int("status_code", resp.StatusCode),
+			slog.String("body", body.String()))
 		return nil, ErrEndorsementCertNotFound
 	}
 
 	buf := new(bytes.Buffer)
 	if _, err = io.Copy(buf, resp.Body); err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read response body", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -1595,7 +1639,7 @@ func (tpm *TPM2) downloadEKCertFromManufacturer(ekCertIndex tpm2.TPMHandle) (*x5
 
 	cert, err := x509.ParseCertificate([]byte(certificate))
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to parse certificate", slog.String("error", err.Error()))
 		return nil, ErrEndorsementCertNotFound
 	}
 

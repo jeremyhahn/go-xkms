@@ -2,6 +2,7 @@ package tpm2
 
 import (
 	"crypto/rsa"
+	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
@@ -79,7 +80,7 @@ func (tpm *TPM2) CreateRSA(
 	}
 	defer func() {
 		if err := closer(); err != nil {
-			tpm.logger.Errorf("failed to close session: %v", err)
+			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -126,7 +127,7 @@ func (tpm *TPM2) CreateRSA(
 			}
 			defer func() {
 				if err := closer(); err != nil {
-					tpm.logger.Errorf("failed to close key session: %v", err)
+					tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))
 				}
 			}()
 
@@ -142,7 +143,7 @@ func (tpm *TPM2) CreateRSA(
 				InPublic: tpm2.BytesAs2B[tpm2.TPMTPublic](createRsp.OutPublic.Bytes()),
 			}.Execute(tpm.transport)
 			if err != nil {
-				tpm.logger.Errorf("%s: %s", err, keyAttrs.CN)
+				tpm.logger.Error("failed to load RSA key", slog.String("error", err.Error()), slog.String("cn", keyAttrs.CN))
 				return nil, err
 			}
 			handle = loadResponse.ObjectHandle
@@ -151,7 +152,7 @@ func (tpm *TPM2) CreateRSA(
 			public = createRsp.OutPublic
 			// Caller is responsible for flushing the handle
 		} else {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to create RSA key", slog.String("error", err.Error()))
 			return nil, err
 		}
 	} else {
@@ -162,9 +163,9 @@ func (tpm *TPM2) CreateRSA(
 		// Caller is responsible for flushing the handle
 	}
 
-	tpm.logger.Debugf("tpm: RSA Key loaded to transient handle 0x%x", handle)
-	tpm.logger.Debugf("tpm: RSA Key Name: %s", Encode(name.Buffer))
-	tpm.logger.Debugf("tpm: RSA Parent (SRK) Name: %s", Encode(srkName.Buffer))
+	tpm.logger.Debug("RSA key loaded to transient handle", slog.String("handle", Encode([]byte{byte(handle >> 24), byte(handle >> 16), byte(handle >> 8), byte(handle)})))
+	tpm.logger.Debug("RSA key name", slog.String("name", Encode(name.Buffer)))
+	tpm.logger.Debug("RSA parent (SRK) name", slog.String("name", Encode(srkName.Buffer)))
 
 	if keyAttrs.TPMAttributes == nil {
 		keyAttrs.TPMAttributes = &types.TPMAttributes{
@@ -183,22 +184,22 @@ func (tpm *TPM2) CreateRSA(
 
 	pub, err := public.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get public contents", slog.String("error", err.Error()))
 		return nil, err
 	}
 	rsaDetail, err := pub.Parameters.RSADetail()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get RSA detail", slog.String("error", err.Error()))
 		return nil, err
 	}
 	rsaUnique, err := pub.Unique.RSA()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get RSA unique", slog.String("error", err.Error()))
 		return nil, err
 	}
 	rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create RSA public key", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -225,7 +226,7 @@ func (tpm *TPM2) CreateRSA(
 // 		},
 // 	}.Execute(tpm.transport)
 // 	if err != nil {
-// 		tpm.logger.Error(err)
+// 		tpm.logger.Error("RSA decrypt failed", slog.String("error", err.Error()))
 // 		return nil, err
 // 	}
 // 	return response.Message.Buffer, nil
@@ -250,7 +251,7 @@ func (tpm *TPM2) RSADecrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, blob []b
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("RSA decrypt failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 	return response.Message.Buffer, nil
@@ -276,7 +277,7 @@ func (tpm *TPM2) RSAEncrypt(handle tpm2.TPMHandle, name tpm2.TPM2BName, message 
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("RSA encrypt failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 	return response.OutData.Buffer, nil

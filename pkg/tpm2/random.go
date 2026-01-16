@@ -3,6 +3,7 @@ package tpm2
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 
 	"github.com/google/go-tpm/tpm2"
@@ -79,7 +80,7 @@ func (tpm *TPM2) readChunk(data []byte, requestSize int) (int, error) {
 		}.Execute(tpm.transport)
 		if err != nil {
 
-			tpm.logger.MaybeError(err)
+			tpm.logger.Debug("EK handle not found, creating transient EK", slog.String("error", err.Error()))
 
 			ekAttrs, err := tpm.EKAttributes()
 			if err != nil {
@@ -98,7 +99,7 @@ func (tpm *TPM2) readChunk(data []byte, requestSize int) (int, error) {
 			// Use the persistent EK handle to encrypt the session
 			ekPub, err := response.OutPublic.Contents()
 			if err != nil {
-				tpm.logger.Error(err)
+				tpm.logger.Error("failed to get EK public contents", slog.String("error", err.Error()))
 				return 0, err
 			}
 			sess = tpm2.HMAC(
@@ -126,7 +127,7 @@ func (tpm *TPM2) readChunk(data []byte, requestSize int) (int, error) {
 		BytesRequested: uint16(requestSize), // #nosec G115 -- Bounds checked above
 	}.Execute(tpm.Transport(), sess)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get random bytes from TPM", slog.String("error", err.Error()))
 		return 0, err
 	}
 
@@ -150,14 +151,14 @@ func (tpm *TPM2) Random() ([]byte, error) {
 	// Read fixed length bytes
 	n, err = tpm.Read(bytes)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read random bytes", slog.String("error", err.Error()))
 		return nil, err
 	}
 	if n != fixedLength {
 		return nil, ErrUnexpectedRandomBytes
 	}
 
-	tpm.logger.Debugf("tpm: read %d random bytes", n)
+	tpm.logger.Debug("read random bytes from TPM", slog.Int("bytes", n))
 
 	return bytes, nil
 }
@@ -176,14 +177,14 @@ func (tpm *TPM2) RandomBytes(fixedLength int) ([]byte, error) {
 	// Read fixed length bytes
 	n, err = tpm.Read(bytes)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read random bytes", slog.String("error", err.Error()))
 		return nil, err
 	}
 	if n != fixedLength {
 		return nil, ErrUnexpectedRandomBytes
 	}
 
-	tpm.logger.Debugf("tpm: read %d random bytes", n)
+	tpm.logger.Debug("read random bytes from TPM", slog.Int("bytes", n))
 
 	return bytes, nil
 }
@@ -210,7 +211,7 @@ func (tpm *TPM2) RandomHex(fixedLength int) ([]byte, error) {
 		return nil, ErrUnexpectedRandomBytes
 	}
 
-	tpm.logger.Debugf("tpm: read %d random bytes", n)
+	tpm.logger.Debug("read random hex bytes from TPM", slog.Int("bytes", n))
 
 	return []byte(Encode(bytes)), nil
 }

@@ -9,12 +9,12 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"log/slog"
 	"math/big"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	tpm2pkg "github.com/jeremyhahn/go-keychain/pkg/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
@@ -22,7 +22,7 @@ import (
 
 // createTPMWithFullProvisioning creates a TPM instance with full provisioning
 func createTPMWithFullProvisioning(t *testing.T) (tpm2pkg.TrustedPlatformModule, func()) {
-	logger := logging.NewLogger(logging.DebugLevel, nil)
+	logger := slog.Default()
 
 	config := &tpm2pkg.Config{
 		Device:       "/dev/null",

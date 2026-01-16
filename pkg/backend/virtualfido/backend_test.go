@@ -17,6 +17,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -184,6 +185,44 @@ func TestGenerateKey(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, key)
 	})
+
+	t.Run("generates RSA 4096 key with SHA384", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "test-rsa-4096",
+			KeyAlgorithm: x509.RSA,
+			Hash:         crypto.SHA384,
+		}
+
+		key, err := backend.GenerateKey(attrs)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+
+		rsaKey, ok := key.(*rsa.PrivateKey)
+		require.True(t, ok)
+		assert.Equal(t, 4096, rsaKey.N.BitLen())
+	})
+
+	t.Run("generates RSA 4096 key with SHA512", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "test-rsa-512",
+			KeyAlgorithm: x509.RSA,
+			Hash:         crypto.SHA512,
+		}
+
+		key, err := backend.GenerateKey(attrs)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+
+		rsaKey, ok := key.(*rsa.PrivateKey)
+		require.True(t, ok)
+		assert.Equal(t, 4096, rsaKey.N.BitLen())
+	})
 }
 
 func TestGetKey(t *testing.T) {
@@ -233,6 +272,52 @@ func TestGetKey(t *testing.T) {
 		assert.Nil(t, key)
 		assert.True(t, errors.Is(err, ErrBackendClosed))
 	})
+
+	t.Run("retrieves key by slot name", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		// Generate a key with a specific key type
+		attrs := &types.KeyAttributes{
+			CN:           "test",
+			KeyAlgorithm: x509.ECDSA,
+			KeyType:      types.KeyTypeSigning,
+		}
+		_, err := backend.GenerateKey(attrs)
+		require.NoError(t, err)
+
+		// Get key by slot name
+		slotName := SlotSignature.String()
+		getAttrs := &types.KeyAttributes{
+			CN: slotName,
+		}
+		key, err := backend.GetKey(getAttrs)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+	})
+
+	t.Run("retrieves key by encryption type", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		// Generate an encryption key
+		attrs := &types.KeyAttributes{
+			CN:           "test-enc",
+			KeyAlgorithm: x509.RSA,
+			KeyType:      types.KeyTypeEncryption,
+		}
+		_, err := backend.GenerateKey(attrs)
+		require.NoError(t, err)
+
+		// Get key by type
+		getAttrs := &types.KeyAttributes{
+			CN:      "some-other-name",
+			KeyType: types.KeyTypeEncryption,
+		}
+		key, err := backend.GetKey(getAttrs)
+		require.NoError(t, err)
+		require.NotNil(t, key)
+	})
 }
 
 func TestDeleteKey(t *testing.T) {
@@ -266,6 +351,16 @@ func TestDeleteKey(t *testing.T) {
 		err := backend.DeleteKey(attrs)
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrKeyNotFound))
+	})
+
+	t.Run("fails on closed backend", func(t *testing.T) {
+		backend := createTestBackend(t)
+		_ = backend.Close()
+
+		attrs := &types.KeyAttributes{CN: "test"}
+		err := backend.DeleteKey(attrs)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
 	})
 }
 
@@ -337,6 +432,17 @@ func TestSigner(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, signer)
 	})
+
+	t.Run("fails on closed backend", func(t *testing.T) {
+		backend := createTestBackend(t)
+		_ = backend.Close()
+
+		attrs := &types.KeyAttributes{CN: "test"}
+		signer, err := backend.Signer(attrs)
+		assert.Error(t, err)
+		assert.Nil(t, signer)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
 }
 
 func TestDecrypter(t *testing.T) {
@@ -383,6 +489,17 @@ func TestDecrypter(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, decrypter)
 	})
+
+	t.Run("fails on closed backend", func(t *testing.T) {
+		backend := createTestBackend(t)
+		_ = backend.Close()
+
+		attrs := &types.KeyAttributes{CN: "test"}
+		decrypter, err := backend.Decrypter(attrs)
+		assert.Error(t, err)
+		assert.Nil(t, decrypter)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
 }
 
 func TestRotateKey(t *testing.T) {
@@ -417,6 +534,63 @@ func TestRotateKey(t *testing.T) {
 		attrs := &types.KeyAttributes{CN: "non-existent"}
 		err := backend.RotateKey(attrs)
 		assert.Error(t, err)
+	})
+
+	t.Run("rotates RSA key successfully", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "test-rsa-rotate",
+			KeyAlgorithm: x509.RSA,
+			KeyType:      types.KeyTypeEncryption,
+		}
+
+		origKey, err := backend.GenerateKey(attrs)
+		require.NoError(t, err)
+
+		err = backend.RotateKey(attrs)
+		require.NoError(t, err)
+
+		newKey, err := backend.GetKey(attrs)
+		require.NoError(t, err)
+
+		origRSA := origKey.(*rsa.PrivateKey)
+		newRSA := newKey.(*rsa.PrivateKey)
+		assert.False(t, origRSA.Equal(newRSA), "rotated key should be different")
+	})
+
+	t.Run("rotates Ed25519 key successfully", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "test-ed25519-rotate",
+			KeyAlgorithm: x509.Ed25519,
+		}
+
+		origKey, err := backend.GenerateKey(attrs)
+		require.NoError(t, err)
+
+		err = backend.RotateKey(attrs)
+		require.NoError(t, err)
+
+		newKey, err := backend.GetKey(attrs)
+		require.NoError(t, err)
+
+		origEd := origKey.(ed25519.PrivateKey)
+		newEd := newKey.(ed25519.PrivateKey)
+		assert.False(t, origEd.Equal(newEd), "rotated key should be different")
+	})
+
+	t.Run("fails on closed backend", func(t *testing.T) {
+		backend := createTestBackend(t)
+		_ = backend.Close()
+
+		attrs := &types.KeyAttributes{CN: "test"}
+		err := backend.RotateKey(attrs)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
 	})
 }
 
@@ -465,6 +639,49 @@ func TestDeriveSharedSecret(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = backend.DeriveSharedSecret(attrs, nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("fails on closed backend", func(t *testing.T) {
+		backend := createTestBackend(t)
+		_ = backend.Close()
+
+		attrs := &types.KeyAttributes{CN: "test"}
+		_, err := backend.DeriveSharedSecret(attrs, nil)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
+
+	t.Run("fails with unsupported peer key type", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "test",
+			KeyAlgorithm: x509.ECDSA,
+			Hash:         crypto.SHA256,
+		}
+
+		_, err := backend.GenerateKey(attrs)
+		require.NoError(t, err)
+
+		// Try with an unsupported public key type (rsa)
+		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+		require.NoError(t, err)
+
+		_, err = backend.DeriveSharedSecret(attrs, &rsaKey.PublicKey)
+		assert.Error(t, err)
+	})
+
+	t.Run("fails for non-existent key", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
+
+		peerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+
+		attrs := &types.KeyAttributes{CN: "non-existent"}
+		_, err = backend.DeriveSharedSecret(attrs, &peerKey.PublicKey)
 		assert.Error(t, err)
 	})
 }
@@ -520,6 +737,59 @@ func TestPINOperations(t *testing.T) {
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrPINInvalid))
 	})
+
+	t.Run("set PIN fails with invalid new PIN length", func(t *testing.T) {
+		cfg := &Config{PIN: "123456"}
+		backend, err := NewBackend(cfg)
+		require.NoError(t, err)
+		defer func() { _ = backend.Close() }()
+
+		// Too short
+		err = backend.SetPIN("123456", "12")
+		assert.Error(t, err)
+
+		// Too long
+		err = backend.SetPIN("123456", "123456789")
+		assert.Error(t, err)
+	})
+
+	t.Run("set PIN fails on closed backend", func(t *testing.T) {
+		cfg := &Config{PIN: "123456"}
+		backend, err := NewBackend(cfg)
+		require.NoError(t, err)
+		_ = backend.Close()
+
+		err = backend.SetPIN("123456", "654321")
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
+
+	t.Run("verify PIN fails on closed backend", func(t *testing.T) {
+		cfg := &Config{PIN: "123456"}
+		backend, err := NewBackend(cfg)
+		require.NoError(t, err)
+		_ = backend.Close()
+
+		err = backend.VerifyPIN("123456")
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
+
+	t.Run("set PIN with default PIN", func(t *testing.T) {
+		// NewBackend always calls SetDefaults which sets PIN to DefaultPIN
+		cfg := &Config{}
+		backend, err := NewBackend(cfg)
+		require.NoError(t, err)
+		defer func() { _ = backend.Close() }()
+
+		// Setting PIN requires providing the current default PIN
+		err = backend.SetPIN(DefaultPIN, "newpin12")
+		assert.NoError(t, err)
+
+		// Verify new PIN works
+		err = backend.VerifyPIN("newpin12")
+		assert.NoError(t, err)
+	})
 }
 
 func TestPUKOperations(t *testing.T) {
@@ -557,30 +827,69 @@ func TestPUKOperations(t *testing.T) {
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrPUKInvalid))
 	})
+
+	t.Run("unblock fails on closed backend", func(t *testing.T) {
+		cfg := &Config{PIN: "123456", PUK: "12345678"}
+		backend, err := NewBackend(cfg)
+		require.NoError(t, err)
+		_ = backend.Close()
+
+		err = backend.UnblockPIN("12345678", "newpin12")
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
+
+	t.Run("PUK blocks after exhausting retries", func(t *testing.T) {
+		cfg := &Config{PIN: "123456", PUK: "12345678", PUKRetries: 3}
+		backend, err := NewBackend(cfg)
+		require.NoError(t, err)
+		defer func() { _ = backend.Close() }()
+
+		// Exhaust PUK retries with wrong PUK
+		for i := 0; i < 3; i++ {
+			_ = backend.UnblockPIN("wrongpuk", "newpin12")
+		}
+
+		// PUK should be blocked now
+		err = backend.UnblockPIN("12345678", "newpin12")
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrPUKBlocked))
+	})
 }
 
 func TestResetDevice(t *testing.T) {
-	backend := createTestBackend(t)
-	defer func() { _ = backend.Close() }()
+	t.Run("resets device and clears keys", func(t *testing.T) {
+		backend := createTestBackend(t)
+		defer func() { _ = backend.Close() }()
 
-	// Generate a key
-	_, err := backend.GenerateKey(&types.KeyAttributes{
-		CN:           "test",
-		KeyAlgorithm: x509.ECDSA,
+		// Generate a key
+		_, err := backend.GenerateKey(&types.KeyAttributes{
+			CN:           "test",
+			KeyAlgorithm: x509.ECDSA,
+		})
+		require.NoError(t, err)
+
+		// Reset
+		err = backend.ResetDevice()
+		require.NoError(t, err)
+
+		// Keys should be gone
+		keys, _ := backend.ListKeys()
+		assert.Empty(t, keys)
+
+		// Default PIN should work
+		err = backend.VerifyPIN(DefaultPIN)
+		assert.NoError(t, err)
 	})
-	require.NoError(t, err)
 
-	// Reset
-	err = backend.ResetDevice()
-	require.NoError(t, err)
+	t.Run("fails on closed backend", func(t *testing.T) {
+		backend := createTestBackend(t)
+		_ = backend.Close()
 
-	// Keys should be gone
-	keys, _ := backend.ListKeys()
-	assert.Empty(t, keys)
-
-	// Default PIN should work
-	err = backend.VerifyPIN(DefaultPIN)
-	assert.NoError(t, err)
+		err := backend.ResetDevice()
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
 }
 
 func TestClose(t *testing.T) {
@@ -600,6 +909,18 @@ func TestClose(t *testing.T) {
 
 		_, err := backend.ListKeys()
 		assert.True(t, errors.Is(err, ErrBackendClosed))
+	})
+
+	t.Run("close without storage", func(t *testing.T) {
+		cfg := &Config{}
+		backend, err := NewBackend(cfg)
+		require.NoError(t, err)
+
+		// Artificially set storage to nil to test nil check
+		backend.storage = nil
+
+		err = backend.Close()
+		assert.NoError(t, err)
 	})
 }
 
@@ -705,15 +1026,61 @@ func TestCurveFromHash(t *testing.T) {
 	backend := createTestBackend(t)
 	defer func() { _ = backend.Close() }()
 
-	// SHA256 -> P-256
-	attrs := &types.KeyAttributes{
-		CN:           "sha256",
-		KeyAlgorithm: x509.ECDSA,
-		Hash:         crypto.SHA256,
-	}
-	privKey, _ := backend.GenerateKey(attrs)
-	ecdsaKey := privKey.(*ecdsa.PrivateKey)
-	assert.Equal(t, 256, ecdsaKey.Curve.Params().BitSize)
+	t.Run("SHA256 uses P-256", func(t *testing.T) {
+		attrs := &types.KeyAttributes{
+			CN:           "sha256",
+			KeyAlgorithm: x509.ECDSA,
+			Hash:         crypto.SHA256,
+		}
+		privKey, _ := backend.GenerateKey(attrs)
+		ecdsaKey := privKey.(*ecdsa.PrivateKey)
+		assert.Equal(t, 256, ecdsaKey.Curve.Params().BitSize)
+	})
+
+	t.Run("SHA384 uses P-384", func(t *testing.T) {
+		backend2 := createTestBackend(t)
+		defer func() { _ = backend2.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "sha384",
+			KeyAlgorithm: x509.ECDSA,
+			Hash:         crypto.SHA384,
+		}
+		privKey, err := backend2.GenerateKey(attrs)
+		require.NoError(t, err)
+		ecdsaKey := privKey.(*ecdsa.PrivateKey)
+		assert.Equal(t, 384, ecdsaKey.Curve.Params().BitSize)
+	})
+
+	t.Run("SHA512 uses P-521", func(t *testing.T) {
+		backend3 := createTestBackend(t)
+		defer func() { _ = backend3.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "sha512",
+			KeyAlgorithm: x509.ECDSA,
+			Hash:         crypto.SHA512,
+		}
+		privKey, err := backend3.GenerateKey(attrs)
+		require.NoError(t, err)
+		ecdsaKey := privKey.(*ecdsa.PrivateKey)
+		assert.Equal(t, 521, ecdsaKey.Curve.Params().BitSize)
+	})
+
+	t.Run("default uses P-256", func(t *testing.T) {
+		backend4 := createTestBackend(t)
+		defer func() { _ = backend4.Close() }()
+
+		attrs := &types.KeyAttributes{
+			CN:           "default",
+			KeyAlgorithm: x509.ECDSA,
+			Hash:         0, // No hash specified
+		}
+		privKey, err := backend4.GenerateKey(attrs)
+		require.NoError(t, err)
+		ecdsaKey := privKey.(*ecdsa.PrivateKey)
+		assert.Equal(t, 256, ecdsaKey.Curve.Params().BitSize)
+	})
 }
 
 func TestAutoApprover(t *testing.T) {
@@ -787,6 +1154,55 @@ func TestGetRetryCountAfterClose(t *testing.T) {
 	_, _, err := backend.GetRetryCount()
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBackendClosed))
+}
+
+func TestSlotAllocationExhaustRetiredSlots(t *testing.T) {
+	backend := createTestBackend(t)
+	defer func() { _ = backend.Close() }()
+
+	// Fill all primary slots and retired slots
+	// First fill signature slot
+	_, err := backend.GenerateKey(&types.KeyAttributes{
+		CN:           "sig",
+		KeyAlgorithm: x509.ECDSA,
+		KeyType:      types.KeyTypeSigning,
+	})
+	require.NoError(t, err)
+
+	// Fill authentication slot
+	_, err = backend.GenerateKey(&types.KeyAttributes{
+		CN:           "auth",
+		KeyAlgorithm: x509.ECDSA,
+	})
+	require.NoError(t, err)
+
+	// Fill key management slot
+	_, err = backend.GenerateKey(&types.KeyAttributes{
+		CN:           "enc",
+		KeyAlgorithm: x509.ECDSA,
+		KeyType:      types.KeyTypeEncryption,
+	})
+	require.NoError(t, err)
+
+	// Generate more keys to fill retired slots
+	for i := 0; i < 20; i++ {
+		_, err := backend.GenerateKey(&types.KeyAttributes{
+			CN:           "retired-" + string(rune('a'+i)),
+			KeyAlgorithm: x509.ECDSA,
+		})
+		require.NoError(t, err)
+	}
+
+	// One more should overwrite authentication slot (replacing an existing key)
+	_, err = backend.GenerateKey(&types.KeyAttributes{
+		CN:           "overflow",
+		KeyAlgorithm: x509.ECDSA,
+	})
+	require.NoError(t, err)
+
+	// Should have 23 keys (3 primary + 20 retired, with overflow replacing auth slot)
+	keys, _ := backend.ListKeys()
+	assert.Len(t, keys, 23)
 }
 
 func createTestBackend(t *testing.T) *Backend {

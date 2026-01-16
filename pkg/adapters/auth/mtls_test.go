@@ -23,7 +23,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/internal/testutil"
+	"github.com/jeremyhahn/go-keychain/pkg/testutil"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"

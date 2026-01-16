@@ -5,6 +5,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 
@@ -54,7 +55,7 @@ func (tpm *TPM2) MakeCredential(
 	digest := tpm2.TPM2BDigest{Buffer: secret}
 
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: MakeCredential secret: %s", secret)
+		tpm.logger.Debug("MakeCredential secret", slog.String("secret", string(secret)))
 	}
 
 	// Create the new credential challenge
@@ -64,19 +65,19 @@ func (tpm *TPM2) MakeCredential(
 		ObjectName: akName,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("MakeCredential failed", slog.String("error", err.Error()))
 		return nil, nil, nil, err
 	}
 
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: MakeCredential: secret (raw): %s", digest.Buffer)
-		tpm.logger.Debugf("tpm: MakeCredential: secret (hex): 0x%x", Encode(digest.Buffer))
+		tpm.logger.Debug("MakeCredential secret raw", slog.String("secret", string(digest.Buffer)))
+		tpm.logger.Debug("MakeCredential secret hex", slog.String("secret_hex", fmt.Sprintf("0x%x", Encode(digest.Buffer))))
 
-		tpm.logger.Debugf("tpm: MakeCredential: encrypted secret (raw): %s", mc.CredentialBlob.Buffer)
-		tpm.logger.Debugf("tpm: MakeCredential: encrypted secret (hex): 0x%x", Encode(mc.CredentialBlob.Buffer))
+		tpm.logger.Debug("MakeCredential encrypted secret raw", slog.String("encrypted_secret", string(mc.CredentialBlob.Buffer)))
+		tpm.logger.Debug("MakeCredential encrypted secret hex", slog.String("encrypted_secret_hex", fmt.Sprintf("0x%x", Encode(mc.CredentialBlob.Buffer))))
 
-		tpm.logger.Debugf("tpm: MakeCredential: secret response (raw): %s", mc.Secret.Buffer)
-		tpm.logger.Debugf("tpm: MakeCredential: secret response (hex): 0x%x", Encode(mc.Secret.Buffer))
+		tpm.logger.Debug("MakeCredential secret response raw", slog.String("secret_response", string(mc.Secret.Buffer)))
+		tpm.logger.Debug("MakeCredential secret response hex", slog.String("secret_response_hex", fmt.Sprintf("0x%x", Encode(mc.Secret.Buffer))))
 	}
 
 	return mc.CredentialBlob.Buffer, mc.Secret.Buffer, digest.Buffer, nil
@@ -154,11 +155,12 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 	defer tpm.Flush(ekLoadRsp.ObjectHandle)
 
 	// Always log the IAK name for debugging credential activation issues
-	tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: IAK name (hex): %x", readPubRsp.Name.Buffer)
-	tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: IAK pub bytes len: %d", len(iakPubBytes))
+	tpm.logger.Debug("MakeCredentialWithExternalEK IAK info",
+		slog.String("iak_name_hex", fmt.Sprintf("%x", readPubRsp.Name.Buffer)),
+		slog.Int("iak_pub_bytes_len", len(iakPubBytes)))
 
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: secret: 0x%x", secret)
+		tpm.logger.Debug("MakeCredentialWithExternalEK secret", slog.String("secret_hex", fmt.Sprintf("0x%x", secret)))
 	}
 
 	// Perform TPM2_MakeCredential
@@ -173,8 +175,8 @@ func (tpm *TPM2) MakeCredentialWithExternalEK(
 	}
 
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: credential blob: 0x%x", mc.CredentialBlob.Buffer)
-		tpm.logger.Debugf("tpm: MakeCredentialWithExternalEK: encrypted secret: 0x%x", mc.Secret.Buffer)
+		tpm.logger.Debug("MakeCredentialWithExternalEK credential blob", slog.String("credential_blob_hex", fmt.Sprintf("0x%x", mc.CredentialBlob.Buffer)))
+		tpm.logger.Debug("MakeCredentialWithExternalEK encrypted secret", slog.String("encrypted_secret_hex", fmt.Sprintf("0x%x", mc.Secret.Buffer)))
 	}
 
 	return mc.CredentialBlob.Buffer, mc.Secret.Buffer, secret, nil
@@ -197,12 +199,12 @@ func (tpm *TPM2) ActivateCredential(
 
 	session, closer, err := tpm2.PolicySession(tpm.transport, tpm2.TPMAlgSHA256, 16)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create policy session", slog.String("error", err.Error()))
 		return nil, err
 	}
 	defer func() {
 		if err := closer(); err != nil {
-			tpm.logger.Errorf("failed to close policy session: %v", err)
+			tpm.logger.Error("failed to close policy session", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -215,7 +217,7 @@ func (tpm *TPM2) ActivateCredential(
 		PolicySession: session.Handle(),
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("PolicySecret failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -232,13 +234,14 @@ func (tpm *TPM2) ActivateCredential(
 
 	// Activate the credential, proving the AK and EK are both loaded
 	// into the same TPM, and the EK is able to decrypt the secret.
-	tpm.logger.Debug("tpm2: activating credential")
-	tpm.logger.Debugf("tpm2: ActivateCredential IAK handle=0x%x, name=%x",
-		keyAttrs.TPMAttributes.Handle, keyAttrs.TPMAttributes.Name.Buffer)
-	tpm.logger.Debugf("tpm2: ActivateCredential EK handle=0x%x, name=%x",
-		ekAttrs.TPMAttributes.Handle, ekAttrs.TPMAttributes.Name.Buffer)
-	tpm.logger.Debugf("tpm2: ActivateCredential credentialBlob len=%d, encryptedSecret len=%d",
-		len(credentialBlob), len(encryptedSecret))
+	tpm.logger.Debug("activating credential",
+		slog.String("iak_handle", fmt.Sprintf("0x%x", keyAttrs.TPMAttributes.Handle)),
+		slog.String("iak_name", fmt.Sprintf("%x", keyAttrs.TPMAttributes.Name.Buffer)),
+		slog.String("ek_handle", fmt.Sprintf("0x%x", ekAttrs.TPMAttributes.Handle)),
+		slog.String("ek_name", fmt.Sprintf("%x", ekAttrs.TPMAttributes.Name.Buffer)),
+		slog.Int("credential_blob_len", len(credentialBlob)),
+		slog.Int("encrypted_secret_len", len(encryptedSecret)))
+
 	activateCredentialsResponse, err := tpm2.ActivateCredential{
 		ActivateHandle: tpm2.NamedHandle{
 			Handle: keyAttrs.TPMAttributes.Handle,
@@ -257,8 +260,7 @@ func (tpm *TPM2) ActivateCredential(
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		fmt.Println(err)
-		tpm.logger.Error(err)
+		tpm.logger.Error("ActivateCredential failed", slog.String("error", err.Error()))
 		return nil, ErrInvalidActivationCredential
 	}
 
@@ -266,11 +268,11 @@ func (tpm *TPM2) ActivateCredential(
 	// if secret debugging is enabled.
 	digest := activateCredentialsResponse.CertInfo.Buffer
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: credential encrypted secret (raw): %s", encryptedSecret)
-		tpm.logger.Debugf("tpm: credential encrypted secret (hex): 0x%x", Encode(encryptedSecret))
+		tpm.logger.Debug("credential encrypted secret raw", slog.String("encrypted_secret", string(encryptedSecret)))
+		tpm.logger.Debug("credential encrypted secret hex", slog.String("encrypted_secret_hex", fmt.Sprintf("0x%x", Encode(encryptedSecret))))
 
-		tpm.logger.Debugf("tpm: TPM2BDigest (raw): %s", digest)
-		tpm.logger.Debugf("tpm: TPM2BDigest (hex): 0x%x", Encode(digest))
+		tpm.logger.Debug("TPM2BDigest raw", slog.String("digest", string(digest)))
+		tpm.logger.Debug("TPM2BDigest hex", slog.String("digest_hex", fmt.Sprintf("0x%x", Encode(digest))))
 	}
 
 	// Return the decrypted secret
@@ -325,7 +327,7 @@ func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 		PCRSelect: pcrSelect,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("Quote failed", slog.String("error", err.Error()))
 		return Quote{}, err
 	}
 
@@ -342,7 +344,7 @@ func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 		} else {
 			rsaSig, err = q.Signature.Signature.RSASSA()
 			if err != nil {
-				tpm.logger.Error(err)
+				tpm.logger.Error("failed to get RSASSA signature", slog.String("error", err.Error()))
 				return quote, err
 			}
 		}
@@ -383,13 +385,13 @@ func (tpm *TPM2) Quote(pcrs []uint, nonce []byte) (Quote, error) {
 
 	allBanks, err := tpm.ReadPCRs(pcrs)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to read PCRs", slog.String("error", err.Error()))
 		return Quote{}, err
 	}
 
 	pcrBytes, err := EncodePCRs(allBanks)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to encode PCRs", slog.String("error", err.Error()))
 		return Quote{}, err
 	}
 

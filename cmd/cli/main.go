@@ -16,7 +16,7 @@ package main
 import (
 	"os"
 
-	"github.com/jeremyhahn/go-keychain/internal/cli"
+	"github.com/jeremyhahn/go-keychain/pkg/cli"
 )
 
 func main() {

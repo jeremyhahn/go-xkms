@@ -1,5 +1,3 @@
-//go:build tpm_simulator
-
 package tpm2
 
 import (
@@ -9,10 +7,10 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -593,7 +591,7 @@ func TestReadPCRs_AllBanks_Simulator(t *testing.T) {
 
 // Benchmark random byte generation
 func BenchmarkRandomBytes_Simulator(b *testing.B) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	buf := make([]byte, 8)
 	_, err := rand.Reader.Read(buf)
@@ -658,7 +656,7 @@ func BenchmarkRandomBytes_Simulator(b *testing.B) {
 	}
 
 	params := &Params{
-		Logger:       logging.DefaultLogger(),
+		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
 		BlobStore:    blobStore,

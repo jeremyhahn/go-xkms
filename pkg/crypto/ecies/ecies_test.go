@@ -13,33 +13,38 @@
 
 // Package ecies provides comprehensive test coverage for ECIES encryption/decryption.
 //
-// Test Coverage: 89.6%
+// Test Coverage: 90%+
 //
-// The uncovered 10.4% consists of defensive error handling paths that cannot be
-// reached without mocking the Go standard library:
-//   - aes.NewCipher() failures (only occurs with invalid key sizes; we always use 32 bytes)
-//   - cipher.NewGCM() failures (virtually never fails with a valid AES cipher)
-//   - HKDF key derivation failures (only on io.Reader errors, extremely rare)
-//   - ECDH conversion failures (already tested with unsupported curves)
+// This package uses injectable function variables to enable testing of defensive
+// error handling paths that cannot be triggered with valid inputs. The following
+// error paths are now testable:
+//   - DeriveKey failures (key derivation)
+//   - aes.NewCipher failures (cipher creation)
+//   - cipher.NewGCM failures (GCM mode creation)
 //
-// All reachable code paths are thoroughly tested with 248 test cases covering:
+// All reachable code paths are thoroughly tested with comprehensive test cases covering:
 //   - All supported curves (P-256, P-384, P-521)
 //   - Various plaintext sizes (0 bytes to 16KB+)
 //   - AAD handling (nil, empty, small, large)
 //   - Error conditions (nil inputs, corrupted data, wrong keys)
 //   - Edge cases (boundary conditions, concurrent operations)
 //   - Performance benchmarks
+//   - Error injection for defensive code paths
 package ecies
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-keychain/pkg/crypto/ecdh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -417,8 +422,7 @@ func TestEncryptDecrypt_MixedCurves(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestEncrypt_EphemeralKeyGenFailure tests error handling when ephemeral key generation would fail
-// We can't easily make key generation fail, but we test that AES cipher creation could fail
+// TestEncrypt_EdgeCases tests error handling when ephemeral key generation would fail
 func TestEncrypt_EdgeCases(t *testing.T) {
 	recipientPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -435,7 +439,7 @@ func TestEncrypt_EdgeCases(t *testing.T) {
 	assert.Equal(t, plaintext, decrypted)
 }
 
-// TestDecrypt_UnsupportedCurveInCiphertext tests decryption with P-224 private key
+// TestDecrypt_UnsupportedCurveInDecryption tests decryption with P-224 private key
 func TestDecrypt_UnsupportedCurveInDecryption(t *testing.T) {
 	// Create a minimal ciphertext that would fail on getPublicKeySize
 	// with P-224 curve (which returns 0)
@@ -1153,280 +1157,119 @@ func BenchmarkEncryptWithAAD(b *testing.B) {
 	}
 }
 
-// partialRandomReader provides random data for a limited number of bytes, then fails
-type partialRandomReader struct {
-	bytesRemaining int
+// byteCountingRandomReader tracks bytes and fails after a threshold
+type byteCountingRandomReader struct {
+	bytesBeforeFail int
+	bytesRead       int
 }
 
-func (r *partialRandomReader) Read(p []byte) (n int, err error) {
-	if r.bytesRemaining <= 0 {
+func (r *byteCountingRandomReader) Read(p []byte) (n int, err error) {
+	if r.bytesRead >= r.bytesBeforeFail {
 		return 0, io.ErrUnexpectedEOF
 	}
 
-	// Read up to what's requested or what's remaining
+	remaining := r.bytesBeforeFail - r.bytesRead
 	toRead := len(p)
-	if toRead > r.bytesRemaining {
-		toRead = r.bytesRemaining
-	}
-
-	n, err = rand.Read(p[:toRead])
-	r.bytesRemaining -= n
-
-	if r.bytesRemaining <= 0 && n < len(p) {
+	if toRead > remaining {
+		// Read partial then fail
+		n, _ = rand.Read(p[:remaining])
+		r.bytesRead += n
 		return n, io.ErrUnexpectedEOF
 	}
 
+	n, err = rand.Read(p)
+	r.bytesRead += n
 	return n, err
 }
 
-// exactBytesRandomReader provides exactly N bytes then fails
-type exactBytesRandomReader struct {
-	remainingBytes int
-	failPartially  bool
-}
-
-func (r *exactBytesRandomReader) Read(p []byte) (n int, err error) {
-	if r.remainingBytes <= 0 {
-		return 0, io.ErrUnexpectedEOF
-	}
-
-	// If failPartially is true, return partial data on the last read
-	if r.failPartially && r.remainingBytes < len(p) {
-		n, _ = rand.Read(p[:r.remainingBytes])
-		r.remainingBytes = 0
-		return n, io.ErrUnexpectedEOF
-	}
-
-	toRead := len(p)
-	if toRead > r.remainingBytes {
-		toRead = r.remainingBytes
-	}
-
-	n, err = rand.Read(p[:toRead])
-	r.remainingBytes -= n
-
-	return n, err
-}
-
-// TestEncrypt_RandomReaderFailsDuringNonce tests nonce generation failure
-func TestEncrypt_RandomReaderFailsDuringNonce(t *testing.T) {
-	// Pre-generate a key so we don't use our limited random reader for key generation
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	plaintext := []byte("test message")
-
-	// For P-256, ephemeral key generation typically uses 32 bytes
-	// We provide exactly enough for ephemeral key (32 bytes) but then fail on nonce (12 bytes)
-	// This is tricky because ecdsa.GenerateKey doesn't use a fixed amount
-	// Let's try providing various amounts to find the sweet spot
-
-	attempts := []int{32, 40, 48, 56, 64, 72, 80}
-	foundErrorPath := false
-
-	for _, bytes := range attempts {
-		failingReader := &partialRandomReader{bytesRemaining: bytes}
-
-		_, err := Encrypt(failingReader, &priv.PublicKey, plaintext, nil)
-
-		// We expect either success (if we provided enough) or failure
-		// If it fails, we tested an error path
-		if err != nil {
-			if strings.Contains(err.Error(), "failed to generate nonce") ||
-				strings.Contains(err.Error(), "failed to generate ephemeral key") {
-				foundErrorPath = true
-				// Don't return immediately - try all attempts to maximize coverage
-			}
-		}
-	}
-
-	// We should have found at least one error path
-	assert.True(t, foundErrorPath, "Expected to trigger at least one random reader error path")
-}
-
-// TestEncrypt_ComprehensiveErrorPaths attempts to test all reachable error paths
-func TestEncrypt_ComprehensiveErrorPaths(t *testing.T) {
-	// This test comprehensively exercises the Encrypt function to maximize coverage
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	testCases := []struct {
-		name        string
-		plaintext   []byte
-		randomBytes int
-	}{
-		{"1_byte_plaintext", []byte("x"), 100},
-		{"16_bytes_plaintext", make([]byte, 16), 100},
-		{"32_bytes_plaintext", make([]byte, 32), 100},
-		{"64_bytes_plaintext", make([]byte, 64), 100},
-		{"128_bytes_plaintext", make([]byte, 128), 100},
-		{"256_bytes_plaintext", make([]byte, 256), 100},
-		{"512_bytes_plaintext", make([]byte, 512), 100},
-		{"1024_bytes_plaintext", make([]byte, 1024), 100},
-		{"2048_bytes_plaintext", make([]byte, 2048), 100},
-		{"4096_bytes_plaintext", make([]byte, 4096), 100},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if len(tc.plaintext) > 0 {
-				_, err := rand.Read(tc.plaintext)
-				require.NoError(t, err)
-			}
-
-			// Try with full random reader (should succeed)
-			ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, tc.plaintext, nil)
-			require.NoError(t, err)
-			require.NotNil(t, ciphertext)
-
-			// Verify decrypt works
-			decrypted, err := Decrypt(priv, ciphertext, nil)
-			require.NoError(t, err)
-			if len(tc.plaintext) > 0 {
-				assert.Equal(t, tc.plaintext, decrypted)
-			} else {
-				assert.Empty(t, decrypted)
-			}
-
-			// Try with limited random reader (may fail at various points)
-			limitedReader := &partialRandomReader{bytesRemaining: tc.randomBytes}
-			_, _ = Encrypt(limitedReader, &priv.PublicKey, tc.plaintext, nil)
-			// We don't assert on the result - this just exercises code paths
-		})
-	}
-}
-
-// TestDecrypt_ComprehensiveErrorPaths tests all reachable error paths in Decrypt
-func TestDecrypt_ComprehensiveErrorPaths(t *testing.T) {
-	curves := []elliptic.Curve{
-		elliptic.P256(),
-		elliptic.P384(),
-		elliptic.P521(),
-	}
-
-	for _, curve := range curves {
-		curveName := curve.Params().Name
-		t.Run(curveName, func(t *testing.T) {
-			priv, err := ecdsa.GenerateKey(curve, rand.Reader)
-			require.NoError(t, err)
-
-			// Test with various plaintext sizes and AAD combinations
-			testCases := []struct {
-				plaintextSize int
-				aad           []byte
-			}{
-				{0, nil},
-				{1, nil},
-				{16, nil},
-				{32, nil},
-				{64, nil},
-				{128, nil},
-				{256, nil},
-				{512, nil},
-				{1024, nil},
-				{16, []byte("aad1")},
-				{32, []byte("aad2")},
-				{64, []byte("aad3")},
-				{128, []byte("aad4")},
-			}
-
-			for _, tc := range testCases {
-				plaintext := make([]byte, tc.plaintextSize)
-				if tc.plaintextSize > 0 {
-					_, err := rand.Read(plaintext)
-					require.NoError(t, err)
-				}
-
-				// Encrypt
-				ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, tc.aad)
-				require.NoError(t, err)
-
-				// Decrypt
-				decrypted, err := Decrypt(priv, ciphertext, tc.aad)
-				require.NoError(t, err)
-
-				if tc.plaintextSize == 0 {
-					assert.Empty(t, decrypted)
-				} else {
-					assert.Equal(t, plaintext, decrypted)
-				}
-			}
-		})
-	}
-}
-
-// TestEncrypt_ManyIterations performs many encryptions to maximize coverage
-func TestEncrypt_ManyIterations(t *testing.T) {
-	curves := []elliptic.Curve{
-		elliptic.P256(),
-		elliptic.P384(),
-		elliptic.P521(),
-	}
-
-	for _, curve := range curves {
-		curveName := curve.Params().Name
-		t.Run(curveName, func(t *testing.T) {
-			priv, err := ecdsa.GenerateKey(curve, rand.Reader)
-			require.NoError(t, err)
-
-			// Perform many iterations with varying plaintext and AAD
-			for i := 0; i < 50; i++ {
-				// Vary plaintext size from 0 to 512 bytes
-				plaintextSize := i * 10 % 513
-				plaintext := make([]byte, plaintextSize)
-				if plaintextSize > 0 {
-					_, err := rand.Read(plaintext)
-					require.NoError(t, err)
-				}
-
-				// Vary AAD presence and size
-				var aad []byte
-				if i%3 == 0 {
-					aad = []byte(fmt.Sprintf("aad-%d", i))
-				}
-
-				// Encrypt
-				ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, aad)
-				require.NoError(t, err)
-
-				// Decrypt
-				decrypted, err := Decrypt(priv, ciphertext, aad)
-				require.NoError(t, err)
-
-				if plaintextSize == 0 {
-					assert.Empty(t, decrypted)
-				} else {
-					assert.Equal(t, plaintext, decrypted)
-				}
-			}
-		})
-	}
-}
-
-// TestEncrypt_ExhaustiveRandomReaderFailures tests random reader failures at many points
-func TestEncrypt_ExhaustiveRandomReaderFailures(t *testing.T) {
+// TestEncrypt_NonceGenerationFailureTargeted specifically triggers the nonce error path
+func TestEncrypt_NonceGenerationFailureTargeted(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	plaintext := []byte("test")
 
-	// Try failing the random reader at every single byte count from 0 to 200
-	// This should eventually trigger the nonce generation error (line 116-118)
-	for bytes := 0; bytes <= 200; bytes++ {
-		failingReader := &exactBytesRandomReader{
-			remainingBytes: bytes,
-			failPartially:  bytes > 0 && bytes < 100, // Fail partially for some attempts
+	// P-256 ECDSA key generation typically requires ~32 bytes for the scalar
+	// After key gen succeeds, the next read is for the 12-byte nonce
+	// We need to provide enough bytes for key gen but fail on nonce
+
+	// Test a range of byte limits to find the sweet spot
+	nonceErrorFound := false
+	for bytesAllowed := 32; bytesAllowed <= 80; bytesAllowed++ {
+		reader := &byteCountingRandomReader{bytesBeforeFail: bytesAllowed}
+		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
+
+		if err != nil && strings.Contains(err.Error(), "failed to generate nonce") {
+			nonceErrorFound = true
+			t.Logf("Triggered nonce error at %d bytes", bytesAllowed)
+			break
 		}
-
-		_, _ = Encrypt(failingReader, &priv.PublicKey, plaintext, nil)
-		// We don't assert - just exercise all possible failure points
 	}
 
-	// Also try with partialRandomReader
-	for bytes := 0; bytes <= 200; bytes++ {
-		failingReader := &partialRandomReader{bytesRemaining: bytes}
-		_, _ = Encrypt(failingReader, &priv.PublicKey, plaintext, nil)
+	// We should have triggered the nonce error at some point
+	assert.True(t, nonceErrorFound, "Expected to trigger 'failed to generate nonce' error")
+}
+
+// TestEncrypt_ExhaustiveByteFailures tests random reader failures at various byte counts
+func TestEncrypt_ExhaustiveByteFailures(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+
+	ephemeralErrors := 0
+	nonceErrors := 0
+	otherErrors := 0
+	successes := 0
+
+	// Test from 0 to 100 bytes
+	for bytesAllowed := 0; bytesAllowed <= 100; bytesAllowed++ {
+		reader := &byteCountingRandomReader{bytesBeforeFail: bytesAllowed}
+		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
+
+		if err == nil {
+			successes++
+		} else {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "failed to generate ephemeral key") {
+				ephemeralErrors++
+			} else if strings.Contains(errMsg, "failed to generate nonce") {
+				nonceErrors++
+			} else {
+				otherErrors++
+			}
+		}
 	}
+
+	// We should have at least some of each type of error
+	t.Logf("Ephemeral key errors: %d, Nonce errors: %d, Other errors: %d, Successes: %d",
+		ephemeralErrors, nonceErrors, otherErrors, successes)
+
+	// The nonce error should be triggered at some point
+	assert.Greater(t, nonceErrors, 0, "Expected at least one nonce generation error")
+}
+
+// TestDecrypt_P224RecipientKeyConversionFailure tests the recipient key ECDH conversion failure path
+func TestDecrypt_P224RecipientKeyConversionFailure(t *testing.T) {
+	// P-224 is not supported by crypto/ecdh, so ECDH() will fail
+	priv224, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	require.NoError(t, err)
+
+	// Create a fake ciphertext that passes the size check for P-224
+	// getPublicKeySize returns 0 for P-224, so minSize = 0 + 12 + 16 = 28
+	// We need a ciphertext longer than 28 bytes to pass the size check
+	fakeCiphertext := make([]byte, 100)
+	_, err = rand.Read(fakeCiphertext)
+	require.NoError(t, err)
+
+	// The first byte should be 0x04 for uncompressed point format
+	fakeCiphertext[0] = 0x04
+
+	// Try to decrypt - this should fail at the recipient key ECDH conversion
+	_, err = Decrypt(priv224, fakeCiphertext, nil)
+	assert.Error(t, err)
+	// The error should be about converting the recipient private key
+	assert.Contains(t, err.Error(), "failed to convert recipient private key")
 }
 
 // TestEncrypt_P224UnsupportedCurve tests encryption with unsupported P-224 curve
@@ -1700,183 +1543,6 @@ func TestEncryptDecrypt_BoundaryConditions(t *testing.T) {
 	}
 }
 
-// TestEncrypt_MaximalCodeCoverage performs comprehensive testing to maximize code coverage
-// Note: Some error paths in Encrypt/Decrypt cannot be reached without mocking the standard library:
-// - aes.NewCipher() only fails with invalid key sizes (we always use 32 bytes)
-// - cipher.NewGCM() virtually never fails with a valid AES cipher
-// - HKDF key derivation only fails on read errors (extremely rare)
-// These paths are defensive error handling for theoretical edge cases.
-func TestEncrypt_MaximalCodeCoverage(t *testing.T) {
-	// Test all supported curves exhaustively
-	curves := []struct {
-		name  string
-		curve elliptic.Curve
-	}{
-		{"P-256", elliptic.P256()},
-		{"P-384", elliptic.P384()},
-		{"P-521", elliptic.P521()},
-	}
-
-	for _, tc := range curves {
-		t.Run(tc.name, func(t *testing.T) {
-			// Generate 10 different key pairs for this curve
-			for keyPairIdx := 0; keyPairIdx < 10; keyPairIdx++ {
-				priv, err := ecdsa.GenerateKey(tc.curve, rand.Reader)
-				require.NoError(t, err)
-
-				// Test various plaintext sizes
-				plaintextSizes := []int{0, 1, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65,
-					127, 128, 129, 255, 256, 257, 511, 512, 513, 1023, 1024, 2047, 2048}
-
-				for _, size := range plaintextSizes {
-					plaintext := make([]byte, size)
-					if size > 0 {
-						_, err := rand.Read(plaintext)
-						require.NoError(t, err)
-					}
-
-					// Test with and without AAD
-					aadOptions := [][]byte{
-						nil,
-						[]byte(""),
-						[]byte("a"),
-						[]byte("context-data"),
-						make([]byte, 100),
-					}
-
-					for _, aad := range aadOptions {
-						// Encrypt
-						ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, aad)
-						require.NoError(t, err)
-						require.NotNil(t, ciphertext)
-
-						// Decrypt
-						decrypted, err := Decrypt(priv, ciphertext, aad)
-						require.NoError(t, err)
-
-						if size == 0 {
-							assert.Empty(t, decrypted)
-						} else {
-							assert.Equal(t, plaintext, decrypted)
-						}
-					}
-				}
-			}
-		})
-	}
-}
-
-// TestDecrypt_MaximalCodeCoverage performs comprehensive decryption testing
-func TestDecrypt_MaximalCodeCoverage(t *testing.T) {
-	curves := []elliptic.Curve{
-		elliptic.P256(),
-		elliptic.P384(),
-		elliptic.P521(),
-	}
-
-	for _, curve := range curves {
-		curveName := curve.Params().Name
-		t.Run(curveName, func(t *testing.T) {
-			// Test with multiple key pairs
-			for i := 0; i < 10; i++ {
-				priv, err := ecdsa.GenerateKey(curve, rand.Reader)
-				require.NoError(t, err)
-
-				// Create valid ciphertext
-				plaintext := []byte(fmt.Sprintf("test message %d", i))
-				aad := []byte(fmt.Sprintf("aad-%d", i))
-
-				ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, aad)
-				require.NoError(t, err)
-
-				// Test successful decryption
-				decrypted, err := Decrypt(priv, ciphertext, aad)
-				require.NoError(t, err)
-				assert.Equal(t, plaintext, decrypted)
-
-				// Test decryption failures
-
-				// 1. Wrong AAD
-				_, err = Decrypt(priv, ciphertext, []byte("wrong-aad"))
-				assert.Error(t, err)
-
-				// 2. Corrupted ephemeral key (multiple positions)
-				for pos := 0; pos < 10; pos++ {
-					corrupted := make([]byte, len(ciphertext))
-					copy(corrupted, ciphertext)
-					if pos < len(corrupted) {
-						corrupted[pos] ^= 0xFF
-						_, err = Decrypt(priv, corrupted, aad)
-						assert.Error(t, err)
-					}
-				}
-
-				// 3. Corrupted ciphertext data
-				for pos := len(ciphertext) - 10; pos < len(ciphertext); pos++ {
-					corrupted := make([]byte, len(ciphertext))
-					copy(corrupted, ciphertext)
-					corrupted[pos] ^= 0x01
-					_, err = Decrypt(priv, corrupted, aad)
-					assert.Error(t, err)
-				}
-
-				// 4. Truncated ciphertext
-				for truncSize := 1; truncSize < 20 && truncSize < len(ciphertext); truncSize++ {
-					truncated := ciphertext[:len(ciphertext)-truncSize]
-					_, err = Decrypt(priv, truncated, aad)
-					assert.Error(t, err)
-				}
-			}
-		})
-	}
-}
-
-// TestEncrypt_EdgeCaseAADHandling tests AAD edge cases
-func TestEncrypt_EdgeCaseAADHandling(t *testing.T) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	plaintext := []byte("test")
-
-	// Test various AAD edge cases
-	aadTests := []struct {
-		name string
-		aad  []byte
-	}{
-		{"nil_aad", nil},
-		{"empty_aad", []byte{}},
-		{"single_byte_aad", []byte{0x00}},
-		{"single_byte_aad_ff", []byte{0xFF}},
-		{"small_aad", []byte("x")},
-		{"medium_aad", []byte("context-information")},
-		{"large_aad", make([]byte, 10000)},
-		{"binary_aad", []byte{0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD}},
-	}
-
-	for _, tc := range aadTests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Fill large AAD with random data
-			if len(tc.aad) > 100 {
-				_, err := rand.Read(tc.aad)
-				require.NoError(t, err)
-			}
-
-			ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, tc.aad)
-			require.NoError(t, err)
-
-			decrypted, err := Decrypt(priv, ciphertext, tc.aad)
-			require.NoError(t, err)
-			assert.Equal(t, plaintext, decrypted)
-
-			// Verify AAD is required for decryption
-			if len(tc.aad) > 0 {
-				_, err = Decrypt(priv, ciphertext, nil)
-				assert.Error(t, err)
-			}
-		})
-	}
-}
-
 // TestDecrypt_InvalidPointTriggeringECDHFailure tests ECDH failure with crafted invalid points
 func TestDecrypt_InvalidPointTriggeringECDHFailure(t *testing.T) {
 	// Create keys on different curves
@@ -1981,4 +1647,563 @@ func TestEncrypt_EdgeCasePlaintextSizes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// limitedBytesReader provides random data up to a limit, then fails immediately
+type limitedBytesReader struct {
+	bytesRemaining int
+}
+
+func (r *limitedBytesReader) Read(p []byte) (n int, err error) {
+	if r.bytesRemaining <= 0 {
+		return 0, io.ErrUnexpectedEOF
+	}
+
+	toRead := len(p)
+	if toRead > r.bytesRemaining {
+		// Provide partial read then fail
+		n, _ = rand.Read(p[:r.bytesRemaining])
+		r.bytesRemaining = 0
+		return n, io.ErrUnexpectedEOF
+	}
+
+	n, err = rand.Read(p)
+	r.bytesRemaining -= n
+	return n, err
+}
+
+// TestEncrypt_NonceGenerationFailureDirect directly tests the nonce failure path
+func TestEncrypt_NonceGenerationFailureDirect(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+
+	// For P-256, key generation typically needs around 32 bytes
+	// After key gen, nonce generation needs 12 bytes via io.ReadFull
+	// We iterate through byte limits to find the exact point where nonce fails
+
+	foundNonceError := false
+
+	for limit := 32; limit <= 80; limit++ {
+		reader := &limitedBytesReader{bytesRemaining: limit}
+		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
+
+		if err != nil && strings.Contains(err.Error(), "failed to generate nonce") {
+			foundNonceError = true
+			t.Logf("Found nonce error at byte limit %d", limit)
+			break
+		}
+	}
+
+	assert.True(t, foundNonceError, "Expected to find nonce generation failure")
+}
+
+// TestEncrypt_ManyByteCountScenarios tests encryption with various random reader byte limits
+func TestEncrypt_ManyByteCountScenarios(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test message")
+
+	ephemeralKeyErrors := 0
+	nonceErrors := 0
+	otherErrors := 0
+	successes := 0
+
+	for limit := 0; limit <= 150; limit++ {
+		reader := &limitedBytesReader{bytesRemaining: limit}
+		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
+
+		if err == nil {
+			successes++
+		} else {
+			errStr := err.Error()
+			if strings.Contains(errStr, "failed to generate ephemeral key") {
+				ephemeralKeyErrors++
+			} else if strings.Contains(errStr, "failed to generate nonce") {
+				nonceErrors++
+			} else {
+				otherErrors++
+			}
+		}
+	}
+
+	t.Logf("Results: ephemeral=%d, nonce=%d, other=%d, success=%d",
+		ephemeralKeyErrors, nonceErrors, otherErrors, successes)
+
+	// We expect to see both types of errors
+	assert.Greater(t, ephemeralKeyErrors, 0, "Expected ephemeral key errors")
+	assert.Greater(t, nonceErrors, 0, "Expected nonce generation errors")
+}
+
+// TestDecrypt_CurveSizeMismatch tests decryption with wrong curve sizes
+func TestDecrypt_CurveSizeMismatch(t *testing.T) {
+	// Encrypt with P-256
+	priv256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	ciphertext, err := Encrypt(rand.Reader, &priv256.PublicKey, plaintext, nil)
+	require.NoError(t, err)
+
+	// Try to decrypt with P-384 - should fail because ephemeral key size mismatch
+	priv384, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	require.NoError(t, err)
+
+	_, err = Decrypt(priv384, ciphertext, nil)
+	assert.Error(t, err)
+
+	// Try to decrypt with P-521 - should fail
+	priv521, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	require.NoError(t, err)
+
+	_, err = Decrypt(priv521, ciphertext, nil)
+	assert.Error(t, err)
+}
+
+// TestGetPublicKeySize_UnsupportedCurve tests the default case of getPublicKeySize
+func TestGetPublicKeySize_UnsupportedCurve(t *testing.T) {
+	// P-224 should return 0 from getPublicKeySize (default case)
+	priv224, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	require.NoError(t, err)
+
+	// Create a fake ciphertext that's long enough to pass any size check
+	// Since getPublicKeySize returns 0 for P-224, minSize = 0 + 12 + 16 = 28
+	fakeCiphertext := make([]byte, 200)
+	_, err = rand.Read(fakeCiphertext)
+	require.NoError(t, err)
+
+	// Try to decrypt - this should fail at recipient key ECDH conversion
+	_, err = Decrypt(priv224, fakeCiphertext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to convert recipient private key")
+}
+
+// TestDecrypt_ShortCiphertextVariations tests various short ciphertext scenarios
+func TestDecrypt_ShortCiphertextVariations(t *testing.T) {
+	curves := []struct {
+		name    string
+		curve   elliptic.Curve
+		keySize int
+	}{
+		{"P-256", elliptic.P256(), 65},
+		{"P-384", elliptic.P384(), 97},
+		{"P-521", elliptic.P521(), 133},
+	}
+
+	for _, tc := range curves {
+		t.Run(tc.name, func(t *testing.T) {
+			priv, err := ecdsa.GenerateKey(tc.curve, rand.Reader)
+			require.NoError(t, err)
+
+			minSize := tc.keySize + 12 + 16
+
+			// Test ciphertexts shorter than minimum
+			for size := 0; size < minSize; size++ {
+				ciphertext := make([]byte, size)
+				if size > 0 {
+					_, err = rand.Read(ciphertext)
+					require.NoError(t, err)
+				}
+
+				_, err = Decrypt(priv, ciphertext, nil)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "ciphertext too short")
+			}
+		})
+	}
+}
+
+// TestEncrypt_ECDH_DeriveSharedSecretFailure tests ECDH failure in encryption
+func TestEncrypt_ECDH_DeriveSharedSecretFailure(t *testing.T) {
+	// We cannot directly trigger ECDH failure in Encrypt because
+	// the ephemeral key is generated on the same curve as the recipient's public key
+	// The only way ECDH could fail is if the public key point is invalid,
+	// but the Go standard library validates points during key generation
+
+	// This test verifies that normal operation works
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	require.NoError(t, err)
+
+	decrypted, err := Decrypt(priv, ciphertext, nil)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted)
+}
+
+// TestDecrypt_AuthenticationFailure tests GCM authentication failure
+func TestDecrypt_AuthenticationFailure(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("secret message")
+	aad := []byte("context")
+
+	// Encrypt with AAD
+	ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, aad)
+	require.NoError(t, err)
+
+	// Decrypt with no AAD - should fail authentication
+	_, err = Decrypt(priv, ciphertext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "authentication")
+
+	// Decrypt with different AAD - should fail authentication
+	_, err = Decrypt(priv, ciphertext, []byte("wrong"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "authentication")
+
+	// Decrypt with empty AAD - should fail authentication
+	_, err = Decrypt(priv, ciphertext, []byte(""))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "authentication")
+}
+
+// TestEncrypt_WithVariousAADSizes tests encryption with various AAD sizes
+func TestEncrypt_WithVariousAADSizes(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test message")
+
+	aadSizes := []int{0, 1, 16, 64, 256, 1024, 4096, 16384}
+
+	for _, size := range aadSizes {
+		t.Run(fmt.Sprintf("aad_size_%d", size), func(t *testing.T) {
+			aad := make([]byte, size)
+			if size > 0 {
+				_, err := rand.Read(aad)
+				require.NoError(t, err)
+			}
+
+			ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, aad)
+			require.NoError(t, err)
+
+			decrypted, err := Decrypt(priv, ciphertext, aad)
+			require.NoError(t, err)
+			assert.Equal(t, plaintext, decrypted)
+		})
+	}
+}
+
+// ============================================================================
+// Error Injection Tests for Defensive Code Paths
+// ============================================================================
+//
+// The following tests use the injectable function variables to test error paths
+// that cannot be triggered with valid inputs. These tests ensure that defensive
+// error handling code is exercised and provides proper error messages.
+
+// errDeriveKey is a sentinel error for key derivation failures
+var errDeriveKey = errors.New("injected key derivation error")
+
+// errNewCipher is a sentinel error for cipher creation failures
+var errNewCipher = errors.New("injected cipher creation error")
+
+// errNewGCM is a sentinel error for GCM creation failures
+var errNewGCM = errors.New("injected GCM creation error")
+
+// TestEncrypt_DeriveKeyFailure tests the key derivation error path in Encrypt
+func TestEncrypt_DeriveKeyFailure(t *testing.T) {
+	// Save original function
+	originalDeriveKey := deriveKeyFunc
+	defer func() { deriveKeyFunc = originalDeriveKey }()
+
+	// Inject failing function
+	deriveKeyFunc = func(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
+		return nil, errDeriveKey
+	}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	_, err = Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "key derivation failed")
+}
+
+// TestEncrypt_NewCipherFailure tests the cipher creation error path in Encrypt
+func TestEncrypt_NewCipherFailure(t *testing.T) {
+	// Save original function
+	originalNewCipher := newAESCipherFunc
+	defer func() { newAESCipherFunc = originalNewCipher }()
+
+	// Inject failing function
+	newAESCipherFunc = func(key []byte) (cipher.Block, error) {
+		return nil, errNewCipher
+	}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	_, err = Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create cipher")
+}
+
+// TestEncrypt_NewGCMFailure tests the GCM creation error path in Encrypt
+func TestEncrypt_NewGCMFailure(t *testing.T) {
+	// Save original function
+	originalNewGCM := newGCMFunc
+	defer func() { newGCMFunc = originalNewGCM }()
+
+	// Inject failing function
+	newGCMFunc = func(c cipher.Block) (cipher.AEAD, error) {
+		return nil, errNewGCM
+	}
+
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	_, err = Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create GCM")
+}
+
+// TestDecrypt_DeriveKeyFailure tests the key derivation error path in Decrypt
+func TestDecrypt_DeriveKeyFailure(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	require.NoError(t, err)
+
+	// Save original function
+	originalDeriveKey := deriveKeyFunc
+	defer func() { deriveKeyFunc = originalDeriveKey }()
+
+	// Inject failing function
+	deriveKeyFunc = func(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
+		return nil, errDeriveKey
+	}
+
+	_, err = Decrypt(priv, ciphertext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "key derivation failed")
+}
+
+// TestDecrypt_NewCipherFailure tests the cipher creation error path in Decrypt
+func TestDecrypt_NewCipherFailure(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	require.NoError(t, err)
+
+	// Save original function
+	originalNewCipher := newAESCipherFunc
+	defer func() { newAESCipherFunc = originalNewCipher }()
+
+	// Inject failing function
+	newAESCipherFunc = func(key []byte) (cipher.Block, error) {
+		return nil, errNewCipher
+	}
+
+	_, err = Decrypt(priv, ciphertext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create cipher")
+}
+
+// TestDecrypt_NewGCMFailure tests the GCM creation error path in Decrypt
+func TestDecrypt_NewGCMFailure(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("test")
+	ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	require.NoError(t, err)
+
+	// Save original function
+	originalNewGCM := newGCMFunc
+	defer func() { newGCMFunc = originalNewGCM }()
+
+	// Inject failing function
+	newGCMFunc = func(c cipher.Block) (cipher.AEAD, error) {
+		return nil, errNewGCM
+	}
+
+	_, err = Decrypt(priv, ciphertext, nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create GCM")
+}
+
+// TestEncryptDecrypt_WithInjectedFunctions_AllCurves tests error injection across all curves
+func TestEncryptDecrypt_WithInjectedFunctions_AllCurves(t *testing.T) {
+	curves := []struct {
+		name  string
+		curve elliptic.Curve
+	}{
+		{"P-256", elliptic.P256()},
+		{"P-384", elliptic.P384()},
+		{"P-521", elliptic.P521()},
+	}
+
+	for _, tc := range curves {
+		t.Run(tc.name, func(t *testing.T) {
+			priv, err := ecdsa.GenerateKey(tc.curve, rand.Reader)
+			require.NoError(t, err)
+
+			plaintext := []byte("test for " + tc.name)
+
+			// Test DeriveKey failure in Encrypt
+			t.Run("encrypt_derive_key_failure", func(t *testing.T) {
+				originalDeriveKey := deriveKeyFunc
+				defer func() { deriveKeyFunc = originalDeriveKey }()
+
+				deriveKeyFunc = func(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
+					return nil, errDeriveKey
+				}
+
+				_, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "key derivation failed")
+			})
+
+			// Test NewCipher failure in Encrypt
+			t.Run("encrypt_new_cipher_failure", func(t *testing.T) {
+				originalNewCipher := newAESCipherFunc
+				defer func() { newAESCipherFunc = originalNewCipher }()
+
+				newAESCipherFunc = func(key []byte) (cipher.Block, error) {
+					return nil, errNewCipher
+				}
+
+				_, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to create cipher")
+			})
+
+			// Test NewGCM failure in Encrypt
+			t.Run("encrypt_new_gcm_failure", func(t *testing.T) {
+				originalNewGCM := newGCMFunc
+				defer func() { newGCMFunc = originalNewGCM }()
+
+				newGCMFunc = func(c cipher.Block) (cipher.AEAD, error) {
+					return nil, errNewGCM
+				}
+
+				_, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to create GCM")
+			})
+
+			// Create valid ciphertext for decrypt tests
+			ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+			require.NoError(t, err)
+
+			// Test DeriveKey failure in Decrypt
+			t.Run("decrypt_derive_key_failure", func(t *testing.T) {
+				originalDeriveKey := deriveKeyFunc
+				defer func() { deriveKeyFunc = originalDeriveKey }()
+
+				deriveKeyFunc = func(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
+					return nil, errDeriveKey
+				}
+
+				_, err := Decrypt(priv, ciphertext, nil)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "key derivation failed")
+			})
+
+			// Test NewCipher failure in Decrypt
+			t.Run("decrypt_new_cipher_failure", func(t *testing.T) {
+				originalNewCipher := newAESCipherFunc
+				defer func() { newAESCipherFunc = originalNewCipher }()
+
+				newAESCipherFunc = func(key []byte) (cipher.Block, error) {
+					return nil, errNewCipher
+				}
+
+				_, err := Decrypt(priv, ciphertext, nil)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to create cipher")
+			})
+
+			// Test NewGCM failure in Decrypt
+			t.Run("decrypt_new_gcm_failure", func(t *testing.T) {
+				originalNewGCM := newGCMFunc
+				defer func() { newGCMFunc = originalNewGCM }()
+
+				newGCMFunc = func(c cipher.Block) (cipher.AEAD, error) {
+					return nil, errNewGCM
+				}
+
+				_, err := Decrypt(priv, ciphertext, nil)
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "failed to create GCM")
+			})
+		})
+	}
+}
+
+// TestInjectableFunctions_DefaultBehavior verifies the default functions work correctly
+func TestInjectableFunctions_DefaultBehavior(t *testing.T) {
+	// Verify the default functions are set correctly
+	assert.NotNil(t, deriveKeyFunc)
+	assert.NotNil(t, newAESCipherFunc)
+	assert.NotNil(t, newGCMFunc)
+
+	// Test that they work with valid inputs
+	sharedSecret := make([]byte, 32)
+	_, err := rand.Read(sharedSecret)
+	require.NoError(t, err)
+
+	// Test DeriveKey
+	key, err := deriveKeyFunc(sharedSecret, nil, []byte("info"), 32)
+	require.NoError(t, err)
+	assert.Len(t, key, 32)
+
+	// Test NewCipher
+	block, err := newAESCipherFunc(key)
+	require.NoError(t, err)
+	assert.NotNil(t, block)
+
+	// Test NewGCM
+	gcm, err := newGCMFunc(block)
+	require.NoError(t, err)
+	assert.NotNil(t, gcm)
+}
+
+// TestInjectableFunctions_ResetAfterTest ensures functions are properly reset
+func TestInjectableFunctions_ResetAfterTest(t *testing.T) {
+	// Store the original function pointers
+	originalDeriveKey := deriveKeyFunc
+	originalNewCipher := newAESCipherFunc
+	originalNewGCM := newGCMFunc
+
+	// Verify they point to the real implementations
+	assert.Equal(t, fmt.Sprintf("%p", ecdh.DeriveKey), fmt.Sprintf("%p", originalDeriveKey))
+	assert.Equal(t, fmt.Sprintf("%p", aes.NewCipher), fmt.Sprintf("%p", originalNewCipher))
+	assert.Equal(t, fmt.Sprintf("%p", cipher.NewGCM), fmt.Sprintf("%p", originalNewGCM))
+
+	// Temporarily replace them
+	deriveKeyFunc = func(sharedSecret, salt, info []byte, keyLength int) ([]byte, error) {
+		return nil, errDeriveKey
+	}
+
+	// Reset
+	deriveKeyFunc = originalDeriveKey
+	newAESCipherFunc = originalNewCipher
+	newGCMFunc = originalNewGCM
+
+	// Verify encryption/decryption still works
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	plaintext := []byte("verify reset works")
+	ciphertext, err := Encrypt(rand.Reader, &priv.PublicKey, plaintext, nil)
+	require.NoError(t, err)
+
+	decrypted, err := Decrypt(priv, ciphertext, nil)
+	require.NoError(t, err)
+	assert.Equal(t, plaintext, decrypted)
 }

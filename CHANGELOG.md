@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3-alpha] - 2026-01-15
+
+### Added
+- Unix IPC client for native socket communication (`pkg/client/unix_ipc_client.go`)
+- WebAuthn mock authenticator for integration testing
+- End-to-end WebAuthn integration tests with virtual authenticator
+- Comprehensive test coverage for CLI remote key and certificate functions
+
+### Changed
+- Moved `internal/` packages to `pkg/` for public API exposure (cli, config, server, api/*)
+- Improved test coverage from 87.9% to 90.4%
+- Enhanced QUIC, MCP, and gRPC handlers with additional key operations
+- Refactored TPM2 package to remove simulator build constraints
+- Simplified TPM2 logging to use standard slog package
+
+### Fixed
+- Race conditions in gRPC server port field using atomic operations
+- Race conditions in server instance field access with proper mutex locking
+- FROST handler parameter validation across all API protocols
+
 ## [0.2.2-alpha] - 2025-12-24
 
 ### Added
@@ -546,6 +566,7 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - Commercial Licensing: licensing@automatethethings.com
 - AGPL-3.0 License: https://www.gnu.org/licenses/agpl-3.0.html
 
+[0.2.3-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.3-alpha
 [0.2.2-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.2-alpha
 [0.2.1-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.1-alpha
 [0.2.0-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.0-alpha

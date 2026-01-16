@@ -1,5 +1,3 @@
-//go:build tpm_simulator
-
 //nolint:staticcheck // Style warnings suppressed
 package tpm2
 
@@ -14,10 +12,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -28,7 +26,7 @@ import (
 func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 	t.Helper()
 
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	buf := make([]byte, 8)
 	_, err := rand.Reader.Read(buf)
@@ -100,7 +98,7 @@ func createTestSimulator(t *testing.T) (TrustedPlatformModule, func()) {
 	}
 
 	params := &Params{
-		Logger:       logging.DefaultLogger(),
+		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
 		BlobStore:    blobStore,

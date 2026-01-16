@@ -15,10 +15,11 @@ package tpm2
 
 import (
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -38,7 +39,7 @@ const (
 // manually with Clear() or will expire automatically based on the configured TTL.
 type PlatformPassword struct {
 	backend  store.KeyBackend
-	logger   *logging.Logger
+	logger   *slog.Logger
 	tpm      TrustedPlatformModule
 	keyAttrs *types.KeyAttributes
 
@@ -70,7 +71,7 @@ type PlatformPassword struct {
 //	}
 //	pp := NewPlatformPassword(logger, tpm, attrs, backend)
 func NewPlatformPassword(
-	logger *logging.Logger,
+	logger *slog.Logger,
 	tpm TrustedPlatformModule,
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend) types.Password {
@@ -117,9 +118,9 @@ func (p *PlatformPassword) Bytes() []byte {
 	if p.cacheEnabled() {
 		if cached := p.getCached(); cached != nil {
 			if p.keyAttrs.Debug {
-				p.logger.Debugf(
-					"keystore/tpm2: returning cached platform password: %s",
-					p.keyAttrs.CN)
+				p.logger.Debug(
+					fmt.Sprintf("keystore/tpm2: returning cached platform password: %s",
+						p.keyAttrs.CN))
 			}
 			return cached
 		}
@@ -168,9 +169,9 @@ func (p *PlatformPassword) unsealWithLock() []byte {
 // unsealDirect performs the actual TPM unseal operation without any locking.
 func (p *PlatformPassword) unsealDirect() []byte {
 	if p.keyAttrs.Debug {
-		p.logger.Debugf(
-			"keystore/tpm2: retrieving platform password from TPM: %s",
-			p.keyAttrs.CN)
+		p.logger.Debug(
+			fmt.Sprintf("keystore/tpm2: retrieving platform password from TPM: %s",
+				p.keyAttrs.CN))
 	}
 
 	// Copy the key attributes to a new "secret attributes"
@@ -180,20 +181,20 @@ func (p *PlatformPassword) unsealDirect() []byte {
 	secretAttrs.KeyType = types.KeyTypeHMAC
 
 	// Always log for tracing - remove after debugging
-	p.logger.Infof("keystore/tpm2: attempting unseal for CN=%s, KeyType=%v, Parent=%v",
-		secretAttrs.CN, secretAttrs.KeyType, secretAttrs.Parent != nil)
+	p.logger.Info(fmt.Sprintf("keystore/tpm2: attempting unseal for CN=%s, KeyType=%v, Parent=%v",
+		secretAttrs.CN, secretAttrs.KeyType, secretAttrs.Parent != nil))
 
 	data, err := p.tpm.UnsealKey(&secretAttrs, p.backend)
 
 	// Always log result for tracing - remove after debugging
-	p.logger.Infof("keystore/tpm2: unseal result - data=%d bytes, err=%v",
-		len(data), err)
+	p.logger.Info(fmt.Sprintf("keystore/tpm2: unseal result - data=%d bytes, err=%v",
+		len(data), err))
 
 	if err != nil {
 		// Log at debug level - this is expected during fresh initialization
 		// when the sealed key doesn't exist yet. The calling code will handle
 		// the nil return by creating/sealing a new key.
-		p.logger.Debugf("keystore/tpm2: failed to unseal platform password: %v", err)
+		p.logger.Debug(fmt.Sprintf("keystore/tpm2: failed to unseal platform password: %v", err))
 		return nil
 	}
 

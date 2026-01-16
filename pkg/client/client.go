@@ -28,13 +28,13 @@ import (
 type Protocol string
 
 const (
-	// ProtocolUnix uses Unix domain socket with HTTP (legacy, for compatibility)
+	// ProtocolUnix uses gRPC over Unix domain socket (default)
 	ProtocolUnix Protocol = "unix"
-	// ProtocolUnixGRPC uses gRPC over Unix domain socket (default for unix:// URLs)
+	// ProtocolUnixGRPC is an alias for ProtocolUnix
 	ProtocolUnixGRPC Protocol = "unix-grpc"
 	// ProtocolREST uses HTTP/HTTPS REST API
 	ProtocolREST Protocol = "rest"
-	// ProtocolGRPC uses gRPC
+	// ProtocolGRPC uses gRPC over TCP
 	ProtocolGRPC Protocol = "grpc"
 	// ProtocolQUIC uses HTTP/3 over QUIC
 	ProtocolQUIC Protocol = "quic"
@@ -234,9 +234,7 @@ func New(cfg *Config) (Client, error) {
 	}
 
 	switch cfg.Protocol {
-	case ProtocolUnix:
-		return newUnixClient(cfg)
-	case ProtocolUnixGRPC:
+	case ProtocolUnix, ProtocolUnixGRPC:
 		return newUnixGRPCClient(cfg)
 	case ProtocolREST:
 		return newRESTClient(cfg)
@@ -251,8 +249,7 @@ func New(cfg *Config) (Client, error) {
 
 // NewFromURL creates a new client from a URL string.
 // Supported URL schemes:
-// - unix:///path/to/socket.sock (uses gRPC by default)
-// - unix+http:///path/to/socket.sock (uses HTTP explicitly)
+// - unix:///path/to/socket.sock (uses gRPC over Unix domain socket)
 // - http://host:port or https://host:port (REST)
 // - grpc://host:port or grpcs://host:port
 // - quic://host:port
@@ -267,14 +264,6 @@ func NewFromURL(serverURL string) (Client, error) {
 		return New(&Config{
 			Protocol: ProtocolUnixGRPC,
 			Address:  strings.TrimPrefix(serverURL, "unix://"),
-		})
-	}
-
-	// Check for unix+http: prefix for HTTP-based Unix socket
-	if strings.HasPrefix(serverURL, "unix+http://") {
-		return New(&Config{
-			Protocol: ProtocolUnix,
-			Address:  strings.TrimPrefix(serverURL, "unix+http://"),
 		})
 	}
 

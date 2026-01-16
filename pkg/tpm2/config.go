@@ -92,11 +92,13 @@ var (
 			Handle:       0x81020000,
 			KeyAlgorithm: x509.RSA.String(),
 			Model:        "edge",
+			Serial:       "001",
+			// Manufacturer, Version: empty by default
+			// When empty, SMBIOS/DMI discovery will be used as fallback
 			// Password:           types.DEFAULT_PASSWORD,
 			Pad:                true,
 			PlatformPolicy:     true,
 			RSAConfig:          &store.RSAConfig{KeySize: 2048},
-			Serial:             "001",
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
 		KeyStore: &KeyStoreConfig{
@@ -192,6 +194,7 @@ type IDevIDConfig struct {
 	Handle             uint32           `yaml:"handle" json:"handle" mapstructure:"handle"`
 	Hash               string           `yaml:"hash" json:"hash" mapstructure:"hash"`
 	KeyAlgorithm       string           `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Manufacturer       string           `yaml:"manufacturer,omitempty" json:"manufacturer" mapstructure:"manufacturer"`
 	Model              string           `yaml:"model,omitempty" json:"model" mapstructure:"model"`
 	Pad                bool             `yaml:"pad" json:"pad" mapstructure:"pad"`
 	Password           string           `yaml:"password,omitempty" json:"password" mapstructure:"password"`
@@ -199,6 +202,7 @@ type IDevIDConfig struct {
 	RSAConfig          *store.RSAConfig `yaml:"rsa" json:"rsa" mapstructure:"rsa"`
 	Serial             string           `yaml:"serial,omitempty" json:"serial" mapstructure:"serial"`
 	SignatureAlgorithm string           `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
+	Version            string           `yaml:"version,omitempty" json:"version" mapstructure:"version"`
 }
 
 type IAKConfig struct {

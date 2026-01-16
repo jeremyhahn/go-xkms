@@ -89,9 +89,9 @@ func TestNew_UnixProtocol(t *testing.T) {
 		t.Fatal("New(Unix) returned nil client")
 	}
 
-	uc, ok := client.(*unixClient)
+	uc, ok := client.(*unixGRPCClient)
 	if !ok {
-		t.Errorf("Expected unixClient, got %T", client)
+		t.Errorf("Expected unixGRPCClient, got %T", client)
 	}
 	if uc.config.Address != "/tmp/test.sock" {
 		t.Errorf("Address = %v, want /tmp/test.sock", uc.config.Address)
@@ -222,8 +222,6 @@ func TestNew_DefaultAddresses(t *testing.T) {
 
 			var addr string
 			switch c := client.(type) {
-			case *unixClient:
-				addr = c.config.Address
 			case *unixGRPCClient:
 				addr = c.config.Address
 			case *restClient:
@@ -273,21 +271,6 @@ func TestNewFromURL_UnixScheme(t *testing.T) {
 	}
 	if ugc.config.Address != "/var/run/test.sock" {
 		t.Errorf("Address = %v, want /var/run/test.sock", ugc.config.Address)
-	}
-}
-
-func TestNewFromURL_UnixHTTPScheme(t *testing.T) {
-	client, err := NewFromURL("unix+http:///var/run/test.sock")
-	if err != nil {
-		t.Fatalf("NewFromURL(unix+http://) returned error: %v", err)
-	}
-
-	uc, ok := client.(*unixClient)
-	if !ok {
-		t.Fatalf("Expected unixClient, got %T", client)
-	}
-	if uc.config.Address != "/var/run/test.sock" {
-		t.Errorf("Address = %v, want /var/run/test.sock", uc.config.Address)
 	}
 }
 

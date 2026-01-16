@@ -15,6 +15,7 @@ package store
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 )
@@ -22,13 +23,13 @@ import (
 // FSBlobStore implements BlobStorer using storage.Backend.
 // For convenience, use NewStorageFactory to create a complete storage setup.
 type FSBlobStore struct {
-	logger  Logger
+	logger  *slog.Logger
 	storage storage.Backend
 }
 
 // NewFSBlobStore creates a new blob store using the storage.Backend interface.
 // For convenience, use NewStorageFactory to create a complete storage setup.
-func NewFSBlobStore(logger Logger, backend storage.Backend) BlobStorer {
+func NewFSBlobStore(logger *slog.Logger, backend storage.Backend) BlobStorer {
 	return &FSBlobStore{
 		logger:  logger,
 		storage: backend,

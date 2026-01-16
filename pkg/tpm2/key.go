@@ -8,6 +8,7 @@ import (
 	"encoding/asn1"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 
@@ -34,7 +35,8 @@ func (tpm *TPM2) EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic) {
 	ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
 	name, pub, err := tpm.ReadHandle(ekHandle)
 	if err != nil {
-		tpm.logger.FatalError(err)
+		tpm.logger.Error("failed to read EK public", slog.String("error", err.Error()))
+		panic(err)
 	}
 	return name, pub
 }
@@ -46,15 +48,18 @@ func (tpm *TPM2) EKRSA() *rsa.PublicKey {
 		_, ekPub := tpm.EKPublic()
 		rsaDetail, err := ekPub.Parameters.RSADetail()
 		if err != nil {
-			tpm.logger.FatalError(err)
+			tpm.logger.Error("failed to get RSA detail", slog.String("error", err.Error()))
+			panic(err)
 		}
 		rsaUnique, err := ekPub.Unique.RSA()
 		if err != nil {
-			tpm.logger.FatalError(err)
+			tpm.logger.Error("failed to get RSA unique", slog.String("error", err.Error()))
+			panic(err)
 		}
 		rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
 		if err != nil {
-			tpm.logger.FatalError(err)
+			tpm.logger.Error("failed to create RSA public key", slog.String("error", err.Error()))
+			panic(err)
 		}
 		tpm.ekRSAPubKey = rsaPub
 	}
@@ -68,15 +73,18 @@ func (tpm *TPM2) EKECC() *ecdsa.PublicKey {
 		_, ekPub := tpm.EKPublic()
 		ecDetail, err := ekPub.Parameters.ECCDetail()
 		if err != nil {
-			tpm.logger.FatalError(err)
+			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
+			panic(err)
 		}
 		curve, err := ecDetail.CurveID.Curve()
 		if err != nil {
-			tpm.logger.FatalError(err)
+			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
+			panic(err)
 		}
 		eccUnique, err := ekPub.Unique.ECC()
 		if err != nil {
-			tpm.logger.FatalError(err)
+			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
+			panic(err)
 		}
 		eccPub := &ecdsa.PublicKey{
 			Curve: curve,
@@ -94,7 +102,8 @@ func (tpm *TPM2) SSRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic) {
 	srkHandle := tpm2.TPMHandle(tpm.config.SSRK.Handle)
 	name, pub, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
-		tpm.logger.FatalError(err)
+		tpm.logger.Error("failed to read SSRK public", slog.String("error", err.Error()))
+		panic(err)
 	}
 	return name, pub
 }
@@ -138,7 +147,8 @@ func (tpm *TPM2) IAK() crypto.PublicKey {
 	}
 	pub, err := x509.ParsePKIXPublicKey(tpm.iakAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
-		tpm.logger.FatalError(err)
+		tpm.logger.Error("failed to parse IAK public key", slog.String("error", err.Error()))
+		panic(err)
 	}
 	return pub
 }
@@ -165,11 +175,13 @@ func (tpm *TPM2) IDevIDAttributes() (*types.KeyAttributes, error) {
 // Returns the Initial Attestation Key Attributes
 func (tpm *TPM2) IDevID() crypto.PublicKey {
 	if tpm.idevidAttrs == nil {
-		tpm.logger.FatalError(ErrNotInitialized)
+		tpm.logger.Error("IDevID not initialized", slog.String("error", ErrNotInitialized.Error()))
+		panic(ErrNotInitialized)
 	}
 	pub, err := x509.ParsePKIXPublicKey(tpm.iakAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
-		tpm.logger.FatalError(err)
+		tpm.logger.Error("failed to parse IDevID public key", slog.String("error", err.Error()))
+		panic(err)
 	}
 	return pub
 }
@@ -252,13 +264,22 @@ func (tpm *TPM2) KeyAttributes(
 		ObjectHandle: handle,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		// TPM_RC_HANDLE (0x18b) is expected when key doesn't exist - log at debug level
+		if err == tpm2.TPMRC(0x18b) {
+			tpm.logger.Debug("key handle not found (expected during initialization)",
+				slog.String("handle", fmt.Sprintf("0x%x", handle)),
+				slog.String("error", err.Error()))
+		} else {
+			tpm.logger.Error("failed to read public key",
+				slog.String("handle", fmt.Sprintf("0x%x", handle)),
+				slog.String("error", err.Error()))
+		}
 		return nil, err
 	}
 
 	keyPub, err := pub.OutPublic.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get public contents", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -336,7 +357,7 @@ func (tpm *TPM2) CreateEK(
 		ekAttrs.TPMAttributes.Template = template
 	}
 
-	tpm.logger.Debugf("tpm: creating %s EK...", ekAttrs.KeyAlgorithm.String())
+	tpm.logger.Debug("tpm: creating EK", slog.String("algorithm", ekAttrs.KeyAlgorithm.String()))
 
 	// Create new EK primary key under the Endorsement Hierarchy
 	primaryKey, err := tpm2.CreatePrimary{
@@ -354,12 +375,13 @@ func (tpm *TPM2) CreateEK(
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create EK primary key", slog.String("error", err.Error()))
 		return err
 	}
 
-	tpm.logger.Debugf("tpm: %s EK: 0x%x",
-		ekAttrs.KeyAlgorithm.String(), primaryKey.ObjectHandle)
+	tpm.logger.Debug("tpm: EK created",
+		slog.String("algorithm", ekAttrs.KeyAlgorithm.String()),
+		slog.String("handle", fmt.Sprintf("0x%x", primaryKey.ObjectHandle)))
 
 	ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
 	if ekAttrs.TPMAttributes.Handle != 0 {
@@ -381,21 +403,21 @@ func (tpm *TPM2) CreateEK(
 	defer tpm.Flush(primaryKey.ObjectHandle)
 
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to persist EK", slog.String("error", err.Error()))
 		return err
 	}
 
-	tpm.logger.Debugf("tpm: EK persisted to 0x%x", ekAttrs.TPMAttributes.Handle)
+	tpm.logger.Debug("tpm: EK persisted", slog.String("handle", fmt.Sprintf("0x%x", ekAttrs.TPMAttributes.Handle)))
 
 	// Extract the public area
 	pub, err := primaryKey.OutPublic.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get EK public contents", slog.String("error", err.Error()))
 		return err
 	}
 
-	tpm.logger.Debugf("tpm: EK Hierarchy: %s", HierarchyName(hierarchy))
-	tpm.logger.Debugf("tpm: EK Name: 0x%x", Encode(primaryKey.Name.Buffer))
+	tpm.logger.Debug("tpm: EK Hierarchy", slog.String("hierarchy", HierarchyName(hierarchy)))
+	tpm.logger.Debug("tpm: EK Name", slog.String("name", fmt.Sprintf("0x%x", Encode(primaryKey.Name.Buffer))))
 
 	ekAttrs.KeyType = types.KeyTypeEndorsement
 	ekAttrs.TPMAttributes.Handle = ekHandle
@@ -469,12 +491,12 @@ func (tpm *TPM2) CreateSRK(
 		var closer func() error
 		session, closer, err = tpm.CreateSession(srkAttrs)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to create session for SRK", slog.String("error", err.Error()))
 			return err
 		}
 		defer func() {
 			if err := closer(); err != nil {
-				tpm.logger.Errorf("failed to close session: %v", err)
+				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 			}
 		}()
 
@@ -484,11 +506,11 @@ func (tpm *TPM2) CreateSRK(
 		primaryKey, err = primaryKeyCMD.Execute(tpm.transport)
 	}
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create SRK primary key", slog.String("error", err.Error()))
 		return err
 	}
 
-	tpm.logger.Debugf("tpm: Created SRK: 0x%x", primaryKey.ObjectHandle)
+	tpm.logger.Debug("tpm: Created SRK", slog.String("handle", fmt.Sprintf("0x%x", primaryKey.ObjectHandle)))
 
 	if srkAttrs.TPMAttributes.HandleType == tpm2.TPMHTPersistent {
 
@@ -509,11 +531,11 @@ func (tpm *TPM2) CreateSRK(
 		tpm.Flush(primaryKey.ObjectHandle)
 
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to persist SRK", slog.String("error", err.Error()))
 			return err
 		}
-		tpm.logger.Debugf("tpm: SRK persisted to 0x%x",
-			srkAttrs.TPMAttributes.Handle)
+		tpm.logger.Debug("tpm: SRK persisted",
+			slog.String("handle", fmt.Sprintf("0x%x", srkAttrs.TPMAttributes.Handle)))
 
 	} else {
 		srkAttrs.TPMAttributes.Handle = primaryKey.ObjectHandle
@@ -522,7 +544,7 @@ func (tpm *TPM2) CreateSRK(
 	// Extract the public area
 	pub, err := primaryKey.OutPublic.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get SRK public contents", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -530,8 +552,8 @@ func (tpm *TPM2) CreateSRK(
 	srkAttrs.TPMAttributes.Name = primaryKey.Name
 	srkAttrs.TPMAttributes.Public = *pub
 
-	tpm.logger.Debugf("tpm: SRK Hierarchy: %s", HierarchyName(hierarchy))
-	tpm.logger.Debugf("tpm: SRK Name: 0x%s", Encode(primaryKey.Name.Buffer))
+	tpm.logger.Debug("tpm: SRK Hierarchy", slog.String("hierarchy", HierarchyName(hierarchy)))
+	tpm.logger.Debug("tpm: SRK Name", slog.String("name", fmt.Sprintf("0x%s", Encode(primaryKey.Name.Buffer))))
 
 	publicKey, err := tpm.ParsePublicKey(primaryKey.OutPublic.Bytes())
 	if err != nil {
@@ -587,7 +609,8 @@ func (tpm *TPM2) CreateIAK(
 		tpm.config.IAK,
 		&policyDigest)
 	if err != nil {
-		tpm.logger.FatalError(err)
+		tpm.logger.Error("failed to create IAK attributes from config", slog.String("error", err.Error()))
+		panic(err)
 	}
 	iakAttrs.Parent = ekAttrs
 
@@ -814,7 +837,7 @@ func (tpm *TPM2) CreateIAK(
 		CreationPCR: pcrSelection,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create IAK primary key", slog.String("error", err.Error()))
 		return nil, err
 	}
 	defer tpm.Flush(iakPrimary.ObjectHandle)
@@ -834,7 +857,7 @@ func (tpm *TPM2) CreateIAK(
 		PersistentHandle: iakHandle,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to persist IAK", slog.String("error", err.Error()))
 		return nil, err
 	}
 
@@ -909,17 +932,17 @@ func (tpm *TPM2) CreateIAK(
 
 		ecDetail, err := iakPub.Parameters.ECCDetail()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
 			return nil, err
 		}
 		curve, err := ecDetail.CurveID.Curve()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
 			return nil, err
 		}
 		eccUnique, err := iakPub.Unique.ECC()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
 			return nil, err
 		}
 		akPublic = &ecdsa.PublicKey{
@@ -1075,7 +1098,7 @@ func (tpm *TPM2) CreateIDevID(
 
 	primaryKey, err := primaryKeyCMD.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create IDevID primary key", slog.String("error", err.Error()))
 		return nil, nil, err
 	}
 	defer tpm.Flush(primaryKey.ObjectHandle)
@@ -1121,7 +1144,7 @@ func (tpm *TPM2) CreateIDevID(
 		PersistentHandle: persistentHandle,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to persist IDevID", slog.String("error", err.Error()))
 		return nil, nil, err
 	}
 
@@ -1191,7 +1214,7 @@ func (tpm *TPM2) CreateIDevID(
 
 		rsaDER, err := store.EncodePubKey(rsaPub)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to encode RSA public key", slog.String("error", err.Error()))
 			return nil, nil, err
 		}
 		pubKeyBytes = rsaDER
@@ -1219,17 +1242,17 @@ func (tpm *TPM2) CreateIDevID(
 
 		ecDetail, err := idevidPub.Parameters.ECCDetail()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
 			return nil, nil, err
 		}
 		curve, err := ecDetail.CurveID.Curve()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
 			return nil, nil, err
 		}
 		eccUnique, err := idevidPub.Unique.ECC()
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
 			return nil, nil, err
 		}
 		eccPub := &ecdsa.PublicKey{
@@ -1240,7 +1263,7 @@ func (tpm *TPM2) CreateIDevID(
 
 		eccDER, err := store.EncodePubKey(eccPub)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to encode ECC public key", slog.String("error", err.Error()))
 			return nil, nil, err
 		}
 		pubKeyBytes = eccDER
@@ -1258,13 +1281,11 @@ func (tpm *TPM2) CreateIDevID(
 
 	tpm.logger.Debug("tpm: IDevID Key Hierarchy: Endorsement")
 
-	tpm.logger.Debugf(
-		"tpm: IDevID Key persistent to handle 0x%x",
-		idevidAttrs.TPMAttributes.Handle)
+	tpm.logger.Debug("tpm: IDevID Key persisted to handle",
+		slog.String("handle", fmt.Sprintf("0x%x", idevidAttrs.TPMAttributes.Handle)))
 
-	tpm.logger.Debugf(
-		"tpm: IDevID Key Name: %s",
-		Encode(primaryKey.Name.Buffer))
+	tpm.logger.Debug("tpm: IDevID Key Name",
+		slog.String("name", Encode(primaryKey.Name.Buffer)))
 
 	idevidAttrs.TPMAttributes.Name = primaryKey.Name
 	idevidAttrs.TPMAttributes.BPublic = primaryKey.OutPublic
@@ -1316,7 +1337,7 @@ func (tpm *TPM2) DeleteKey(
 			PersistentHandle: keyAttrs.TPMAttributes.Handle,
 		}.Execute(tpm.transport)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to evict key", slog.String("error", err.Error()))
 			return err
 		}
 		return nil
@@ -1341,7 +1362,7 @@ func (tpm *TPM2) DeleteKey(
 
 	// Delete the key pair from the backend
 	if err := tpm.DeleteKeyPair(keyAttrs, backend); err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to delete key pair", slog.String("error", err.Error()))
 		return err
 	}
 

@@ -24,8 +24,8 @@
         "streetsidesoftware.code-spell-checker"
       ],
       "settings": {
-        "go.testTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator,yubikey,nitrokey,canokey,fido2,webauthn",
-        "go.buildTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator,yubikey,nitrokey,canokey,fido2,webauthn",
+        "go.testTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,yubikey,nitrokey,canokey,fido2,webauthn",
+        "go.buildTags": "integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,yubikey,nitrokey,canokey,fido2,webauthn",
         "go.lintTool": "golangci-lint",
         "go.lintFlags": ["--fast"],
         "go.useLanguageServer": true,

@@ -722,14 +722,18 @@ func TestUnixGRPCClient_Operations(t *testing.T) {
 		}
 	})
 
-	t.Run("EncryptAsym returns ErrNotSupported", func(t *testing.T) {
-		_, err := client.EncryptAsym(ctx, &EncryptAsymRequest{
+	t.Run("EncryptAsym", func(t *testing.T) {
+		resp, err := client.EncryptAsym(ctx, &EncryptAsymRequest{
 			Backend:   "test-backend",
 			KeyID:     "test-key",
-			Plaintext: json.RawMessage(`"dGVzdA=="`),
+			Plaintext: []byte("test data"),
+			Hash:      "SHA256",
 		})
-		if err == nil {
-			t.Error("EncryptAsym() should return error")
+		if err != nil {
+			t.Errorf("EncryptAsym() error = %v", err)
+		}
+		if len(resp.Ciphertext) == 0 {
+			t.Error("EncryptAsym() returned empty ciphertext")
 		}
 	})
 
@@ -929,11 +933,6 @@ func TestUnixGRPCClient_URLParsing(t *testing.T) {
 			url:      "unix:///tmp/keychain.sock",
 			protocol: ProtocolUnixGRPC,
 		},
-		{
-			name:     "unix+http URL uses HTTP",
-			url:      "unix+http:///tmp/keychain.sock",
-			protocol: ProtocolUnix,
-		},
 	}
 
 	for _, tt := range tests {
@@ -950,8 +949,8 @@ func TestUnixGRPCClient_URLParsing(t *testing.T) {
 					t.Errorf("Expected unixGRPCClient, got %T", client)
 				}
 			case ProtocolUnix:
-				if _, ok := client.(*unixClient); !ok {
-					t.Errorf("Expected unixClient, got %T", client)
+				if _, ok := client.(*unixGRPCClient); !ok {
+					t.Errorf("Expected unixGRPCClient, got %T", client)
 				}
 			}
 		})

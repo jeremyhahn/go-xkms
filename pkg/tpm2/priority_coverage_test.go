@@ -13,11 +13,11 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
+	"log/slog"
 	"math/big"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -27,7 +27,7 @@ import (
 // PRIORITY 1: Test createIDevIDContent
 
 func TestCreateIDevIDContent_ValidInput(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	config := &Config{
 		IDevID: &IDevIDConfig{
 			Model:  "TestModel",
@@ -104,7 +104,7 @@ func TestCreateIDevIDContent_ValidInput(t *testing.T) {
 }
 
 func TestCreateIDevIDContent_InvalidHash(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	config := &Config{
 		IDevID: &IDevIDConfig{
 			Model:  "TestModel",
@@ -156,7 +156,7 @@ func TestCreateIDevIDContent_InvalidHash(t *testing.T) {
 }
 
 func TestCreateIDevIDContent_DifferentHashAlgorithms(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	config := &Config{
 		IDevID: &IDevIDConfig{
 			Model:  "TestModel",
@@ -213,7 +213,7 @@ func TestCreateIDevIDContent_DifferentHashAlgorithms(t *testing.T) {
 }
 
 func TestCreateIDevIDContent_EmptyFields(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	config := &Config{
 		IDevID: &IDevIDConfig{
 			Model:  "",
@@ -252,15 +252,21 @@ func TestCreateIDevIDContent_EmptyFields(t *testing.T) {
 
 	content, err := tpm.createIDevIDContent(ekCert, akAttrs, idevidAttrs)
 	require.NoError(t, err)
-	assert.Equal(t, uint32(0), content.ProdModelSz)
-	assert.Equal(t, uint32(0), content.ProdSerialSz)
+
+	// When config Model/Serial are empty, ResolvePlatformAttributes falls back
+	// to SMBIOS discovery. On systems with SMBIOS data, these values will be
+	// populated from /sys/class/dmi/id/. We verify the content is created
+	// and matches the resolved platform attributes.
+	platformAttrs := ResolvePlatformAttributes(config.IDevID)
+	assert.Equal(t, uint32(len(platformAttrs.Model)), content.ProdModelSz)
+	assert.Equal(t, uint32(len(platformAttrs.Serial)), content.ProdSerialSz)
 	assert.Equal(t, uint32(0), content.EkCertSZ)
 	assert.Equal(t, uint32(0), content.AtCreateTktSZ)
 	assert.Equal(t, uint32(0), content.AtCertifyInfoSZ)
 }
 
 func TestCreateIDevIDContent_LargeData(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	config := &Config{
 		IDevID: &IDevIDConfig{
 			Model:  "LongModelName12345678901234567890",
@@ -516,7 +522,7 @@ func TestVerifyTCGCSRSignature_WrongKey_RSA(t *testing.T) {
 // PRIORITY 2: Test Sign function error cases
 
 func TestSign_InvalidSignerOpts(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpm := &TPM2{
 		logger: logger,
 	}
@@ -531,7 +537,7 @@ func TestSign_InvalidSignerOpts(t *testing.T) {
 }
 
 func TestSign_NilSignerOpts(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpm := &TPM2{
 		logger: logger,
 	}
@@ -572,7 +578,7 @@ func TestParsePublicKey_MalformedInput(t *testing.T) {
 // PRIORITY 2: Test fileIntegritySum edge cases
 
 func TestFileIntegritySum_InvalidPCRBank(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	config := &Config{
 		PlatformPCRBank: "INVALID_BANK",
 	}

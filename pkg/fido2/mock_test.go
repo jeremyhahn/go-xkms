@@ -24,18 +24,19 @@ import (
 
 // MockHIDDevice implements HIDDevice for testing
 type MockHIDDevice struct {
-	path         string
-	vendorID     uint16
-	productID    uint16
-	manufacturer string
-	product      string
-	serialNumber string
-	readBuf      *bytes.Buffer
-	writeBuf     *bytes.Buffer
-	closed       bool
-	mu           sync.Mutex
-	responses    [][]byte // Pre-configured responses
-	writeCount   int
+	path             string
+	vendorID         uint16
+	productID        uint16
+	manufacturer     string
+	product          string
+	serialNumber     string
+	readBuf          *bytes.Buffer
+	writeBuf         *bytes.Buffer
+	closed           bool
+	mu               sync.Mutex
+	responses        [][]byte // Pre-configured responses
+	writeCount       int
+	generateResponse func([]byte) // Optional custom response generator
 }
 
 // NewMockHIDDevice creates a mock HID device
@@ -64,8 +65,13 @@ func (m *MockHIDDevice) Write(data []byte) (int, error) {
 	n, err := m.writeBuf.Write(data)
 	m.writeCount++
 
-	// Auto-generate response based on written command
-	m.generateResponse(data)
+	// Use custom response generator if provided
+	if m.generateResponse != nil {
+		m.generateResponse(data)
+	} else {
+		// Auto-generate response based on written command
+		m.defaultGenerateResponse(data)
+	}
 
 	return n, err
 }
@@ -97,6 +103,7 @@ func (m *MockHIDDevice) Reset() {
 	m.writeBuf.Reset()
 	m.writeCount = 0
 	m.responses = make([][]byte, 0)
+	m.generateResponse = nil
 }
 
 func (m *MockHIDDevice) Path() string         { return m.path }
@@ -113,8 +120,8 @@ func (m *MockHIDDevice) SetResponse(response []byte) {
 	m.responses = append(m.responses, response)
 }
 
-// generateResponse generates mock responses based on CTAPHID commands
-func (m *MockHIDDevice) generateResponse(packet []byte) {
+// defaultGenerateResponse generates mock responses based on CTAPHID commands
+func (m *MockHIDDevice) defaultGenerateResponse(packet []byte) {
 	if len(packet) < HIDPacketSize {
 		return
 	}

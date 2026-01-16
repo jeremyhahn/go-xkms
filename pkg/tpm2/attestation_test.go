@@ -1,13 +1,11 @@
-//go:build tpm_simulator
-
 package tpm2
 
 import (
 	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/google/logger"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -56,12 +54,12 @@ func TestParseEventLogSimulator(t *testing.T) {
 	eventLog, err := tpm.EventLog()
 	// With simulator, event log access will fail - this is expected
 	if err != nil {
-		logger.Debugf("EventLog returned expected error for simulator: %v", err)
+		logger.Debug("EventLog returned expected error for simulator", slog.String("error", err.Error()))
 		// This is expected behavior for simulator
 		assert.NotNil(t, err)
 	} else {
 		assert.NotNil(t, eventLog)
-		logger.Debugf("%d", eventLog)
+		logger.Debug("EventLog returned", slog.Int("len", len(eventLog)))
 	}
 }
 
@@ -112,7 +110,7 @@ func TestReadPCRs_SIM(t *testing.T) {
 
 	for _, bank := range banks {
 		for _, pcr := range bank.PCRs {
-			logger.Infof("%s %d: 0x%s",
+			t.Logf("%s %d: 0x%s",
 				bank.Algorithm, pcr.ID, string(pcr.Value))
 		}
 	}

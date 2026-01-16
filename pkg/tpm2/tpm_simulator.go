@@ -11,8 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build tpm_simulator
-
 package tpm2
 
 import (
@@ -49,6 +47,12 @@ func openSimulator() (SimulatorInterface, error) {
 		return nil, err
 	}
 	return &simulatorWrapper{sim: sim}, nil
+}
+
+// OpenSimulator returns a new TPM simulator instance for unit testing.
+// The simulator uses a fixed seed for reproducibility.
+func OpenSimulator() (SimulatorInterface, error) {
+	return openSimulator()
 }
 
 func init() {

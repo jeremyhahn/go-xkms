@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"sort"
 	"strings"
 	"sync"
 )
@@ -97,7 +98,9 @@ func (m *MemoryBackend) Delete(key string) error {
 	return nil
 }
 
-// List returns all keys with the given prefix.
+// List returns all keys with the given prefix in sorted order.
+// Keys are sorted to ensure deterministic ordering since Go map
+// iteration order is not guaranteed.
 func (m *MemoryBackend) List(prefix string) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -112,6 +115,7 @@ func (m *MemoryBackend) List(prefix string) ([]string, error) {
 			keys = append(keys, key)
 		}
 	}
+	sort.Strings(keys)
 	return keys, nil
 }
 

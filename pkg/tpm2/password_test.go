@@ -5,12 +5,12 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -72,7 +72,7 @@ type mockKeyBackendForPassword struct {
 }
 
 func TestNewPlatformPassword(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{}
 	backend := &mockKeyBackendForPassword{}
 	keyAttrs := &types.KeyAttributes{
@@ -136,7 +136,7 @@ func TestPlatformPasswordString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := logging.DefaultLogger()
+			logger := slog.Default()
 			tpmMock := &mockTPMForPassword{
 				unsealData: tt.unsealData,
 				unsealErr:  tt.unsealErr,
@@ -204,7 +204,7 @@ func TestPlatformPasswordBytes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			logger := logging.DefaultLogger()
+			logger := slog.Default()
 			tpmMock := &mockTPMForPassword{
 				unsealData: tt.unsealData,
 				unsealErr:  tt.unsealErr,
@@ -246,7 +246,7 @@ func TestPlatformPasswordBytes(t *testing.T) {
 }
 
 func TestPlatformPasswordBytesModifiesKeyType(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("password"),
 	}
@@ -271,7 +271,7 @@ func TestPlatformPasswordBytesModifiesKeyType(t *testing.T) {
 }
 
 func TestPlatformPasswordCreate_NilPassword(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		sealErr: nil,
 	}
@@ -296,7 +296,7 @@ func TestPlatformPasswordCreate_NilPassword(t *testing.T) {
 }
 
 func TestPlatformPasswordCreate_WithPasswordError(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{}
 	backend := &mockKeyBackendForPassword{}
 
@@ -316,7 +316,7 @@ func TestPlatformPasswordCreate_WithPasswordError(t *testing.T) {
 }
 
 func TestPlatformPasswordCreate_SealError(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		sealErr: errors.New("seal failed"),
 	}
@@ -354,7 +354,7 @@ func (p *errorPasswordForPasswordTest) Clear() {
 
 func TestPlatformPasswordIntegration(t *testing.T) {
 	// Test that multiple calls to Bytes() work correctly
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("consistent-password"),
 	}
@@ -398,7 +398,7 @@ func TestPlatformPasswordIntegration(t *testing.T) {
 }
 
 func TestPlatformPasswordImplementsInterface(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{}
 	backend := &mockKeyBackendForPassword{}
 	keyAttrs := &types.KeyAttributes{}
@@ -412,7 +412,7 @@ func TestPlatformPasswordImplementsInterface(t *testing.T) {
 }
 
 func TestPlatformPasswordCreate_DefaultPassword(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		sealResponse: &tpm2.CreateResponse{},
 		sealErr:      nil,
@@ -440,7 +440,7 @@ func TestPlatformPasswordCreate_DefaultPassword(t *testing.T) {
 }
 
 func TestPlatformPasswordCreate_WithPlatformPolicy(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		sealResponse: &tpm2.CreateResponse{},
 		sealErr:      nil,
@@ -469,7 +469,7 @@ func TestPlatformPasswordCreate_WithPlatformPolicy(t *testing.T) {
 }
 
 func TestPlatformPasswordCreate_WithoutPlatformPolicy(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		sealResponse: &tpm2.CreateResponse{},
 		sealErr:      nil,
@@ -500,7 +500,7 @@ func TestPlatformPasswordCreate_WithoutPlatformPolicy(t *testing.T) {
 // ========== Password Caching Tests ==========
 
 func TestPlatformPassword_CacheDisabled(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -527,7 +527,7 @@ func TestPlatformPassword_CacheDisabled(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheDisabledExplicit(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -557,7 +557,7 @@ func TestPlatformPassword_CacheDisabledExplicit(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheEnabled(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -587,7 +587,7 @@ func TestPlatformPassword_CacheEnabled(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheDefaultTTL(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -613,7 +613,7 @@ func TestPlatformPassword_CacheDefaultTTL(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheExpiry(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -659,7 +659,7 @@ func TestPlatformPassword_CacheExpiry(t *testing.T) {
 }
 
 func TestPlatformPassword_IsCached(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -687,7 +687,7 @@ func TestPlatformPassword_IsCached(t *testing.T) {
 }
 
 func TestPlatformPassword_IsCached_Disabled(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -709,7 +709,7 @@ func TestPlatformPassword_IsCached_Disabled(t *testing.T) {
 }
 
 func TestPlatformPassword_Clear(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -744,7 +744,7 @@ func TestPlatformPassword_Clear(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheExpiry_Time(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -785,7 +785,7 @@ func TestPlatformPassword_CacheExpiry_Time(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheExpiry_Disabled(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("test-password"),
 	}
@@ -807,7 +807,7 @@ func TestPlatformPassword_CacheExpiry_Disabled(t *testing.T) {
 }
 
 func TestPlatformPassword_RefreshCache(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("password-v1"),
 	}
@@ -850,7 +850,7 @@ func TestPlatformPassword_RefreshCache(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheConcurrency(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("concurrent-password"),
 	}
@@ -892,7 +892,7 @@ func TestPlatformPassword_CacheConcurrency(t *testing.T) {
 }
 
 func TestPlatformPassword_CacheSecureMemory(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 	tpmMock := &mockTPMForPassword{
 		unsealData: []byte("sensitive-password"),
 	}

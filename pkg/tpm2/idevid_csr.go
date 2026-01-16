@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
+	"log/slog"
 	"math/big"
 	"os"
 
@@ -195,7 +196,7 @@ func (tpm *TPM2) createIDevIDContent(
 	prodCaData, prodCaDataSz, err := tpm.createProdCaData()
 	if err != nil {
 		// Log warning but continue - attestation data is optional during enrollment
-		tpm.logger.Warnf("tpm: failed to create ProdCaData attestation: %v", err)
+		tpm.logger.Warn("failed to create ProdCaData attestation", slog.String("error", err.Error()))
 		prodCaData = nil
 		prodCaDataSz = 0
 	}
@@ -211,6 +212,9 @@ func (tpm *TPM2) createIDevIDContent(
 	signingPubBytes := idevidBPublic.Bytes()
 	sgnCertifyInfoSig := idevidAttrs.TPMAttributes.Signature
 
+	// Resolve platform attributes with config-first-then-SMBIOS fallback
+	platformAttrs := ResolvePlatformAttributes(tpm.config.IDevID)
+
 	// Build an unpacked TCG_IDEVID_CONTENT structure that omits
 	// the HashSz, PadSz, and Pad fields. They will be populated
 	// during the packing operation.
@@ -220,16 +224,16 @@ func (tpm *TPM2) createIDevIDContent(
 		HashSz:     uint32(hashSz),
 		// Hash of all that follows is placed here
 		ProdModelSz: func() uint32 {
-			if len(tpm.config.IDevID.Model) > math.MaxUint32 {
+			if len(platformAttrs.Model) > math.MaxUint32 {
 				panic("model too large")
 			}
-			return uint32(len(tpm.config.IDevID.Model))
+			return uint32(len(platformAttrs.Model))
 		}(),
 		ProdSerialSz: func() uint32 {
-			if len(tpm.config.IDevID.Serial) > math.MaxUint32 {
+			if len(platformAttrs.Serial) > math.MaxUint32 {
 				panic("serial too large")
 			}
-			return uint32(len(tpm.config.IDevID.Serial))
+			return uint32(len(platformAttrs.Serial))
 		}(),
 		ProdCaDataSz: prodCaDataSz,
 		BootEvntLogSz: func() uint32 {
@@ -290,8 +294,8 @@ func (tpm *TPM2) createIDevIDContent(
 		// All payloads are included as byte arrays (no delimiters)
 		// Payload is followed by padSz bytes of random data here to make
 		// the structure size a multiple of 16 bytes.
-		ProdModel:         []byte(tpm.config.IDevID.Model),
-		ProdSerial:        []byte(tpm.config.IDevID.Serial),
+		ProdModel:         []byte(platformAttrs.Model),
+		ProdSerial:        []byte(platformAttrs.Serial),
 		ProdCaData:        prodCaData,
 		BootEvntLog:       bootEventLog,
 		EkCert:            ekCert.Raw,
@@ -333,7 +337,7 @@ func (tpm *TPM2) createProdCaData() ([]byte, uint32, error) {
 		return nil, 0, fmt.Errorf("failed to generate nonce for ProdCaData: %w", err)
 	}
 
-	tpm.logger.Infof("tpm: creating ProdCaData attestation for PCRs %v", pcrs)
+	tpm.logger.Info("creating ProdCaData attestation", slog.Any("pcrs", pcrs))
 
 	// Perform TPM Quote over the configured PCRs
 	quote, err := tpm.Quote(pcrs, nonce)
@@ -357,8 +361,12 @@ func (tpm *TPM2) createProdCaData() ([]byte, uint32, error) {
 		return nil, 0, ErrProdCaDataTooLarge
 	}
 
-	tpm.logger.Debugf("tpm: ProdCaData created: %d bytes (quoted=%d, sig=%d, nonce=%d, pcrs=%d)",
-		len(packedData), len(quote.Quoted), len(quote.Signature), len(quote.Nonce), len(quote.PCRs))
+	tpm.logger.Debug("ProdCaData created",
+		slog.Int("total_bytes", len(packedData)),
+		slog.Int("quoted_bytes", len(quote.Quoted)),
+		slog.Int("signature_bytes", len(quote.Signature)),
+		slog.Int("nonce_bytes", len(quote.Nonce)),
+		slog.Int("pcr_count", len(quote.PCRs)))
 
 	return packedData, uint32(len(packedData)), nil // #nosec G115 -- validated above
 }
@@ -971,7 +979,7 @@ func (tpm *TPM2) VerifyTCGCSR(
 // i. Extract the IAK Public Key from the IAK Public Area in the TCG-CSR-IDEVID.
 // ii. Use the IAK public key to verify the signature on the TCG-CSR-IDEVID.
 // b. Extract the EK certificate from the TCG-CSR-IDEVID and verify the EK
-// Certificate using the indicated TPM manufacturer’s public key.
+// Certificate using the indicated TPM manufacturer's public key.
 // c. Verify the attributes (TPMA_OBJECT bits) of the IAK Public Area to ensure
 // that the key is a Restricted, fixedTPM, fixedParent signing key. Ensure all
 // other attributes meet CA policy.
@@ -1060,18 +1068,18 @@ func (tpm *TPM2) VerifyTCG_CSR_IAK(
 // in a Single Pass.
 // 7. The CA verifies the received data:
 // a. Extract IDevID public key and verify the signature on TCG-CSR-IDEVID
-// b. Verify the EK Certificate using the indicated TPM manufacturer’s public key
+// b. Verify the EK Certificate using the indicated TPM manufacturer's public key
 // c. Verify TPM residency of IDevID key using the IAK public key to validate the signature of the
 // TPMB_Attest structure.
 // d. Verify the attributes of the IDevID key public area.
 // e. Verify the attributes of the IAK public area.
 // f. Calculate the Name of the IAK, by hashing its public area with its associated hash algorithm,
 // prepended with the Algorithm ID of the hashing algorithm. Refer to TPM 2.0 Library Specification [2]
-// Part 1, Section 16, “Names”.
+// Part 1, Section 16, "Names".
 // g. Using the sequence described in the TPM 2.0 Library Specification [2] Part 3, section 12.6.3
-// (TPM2_MakeCredential Detailed Actions), create the encrypted “credential” structure to be sent to
+// (TPM2_MakeCredential Detailed Actions), create the encrypted "credential" structure to be sent to
 // the device. When building this encrypted structure, objectName is the Name of the IAK calculated in
-// step ‘a’ and Certificate (which is the payload field) holds a nonce (whose size matches the Name
+// step 'a' and Certificate (which is the payload field) holds a nonce (whose size matches the Name
 // hash). Retain the nonce for use in later steps.
 // NOTE: Step b is not implemented here. The EK certificate should be verified by
 // the CA package using the Verify(certificate *x509.Certificate) method.
@@ -1257,7 +1265,7 @@ func (tpm *TPM2) verifyTCGCSRSignature(
 			// 	},
 			// }.Execute(tpm.transport)
 			// if err != nil {
-			// 	tpm.logger.Error(err)
+			// 	tpm.logger.Error("signature verification failed", slog.String("error", err.Error()))
 			// 	return nil, nil, err
 			// }
 
