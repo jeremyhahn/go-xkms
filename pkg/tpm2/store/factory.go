@@ -14,6 +14,7 @@
 package store
 
 import (
+	"log/slog"
 	"os"
 
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
@@ -24,7 +25,7 @@ import (
 // for TPM operations. It manages the lifecycle of the underlying storage
 // and provides both blob storage and key backend capabilities.
 type StorageFactory struct {
-	logger    Logger
+	logger    *slog.Logger
 	backend   storage.Backend
 	blobStore BlobStorer
 	keyStore  KeyBackend
@@ -34,7 +35,7 @@ type StorageFactory struct {
 // NewStorageFactory creates a new storage factory. If baseDir is empty,
 // a temporary directory is created. The factory uses the local storage
 // package implementations (file or memory based).
-func NewStorageFactory(logger Logger, baseDir string) (*StorageFactory, error) {
+func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, error) {
 	var backend storage.Backend
 	var err error
 	var tempDir string
@@ -53,7 +54,9 @@ func NewStorageFactory(logger Logger, baseDir string) (*StorageFactory, error) {
 	if err != nil {
 		if tempDir != "" {
 			if rmErr := os.RemoveAll(tempDir); rmErr != nil {
-				logger.Errorf("failed to remove temp directory %s: %v", tempDir, rmErr)
+				logger.Error("failed to remove temp directory",
+					slog.String("path", tempDir),
+					slog.String("error", rmErr.Error()))
 			}
 		}
 		return nil, err
@@ -70,7 +73,7 @@ func NewStorageFactory(logger Logger, baseDir string) (*StorageFactory, error) {
 
 // NewMemoryStorageFactory creates a storage factory using in-memory storage.
 // This is useful for testing where persistence is not required.
-func NewMemoryStorageFactory(logger Logger) (*StorageFactory, error) {
+func NewMemoryStorageFactory(logger *slog.Logger) (*StorageFactory, error) {
 	backend := storage.NewMemory()
 
 	return &StorageFactory{
@@ -104,7 +107,9 @@ func (f *StorageFactory) Close() error {
 	}
 	if f.tempDir != "" {
 		if rmErr := os.RemoveAll(f.tempDir); rmErr != nil {
-			f.logger.Errorf("failed to remove temp directory %s: %v", f.tempDir, rmErr)
+			f.logger.Error("failed to remove temp directory",
+				slog.String("path", f.tempDir),
+				slog.String("error", rmErr.Error()))
 		}
 	}
 	return err

@@ -1,5 +1,3 @@
-//go:build tpm_simulator
-
 package tpm2
 
 import (
@@ -11,12 +9,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"log/slog"
 	"math/big"
 	"testing"
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -40,7 +38,7 @@ func (e *errorPassword) Clear() {
 
 // TestOpenWithSimulator tests the Open function with simulator config
 func TestOpenWithSimulator(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("opens simulator connection", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -105,11 +103,11 @@ func TestOpenWithSimulator(t *testing.T) {
 }
 
 // TestSignValidateNilAttributes tests SignValidate with nil key attributes
-// Note: These tests reveal missing nil checks in SignValidate - panics indicate areas needing improvement
+// SignValidate now properly returns an error instead of panicking
 func TestSignValidateNilAttributes(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
-	t.Run("panics with nil key attributes", func(t *testing.T) {
+	t.Run("returns error with nil key attributes", func(t *testing.T) {
 		tpmInstance := &TPM2{
 			logger: logger,
 		}
@@ -117,10 +115,9 @@ func TestSignValidateNilAttributes(t *testing.T) {
 		digest := []byte("test digest data")
 		validationDigest := []byte("validation digest")
 
-		// SignValidate should check for nil, but currently panics
-		assert.Panics(t, func() {
-			_, _ = tpmInstance.SignValidate(nil, digest, validationDigest)
-		})
+		// SignValidate should return ErrInvalidKeyAttributes for nil keyAttrs
+		_, err := tpmInstance.SignValidate(nil, digest, validationDigest)
+		assert.Equal(t, ErrInvalidKeyAttributes, err)
 	})
 
 	t.Run("returns error with nil TPM attributes", func(t *testing.T) {
@@ -235,7 +232,7 @@ func TestSSRKPublicErrorHandling(t *testing.T) {
 // TestIDevIDWithValidKeyBytes tests IDevID with valid public key bytes
 func TestIDevIDWithValidKeyBytes(t *testing.T) {
 	t.Run("returns public key when valid bytes are provided", func(t *testing.T) {
-		logger := logging.DefaultLogger()
+		logger := slog.Default()
 
 		// Generate a valid RSA key pair
 		privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -269,7 +266,7 @@ func TestIDevIDWithValidKeyBytes(t *testing.T) {
 	})
 
 	t.Run("returns ECDSA public key when valid ECC bytes are provided", func(t *testing.T) {
-		logger := logging.DefaultLogger()
+		logger := slog.Default()
 
 		// Generate a valid ECDSA key pair
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -303,7 +300,7 @@ func TestIDevIDWithValidKeyBytes(t *testing.T) {
 
 // TestDeleteKeyPersistentHandle tests DeleteKey with persistent handle
 func TestDeleteKeyPersistentHandle(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("returns error with nil TPM attributes", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -344,7 +341,7 @@ func TestDeleteKeyPersistentHandle(t *testing.T) {
 
 // TestInstallHierarchyAuthError tests Install with hierarchy auth errors
 func TestInstallHierarchyAuthError(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("panics when no transport is set", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -418,7 +415,7 @@ func TestProvisionEKCertWithNilCertStore(t *testing.T) {
 	})
 
 	t.Run("returns error with valid cert but no cert store", func(t *testing.T) {
-		logger := logging.DefaultLogger()
+		logger := slog.Default()
 
 		// Create a valid self-signed certificate
 		certDER := createTestCertDER(t)
@@ -459,7 +456,7 @@ func TestInstallWithConfig(t *testing.T) {
 
 // TestDeleteKeyTransientHandle tests DeleteKey with transient handle
 func TestDeleteKeyTransientHandle(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("returns error when unseal fails for transient handle", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -555,7 +552,7 @@ func createTestCertDER(t *testing.T) []byte {
 
 // TestOpenSocketPath tests Open with socket path
 func TestOpenSocketPath(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("returns error for nonexistent socket", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -604,7 +601,7 @@ func TestSSRKPublicWithProvisionedTPM(t *testing.T) {
 // TestEKECCWithProvisionedTPM tests EKECC functionality
 func TestEKECCWithProvisionedTPM(t *testing.T) {
 	t.Run("caches and returns ECC public key", func(t *testing.T) {
-		logger := logging.DefaultLogger()
+		logger := slog.Default()
 
 		privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
@@ -626,7 +623,7 @@ func TestEKECCWithProvisionedTPM(t *testing.T) {
 
 // TestInstallEKNotExists tests Install when EK doesn't exist
 func TestInstallEKNotExists(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("handles EK creation error", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -671,7 +668,7 @@ func TestInstallEKNotExists(t *testing.T) {
 
 // TestDeleteKeyWithBackend tests DeleteKey interactions with backend
 func TestDeleteKeyWithBackend(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("attempts unseal for transient key", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -714,7 +711,7 @@ func TestProvisionEKCertNVRAM(t *testing.T) {
 
 // TestSignValidateECDSA tests SignValidate with ECDSA key type
 func TestSignValidateECDSA(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("handles ECDSA key type", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -802,7 +799,7 @@ func TestDeleteKeyPersistentWithoutAuth(t *testing.T) {
 
 // TestSignValidateRSAPSS tests SignValidate with RSA-PSS scheme
 func TestSignValidateRSAPSS(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("handles RSA-PSS signature scheme", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -859,7 +856,7 @@ func TestSignValidateRSAPSS(t *testing.T) {
 
 // TestOpenMultipleTimes tests Open function can be called multiple times
 func TestOpenMultipleTimes(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("can open simulator multiple times", func(t *testing.T) {
 		tpmInstance := &TPM2{
@@ -910,7 +907,7 @@ func TestInstallCreatesPlatformPolicy(t *testing.T) {
 
 // TestDeleteKeyNilKeyAttributes tests DeleteKey with completely nil attributes
 func TestDeleteKeyNilKeyAttributes(t *testing.T) {
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	t.Run("panics with nil key attributes", func(t *testing.T) {
 		tpmInstance := &TPM2{

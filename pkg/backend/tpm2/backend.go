@@ -19,13 +19,13 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	pkgtpm2 "github.com/jeremyhahn/go-keychain/pkg/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
@@ -38,7 +38,7 @@ type Backend struct {
 	config      *Config
 	tpm         pkgtpm2.TrustedPlatformModule
 	keyBackend  store.KeyBackend
-	logger      *logging.Logger
+	logger      *slog.Logger
 	srkAttrs    *types.KeyAttributes
 	tracker     types.AEADSafetyTracker
 	mu          sync.RWMutex
@@ -55,7 +55,7 @@ type ExternalTPMConfig struct {
 	KeyBackend store.KeyBackend
 
 	// Logger is the logger instance to use (optional)
-	Logger *logging.Logger
+	Logger *slog.Logger
 
 	// Tracker is the AEAD safety tracker (optional)
 	Tracker types.AEADSafetyTracker
@@ -79,9 +79,9 @@ func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
 	}
 
 	// Create logger if not provided
-	logger := config.Logger
-	if logger == nil {
-		logger = logging.DefaultLogger()
+	log := config.Logger
+	if log == nil {
+		log = slog.Default()
 	}
 
 	// Initialize AEAD tracker
@@ -100,7 +100,7 @@ func NewBackendWithTPM(config *ExternalTPMConfig) (*Backend, error) {
 		config:      nil, // No config when using external TPM
 		tpm:         config.TPM,
 		keyBackend:  config.KeyBackend,
-		logger:      logger,
+		logger:      log,
 		srkAttrs:    srkAttrs,
 		tracker:     tracker,
 		externalTPM: true, // Mark as external so Close() doesn't close the TPM
@@ -115,9 +115,9 @@ func NewBackend(config *Config) (*Backend, error) {
 	}
 
 	// Create logger if not provided
-	logger := config.Logger
-	if logger == nil {
-		logger = logging.DefaultLogger()
+	log := config.Logger
+	if log == nil {
+		log = slog.Default()
 	}
 
 	// Initialize AEAD tracker
@@ -136,7 +136,7 @@ func NewBackend(config *Config) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage backend: %w", err)
 	}
-	keyBackend := store.NewFileBackend(logger, fsBackend)
+	keyBackend := store.NewFileBackend(log, fsBackend)
 
 	// Create TPM2 configuration
 	tpmConfig := config.ToTPMConfig()
@@ -145,7 +145,7 @@ func NewBackend(config *Config) (*Backend, error) {
 	tpm, err := pkgtpm2.NewTPM2(&pkgtpm2.Params{
 		Config:  tpmConfig,
 		Backend: keyBackend,
-		Logger:  logger,
+		Logger:  log,
 		Tracker: tracker,
 	})
 	if err != nil {
@@ -167,7 +167,7 @@ func NewBackend(config *Config) (*Backend, error) {
 		config:     config,
 		tpm:        tpm,
 		keyBackend: keyBackend,
-		logger:     logger,
+		logger:     log,
 		srkAttrs:   srkAttrs,
 		tracker:    tracker,
 	}, nil

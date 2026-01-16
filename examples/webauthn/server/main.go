@@ -44,7 +44,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/internal/rest"
+	"github.com/jeremyhahn/go-keychain/pkg/api/rest"
 	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-keychain/pkg/webauthn/http"
 )

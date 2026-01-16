@@ -16,6 +16,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
@@ -25,13 +26,13 @@ import (
 // FileBackend implements KeyBackend using storage.Backend.
 // For convenience, use NewStorageFactory to create a complete storage setup.
 type FileBackend struct {
-	logger  Logger
+	logger  *slog.Logger
 	storage storage.Backend
 }
 
 // NewFileBackend creates a new file-based key backend using the storage.Backend interface.
 // For convenience, use NewStorageFactory to create a complete storage setup.
-func NewFileBackend(logger Logger, backend storage.Backend) KeyBackend {
+func NewFileBackend(logger *slog.Logger, backend storage.Backend) KeyBackend {
 	return &FileBackend{
 		logger:  logger,
 		storage: backend,
@@ -89,7 +90,9 @@ func (fb *FileBackend) Delete(attrs *types.KeyAttributes) error {
 			if !errors.Is(err, storage.ErrNotFound) && !os.IsNotExist(err) {
 				lastErr = err
 				if fb.logger != nil {
-					fb.logger.Warnf("failed to delete %s: %v", key, err)
+					fb.logger.Warn("failed to delete key file",
+						slog.String("key", key),
+						slog.String("error", err.Error()))
 				}
 			}
 		}

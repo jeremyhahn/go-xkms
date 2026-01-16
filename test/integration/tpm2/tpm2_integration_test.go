@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -181,7 +181,7 @@ func createTPM2Instance(t *testing.T) (tpm2lib.TrustedPlatformModule, func()) {
 	tpmTransport := transport.FromReadWriter(conn)
 
 	// Create logger
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	// Create storage backend using the factory
 	storageFactory, err := store.NewStorageFactory(logger, "")

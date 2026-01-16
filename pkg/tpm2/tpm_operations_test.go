@@ -1,5 +1,3 @@
-//go:build tpm_simulator
-
 //nolint:staticcheck // Style warnings suppressed
 package tpm2
 
@@ -12,11 +10,12 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -28,7 +27,7 @@ func TestTPMOperations(t *testing.T) {
 	}
 	defer func() { _ = sim.Close() }()
 
-	logger := logging.DefaultLogger()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	buf := make([]byte, 8)
 	_, err = rand.Reader.Read(buf)
@@ -1463,7 +1462,7 @@ func TestTPMOperationsECC(t *testing.T) {
 	}
 	defer func() { _ = sim.Close() }()
 
-	logger := logging.DefaultLogger()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	buf := make([]byte, 8)
 	_, err = rand.Reader.Read(buf)
@@ -1612,7 +1611,7 @@ func TestTPMOperationsMultipleRandomReads(t *testing.T) {
 	}
 	defer func() { _ = sim.Close() }()
 
-	logger := logging.DefaultLogger()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	buf := make([]byte, 8)
 	_, err = rand.Reader.Read(buf)

@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -36,14 +37,14 @@ const (
 // libraries like go-objstore. Higher-level applications can create adapters
 // to use cloud storage (S3, Azure, GCS) by implementing storage.Backend.
 type SignerStore struct {
-	logger  Logger
+	logger  *slog.Logger
 	storage storage.Backend
 }
 
 // NewSignerStore creates a new signer store using the storage.Backend interface.
 // The backend can be any implementation of storage.Backend, including custom
 // adapters that wrap external storage libraries like go-objstore.
-func NewSignerStore(logger Logger, backend storage.Backend) SignerStorer {
+func NewSignerStore(logger *slog.Logger, backend storage.Backend) SignerStorer {
 	return &SignerStore{
 		logger:  logger,
 		storage: backend,
@@ -185,7 +186,7 @@ func (s *SignerStore) Save(attrs *types.KeyAttributes, signer interface{}) error
 	}
 
 	if s.logger != nil {
-		s.logger.Debugf("Saved signer for %s", attrs.CN)
+		s.logger.Debug("saved signer", slog.String("cn", attrs.CN))
 	}
 
 	return nil
@@ -200,12 +201,12 @@ func (s *SignerStore) Delete(attrs *types.KeyAttributes) error {
 		}
 		// Not found is not an error for delete
 		if s.logger != nil {
-			s.logger.Debugf("Signer not found for deletion: %s", key)
+			s.logger.Debug("signer not found for deletion", slog.String("key", key))
 		}
 	}
 
 	if s.logger != nil {
-		s.logger.Debugf("Deleted signer for %s", attrs.CN)
+		s.logger.Debug("deleted signer", slog.String("cn", attrs.CN))
 	}
 
 	return nil
@@ -233,7 +234,7 @@ func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) 
 	}
 
 	if s.logger != nil {
-		s.logger.Debugf("Saved signature for %s", key)
+		s.logger.Debug("saved signature", slog.String("key", key))
 	}
 
 	return nil

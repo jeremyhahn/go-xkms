@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
@@ -155,7 +156,7 @@ func (tpm *TPM2) Provision(soPIN types.Password) error {
 	// TPM2_Clear clears Owner, Endorsement, and Lockout hierarchy auth values
 	if err := tpm.Clear(nil); err != nil {
 		tpm.logger.Warn("tpm: failed to clear TPM hierarchies")
-		tpm.logger.MaybeError(err)
+		tpm.logger.Error("tpm clear failed", slog.String("error", err.Error()))
 		// Continue anyway - the TPM might already be in the expected state
 	}
 
@@ -181,7 +182,8 @@ func (tpm *TPM2) Provision(soPIN types.Password) error {
 		if soPIN != nil {
 			soPinBytes = soPIN.Bytes()
 		}
-		tpm.logger.Debugf("tpm: Lockout, Endorsement & Storage Hierarchy authorization: %s", soPinBytes)
+		tpm.logger.Debug("tpm: hierarchy authorization set",
+			slog.String("authorization", string(soPinBytes)))
 	}
 
 	// Provision Owner hierarchy with new EK and SRK
@@ -276,7 +278,8 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 		return nil
 	}
 
-	tpm.logger.Debugf("NVDefineSpace: EK Certificate size: %d", len(ekCertDER))
+	tpm.logger.Debug("NVDefineSpace: EK Certificate",
+		slog.Int("size", len(ekCertDER)))
 
 	defs := tpm2.NVDefineSpace{
 		AuthHandle: tpm2.AuthHandle{
@@ -300,7 +303,7 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 	}
 	_, err = defs.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("NVDefineSpace failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -308,13 +311,13 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 
 	pub, err := defs.PublicInfo.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get public info contents", slog.String("error", err.Error()))
 		return err
 	}
 
 	nvName, err := tpm2.NVName(pub)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get NV name", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -333,7 +336,7 @@ func (tpm *TPM2) ProvisionEKCert(hierarchyAuth, ekCertDER []byte) error {
 		Offset: 0,
 	}
 	if _, err := write.Execute(tpm.transport); err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("NVWrite failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -372,22 +375,26 @@ func (tpm *TPM2) GoldenMeasurements() []byte {
 	var gold, extend []byte
 	hash, err := ParsePCRBankCryptoHash(tpm.config.PlatformPCRBank)
 	if err != nil {
-		tpm.logger.FatalError(err)
+		tpm.logger.Error("failed to parse PCR bank crypto hash", slog.String("error", err.Error()))
+		panic(err)
 	}
 	digest := hash.New()
 	digest.Reset()
 
 	banks, err := tpm.ReadPCRs(tpm.config.GoldenPCRs)
 	if err != nil {
-		tpm.logger.FatalError(err)
+		tpm.logger.Error("failed to read PCRs", slog.String("error", err.Error()))
+		panic(err)
 	}
 
 	// Create golden PCR that stores the final sum of
 	// configured PCR values across all banks.
 	for _, bank := range banks {
-		tpm.logger.Infof("tpm: processing PCR bank: %s", bank.Algorithm)
+		tpm.logger.Info("tpm: processing PCR bank", slog.String("algorithm", bank.Algorithm))
 		for _, pcr := range bank.PCRs {
-			tpm.logger.Infof("tpm: PCR[%d] = %x", pcr.ID, pcr.Value)
+			tpm.logger.Info("tpm: PCR value",
+				slog.Int("id", int(pcr.ID)),
+				slog.String("value", fmt.Sprintf("%x", pcr.Value)))
 			extend = append(extend, pcr.Value...)
 			digest.Write(extend)
 			gold = digest.Sum(nil)
@@ -395,7 +402,9 @@ func (tpm *TPM2) GoldenMeasurements() []byte {
 			digest.Reset()
 		}
 	}
-	tpm.logger.Infof("tpm: golden measurement from PCRs %v = %x", tpm.config.GoldenPCRs, gold)
+	tpm.logger.Info("tpm: golden measurement calculated",
+		slog.String("pcrs", fmt.Sprintf("%v", tpm.config.GoldenPCRs)),
+		slog.String("measurement", fmt.Sprintf("%x", gold)))
 
 	return gold
 }
@@ -423,7 +432,7 @@ func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("PCRRead failed", slog.String("error", err.Error()))
 		return nil, err
 	}
 	buffer := pcrReadRsp.PCRValues.Digests[0].Buffer
@@ -434,8 +443,8 @@ func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 	hash.Write(buffer)
 	digest := hash.Sum(nil)
 
-	// tpm.logger.Debugf("PlatformPolicyDigest: PCRRead buffer: %x", buffer)
-	// tpm.logger.Debugf("PlatformPolicyDigest: PCRRead digest: %x", digest)
+	// tpm.logger.Debug("PlatformPolicyDigest: PCRRead buffer", slog.String("buffer", fmt.Sprintf("%x", buffer)))
+	// tpm.logger.Debug("PlatformPolicyDigest: PCRRead digest", slog.String("digest", fmt.Sprintf("%x", digest)))
 
 	return digest, nil
 }
@@ -460,9 +469,10 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		return err
 	}
 
-	tpm.logger.Infof(
-		"tpm: CreatePlatformPolicy - extending golden measurement %x to PCR %s:%d",
-		measurement, tpm.config.PlatformPCRBank, tpm.config.PlatformPCR)
+	tpm.logger.Info("tpm: CreatePlatformPolicy - extending golden measurement",
+		slog.String("measurement", fmt.Sprintf("%x", measurement)),
+		slog.String("bank", tpm.config.PlatformPCRBank),
+		slog.Uint64("pcr", uint64(tpm.config.PlatformPCR)))
 
 	_, err = tpm2.PCRExtend{
 		PCRHandle: tpm2.AuthHandle{
@@ -479,7 +489,7 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("PCRExtend failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -493,12 +503,12 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 	trialSession, closer, err := tpm2.PolicySession(
 		tpm.transport, hashAlgID, 16, tpm2.Trial())
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("PolicySession failed", slog.String("error", err.Error()))
 		return err
 	}
 	defer func() {
 		if err := closer(); err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to close policy session", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -524,7 +534,7 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("PolicyPCR failed", slog.String("error", err.Error()))
 		return err
 	}
 
@@ -535,9 +545,13 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 		return err
 	}
 
-	tpm.logger.Infof("tpm: CreatePlatformPolicy - golden measurement: %x", measurement)
-	tpm.logger.Infof("tpm: CreatePlatformPolicy - policy digest: %x", pgd.PolicyDigest.Buffer)
-	tpm.logger.Infof("tpm: CreatePlatformPolicy - PCR %d hash: %x", tpm.config.PlatformPCR, hash)
+	tpm.logger.Info("tpm: CreatePlatformPolicy - golden measurement",
+		slog.String("measurement", fmt.Sprintf("%x", measurement)))
+	tpm.logger.Info("tpm: CreatePlatformPolicy - policy digest",
+		slog.String("digest", fmt.Sprintf("%x", pgd.PolicyDigest.Buffer)))
+	tpm.logger.Info("tpm: CreatePlatformPolicy - PCR hash",
+		slog.Uint64("pcr", uint64(tpm.config.PlatformPCR)),
+		slog.String("hash", fmt.Sprintf("%x", hash)))
 
 	tpm.policyDigest = pgd.PolicyDigest
 

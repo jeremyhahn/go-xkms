@@ -9,9 +9,9 @@
 VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS := -X github.com/jeremyhahn/go-keychain/internal/cli.Version=$(VERSION) \
-           -X github.com/jeremyhahn/go-keychain/internal/cli.GitCommit=$(GIT_COMMIT) \
-           -X github.com/jeremyhahn/go-keychain/internal/cli.BuildDate=$(BUILD_DATE)
+LDFLAGS := -X github.com/jeremyhahn/go-keychain/pkg/cli.Version=$(VERSION) \
+           -X github.com/jeremyhahn/go-keychain/pkg/cli.GitCommit=$(GIT_COMMIT) \
+           -X github.com/jeremyhahn/go-keychain/pkg/cli.BuildDate=$(BUILD_DATE)
 
 # Optional backend features (set to 1 to enable)
 # Default: Software backends enabled, hardware/cloud backends disabled
@@ -51,11 +51,11 @@ endif
 
 # All available build tags for release builds
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
-CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault quantum frost
+CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault quantum frost codec_cbor codec_json codec_msgpack
 # Server includes all tags including pkcs11
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum frost tpm_simulator
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum frost  codec_cbor codec_json codec_msgpack
 # All tags for integration testing (includes all possible build tags)
-ALL_TAGS := integration frost pkcs8 pkcs11 quantum awskms gcpkms azurekv vault tpm_simulator yubikey nitrokey canokey fido2 webauthn
+ALL_TAGS := integration frost pkcs8 pkcs11 quantum awskms gcpkms azurekv vault  yubikey nitrokey canokey fido2 webauthn codec_cbor codec_json codec_msgpack
 
 # Build tags based on backend flags (for development/testing)
 BUILD_TAGS :=
@@ -63,7 +63,7 @@ ifeq ($(WITH_PKCS8),1)
 	BUILD_TAGS += pkcs8
 endif
 ifeq ($(WITH_TPM_SIMULATOR),1)
-	BUILD_TAGS += tpm_simulator
+	BUILD_TAGS += 
 endif
 ifeq ($(WITH_AWS_KMS),1)
 	BUILD_TAGS += awskms
@@ -128,15 +128,15 @@ DOCKER_IMAGE := $(PROJECT_NAME):latest
 DOCKER_INTEGRATION_IMAGE := $(PROJECT_NAME)-integration:latest
 DOCKER_CONTAINER := $(PROJECT_NAME)-container
 
-# Test configuration
-TEST_FLAGS := -v -race
+# Test configuration - include codec build tags for go-codec support
+TEST_FLAGS := -v -race -tags="codec_cbor codec_json codec_msgpack"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 # Integration test tags include both backend tags and integration tag
 ifneq ($(BUILD_TAGS),)
-	INTEGRATION_TEST_FLAGS := -v -tags="integration pkcs8 pkcs11 $(BUILD_TAGS)"
+	INTEGRATION_TEST_FLAGS := -v -tags="integration pkcs8 pkcs11 codec_cbor codec_json codec_msgpack $(BUILD_TAGS)"
 else
-	INTEGRATION_TEST_FLAGS := -v -tags="integration pkcs8 pkcs11"
+	INTEGRATION_TEST_FLAGS := -v -tags="integration pkcs8 pkcs11 codec_cbor codec_json codec_msgpack"
 endif
 
 # Color output (ANSI escape codes)
@@ -384,7 +384,7 @@ test-all: test test-importexport
 ## race: Run tests with race detector on all backends (matches GitHub Actions)
 race:
 	@echo "$(CYAN)$(BOLD)→ Running race detector tests with all backends...$(RESET)"
-	@CGO_ENABLED=1 $(GO) test -race -short -tags="pkcs8,tpm_simulator,awskms,gcpkms,azurekv,pkcs11,vault" ./... || \
+	@CGO_ENABLED=1 $(GO) test -race -short -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./... || \
 		(echo "$(RED)$(BOLD)✗ Race detector found issues$(RESET)" && exit 1)
 	@echo "$(GREEN)$(BOLD)✓ Race detector tests passed!$(RESET)"
 
@@ -399,7 +399,7 @@ coverage-full:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
 	@$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-		$$(go list -e ./pkg/... ./internal/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
+		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
 		2>&1 | tee $(COVERAGE_DIR)/unit.log || true
 	@echo "$(CYAN)→ Step 2: Running integration tests with coverage...$(RESET)"
 	@$(GOTEST) -v -tags=integration -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
@@ -585,7 +585,7 @@ bench-backup:
 ## test-rand-tpm2: Run crypto/rand package unit tests with TPM2 simulator support
 test-rand-tpm2:
 	@echo "$(CYAN)→ Testing crypto/rand package with TPM2 simulator...$(RESET)"
-	@$(GO) test -tags=tpm_simulator $(TEST_FLAGS) ./pkg/crypto/rand/...
+	@$(GO) test -tags= $(TEST_FLAGS) ./pkg/crypto/rand/...
 
 .PHONY: test-rand-all
 ## test-rand-all: Run all crypto/rand unit tests (software + TPM2)
@@ -606,7 +606,7 @@ test-importexport:
 	@echo "$(CYAN)→ Testing GCP KMS backend import/export...$(RESET)"
 	@$(GO) test -tags=gcpkms $(TEST_FLAGS) ./pkg/backend/gcpkms/... -run "Test.*Import|Test.*Export|Test.*Wrap"
 	@echo "$(CYAN)→ Testing TPM2 backend import/export...$(RESET)"
-	@$(GO) test -tags=tpm_simulator $(TEST_FLAGS) ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
+	@$(GO) test -tags= $(TEST_FLAGS) ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
 	@echo "$(CYAN)→ Testing PKCS#11 backend import/export...$(RESET)"
 	@$(GO) test -tags=pkcs11 $(TEST_FLAGS) ./pkg/backend/pkcs11/... -run "Test.*Import|Test.*Export|TestCapabilities"
 
@@ -707,7 +707,7 @@ integration-test-hw-storage-pkcs11:
 integration-test-hw-storage-tpm2:
 	@echo "$(CYAN)$(BOLD)→ Running real TPM2 hardware storage tests...$(RESET)"
 	@echo "$(YELLOW)NOTE: This requires real TPM2 hardware (/dev/tpm0 or /dev/tpmrm0)$(RESET)"
-	go test -v -tags='hw_integration,tpm_simulator' ./test/integration/storage -run TestRealTPM2Hardware -timeout 15m
+	go test -v -tags='hw_integration' ./test/integration/storage -run TestRealTPM2Hardware -timeout 15m
 	@echo "$(GREEN)✓ Real TPM2 hardware storage tests complete$(RESET)"
 
 .PHONY: coverage-storage
@@ -742,7 +742,7 @@ coverage-memory-storage:
 coverage-hardware-storage:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Generating hardware storage coverage report...$(RESET)"
-	@$(GO) test -v -tags='integration,pkcs11,tpm_simulator' -coverprofile=$(COVERAGE_DIR)/hardware-storage.out -covermode=atomic \
+	@$(GO) test -v -tags='integration,pkcs11' -coverprofile=$(COVERAGE_DIR)/hardware-storage.out -covermode=atomic \
 		./pkg/storage/hardware/... ./test/integration/storage/... -run 'TestHardwareStorage'
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/hardware-storage.out -o $(COVERAGE_DIR)/hardware-storage.html
 	@echo "$(GREEN)✓ Hardware storage coverage report generated$(RESET)"
@@ -870,7 +870,7 @@ test-tpm2-encryption-local:
 			exit 1; \
 		fi; \
 	fi
-	@go test -v -tags='integration,tpm_simulator' -run 'TestTPMSession' -timeout 30m ./test/integration/tpm2/
+	@go test -v -tags='integration' -run 'TestTPMSession' -timeout 30m ./test/integration/tpm2/
 	@echo "$(GREEN)✓ TPM2 encryption tests complete$(RESET)"
 
 .PHONY: integration-test-awskms
@@ -1325,7 +1325,7 @@ coverage-importexport:
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/wrapping.out -covermode=atomic ./pkg/crypto/wrapping/...
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/software_import.out -covermode=atomic ./pkg/backend/software/... -run "Test.*Import|Test.*Export"
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/symmetric_import.out -covermode=atomic ./pkg/backend/symmetric/... -run "Test.*Import|Test.*Export"
-	@$(GO) test -tags=tpm_simulator -v -coverprofile=$(COVERAGE_DIR)/tpm2_import.out -covermode=atomic ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
+	@$(GO) test -tags= -v -coverprofile=$(COVERAGE_DIR)/tpm2_import.out -covermode=atomic ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
 	@echo "$(GREEN)✓ Import/export coverage reports generated$(RESET)"
 	@echo "$(CYAN)Wrapping:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/wrapping.out | grep total
@@ -1366,7 +1366,7 @@ coverage-pkcs11:
 coverage-tpm2:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "Generating TPM2 coverage report (requires TPM device at /dev/tpmrm0)..."
-	@$(GO) test -v -tags="integration,tpm_simulator" -coverprofile=$(COVERAGE_DIR)/tpm2.out -covermode=atomic \
+	@$(GO) test -v -tags="integration" -coverprofile=$(COVERAGE_DIR)/tpm2.out -covermode=atomic \
 		./test/integration/tpm2/... ./pkg/tpm2/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/tpm2.out -o $(COVERAGE_DIR)/tpm2.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/tpm2.out | grep total
@@ -2341,8 +2341,8 @@ bench-keychain:
 bench-api:
 	@echo "$(CYAN)$(BOLD)→ Running API benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./internal/rest/... | tee -a $(BENCH_OUTPUT)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./internal/grpc/... | tee -a $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/api/rest/... | tee -a $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/api/grpc/... | tee -a $(BENCH_OUTPUT)
 	@echo "$(GREEN)✓ API benchmarks complete$(RESET)"
 
 .PHONY: bench-file
@@ -2392,14 +2392,14 @@ bench-jwt:
 bench-rest:
 	@echo "$(CYAN)$(BOLD)→ Running REST API benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -benchtime=3s -run=^$$ ./internal/rest/... | tee $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -benchtime=3s -run=^$$ ./pkg/api/rest/... | tee $(BENCH_OUTPUT)
 
 .PHONY: bench-grpc
 ## bench-grpc: Benchmark gRPC service operations
 bench-grpc:
 	@echo "$(CYAN)$(BOLD)→ Running gRPC benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -benchtime=3s -run=^$$ ./internal/grpc/... | tee $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -benchtime=3s -run=^$$ ./pkg/api/grpc/... | tee $(BENCH_OUTPUT)
 
 .PHONY: bench-baseline
 ## bench-baseline: Create baseline benchmark results
@@ -2407,7 +2407,7 @@ bench-baseline:
 	@echo "$(CYAN)$(BOLD)→ Creating benchmark baseline...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
 	@rm -f $(BENCH_BASELINE)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/... ./internal/... | tee $(BENCH_BASELINE)
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/... | tee $(BENCH_BASELINE)
 	@echo "$(GREEN)✓ Baseline saved to: $(BENCH_BASELINE)$(RESET)"
 
 .PHONY: bench-compare
@@ -2423,7 +2423,7 @@ bench-compare:
 		$(GO) install golang.org/x/perf/cmd/benchstat@latest; \
 	fi
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/... ./internal/... > $(BENCH_DIR)/current.txt
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/... > $(BENCH_DIR)/current.txt
 	@benchstat $(BENCH_BASELINE) $(BENCH_DIR)/current.txt
 	@echo "$(GREEN)✓ Benchmark comparison complete$(RESET)"
 
@@ -2464,7 +2464,7 @@ bench-pkcs11-certs:
 bench-tpm2-certs:
 	@echo "$(CYAN)$(BOLD)→ Running TPM2 certificate storage benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=BenchmarkTPM2 -benchmem -benchtime=3s -run=^$$ -tags=tpm_simulator \
+	@$(GO) test -bench=BenchmarkTPM2 -benchmem -benchtime=3s -run=^$$ -tags= \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/tpm2-certs.txt
 	@echo "$(GREEN)✓ TPM2 certificate benchmarks complete$(RESET)"
 	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/tpm2-certs.txt$(RESET)"
@@ -2474,7 +2474,7 @@ bench-tpm2-certs:
 bench-hybrid-certs:
 	@echo "$(CYAN)$(BOLD)→ Running hybrid certificate storage benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=BenchmarkHybrid -benchmem -benchtime=3s -run=^$$ -tags="pkcs11,tpm_simulator" \
+	@$(GO) test -bench=BenchmarkHybrid -benchmem -benchtime=3s -run=^$$ -tags="pkcs11" \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/hybrid-certs.txt
 	@echo "$(GREEN)✓ Hybrid certificate benchmarks complete$(RESET)"
 	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/hybrid-certs.txt$(RESET)"
@@ -2484,7 +2484,7 @@ bench-hybrid-certs:
 bench-cert-comparison:
 	@echo "$(CYAN)$(BOLD)→ Running certificate storage comparison benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=BenchmarkComparison -benchmem -benchtime=3s -run=^$$ -tags="pkcs11,tpm_simulator" \
+	@$(GO) test -bench=BenchmarkComparison -benchmem -benchtime=3s -run=^$$ -tags="pkcs11" \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/cert-comparison.txt
 	@echo "$(GREEN)✓ Certificate storage comparison benchmarks complete$(RESET)"
 	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/cert-comparison.txt$(RESET)"
@@ -2508,7 +2508,7 @@ bench-cert-baseline:
 	@echo "$(CYAN)$(BOLD)→ Creating certificate storage benchmark baseline...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
 	@rm -f $(BENCH_DIR)/cert-baseline.txt
-	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11,tpm_simulator" \
+	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11" \
 		./pkg/storage/hardware/... | tee $(BENCH_DIR)/cert-baseline.txt
 	@echo "$(GREEN)✓ Baseline saved to: $(BENCH_DIR)/cert-baseline.txt$(RESET)"
 
@@ -2525,7 +2525,7 @@ bench-cert-compare:
 		$(GO) install golang.org/x/perf/cmd/benchstat@latest; \
 	fi
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11,tpm_simulator" \
+	@$(GO) test -bench=. -benchmem -run=^$$ -tags="pkcs11" \
 		./pkg/storage/hardware/... > $(BENCH_DIR)/cert-current.txt
 	@benchstat $(BENCH_DIR)/cert-baseline.txt $(BENCH_DIR)/cert-current.txt | tee $(BENCH_DIR)/cert-comparison-stats.txt
 	@echo "$(GREEN)✓ Benchmark comparison complete$(RESET)"

@@ -25,7 +25,6 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/go-tpm v0.9.7
 	github.com/google/go-tpm-tools v0.4.7
-	github.com/google/logger v1.1.1
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/vault/api v1.22.0
 	github.com/miekg/pkcs11 v1.1.1

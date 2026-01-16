@@ -64,6 +64,20 @@ const (
 	tagSize = 16
 )
 
+// Package-level functions that can be replaced during testing for error injection.
+// These enable testing of defensive error handling paths that cannot be triggered
+// with valid inputs.
+var (
+	// deriveKeyFunc wraps ecdh.DeriveKey for testability
+	deriveKeyFunc = ecdh.DeriveKey
+
+	// newAESCipherFunc wraps aes.NewCipher for testability
+	newAESCipherFunc = aes.NewCipher
+
+	// newGCMFunc wraps cipher.NewGCM for testability
+	newGCMFunc = cipher.NewGCM
+)
+
 // Encrypt encrypts plaintext using ECIES with the recipient's public key.
 //
 // The encryption process:
@@ -104,19 +118,19 @@ func Encrypt(random io.Reader, publicKey *ecdsa.PublicKey, plaintext, aad []byte
 	}
 
 	// Derive AES-256 encryption key using HKDF
-	encKey, err := ecdh.DeriveKey(sharedSecret, nil, []byte("ecies-encryption"), aesKeySize)
+	encKey, err := deriveKeyFunc(sharedSecret, nil, []byte("ecies-encryption"), aesKeySize)
 	if err != nil {
 		return nil, fmt.Errorf("key derivation failed: %w", err)
 	}
 
 	// Create AES cipher
-	block, err := aes.NewCipher(encKey)
+	block, err := newAESCipherFunc(encKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
 
 	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := newGCMFunc(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}
@@ -210,19 +224,19 @@ func Decrypt(privateKey *ecdsa.PrivateKey, ciphertext, aad []byte) ([]byte, erro
 	}
 
 	// Derive AES-256 encryption key using HKDF (same as encryption)
-	encKey, err := ecdh.DeriveKey(sharedSecret, nil, []byte("ecies-encryption"), aesKeySize)
+	encKey, err := deriveKeyFunc(sharedSecret, nil, []byte("ecies-encryption"), aesKeySize)
 	if err != nil {
 		return nil, fmt.Errorf("key derivation failed: %w", err)
 	}
 
 	// Create AES cipher
-	block, err := aes.NewCipher(encKey)
+	block, err := newAESCipherFunc(encKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cipher: %w", err)
 	}
 
 	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := newGCMFunc(block)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCM: %w", err)
 	}

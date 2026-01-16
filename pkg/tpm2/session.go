@@ -1,6 +1,9 @@
 package tpm2
 
 import (
+	"fmt"
+	"log/slog"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -11,8 +14,7 @@ import (
 // the TPM <-> CPU bus is encrypted using AES-128 CFB.
 func (tpm *TPM2) HMAC(auth []byte) tpm2.Session {
 	if tpm.config.EncryptSession {
-		tpm.logger.Debugf(
-			"tpm: creating unauthenticated, unsalted, encrypted HMAC session")
+		tpm.logger.Debug("tpm: creating unauthenticated, unsalted, encrypted HMAC session")
 		return tpm2.HMAC(
 			tpm2.TPMAlgSHA256,
 			16,
@@ -28,8 +30,7 @@ func (tpm *TPM2) HMAC(auth []byte) tpm2.Session {
 				128,
 				tpm2.EncryptInOut))
 	}
-	tpm.logger.Debugf(
-		"tpm: creating unauthenticated, unsalted, UNencrypted HMAC session")
+	tpm.logger.Debug("tpm: creating unauthenticated, unsalted, UNencrypted HMAC session")
 
 	return tpm2.HMAC(
 		tpm2.TPMAlgSHA256,
@@ -44,7 +45,7 @@ func (tpm *TPM2) HMACSession(auth []byte) (s tpm2.Session, close func() error, e
 	if tpm.config.EncryptSession {
 		tpm.logger.Debug("tpm: creating encrypted HMAC session")
 		if tpm.debugSecrets {
-			tpm.logger.Debugf("tpm: HMAC session auth: %s", auth)
+			tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
 		}
 		return tpm2.HMACSession(
 			tpm.transport,
@@ -55,9 +56,9 @@ func (tpm *TPM2) HMACSession(auth []byte) (s tpm2.Session, close func() error, e
 				128,
 				tpm2.EncryptInOut))
 	}
-	tpm.logger.Debugf("tpm: creating UNencrypted HMAC session")
+	tpm.logger.Debug("tpm: creating UNencrypted HMAC session")
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: HMAC session auth: %s", auth)
+		tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
 	}
 	return tpm2.HMACSession(
 		tpm.transport,
@@ -75,11 +76,10 @@ func (tpm *TPM2) HMACSaltedSession(
 	auth []byte) (s tpm2.Session, close func() error, err error) {
 
 	if tpm.config.EncryptSession {
-		tpm.logger.Debugf(
-			"tpm: creating salted, encrypted HMAC session with primary key: 0x%x",
-			handle)
+		tpm.logger.Debug("tpm: creating salted, encrypted HMAC session with primary key",
+			slog.String("handle", fmt.Sprintf("0x%x", handle)))
 		if tpm.debugSecrets {
-			tpm.logger.Debugf("tpm: HMAC session auth: %s", auth)
+			tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
 		}
 		return tpm2.HMACSession(
 			tpm.transport,
@@ -91,11 +91,10 @@ func (tpm *TPM2) HMACSaltedSession(
 				tpm2.EncryptInOut),
 			tpm2.Salted(handle, pub))
 	}
-	tpm.logger.Debugf(
-		"tpm: creating salted, UNencrypted HMAC session with key: 0x%x",
-		handle)
+	tpm.logger.Debug("tpm: creating salted, UNencrypted HMAC session with key",
+		slog.String("handle", fmt.Sprintf("0x%x", handle)))
 	if tpm.debugSecrets {
-		tpm.logger.Debugf("tpm: HMAC session auth: %s", auth)
+		tpm.logger.Debug("tpm: HMAC session auth", slog.String("auth", string(auth)))
 	}
 	return tpm2.HMACSession(
 		tpm.transport,
@@ -131,13 +130,15 @@ func (tpm *TPM2) PlatformPolicySession() (tpm2.Session, func() error, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	tpm.logger.Infof("tpm: PlatformPolicySession - PCR %d digest: %x", tpm.config.PlatformPCR, digest)
+	tpm.logger.Info("tpm: PlatformPolicySession - PCR digest",
+		slog.Int("pcr", int(tpm.config.PlatformPCR)),
+		slog.String("digest", fmt.Sprintf("%x", digest)))
 
 	// Create the policy session
 	session, closer, err := tpm2.PolicySession(
 		tpm.transport, hashAlgID, 16, []tpm2.AuthOption{}...)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create policy session", slog.String("error", err.Error()))
 		return nil, nil, err
 	}
 
@@ -152,10 +153,10 @@ func (tpm *TPM2) PlatformPolicySession() (tpm2.Session, func() error, error) {
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to execute PolicyPCR", slog.String("error", err.Error()))
 		// Clean up session before returning error
 		if closeErr := closer(); closeErr != nil {
-			tpm.logger.Errorf("Failed to close session after PolicyPCR error: %v", closeErr)
+			tpm.logger.Error("Failed to close session after PolicyPCR error", slog.String("error", closeErr.Error()))
 		}
 		return nil, nil, err
 	}
@@ -166,13 +167,13 @@ func (tpm *TPM2) PlatformPolicySession() (tpm2.Session, func() error, error) {
 	if err != nil {
 		// Clean up session before returning error
 		if closeErr := closer(); closeErr != nil {
-			tpm.logger.Errorf("Failed to close session after PolicyGetDigest error: %v", closeErr)
+			tpm.logger.Error("Failed to close session after PolicyGetDigest error", slog.String("error", closeErr.Error()))
 		}
 		return nil, nil, err
 	}
 
-	tpm.logger.Infof("tpm: PlatformPolicySession - PCR policy digest: %x", digest)
-	tpm.logger.Infof("tpm: PlatformPolicySession - session policy digest: %x", pgd.PolicyDigest.Buffer)
+	tpm.logger.Info("tpm: PlatformPolicySession - PCR policy digest", slog.String("digest", fmt.Sprintf("%x", digest)))
+	tpm.logger.Info("tpm: PlatformPolicySession - session policy digest", slog.String("digest", fmt.Sprintf("%x", pgd.PolicyDigest.Buffer)))
 
 	tpm.policyDigest = pgd.PolicyDigest
 
@@ -190,7 +191,7 @@ func (tpm *TPM2) NonceSession(hierarchyAuth types.Password) (tpm2.Session, func(
 	session, closer, err := tpm2.PolicySession(
 		tpm.transport, tpm2.TPMAlgSHA256, 16)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to create nonce policy session", slog.String("error", err.Error()))
 		return nil, nil, err
 	}
 
@@ -203,10 +204,10 @@ func (tpm *TPM2) NonceSession(hierarchyAuth types.Password) (tpm2.Session, func(
 		PolicySession: session.Handle(),
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to execute PolicySecret", slog.String("error", err.Error()))
 		// Clean up session before returning error
 		if closeErr := closer(); closeErr != nil {
-			tpm.logger.Errorf("Failed to close session after PolicySecret error: %v", closeErr)
+			tpm.logger.Error("Failed to close session after PolicySecret error", slog.String("error", closeErr.Error()))
 		}
 		return nil, nil, err
 	}
@@ -256,8 +257,7 @@ func (tpm *TPM2) CreateSession(
 		}
 		// dont forget to call closer() when finished
 		// defer closer()
-		tpm.logger.Debugf(
-			"tpm: created platform policy session for %s", keyAttrs.CN)
+		tpm.logger.Debug("tpm: created platform policy session", slog.String("cn", keyAttrs.CN))
 
 		if err != nil {
 			return session, closer, err
@@ -282,7 +282,7 @@ func (tpm *TPM2) CreateSession(
 		// 	ekAttrs.TPMAttributes.Public,
 		// 	ekAuth)
 		// if err != nil {
-		// 	tpm.logger.Error(err)
+		// 	tpm.logger.Error("failed to create salted session", slog.String("error", err.Error()))
 		// 	return session, nil, err
 		// }
 
@@ -292,7 +292,7 @@ func (tpm *TPM2) CreateSession(
 			parentPub,
 			parentAuth)
 		if err != nil {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to create salted session", slog.String("error", err.Error()))
 			return session, closer, err
 		}
 		// dont forget to call closer() when finished
@@ -366,23 +366,29 @@ func (tpm *TPM2) LoadKeyPair(
 	}
 
 	// Load the public and private area blobs
-	tpm.logger.Debugf("tpm: LoadKeyPair - loading blobs for CN=%s, KeyType=%v", keyAttrs.CN, keyAttrs.KeyType)
+	tpm.logger.Debug("tpm: LoadKeyPair - loading blobs",
+		slog.String("cn", keyAttrs.CN),
+		slog.String("keyType", fmt.Sprintf("%v", keyAttrs.KeyType)))
 	priv, err := backend.Get(keyAttrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
 		// Log at debug level - this is expected during fresh initialization
 		// when the key doesn't exist yet
-		tpm.logger.Debugf("tpm: LoadKeyPair - failed to load private blob: %s: %s", err, keyAttrs.CN)
+		tpm.logger.Debug("tpm: LoadKeyPair - failed to load private blob",
+			slog.String("error", err.Error()),
+			slog.String("cn", keyAttrs.CN))
 		return nil, err
 	}
-	tpm.logger.Debugf("tpm: LoadKeyPair - loaded private blob: %d bytes", len(priv))
+	tpm.logger.Debug("tpm: LoadKeyPair - loaded private blob", slog.Int("bytes", len(priv)))
 	pub, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
 	if err != nil {
 		// Log at debug level - this is expected during fresh initialization
 		// when the key doesn't exist yet
-		tpm.logger.Debugf("tpm: LoadKeyPair - failed to load public blob: %s: %s", err, keyAttrs.CN)
+		tpm.logger.Debug("tpm: LoadKeyPair - failed to load public blob",
+			slog.String("error", err.Error()),
+			slog.String("cn", keyAttrs.CN))
 		return nil, err
 	}
-	tpm.logger.Debugf("tpm: LoadKeyPair - loaded public blob: %d bytes", len(pub))
+	tpm.logger.Debug("tpm: LoadKeyPair - loaded public blob", slog.Int("bytes", len(pub)))
 
 	if keyAttrs.Password != nil && !keyAttrs.PlatformPolicy {
 		auth = keyAttrs.Password.Bytes()
@@ -397,13 +403,11 @@ func (tpm *TPM2) LoadKeyPair(
 	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	parentName := keyAttrs.Parent.TPMAttributes.Name
 
-	tpm.logger.Debugf(
-		"tpm: loading key pair, parent handle: 0x%x",
-		parentHandle)
+	tpm.logger.Debug("tpm: loading key pair",
+		slog.String("parent_handle", fmt.Sprintf("0x%x", parentHandle)))
 
-	tpm.logger.Debugf(
-		"tpm: loading key pair, parent name: 0x%s",
-		Encode(parentName.Buffer))
+	tpm.logger.Debug("tpm: loading key pair",
+		slog.String("parent_name", fmt.Sprintf("0x%s", Encode(parentName.Buffer))))
 
 	// Load the public and private areas into the TPM
 	loadResponse, err := tpm2.Load{
@@ -418,12 +422,14 @@ func (tpm *TPM2) LoadKeyPair(
 		InPublic: tpm2.BytesAs2B[tpm2.TPMTPublic](pub),
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Errorf("%s: %s", err, keyAttrs.CN)
+		tpm.logger.Error("failed to load key pair",
+			slog.String("cn", keyAttrs.CN),
+			slog.String("error", err.Error()))
 		return nil, err
 	}
 	// defer tpm.Flush(loadResponse.ObjectHandle)
 
-	tpm.logger.Debugf("tpm: loaded key pair 0x%x", loadResponse.ObjectHandle)
+	tpm.logger.Debug("tpm: loaded key pair", slog.String("handle", fmt.Sprintf("0x%x", loadResponse.ObjectHandle)))
 
 	return loadResponse, nil
 }
@@ -453,13 +459,11 @@ func (tpm *TPM2) LoadKeyPairFromBlobs(
 	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	parentName := keyAttrs.Parent.TPMAttributes.Name
 
-	tpm.logger.Debugf(
-		"tpm: loading key pair from blobs, parent handle: 0x%x",
-		parentHandle)
+	tpm.logger.Debug("tpm: loading key pair from blobs",
+		slog.String("parent_handle", fmt.Sprintf("0x%x", parentHandle)))
 
-	tpm.logger.Debugf(
-		"tpm: loading key pair from blobs, parent name: 0x%s",
-		Encode(parentName.Buffer))
+	tpm.logger.Debug("tpm: loading key pair from blobs",
+		slog.String("parent_name", fmt.Sprintf("0x%s", Encode(parentName.Buffer))))
 
 	// Load the public and private areas into the TPM
 	loadResponse, err := tpm2.Load{
@@ -474,11 +478,13 @@ func (tpm *TPM2) LoadKeyPairFromBlobs(
 		InPublic: tpm2.BytesAs2B[tpm2.TPMTPublic](tpmPublic),
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Errorf("failed to load key pair from blobs: %s: %v", keyAttrs.CN, err)
+		tpm.logger.Error("failed to load key pair from blobs",
+			slog.String("cn", keyAttrs.CN),
+			slog.String("error", err.Error()))
 		return nil, err
 	}
 
-	tpm.logger.Debugf("tpm: loaded key pair from blobs 0x%x", loadResponse.ObjectHandle)
+	tpm.logger.Debug("tpm: loaded key pair from blobs", slog.String("handle", fmt.Sprintf("0x%x", loadResponse.ObjectHandle)))
 
 	return loadResponse, nil
 }
@@ -492,7 +498,7 @@ func (tpm *TPM2) SaveKeyPair(
 	backend store.KeyBackend,
 	overwrite bool) error {
 
-	tpm.logger.Debugf("tpm: saving key pair: %s", keyAttrs.CN)
+	tpm.logger.Debug("tpm: saving key pair", slog.String("cn", keyAttrs.CN))
 
 	if backend == nil {
 		backend = tpm.backend
@@ -514,7 +520,7 @@ func (tpm *TPM2) DeleteKeyPair(
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend) error {
 
-	tpm.logger.Debugf("tpm: deleting key pair: %s", keyAttrs.CN)
+	tpm.logger.Debug("tpm: deleting key pair", slog.String("cn", keyAttrs.CN))
 	if backend == nil {
 		backend = tpm.backend
 	}
@@ -531,13 +537,13 @@ func (tpm *TPM2) DeleteKeyPair(
 // 		SaveHandle: keyAttrs.TPMAttributes.Handle,
 // 	}.Execute(tpm.transport)
 // 	if err != nil {
-// 		tpm.logger.Error(err)
+// 		tpm.logger.Error("failed to save context", slog.String("error", err.Error()))
 // 		return err
 // 	}
 // 	err = tpm.backend.Save(
 // 		keyAttrs, response.Context.ContextBlob.Buffer, store.FSEXT_TPM_CONTEXT)
 // 	if err != nil {
-// 		tpm.logger.Error(err)
+// 		tpm.logger.Error("failed to save context to backend", slog.String("error", err.Error()))
 // 		return err
 // 	}
 // 	return nil
@@ -547,7 +553,7 @@ func (tpm *TPM2) DeleteKeyPair(
 // func (tpm *TPM2) loadContext(keyAttrs *types.KeyAttributes) ([]byte, error) {
 // 	ctx, err := tpm.backend.Get(keyAttrs, store.FSEXT_TPM_CONTEXT)
 // 	if err != nil {
-// 		tpm.logger.Error(err)
+// 		tpm.logger.Error("failed to load context", slog.String("error", err.Error()))
 // 		return nil, err
 // 	}
 // 	return ctx, nil

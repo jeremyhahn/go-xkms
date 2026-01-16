@@ -17,6 +17,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/google/go-tpm/tpm2"
@@ -177,7 +178,7 @@ func (tpm *TPM2) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmetr
 	if tpm.tracker != nil {
 		if err := tpm.tracker.SetAEADOptions(keyID, types.DefaultAEADOptions()); err != nil {
 			// Log but don't fail key generation
-			tpm.logger.Warnf("warning: failed to set AEAD options: %v", err)
+			tpm.logger.Warn("failed to set AEAD options", slog.String("error", err.Error()))
 		}
 	}
 
@@ -362,7 +363,7 @@ func (e *tpm2AESEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions)
 	if e.tpm.tracker != nil {
 		if err := e.tpm.tracker.RecordNonce(keyID, nonce); err != nil {
 			// Log warning but return successful encryption
-			e.tpm.logger.Warnf("warning: failed to record nonce: %v", err)
+			e.tpm.logger.Warn("failed to record nonce", slog.String("error", err.Error()))
 		}
 	}
 

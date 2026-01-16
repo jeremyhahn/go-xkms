@@ -1,5 +1,3 @@
-//go:build tpm_simulator
-
 package tpm2
 
 import (
@@ -8,12 +6,12 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
@@ -71,7 +69,8 @@ func extendRandomBytes(transport transport.TPM) {
 	bytes := make([]byte, 32)
 	_, err := rand.Read(bytes)
 	if err != nil {
-		logging.DefaultLogger().FatalError(err)
+		slog.Default().Error("failed to read random bytes", "error", err)
+		panic(err)
 	}
 
 	fmt.Printf(
@@ -93,7 +92,8 @@ func extendRandomBytes(transport transport.TPM) {
 		},
 	}.Execute(transport)
 	if err != nil {
-		logging.DefaultLogger().FatalError(err)
+		slog.Default().Error("failed to extend PCR", "error", err)
+		panic(err)
 	}
 }
 
@@ -106,7 +106,8 @@ func createKey(
 
 	ekAttrs, err := tpm.EKAttributes()
 	if err != nil {
-		logging.DefaultLogger().FatalError(err)
+		slog.Default().Error("failed to get EK attributes", "error", err)
+		panic(err)
 	}
 
 	srkAttrs := &types.KeyAttributes{
@@ -126,7 +127,8 @@ func createKey(
 		}}
 	err = tpm.CreateSRK(srkAttrs)
 	if err != nil {
-		logging.DefaultLogger().FatalError(err)
+		slog.Default().Error("failed to create SRK", "error", err)
+		panic(err)
 	}
 
 	return &types.KeyAttributes{
@@ -143,14 +145,15 @@ func createKey(
 }
 
 // Creates a connection a simulated TPM (without creating a CA)
-func createSim(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
+func createSim(encrypt, entropy bool) (*slog.Logger, TrustedPlatformModule) {
 
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	buf := make([]byte, 8)
 	_, err := rand.Reader.Read(buf)
 	if err != nil {
-		logger.FatalError(err)
+		logger.Error("failed to read random bytes", "error", err)
+		panic(err)
 	}
 	hexVal := hex.EncodeToString(buf)
 	_ = fmt.Sprintf("%s/%s", TEST_DIR, hexVal)
@@ -158,7 +161,8 @@ func createSim(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
 	// Create storage backend
 	storageFactory, err := store.NewStorageFactory(logger, "")
 	if err != nil {
-		logger.FatalError(err)
+		logger.Error("failed to create storage factory", "error", err)
+		panic(err)
 	}
 	// Note: In a real test, we'd defer storageFactory.Close() but this helper
 	// doesn't return a cleanup function. The temp dir will be cleaned up on program exit.
@@ -215,7 +219,7 @@ func createSim(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
 	}
 
 	params := &Params{
-		Logger:       logging.DefaultLogger(),
+		Logger:       logger,
 		DebugSecrets: true,
 		Config:       config,
 		BlobStore:    blobStore,
@@ -227,10 +231,12 @@ func createSim(encrypt, entropy bool) (*logging.Logger, TrustedPlatformModule) {
 	if err != nil {
 		if err == ErrNotInitialized {
 			if err = tpm.Provision(nil); err != nil {
-				logger.FatalError(err)
+				logger.Error("failed to provision TPM", "error", err)
+				panic(err)
 			}
 		} else {
-			logger.FatalError(err)
+			logger.Error("failed to create TPM2", "error", err)
+			panic(err)
 		}
 	}
 

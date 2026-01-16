@@ -1,12 +1,10 @@
-//go:build tpm_simulator
-
 package tpm2
 
 import (
 	"encoding/hex"
+	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -38,7 +36,7 @@ func TestRandBytesEncrypted(t *testing.T) {
 
 func TestRandom(t *testing.T) {
 
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
@@ -50,7 +48,7 @@ func TestRandom(t *testing.T) {
 
 	encoded := hex.EncodeToString(random)
 
-	logger.Debugf("%+s", encoded)
+	logger.Debug(encoded)
 }
 
 func TestRandomBytes_SmallChunk(t *testing.T) {

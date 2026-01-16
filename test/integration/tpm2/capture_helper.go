@@ -18,6 +18,7 @@ package integration
 import (
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,7 +30,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
 	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
 	tpm2ks "github.com/jeremyhahn/go-keychain/pkg/tpm2"
@@ -104,7 +104,7 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 	capture := NewTPMCapture(baseTpm)
 
 	// Create logger
-	logger := logging.DefaultLogger()
+	logger := slog.Default()
 
 	// Create in-memory storage backend for blob store and file backend
 	memStorage := storage.New()

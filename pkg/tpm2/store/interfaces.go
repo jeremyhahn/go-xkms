@@ -18,9 +18,13 @@ import (
 	"crypto"
 	"crypto/x509"
 	"errors"
+	"log/slog"
 
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 )
+
+// Logger is a type alias for *slog.Logger
+type Logger = *slog.Logger
 
 // SignerOpts provides TPM-specific signer options
 type SignerOpts struct {
@@ -118,11 +122,4 @@ type SignerStorer interface {
 	Save(attrs *types.KeyAttributes, signer interface{}) error
 	Delete(attrs *types.KeyAttributes) error
 	SaveSignature(opts *SignerOpts, signature, digest []byte) error
-}
-
-// Logger defines the minimal logging interface required by the store package
-type Logger interface {
-	Debugf(format string, args ...any)
-	Warnf(format string, args ...any)
-	Errorf(format string, args ...any)
 }

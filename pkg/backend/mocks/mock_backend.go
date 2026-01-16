@@ -71,8 +71,8 @@ func NewMockBackend() *MockBackend {
 
 // Type returns the backend type.
 func (m *MockBackend) Type() types.BackendType {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.TypeCalls++
 
@@ -84,8 +84,8 @@ func (m *MockBackend) Type() types.BackendType {
 
 // Capabilities returns backend capabilities.
 func (m *MockBackend) Capabilities() types.Capabilities {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.CapabilitiesCalls++
 
@@ -145,8 +145,8 @@ func (m *MockBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey
 
 // GetKey retrieves a key.
 func (m *MockBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.GetKeyCalls = append(m.GetKeyCalls, attrs.CN)
 
@@ -189,8 +189,8 @@ func (m *MockBackend) DeleteKey(attrs *types.KeyAttributes) error {
 
 // ListKeys returns all keys.
 func (m *MockBackend) ListKeys() ([]*types.KeyAttributes, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.ListKeysCalls++
 
@@ -216,8 +216,8 @@ func (m *MockBackend) ListKeys() ([]*types.KeyAttributes, error) {
 
 // Signer returns a crypto.Signer for the key.
 func (m *MockBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.SignerCalls = append(m.SignerCalls, attrs.CN)
 
@@ -243,8 +243,8 @@ func (m *MockBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) 
 
 // Decrypter returns a crypto.Decrypter for the key.
 func (m *MockBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.DecrypterCalls = append(m.DecrypterCalls, attrs.CN)
 

@@ -24,8 +24,8 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/jeremyhahn/go-keychain/internal/config"
-	"github.com/jeremyhahn/go-keychain/internal/server"
+	"github.com/jeremyhahn/go-keychain/pkg/config"
+	"github.com/jeremyhahn/go-keychain/pkg/server"
 )
 
 var (

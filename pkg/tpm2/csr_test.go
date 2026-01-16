@@ -9,11 +9,11 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/binary"
+	"log/slog"
 	"math/big"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -664,8 +664,8 @@ func TestCSR_ParseIdentityProvisioningStrategy(t *testing.T) {
 
 // Helper functions for tests
 
-func createTestLogger() *logging.Logger {
-	return logging.DefaultLogger()
+func createTestLogger() *slog.Logger {
+	return slog.Default()
 }
 
 // mockTPMForSignatureTests wraps TPM2 for signature verification testing

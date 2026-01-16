@@ -441,9 +441,24 @@ func (c *unixGRPCClient) Decrypt(ctx context.Context, req *DecryptRequest) (*Dec
 }
 
 // EncryptAsym encrypts data with RSA public key (asymmetric encryption).
-// Note: This operation is not supported over gRPC. Use REST client or local mode.
 func (c *unixGRPCClient) EncryptAsym(ctx context.Context, req *EncryptAsymRequest) (*EncryptAsymResponse, error) {
-	return nil, fmt.Errorf("%w: asymmetric encryption via gRPC, use REST API or local mode", ErrNotSupported)
+	if c.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := c.client.EncryptAsym(ctx, &pb.EncryptAsymRequest{
+		KeyId:     req.KeyID,
+		Backend:   req.Backend,
+		Plaintext: req.Plaintext,
+		Hash:      req.Hash,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &EncryptAsymResponse{
+		Ciphertext: resp.Ciphertext,
+	}, nil
 }
 
 // GetCertificate returns the certificate for a key.

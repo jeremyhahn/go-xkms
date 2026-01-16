@@ -26,12 +26,15 @@ const (
 	srkIndexECCP256 = 0x81000002
 	idevIDKey       = 0x81020000
 	idevIDCert      = 0x01C90000
+	iakKey          = 0x81020001
+	iakCert         = 0x01C90001
 
 	// TCG TPM 2.0 Keys for Device Identity and Attestation
 	// Section 7.3.2 - IDevID/IAK Policy NV Indices for Recoverable Keys
 	// Section 7.3.3 - IDevID/IAK Unique String
 	// https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_DevID_v1r2_02dec2020.pdf
 	idevIDNVIndex = 0x01C90020
+	iakNVIndex    = 0x01C90021
 
 	ekCertIndexRSA2048 = 0x01C00002
 	ekCertIndexECCP256 = 0x01C0000a
@@ -39,11 +42,15 @@ const (
 	ekCertIndexECCP521 = 0x01C00018
 
 	// Defined in "Registry of reserved TPM 2.0 handles and localities".
-	// These constants are used in test files with tpm_simulator build tag.
+	// These constants are used in test files.
 
 	nvramPlatformIndex    = 0x01400001 //nolint:unused // used in tests
 	nvramEndorsementIndex = 0x01C00001 //nolint:unused // used in tests
 	nvramOwnerIndex       = 0x01800001 //nolint:unused // used in tests
+
+	// NV index ranges for counter and extend testing
+	nvramCounterIndex = 0x01800010 //nolint:unused // used in tests
+	nvramExtendIndex  = 0x01800020 //nolint:unused // used in tests
 
 	// Trusted Platform EK and SRK stored under the Platform Hierarchy
 	// Registry of Reserved TPM 2.0 Handles and Localities, Section 2.3.1 - Key Handle Assignments
@@ -65,7 +72,7 @@ const (
 )
 
 var (
-	// debugPCR and debugPCRBank are used in test files with tpm_simulator build tag.
+	// debugPCR and debugPCRBank are used in test files.
 	debugPCR     = uint(16)      //nolint:unused // used in tests
 	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
 
@@ -98,6 +105,7 @@ var (
 	ErrInvalidCryptoHashAlgID       = errors.New("tpm: crypto.Hash doesn't map to a supported TPMAlgID")
 	ErrCurveNotSupported            = errors.New("tpm: ECC curve not supported by TPM")
 	ErrInvalidKeySize               = errors.New("tpm: invalid key size")
+	ErrInvalidNVExtendData          = errors.New("tpm: invalid NV extend data - data cannot be nil or empty")
 
 	// TPM_RC errors
 	ErrCommandNotSupported = tpm2.TPMRC(0xb0143)
@@ -607,6 +615,11 @@ type TCG_CSR_IDEVID struct {
 	SigSz       [4]byte
 	CsrContents TCG_IDEVID_CONTENT
 	Signature   []byte
+}
+
+// Marshal serializes the TCG_CSR_IDEVID to a binary byte array.
+func (csr TCG_CSR_IDEVID) Marshal() ([]byte, error) {
+	return PackIDevIDCSR(&csr)
 }
 
 type TCG_IDEVID_CONTENT struct {

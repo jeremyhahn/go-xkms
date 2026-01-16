@@ -15,9 +15,9 @@ package tpm2
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
-	"github.com/jeremyhahn/go-keychain/pkg/logging"
 	pkgtpm2 "github.com/jeremyhahn/go-keychain/pkg/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -65,7 +65,7 @@ type Config struct {
 	CN string `yaml:"cn" json:"cn"`
 
 	// Logger is the logger instance to use
-	Logger *logging.Logger `yaml:"-" json:"-"`
+	Logger *slog.Logger `yaml:"-" json:"-"`
 
 	// Tracker is the AEAD safety tracker
 	Tracker types.AEADSafetyTracker `yaml:"-" json:"-"`

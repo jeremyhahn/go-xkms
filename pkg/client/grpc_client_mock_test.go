@@ -16,7 +16,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -285,6 +284,12 @@ func (s *mockKeystoreServer) DisableAllKeyVersions(ctx context.Context, req *pb.
 		KeyId:   req.KeyId,
 		Count:   3,
 		Message: "all versions disabled",
+	}, nil
+}
+
+func (s *mockKeystoreServer) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (*pb.EncryptAsymResponse, error) {
+	return &pb.EncryptAsymResponse{
+		Ciphertext: []byte("encrypted-asym-data"),
 	}, nil
 }
 
@@ -1427,26 +1432,25 @@ func TestGRPCClient_NotConnected_GetTLSCertificate(t *testing.T) {
 	}
 }
 
-func TestGRPCClient_EncryptAsym_NotSupported(t *testing.T) {
+func TestGRPCClient_WithMockServer_EncryptAsym(t *testing.T) {
 	server, lis := setupMockGRPCServer(t)
 	defer server.Stop()
 
 	client := createMockGRPCClient(t, lis)
 	defer func() { _ = client.Close() }()
 
-	plaintext, _ := json.Marshal([]byte("test data"))
-	_, err := client.EncryptAsym(context.Background(), &EncryptAsymRequest{
+	resp, err := client.EncryptAsym(context.Background(), &EncryptAsymRequest{
 		Backend:   "software",
 		KeyID:     "test-key",
-		Plaintext: plaintext,
+		Plaintext: []byte("test data"),
 		Hash:      "SHA256",
 	})
 
-	if err == nil {
-		t.Error("EncryptAsym() should return error")
+	if err != nil {
+		t.Fatalf("EncryptAsym() error = %v", err)
 	}
-	if !errors.Is(err, ErrNotSupported) {
-		t.Errorf("EncryptAsym() error = %v, want ErrNotSupported", err)
+	if len(resp.Ciphertext) == 0 {
+		t.Error("EncryptAsym() ciphertext is empty")
 	}
 }
 

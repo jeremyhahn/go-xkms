@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -60,18 +61,19 @@ func DecodePEM(data []byte) (*pem.Block, error) {
 }
 
 // DebugKeyAttributes logs key attributes for debugging
-func DebugKeyAttributes(logger Logger, attrs *types.KeyAttributes) {
+func DebugKeyAttributes(logger *slog.Logger, attrs *types.KeyAttributes) {
 	if !attrs.Debug {
 		return
 	}
-	logger.Debugf("Key Attributes:")
-	logger.Debugf("  CN: %s", attrs.CN)
-	logger.Debugf("  KeyAlgorithm: %s", attrs.KeyAlgorithm)
-	logger.Debugf("  KeyType: %s", attrs.KeyType)
-	logger.Debugf("  StoreType: %s", attrs.StoreType)
-	logger.Debugf("  Hash: %s", attrs.Hash)
-	logger.Debugf("  SignatureAlgorithm: %s", attrs.SignatureAlgorithm)
-	logger.Debugf("  PlatformPolicy: %t", attrs.PlatformPolicy)
+	logger.Debug("Key Attributes",
+		slog.String("cn", attrs.CN),
+		slog.String("key_algorithm", attrs.KeyAlgorithm.String()),
+		slog.String("key_type", attrs.KeyType.String()),
+		slog.String("store_type", string(attrs.StoreType)),
+		slog.String("hash", attrs.Hash.String()),
+		slog.String("signature_algorithm", attrs.SignatureAlgorithm.String()),
+		slog.Bool("platform_policy", attrs.PlatformPolicy),
+	)
 }
 
 // ParseSignatureAlgorithm converts a string to x509.SignatureAlgorithm

@@ -30,6 +30,7 @@ const (
 	CategoryAdmin    CommandCategory = "admin"
 	CategoryVersion  CommandCategory = "version"
 	CategoryBackends CommandCategory = "backends"
+	CategorySealing  CommandCategory = "sealing"
 )
 
 // CommandDefinition defines a CLI command with its arguments and expected behavior
@@ -92,13 +93,14 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
-	return append(append(append(append(append(append(
+	return append(append(append(append(append(append(append(
 		BackendCommands(),
 		KeyCommands()...),
 		CertCommands()...),
 		TLSCommands()...),
 		FrostCommands()...),
 		FIDO2Commands()...),
+		SealingCommands()...),
 		VersionCommands()...)
 }
 
@@ -485,6 +487,54 @@ func FIDO2Commands() []CommandDefinition {
 			OptionalArgs: []ArgDefinition{
 				{Flag: "device", Value: "", Description: "Specific device path"},
 			},
+		},
+	}
+}
+
+// SealingCommands returns sealing-related commands for data protection
+// These commands use the backend's sealing mechanism to protect data
+func SealingCommands() []CommandDefinition {
+	return []CommandDefinition{
+		{
+			Name:            "seal",
+			Category:        CategorySealing,
+			Command:         []string{"seal"},
+			Description:     "Seal data using backend's sealing mechanism",
+			RequiresBackend: true,
+			RequiresServer:  true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "", Value: "test-data-to-seal", Description: "Data to seal", IsPositional: true},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "aad", Value: "", Description: "Additional authenticated data"},
+				{Flag: "output", Value: "", Description: "Output format (json/base64)"},
+			},
+		},
+		{
+			Name:            "unseal",
+			Category:        CategorySealing,
+			Command:         []string{"unseal"},
+			Description:     "Unseal previously sealed data",
+			RequiresBackend: true,
+			RequiresServer:  true,
+			RequiresSetup:   true, // Requires sealed data from seal operation
+			RequiredArgs: []ArgDefinition{
+				{Flag: "ciphertext", Value: "", Description: "Sealed ciphertext (base64)", IsPositional: false},
+				{Flag: "nonce", Value: "", Description: "Nonce from seal operation", IsPositional: false},
+				{Flag: "tag", Value: "", Description: "Authentication tag from seal operation", IsPositional: false},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "aad", Value: "", Description: "Additional authenticated data (must match seal)"},
+			},
+		},
+		{
+			Name:                   "can-seal",
+			Category:               CategorySealing,
+			Command:                []string{"can-seal"},
+			Description:            "Check if backend supports sealing operations",
+			RequiresBackend:        false, // Optional - checks default if not specified
+			RequiresServer:         true,
+			ExpectedOutputContains: []string{"can_seal"},
 		},
 	}
 }

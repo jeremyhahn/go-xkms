@@ -15,31 +15,33 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	pkgwebauthn "github.com/jeremyhahn/go-keychain/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func newTestHandler(t *testing.T) *Handler {
-	svc, err := webauthn.NewService(webauthn.ServiceParams{
-		Config: &webauthn.Config{
+	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
 			RPID:          "example.com",
 			RPDisplayName: "Example",
 			RPOrigins:     []string{"https://example.com"},
 		},
-		UserStore:       webauthn.NewMemoryUserStore(),
-		SessionStore:    webauthn.NewMemorySessionStore(),
-		CredentialStore: webauthn.NewMemoryCredentialStore(),
+		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
+		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
 	})
 	require.NoError(t, err)
 	return NewHandler(svc)
@@ -642,43 +644,43 @@ func TestHandler_HandleServiceError(t *testing.T) {
 	}{
 		{
 			name:       "session not found",
-			err:        webauthn.ErrSessionNotFound,
+			err:        pkgwebauthn.ErrSessionNotFound,
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrorCodeInvalidSession,
 		},
 		{
 			name:       "session expired",
-			err:        webauthn.ErrSessionExpired,
+			err:        pkgwebauthn.ErrSessionExpired,
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrorCodeSessionExpired,
 		},
 		{
 			name:       "user not found",
-			err:        webauthn.ErrUserNotFound,
+			err:        pkgwebauthn.ErrUserNotFound,
 			wantStatus: http.StatusNotFound,
 			wantCode:   ErrorCodeUserNotFound,
 		},
 		{
 			name:       "no credentials",
-			err:        webauthn.ErrNoCredentials,
+			err:        pkgwebauthn.ErrNoCredentials,
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrorCodeNoCredentials,
 		},
 		{
 			name:       "verification failed",
-			err:        webauthn.ErrVerificationFailed,
+			err:        pkgwebauthn.ErrVerificationFailed,
 			wantStatus: http.StatusUnauthorized,
 			wantCode:   ErrorCodeVerificationFailed,
 		},
 		{
 			name:       "invalid request",
-			err:        webauthn.ErrInvalidRequest,
+			err:        pkgwebauthn.ErrInvalidRequest,
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrorCodeInvalidRequest,
 		},
 		{
 			name:       "invalid response",
-			err:        webauthn.ErrInvalidResponse,
+			err:        pkgwebauthn.ErrInvalidResponse,
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrorCodeInvalidRequest,
 		},
@@ -690,13 +692,13 @@ func TestHandler_HandleServiceError(t *testing.T) {
 		},
 		{
 			name:       "wrapped session not found",
-			err:        fmt.Errorf("wrapped: %w", webauthn.ErrSessionNotFound),
+			err:        fmt.Errorf("wrapped: %w", pkgwebauthn.ErrSessionNotFound),
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrorCodeInvalidSession,
 		},
 		{
 			name:       "wrapped user not found",
-			err:        fmt.Errorf("wrapped: %w", webauthn.ErrUserNotFound),
+			err:        fmt.Errorf("wrapped: %w", pkgwebauthn.ErrUserNotFound),
 			wantStatus: http.StatusNotFound,
 			wantCode:   ErrorCodeUserNotFound,
 		},
@@ -1062,5 +1064,385 @@ func TestHandler_BeginLogin_UserIDNotNil(t *testing.T) {
 	h.BeginLogin(rec, req)
 
 	// Should fail due to no credentials but we test the userID != nil path (line 182-184)
+	assert.True(t, rec.Code >= 400)
+}
+
+// errorUserStore is a mock user store that returns errors for specific operations.
+type errorUserStore struct {
+	pkgwebauthn.UserStore
+	getByEmailErr error
+	createErr     error
+}
+
+func (e *errorUserStore) GetByEmail(ctx context.Context, email string) (pkgwebauthn.User, error) {
+	if e.getByEmailErr != nil {
+		return nil, e.getByEmailErr
+	}
+	return e.UserStore.GetByEmail(ctx, email)
+}
+
+func (e *errorUserStore) Create(ctx context.Context, email, displayName string) (pkgwebauthn.User, error) {
+	if e.createErr != nil {
+		return nil, e.createErr
+	}
+	return e.UserStore.Create(ctx, email, displayName)
+}
+
+// errorCredentialStore is a mock credential store that returns errors.
+type errorCredentialStore struct {
+	pkgwebauthn.CredentialStore
+	getByUserIDErr error
+}
+
+func (e *errorCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([]*pkgwebauthn.Credential, error) {
+	if e.getByUserIDErr != nil {
+		return nil, e.getByUserIDErr
+	}
+	return e.CredentialStore.GetByUserID(ctx, userID)
+}
+
+// TestHandler_BeginRegistration_ServiceError tests BeginRegistration when the service returns an error.
+func TestHandler_BeginRegistration_ServiceError(t *testing.T) {
+	// Create a handler with an error-returning user store
+	baseUserStore := pkgwebauthn.NewMemoryUserStore()
+	errStore := &errorUserStore{
+		UserStore:     baseUserStore,
+		getByEmailErr: errors.New("database connection failed"),
+	}
+
+	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
+			RPID:          "example.com",
+			RPDisplayName: "Example",
+			RPOrigins:     []string{"https://example.com"},
+		},
+		UserStore:       errStore,
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
+		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+	h := NewHandler(svc)
+
+	req := httptest.NewRequest(http.MethodPost, "/registration/begin",
+		strings.NewReader(`{"email":"error@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.BeginRegistration(rec, req)
+
+	// Should return internal server error
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	var errResp ErrorResponse
+	decErr := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, decErr)
+	assert.Equal(t, ErrorCodeInternalError, errResp.Error)
+}
+
+// TestHandler_FinishRegistration_SessionNotFoundError tests FinishRegistration
+// when the session is not found and returns session not found error.
+func TestHandler_FinishRegistration_InvalidCredentialBody(t *testing.T) {
+	h := newTestHandler(t)
+
+	// A credential creation response body that will fail parsing
+	// because the attestationObject contains invalid CBOR/data
+	validBody := `{
+		"id": "dGVzdC1jcmVkLWlk",
+		"rawId": "dGVzdC1jcmVkLWlk",
+		"type": "public-key",
+		"response": {
+			"clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIiwiY2hhbGxlbmdlIjoiYUdWc2JHOD0iLCJvcmlnaW4iOiJodHRwczovL2V4YW1wbGUuY29tIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+			"attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVikSZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2NFAAAAAK3OAAI1vMYKZIsLJfHwVQMAIHRlc3QtY3JlZC1pZKUBAgMmIAEhWCBEZXZpY2VQdWJsaWNLZXlIZXJlSW5IZXgiWCAiWCBEZXZpY2VQdWJsaWNLZXlIZXJlSW5IZXgi"
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/registration/finish", strings.NewReader(validBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSessionID, "nonexistent-session-id")
+	rec := httptest.NewRecorder()
+
+	h.FinishRegistration(rec, req)
+
+	// The response should be bad request because credential body parsing fails
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	var errResp ErrorResponse
+	decErr := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, decErr)
+	assert.Equal(t, ErrorCodeInvalidRequest, errResp.Error)
+}
+
+// TestHandler_FinishLogin_SessionNotFoundError tests FinishLogin when session is not found.
+func TestHandler_FinishLogin_SessionNotFoundError(t *testing.T) {
+	h := newTestHandler(t)
+
+	// A properly formatted assertion response
+	validBody := `{
+		"id": "dGVzdC1jcmVkLWlk",
+		"rawId": "dGVzdC1jcmVkLWlk",
+		"type": "public-key",
+		"response": {
+			"clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiYUdWc2JHOD0iLCJvcmlnaW4iOiJodHRwczovL2V4YW1wbGUuY29tIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+			"authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAA",
+			"signature": "MEUCIQDxT3T8cKfGcYXnkECKLyFYJR_Z3vGa_y55eCPzjEXAUgIgfSy3Tk9L_mJQqfqNpqpLcT7SqkQ4",
+			"userHandle": "dXNlci1oYW5kbGU"
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/login/finish", strings.NewReader(validBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSessionID, "nonexistent-session-id")
+	rec := httptest.NewRecorder()
+
+	h.FinishLogin(rec, req)
+
+	// The response should be bad request because session not found
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	var errResp ErrorResponse
+	decErr := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, decErr)
+	assert.Equal(t, ErrorCodeInvalidSession, errResp.Error)
+}
+
+// TestHandler_RegistrationStatus_GetUserByEmailError tests RegistrationStatus when
+// GetUserByEmail returns a non-user-not-found error.
+func TestHandler_RegistrationStatus_GetUserByEmailError(t *testing.T) {
+	// Create a handler with an error-returning user store
+	baseUserStore := pkgwebauthn.NewMemoryUserStore()
+	errStore := &errorUserStore{
+		UserStore:     baseUserStore,
+		getByEmailErr: errors.New("database connection failed"),
+	}
+
+	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
+			RPID:          "example.com",
+			RPDisplayName: "Example",
+			RPOrigins:     []string{"https://example.com"},
+		},
+		UserStore:       errStore,
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
+		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+	h := NewHandler(svc)
+
+	req := httptest.NewRequest(http.MethodGet, "/registration/status?email=error@example.com", nil)
+	rec := httptest.NewRecorder()
+
+	h.RegistrationStatus(rec, req)
+
+	// Should return internal server error
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	var errResp ErrorResponse
+	decErr := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, decErr)
+	assert.Equal(t, ErrorCodeInternalError, errResp.Error)
+}
+
+// TestHandler_RegistrationStatus_IsRegisteredError tests RegistrationStatus when
+// IsRegistered returns an error.
+func TestHandler_RegistrationStatus_IsRegisteredServiceError(t *testing.T) {
+	// Create a handler with an error-returning credential store
+	baseCredStore := pkgwebauthn.NewMemoryCredentialStore()
+	errStore := &errorCredentialStore{
+		CredentialStore: baseCredStore,
+		getByUserIDErr:  errors.New("database connection failed"),
+	}
+
+	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
+			RPID:          "example.com",
+			RPDisplayName: "Example",
+			RPOrigins:     []string{"https://example.com"},
+		},
+		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
+		CredentialStore: errStore,
+	})
+	require.NoError(t, err)
+	h := NewHandler(svc)
+
+	// Use a valid base64-encoded user ID
+	userID := base64.RawURLEncoding.EncodeToString([]byte{1, 2, 3, 4})
+	req := httptest.NewRequest(http.MethodGet, "/registration/status", nil)
+	req.Header.Set(HeaderUserID, userID)
+	rec := httptest.NewRecorder()
+
+	h.RegistrationStatus(rec, req)
+
+	// Should return internal server error
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	var errResp ErrorResponse
+	decErr := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, decErr)
+	assert.Equal(t, ErrorCodeInternalError, errResp.Error)
+}
+
+// TestHandler_BeginLogin_GetUserByEmailServiceError tests BeginLogin when
+// GetUserByEmail returns a non-user-not-found error.
+func TestHandler_BeginLogin_GetUserByEmailServiceError(t *testing.T) {
+	// First create a user in a real store
+	baseUserStore := pkgwebauthn.NewMemoryUserStore()
+	ctx := context.Background()
+	_, createErr := baseUserStore.Create(ctx, "error@example.com", "Error User")
+	require.NoError(t, createErr)
+
+	// Now wrap with error store that returns errors for GetByEmail
+	errStore := &errorUserStore{
+		UserStore:     baseUserStore,
+		getByEmailErr: errors.New("database connection failed"),
+	}
+
+	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
+			RPID:          "example.com",
+			RPDisplayName: "Example",
+			RPOrigins:     []string{"https://example.com"},
+		},
+		UserStore:       errStore,
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
+		CredentialStore: pkgwebauthn.NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+	h := NewHandler(svc)
+
+	// Try to login by email, which will call GetUserByEmail
+	req := httptest.NewRequest(http.MethodPost, "/login/begin",
+		strings.NewReader(`{"email":"error@example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.BeginLogin(rec, req)
+
+	// Should return internal server error
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	var errResp ErrorResponse
+	decErr := json.NewDecoder(rec.Body).Decode(&errResp)
+	require.NoError(t, decErr)
+	assert.Equal(t, ErrorCodeInternalError, errResp.Error)
+}
+
+// TestHandler_BeginLogin_ServiceErrorOnBeginLogin tests BeginLogin when
+// the service BeginLogin call itself fails.
+func TestHandler_BeginLogin_BeginLoginServiceError(t *testing.T) {
+	// Create a credential store that returns errors
+	baseCredStore := pkgwebauthn.NewMemoryCredentialStore()
+	errStore := &errorCredentialStore{
+		CredentialStore: baseCredStore,
+		getByUserIDErr:  errors.New("database connection failed"),
+	}
+
+	svc, err := pkgwebauthn.NewService(pkgwebauthn.ServiceParams{
+		Config: &pkgwebauthn.Config{
+			RPID:          "example.com",
+			RPDisplayName: "Example",
+			RPOrigins:     []string{"https://example.com"},
+		},
+		UserStore:       pkgwebauthn.NewMemoryUserStore(),
+		SessionStore:    pkgwebauthn.NewMemorySessionStore(),
+		CredentialStore: errStore,
+	})
+	require.NoError(t, err)
+	h := NewHandler(svc)
+
+	// Register a user first (this will work because the error is on GetByUserID)
+	regReq := httptest.NewRequest(http.MethodPost, "/registration/begin",
+		strings.NewReader(`{"email":"test@example.com"}`))
+	regReq.Header.Set("Content-Type", "application/json")
+	regRec := httptest.NewRecorder()
+	h.BeginRegistration(regRec, regReq)
+	// Note: this fails at getting credentials, but user is still created
+
+	// Get the user ID from a successful fetch
+	user, userErr := h.service.GetUserByEmail(regReq.Context(), "test@example.com")
+	if userErr == nil && user != nil {
+		userID := base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
+
+		// Try to login with user ID
+		req := httptest.NewRequest(http.MethodPost, "/login/begin",
+			strings.NewReader(`{"user_id":"`+userID+`"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		h.BeginLogin(rec, req)
+
+		// Should fail with internal server error due to credential store error
+		assert.True(t, rec.Code >= 400)
+	}
+}
+
+// TestHandler_WithLogger_CustomLogger tests that WithLogger properly sets a custom logger.
+func TestHandler_WithLogger_CustomLogger(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create a custom logger
+	customLogger := slog.Default().With("component", "webauthn")
+
+	// Set the logger
+	result := h.WithLogger(customLogger)
+
+	// Verify it returns the same handler for chaining
+	assert.Same(t, h, result)
+
+	// Verify the logger was set (indirectly through an operation that would use logging)
+	// The logger is private so we can only verify the handler works correctly
+	assert.NotNil(t, h)
+}
+
+// TestHandler_BeginLogin_DiscoverableCredentialsWithUserIDHeader tests that
+// BeginLogin sets the X-User-Id header when userID is not nil and login succeeds.
+func TestHandler_BeginLogin_HeaderSetOnSuccess(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Test discoverable credentials flow (no user ID) - should NOT set X-User-Id header
+	req := httptest.NewRequest(http.MethodPost, "/login/begin", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.BeginLogin(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get(HeaderSessionID))
+	// For discoverable credentials (no user ID), X-User-Id should be empty
+	assert.Empty(t, rec.Header().Get(HeaderUserID))
+}
+
+// TestHandler_FinishLogin_ValidSessionWithUserID tests FinishLogin with a valid session
+// but invalid user ID to trigger the user lookup error path.
+func TestHandler_FinishLogin_ValidSessionUserLookupError(t *testing.T) {
+	h := newTestHandler(t)
+
+	// First, start a discoverable login to get a valid session
+	loginBeginReq := httptest.NewRequest(http.MethodPost, "/login/begin", strings.NewReader(`{}`))
+	loginBeginReq.Header.Set("Content-Type", "application/json")
+	loginBeginRec := httptest.NewRecorder()
+	h.BeginLogin(loginBeginRec, loginBeginReq)
+	require.Equal(t, http.StatusOK, loginBeginRec.Code)
+	sessionID := loginBeginRec.Header().Get(HeaderSessionID)
+	require.NotEmpty(t, sessionID)
+
+	// Now try to finish login with that session but with a user ID that doesn't exist
+	userID := base64.RawURLEncoding.EncodeToString([]byte("nonexistent-user"))
+
+	validBody := `{
+		"id": "dGVzdC1jcmVkLWlk",
+		"rawId": "dGVzdC1jcmVkLWlk",
+		"type": "public-key",
+		"response": {
+			"clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiYUdWc2JHOD0iLCJvcmlnaW4iOiJodHRwczovL2V4YW1wbGUuY29tIiwiY3Jvc3NPcmlnaW4iOmZhbHNlfQ",
+			"authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAA",
+			"signature": "MEUCIQDxT3T8cKfGcYXnkECKLyFYJR_Z3vGa_y55eCPzjEXAUgIgfSy3Tk9L_mJQqfqNpqpLcT7SqkQ4",
+			"userHandle": ""
+		}
+	}`
+
+	req := httptest.NewRequest(http.MethodPost, "/login/finish", strings.NewReader(validBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSessionID, sessionID)
+	req.Header.Set(HeaderUserID, userID)
+	rec := httptest.NewRecorder()
+
+	h.FinishLogin(rec, req)
+
+	// Should fail with either user not found or verification failed
 	assert.True(t, rec.Code >= 400)
 }

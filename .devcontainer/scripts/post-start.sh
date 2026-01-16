@@ -7,7 +7,7 @@ set -e
 echo "=== Starting go-keychain Development Environment ==="
 
 # All build tags for reference
-ALL_BUILD_TAGS="integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,tpm_simulator,yubikey,nitrokey,canokey,fido2,webauthn"
+ALL_BUILD_TAGS="integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,yubikey,nitrokey,canokey,fido2,webauthn"
 
 # Ensure SoftHSM directories have correct permissions
 sudo chown -R $(whoami):$(whoami) /var/lib/softhsm 2>/dev/null || true

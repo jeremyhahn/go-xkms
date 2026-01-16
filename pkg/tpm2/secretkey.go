@@ -1,6 +1,8 @@
 package tpm2
 
 import (
+	"log/slog"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -39,7 +41,7 @@ func (tpm *TPM2) CreateSecretKey(
 	}
 	defer func() {
 		if err := closer(); err != nil {
-			tpm.logger.Errorf("failed to close session: %v", err)
+			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 		}
 	}()
 

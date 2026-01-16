@@ -3,6 +3,7 @@ package tpm2
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"log/slog"
 	"math/big"
 
 	"github.com/google/go-tpm/tpm2"
@@ -45,7 +46,7 @@ func (tpm *TPM2) CreateECDSA(
 	}
 	defer func() {
 		if err := closer(); err != nil {
-			tpm.logger.Errorf("failed to close session: %v", err)
+			tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 		}
 	}()
 
@@ -61,7 +62,7 @@ func (tpm *TPM2) CreateECDSA(
 		case elliptic.P521().Params().Name:
 			eccTemplate = ECCP521Template
 		default:
-			tpm.logger.Debugf("tpm: unsupported curve %s, defaulting to P-256", curveName)
+			tpm.logger.Debug("unsupported curve, defaulting to P-256", slog.String("curve", curveName))
 			eccTemplate = ECCP256Template
 		}
 	}
@@ -117,7 +118,7 @@ func (tpm *TPM2) CreateECDSA(
 			}
 			defer func() {
 				if err := closer(); err != nil {
-					tpm.logger.Errorf("failed to close key session: %v", err)
+					tpm.logger.Error("failed to close key session", slog.String("error", err.Error()))
 				}
 			}()
 
@@ -133,7 +134,7 @@ func (tpm *TPM2) CreateECDSA(
 				InPublic: tpm2.BytesAs2B[tpm2.TPMTPublic](createRsp.OutPublic.Bytes()),
 			}.Execute(tpm.transport)
 			if err != nil {
-				tpm.logger.Errorf("%s: %s", err, keyAttrs.CN)
+				tpm.logger.Error("failed to load ECC key", slog.String("error", err.Error()), slog.String("cn", keyAttrs.CN))
 				return nil, err
 			}
 			handle = loadResponse.ObjectHandle
@@ -142,7 +143,7 @@ func (tpm *TPM2) CreateECDSA(
 			public = createRsp.OutPublic
 			defer tpm.Flush(loadResponse.ObjectHandle)
 		} else {
-			tpm.logger.Error(err)
+			tpm.logger.Error("failed to create ECC key", slog.String("error", err.Error()))
 			return nil, err
 		}
 	} else {
@@ -153,9 +154,9 @@ func (tpm *TPM2) CreateECDSA(
 		defer tpm.Flush(response.ObjectHandle)
 	}
 
-	tpm.logger.Debugf("tpm: ECC Key loaded to transient handle 0x%x", handle)
-	tpm.logger.Debugf("tpm: ECC Key Name: %s", Encode(name.Buffer))
-	tpm.logger.Debugf("tpm: ECC Parent (SRK) Name: %s", Encode(srkName.Buffer))
+	tpm.logger.Debug("ECC key loaded to transient handle", slog.String("handle", Encode([]byte{byte(handle >> 24), byte(handle >> 16), byte(handle >> 8), byte(handle)})))
+	tpm.logger.Debug("ECC key name", slog.String("name", Encode(name.Buffer)))
+	tpm.logger.Debug("ECC parent (SRK) name", slog.String("name", Encode(srkName.Buffer)))
 
 	if keyAttrs.TPMAttributes == nil {
 		keyAttrs.TPMAttributes = &types.TPMAttributes{
@@ -174,22 +175,22 @@ func (tpm *TPM2) CreateECDSA(
 
 	outPub, err := public.Contents()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get public contents", slog.String("error", err.Error()))
 		return nil, err
 	}
 	ecDetail, err := outPub.Parameters.ECCDetail()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
 		return nil, err
 	}
 	curve, err := ecDetail.CurveID.Curve()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
 		return nil, err
 	}
 	eccUnique, err := outPub.Unique.ECC()
 	if err != nil {
-		tpm.logger.Error(err)
+		tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
 		return nil, err
 	}
 	eccPub := &ecdsa.PublicKey{

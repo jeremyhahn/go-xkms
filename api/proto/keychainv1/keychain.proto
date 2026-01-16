@@ -107,6 +107,17 @@ service KeystoreService {
   // CopyKey copies a key from one backend to another
   rpc CopyKey(CopyKeyRequest) returns (CopyKeyResponse);
 
+  // ==================== Sealing Operations ====================
+
+  // Seal encrypts data using the backend's sealing mechanism
+  rpc Seal(SealRequest) returns (SealResponse);
+
+  // Unseal decrypts previously sealed data
+  rpc Unseal(UnsealRequest) returns (UnsealResponse);
+
+  // CanSeal checks if a backend supports sealing operations
+  rpc CanSeal(CanSealRequest) returns (CanSealResponse);
+
   // ==================== FROST Threshold Signature Operations ====================
 
   // FrostGenerateKey generates FROST key packages using trusted dealer model
@@ -600,6 +611,50 @@ message CopyKeyResponse {
   bool success = 1;
   string message = 2;
   string dest_key_id = 3;
+}
+
+// ==================== Sealing Operations Messages ====================
+
+// SealRequest requests sealing (encryption) of data using the backend's sealing mechanism
+message SealRequest {
+  string backend = 1;
+  string key_id = 2;
+  bytes data = 3;
+  bytes aad = 4; // Additional authenticated data (optional)
+}
+
+// SealResponse contains the sealed data
+message SealResponse {
+  string backend = 1;
+  bytes ciphertext = 2;
+  bytes nonce = 3;
+  bytes tag = 4;
+  map<string, string> metadata = 5;
+}
+
+// UnsealRequest requests unsealing (decryption) of previously sealed data
+message UnsealRequest {
+  string backend = 1;
+  string key_id = 2;
+  bytes ciphertext = 3;
+  bytes nonce = 4;
+  bytes tag = 5;
+  bytes aad = 6;
+}
+
+// UnsealResponse contains the unsealed (decrypted) data
+message UnsealResponse {
+  bytes plaintext = 1;
+}
+
+// CanSealRequest checks if a backend supports sealing operations
+message CanSealRequest {
+  string backend = 1; // Optional - if empty, checks default backend
+}
+
+// CanSealResponse contains the sealing capability status
+message CanSealResponse {
+  bool can_seal = 1;
 }
 
 // ==================== FROST Threshold Signature Messages ====================

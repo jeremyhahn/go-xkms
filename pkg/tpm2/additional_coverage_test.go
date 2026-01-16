@@ -686,3 +686,32 @@ func TestDefaultConfigValues(t *testing.T) {
 		assert.True(t, DefaultConfig.KeyStore.PlatformPolicy)
 	})
 }
+
+// TestHierarchyNameFunction tests the HierarchyName function
+func TestHierarchyNameFunction(t *testing.T) {
+	t.Run("returns OWNER for TPMRHOwner", func(t *testing.T) {
+		result := HierarchyName(tpm2.TPMRHOwner)
+		assert.Equal(t, "OWNER", result)
+	})
+
+	t.Run("returns ENDORSEMENT for TPMRHEndorsement", func(t *testing.T) {
+		result := HierarchyName(tpm2.TPMRHEndorsement)
+		assert.Equal(t, "ENDORSEMENT", result)
+	})
+
+	t.Run("returns PLATFORM for TPMRHPlatform", func(t *testing.T) {
+		result := HierarchyName(tpm2.TPMRHPlatform)
+		assert.Equal(t, "PLATFORM", result)
+	})
+
+	t.Run("returns NULL for TPMRHNull", func(t *testing.T) {
+		result := HierarchyName(tpm2.TPMRHNull)
+		assert.Equal(t, "NULL", result)
+	})
+
+	t.Run("panics for unknown hierarchy", func(t *testing.T) {
+		assert.Panics(t, func() {
+			HierarchyName(tpm2.TPMHandle(0x99999999))
+		})
+	})
+}
