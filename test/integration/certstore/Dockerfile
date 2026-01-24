@@ -1,6 +1,14 @@
-FROM golang:1.25.5-alpine
+FROM golang:bookworm
 
-RUN apk add --no-cache git make gcc musl-dev
+# Allow Go to automatically download the required toolchain version
+ENV GOTOOLCHAIN=auto
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    make \
+    gcc \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 

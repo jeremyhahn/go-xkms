@@ -1,7 +1,7 @@
 services:
   # Integration test runner for storage packages
   test:
-    image: golang:1.25.5-alpine
+    image: golang:bookworm
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -11,7 +11,7 @@ services:
       - GOPATH=/tmp/go
     command: >
       sh -c "
-      apk add --no-cache build-base &&
+      apt-get update && apt-get install -y --no-install-recommends build-essential &&
       go test -v -tags=integration ./test/integration/storage/... -timeout 30m
       "
     networks:
@@ -19,7 +19,7 @@ services:
 
   # File storage tests (no special requirements, run standalone)
   test-file:
-    image: golang:1.25.5-alpine
+    image: golang:bookworm
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -37,7 +37,7 @@ services:
 
   # Memory storage tests (no special requirements, run standalone)
   test-memory:
-    image: golang:1.25.5-alpine
+    image: golang:bookworm
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -55,7 +55,7 @@ services:
 
   # Hardware storage tests with PKCS#11 (SoftHSM)
   test-hardware-pkcs11:
-    image: golang:1.25.5-alpine
+    image: golang:bookworm
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -70,7 +70,7 @@ services:
       - softhsm-init
     command: >
       sh -c "
-      apk add --no-cache build-base softhsm &&
+      apt-get update && apt-get install -y --no-install-recommends build-essential softhsm2 libsofthsm2 &&
       go test -v -tags='integration,pkcs11' ./test/integration/storage/...
       -run 'TestHardwareStorage' -timeout 30m
       "
@@ -79,7 +79,7 @@ services:
 
   # Hardware storage tests with TPM2
   test-hardware-tpm2:
-    image: golang:1.25.5-alpine
+    image: golang:bookworm
     working_dir: /app
     volumes:
       - ../../..:/app
@@ -94,7 +94,7 @@ services:
         condition: service_healthy
     command: >
       sh -c "
-      apk add --no-cache build-base tpm2-tss-dev &&
+      apt-get update && apt-get install -y --no-install-recommends build-essential libtss2-dev &&
       sleep 3 &&
       go test -v -tags='integration,tpm2' ./test/integration/storage/...
       -run 'TestHardwareStorage' -timeout 30m
@@ -104,7 +104,7 @@ services:
 
   # SoftHSM initialization service
   softhsm-init:
-    image: golang:1.25.5-alpine
+    image: golang:bookworm
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
       - ../../..:/app
@@ -112,7 +112,7 @@ services:
       - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
     command: >
       sh -c "
-      apk add --no-cache softhsm &&
+      apt-get update && apt-get install -y --no-install-recommends softhsm2 &&
       mkdir -p /var/lib/softhsm/tokens &&
       softhsm2-util --init-token --slot 0 --label test-token --so-pin 1234 --pin 1234 &&
       echo 'SoftHSM initialized successfully'

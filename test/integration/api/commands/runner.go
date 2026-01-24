@@ -29,23 +29,34 @@ import (
 type ProtocolType string
 
 const (
-	ProtocolUnix ProtocolType = "unix"
-	ProtocolREST ProtocolType = "rest"
-	ProtocolGRPC ProtocolType = "grpc"
-	ProtocolQUIC ProtocolType = "quic"
-	ProtocolMCP  ProtocolType = "mcp"
+	ProtocolUnix     ProtocolType = "unix"
+	ProtocolREST     ProtocolType = "rest"
+	ProtocolGRPC     ProtocolType = "grpc"
+	ProtocolQUIC     ProtocolType = "quic"
+	ProtocolMCP      ProtocolType = "mcp"
+	ProtocolEmbedded ProtocolType = "embedded"
 )
 
-// AllProtocols returns all supported protocols
+// AllProtocols returns all supported protocols including embedded mode
 func AllProtocols() []ProtocolType {
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP, ProtocolEmbedded}
+}
+
+// CLIProtocols returns protocols supported by the CLI for remote server connections.
+// This includes all network protocols that require a running server.
+func CLIProtocols() []ProtocolType {
 	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
 }
 
-// CLIProtocols returns protocols supported by the CLI.
-// MCP is excluded because it uses direct TCP with JSON-RPC 2.0, not HTTP-based URLs.
-// MCP functionality is tested via direct MCPClient in mcp_comprehensive_test.go.
-func CLIProtocols() []ProtocolType {
-	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+// RemoteProtocols returns protocols that require a remote server connection.
+// Excludes embedded mode which runs locally without a server.
+func RemoteProtocols() []ProtocolType {
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+}
+
+// LocalProtocols returns protocols that run locally without a server.
+func LocalProtocols() []ProtocolType {
+	return []ProtocolType{ProtocolEmbedded}
 }
 
 // TestRunner provides utilities for running CLI commands in tests
@@ -67,7 +78,7 @@ type TestRunner struct {
 // NewTestRunner creates a new test runner with default configuration
 func NewTestRunner() *TestRunner {
 	projectRoot := getProjectRoot()
-	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychain")
+	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychainctl")
 
 	return &TestRunner{
 		CLIBinPath:     getEnv("KEYSTORE_CLI_BIN", defaultCLIPath),
@@ -103,7 +114,8 @@ func (r *TestRunner) WithTimeout(timeout time.Duration) *TestRunner {
 	return r
 }
 
-// GetServerURL returns the server URL for a protocol
+// GetServerURL returns the server URL for a protocol.
+// Returns empty string for embedded protocol (which uses --local flag instead).
 func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	switch protocol {
 	case ProtocolUnix:
@@ -111,14 +123,27 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolREST:
 		return r.RESTBaseURL
 	case ProtocolGRPC:
-		return "grpc://" + r.GRPCAddr
+		return "grpcs://" + r.GRPCAddr
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
 		return "mcp://" + r.MCPAddr
+	case ProtocolEmbedded:
+		// Embedded mode uses --local flag, no server URL needed
+		return ""
 	default:
 		return ""
 	}
+}
+
+// IsEmbeddedProtocol returns true if the protocol is embedded (local) mode
+func IsEmbeddedProtocol(protocol ProtocolType) bool {
+	return protocol == ProtocolEmbedded
+}
+
+// IsRemoteProtocol returns true if the protocol requires a remote server
+func IsRemoteProtocol(protocol ProtocolType) bool {
+	return protocol != ProtocolEmbedded
 }
 
 // IsCLIAvailable checks if the CLI binary is available
@@ -172,22 +197,28 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 	// Build prefix args with server URL and TLS options
 	prefixArgs := []string{}
 
-	serverURL := r.GetServerURL(protocol)
-	if serverURL != "" {
-		prefixArgs = append(prefixArgs, "--server", serverURL)
-	}
-
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
-		protocol == ProtocolGRPC ||
-		protocol == ProtocolQUIC
-
-	if needsTLS {
-		if r.TLSInsecure {
-			prefixArgs = append(prefixArgs, "--tls-insecure")
+	// For embedded protocol, use --protocol embedded instead of server URL
+	if protocol == ProtocolEmbedded {
+		prefixArgs = append(prefixArgs, "--protocol", "embedded")
+	} else {
+		serverURL := r.GetServerURL(protocol)
+		if serverURL != "" {
+			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
-		if r.TLSCACert != "" {
-			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+
+		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC, MCP)
+		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
+			protocol == ProtocolGRPC ||
+			protocol == ProtocolQUIC ||
+			protocol == ProtocolMCP
+
+		if needsTLS {
+			if r.TLSInsecure {
+				prefixArgs = append(prefixArgs, "--tls-insecure")
+			}
+			if r.TLSCACert != "" {
+				prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+			}
 		}
 	}
 
@@ -199,9 +230,9 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 func (r *TestRunner) BuildCommandArgs(cmd CommandDefinition, overrides map[string]string) []string {
 	args := make([]string, 0)
 
-	// Add --local flag first if required (for FROST and other local-only commands)
+	// Add --protocol embedded first if required (for FROST and other embedded-only commands)
 	if cmd.RequiresLocal {
-		args = append(args, "--local")
+		args = append(args, "--protocol", "embedded")
 	}
 
 	// Add key directory if required (before command for local mode)

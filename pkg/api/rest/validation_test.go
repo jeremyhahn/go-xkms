@@ -37,7 +37,7 @@ func TestValidateKeyID(t *testing.T) {
 		{"special chars", "key<>id", true},
 		{"space", "key id", true},
 		{"backslash", "key\\id", true},
-		{"colon", "key:id", true},
+		{"colon", "key:id", false}, // Colons are valid for extended key ID format (backend:type:algo:keyname)
 		{"semicolon", "key;id", true},
 		{"quote", "key\"id", true},
 		{"single quote", "key'id", true},

@@ -1,4 +1,4 @@
-FROM golang:1.25.5
+FROM golang:bookworm
 
 # Install dependencies including tcpdump for optional packet capture debugging
 RUN apt-get update && apt-get install -y \

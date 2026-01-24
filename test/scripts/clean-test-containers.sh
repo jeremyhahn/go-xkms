@@ -4,6 +4,17 @@
 
 echo "Cleaning up integration test Docker containers..."
 
+# First, stop any containers using the ports we need
+echo "Checking for processes using test ports..."
+for port in 8443 9443 8444 9444 9090 2321 2322; do
+    container_id=$(docker ps -q --filter "publish=$port" 2>/dev/null)
+    if [ -n "$container_id" ]; then
+        echo "Stopping container using port $port: $container_id"
+        docker stop $container_id 2>/dev/null || true
+        docker rm -f $container_id 2>/dev/null || true
+    fi
+done
+
 # Force kill keychain integration test containers (API tests)
 docker kill keychain-integration-server keychain-integration-swtpm keychain-integration-softhsm keychain-integration-tests 2>/dev/null || true
 docker rm -f keychain-integration-server keychain-integration-swtpm keychain-integration-softhsm keychain-integration-tests 2>/dev/null || true
@@ -41,8 +52,21 @@ docker rm -f $(docker ps -aq --filter "name=gcp") 2>/dev/null || true
 # Remove test networks
 docker network prune -f 2>/dev/null || true
 
-# Clean up any orphaned containers from compose
-docker compose -f test/integration/api/docker-compose.yml down -v --remove-orphans 2>/dev/null || true
+# Clean up any orphaned containers from all integration test compose files
+for compose_file in test/integration/*/docker-compose.yml; do
+    if [ -f "$compose_file" ]; then
+        echo "Cleaning up $compose_file..."
+        docker compose -f "$compose_file" down -v --remove-orphans 2>/dev/null || true
+    fi
+done
+
+# Also handle nested compose files (e.g., tpm2/idevid, tpm2/tpm_operations)
+for compose_file in test/integration/*/*/docker-compose.yml; do
+    if [ -f "$compose_file" ]; then
+        echo "Cleaning up $compose_file..."
+        docker compose -f "$compose_file" down -v --remove-orphans 2>/dev/null || true
+    fi
+done
 
 # Clean up dangling images and build cache to free disk space (CI)
 if [ "${CI:-}" = "true" ] || [ "${GITHUB_ACTIONS:-}" = "true" ]; then

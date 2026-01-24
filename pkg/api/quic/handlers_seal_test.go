@@ -47,6 +47,14 @@ func createTestServerWithSealSupport(t *testing.T) (*Server, *keychainmocks.Mock
 		return true
 	}
 
+	// Configure mock to return keys for CN lookup
+	mockKS.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+		return []*types.KeyAttributes{
+			{CN: "test-key", StoreType: types.StoreSoftware, KeyType: types.KeyTypeSigning},
+			{CN: "my-seal-key", StoreType: types.StoreSoftware, KeyType: types.KeyTypeSigning},
+		}, nil
+	}
+
 	// Configure successful seal operation
 	mockKS.SealFunc = func(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 		return &types.SealedData{
@@ -532,7 +540,7 @@ func TestHandleCanSeal(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
 		defer keychain.Reset()
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can_seal?backend=software", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=software", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
@@ -549,7 +557,7 @@ func TestHandleCanSeal(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
 		defer keychain.Reset()
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can_seal", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
@@ -573,7 +581,7 @@ func TestHandleCanSeal(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/can_seal", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/seal/capability", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -596,7 +604,7 @@ func TestHandleCanSeal(t *testing.T) {
 		body, err := json.Marshal(reqBody)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/can_seal", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/seal/capability", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -614,7 +622,7 @@ func TestHandleCanSeal(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
 		defer keychain.Reset()
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/can_seal", strings.NewReader("{invalid json}"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/seal/capability", strings.NewReader("{invalid json}"))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 
@@ -632,7 +640,7 @@ func TestHandleCanSeal(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
 		defer keychain.Reset()
 
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/can_seal", nil)
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
@@ -644,7 +652,7 @@ func TestHandleCanSeal(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
 		defer keychain.Reset()
 
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/can_seal", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
@@ -680,7 +688,7 @@ func TestHandleCanSeal(t *testing.T) {
 		server, err := NewServer(cfg)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can_seal?backend=software", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=software", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
@@ -798,8 +806,8 @@ func TestHandleUnsealWithNonExistentBackend(t *testing.T) {
 
 		server.handler.ServeHTTP(w, req)
 
-		// The handler should return an error when backend is not found
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		// The handler should return NotFound when backend doesn't exist
+		assert.Equal(t, http.StatusNotFound, w.Code)
 	})
 }
 

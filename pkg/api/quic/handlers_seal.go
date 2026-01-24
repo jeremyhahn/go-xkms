@@ -92,11 +92,36 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 		AAD: req.AAD,
 	}
 
-	// If KeyID is provided, create key attributes
+	// If KeyID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
-		opts.KeyAttributes = &types.KeyAttributes{
-			CN: req.KeyID,
+		// Get the backend to look up the key
+		ks, err := keychain.Backend(req.Backend)
+		if err != nil {
+			s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %v", err))
+			return
 		}
+
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys: %v", err))
+			return
+		}
+
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == req.KeyID {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %s", req.KeyID))
+			return
+		}
+
+		opts.KeyAttributes = targetAttr
 	}
 
 	// Seal the data using the keychain service
@@ -139,8 +164,16 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get backend to determine backend type for sealed data
+	ks, err := keychain.Backend(req.Backend)
+	if err != nil {
+		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %v", err))
+		return
+	}
+
 	// Build sealed data from request
 	sealed := &types.SealedData{
+		Backend:    ks.Backend().Type(),
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
@@ -151,11 +184,30 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		AAD: req.AAD,
 	}
 
-	// If KeyID is provided, create key attributes
+	// If KeyID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
-		opts.KeyAttributes = &types.KeyAttributes{
-			CN: req.KeyID,
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list keys: %v", err))
+			return
 		}
+
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == req.KeyID {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			s.sendError(w, http.StatusNotFound, fmt.Sprintf("key not found: %s", req.KeyID))
+			return
+		}
+
+		opts.KeyAttributes = targetAttr
+		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
 	}
 
 	// Unseal the data using the keychain service

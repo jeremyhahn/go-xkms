@@ -18,7 +18,7 @@ package grpc
 import (
 	"context"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

@@ -31,6 +31,7 @@ import (
 // Server represents a QUIC/HTTP3 server
 type Server struct {
 	addr          string
+	version       string
 	keystore      keychain.KeyStore // Default keystore for backward compatibility
 	tlsConfig     *tls.Config
 	authenticator auth.Authenticator
@@ -46,6 +47,7 @@ type Server struct {
 // Config holds the QUIC server configuration
 type Config struct {
 	Addr          string
+	Version       string
 	TLSConfig     *tls.Config
 	Authenticator auth.Authenticator
 	Logger        *slog.Logger
@@ -89,6 +91,7 @@ func NewServer(config *Config) (*Server, error) {
 
 	s := &Server{
 		addr:          config.Addr,
+		version:       config.Version,
 		tlsConfig:     tlsConfig,
 		authenticator: authenticator,
 		logger:        log,
@@ -145,7 +148,7 @@ func (s *Server) setupRoutes(mux *http.ServeMux) {
 	// Sealing endpoints
 	mux.HandleFunc("/api/v1/seal", s.handleSeal)
 	mux.HandleFunc("/api/v1/unseal", s.handleUnseal)
-	mux.HandleFunc("/api/v1/can_seal", s.handleCanSeal)
+	mux.HandleFunc("/api/v1/seal/capability", s.handleCanSeal)
 
 	// FROST threshold signature endpoints
 	s.setupFrostRoutes(mux)

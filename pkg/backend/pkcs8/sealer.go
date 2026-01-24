@@ -112,23 +112,29 @@ func (b *PKCS8Backend) Seal(ctx context.Context, data []byte, opts *types.SealOp
 		aad = opts.AAD
 	}
 
-	ciphertext := gcm.Seal(nil, nonce, data, aad)
+	// gcm.Seal appends the authentication tag to the ciphertext
+	// We need to separate them for consistent API response
+	sealed := gcm.Seal(nil, nonce, data, aad)
+	tagSize := gcm.Overhead()
+	ciphertext := sealed[:len(sealed)-tagSize]
+	tag := sealed[len(sealed)-tagSize:]
 
 	// Build the sealed data result
-	sealed := &types.SealedData{
+	result := &types.SealedData{
 		Backend:    types.BackendTypeSoftware,
 		Ciphertext: ciphertext,
 		Nonce:      nonce,
+		Tag:        tag,
 		KeyID:      keyAttrs.ID(),
 		Metadata:   make(map[string][]byte),
 	}
 
 	// Store AAD in metadata if provided
 	if aad != nil {
-		sealed.Metadata["pkcs8:aad_hash"] = hashBytes(aad)
+		result.Metadata["pkcs8:aad_hash"] = hashBytes(aad)
 	}
 
-	return sealed, nil
+	return result, nil
 }
 
 // Unseal decrypts/recovers data using HKDF-derived key and AES-GCM.
@@ -209,7 +215,13 @@ func (b *PKCS8Backend) Unseal(ctx context.Context, sealed *types.SealedData, opt
 		aad = opts.AAD
 	}
 
-	plaintext, err := gcm.Open(nil, sealed.Nonce, sealed.Ciphertext, aad)
+	// gcm.Open expects ciphertext with tag appended
+	// Combine ciphertext and tag for decryption
+	ciphertextWithTag := make([]byte, len(sealed.Ciphertext)+len(sealed.Tag))
+	copy(ciphertextWithTag, sealed.Ciphertext)
+	copy(ciphertextWithTag[len(sealed.Ciphertext):], sealed.Tag)
+
+	plaintext, err := gcm.Open(nil, sealed.Nonce, ciphertextWithTag, aad)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt (check password/key and AAD): %w", err)
 	}

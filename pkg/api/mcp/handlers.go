@@ -117,18 +117,25 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 	var privKey interface{}
 	var err error
 
-	// Determine key type - check KeyType first, then fall back to Algorithm
-	keyType := strings.ToLower(params.KeyType)
-	algorithm := strings.ToLower(params.Algorithm)
-
-	// If no key type specified, try to infer from algorithm
-	if keyType == "" {
-		keyType = algorithm
+	// Parse key purpose type from params.KeyType (e.g., "tls", "signing", "encryption")
+	// If params.KeyType is actually an algorithm name (e.g., "rsa", "ecdsa"), this will return 0
+	keyPurposeType := types.ParseKeyType(params.KeyType)
+	// Default to KeyTypeSigning if no valid key purpose type was parsed
+	if keyPurposeType == 0 {
+		keyPurposeType = types.KeyTypeSigning
 	}
 
+	// Determine the algorithm discriminator:
+	// - First, check if params.KeyType is an algorithm name (backward compatibility)
+	// - If not, use params.Algorithm
+	// This allows both "KeyType: symmetric, Algorithm: aes256-gcm" (backward compat)
+	// and "KeyType: tls, Algorithm: rsa" (new format)
+	algorithmDiscriminator := strings.ToLower(params.KeyType)
+	algorithm := strings.ToLower(params.Algorithm)
+
 	switch {
-	case types.AlgorithmRSA.Equals(keyType):
-		attrs.KeyType = types.KeyTypeTLS
+	case types.AlgorithmRSA.Equals(algorithmDiscriminator) || types.AlgorithmRSA.Equals(algorithm):
+		attrs.KeyType = keyPurposeType
 		attrs.RSAAttributes = &types.RSAAttributes{
 			KeySize: params.KeySize,
 		}
@@ -137,8 +144,8 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		}
 		privKey, err = s.keystore.GenerateRSA(attrs)
 
-	case types.AlgorithmECDSA.Equals(keyType):
-		attrs.KeyType = types.KeyTypeTLS
+	case types.AlgorithmECDSA.Equals(algorithmDiscriminator) || types.AlgorithmECDSA.Equals(algorithm):
+		attrs.KeyType = keyPurposeType
 		attrs.ECCAttributes = &types.ECCAttributes{}
 		if params.Curve != "" {
 			curve, curveErr := types.ParseCurve(params.Curve)
@@ -151,11 +158,11 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		}
 		privKey, err = s.keystore.GenerateECDSA(attrs)
 
-	case types.AlgorithmEd25519.Equals(keyType):
-		attrs.KeyType = types.KeyTypeTLS
+	case types.AlgorithmEd25519.Equals(algorithmDiscriminator) || types.AlgorithmEd25519.Equals(algorithm):
+		attrs.KeyType = keyPurposeType
 		privKey, err = s.keystore.GenerateEd25519(attrs)
 
-	case types.AlgorithmSymmetric.Equals(keyType):
+	case types.AlgorithmSymmetric.Equals(algorithmDiscriminator) || types.AlgorithmSymmetric.Equals(algorithm):
 		// Get the correct backend for symmetric operations
 		backendName := params.Backend
 		if backendName == "" {
@@ -200,7 +207,11 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported key type: %s", keyType)
+		// Report the most informative error message
+		if algorithm != "" {
+			return nil, fmt.Errorf("unsupported algorithm: %s", algorithm)
+		}
+		return nil, fmt.Errorf("unsupported key type: %s", algorithmDiscriminator)
 	}
 
 	if err != nil {
@@ -370,7 +381,13 @@ func (s *Server) handleSign(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	var attrs *types.KeyAttributes
+	var err error
+	if params.Backend != "" {
+		attrs, err = s.findKeyInBackend(params.KeyID, params.Backend)
+	} else {
+		attrs, err = s.findKeyByCN(params.KeyID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
@@ -424,7 +441,13 @@ func (s *Server) handleVerify(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Look up the key to get full attributes
-	attrs, err := s.findKeyByCN(params.KeyID)
+	var attrs *types.KeyAttributes
+	var err error
+	if params.Backend != "" {
+		attrs, err = s.findKeyInBackend(params.KeyID, params.Backend)
+	} else {
+		attrs, err = s.findKeyByCN(params.KeyID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
@@ -1603,15 +1626,37 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		AAD: params.AAD,
 	}
 
-	// If KeyID is provided, set up key attributes
-	if params.KeyID != "" {
-		opts.KeyAttributes = &types.KeyAttributes{
-			CN: params.KeyID,
-		}
-	}
-
 	// Use backend name if provided, otherwise use default
 	backendName := params.Backend
+
+	// If KeyID is provided, look up the key to get its actual attributes
+	if params.KeyID != "" {
+		// Get the backend to look up the key
+		ks, err := keychain.Backend(backendName)
+		if err != nil {
+			return nil, fmt.Errorf("backend not found: %w", err)
+		}
+
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list keys: %w", err)
+		}
+
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == params.KeyID {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			return nil, fmt.Errorf("key not found: %s", params.KeyID)
+		}
+
+		opts.KeyAttributes = targetAttr
+	}
 
 	// Call the keychain service to seal the data
 	sealed, err := keychain.SealWithBackend(ctx, backendName, params.Data, opts)
@@ -1650,12 +1695,21 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		return nil, fmt.Errorf("ciphertext is required")
 	}
 
+	// Use backend name if provided, otherwise use default
+	backendName := params.Backend
+
+	// Get backend to determine backend type for sealed data
+	ks, err := keychain.Backend(backendName)
+	if err != nil {
+		return nil, fmt.Errorf("backend not found: %w", err)
+	}
+
 	// Build sealed data structure
 	sealed := &types.SealedData{
+		Backend:    ks.Backend().Type(),
 		Ciphertext: params.Ciphertext,
 		Nonce:      params.Nonce,
 		Tag:        params.Tag,
-		KeyID:      params.KeyID,
 	}
 
 	// Build unseal options
@@ -1663,15 +1717,29 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		AAD: params.AAD,
 	}
 
-	// If KeyID is provided, set up key attributes
+	// If KeyID is provided, look up the key to get its actual attributes
 	if params.KeyID != "" {
-		opts.KeyAttributes = &types.KeyAttributes{
-			CN: params.KeyID,
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list keys: %w", err)
 		}
-	}
 
-	// Use backend name if provided, otherwise use default
-	backendName := params.Backend
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == params.KeyID {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			return nil, fmt.Errorf("key not found: %s", params.KeyID)
+		}
+
+		opts.KeyAttributes = targetAttr
+		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
+	}
 
 	// Call the keychain service to unseal the data
 	plaintext, err := keychain.UnsealWithBackend(ctx, backendName, sealed, opts)

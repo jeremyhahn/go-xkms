@@ -202,6 +202,104 @@ func TestParseKeyID_Valid(t *testing.T) {
 			expectedAlgo:    "rsa",
 			expectedKeyname: "tpm-key",
 		},
+		// New backends: quantum, threshold, frost
+		{
+			name:            "quantum backend with ML-DSA-65",
+			keyID:           "quantum:signing:ml-dsa-65:pq-signing-key",
+			expectedBackend: "quantum",
+			expectedKeyType: "signing",
+			expectedAlgo:    "ml-dsa-65",
+			expectedKeyname: "pq-signing-key",
+		},
+		{
+			name:            "quantum backend with ML-KEM-768",
+			keyID:           "quantum:encryption:ml-kem-768:pq-kem-key",
+			expectedBackend: "quantum",
+			expectedKeyType: "encryption",
+			expectedAlgo:    "ml-kem-768",
+			expectedKeyname: "pq-kem-key",
+		},
+		{
+			name:            "threshold backend",
+			keyID:           "threshold:encryption:aes256:shared-key",
+			expectedBackend: "threshold",
+			expectedKeyType: "encryption",
+			expectedAlgo:    "aes256",
+			expectedKeyname: "shared-key",
+		},
+		{
+			name:            "frost backend with FROST-Ed25519",
+			keyID:           "frost:signing:frost-ed25519:threshold-key",
+			expectedBackend: "frost",
+			expectedKeyType: "signing",
+			expectedAlgo:    "frost-ed25519",
+			expectedKeyname: "threshold-key",
+		},
+		// New algorithms
+		{
+			name:            "Ed448 signing key",
+			keyID:           "software:signing:ed448:ed448-key",
+			expectedBackend: "software",
+			expectedKeyType: "signing",
+			expectedAlgo:    "ed448",
+			expectedKeyname: "ed448-key",
+		},
+		{
+			name:            "X25519 key exchange",
+			keyID:           "software:encryption:x25519:ecdh-key",
+			expectedBackend: "software",
+			expectedKeyType: "encryption",
+			expectedAlgo:    "x25519",
+			expectedKeyname: "ecdh-key",
+		},
+		{
+			name:            "ChaCha20-Poly1305 symmetric",
+			keyID:           "software:secret:chacha20-poly1305:stream-key",
+			expectedBackend: "software",
+			expectedKeyType: "secret",
+			expectedAlgo:    "chacha20-poly1305",
+			expectedKeyname: "stream-key",
+		},
+		{
+			name:            "XChaCha20-Poly1305 symmetric",
+			keyID:           "software:secret:xchacha20-poly1305:xstream-key",
+			expectedBackend: "software",
+			expectedKeyType: "secret",
+			expectedAlgo:    "xchacha20-poly1305",
+			expectedKeyname: "xstream-key",
+		},
+		{
+			name:            "HMAC-SHA256",
+			keyID:           "software:hmac:hmac-sha256:mac-key",
+			expectedBackend: "software",
+			expectedKeyType: "hmac",
+			expectedAlgo:    "hmac-sha256",
+			expectedKeyname: "mac-key",
+		},
+		{
+			name:            "LDevID key type",
+			keyID:           "tpm2:ldevid:rsa:device-key",
+			expectedBackend: "tpm2",
+			expectedKeyType: "ldevid",
+			expectedAlgo:    "rsa",
+			expectedKeyname: "device-key",
+		},
+		{
+			name:            "FROST-P256 threshold signature",
+			keyID:           "frost:signing:frost-p256:p256-threshold",
+			expectedBackend: "frost",
+			expectedKeyType: "signing",
+			expectedAlgo:    "frost-p256",
+			expectedKeyname: "p256-threshold",
+		},
+		{
+			name:            "ML-DSA-44 compact form",
+			keyID:           "quantum:signing:mldsa44:dilithium2-key",
+			expectedBackend: "quantum",
+			expectedKeyType: "signing",
+			expectedAlgo:    "mldsa44",
+			expectedKeyname: "dilithium2-key",
+		},
 	}
 
 	for _, tt := range tests {
@@ -740,6 +838,21 @@ func TestKeyIDToBackendType(t *testing.T) {
 			backend:             "vault",
 			expectedBackendType: backend.BackendTypeVault,
 		},
+		{
+			name:                "quantum to BackendTypeQuantum",
+			backend:             "quantum",
+			expectedBackendType: backend.BackendTypeQuantum,
+		},
+		{
+			name:                "threshold to BackendTypeThreshold",
+			backend:             "threshold",
+			expectedBackendType: backend.BackendTypeThreshold,
+		},
+		{
+			name:                "frost to BackendTypeFrost",
+			backend:             "frost",
+			expectedBackendType: backend.BackendTypeFrost,
+		},
 	}
 
 	for _, tt := range tests {
@@ -848,6 +961,7 @@ func TestValidateBackend(t *testing.T) {
 	validBackends := []string{
 		"software", "pkcs11", "tpm2",
 		"awskms", "gcpkms", "azurekv", "vault",
+		"quantum", "threshold", "frost",
 	}
 
 	for _, backend := range validBackends {
@@ -873,7 +987,8 @@ func TestValidateBackend(t *testing.T) {
 func TestValidateKeyName(t *testing.T) {
 	validKeynames := []string{
 		"a", "my-key", "my_key", "key123", "KEY-2024-v1",
-		"test_key_123", strings.Repeat("a", 255),
+		"test_key_123", "ca.root.my-key", "ns.example.com",
+		strings.Repeat("a", 255),
 	}
 
 	for _, keyname := range validKeynames {
@@ -919,6 +1034,7 @@ func TestKeyTypeToEnum(t *testing.T) {
 		{"endorsement", "endorsement", backend.KEY_TYPE_ENDORSEMENT, false},
 		{"hmac", "hmac", backend.KEY_TYPE_HMAC, false},
 		{"idevid", "idevid", backend.KEY_TYPE_IDEVID, false},
+		{"ldevid", "ldevid", backend.KEY_TYPE_LDEVID, false},
 		{"secret", "secret", backend.KEY_TYPE_SECRET, false},
 		{"signing", "signing", backend.KEY_TYPE_SIGNING, false},
 		{"storage", "storage", backend.KEY_TYPE_STORAGE, false},
@@ -1023,6 +1139,9 @@ func TestBackendTypeToStoreType(t *testing.T) {
 		{"GCPKMS", backend.BackendTypeGCPKMS, backend.STORE_GCPKMS},
 		{"AzureKV", backend.BackendTypeAzureKV, backend.STORE_AZUREKV},
 		{"Vault", backend.BackendTypeVault, backend.STORE_VAULT},
+		{"Quantum", backend.BackendTypeQuantum, backend.STORE_QUANTUM},
+		{"Threshold", backend.BackendTypeThreshold, backend.STORE_THRESHOLD},
+		{"Frost", backend.BackendTypeFrost, backend.STORE_FROST},
 	}
 
 	for _, tt := range tests {

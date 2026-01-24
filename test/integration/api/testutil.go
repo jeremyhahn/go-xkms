@@ -65,7 +65,7 @@ func getProjectRoot() string {
 // LoadTestConfig loads test configuration from environment or defaults
 func LoadTestConfig() *TestConfig {
 	projectRoot := getProjectRoot()
-	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychain")
+	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychainctl")
 
 	cfg := &TestConfig{
 		CLIBinPath:     getEnv("KEYSTORE_CLI_BIN", defaultCLIPath),
@@ -139,6 +139,19 @@ func isGRPCServerAvailable(t *testing.T, cfg *TestConfig) bool {
 	t.Helper()
 
 	conn, err := net.DialTimeout("tcp", cfg.GRPCAddr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+
+	return true
+}
+
+// isMCPServerAvailable checks if the MCP server is available
+func isMCPServerAvailable(t *testing.T, cfg *TestConfig) bool {
+	t.Helper()
+
+	conn, err := net.DialTimeout("tcp", cfg.MCPAddr, 2*time.Second)
 	if err != nil {
 		return false
 	}
@@ -276,9 +289,40 @@ const (
 	ProtocolGRPC ProtocolType = "grpc"
 	// ProtocolQUIC uses HTTP/3 over QUIC
 	ProtocolQUIC ProtocolType = "quic"
+	// ProtocolMCP uses Model Context Protocol (JSON-RPC 2.0 over TCP)
+	ProtocolMCP ProtocolType = "mcp"
+	// ProtocolEmbedded uses embedded/local mode (no server connection)
+	ProtocolEmbedded ProtocolType = "embedded"
 )
 
-// GetServerURL returns the server URL for the specified protocol
+// AllProtocols returns all supported protocols including embedded mode
+func AllProtocols() []ProtocolType {
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP, ProtocolEmbedded}
+}
+
+// RemoteProtocols returns protocols that require a remote server connection.
+// Excludes embedded mode which runs locally without a server.
+func RemoteProtocols() []ProtocolType {
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+}
+
+// LocalProtocols returns protocols that run locally without a server.
+func LocalProtocols() []ProtocolType {
+	return []ProtocolType{ProtocolEmbedded}
+}
+
+// IsEmbeddedProtocol returns true if the protocol is embedded (local) mode
+func IsEmbeddedProtocol(protocol ProtocolType) bool {
+	return protocol == ProtocolEmbedded
+}
+
+// IsRemoteProtocol returns true if the protocol requires a remote server
+func IsRemoteProtocol(protocol ProtocolType) bool {
+	return protocol != ProtocolEmbedded
+}
+
+// GetServerURL returns the server URL for the specified protocol.
+// Returns empty string for embedded protocol (which uses --local flag instead).
 func (cfg *TestConfig) GetServerURL(protocol ProtocolType) string {
 	switch protocol {
 	case ProtocolUnix:
@@ -286,15 +330,21 @@ func (cfg *TestConfig) GetServerURL(protocol ProtocolType) string {
 	case ProtocolREST:
 		return cfg.RESTBaseURL
 	case ProtocolGRPC:
-		return "grpc://" + cfg.GRPCAddr
+		return "grpcs://" + cfg.GRPCAddr
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(cfg.QUICBaseURL, "https://"), "http://")
+	case ProtocolMCP:
+		return "mcp://" + cfg.MCPAddr
+	case ProtocolEmbedded:
+		// Embedded mode uses --local flag, no server URL needed
+		return ""
 	default:
 		return ""
 	}
 }
 
-// IsProtocolAvailable checks if the specified protocol server is available
+// IsProtocolAvailable checks if the specified protocol server is available.
+// For embedded protocol, always returns true since it doesn't require a server.
 func (cfg *TestConfig) IsProtocolAvailable(t *testing.T, protocol ProtocolType) bool {
 	t.Helper()
 
@@ -324,6 +374,11 @@ func (cfg *TestConfig) IsProtocolAvailable(t *testing.T, protocol ProtocolType) 
 		}
 		defer resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
+	case ProtocolMCP:
+		return isMCPServerAvailable(t, cfg)
+	case ProtocolEmbedded:
+		// Embedded mode doesn't require a server - always available
+		return true
 	default:
 		return false
 	}

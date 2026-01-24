@@ -14,6 +14,7 @@
 package keychain
 
 import (
+	"crypto/elliptic"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -76,17 +77,20 @@ const (
 
 // validBackends contains all supported backend types for Key IDs.
 var validBackends = map[string]bool{
-	"software": true, // Unified software backend (asymmetric + symmetric)
-	"pkcs11":   true, // PKCS#11 Hardware Security Module
-	"tpm2":     true, // Trusted Platform Module 2.0
-	"awskms":   true, // AWS Key Management Service
-	"gcpkms":   true, // Google Cloud KMS
-	"azurekv":  true, // Azure Key Vault
-	"vault":    true, // HashiCorp Vault
+	"software":  true, // Unified software backend (asymmetric + symmetric)
+	"pkcs11":    true, // PKCS#11 Hardware Security Module
+	"tpm2":      true, // Trusted Platform Module 2.0
+	"awskms":    true, // AWS Key Management Service
+	"gcpkms":    true, // Google Cloud KMS
+	"azurekv":   true, // Azure Key Vault
+	"vault":     true, // HashiCorp Vault
+	"quantum":   true, // Post-quantum cryptography (ML-DSA, ML-KEM)
+	"threshold": true, // Threshold cryptography (Shamir secret sharing)
+	"frost":     true, // FROST threshold signatures (RFC 9591)
 }
 
-// keynameRegex validates keyname characters (alphanumeric, hyphens, underscores only).
-var keynameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+// keynameRegex validates keyname characters (alphanumeric, hyphens, underscores, dots).
+var keynameRegex = regexp.MustCompile(`^[a-zA-Z0-9_.\-]+$`)
 
 // ParseKeyID parses an extended Key ID into its components.
 //
@@ -94,7 +98,7 @@ var keynameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 // - backend: One of the supported backend types (case-insensitive), or empty for default
 // - type: The key type (signing, encryption, attestation, etc.), or empty for any
 // - algo: The algorithm (rsa, ecdsa-p256, ed25519, aes256-gcm, etc.), or empty for any
-// - keyname: The key's identifier within that backend (alphanumeric, hyphens, underscores)
+// - keyname: The key's identifier within that backend (alphanumeric, hyphens, underscores, dots)
 //
 // Shorthand: If the input contains no colons, it is treated as just the keyname.
 // This allows users to specify "my-key" instead of ":::my-key".
@@ -264,7 +268,7 @@ func validateBackend(backend string) error {
 func validateKeyType(keyType string) error {
 	validTypes := []string{
 		"attestation", "ca", "encryption", "endorsement",
-		"hmac", "idevid", "secret",
+		"hmac", "idevid", "ldevid", "secret",
 		"signing", "storage", "tls", "tpm",
 	}
 	keyType = strings.ToLower(keyType)
@@ -277,8 +281,8 @@ func validateKeyType(keyType string) error {
 }
 
 // validateAlgorithm validates the algorithm component of a Key ID.
-// Valid algorithms: rsa, ecdsa-p256, ecdsa-p384, ecdsa-p521, ed25519,
-// aes128-gcm, aes192-gcm, aes256-gcm
+// Valid algorithms include asymmetric (RSA, ECDSA, Ed25519, Ed448), symmetric (AES, ChaCha20),
+// post-quantum (ML-DSA, ML-KEM), key exchange (X25519, X448), HMAC, and FROST algorithms.
 func validateAlgorithm(algo string) error {
 	validAlgos := []string{
 		// Asymmetric algorithms
@@ -287,10 +291,31 @@ func validateAlgorithm(algo string) error {
 		"ecdsa-p384", "ecdsa-p-384", "p384", "p-384",
 		"ecdsa-p521", "ecdsa-p-521", "p521", "p-521",
 		"ed25519",
+		"ed448",
+		// Key exchange algorithms
+		"x25519", "x448",
 		// Symmetric algorithms
 		"aes128-gcm", "aes128",
 		"aes192-gcm", "aes192",
 		"aes256-gcm", "aes256",
+		"chacha20-poly1305", "chacha20",
+		"xchacha20-poly1305", "xchacha20",
+		// Post-quantum signature algorithms (ML-DSA / Dilithium)
+		"ml-dsa-44", "mldsa44",
+		"ml-dsa-65", "mldsa65",
+		"ml-dsa-87", "mldsa87",
+		// Post-quantum key encapsulation algorithms (ML-KEM / Kyber)
+		"ml-kem-512", "mlkem512",
+		"ml-kem-768", "mlkem768",
+		"ml-kem-1024", "mlkem1024",
+		// HMAC algorithms
+		"hmac-sha256", "hmac-sha384", "hmac-sha512",
+		// FROST threshold signature algorithms (RFC 9591)
+		"frost-ed25519", "frost-ed25519-sha512",
+		"frost-ristretto255", "frost-ristretto255-sha512",
+		"frost-ed448", "frost-ed448-shake256",
+		"frost-p256", "frost-p256-sha256",
+		"frost-secp256k1", "frost-secp256k1-sha256",
 	}
 	algo = strings.ToLower(algo)
 	for _, valid := range validAlgos {
@@ -305,7 +330,7 @@ func validateAlgorithm(algo string) error {
 // It ensures:
 //   - Non-empty
 //   - Length <= 255 characters
-//   - Only alphanumeric, hyphens, and underscores
+//   - Only alphanumeric, hyphens, underscores, and dots
 //   - No path traversal characters (/, .., \)
 func validateKeyName(keyname string) error {
 	if keyname == "" {
@@ -323,7 +348,7 @@ func validateKeyName(keyname string) error {
 
 	// Check character whitelist
 	if !keynameRegex.MatchString(keyname) {
-		return fmt.Errorf("%w: keyname must contain only alphanumeric, hyphens, and underscores", ErrInvalidKeyName)
+		return fmt.Errorf("%w: keyname must contain only alphanumeric, hyphens, underscores, and dots", ErrInvalidKeyName)
 	}
 
 	return nil
@@ -351,6 +376,12 @@ func keyIDToBackendType(backendStr string) (types.BackendType, error) {
 		return types.BackendTypeAzureKV, nil
 	case "vault":
 		return types.BackendTypeVault, nil
+	case "quantum":
+		return types.BackendTypeQuantum, nil
+	case "threshold":
+		return types.BackendTypeThreshold, nil
+	case "frost":
+		return types.BackendTypeFrost, nil
 	default:
 		return "", fmt.Errorf("%w: %s", ErrInvalidBackendType, backendStr)
 	}
@@ -378,6 +409,8 @@ func keyTypeToEnum(keyType string) (types.KeyType, error) {
 		return types.KeyTypeHMAC, nil
 	case "idevid":
 		return types.KeyTypeIDevID, nil
+	case "ldevid":
+		return types.KeyTypeLDevID, nil
 	case "secret":
 		return types.KeyTypeSecret, nil
 	case "signing":
@@ -452,9 +485,36 @@ func backendTypeToStoreType(bt types.BackendType) types.StoreType {
 		return types.StoreAzureKV
 	case types.BackendTypeVault:
 		return types.StoreVault
+	case types.BackendTypeQuantum:
+		return types.StoreQuantum
+	case types.BackendTypeThreshold:
+		return types.StoreThreshold
+	case types.BackendTypeFrost:
+		return types.StoreFrost
 	default:
 		return types.StoreSoftware
 	}
+}
+
+// algorithmToECCAttributes converts an ECDSA algorithm string to ECCAttributes.
+// Returns ECCAttributes with the appropriate curve (defaults to P-256).
+func algorithmToECCAttributes(algo string) *types.ECCAttributes {
+	algo = strings.ToLower(algo)
+	switch {
+	case strings.Contains(algo, "p384") || strings.Contains(algo, "p-384"):
+		return &types.ECCAttributes{Curve: elliptic.P384()}
+	case strings.Contains(algo, "p521") || strings.Contains(algo, "p-521"):
+		return &types.ECCAttributes{Curve: elliptic.P521()}
+	default:
+		// Default to P-256 for "ecdsa" or "ecdsa-p256" or "p256"
+		return &types.ECCAttributes{Curve: elliptic.P256()}
+	}
+}
+
+// algorithmToRSAAttributes returns RSAAttributes with default key size for RSA algorithms.
+// The default key size is 2048 bits, which provides adequate security for most use cases.
+func algorithmToRSAAttributes() *types.RSAAttributes {
+	return &types.RSAAttributes{KeySize: 2048}
 }
 
 // ParseKeyIDToAttributes parses a Key ID string and returns KeyAttributes.
@@ -507,6 +567,13 @@ func ParseKeyIDToAttributes(keyID string) (*types.KeyAttributes, error) {
 		switch a := algoEnum.(type) {
 		case x509.PublicKeyAlgorithm:
 			attrs.KeyAlgorithm = a
+			// Set algorithm-specific attributes
+			switch a {
+			case x509.ECDSA:
+				attrs.ECCAttributes = algorithmToECCAttributes(algo)
+			case x509.RSA:
+				attrs.RSAAttributes = algorithmToRSAAttributes()
+			}
 		case types.SymmetricAlgorithm:
 			attrs.SymmetricAlgorithm = a
 		}

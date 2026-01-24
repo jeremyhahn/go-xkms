@@ -404,11 +404,11 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionDecrypt)).
 				Post("/unseal", s.handlers.UnsealHandler)
 			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionRead)).
-				Get("/can-seal", s.handlers.CanSealHandler)
+				Get("/seal/capability", s.handlers.CanSealHandler)
 		} else {
 			r.Post("/seal", s.handlers.SealHandler)
 			r.Post("/unseal", s.handlers.UnsealHandler)
-			r.Get("/can-seal", s.handlers.CanSealHandler)
+			r.Get("/seal/capability", s.handlers.CanSealHandler)
 		}
 
 		// FROST threshold signature endpoints

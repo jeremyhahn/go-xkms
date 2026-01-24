@@ -2,7 +2,7 @@
 # Production-ready with security best practices
 
 # Stage 1: Builder
-FROM golang:1.25.5-bookworm AS builder
+FROM golang:bookworm AS builder
 
 ENV GOTOOLCHAIN=auto
 
@@ -52,6 +52,7 @@ WORKDIR /build
 
 # Copy go module files for better layer caching
 COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 
 # Download dependencies
 RUN go mod download
@@ -82,7 +83,7 @@ RUN if [ "$WITH_QUANTUM" = "1" ]; then \
         -tags="${BUILD_TAGS}" \
         -ldflags="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
         -o /build/keychain-cli \
-        ./cmd/cli
+        ./cmd/keychainctl
 
 # Verify binary was built
 RUN test -f /build/keychain-cli || (echo "ERROR: CLI binary not built" && exit 1)

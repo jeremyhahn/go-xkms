@@ -32,10 +32,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
 	grpcinternal "github.com/jeremyhahn/go-keychain/pkg/api/grpc"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/api/mcp"
 	"github.com/jeremyhahn/go-keychain/pkg/api/quic"
 	"github.com/jeremyhahn/go-keychain/pkg/api/rest"
@@ -841,7 +842,22 @@ func (s *Server) startGRPC() {
 		return
 	}
 
-	grpcSrv := grpc.NewServer()
+	// Build gRPC server options
+	var opts []grpc.ServerOption
+
+	// Add TLS credentials if TLS is enabled
+	if s.config.TLS.Enabled {
+		tlsConfig, err := s.buildTLSConfig()
+		if err != nil {
+			s.logger.Error("Failed to build TLS config for gRPC", slog.Any("error", err))
+			return
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpc.Creds(creds))
+		s.logger.Info("gRPC server TLS enabled")
+	}
+
+	grpcSrv := grpc.NewServer(opts...)
 
 	// Store server with lock
 	s.mu.Lock()
@@ -1102,6 +1118,7 @@ func (s *Server) startQUIC() {
 
 	quicConfig := &quic.Config{
 		Addr:      addr,
+		Version:   getBuildVersion(),
 		TLSConfig: tlsConfig,
 		Logger:    s.logger.With("component", "quic"),
 	}

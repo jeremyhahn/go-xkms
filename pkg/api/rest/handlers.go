@@ -198,11 +198,19 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	// Parse key purpose type from request (e.g., "tls", "signing", "encryption")
+	keyPurposeType := types.ParseKeyType(req.KeyType)
+	// Default to KeyTypeSigning if the parsed key purpose type is invalid
+	// (e.g., when req.KeyType is an algorithm name like "rsa", "ecdsa", "ed25519")
+	if keyPurposeType == 0 {
+		keyPurposeType = types.KeyTypeSigning
+	}
+
 	// Build key attributes
 	attrs := &types.KeyAttributes{
 		CN:                 req.KeyID,
-		KeyType:            types.KeyTypeSigning, // Default to signing
-		StoreType:          types.StoreSoftware,  // Will be updated based on backend
+		KeyType:            keyPurposeType,
+		StoreType:          types.StoreSoftware, // Will be updated based on backend
 		KeyAlgorithm:       keyAlgorithm,
 		SymmetricAlgorithm: symmetricAlgorithm,
 		Exportable:         req.Exportable,
@@ -724,6 +732,7 @@ func (h *HandlerContext) RotateKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Build response
 	resp := RotateKeyResponse{
+		Success: true,
 		KeyID:   keyID,
 		KeyType: string(targetAttr.KeyType),
 		Message: fmt.Sprintf("Key %s rotated successfully", keyID),
@@ -2050,11 +2059,37 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 		AAD: req.AAD,
 	}
 
-	// If key ID is provided, build key attributes for it
+	// If key ID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
-		opts.KeyAttributes = &types.KeyAttributes{
-			CN: req.KeyID,
+		// Get the backend to look up the key
+		ks, err := keychain.Backend(req.Backend)
+		if err != nil {
+			writeError(w, ErrBackendNotFound, http.StatusNotFound)
+			return
 		}
+
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			log.Printf("Failed to list keys: %v", err)
+			handleError(w, err)
+			return
+		}
+
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == req.KeyID {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
+			return
+		}
+
+		opts.KeyAttributes = targetAttr
 	}
 
 	// Seal the data using the keychain service
@@ -2125,7 +2160,6 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
-		KeyID:      req.KeyID,
 		Metadata:   req.Metadata,
 	}
 
@@ -2134,11 +2168,31 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		AAD: req.AAD,
 	}
 
-	// If key ID is provided, build key attributes for it
+	// If key ID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
-		opts.KeyAttributes = &types.KeyAttributes{
-			CN: req.KeyID,
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			log.Printf("Failed to list keys: %v", err)
+			handleError(w, err)
+			return
 		}
+
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == req.KeyID {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			writeError(w, backend.ErrKeyNotFound, http.StatusNotFound)
+			return
+		}
+
+		opts.KeyAttributes = targetAttr
+		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
 	}
 
 	// Unseal the data using the keychain service
@@ -2157,7 +2211,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// CanSealHandler handles GET /api/v1/can-seal requests.
+// CanSealHandler handles GET /api/v1/seal/capability requests.
 // This endpoint checks whether a backend supports sealing operations.
 func (h *HandlerContext) CanSealHandler(w http.ResponseWriter, r *http.Request) {
 	backendName := r.URL.Query().Get("backend")

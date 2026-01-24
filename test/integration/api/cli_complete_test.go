@@ -203,14 +203,12 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 				t.Logf("[%s] key list passed", proto)
 			})
 
-			// Test key get
+			// Test key get (key info)
 			t.Run("key_get", func(t *testing.T) {
 				args := []string{
 					"key", "get", keyID,
 					"--backend", "software",
 					"--key-type", "rsa",
-					"--key-algorithm", "rsa",
-					"--key-size", "2048",
 					"--key-dir", suite.keyDir,
 				}
 
@@ -233,11 +231,8 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 				args := []string{
 					"key", "sign", keyID, testData,
 					"--backend", "software",
-					"--key-type", "rsa",
-					"--key-algorithm", "rsa",
-					"--key-size", "2048",
 					"--key-dir", suite.keyDir,
-					"--hash", "SHA-256",
+					"--hash", "sha256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -271,11 +266,8 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 				args := []string{
 					"key", "verify", keyID, testData, signature,
 					"--backend", "software",
-					"--key-type", "rsa",
-					"--key-algorithm", "rsa",
-					"--key-size", "2048",
 					"--key-dir", suite.keyDir,
-					"--hash", "SHA-256",
+					"--hash", "sha256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -306,11 +298,8 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 				args := []string{
 					"key", "encrypt-asym", keyID, plaintext,
 					"--backend", "software",
-					"--key-type", "rsa",
-					"--key-algorithm", "rsa",
-					"--key-size", "2048",
 					"--key-dir", suite.keyDir,
-					"--hash", "SHA-256",
+					"--hash", "sha256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -343,11 +332,7 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 				args := []string{
 					"key", "decrypt", keyID, ciphertext,
 					"--backend", "software",
-					"--key-type", "rsa",
-					"--key-algorithm", "rsa",
-					"--key-size", "2048",
 					"--key-dir", suite.keyDir,
-					"--hash", "SHA-256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -369,8 +354,6 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 					"key", "rotate", keyID,
 					"--backend", "software",
 					"--key-type", "rsa",
-					"--key-algorithm", "rsa",
-					"--key-size", "2048",
 					"--key-dir", suite.keyDir,
 				}
 
@@ -390,8 +373,6 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 					"key", "delete", keyID,
 					"--backend", "software",
 					"--key-type", "rsa",
-					"--key-algorithm", "rsa",
-					"--key-size", "2048",
 					"--key-dir", suite.keyDir,
 				}
 
@@ -448,11 +429,8 @@ func TestCLICompleteECDSAKeyOperations(t *testing.T) {
 				args := []string{
 					"key", "sign", keyID, testData,
 					"--backend", "software",
-					"--key-type", "rsa",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
-					"--hash", "SHA-256",
+					"--hash", "sha256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -477,11 +455,8 @@ func TestCLICompleteECDSAKeyOperations(t *testing.T) {
 				args := []string{
 					"key", "verify", keyID, testData, signature,
 					"--backend", "software",
-					"--key-type", "rsa",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
-					"--hash", "SHA-256",
+					"--hash", "sha256",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
@@ -497,9 +472,7 @@ func TestCLICompleteECDSAKeyOperations(t *testing.T) {
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", keyID,
 				"--backend", "software",
-				"--key-type", "rsa",
-				"--key-algorithm", "ecdsa",
-				"--curve", "P-256",
+				"--key-type", "ecdsa",
 				"--key-dir", suite.keyDir)
 		})
 	}
@@ -544,8 +517,6 @@ func TestCLICompleteEd25519KeyOperations(t *testing.T) {
 				args := []string{
 					"key", "sign", keyID, testData,
 					"--backend", "software",
-					"--key-type", "ed25519",
-					"--key-algorithm", "ed25519",
 					"--key-dir", suite.keyDir,
 				}
 
@@ -571,8 +542,6 @@ func TestCLICompleteEd25519KeyOperations(t *testing.T) {
 				args := []string{
 					"key", "verify", keyID, testData, signature,
 					"--backend", "software",
-					"--key-type", "ed25519",
-					"--key-algorithm", "ed25519",
 					"--key-dir", suite.keyDir,
 				}
 
@@ -590,7 +559,6 @@ func TestCLICompleteEd25519KeyOperations(t *testing.T) {
 			suite.runCLI(serverURL, "key", "delete", keyID,
 				"--backend", "software",
 				"--key-type", "ed25519",
-				"--key-algorithm", "ed25519",
 				"--key-dir", suite.keyDir)
 		})
 	}
@@ -642,8 +610,6 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 				args := []string{
 					"key", "encrypt", keyID, plaintext,
 					"--backend", "software",
-					"--key-algorithm", "aes256-gcm",
-					"--key-size", "256",
 					"--key-dir", suite.keyDir,
 					"--output", "json",
 				}
@@ -676,8 +642,6 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 				args := []string{
 					"key", "decrypt", keyID, encrypted.Ciphertext,
 					"--backend", "software",
-					"--key-algorithm", "aes256-gcm",
-					"--key-size", "256",
 					"--key-dir", suite.keyDir,
 					"--nonce", encrypted.Nonce,
 					"--tag", encrypted.Tag,
@@ -697,8 +661,6 @@ func TestCLICompleteAESKeyOperations(t *testing.T) {
 			suite.runCLI(serverURL, "key", "delete", keyID,
 				"--backend", "software",
 				"--key-type", "aes",
-				"--algorithm", "aes-256-gcm",
-				"--key-size", "256",
 				"--key-dir", suite.keyDir)
 		})
 	}
@@ -742,9 +704,6 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 				args := []string{
 					"key", "export", keyID, exportFile,
 					"--backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
 					"--algorithm", "RSAES_OAEP_SHA_256",
 				}
@@ -792,8 +751,6 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 			suite.runCLI(serverURL, "key", "delete", keyID,
 				"--backend", "software",
 				"--key-type", "signing",
-				"--key-algorithm", "ecdsa",
-				"--curve", "P-256",
 				"--key-dir", suite.keyDir)
 
 			os.Remove(exportFile)
@@ -867,8 +824,6 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 			suite.runCLI(serverURL, "key", "delete", sourceKeyID,
 				"--backend", "software",
 				"--key-type", "signing",
-				"--key-algorithm", "ecdsa",
-				"--curve", "P-256",
 				"--key-dir", suite.keyDir)
 		})
 	}

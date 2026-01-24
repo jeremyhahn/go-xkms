@@ -316,7 +316,6 @@ func TestCLISignVerify(t *testing.T) {
 		delArgs := []string{"key", "delete", keyID,
 			"--backend", "software",
 			"--key-type", "rsa",
-			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
 		execCLI(t, cfg, delArgs...)
@@ -335,8 +334,6 @@ func TestCLISignVerify(t *testing.T) {
 
 	signArgs := []string{"key", "sign", keyID, testData,
 		"--backend", "software",
-		"--key-type", "rsa",
-		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
 		"--hash", "sha256",
 	}
@@ -392,7 +389,6 @@ func TestCLIDeleteKey(t *testing.T) {
 	delArgs := []string{"key", "delete", keyID,
 		"--backend", "software",
 		"--key-type", "rsa",
-		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
 	}
 	stdout, stderr, err := execCLI(t, cfg, delArgs...)
@@ -408,7 +404,6 @@ func TestCLIDeleteKey(t *testing.T) {
 	listArgs := []string{"key", "get", keyID,
 		"--backend", "software",
 		"--key-type", "rsa",
-		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
 	}
 	_, _, err = execCLI(t, cfg, listArgs...)
@@ -448,7 +443,6 @@ func TestCLIGetKey(t *testing.T) {
 		delArgs := []string{"key", "delete", keyID,
 			"--backend", "software",
 			"--key-type", "rsa",
-			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
 		execCLI(t, cfg, delArgs...)
@@ -458,7 +452,6 @@ func TestCLIGetKey(t *testing.T) {
 	getArgs := []string{"key", "get", keyID,
 		"--backend", "software",
 		"--key-type", "rsa",
-		"--key-algorithm", "rsa",
 		"--key-dir", keyDir,
 	}
 	stdout, stderr, err := execCLI(t, cfg, getArgs...)

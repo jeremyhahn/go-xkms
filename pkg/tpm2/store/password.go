@@ -76,5 +76,7 @@ func (p *RequiredPassword) String() (string, error) {
 	return "", ErrPasswordRequired
 }
 
-// Clear is a no-op
-func (p *RequiredPassword) Clear() {}
+// Clear is a no-op for RequiredPassword as there is no sensitive data to clear
+func (p *RequiredPassword) Clear() {
+	_ = p // No-op: RequiredPassword holds no sensitive data
+}

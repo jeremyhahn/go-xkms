@@ -18,7 +18,6 @@
 package rest
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/test/integration/api/commands"
@@ -41,89 +40,6 @@ func TestRESTAPI_Health(t *testing.T) {
 		t.Fatal("No output from REST server")
 	}
 	t.Logf("REST health check passed")
-}
-
-// TestRESTAPI_KeyOperations tests key operations via REST
-func TestRESTAPI_KeyOperations(t *testing.T) {
-	runner := commands.NewTestRunner()
-	runner.RequireCLI(t)
-
-	keyDir := commands.CreateTempKeyDir(t)
-	runner = runner.WithKeyDir(keyDir).WithBackend("software")
-	keyID := commands.GenerateUniqueKeyID("rest-test")
-
-	// Generate key
-	t.Run("Generate", func(t *testing.T) {
-		args := []string{
-			"key", "generate", keyID,
-			"--backend", "software",
-			"--key-dir", keyDir,
-			"--key-type", "ecdsa",
-			"--key-algorithm", "ecdsa",
-			"--curve", "P-256",
-		}
-		stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolREST, args...)
-		if err != nil {
-			t.Logf("stdout: %s", stdout)
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("REST key generation failed: %v", err)
-		}
-	})
-
-	// List keys
-	t.Run("List", func(t *testing.T) {
-		args := []string{
-			"key", "list",
-			"--backend", "software",
-			"--key-dir", keyDir,
-		}
-		stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolREST, args...)
-		if err != nil {
-			t.Logf("stdout: %s", stdout)
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("List keys failed: %v", err)
-		}
-		if !strings.Contains(stdout+stderr, keyID) {
-			t.Fatalf("Key %s not in list", keyID)
-		}
-	})
-
-	// Sign
-	t.Run("Sign", func(t *testing.T) {
-		args := []string{
-			"key", "sign", keyID, "test data",
-			"--backend", "software",
-			"--key-dir", keyDir,
-			"--key-type", "ecdsa",
-			"--key-algorithm", "ecdsa",
-			"--hash", "SHA-256",
-		}
-		stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolREST, args...)
-		if err != nil {
-			t.Logf("stdout: %s", stdout)
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("Sign failed: %v", err)
-		}
-		if strings.TrimSpace(stdout) == "" {
-			t.Fatal("No signature returned")
-		}
-	})
-
-	// Delete
-	t.Run("Delete", func(t *testing.T) {
-		args := []string{
-			"key", "delete", keyID,
-			"--backend", "software",
-			"--key-dir", keyDir,
-			"--key-type", "ecdsa",
-			"--key-algorithm", "ecdsa",
-		}
-		_, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolREST, args...)
-		if err != nil {
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("Delete failed: %v", err)
-		}
-	})
 }
 
 // TestRESTAPI_AllCommands runs all CLI commands via REST protocol

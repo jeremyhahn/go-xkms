@@ -12,6 +12,25 @@ ALL_BUILD_TAGS="integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vau
 # Ensure SoftHSM directories have correct permissions
 sudo chown -R $(whoami):$(whoami) /var/lib/softhsm 2>/dev/null || true
 
+# Setup UHID device for virtual FIDO2 testing
+# UHID requires privileged mode and Linux kernel support
+if [ -e /dev/uhid ]; then
+    sudo chmod 666 /dev/uhid
+    echo "✓ UHID device available and permissions set"
+elif [ -c /dev/uhid ] 2>/dev/null || sudo test -c /dev/uhid 2>/dev/null; then
+    sudo chmod 666 /dev/uhid
+    echo "✓ UHID device permissions set"
+else
+    # Try to create UHID device node (requires privileged mode and UHID module loaded)
+    # UHID major number is 10 (misc), minor is typically 239
+    if sudo modprobe uhid 2>/dev/null && sudo mknod -m 666 /dev/uhid c 10 239 2>/dev/null; then
+        echo "✓ UHID device created successfully"
+    else
+        echo "⚠ /dev/uhid not available (virtual FIDO2 tests will be skipped)"
+        echo "  Note: UHID requires Linux kernel with CONFIG_UHID=y and privileged mode"
+    fi
+fi
+
 # Check if services are available
 echo "Checking service availability..."
 

@@ -56,6 +56,7 @@ const (
 	KEY_TYPE_ENDORSEMENT = types.KeyTypeEndorsement
 	KEY_TYPE_HMAC        = types.KeyTypeHMAC
 	KEY_TYPE_IDEVID      = types.KeyTypeIDevID
+	KEY_TYPE_LDEVID      = types.KeyTypeLDevID
 	KEY_TYPE_TPM         = types.KeyTypeTPM
 	KEY_TYPE_SECRET      = types.KeyTypeSecret
 	KEY_TYPE_SIGNING     = types.KeyTypeSigning
@@ -66,13 +67,16 @@ const (
 // StoreType constant re-exports
 const (
 	// STORE_SW is an alias for software-based key storage
-	STORE_SW      = types.StoreSoftware
-	STORE_TPM2    = types.StoreTPM2
-	STORE_PKCS11  = types.StorePKCS11
-	STORE_AWSKMS  = types.StoreAWSKMS
-	STORE_GCPKMS  = types.StoreGCPKMS
-	STORE_AZUREKV = types.StoreAzureKV
-	STORE_VAULT   = types.StoreVault
+	STORE_SW        = types.StoreSoftware
+	STORE_TPM2      = types.StoreTPM2
+	STORE_PKCS11    = types.StorePKCS11
+	STORE_AWSKMS    = types.StoreAWSKMS
+	STORE_GCPKMS    = types.StoreGCPKMS
+	STORE_AZUREKV   = types.StoreAzureKV
+	STORE_VAULT     = types.StoreVault
+	STORE_QUANTUM   = types.StoreQuantum
+	STORE_THRESHOLD = types.StoreThreshold
+	STORE_FROST     = types.StoreFrost
 )
 
 // BackendType constant re-exports
@@ -86,6 +90,9 @@ const (
 	BackendTypeGCPKMS       = types.BackendTypeGCPKMS
 	BackendTypeAzureKV      = types.BackendTypeAzureKV
 	BackendTypeVault        = types.BackendTypeVault
+	BackendTypeQuantum      = types.BackendTypeQuantum
+	BackendTypeThreshold    = types.BackendTypeThreshold
+	BackendTypeFrost        = types.BackendTypeFrost
 )
 
 // FSExtension constant re-exports

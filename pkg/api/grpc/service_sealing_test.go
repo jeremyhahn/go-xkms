@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"
@@ -252,25 +252,25 @@ func TestService_Seal_WithValidBackend(t *testing.T) {
 		}
 	})
 
-	t.Run("returns error even with key_id when handler does not use it", func(t *testing.T) {
-		// Even when key_id is provided, the current handler implementation
-		// does not populate KeyAttributes from it.
+	t.Run("returns NotFound error when key_id references non-existent key", func(t *testing.T) {
+		// The handler now looks up the key by key_id (CN) and returns NotFound
+		// if the key doesn't exist in the keystore.
 		_, err := service.Seal(ctx, &pb.SealRequest{
 			Backend: "software",
-			KeyId:   "test-key",
+			KeyId:   "non-existent-key",
 			Data:    testData,
 		})
 
 		if err == nil {
-			t.Fatal("Expected error when KeyAttributes is not populated from key_id")
+			t.Fatal("Expected error when key does not exist")
 		}
 
 		st, ok := status.FromError(err)
 		if !ok {
 			t.Fatalf("Expected gRPC status error, got: %v", err)
 		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code, got: %v", st.Code())
+		if st.Code() != codes.NotFound {
+			t.Errorf("Expected NotFound code, got: %v", st.Code())
 		}
 	})
 
@@ -379,14 +379,14 @@ func TestService_Unseal_EmptyCiphertext(t *testing.T) {
 }
 
 // TestService_Unseal_NonExistentBackend tests Unseal with a backend that does not exist.
-// The handler should return Internal error when the backend is not found.
+// The handler should return NotFound error when the backend is not found.
 func TestService_Unseal_NonExistentBackend(t *testing.T) {
 	service := setupSealingTest(t)
 	defer keychain.Reset()
 
 	ctx := context.Background()
 
-	t.Run("returns Internal error for non-existent backend", func(t *testing.T) {
+	t.Run("returns NotFound error for non-existent backend", func(t *testing.T) {
 		_, err := service.Unseal(ctx, &pb.UnsealRequest{
 			Backend:    "nonexistent",
 			Ciphertext: []byte("some ciphertext"),
@@ -399,8 +399,8 @@ func TestService_Unseal_NonExistentBackend(t *testing.T) {
 		if !ok {
 			t.Fatalf("Expected gRPC status error, got: %v", err)
 		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code, got: %v", st.Code())
+		if st.Code() != codes.NotFound {
+			t.Errorf("Expected NotFound code, got: %v", st.Code())
 		}
 	})
 }
@@ -437,26 +437,26 @@ func TestService_Unseal_WithValidBackend(t *testing.T) {
 		}
 	})
 
-	t.Run("returns error with key_id when handler does not use it", func(t *testing.T) {
-		// Even when key_id is provided, the current handler implementation
-		// does not populate KeyAttributes from it.
+	t.Run("returns NotFound error when key_id references non-existent key", func(t *testing.T) {
+		// The handler now looks up the key by key_id (CN) and returns NotFound
+		// if the key doesn't exist in the keystore.
 		_, err := service.Unseal(ctx, &pb.UnsealRequest{
 			Backend:    "software",
-			KeyId:      "test-key",
+			KeyId:      "non-existent-key",
 			Ciphertext: []byte("some ciphertext data"),
 			Nonce:      []byte("nonce12bytes"),
 		})
 
 		if err == nil {
-			t.Fatal("Expected error when KeyAttributes is not populated from key_id")
+			t.Fatal("Expected error when key does not exist")
 		}
 
 		st, ok := status.FromError(err)
 		if !ok {
 			t.Fatalf("Expected gRPC status error, got: %v", err)
 		}
-		if st.Code() != codes.Internal {
-			t.Errorf("Expected Internal code, got: %v", st.Code())
+		if st.Code() != codes.NotFound {
+			t.Errorf("Expected NotFound code, got: %v", st.Code())
 		}
 	})
 }
@@ -491,9 +491,9 @@ func TestService_Unseal_InvalidBackendName(t *testing.T) {
 			if !ok {
 				t.Fatalf("Expected gRPC status error, got: %v", err)
 			}
-			// Should fail with Internal error from validation or backend not found
-			if st.Code() != codes.Internal && st.Code() != codes.InvalidArgument {
-				t.Errorf("Expected Internal or InvalidArgument code, got: %v", st.Code())
+			// Should fail with NotFound error since invalid backend names won't be found
+			if st.Code() != codes.NotFound && st.Code() != codes.InvalidArgument {
+				t.Errorf("Expected NotFound or InvalidArgument code, got: %v", st.Code())
 			}
 		})
 	}

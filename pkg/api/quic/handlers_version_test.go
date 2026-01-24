@@ -58,7 +58,8 @@ func TestHandleKeyVersioning(t *testing.T) {
 		var resp ErrorResponse
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
-		assert.Equal(t, "Not Implemented", resp.Error)
+		// Error now contains the full message for SDK client compatibility
+		assert.Contains(t, resp.Error, "key versioning is not yet supported")
 		assert.Contains(t, resp.Message, "key versioning is not yet supported")
 	})
 

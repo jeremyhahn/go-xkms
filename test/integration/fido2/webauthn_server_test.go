@@ -306,7 +306,7 @@ func (s *WebAuthnServer) handleAuthenticateVerify(w http.ResponseWriter, r *http
 		return
 	}
 
-	if len(derivedKey) != 32 {
+	if len(derivedKey) != 64 {
 		http.Error(w, "Invalid derived key length", http.StatusBadRequest)
 		return
 	}

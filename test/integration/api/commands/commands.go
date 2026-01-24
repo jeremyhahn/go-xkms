@@ -502,10 +502,12 @@ func SealingCommands() []CommandDefinition {
 			Description:     "Seal data using backend's sealing mechanism",
 			RequiresBackend: true,
 			RequiresServer:  true,
+			RequiresSetup:   true, // Requires a key to be generated first
 			RequiredArgs: []ArgDefinition{
 				{Flag: "", Value: "test-data-to-seal", Description: "Data to seal", IsPositional: true},
 			},
 			OptionalArgs: []ArgDefinition{
+				{Flag: "key-id", Value: "", Description: "Key ID for sealing (required for software backend)"},
 				{Flag: "aad", Value: "", Description: "Additional authenticated data"},
 				{Flag: "output", Value: "", Description: "Output format (json/base64)"},
 			},

@@ -13,17 +13,6 @@ This document tracks the development progress of go-keychain.
 - [x] **Cloud KMS Backends** - AWS KMS, GCP Cloud KMS, Azure Key Vault
 - [x] **Unix Socket IPC** - Direct go-codec based IPC (`pkg/api/unix/`)
 
-## In Progress
-
-### Unix Socket Migration
-
-Migrate existing Unix socket code to use the new `pkg/api/unix/` implementation:
-
-- [ ] Refactor `internal/unix/` to use new IPC server
-- [ ] Refactor `pkg/client/unix_*.go` to use new IPC client
-- [ ] Update integration tests in `test/integration/api/unix/`
-- [ ] Remove deprecated gRPC wrapper code
-
 ## Planned Features
 
 ### PKCS#11 v3.0 Provider Module (14-18 weeks)

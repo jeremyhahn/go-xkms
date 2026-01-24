@@ -35,11 +35,12 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
+	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC, MCP)
 	needsTLS := strings.HasPrefix(serverURL, "https://") ||
 		strings.HasPrefix(serverURL, "grpc://") ||
 		strings.HasPrefix(serverURL, "grpcs://") ||
-		strings.HasPrefix(serverURL, "quic://")
+		strings.HasPrefix(serverURL, "quic://") ||
+		strings.HasPrefix(serverURL, "mcp://")
 
 	if needsTLS {
 		prefixArgs = append(prefixArgs, "--tls-insecure")
@@ -57,12 +58,41 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 	return stdout.String(), stderr.String(), err
 }
 
+// execCLIWithLocal executes the CLI binary with the "--protocol", "embedded" flag for embedded mode
+func execCLIWithLocal(t *testing.T, cfg *TestConfig, args ...string) (string, string, error) {
+	t.Helper()
+
+	prefixArgs := []string{"--protocol", "embedded"}
+	args = append(prefixArgs, args...)
+	cmd := exec.Command(cfg.CLIBinPath, args...)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+
+	return stdout.String(), stderr.String(), err
+}
+
+// execCLIWithProtocol executes CLI commands using the appropriate method based on protocol
+func execCLIWithProtocol(t *testing.T, cfg *TestConfig, protocol ProtocolType, args ...string) (string, string, error) {
+	t.Helper()
+
+	if protocol == ProtocolEmbedded {
+		return execCLIWithLocal(t, cfg, args...)
+	}
+	serverURL := cfg.GetServerURL(protocol)
+	return execCLIWithServer(t, cfg, serverURL, args...)
+}
+
 // TestCLIMultiProtocolVersion tests the version command across all protocols
 func TestCLIMultiProtocolVersion(t *testing.T) {
 	cfg := LoadTestConfig()
 	requireCLI(t, cfg)
 
-	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+	// Version command doesn't require server, test across all protocols
+	protocols := AllProtocols()
 
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
@@ -88,19 +118,17 @@ func TestCLIMultiProtocolHealth(t *testing.T) {
 	cfg := LoadTestConfig()
 	requireCLI(t, cfg)
 
-	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+	// Test remote protocols that require a server
+	remoteProtocols := RemoteProtocols()
 
-	for _, proto := range protocols {
+	for _, proto := range remoteProtocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
 				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
-			serverURL := cfg.GetServerURL(proto)
-
-			// Health check command - assuming there's a 'health' subcommand
-			// If not, this test documents that we need one
-			stdout, stderr, err := execCLIWithServer(t, cfg, serverURL, "backends", "list")
+			// Health check via backends list command
+			stdout, stderr, err := execCLIWithProtocol(t, cfg, proto, "backends", "list")
 			if err != nil {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
@@ -117,6 +145,24 @@ func TestCLIMultiProtocolHealth(t *testing.T) {
 			t.Logf("[%s] Health check succeeded:\n%s", proto, strings.TrimSpace(output))
 		})
 	}
+
+	// Test embedded protocol separately (doesn't need server)
+	t.Run("embedded", func(t *testing.T) {
+		// Embedded mode should work for local operations
+		stdout, stderr, err := execCLIWithLocal(t, cfg, "version")
+		if err != nil {
+			t.Logf("stdout: %s", stdout)
+			t.Logf("stderr: %s", stderr)
+			t.Fatalf("[embedded] Version command failed: %v", err)
+		}
+
+		output := stdout + stderr
+		if output == "" {
+			t.Fatal("[embedded] Version command produced no output")
+		}
+
+		t.Logf("[embedded] Health check succeeded:\n%s", strings.TrimSpace(output))
+	})
 }
 
 // TestCLIMultiProtocolKeyGenerate tests key generation across all protocols
@@ -129,15 +175,15 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 	os.MkdirAll(keyDir, 0755)
 	defer os.RemoveAll(keyDir)
 
-	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+	// Test remote protocols
+	remoteProtocols := RemoteProtocols()
 
-	for _, proto := range protocols {
+	for _, proto := range remoteProtocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
 				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
-			serverURL := cfg.GetServerURL(proto)
 			keyID := fmt.Sprintf("test-key-%s-%d", proto, testTimestamp())
 
 			// Generate key
@@ -150,7 +196,7 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 				"--key-dir", keyDir,
 			}
 
-			stdout, stderr, err := execCLIWithServer(t, cfg, serverURL, args...)
+			stdout, stderr, err := execCLIWithProtocol(t, cfg, proto, args...)
 			if err != nil {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
@@ -168,9 +214,44 @@ func TestCLIMultiProtocolKeyGenerate(t *testing.T) {
 				"--key-algorithm", "rsa",
 				"--key-dir", keyDir,
 			}
-			execCLIWithServer(t, cfg, serverURL, delArgs...)
+			execCLIWithProtocol(t, cfg, proto, delArgs...)
 		})
 	}
+
+	// Test embedded protocol
+	t.Run("embedded", func(t *testing.T) {
+		keyID := fmt.Sprintf("test-key-embedded-%d", testTimestamp())
+
+		// Generate key in embedded mode
+		args := []string{
+			"key", "generate", keyID,
+			"--backend", "software",
+			"--key-type", "rsa",
+			"--key-algorithm", "rsa",
+			"--key-size", "2048",
+			"--key-dir", keyDir,
+		}
+
+		stdout, stderr, err := execCLIWithLocal(t, cfg, args...)
+		if err != nil {
+			t.Logf("stdout: %s", stdout)
+			t.Logf("stderr: %s", stderr)
+			t.Logf("[embedded] Key generation failed: %v", err)
+			t.Fatalf("Embedded mode key generation failed - check CLI implementation")
+		}
+
+		t.Logf("[embedded] Generated key: %s", keyID)
+
+		// Cleanup
+		delArgs := []string{
+			"key", "delete", keyID,
+			"--backend", "software",
+			"--key-type", "rsa",
+			"--key-algorithm", "rsa",
+			"--key-dir", keyDir,
+		}
+		execCLIWithLocal(t, cfg, delArgs...)
+	})
 }
 
 // TestCLIMultiProtocolListKeys tests listing keys across all protocols
@@ -213,15 +294,14 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 		execCLI(t, cfg, delArgs...)
 	}()
 
-	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+	// Test remote protocols
+	remoteProtocols := RemoteProtocols()
 
-	for _, proto := range protocols {
+	for _, proto := range remoteProtocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
 				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
-
-			serverURL := cfg.GetServerURL(proto)
 
 			args := []string{
 				"key", "list",
@@ -229,7 +309,7 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 				"--key-dir", keyDir,
 			}
 
-			stdout, stderr, err := execCLIWithServer(t, cfg, serverURL, args...)
+			stdout, stderr, err := execCLIWithProtocol(t, cfg, proto, args...)
 			if err != nil {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
@@ -243,6 +323,9 @@ func TestCLIMultiProtocolListKeys(t *testing.T) {
 			t.Logf("[%s] List keys succeeded:\n%s", proto, strings.TrimSpace(output))
 		})
 	}
+
+	// Note: Embedded protocol is tested separately in TestCLIEmbeddedProtocol
+	// because embedded mode doesn't share state with the server
 }
 
 // TestCLIMultiProtocolSignVerify tests sign/verify across all protocols
@@ -279,7 +362,6 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 			"key", "delete", keyID,
 			"--backend", "software",
 			"--key-type", "rsa",
-			"--key-algorithm", "rsa",
 			"--key-dir", keyDir,
 		}
 		execCLI(t, cfg, delArgs...)
@@ -287,26 +369,23 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 
 	testData := "test data for multi-protocol signing"
 
-	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+	// Test remote protocols
+	remoteProtocols := RemoteProtocols()
 
-	for _, proto := range protocols {
+	for _, proto := range remoteProtocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
 				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
 
-			serverURL := cfg.GetServerURL(proto)
-
 			signArgs := []string{
 				"key", "sign", keyID, testData,
 				"--backend", "software",
-				"--key-type", "rsa",
-				"--key-algorithm", "rsa",
 				"--key-dir", keyDir,
-				"--hash", "SHA-256",
+				"--hash", "sha256",
 			}
 
-			stdout, stderr, err := execCLIWithServer(t, cfg, serverURL, signArgs...)
+			stdout, stderr, err := execCLIWithProtocol(t, cfg, proto, signArgs...)
 			if err != nil {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
@@ -322,6 +401,9 @@ func TestCLIMultiProtocolSignVerify(t *testing.T) {
 			t.Logf("[%s] Sign succeeded, signature length: %d", proto, len(signature))
 		})
 	}
+
+	// Note: Embedded protocol is tested separately in TestCLIEmbeddedProtocol
+	// because embedded mode doesn't share state with the server
 }
 
 // TestCLIMultiProtocolEncryptDecrypt tests encrypt/decrypt across all protocols
@@ -378,15 +460,14 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 
 	testData := "secret data for encryption"
 
-	protocols := []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
+	// Test remote protocols
+	remoteProtocols := RemoteProtocols()
 
-	for _, proto := range protocols {
+	for _, proto := range remoteProtocols {
 		t.Run(string(proto), func(t *testing.T) {
 			if !cfg.IsProtocolAvailable(t, proto) {
 				t.Fatalf("Server not available for protocol %s - server must be running", proto)
 			}
-
-			serverURL := cfg.GetServerURL(proto)
 
 			encryptArgs := []string{
 				"key", "encrypt", keyID, testData,
@@ -394,7 +475,7 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 				"--key-dir", keyDir,
 			}
 
-			stdout, stderr, err := execCLIWithServer(t, cfg, serverURL, encryptArgs...)
+			stdout, stderr, err := execCLIWithProtocol(t, cfg, proto, encryptArgs...)
 			if err != nil {
 				t.Logf("stdout: %s", stdout)
 				t.Logf("stderr: %s", stderr)
@@ -410,6 +491,9 @@ func TestCLIMultiProtocolEncryptDecrypt(t *testing.T) {
 			t.Logf("[%s] Encrypt/Decrypt succeeded", proto)
 		})
 	}
+
+	// Note: Embedded protocol is tested separately in TestCLIEmbeddedProtocol
+	// because embedded mode doesn't share state with the server
 }
 
 // TestCLIUnixSocketDefault tests that CLI uses Unix socket by default
@@ -442,9 +526,10 @@ func TestCLIServerFlagFormats(t *testing.T) {
 		{"unix socket", "unix:///var/run/keychain/keychain.sock"},
 		{"http", "http://localhost:8443"},
 		{"https", "https://localhost:8443"},
-		{"grpc", "grpc://localhost:9443"},
+		{"grpc", "grpcs://localhost:9443"},
 		{"grpcs", "grpcs://localhost:9443"},
 		{"quic", "quic://localhost:8444"},
+		{"mcp", "mcp://localhost:9444"},
 	}
 
 	for _, tt := range tests {
@@ -466,6 +551,99 @@ func TestCLIServerFlagFormats(t *testing.T) {
 			t.Logf("[%s] CLI accepts server format: %s", tt.name, tt.format)
 		})
 	}
+}
+
+// TestCLILocalFlag tests the "--protocol", "embedded" flag for embedded mode
+func TestCLILocalFlag(t *testing.T) {
+	cfg := LoadTestConfig()
+	requireCLI(t, cfg)
+
+	// Test that --protocol embedded flag works for version command
+	stdout, stderr, err := execCLIWithLocal(t, cfg, "version")
+	if err != nil {
+		t.Logf("stdout: %s", stdout)
+		t.Logf("stderr: %s", stderr)
+		t.Fatalf("Version command with --protocol embedded failed: %v", err)
+	}
+
+	output := stdout + stderr
+	if output == "" {
+		t.Fatal("Version command with --protocol embedded produced no output")
+	}
+
+	t.Logf("CLI --protocol embedded flag works correctly for embedded mode")
+}
+
+// TestCLIMCPProtocol tests MCP protocol specifically
+func TestCLIMCPProtocol(t *testing.T) {
+	cfg := LoadTestConfig()
+	requireCLI(t, cfg)
+
+	if !cfg.IsProtocolAvailable(t, ProtocolMCP) {
+		t.Skip("MCP server not available")
+	}
+
+	// Test backends list via MCP
+	stdout, stderr, err := execCLIWithProtocol(t, cfg, ProtocolMCP, "backends", "list")
+	if err != nil {
+		t.Logf("stdout: %s", stdout)
+		t.Logf("stderr: %s", stderr)
+		t.Fatalf("MCP backends list failed: %v", err)
+	}
+
+	output := stdout + stderr
+	if output == "" {
+		t.Fatal("MCP backends list produced no output")
+	}
+
+	t.Logf("MCP protocol test succeeded:\n%s", strings.TrimSpace(output))
+}
+
+// TestCLIEmbeddedProtocol tests embedded protocol specifically
+func TestCLIEmbeddedProtocol(t *testing.T) {
+	cfg := LoadTestConfig()
+	requireCLI(t, cfg)
+
+	keyDir := t.TempDir()
+
+	// Test key generation in embedded mode
+	keyID := fmt.Sprintf("embedded-test-key-%d", testTimestamp())
+	genArgs := []string{
+		"key", "generate", keyID,
+		"--backend", "software",
+		"--key-type", "rsa",
+		"--key-algorithm", "rsa",
+		"--key-size", "2048",
+		"--key-dir", keyDir,
+	}
+
+	stdout, stderr, err := execCLIWithLocal(t, cfg, genArgs...)
+	if err != nil {
+		t.Logf("stdout: %s", stdout)
+		t.Logf("stderr: %s", stderr)
+		t.Fatalf("Embedded key generation failed: %v", err)
+	}
+
+	t.Logf("Embedded protocol key generation succeeded for key: %s", keyID)
+
+	// Test key list in embedded mode
+	listArgs := []string{
+		"key", "list",
+		"--backend", "software",
+		"--key-dir", keyDir,
+	}
+
+	stdout, stderr, err = execCLIWithLocal(t, cfg, listArgs...)
+	if err != nil {
+		t.Logf("stdout: %s", stdout)
+		t.Logf("stderr: %s", stderr)
+		t.Fatalf("Embedded key list failed: %v", err)
+	}
+
+	output := stdout + stderr
+	assertContains(t, output, keyID, "Embedded key list should contain the generated key")
+
+	t.Logf("Embedded protocol test succeeded")
 }
 
 // testTimestamp returns a unique timestamp for test identifiers

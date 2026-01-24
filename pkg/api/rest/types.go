@@ -123,6 +123,7 @@ type SuccessResponse struct {
 
 // RotateKeyResponse represents the response for key rotation.
 type RotateKeyResponse struct {
+	Success      bool   `json:"success"`
 	KeyID        string `json:"key_id"`
 	KeyType      string `json:"key_type"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`

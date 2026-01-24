@@ -40,7 +40,7 @@ func TestCLI_FrostKeygen(t *testing.T) {
 	tempDir := t.TempDir()
 
 	output, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "keygen",
 		"--algorithm", "FROST-Ed25519-SHA512",
@@ -71,7 +71,7 @@ func TestCLI_FrostList(t *testing.T) {
 
 	// First generate a key (participant mode stores key locally)
 	_, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "keygen",
 		"--key-id", "list-test-key",
@@ -84,7 +84,7 @@ func TestCLI_FrostList(t *testing.T) {
 
 	// Then list
 	output, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "list",
 	)
@@ -98,7 +98,7 @@ func TestCLI_FrostInfo(t *testing.T) {
 
 	// Generate a key (participant mode stores key locally)
 	_, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "keygen",
 		"--key-id", "info-test-key",
@@ -111,7 +111,7 @@ func TestCLI_FrostInfo(t *testing.T) {
 
 	// Get info
 	output, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "info", "info-test-key",
 		"--show-public-key",
@@ -126,7 +126,7 @@ func TestCLI_FrostDelete(t *testing.T) {
 
 	// Generate a key (participant mode stores key locally)
 	_, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "keygen",
 		"--key-id", "delete-test-key",
@@ -139,7 +139,7 @@ func TestCLI_FrostDelete(t *testing.T) {
 
 	// Delete with force
 	output, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "delete", "delete-test-key",
 		"--force",
@@ -149,7 +149,7 @@ func TestCLI_FrostDelete(t *testing.T) {
 
 	// Verify key is gone
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", tempDir,
 		"frost", "info", "delete-test-key",
 	)
@@ -169,7 +169,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 
 	// Step 1: Dealer generates all key packages
 	output, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", dealerDir,
 		"frost", "keygen",
 		"--key-id", keyID,
@@ -191,7 +191,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 
 	// Step 2: Each participant imports their package
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "import",
 		"--package", package1,
@@ -200,7 +200,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 	t.Log("Participant 1 (alice) imported key package")
 
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "import",
 		"--package", package2,
@@ -211,7 +211,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 	// Step 3: Round 1 - Each participant generates nonces/commitments
 	commitment1File := filepath.Join(participant1Dir, "round1.json")
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "round1",
 		"--key-id", keyID,
@@ -222,7 +222,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 
 	commitment2File := filepath.Join(participant2Dir, "round1.json")
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "round1",
 		"--key-id", keyID,
@@ -234,7 +234,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 	// Step 4: Round 2 - Each participant generates their signature share
 	share1File := filepath.Join(participant1Dir, "share.json")
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "round2",
 		"--key-id", keyID,
@@ -248,7 +248,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 
 	share2File := filepath.Join(participant2Dir, "share.json")
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "round2",
 		"--key-id", keyID,
@@ -263,7 +263,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 	// Step 5: Aggregate both shares (can be done by any participant)
 	signatureFile := filepath.Join(participant1Dir, "signature.bin")
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "aggregate",
 		"--key-id", keyID,
@@ -284,7 +284,7 @@ func TestCLI_FrostSigningWorkflow(t *testing.T) {
 
 	// Step 6: Verify (can be done by anyone with access to the group public key)
 	output, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "verify",
 		"--key-id", keyID,
@@ -313,7 +313,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 
 	// Step 1: Dealer generates and exports all packages
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", dealerDir,
 		"frost", "keygen",
 		"--key-id", keyID,
@@ -326,7 +326,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 
 	// Step 2: Participants import their packages
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "import",
 		"--package", filepath.Join(exportDir, "signer1_participant_1.json"),
@@ -334,7 +334,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "import",
 		"--package", filepath.Join(exportDir, "signer2_participant_2.json"),
@@ -344,7 +344,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 	// Round 1 for each participant
 	commitment1File := filepath.Join(participant1Dir, "commit.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "round1",
 		"--key-id", keyID,
@@ -354,7 +354,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 
 	commitment2File := filepath.Join(participant2Dir, "commit.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "round1",
 		"--key-id", keyID,
@@ -365,7 +365,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 	// Round 2 with file for each participant
 	share1File := filepath.Join(participant1Dir, "share.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "round2",
 		"--key-id", keyID,
@@ -378,7 +378,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 
 	share2File := filepath.Join(participant2Dir, "share.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "round2",
 		"--key-id", keyID,
@@ -392,7 +392,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 	// Aggregate both shares
 	signatureFile := filepath.Join(participant1Dir, "doc.sig")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "aggregate",
 		"--key-id", keyID,
@@ -405,7 +405,7 @@ func TestCLI_FrostSigningWithFile(t *testing.T) {
 
 	// Verify
 	output, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "verify",
 		"--key-id", keyID,
@@ -433,7 +433,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 
 	// Step 1: Dealer generates and exports all packages (secp256k1 for blockchain)
 	_, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", dealerDir,
 		"frost", "keygen",
 		"--key-id", keyID,
@@ -447,7 +447,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 
 	// Step 2: Participants import their packages
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "import",
 		"--package", filepath.Join(exportDir, "wallet1_participant_1.json"),
@@ -455,7 +455,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "import",
 		"--package", filepath.Join(exportDir, "wallet2_participant_2.json"),
@@ -465,7 +465,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 	// Round 1 for each participant
 	commitment1File := filepath.Join(participant1Dir, "commit.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "round1",
 		"--key-id", keyID,
@@ -475,7 +475,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 
 	commitment2File := filepath.Join(participant2Dir, "commit.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "round1",
 		"--key-id", keyID,
@@ -486,7 +486,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 	// Round 2 with hex message for each participant
 	share1File := filepath.Join(participant1Dir, "share.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "round2",
 		"--key-id", keyID,
@@ -499,7 +499,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 
 	share2File := filepath.Join(participant2Dir, "share.json")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant2Dir,
 		"frost", "round2",
 		"--key-id", keyID,
@@ -513,7 +513,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 	// Aggregate both shares
 	signatureFile := filepath.Join(participant1Dir, "tx.sig")
 	_, err = runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "aggregate",
 		"--key-id", keyID,
@@ -530,7 +530,7 @@ func TestCLI_FrostSigningWithHex(t *testing.T) {
 	require.NoError(t, err)
 
 	output, err := runCLI(
-		"--local",
+		"--protocol", "embedded",
 		"--key-dir", participant1Dir,
 		"frost", "verify",
 		"--key-id", keyID,
@@ -559,7 +559,7 @@ func TestCLI_FrostAllAlgorithms(t *testing.T) {
 
 			// Use participant mode to store key locally
 			output, err := runCLI(
-				"--local",
+				"--protocol", "embedded",
 				"--key-dir", tempDir,
 				"frost", "keygen",
 				"--algorithm", algo,
@@ -573,7 +573,7 @@ func TestCLI_FrostAllAlgorithms(t *testing.T) {
 
 			// Verify key was created
 			output, err = runCLI(
-				"--local",
+				"--protocol", "embedded",
 				"--key-dir", tempDir,
 				"frost", "list",
 			)
@@ -591,7 +591,7 @@ func runCLI(args ...string) (string, error) {
 	cliPath := findCLI()
 	if cliPath == "" {
 		// Fall back to go run
-		allArgs := append([]string{"run", "-tags=frost", "./cmd/cli/main.go"}, args...)
+		allArgs := append([]string{"run", "-tags=frost", "./cmd/keychainctl"}, args...)
 		cmd := exec.Command("go", allArgs...)
 		cmd.Dir = getProjectRoot()
 		var stdout, stderr bytes.Buffer
@@ -615,18 +615,18 @@ func runCLI(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// findCLI looks for the keychain CLI binary
+// findCLI looks for the keychainctl CLI binary
 func findCLI() string {
 	// Check if installed in PATH
-	if path, err := exec.LookPath("keychain"); err == nil {
+	if path, err := exec.LookPath("keychainctl"); err == nil {
 		return path
 	}
 
 	// Check common locations
 	locations := []string{
-		"/usr/local/bin/keychain",
-		"./bin/keychain",
-		"../../../bin/keychain",
+		"/usr/local/bin/keychainctl",
+		"./bin/keychainctl",
+		"../../../bin/keychainctl",
 	}
 
 	for _, loc := range locations {

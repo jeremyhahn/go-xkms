@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-keychain/pkg/fido2"
+	"github.com/jeremyhahn/go-keychain/pkg/fido2/authenticator/keybackend/software"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,6 +37,9 @@ type TestConfig struct {
 	WaitDeviceTimeout  time.Duration
 	RegistrationConfig *fido2.EnrollmentConfig
 	AuthConfig         *fido2.AuthenticationConfig
+	useVirtual         bool
+	virtualEnumerator  *NativeVirtualDeviceEnumerator
+	virtualDevice      *fido2.NativeVirtualDevice
 }
 
 // LoadFIDO2TestConfig loads test configuration from environment
@@ -46,6 +50,12 @@ func LoadFIDO2TestConfig() *TestConfig {
 		PIN:               os.Getenv("FIDO2_PIN"),
 		Timeout:           30 * time.Second,
 		WaitDeviceTimeout: 60 * time.Second,
+		useVirtual:        os.Getenv("FIDO2_USE_VIRTUAL") == "true",
+	}
+
+	// If using virtual device, skip physical device detection
+	if cfg.useVirtual {
+		return cfg
 	}
 
 	// Use CanoKey QEMU device path if available and the device is valid
@@ -62,6 +72,11 @@ func LoadFIDO2TestConfig() *TestConfig {
 	}
 
 	return cfg
+}
+
+// UseVirtualDevice returns true if the test should use a virtual device
+func (tc *TestConfig) UseVirtualDevice() bool {
+	return tc.useVirtual
 }
 
 // isValidFIDO2Device checks if a device path exists and is a valid FIDO2 device
@@ -132,6 +147,10 @@ func (tc *TestConfig) GetFIDO2Config() *fido2.Config {
 func (tc *TestConfig) CreateHandler(t *testing.T) *fido2.FIDO2Handler {
 	t.Helper()
 
+	if tc.UseVirtualDevice() {
+		return tc.CreateVirtualHandler(t)
+	}
+
 	cfg := tc.GetFIDO2Config()
 	enumerator := fido2.NewDefaultEnumerator()
 
@@ -142,9 +161,61 @@ func (tc *TestConfig) CreateHandler(t *testing.T) *fido2.FIDO2Handler {
 	return handler
 }
 
+// CreateVirtualHandler creates a handler with a virtual FIDO2 device
+func (tc *TestConfig) CreateVirtualHandler(t *testing.T) *fido2.FIDO2Handler {
+	t.Helper()
+
+	// Create virtual device if not already created
+	if tc.virtualDevice == nil {
+		config := &fido2.NativeVirtualDeviceConfig{
+			SerialNumber:     "NFIDO-INT-TEST",
+			Manufacturer:     "go-keychain-test",
+			Product:          "VirtualFIDO Test",
+			EnablePIN:        true,
+			EnableHMACSecret: true,
+			KeyBackend:       software.NewSoftwareKeyBackend(),
+		}
+
+		device, err := fido2.NewNativeVirtualDevice(config)
+		require.NoError(t, err, "Failed to create native virtual device")
+		tc.virtualDevice = device
+		t.Logf("Virtual device created: path=%s, PIN=%v, HMAC-Secret=%v",
+			device.Path(), config.EnablePIN, config.EnableHMACSecret)
+	}
+
+	// Create enumerator if not already created
+	if tc.virtualEnumerator == nil {
+		tc.virtualEnumerator = NewNativeVirtualDeviceEnumerator()
+		err := tc.virtualEnumerator.RegisterDevice(tc.virtualDevice)
+		require.NoError(t, err, "Failed to register virtual device")
+	}
+
+	cfg := tc.GetFIDO2Config()
+	handler, err := fido2.NewHandler(cfg, tc.virtualEnumerator)
+	require.NoError(t, err, "Failed to create FIDO2 handler with virtual device")
+
+	return handler
+}
+
+// GetVirtualEnumerator returns the virtual device enumerator for the test
+func (tc *TestConfig) GetVirtualEnumerator(t *testing.T) *NativeVirtualDeviceEnumerator {
+	t.Helper()
+
+	if tc.virtualEnumerator == nil {
+		// Initialize virtual device first
+		_ = tc.CreateVirtualHandler(t)
+	}
+
+	return tc.virtualEnumerator
+}
+
 // CheckDeviceAvailable checks if a FIDO2 device is available
 func (tc *TestConfig) CheckDeviceAvailable(t *testing.T) bool {
 	t.Helper()
+
+	if tc.UseVirtualDevice() {
+		return true
+	}
 
 	handler := tc.CreateHandler(t)
 	defer handler.Close()
@@ -158,12 +229,14 @@ func (tc *TestConfig) CheckDeviceAvailable(t *testing.T) bool {
 	return len(devices) > 0
 }
 
-// RequireDevice skips the test if no FIDO2 device is available
+// RequireDevice ensures a FIDO2 device is available, falling back to a
+// virtual device when no hardware is detected.
 func (tc *TestConfig) RequireDevice(t *testing.T) {
 	t.Helper()
 
 	if !tc.CheckDeviceAvailable(t) {
-		t.Skip("FIDO2 device required but not available. Set FIDO2_DEVICE_PATH or CANOKEY_QEMU to virtual device socket path.")
+		t.Log("No hardware FIDO2 device detected; falling back to native virtual device")
+		tc.useVirtual = true
 	}
 }
 
@@ -235,7 +308,7 @@ func (tc *TestConfig) AuthenticateWithCredential(t *testing.T, handler *fido2.FI
 	derivedKey, err := handler.UnlockWithKey(authConfig)
 	require.NoError(t, err, "Authentication failed")
 	require.NotEmpty(t, derivedKey, "Derived key should not be empty")
-	require.Equal(t, 32, len(derivedKey), "Derived key should be 32 bytes")
+	require.Equal(t, 64, len(derivedKey), "Derived key should be 64 bytes (512-bit KDF)")
 
 	t.Logf("Authentication successful: derived key length=%d", len(derivedKey))
 

@@ -234,61 +234,75 @@ deps-quantum-debian:
 	@echo "$(YELLOW)Now run 'make deps-quantum' to build and install liboqs$(RESET)"
 
 .PHONY: build
-## build: Build the shared library, CLI, and all server binaries (default)
-build: lib build-cli build-servers
+## build: Build the shared library, CLI, server binaries, and vfido2 (default)
+build: lib build-cli build-servers build-vfido2
 
 .PHONY: build-cli
-## build-cli: Build the keychain CLI binary
+## build-cli: Build the keychainctl CLI binary
 build-cli:
-	@echo "$(CYAN)$(BOLD)→ Building keychain CLI...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building keychainctl CLI...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=0 $(GOBUILD) -o $(BIN_DIR)/keychain ./cmd/cli/main.go
-	@echo "$(GREEN)✓ CLI binary built: $(BIN_DIR)/keychain$(RESET)"
+	@CGO_ENABLED=0 $(GOBUILD) -o $(BIN_DIR)/keychainctl ./cmd/keychainctl
+	@echo "$(GREEN)✓ CLI binary built: $(BIN_DIR)/keychainctl$(RESET)"
 
 .PHONY: build-server
-## build-server: Build the unified keychain server binary (all protocols)
+## build-server: Build the unified keychaind server binary (all protocols)
 build-server:
-	@echo "$(CYAN)$(BOLD)→ Building unified keychain server...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building unified keychaind server...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychaind ./cmd/server/main.go
+	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychaind ./cmd/keychaind/main.go
 	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/keychaind$(RESET)"
 
-.PHONY: build-rest-server
-## build-rest-server: Build the REST API server binary
-build-rest-server:
-	@echo "$(CYAN)$(BOLD)→ Building REST server...$(RESET)"
-	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychain-rest ./cmd/rest-server/main.go
-	@echo "$(GREEN)✓ REST server binary built: $(BIN_DIR)/keychain-rest$(RESET)"
-
-.PHONY: build-grpc-server
-## build-grpc-server: Build the gRPC server binary
-build-grpc-server:
-	@echo "$(CYAN)$(BOLD)→ Building gRPC server...$(RESET)"
-	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychain-grpc ./cmd/grpc-server/main.go
-	@echo "$(GREEN)✓ gRPC server binary built: $(BIN_DIR)/keychain-grpc$(RESET)"
-
-.PHONY: build-quic-server
-## build-quic-server: Build the QUIC server binary
-build-quic-server:
-	@echo "$(CYAN)$(BOLD)→ Building QUIC server...$(RESET)"
-	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychain-quic ./cmd/quic-server/main.go
-	@echo "$(GREEN)✓ QUIC server binary built: $(BIN_DIR)/keychain-quic$(RESET)"
-
-.PHONY: build-mcp-server
-## build-mcp-server: Build the MCP (Model Context Protocol) server binary
-build-mcp-server:
-	@echo "$(CYAN)$(BOLD)→ Building MCP server...$(RESET)"
-	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychain-mcp ./cmd/mcp-server/main.go
-	@echo "$(GREEN)✓ MCP server binary built: $(BIN_DIR)/keychain-mcp$(RESET)"
-
 .PHONY: build-servers
-## build-servers: Build all server binaries (unified + protocol-specific)
-build-servers: build-server build-rest-server build-grpc-server build-quic-server build-mcp-server
-	@echo "$(GREEN)$(BOLD)✓ All server binaries built successfully!$(RESET)"
+## build-servers: Build server binary (alias for build-server)
+build-servers: build-server
+	@echo "$(GREEN)$(BOLD)✓ Server binary built successfully!$(RESET)"
+
+.PHONY: build-vfido2
+## build-vfido2: Build the vfido2 virtual FIDO2 key binary (Linux only)
+build-vfido2:
+	@echo "$(CYAN)$(BOLD)→ Building vfido2 (Linux only)...$(RESET)"
+	@mkdir -p $(BIN_DIR)
+	@GOOS=linux CGO_ENABLED=0 $(GO) build -buildvcs=false -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(BUILD_DATE)" -o $(BIN_DIR)/vfido2 ./cmd/vfido2
+	@echo "$(GREEN)✓ vfido2 binary built: $(BIN_DIR)/vfido2$(RESET)"
+
+.PHONY: test-uhid
+## test-uhid: Run UHID package unit tests
+test-uhid:
+	@echo "$(CYAN)→ Testing UHID package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/uhid/...
+
+.PHONY: test-vfido2
+## test-vfido2: Run vfido2 command unit tests
+test-vfido2:
+	@echo "$(CYAN)→ Testing vfido2 command...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./cmd/vfido2/...
+
+.PHONY: test-webauthn-verification
+## test-webauthn-verification: Run WebAuthn end-to-end verification tests (MakeCredential → GetAssertion → RP verify)
+test-webauthn-verification:
+	@echo "$(CYAN)→ Testing WebAuthn verification flow...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) -run TestWebAuthnVerification ./pkg/fido2/authenticator/...
+
+.PHONY: coverage-uhid
+## coverage-uhid: Generate UHID package coverage report
+coverage-uhid:
+	@echo "$(CYAN)→ Generating UHID coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/uhid.out -covermode=atomic ./pkg/uhid/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/uhid.out -o $(COVERAGE_DIR)/uhid.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/uhid.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/uhid.html$(RESET)"
+
+.PHONY: coverage-vfido2-cmd
+## coverage-vfido2-cmd: Generate vfido2 command coverage report
+coverage-vfido2-cmd:
+	@echo "$(CYAN)→ Generating vfido2 command coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/vfido2-cmd.out -covermode=atomic ./cmd/vfido2/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/vfido2-cmd.out -o $(COVERAGE_DIR)/vfido2-cmd.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/vfido2-cmd.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/vfido2-cmd.html$(RESET)"
 
 # ==============================================================================
 # Cross-Compilation Targets (Release Builds with ALL Tags)
@@ -300,23 +314,23 @@ release-binaries: release-cli release-server
 	@echo "$(GREEN)$(BOLD)✓ All release binaries built successfully!$(RESET)"
 
 .PHONY: release-cli
-## release-cli: Build keychain-cli for all platforms with ALL build tags
+## release-cli: Build keychainctl for all platforms with ALL build tags
 release-cli:
-	@echo "$(CYAN)$(BOLD)→ Building keychain-cli for all platforms (CGO-free)...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building keychainctl for all platforms (CGO-free)...$(RESET)"
 	@mkdir -p $(BIN_DIR)/release
 	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-linux-amd64 ./cmd/cli/main.go
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-linux-amd64 ./cmd/keychainctl
 	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-linux-arm64 ./cmd/cli/main.go
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-linux-arm64 ./cmd/keychainctl
 	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-darwin-amd64 ./cmd/cli/main.go
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-darwin-amd64 ./cmd/keychainctl
 	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-darwin-arm64 ./cmd/cli/main.go
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-darwin-arm64 ./cmd/keychainctl
 	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-windows-amd64.exe ./cmd/cli/main.go
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-windows-amd64.exe ./cmd/keychainctl
 	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
-	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychain-cli-windows-arm64.exe ./cmd/cli/main.go
-	@echo "$(GREEN)✓ keychain-cli binaries built for all platforms$(RESET)"
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-windows-arm64.exe ./cmd/keychainctl
+	@echo "$(GREEN)✓ keychainctl binaries built for all platforms$(RESET)"
 
 .PHONY: release-server
 ## release-server: Build keychaind for all platforms with ALL build tags (including pkcs11)
@@ -324,17 +338,17 @@ release-server:
 	@echo "$(CYAN)$(BOLD)→ Building keychaind for all platforms (with all tags including pkcs11)...$(RESET)"
 	@mkdir -p $(BIN_DIR)/release
 	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-amd64 ./cmd/server/main.go
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-amd64 ./cmd/keychaind/main.go
 	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for linux/arm64 requires aarch64-linux-gnu-gcc$(RESET)"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-arm64 ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for linux/arm64 requires aarch64-linux-gnu-gcc$(RESET)"
 	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-amd64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/amd64 may require macOS SDK$(RESET)"
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-amd64 ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/amd64 may require macOS SDK$(RESET)"
 	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-arm64 ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/arm64 may require macOS SDK$(RESET)"
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-arm64 ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/arm64 may require macOS SDK$(RESET)"
 	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-amd64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/amd64 requires mingw-w64$(RESET)"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-amd64.exe ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/amd64 requires mingw-w64$(RESET)"
 	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
-	@GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-arm64.exe ./cmd/server/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/arm64 requires appropriate cross-compiler$(RESET)"
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-arm64.exe ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/arm64 requires appropriate cross-compiler$(RESET)"
 	@echo "$(GREEN)✓ keychaind binaries built for all platforms$(RESET)"
 
 .PHONY: lib
@@ -363,7 +377,7 @@ test:
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
 	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/...  2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
+		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2$$|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand|/testutil|/frost$$|/proto)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -626,10 +640,28 @@ coverage-migration:
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/migration.html$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/migration.out | grep total
 
+
+.PHONY: test-sdk-go
+## test-sdk-go: Run Go SDK unit tests (separate module at sdk/go)
+test-sdk-go:
+	@echo "$(CYAN)→ Testing Go SDK package...$(RESET)"
+	@cd sdk/go && $(GO) test $(TEST_FLAGS) ./...
+	@echo "$(GREEN)✓ Go SDK unit tests complete$(RESET)"
+
+.PHONY: coverage-sdk-go
+## coverage-sdk-go: Generate coverage report for Go SDK
+coverage-sdk-go:
+	@echo "$(CYAN)→ Generating coverage report for Go SDK...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@cd sdk/go && $(GO) test -race -coverprofile=../../$(COVERAGE_DIR)/sdk-go.out -covermode=atomic ./...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/sdk-go.out -o $(COVERAGE_DIR)/sdk-go.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/sdk-go.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/sdk-go.out | grep total
+
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends + all API protocols)
 ## Note: CanoKey tests require physical hardware - run separately with `make integration-test-canokey`
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-virtualfido integration-test-cli integration-test-api-all
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-virtualfido integration-test-cli integration-test-api-all integration-test-sdk-go
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -996,9 +1028,9 @@ integration-test-fido2-webauthn:
 	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
-## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests (runs in devcontainer)
+## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -o build/bin/keychainctl ./cmd/keychainctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-canokey-qemu
 ## integration-test-canokey-qemu: Run CanoKey QEMU smoke tests (verifies QEMU has CanoKey support)
@@ -1010,6 +1042,43 @@ integration-test-canokey-qemu:
 ## integration-test-virtualfido: Run VirtualFIDO backend integration tests (runs in devcontainer)
 integration-test-virtualfido:
 	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/virtualfido/... -timeout 5m,integration-test-virtualfido)
+
+.PHONY: integration-test-uhid
+## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
+## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
+integration-test-uhid:
+	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/uhid/... -timeout 5m,integration-test-uhid)
+
+.PHONY: integration-test-vfido2
+## integration-test-vfido2: Run vfido2 integration tests (runs in devcontainer with /dev/uhid access)
+## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
+integration-test-vfido2:
+	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/vfido2/... -timeout 5m,integration-test-vfido2)
+
+.PHONY: integration-test-vfido2-webauthn
+## integration-test-vfido2-webauthn: Run Playwright browser tests against webauthn.io (Docker)
+## Tests use Chrome CDP virtual authenticator to validate full WebAuthn registration + authentication flow
+integration-test-vfido2-webauthn:
+	@echo "$(CYAN)$(BOLD)→ Running vfido2 Playwright WebAuthn integration tests...$(RESET)"
+	@cd test/integration/vfido2/webauthn && docker compose down -v >/dev/null 2>&1 || true
+	@cd test/integration/vfido2/webauthn && (docker compose run --rm webauthn-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ vfido2 Playwright WebAuthn integration tests complete$(RESET)"
+
+.PHONY: coverage-uhid-integration
+## coverage-uhid-integration: Generate UHID integration test coverage report
+## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
+coverage-uhid-integration:
+	@echo "$(CYAN)$(BOLD)→ Generating UHID integration coverage report...$(RESET)"
+	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-uhid-integration.out -covermode=atomic ./test/integration/uhid/... ./pkg/uhid/... && /usr/local/go/bin/go tool cover -func=coverage-uhid-integration.out | tail -1,coverage-uhid-integration)
+	@echo "$(GREEN)✓ UHID integration coverage report generated$(RESET)"
+
+.PHONY: coverage-vfido2-integration
+## coverage-vfido2-integration: Generate vfido2 integration test coverage report
+## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
+coverage-vfido2-integration:
+	@echo "$(CYAN)$(BOLD)→ Generating vfido2 integration coverage report...$(RESET)"
+	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-vfido2-integration.out -covermode=atomic -coverpkg=./cmd/vfido2/...$(comma)./pkg/uhid/... ./test/integration/vfido2/... ./cmd/vfido2/... && /usr/local/go/bin/go tool cover -func=coverage-vfido2-integration.out | tail -1,coverage-vfido2-integration)
+	@echo "$(GREEN)✓ vfido2 integration coverage report generated$(RESET)"
 
 .PHONY: test-virtualfido
 ## test-virtualfido: Run VirtualFIDO unit tests
@@ -1488,7 +1557,7 @@ release: lib release-binaries
 	@echo "$(CYAN)  Creating release v$(VERSION) with all platform binaries...$(RESET)"
 	@gh release create v$(VERSION) \
 		$(SHARED_LIB) \
-		$(BIN_DIR)/release/keychain-cli-* \
+		$(BIN_DIR)/release/keychainctl-* \
 		$(BIN_DIR)/release/keychaind-* \
 		--title "go-keychain v$(VERSION)" \
 		--notes-file /tmp/release-notes-$(VERSION).md
@@ -1497,7 +1566,7 @@ release: lib release-binaries
 	@echo "$(CYAN)  Release URL: $$(gh release view v$(VERSION) --json url -q .url)$(RESET)"
 	@echo "$(CYAN)  Attached binaries:$(RESET)"
 	@echo "$(CYAN)    - $(SHARED_LIB)$(RESET)"
-	@echo "$(CYAN)    - keychain-cli (all platforms)$(RESET)"
+	@echo "$(CYAN)    - keychainctl (all platforms)$(RESET)"
 	@echo "$(CYAN)    - keychaind (all platforms)$(RESET)"
 
 # ==============================================================================
@@ -2085,18 +2154,20 @@ help:
 ## proto: Generate Go code from protocol buffer definitions
 proto:
 	@echo "$(CYAN)$(BOLD)→ Generating Protocol Buffer code...$(RESET)"
-	@if [ ! -f "api/proto/keychain.proto" ]; then \
-		echo "$(RED)✗ Proto file not found: api/proto/keychain.proto$(RESET)"; \
+	@if [ ! -f "pkg/api/grpc/proto/keychainv1/keychain.proto" ]; then \
+		echo "$(RED)✗ Proto file not found: pkg/api/grpc/proto/keychainv1/keychain.proto$(RESET)"; \
 		exit 1; \
 	fi
-	@cd api/proto && ./generate.sh
+	@protoc --go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		pkg/api/grpc/proto/keychainv1/keychain.proto
 	@echo "$(GREEN)✓ Protocol Buffer code generated$(RESET)"
 
 .PHONY: proto-check
 ## proto-check: Verify generated proto code is up to date
 proto-check:
 	@echo "$(CYAN)$(BOLD)→ Checking Protocol Buffer code...$(RESET)"
-	@if [ ! -f "api/proto/keychainv1/keychain.pb.go" ]; then \
+	@if [ ! -f "pkg/api/grpc/proto/keychainv1/keychain.pb.go" ]; then \
 		echo "$(RED)✗ Generated proto code not found. Run 'make proto'$(RESET)"; \
 		exit 1; \
 	fi
@@ -2111,7 +2182,13 @@ proto-check:
 integration-test-api:
 	@echo "$(CYAN)$(BOLD)→ Running API integration tests...$(RESET)"
 	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
-	@$(API_COMPOSE) up --build --abort-on-container-exit --exit-code-from integration-tests
+	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
+	$(call kill_integration_containers)
+	@$(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true
+	@$(API_COMPOSE) up --build --abort-on-container-exit --exit-code-from integration-tests ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
+		exit $$EXIT_CODE
 	@echo "$(GREEN)$(BOLD)✓ API integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-up
@@ -2119,6 +2196,9 @@ integration-test-api:
 integration-test-api-up:
 	@echo "$(CYAN)$(BOLD)→ Starting API test environment...$(RESET)"
 	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
+	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
+	$(call kill_integration_containers)
+	@$(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true
 	@$(API_COMPOSE) up -d keychain-server swtpm softhsm
 	@echo "$(GREEN)✓ API test environment started$(RESET)"
 	@echo "$(CYAN)REST API: http://localhost:8443$(RESET)"
@@ -2185,7 +2265,7 @@ integration-test-api-unix:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-unix integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/unix/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/unix/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2198,7 +2278,7 @@ integration-test-api-rest:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-rest integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/rest/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/rest/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2211,7 +2291,7 @@ integration-test-api-grpc:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-grpc integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/grpc/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/grpc/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2224,7 +2304,7 @@ integration-test-api-quic:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-quic integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/quic/... -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/quic/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2237,7 +2317,7 @@ integration-test-api-mcp:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-mcp integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2251,7 +2331,7 @@ ifeq ($(WITH_FROST),1)
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-frost integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2268,11 +2348,44 @@ integration-test-api-parity:
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
 	@$(API_COMPOSE) run --rm --name keychain-test-parity integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go && go test -v -tags='integration frost' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
+
+.PHONY: integration-test-sdk-go
+## integration-test-sdk-go: Run Go SDK integration tests across all protocols (Unix, REST, gRPC, QUIC, MCP)
+integration-test-sdk-go:
+	@echo "$(CYAN)$(BOLD)→ Running Go SDK integration tests...$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration' ./test/integration/sdk/go/... -timeout 15m,integration-test-sdk-go)
+	@echo "$(GREEN)✓ Go SDK integration tests complete$(RESET)"
+
+.PHONY: integration-test-sdk-go-remote
+## integration-test-sdk-go-remote: Run Go SDK multiprotocol integration tests against docker-compose server
+integration-test-sdk-go-remote:
+	@echo "$(CYAN)$(BOLD)→ Running Go SDK remote integration tests...$(RESET)"
+	$(call kill_integration_containers)
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-sdk-go integration-tests \
+		sh -c "go test -v -tags='integration' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocol' -timeout 20m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ Go SDK remote integration tests complete$(RESET)"
+
+.PHONY: integration-test-sdk-go-remote-only
+## integration-test-sdk-go-remote-only: Run Go SDK tests against remote protocols only (no embedded mode)
+integration-test-sdk-go-remote-only:
+	@echo "$(CYAN)$(BOLD)→ Running Go SDK remote-only integration tests...$(RESET)"
+	$(call kill_integration_containers)
+	@$(API_COMPOSE) build
+	@$(API_COMPOSE) run --rm --name keychain-test-sdk-go-remote integration-tests \
+		sh -c "go test -v -tags='integration' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocolRemoteOnly' -timeout 20m" ; \
+		EXIT_CODE=$$? ; \
+		$(API_COMPOSE) down -v --remove-orphans ; \
+		exit $$EXIT_CODE
+	@echo "$(GREEN)✓ Go SDK remote-only integration tests complete$(RESET)"
 
 .PHONY: show-backends
 ## show-backends: Display enabled backends for current build configuration

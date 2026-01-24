@@ -19,6 +19,15 @@ if [ ! -f /var/lib/softhsm/tokens/.initialized ]; then
     echo "SoftHSM token initialized"
 fi
 
+# Setup UHID device permissions for virtual FIDO2 testing
+if [ -e /dev/uhid ]; then
+    echo "Setting up UHID device permissions..."
+    sudo chmod 666 /dev/uhid
+    echo "UHID device permissions set"
+else
+    echo "Note: /dev/uhid not available (virtual FIDO2 tests will be skipped)"
+fi
+
 # Download Go dependencies
 echo "Downloading Go dependencies..."
 cd /workspace
@@ -49,7 +58,7 @@ fi
 # Generate protobuf files if proto compiler is available
 if command -v protoc &> /dev/null; then
     echo "Checking protobuf files..."
-    if [ -f "api/proto/keychainv1/keychain.proto" ]; then
+    if [ -f "pkg/api/grpc/proto/keychainv1/keychain.proto" ]; then
         make proto 2>/dev/null || true
     fi
 fi

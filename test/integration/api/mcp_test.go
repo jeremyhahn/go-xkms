@@ -95,19 +95,6 @@ func (c *MCPClient) Call(method string, params interface{}) (map[string]interfac
 	return response, nil
 }
 
-// isMCPServerAvailable checks if MCP server is available
-func isMCPServerAvailable(t *testing.T, cfg *TestConfig) bool {
-	t.Helper()
-
-	conn, err := net.DialTimeout("tcp", cfg.MCPAddr, 2*time.Second)
-	if err != nil {
-		return false
-	}
-	defer conn.Close()
-
-	return true
-}
-
 // TestMCPHealth tests the MCP health check (placeholder)
 func TestMCPHealth(t *testing.T) {
 	// MCP protocol is implemented using Model Context Protocol SDK

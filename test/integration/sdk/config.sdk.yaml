@@ -1,0 +1,90 @@
+# SDK Integration test configuration for keychain server
+# Enables ALL protocols for comprehensive SDK testing
+
+server:
+  host: "0.0.0.0"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 9444
+
+# Enable ALL protocols for complete SDK testing
+protocols:
+  unix: true    # Unix domain socket for local CLI
+  rest: true    # REST/HTTP API
+  grpc: true    # gRPC API
+  quic: true    # QUIC/HTTP3 API (requires TLS)
+  mcp: true     # MCP JSON-RPC API
+
+# Unix socket configuration
+unix:
+  socket_path: /var/run/keychain/keychain.sock
+  socket_mode: "0660"
+  protocol: grpc  # Use gRPC over Unix socket
+
+logging:
+  level: "debug"
+  format: "json"
+
+# TLS enabled for QUIC (QUIC requires TLS 1.3)
+tls:
+  enabled: true
+  cert_file: /etc/keychain/certs/server.crt
+  key_file: /etc/keychain/certs/server.key
+  ca_file: /etc/keychain/certs/ca.crt
+  min_version: TLS1.3
+  # No client auth for SDK integration tests
+  client_auth: none
+
+# Auth disabled for SDK integration tests
+auth:
+  enabled: false
+
+# WebAuthn/FIDO2 authentication enabled for SDK testing
+webauthn:
+  enabled: true
+  rp_id: "localhost"
+  rp_origins:
+    - "http://localhost:8443"
+    - "https://localhost:8443"
+  rp_display_name: "Keychain SDK Tests"
+  attestation_preference: "none"
+  authenticator_attachment: ""
+  resident_key: "preferred"
+  user_verification: "preferred"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: true
+  path: "/metrics"
+  port: 9090
+
+health:
+  enabled: true
+  path: "/health"
+
+# Storage configuration
+storage:
+  backend: "filesystem"
+  path: "/data/keychain"
+
+# Default backend for key operations
+default_backend: "software"
+
+# Backend configurations
+backends:
+  software:
+    enabled: true
+    path: "/data/keychain/software"
+
+  tpm2:
+    enabled: false  # Disabled by default
+    device_path: "tcp://swtpm:2321"
+
+  pkcs11:
+    enabled: false  # Disabled by default
+    library: "/usr/local/lib/softhsm/libsofthsm2.so"
+    token: "test-token"
+    pin: "123456"

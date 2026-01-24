@@ -10,22 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.3-alpha] - 2026-01-15
 
 ### Added
-- Unix IPC client for native socket communication (`pkg/client/unix_ipc_client.go`)
+- Go SDK (`sdk/go/`) with multi-protocol client support (REST, gRPC, QUIC, MCP, Unix)
+- Virtual FIDO2 key binary (`cmd/vfido2`) with Linux UHID support
+- Linux UHID interface package (`pkg/uhid`) for virtual USB HID device emulation
+- Native FIDO2 authenticator (`pkg/fido2/authenticator/`) with CTAP2 protocol support
+- Virtual FIDO2 device factory and native enumerator in `pkg/fido2/`
+- Integration tests for SDK, UHID, and vfido2 packages
 - WebAuthn mock authenticator for integration testing
-- End-to-end WebAuthn integration tests with virtual authenticator
-- Comprehensive test coverage for CLI remote key and certificate functions
+- CLI documentation (`docs/usage/cli/`) for all commands
+- FIDO2 documentation (`docs/fido2/`)
 
 ### Changed
-- Moved `internal/` packages to `pkg/` for public API exposure (cli, config, server, api/*)
-- Improved test coverage from 87.9% to 90.4%
-- Enhanced QUIC, MCP, and gRPC handlers with additional key operations
+- Renamed `cmd/cli` to `cmd/keychainctl` (CLI binary)
+- Renamed `cmd/server` to `cmd/keychaind` (daemon binary)
+- Moved `pkg/cli/` to `cmd/keychainctl/` (CLI is now a standalone command)
+- Moved `pkg/client/` to `sdk/go/` (clients are now part of SDK)
+- Moved gRPC proto files to `pkg/api/grpc/proto/`
+- Updated all Dockerfiles to use `golang:bookworm` with `GOTOOLCHAIN=auto`
+- Updated Go version to 1.25.6
+- Improved devcontainer with UHID permissions for virtual FIDO2 testing
+- Enhanced QUIC, MCP, and gRPC handlers with sealing operations
 - Refactored TPM2 package to remove simulator build constraints
-- Simplified TPM2 logging to use standard slog package
 
 ### Fixed
 - Race conditions in gRPC server port field using atomic operations
 - Race conditions in server instance field access with proper mutex locking
 - FROST handler parameter validation across all API protocols
+- UHID integration test permissions in devcontainer
 
 ## [0.2.2-alpha] - 2025-12-24
 
@@ -114,7 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `EnableKeyVersion` / `DisableKeyVersion` - Enable or disable specific key versions
   - `EnableAllKeyVersions` / `DisableAllKeyVersions` - Bulk version state management
   - gRPC, REST, QUIC, and Unix socket client support
-  - Proto definitions in `api/proto/keychainv1/keychain.proto`
+  - Proto definitions in `pkg/api/grpc/proto/keychainv1/keychain.proto`
 - **JWT Authentication Adapter**: `pkg/adapters/auth/jwt.go` for token-based authentication
   - Configurable issuer, audience, and signing key validation
   - Support for RS256, ES256, and EdDSA signing algorithms

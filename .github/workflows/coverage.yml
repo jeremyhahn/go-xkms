@@ -9,7 +9,7 @@ on:
   #   branches: [ master, main, develop ]
 
 env:
-  GO_VERSION: '1.25.5'
+  GO_VERSION: 'stable'
   COVERAGE_THRESHOLD: 90
   GOPROXY: direct
   GOSUMDB: off

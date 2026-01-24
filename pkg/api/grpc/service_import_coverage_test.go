@@ -17,7 +17,7 @@ import (
 	"context"
 	"testing"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/storage"

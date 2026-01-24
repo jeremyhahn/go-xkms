@@ -176,15 +176,27 @@ func (m *mockKeyStore) GetTLSCertificate(keyID string, attrs *types.KeyAttribute
 }
 
 func (m *mockKeyStore) GetKeyByID(keyID string) (crypto.PrivateKey, error) {
-	return m.GetKey(&types.KeyAttributes{CN: keyID})
+	attrs, err := ParseKeyIDToAttributes(keyID)
+	if err != nil {
+		return nil, err
+	}
+	return m.GetKey(attrs)
 }
 
 func (m *mockKeyStore) GetSignerByID(keyID string) (crypto.Signer, error) {
-	return m.Signer(&types.KeyAttributes{CN: keyID})
+	attrs, err := ParseKeyIDToAttributes(keyID)
+	if err != nil {
+		return nil, err
+	}
+	return m.Signer(attrs)
 }
 
 func (m *mockKeyStore) GetDecrypterByID(keyID string) (crypto.Decrypter, error) {
-	return m.Decrypter(&types.KeyAttributes{CN: keyID})
+	attrs, err := ParseKeyIDToAttributes(keyID)
+	if err != nil {
+		return nil, err
+	}
+	return m.Decrypter(attrs)
 }
 
 func (m *mockKeyStore) Backend() types.Backend {
@@ -665,14 +677,15 @@ func TestDeleteCertificate_WithBackendPrefix(t *testing.T) {
 	require.NoError(t, err)
 	cert := createTestCert(t, "test-key", key.(crypto.Signer))
 
-	err = software.SaveCert("test-key", cert)
+	// Save and delete using consistent key ID format
+	err = SaveCertificateByID("software:::test-key", cert)
 	require.NoError(t, err)
 
 	err = DeleteCertificateByID("software:::test-key")
 	assert.NoError(t, err)
 
-	// Verify cert is deleted
-	_, err = software.GetCert("test-key")
+	// Verify cert is deleted - use same key ID format
+	_, err = CertificateByID("software:::test-key")
 	assert.Error(t, err)
 }
 
@@ -1814,12 +1827,12 @@ func TestSaveCertificateChain_Success(t *testing.T) {
 	cert := createTestCert(t, "cert-chain-key", key.(crypto.Signer))
 	chain := []*x509.Certificate{cert}
 
-	// Save the chain
+	// Save the chain using the full key ID
 	err = SaveCertificateChainByID("software:::cert-chain-key", chain)
 	assert.NoError(t, err)
 
-	// Verify it was saved
-	savedChain, ok := software.certChains["cert-chain-key"]
+	// Verify it was saved - check using full key ID since that's what the service passes
+	savedChain, ok := software.certChains["software:::cert-chain-key"]
 	assert.True(t, ok)
 	assert.Len(t, savedChain, 1)
 }
@@ -1832,7 +1845,8 @@ func TestCertificateChain_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	cert := createTestCert(t, "cert-chain-key", key.(crypto.Signer))
-	software.certChains["cert-chain-key"] = []*x509.Certificate{cert}
+	// Store using full key ID since that's what the service will use for retrieval
+	software.certChains["software:::cert-chain-key"] = []*x509.Certificate{cert}
 
 	// Retrieve the chain
 	chain, err := CertificateChainByID("software:::cert-chain-key")
@@ -1860,7 +1874,8 @@ func TestCertificateExists_True(t *testing.T) {
 	require.NoError(t, err)
 
 	cert := createTestCert(t, "exists-test-key", key.(crypto.Signer))
-	software.certs["exists-test-key"] = cert
+	// Store using full key ID since that's what the service will check
+	software.certs["software:::exists-test-key"] = cert
 
 	exists, err := CertificateExistsByID("software:::exists-test-key")
 	assert.NoError(t, err)
@@ -1892,7 +1907,8 @@ func TestTLSCertificateByID_Success(t *testing.T) {
 		PrivateKey:  key,
 		Leaf:        cert,
 	}
-	software.tlsCerts["tls-test-key"] = tlsCert
+	// Store using full key ID since that's what the service will pass
+	software.tlsCerts["software:::tls-test-key"] = tlsCert
 
 	// Retrieve via service
 	result, err := TLSCertificateByID("software:::tls-test-key")

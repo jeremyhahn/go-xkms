@@ -410,12 +410,12 @@ func KeyByID(kid string) (crypto.PrivateKey, error) {
 		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetKeyByID(attrs.CN)
+	return ks.GetKeyByID(kid)
 }
 
 // SignerByID returns a signer for the specified key ID (kid).
@@ -426,12 +426,12 @@ func SignerByID(kid string) (crypto.Signer, error) {
 		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetSignerByID(attrs.CN)
+	return ks.GetSignerByID(kid)
 }
 
 // DecrypterByID returns a decrypter for the specified key ID (kid).
@@ -442,12 +442,12 @@ func DecrypterByID(kid string) (crypto.Decrypter, error) {
 		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetDecrypterByID(attrs.CN)
+	return ks.GetDecrypterByID(kid)
 }
 
 // DeleteKeyByID deletes a key by its key ID (kid).
@@ -515,12 +515,12 @@ func SaveCertificateByID(kid string, cert *x509.Certificate) error {
 		return fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return err
 	}
 
-	return ks.SaveCert(attrs.CN, cert)
+	return ks.SaveCert(kid, cert)
 }
 
 // CertificateByID retrieves a certificate by key ID (kid).
@@ -531,12 +531,12 @@ func CertificateByID(kid string) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetCert(attrs.CN)
+	return ks.GetCert(kid)
 }
 
 // DeleteCertificateByID deletes a certificate by key ID (kid).
@@ -547,12 +547,12 @@ func DeleteCertificateByID(kid string) error {
 		return fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return err
 	}
 
-	return ks.DeleteCert(attrs.CN)
+	return ks.DeleteCert(kid)
 }
 
 // ListCertificates lists all certificate IDs across all backends or from a specific backend
@@ -994,12 +994,12 @@ func SaveCertificateChainByID(kid string, chain []*x509.Certificate) error {
 		return fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return err
 	}
 
-	return ks.SaveCertChain(attrs.CN, chain)
+	return ks.SaveCertChain(kid, chain)
 }
 
 // CertificateChainByID retrieves a certificate chain by key ID (kid).
@@ -1010,12 +1010,12 @@ func CertificateChainByID(kid string) ([]*x509.Certificate, error) {
 		return nil, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return nil, err
 	}
 
-	return ks.GetCertChain(attrs.CN)
+	return ks.GetCertChain(kid)
 }
 
 // CertificateExistsByID checks if a certificate exists for the given key ID (kid).
@@ -1026,12 +1026,12 @@ func CertificateExistsByID(kid string) (bool, error) {
 		return false, fmt.Errorf("invalid key ID: %w", err)
 	}
 
-	ks, attrs, err := getKeystoreForKID(kid)
+	ks, _, err := getKeystoreForKID(kid)
 	if err != nil {
 		return false, err
 	}
 
-	return ks.CertExists(attrs.CN)
+	return ks.CertExists(kid)
 }
 
 // ========================================================================
@@ -1051,7 +1051,7 @@ func TLSCertificateByID(kid string) (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 
-	return ks.GetTLSCertificate(attrs.CN, attrs)
+	return ks.GetTLSCertificate(kid, attrs)
 }
 
 // ========================================================================

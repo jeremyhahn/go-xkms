@@ -17,7 +17,6 @@ package fido2
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -76,7 +75,7 @@ func (cfg *MultiProtocolConfig) GetServerURL(protocol ProtocolType) string {
 	case ProtocolREST:
 		return cfg.RESTBaseURL
 	case ProtocolGRPC:
-		return "grpc://" + cfg.GRPCAddr
+		return "grpcs://" + cfg.GRPCAddr
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(cfg.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
@@ -510,13 +509,39 @@ func TestMultiProtocolFIDO2AuthenticateWithBase64AndHex(t *testing.T) {
 
 	t.Log("=== Multi-Protocol FIDO2 Authenticate With Different Encodings Test ===")
 
-	// Enroll credential using API
+	// First, register a credential using CLI (so it uses the same virtual device)
 	username := GenerateUniqueUsername("encoding-test")
-	enrollment, handler := fido2Cfg.EnrollTestCredential(t, username)
-	defer CleanupCredential(t, handler)
 
-	credIDBase64 := base64.StdEncoding.EncodeToString(enrollment.CredentialID)
-	saltBase64 := base64.StdEncoding.EncodeToString(enrollment.Salt)
+	registerArgs := []string{
+		"--output", "json",
+		"fido2", "register", username,
+		"--rp-id", "go-keychain-encoding-test",
+		"--rp-name", "Encoding Test",
+		"--timeout", "30s",
+	}
+
+	if fido2Cfg.DevicePath != "" {
+		registerArgs = append(registerArgs, "--device", fido2Cfg.DevicePath)
+	}
+
+	t.Log("Registering credential via CLI...")
+
+	stdout, stderr, err := cfg.execCLIWithProtocol(t, ProtocolUnix, registerArgs...)
+	if err != nil {
+		t.Logf("stdout: %s", stdout)
+		t.Logf("stderr: %s", stderr)
+		t.Fatalf("Registration failed: %v", err)
+	}
+
+	// Parse registration result
+	var regResult map[string]interface{}
+	err = json.Unmarshal([]byte(stdout), &regResult)
+	require.NoError(t, err, "Failed to parse registration JSON")
+
+	credIDBase64 := regResult["credential_id"].(string)
+	saltBase64 := regResult["salt"].(string)
+
+	t.Logf("Credential registered: credID length=%d chars", len(credIDBase64))
 
 	protocols := []ProtocolType{ProtocolUnix, ProtocolREST}
 
@@ -526,7 +551,7 @@ func TestMultiProtocolFIDO2AuthenticateWithBase64AndHex(t *testing.T) {
 				"fido2", "authenticate",
 				"--credential-id", credIDBase64,
 				"--salt", saltBase64,
-				"--rp-id", "go-keychain-test",
+				"--rp-id", "go-keychain-encoding-test",
 				"--timeout", "30s",
 			}
 

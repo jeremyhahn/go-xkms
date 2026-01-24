@@ -39,7 +39,8 @@ type ErrorResponse struct {
 
 // HealthResponse represents a health check response
 type HealthResponse struct {
-	Status string `json:"status"`
+	Status  string `json:"status"`
+	Version string `json:"version,omitempty"`
 }
 
 // BackendInfo represents information about a backend
@@ -71,6 +72,15 @@ type KeyResponse struct {
 	KeyID        string `json:"key_id"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
 	Backend      string `json:"backend,omitempty"`
+}
+
+// RotateKeyResponse represents a key rotation response
+type RotateKeyResponse struct {
+	Success      bool   `json:"success"`
+	KeyID        string `json:"key_id"`
+	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	Backend      string `json:"backend,omitempty"`
+	Message      string `json:"message,omitempty"`
 }
 
 // ListKeysResponse represents the keys list response
@@ -142,14 +152,15 @@ type DecryptResponse struct {
 
 // CertRequest represents a certificate save request
 type CertRequest struct {
-	KeyID   string `json:"key_id"`
-	CertPEM string `json:"cert_pem"`
+	KeyID          string `json:"key_id"`
+	CertPEM        string `json:"cert_pem"`
+	CertificatePEM string `json:"certificate_pem"` // Alternative field name for SDK compatibility
 }
 
 // CertResponse represents a certificate response
 type CertResponse struct {
-	KeyID   string `json:"key_id"`
-	CertPEM string `json:"cert_pem"`
+	KeyID          string `json:"key_id"`
+	CertificatePEM string `json:"certificate_pem"`
 }
 
 // ListCertsResponse represents the certificates list response
@@ -316,7 +327,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.sendJSON(w, http.StatusOK, HealthResponse{Status: "healthy"})
+	s.sendJSON(w, http.StatusOK, HealthResponse{Status: "healthy", Version: s.version})
 }
 
 // handleListBackends handles backend listing
@@ -456,10 +467,18 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse key type from request (e.g., "tls", "signing", "encryption")
+	keyType := types.ParseKeyType(req.KeyType)
+	// Default to KeyTypeSigning if the parsed key type is invalid
+	// (e.g., when req.KeyType is an algorithm name like "rsa", "ecdsa", "ed25519")
+	if keyType == 0 {
+		keyType = types.KeyTypeSigning
+	}
+
 	// Create key attributes
 	attrs := &types.KeyAttributes{
 		CN:         req.KeyID,
-		KeyType:    types.KeyTypeSigning, // Default to signing
+		KeyType:    keyType,
 		Exportable: req.Exportable,
 	}
 
@@ -942,10 +961,12 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request, keyID, 
 		}
 	}
 
-	s.sendJSON(w, http.StatusOK, KeyResponse{
+	s.sendJSON(w, http.StatusOK, RotateKeyResponse{
+		Success:      true,
 		KeyID:        keyID,
 		PublicKeyPEM: pubKeyPEM,
 		Backend:      backendParam,
+		Message:      fmt.Sprintf("Key %s rotated successfully", keyID),
 	})
 }
 
@@ -1127,10 +1148,7 @@ func (s *Server) handleListKeyVersions(w http.ResponseWriter, r *http.Request, k
 		return
 	}
 
-	s.sendJSON(w, http.StatusNotImplemented, ErrorResponse{
-		Error:   "Not Implemented",
-		Message: "key versioning is not yet supported - requires VersioningAdapter integration",
-	})
+	s.sendError(w, http.StatusNotImplemented, "key versioning is not yet supported - requires VersioningAdapter integration")
 }
 
 // handleEnableKeyVersion handles enabling a specific key version (stub - not yet implemented)
@@ -1216,15 +1234,27 @@ func (s *Server) handleSaveCert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.KeyID == "" {
+	// Support key_id from query parameter (SDK compatibility)
+	keyID := r.URL.Query().Get("key_id")
+	if keyID == "" {
+		keyID = req.KeyID
+	}
+	if keyID == "" {
 		s.sendError(w, http.StatusBadRequest, "key_id is required")
 		return
 	}
 
-	if req.CertPEM == "" {
-		s.sendError(w, http.StatusBadRequest, "cert_pem is required")
+	// Support both cert_pem and certificate_pem field names
+	certPEM := req.CertPEM
+	if certPEM == "" {
+		certPEM = req.CertificatePEM
+	}
+	if certPEM == "" {
+		s.sendError(w, http.StatusBadRequest, "cert_pem or certificate_pem is required")
 		return
 	}
+	req.KeyID = keyID
+	req.CertPEM = certPEM
 
 	// Parse PEM certificate
 	block, _ := pem.Decode([]byte(req.CertPEM))
@@ -1302,8 +1332,8 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request, certID st
 	certPEM := string(pem.EncodeToMemory(pemBlock))
 
 	s.sendJSON(w, http.StatusOK, CertResponse{
-		KeyID:   certID,
-		CertPEM: certPEM,
+		KeyID:          certID,
+		CertificatePEM: certPEM,
 	})
 }
 
@@ -1492,7 +1522,7 @@ func (s *Server) sendError(w http.ResponseWriter, status int, message string) {
 		slog.Int("status", status),
 		slog.String("error", message))
 	s.sendJSON(w, status, ErrorResponse{
-		Error:   http.StatusText(status),
+		Error:   message,
 		Message: message,
 	})
 }

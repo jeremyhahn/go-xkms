@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 )
 
 // TestE2ECompleteWorkflow tests a complete workflow across all interfaces
