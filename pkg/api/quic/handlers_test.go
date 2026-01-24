@@ -805,7 +805,7 @@ func TestHandleCertOperations(t *testing.T) {
 		err := json.NewDecoder(w.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.Equal(t, "test-cert", resp.KeyID)
-		assert.Contains(t, resp.CertPEM, "CERTIFICATE")
+		assert.Contains(t, resp.CertificatePEM, "CERTIFICATE")
 	})
 
 	t.Run("GET non-existent cert returns 404", func(t *testing.T) {

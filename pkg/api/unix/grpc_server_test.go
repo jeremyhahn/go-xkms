@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 )
 
 func TestNewGRPCServer_NilConfig(t *testing.T) {

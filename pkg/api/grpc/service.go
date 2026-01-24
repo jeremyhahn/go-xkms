@@ -26,7 +26,7 @@ import (
 	"fmt"
 	"strings"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 	"github.com/jeremyhahn/go-keychain/pkg/backend"
 	"github.com/jeremyhahn/go-keychain/pkg/keychain"
 	"github.com/jeremyhahn/go-keychain/pkg/types"
@@ -1600,6 +1600,35 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 		AAD: req.Aad,
 	}
 
+	// If key ID is provided, look up the key to get its actual attributes
+	if req.KeyId != "" {
+		// Get the backend to look up the key
+		ks, err := keychain.Backend(req.Backend)
+		if err != nil {
+			return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+		}
+
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
+		}
+
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == req.KeyId {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			return nil, status.Errorf(codes.NotFound, "key not found: %s", req.KeyId)
+		}
+
+		opts.KeyAttributes = targetAttr
+	}
+
 	// Call keychain service
 	sealed, err := keychain.SealWithBackend(ctx, req.Backend, req.Data, opts)
 	if err != nil {
@@ -1631,8 +1660,15 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 		return nil, status.Error(codes.InvalidArgument, "ciphertext is required")
 	}
 
+	// Get backend to determine backend type for sealed data
+	ks, err := keychain.Backend(req.Backend)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "backend not found: %v", err)
+	}
+
 	// Construct SealedData from request
 	sealed := &types.SealedData{
+		Backend:    ks.Backend().Type(),
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
@@ -1641,6 +1677,30 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 	// Build unseal options
 	opts := &types.UnsealOptions{
 		AAD: req.Aad,
+	}
+
+	// If key ID is provided, look up the key to get its actual attributes
+	if req.KeyId != "" {
+		// Find the key by CN to get its full attributes
+		keyAttrs, err := ks.ListKeys()
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to list keys: %v", err)
+		}
+
+		var targetAttr *types.KeyAttributes
+		for _, attr := range keyAttrs {
+			if attr.CN == req.KeyId {
+				targetAttr = attr
+				break
+			}
+		}
+
+		if targetAttr == nil {
+			return nil, status.Errorf(codes.NotFound, "key not found: %s", req.KeyId)
+		}
+
+		opts.KeyAttributes = targetAttr
+		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
 	}
 
 	// Call keychain service

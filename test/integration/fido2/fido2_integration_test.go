@@ -151,8 +151,8 @@ func TestFIDO2AuthenticationFlow(t *testing.T) {
 	// Authenticate with the enrolled credential
 	derivedKey := cfg.AuthenticateWithCredential(t, handler, enrollment)
 
-	assert.Equal(t, 32, len(derivedKey), "Derived key should be 32 bytes")
-	assert.NotEqual(t, make([]byte, 32), derivedKey, "Derived key should not be all zeros")
+	assert.Equal(t, 64, len(derivedKey), "Derived key should be 64 bytes (512-bit KDF)")
+	assert.NotEqual(t, make([]byte, 64), derivedKey, "Derived key should not be all zeros")
 
 	t.Logf("Authentication successful, derived key: %d bytes", len(derivedKey))
 }
@@ -177,7 +177,7 @@ func TestFIDO2RepeatedAuthentication(t *testing.T) {
 		t.Logf("Authentication attempt %d/%d", i+1, numAttempts)
 
 		derivedKey := cfg.AuthenticateWithCredential(t, handler, enrollment)
-		assert.Equal(t, 32, len(derivedKey), "Derived key should be 32 bytes")
+		assert.Equal(t, 64, len(derivedKey), "Derived key should be 64 bytes (512-bit KDF)")
 
 		if i > 0 {
 			// Derived key should be consistent across authentications
@@ -271,8 +271,8 @@ func TestFIDO2DeviceInfo(t *testing.T) {
 	// Validate device info
 	AssertDeviceInfo(t, &device)
 
-	// Check for CanoKey QEMU virtual device
-	if cfg.IsCanoKeyQEMU() {
+	// Check for CanoKey QEMU virtual device (only when using actual hardware, not virtual fallback)
+	if cfg.IsCanoKeyQEMU() && !cfg.UseVirtualDevice() {
 		t.Log("Using CanoKey QEMU virtual device")
 		assert.Contains(t, device.Path, "/dev/hidraw", "CanoKey QEMU should use hidraw device")
 	}

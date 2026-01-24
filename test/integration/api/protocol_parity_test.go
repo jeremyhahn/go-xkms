@@ -167,9 +167,7 @@ func TestProtocolParity_KeyLifecycle(t *testing.T) {
 					"key", "sign", keyID, "test data to sign",
 					"--backend", "software",
 					"--key-dir", keyDir,
-					"--key-type", "ecdsa",
-					"--key-algorithm", "ecdsa",
-					"--hash", "SHA-256",
+					"--hash", "sha256",
 				}
 				stdout, stderr, err := runner.RunCommandWithProtocol(t, protocol, args...)
 				if err != nil {
@@ -189,7 +187,6 @@ func TestProtocolParity_KeyLifecycle(t *testing.T) {
 					"--backend", "software",
 					"--key-dir", keyDir,
 					"--key-type", "ecdsa",
-					"--key-algorithm", "ecdsa",
 				}
 				stdout, stderr, err := runner.RunCommandWithProtocol(t, protocol, args...)
 				if err != nil {
@@ -227,7 +224,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 1: Generate FROST key (participant mode)
 			t.Run("keygen", func(t *testing.T) {
 				args := []string{
-					"--local",
+					"--protocol", "embedded",
 					"--key-dir", keyDir,
 					"frost", "keygen",
 					"--key-id", keyID,
@@ -249,7 +246,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 2: List FROST keys
 			t.Run("list", func(t *testing.T) {
 				args := []string{
-					"--local",
+					"--protocol", "embedded",
 					"--key-dir", keyDir,
 					"frost", "list",
 				}
@@ -265,7 +262,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 3: Get FROST key info
 			t.Run("info", func(t *testing.T) {
 				args := []string{
-					"--local",
+					"--protocol", "embedded",
 					"--key-dir", keyDir,
 					"frost", "info", keyID,
 				}
@@ -285,7 +282,7 @@ func TestProtocolParity_FrostOperations(t *testing.T) {
 			// Step 5: Delete FROST key
 			t.Run("delete", func(t *testing.T) {
 				args := []string{
-					"--local",
+					"--protocol", "embedded",
 					"--key-dir", keyDir,
 					"frost", "delete", keyID,
 					"--force", // Skip confirmation prompt
@@ -321,7 +318,7 @@ func TestProtocolParity_FrostTrustedDealer(t *testing.T) {
 	// Generate keys using trusted dealer
 	t.Run("dealer-keygen", func(t *testing.T) {
 		args := []string{
-			"--local",
+			"--protocol", "embedded",
 			"--key-dir", keyDir,
 			"frost", "keygen",
 			"--key-id", keyID,
@@ -401,6 +398,8 @@ func isProtocolAvailable(t *testing.T, runner *commands.TestRunner, protocol com
 	t.Helper()
 
 	switch protocol {
+	case commands.ProtocolEmbedded:
+		return true // Embedded mode is always available
 	case commands.ProtocolUnix:
 		return checkUnixSocketExists(runner.UnixSocketPath)
 	case commands.ProtocolREST:

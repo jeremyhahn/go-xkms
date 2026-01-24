@@ -176,7 +176,7 @@ curl http://localhost:8443/api/v1/health
 
 **gRPC:**
 ```go
-import pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+import pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 
 conn, _ := grpc.Dial("localhost:9443", grpc.WithInsecure())
 client := pb.NewKeychainServiceClient(conn)

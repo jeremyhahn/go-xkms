@@ -371,9 +371,7 @@ func TestCLIComprehensiveKeyImportExportOperations(t *testing.T) {
 				stdout, stderr, err := suite.runCLI(serverURL,
 					"key", "export", sourceKeyID, exportFile,
 					"--backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
+					"--key-dir", suite.keyDir,
 					"--algorithm", "RSAES_OAEP_SHA_256",
 				)
 				if err != nil {
@@ -528,8 +526,7 @@ func TestCLIComprehensiveKeyOperationsAllAlgorithms(t *testing.T) {
 						t.Run("sign", func(t *testing.T) {
 							stdout, stderr, err := suite.runCLI(serverURL,
 								"key", "sign", keyID, testData,
-								"--key-type", kt.keyType,
-								"--key-algorithm", kt.keyAlgorithm,
+								"--hash", "sha256",
 							)
 							if err != nil {
 								t.Fatalf("sign failed: %v\nstderr: %s", err, stderr)
@@ -545,8 +542,7 @@ func TestCLIComprehensiveKeyOperationsAllAlgorithms(t *testing.T) {
 							// Note: signature is passed as positional argument, not flag
 							stdout, stderr, err := suite.runCLI(serverURL,
 								"key", "verify", keyID, testData, signature,
-								"--key-type", kt.keyType,
-								"--key-algorithm", kt.keyAlgorithm,
+								"--hash", "sha256",
 							)
 							if err != nil {
 								t.Fatalf("verify failed: %v\nstderr: %s", err, stderr)
@@ -569,9 +565,6 @@ func TestCLIComprehensiveKeyOperationsAllAlgorithms(t *testing.T) {
 
 							stdout, stderr, err := suite.runCLI(serverURL,
 								"key", "encrypt-asym", keyID, plaintext,
-								"--key-type", kt.keyType,
-								"--key-algorithm", kt.keyAlgorithm,
-								"--key-size", kt.keySize,
 								"--hash", "sha256",
 							)
 							if err != nil {
@@ -593,10 +586,6 @@ func TestCLIComprehensiveKeyOperationsAllAlgorithms(t *testing.T) {
 							}
 							stdout, stderr, err := suite.runCLI(serverURL,
 								"key", "decrypt", keyID, ciphertext,
-								"--key-type", kt.keyType,
-								"--key-algorithm", kt.keyAlgorithm,
-								"--key-size", kt.keySize,
-								"--hash", "sha256",
 							)
 							if err != nil {
 								t.Fatalf("decrypt failed: %v\nstderr: %s", err, stderr)

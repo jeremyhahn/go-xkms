@@ -18,7 +18,6 @@
 package unix
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-keychain/test/integration/api/commands"
@@ -41,89 +40,6 @@ func TestUnix_Health(t *testing.T) {
 		t.Fatal("No output from Unix socket server")
 	}
 	t.Logf("Unix socket health check passed")
-}
-
-// TestUnix_KeyOperations tests key operations via Unix socket
-func TestUnix_KeyOperations(t *testing.T) {
-	runner := commands.NewTestRunner()
-	runner.RequireCLI(t)
-
-	keyDir := commands.CreateTempKeyDir(t)
-	runner = runner.WithKeyDir(keyDir).WithBackend("software")
-	keyID := commands.GenerateUniqueKeyID("unix-test")
-
-	// Generate key
-	t.Run("Generate", func(t *testing.T) {
-		args := []string{
-			"key", "generate", keyID,
-			"--backend", "software",
-			"--key-dir", keyDir,
-			"--key-type", "ecdsa",
-			"--key-algorithm", "ecdsa",
-			"--curve", "P-256",
-		}
-		stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolUnix, args...)
-		if err != nil {
-			t.Logf("stdout: %s", stdout)
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("Unix socket key generation failed: %v", err)
-		}
-	})
-
-	// List keys
-	t.Run("List", func(t *testing.T) {
-		args := []string{
-			"key", "list",
-			"--backend", "software",
-			"--key-dir", keyDir,
-		}
-		stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolUnix, args...)
-		if err != nil {
-			t.Logf("stdout: %s", stdout)
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("List keys failed: %v", err)
-		}
-		if !strings.Contains(stdout+stderr, keyID) {
-			t.Fatalf("Key %s not in list", keyID)
-		}
-	})
-
-	// Sign
-	t.Run("Sign", func(t *testing.T) {
-		args := []string{
-			"key", "sign", keyID, "test data",
-			"--backend", "software",
-			"--key-dir", keyDir,
-			"--key-type", "ecdsa",
-			"--key-algorithm", "ecdsa",
-			"--hash", "SHA-256",
-		}
-		stdout, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolUnix, args...)
-		if err != nil {
-			t.Logf("stdout: %s", stdout)
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("Sign failed: %v", err)
-		}
-		if strings.TrimSpace(stdout) == "" {
-			t.Fatal("No signature returned")
-		}
-	})
-
-	// Delete
-	t.Run("Delete", func(t *testing.T) {
-		args := []string{
-			"key", "delete", keyID,
-			"--backend", "software",
-			"--key-dir", keyDir,
-			"--key-type", "ecdsa",
-			"--key-algorithm", "ecdsa",
-		}
-		_, stderr, err := runner.RunCommandWithProtocol(t, commands.ProtocolUnix, args...)
-		if err != nil {
-			t.Logf("stderr: %s", stderr)
-			t.Fatalf("Delete failed: %v", err)
-		}
-	})
 }
 
 // TestUnix_AllCommands runs all CLI commands via Unix socket protocol

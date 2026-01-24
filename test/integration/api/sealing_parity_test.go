@@ -78,6 +78,9 @@ func TestProtocolParity_SealUnsealLifecycle(t *testing.T) {
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")
 
 	testPlaintext := "secret-data-to-protect-12345"
+	sealKeyName := "seal-test-key"
+	// Use just the key name - the backend/type/algo are specified via separate flags
+	sealKeyID := sealKeyName
 
 	for _, protocol := range protocols {
 		t.Run(string(protocol), func(t *testing.T) {
@@ -87,7 +90,26 @@ func TestProtocolParity_SealUnsealLifecycle(t *testing.T) {
 
 			var sealedData sealOutput
 
-			// Step 1: Verify sealing capability
+			// Step 1: Generate a key for sealing
+			t.Run("generate-key", func(t *testing.T) {
+				args := []string{
+					"key", "generate", sealKeyName,
+					"--key-algorithm", "ecdsa",
+					"--curve", "P-256",
+					"--key-type", "tls",
+					"--backend", "software",
+					"--key-dir", keyDir,
+				}
+				stdout, stderr, err := runner.RunCommandWithProtocol(t, protocol, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("key generate failed: %v", err)
+				}
+				t.Logf("[%s] Generated sealing key: %s", protocol, sealKeyName)
+			})
+
+			// Step 2: Verify sealing capability
 			t.Run("can-seal", func(t *testing.T) {
 				args := []string{
 					"can-seal",
@@ -106,10 +128,11 @@ func TestProtocolParity_SealUnsealLifecycle(t *testing.T) {
 				t.Logf("[%s] Verified sealing capability", protocol)
 			})
 
-			// Step 2: Seal the test data
+			// Step 3: Seal the test data
 			t.Run("seal", func(t *testing.T) {
 				args := []string{
 					"seal", testPlaintext,
+					"--key-id", sealKeyID,
 					"--backend", "software",
 					"--key-dir", keyDir,
 					"--output", "json",
@@ -151,7 +174,7 @@ func TestProtocolParity_SealUnsealLifecycle(t *testing.T) {
 					protocol, len(sealedData.Ciphertext), len(sealedData.Nonce), len(sealedData.Tag))
 			})
 
-			// Step 3: Unseal the data and verify it matches the original
+			// Step 4: Unseal the data and verify it matches the original
 			t.Run("unseal", func(t *testing.T) {
 				// Skip if seal failed (sealedData would be empty)
 				if sealedData.Ciphertext == "" {
@@ -160,6 +183,7 @@ func TestProtocolParity_SealUnsealLifecycle(t *testing.T) {
 
 				args := []string{
 					"unseal",
+					"--key-id", sealKeyID,
 					"--ciphertext", sealedData.Ciphertext,
 					"--nonce", sealedData.Nonce,
 					"--tag", sealedData.Tag,
@@ -192,6 +216,17 @@ func TestProtocolParity_SealUnsealLifecycle(t *testing.T) {
 				assertEqual(t, testPlaintext, unsealedData, "Unsealed data should match original plaintext")
 				t.Logf("[%s] Successfully unsealed and verified data", protocol)
 			})
+
+			// Step 5: Cleanup - delete the test key
+			t.Run("cleanup", func(t *testing.T) {
+				args := []string{
+					"key", "delete", sealKeyName,
+					"--backend", "software",
+					"--key-dir", keyDir,
+				}
+				_, _, _ = runner.RunCommandWithProtocol(t, protocol, args...)
+				// Ignore cleanup errors
+			})
 		})
 	}
 }
@@ -207,6 +242,9 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 
 	testPlaintext := "secret-with-aad-67890"
 	testAAD := "additional-authenticated-data"
+	sealKeyName := "seal-aad-test-key"
+	// Use just the key name - the backend/type/algo are specified via separate flags
+	sealKeyID := sealKeyName
 
 	for _, protocol := range protocols {
 		t.Run(string(protocol), func(t *testing.T) {
@@ -216,10 +254,30 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 
 			var sealedData sealOutput
 
-			// Step 1: Seal with AAD
+			// Step 1: Generate a key for sealing
+			t.Run("generate-key", func(t *testing.T) {
+				args := []string{
+					"key", "generate", sealKeyName,
+					"--key-algorithm", "ecdsa",
+					"--curve", "P-256",
+					"--key-type", "tls",
+					"--backend", "software",
+					"--key-dir", keyDir,
+				}
+				stdout, stderr, err := runner.RunCommandWithProtocol(t, protocol, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("key generate failed: %v", err)
+				}
+				t.Logf("[%s] Generated sealing key: %s", protocol, sealKeyName)
+			})
+
+			// Step 2: Seal with AAD
 			t.Run("seal-with-aad", func(t *testing.T) {
 				args := []string{
 					"seal", testPlaintext,
+					"--key-id", sealKeyID,
 					"--backend", "software",
 					"--key-dir", keyDir,
 					"--aad", testAAD,
@@ -249,7 +307,7 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 				t.Logf("[%s] Sealed data with AAD", protocol)
 			})
 
-			// Step 2: Unseal with matching AAD
+			// Step 3: Unseal with matching AAD
 			t.Run("unseal-with-aad", func(t *testing.T) {
 				if sealedData.Ciphertext == "" {
 					t.Skip("Skipping unseal - seal operation did not produce output")
@@ -257,6 +315,7 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 
 				args := []string{
 					"unseal",
+					"--key-id", sealKeyID,
 					"--ciphertext", sealedData.Ciphertext,
 					"--nonce", sealedData.Nonce,
 					"--tag", sealedData.Tag,
@@ -290,7 +349,7 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 				t.Logf("[%s] Successfully unsealed with AAD", protocol)
 			})
 
-			// Step 3: Verify unseal fails with wrong AAD
+			// Step 4: Verify unseal fails with wrong AAD
 			t.Run("unseal-wrong-aad-fails", func(t *testing.T) {
 				if sealedData.Ciphertext == "" {
 					t.Skip("Skipping unseal - seal operation did not produce output")
@@ -298,6 +357,7 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 
 				args := []string{
 					"unseal",
+					"--key-id", sealKeyID,
 					"--ciphertext", sealedData.Ciphertext,
 					"--nonce", sealedData.Nonce,
 					"--tag", sealedData.Tag,
@@ -310,6 +370,17 @@ func TestProtocolParity_SealWithAAD(t *testing.T) {
 				// Unseal with wrong AAD should fail
 				assertError(t, err, "Unseal with wrong AAD should fail")
 				t.Logf("[%s] Correctly rejected unseal with wrong AAD", protocol)
+			})
+
+			// Step 5: Cleanup - delete the test key
+			t.Run("cleanup", func(t *testing.T) {
+				args := []string{
+					"key", "delete", sealKeyName,
+					"--backend", "software",
+					"--key-dir", keyDir,
+				}
+				_, _, _ = runner.RunCommandWithProtocol(t, protocol, args...)
+				// Ignore cleanup errors
 			})
 		})
 	}
@@ -324,16 +395,39 @@ func TestProtocolParity_SealInvalidInput(t *testing.T) {
 	keyDir := commands.CreateTempKeyDir(t)
 	runner = runner.WithKeyDir(keyDir).WithBackend("software")
 
+	sealKeyName := "seal-invalid-test-key"
+	// Use just the key name - the backend/type/algo are specified via separate flags
+	sealKeyID := sealKeyName
+
 	for _, protocol := range protocols {
 		t.Run(string(protocol), func(t *testing.T) {
 			if !isProtocolAvailable(t, runner, protocol) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}
 
+			// Generate a key for this protocol's tests
+			t.Run("generate-key", func(t *testing.T) {
+				args := []string{
+					"key", "generate", sealKeyName,
+					"--key-algorithm", "ecdsa",
+					"--curve", "P-256",
+					"--key-type", "tls",
+					"--backend", "software",
+					"--key-dir", keyDir,
+				}
+				stdout, stderr, err := runner.RunCommandWithProtocol(t, protocol, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("key generate failed: %v", err)
+				}
+			})
+
 			// Test unseal with invalid ciphertext
 			t.Run("unseal-invalid-ciphertext", func(t *testing.T) {
 				args := []string{
 					"unseal",
+					"--key-id", sealKeyID,
 					"--ciphertext", "invalid-base64!@#$",
 					"--nonce", "dGVzdG5vbmNl",
 					"--tag", "dGVzdHRhZw==",
@@ -352,6 +446,7 @@ func TestProtocolParity_SealInvalidInput(t *testing.T) {
 				// First seal some data
 				sealArgs := []string{
 					"seal", "test-data",
+					"--key-id", sealKeyID,
 					"--backend", "software",
 					"--key-dir", keyDir,
 					"--output", "json",
@@ -377,6 +472,7 @@ func TestProtocolParity_SealInvalidInput(t *testing.T) {
 				// Try to unseal with a tampered tag
 				args := []string{
 					"unseal",
+					"--key-id", sealKeyID,
 					"--ciphertext", sealedData.Ciphertext,
 					"--nonce", sealedData.Nonce,
 					"--tag", "dGFtcGVyZWR0YWc=", // "tamperedtag" in base64
@@ -388,6 +484,16 @@ func TestProtocolParity_SealInvalidInput(t *testing.T) {
 				// Should fail with authentication error
 				assertError(t, err, "Unseal with tampered tag should fail")
 				t.Logf("[%s] Correctly rejected tampered authentication tag", protocol)
+			})
+
+			// Cleanup
+			t.Run("cleanup", func(t *testing.T) {
+				args := []string{
+					"key", "delete", sealKeyName,
+					"--backend", "software",
+					"--key-dir", keyDir,
+				}
+				_, _, _ = runner.RunCommandWithProtocol(t, protocol, args...)
 			})
 		})
 	}

@@ -1,6 +1,6 @@
 # go-keychain Development Container
 # This container provides ALL dependencies needed for development and testing
-# Go Version: 1.25.5 (as specified in go.mod)
+# Go Version: Latest stable via golang:bookworm (GOTOOLCHAIN=auto)
 #
 # Includes:
 # - PKCS#11: SoftHSM2, OpenSC (for CanoKey PIV support)
@@ -11,7 +11,7 @@
 # - Docker: docker-in-docker support for integration tests
 
 # Stage 1: Builder stage - compile dependencies from source
-FROM golang:1.25.5-bookworm AS builder
+FROM golang:bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -153,7 +153,7 @@ RUN mkdir -p /build/qemu-install/usr/local/bin && \
     fi
 
 # Stage 2: Development runtime environment
-FROM golang:1.25.5-bookworm
+FROM golang:bookworm
 
 LABEL maintainer="go-keychain"
 LABEL description="Development environment for go-keychain with ALL build and test dependencies"

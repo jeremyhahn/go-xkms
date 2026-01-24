@@ -7,7 +7,7 @@ on:
     branches: [ master, main, develop ]
 
 env:
-  GO_VERSION: '1.25.5'
+  GO_VERSION: 'stable'
   COVERAGE_THRESHOLD: 90
   REGISTRY: ghcr.io
   IMAGE_NAME: jeremyhahn/keychain-cli
@@ -273,7 +273,13 @@ jobs:
     needs: [test, lint]
     strategy:
       matrix:
-        binary: [cli, server, rest-server, grpc-server, quic-server, mcp-server]
+        include:
+          - binary: keychainctl
+            output: keychainctl
+          - binary: keychaind
+            output: keychaind
+          - binary: vfido2
+            output: vfido2
 
     steps:
       - name: Checkout code
@@ -295,19 +301,15 @@ jobs:
           CGO_ENABLED: 1
         run: |
           # Build with ALL backend tags enabled to test full integration
-          TAGS="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault"
+          TAGS="pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost"
           mkdir -p build
-          if [ "${{ matrix.binary }}" = "cli" ]; then
-            go build -tags="${TAGS}" -o build/keychain-cli ./cmd/cli/main.go
-          else
-            go build -tags="${TAGS}" -o build/keychain-${{ matrix.binary }} ./cmd/${{ matrix.binary }}/main.go
-          fi
+          go build -tags="${TAGS}" -o build/${{ matrix.output }} ./cmd/${{ matrix.binary }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v6
         with:
           name: binaries-${{ matrix.binary }}
-          path: build/keychain-*
+          path: build/${{ matrix.output }}
           retention-days: 7
 
   # Job 6: Docker Multi-Platform Build with Security Scanning

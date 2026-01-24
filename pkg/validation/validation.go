@@ -27,8 +27,8 @@ var (
 	// backendPattern matches safe backend names (lowercase alphanumeric + hyphens)
 	backendPattern = regexp.MustCompile(`^[a-z0-9\-]+$`)
 
-	// simpleKeyIDPattern for key IDs without backend prefix
-	simpleKeyIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
+	// simpleKeyIDPattern for key IDs - supports both simple names and extended format (backend:type:algo:keyname)
+	simpleKeyIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.:]+$`)
 )
 
 // ValidateKeyID validates a key identifier.
@@ -72,9 +72,9 @@ func ValidateKeyID(keyID string) error {
 		}
 	}
 
-	// Only allow safe characters
+	// Only allow safe characters (supports extended key ID format with colons)
 	if !simpleKeyIDPattern.MatchString(keyID) {
-		return fmt.Errorf("key ID contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, .)")
+		return fmt.Errorf("key ID contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, ., :)")
 	}
 
 	return nil

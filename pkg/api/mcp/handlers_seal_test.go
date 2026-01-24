@@ -103,7 +103,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		_, err = server.handleSeal(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to seal data")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 
 	t.Run("fails when backend name is empty", func(t *testing.T) {
@@ -125,13 +125,12 @@ func TestHandler_Seal(t *testing.T) {
 		_, err = server.handleSeal(context.Background(), req)
 		require.Error(t, err)
 		// The service validates backend name cannot be empty
-		assert.Contains(t, err.Error(), "failed to seal data")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 
-	// Note: The following test documents that the software backend requires
-	// complete KeyAttributes (including StoreType), which the current handler
-	// does not provide when only KeyID is given.
-	t.Run("fails when KeyAttributes lacks StoreType for software backend", func(t *testing.T) {
+	// Note: The handler now looks up the key by CN and retrieves full KeyAttributes
+	// including StoreType, so sealing should succeed with a valid key.
+	t.Run("succeeds when key exists and handler resolves full KeyAttributes", func(t *testing.T) {
 		// Generate a key first
 		genParams := GenerateKeyParams{
 			KeyID:   "seal-key-1",
@@ -151,7 +150,7 @@ func TestHandler_Seal(t *testing.T) {
 		_, err = server.handleGenerateKey(genReq)
 		require.NoError(t, err)
 
-		// Try to seal - will fail because handler doesn't resolve full KeyAttributes
+		// Seal should succeed because handler now looks up full KeyAttributes
 		params := SealParams{
 			Backend: "software",
 			KeyID:   "seal-key-1",
@@ -167,10 +166,10 @@ func TestHandler_Seal(t *testing.T) {
 			ID:      1,
 		}
 
-		// The handler only sets CN, not StoreType, so the backend rejects it
-		_, err = server.handleSeal(context.Background(), req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to seal data")
+		// The handler now resolves full KeyAttributes including StoreType
+		resp, err := server.handleSeal(context.Background(), req)
+		require.NoError(t, err)
+		assert.NotNil(t, resp)
 	})
 
 	t.Run("accepts valid seal params structure", func(t *testing.T) {
@@ -283,7 +282,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		_, err = server.handleUnseal(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unseal data")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 
 	t.Run("fails when backend name is empty", func(t *testing.T) {
@@ -305,7 +304,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		_, err = server.handleUnseal(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unseal data")
+		assert.Contains(t, err.Error(), "backend not found")
 	})
 
 	t.Run("accepts valid unseal params structure", func(t *testing.T) {
@@ -335,10 +334,10 @@ func TestHandler_Unseal(t *testing.T) {
 		assert.NotContains(t, err.Error(), "invalid params")
 	})
 
-	t.Run("fails with corrupted encrypted data", func(t *testing.T) {
+	t.Run("fails when key does not exist", func(t *testing.T) {
 		params := UnsealParams{
 			Backend:    "software",
-			KeyID:      "test-key",
+			KeyID:      "non-existent-key",
 			Ciphertext: []byte{0xFF, 0xFE, 0xFD}, // Invalid ciphertext
 			Nonce:      []byte("invalid-nonce"),
 			Tag:        []byte("invalid-tag"),
@@ -353,9 +352,10 @@ func TestHandler_Unseal(t *testing.T) {
 			ID:      1,
 		}
 
+		// The handler now looks up the key first, so non-existent key returns key not found
 		_, err = server.handleUnseal(context.Background(), req)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unseal data")
+		assert.Contains(t, err.Error(), "key not found")
 	})
 }
 

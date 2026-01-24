@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-keychain
 
-go 1.25.5
+go 1.25.6
 
 require (
 	cloud.google.com/go/kms v1.23.2
@@ -34,7 +34,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.46.0
-	golang.org/x/sys v0.39.0
+	golang.org/x/sys v0.40.0
 	golang.org/x/time v0.14.0
 	google.golang.org/api v0.257.0
 	google.golang.org/grpc v1.77.0
@@ -50,6 +50,11 @@ require github.com/jeremyhahn/go-frost v0.1.4-alpha
 
 // Virtual FIDO2/U2F authenticator (for testing without hardware)
 require github.com/bulwarkid/virtual-fido v0.0.0-20240623215839-512d8a3fef0e
+
+// Local SDK module
+require github.com/jeremyhahn/go-keychain/sdk/go v0.0.0
+
+replace github.com/jeremyhahn/go-keychain/sdk/go => ./sdk/go
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -132,6 +137,7 @@ require (
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
+	golang.org/x/term v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	google.golang.org/genproto v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect

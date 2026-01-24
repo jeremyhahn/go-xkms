@@ -12,6 +12,7 @@ services:
       - NET_ADMIN        # For network configuration
       - IPC_LOCK         # For TPM memory locking
     # Device access for KVM acceleration
+    # Note: /dev/uhid access handled via privileged mode + mknod in post-start
     devices:
       - /dev/kvm:/dev/kvm
     # Shared memory for QEMU

@@ -71,6 +71,13 @@ func TestSealHandler(t *testing.T) {
 	t.Run("seals data with optional key_id", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
 
+		// Configure mock to return a key matching the CN
+		ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+			return []*types.KeyAttributes{
+				{CN: "my-seal-key", StoreType: types.StoreSoftware, KeyType: types.KeyTypeSigning},
+			}, nil
+		}
+
 		var capturedOpts *types.SealOptions
 		ks.SealFunc = func(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 			capturedOpts = opts
@@ -308,6 +315,13 @@ func TestUnsealHandler(t *testing.T) {
 
 	t.Run("unseals data with optional key_id", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
+
+		// Configure mock to return a key matching the CN
+		ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+			return []*types.KeyAttributes{
+				{CN: "my-seal-key", StoreType: types.StoreSoftware, KeyType: types.KeyTypeSigning},
+			}, nil
+		}
 
 		var capturedOpts *types.UnsealOptions
 		ks.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
@@ -551,7 +565,7 @@ func TestUnsealHandler(t *testing.T) {
 	})
 }
 
-// TestCanSealHandler tests the GET /api/v1/can-seal endpoint
+// TestCanSealHandler tests the GET /api/v1/seal/capability endpoint
 func TestCanSealHandler(t *testing.T) {
 	t.Run("returns true when specific backend supports sealing", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
@@ -561,7 +575,7 @@ func TestCanSealHandler(t *testing.T) {
 		}
 
 		ctx := newTestHandlerContext()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can-seal?backend=test-backend", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=test-backend", nil)
 		w := httptest.NewRecorder()
 
 		ctx.CanSealHandler(w, req)
@@ -585,7 +599,7 @@ func TestCanSealHandler(t *testing.T) {
 		}
 
 		ctx := newTestHandlerContext()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can-seal?backend=test-backend", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=test-backend", nil)
 		w := httptest.NewRecorder()
 
 		ctx.CanSealHandler(w, req)
@@ -607,7 +621,7 @@ func TestCanSealHandler(t *testing.T) {
 		}
 
 		ctx := newTestHandlerContext()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can-seal", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
 
 		ctx.CanSealHandler(w, req)
@@ -631,7 +645,7 @@ func TestCanSealHandler(t *testing.T) {
 		}
 
 		ctx := newTestHandlerContext()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can-seal?backend=", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=", nil)
 		w := httptest.NewRecorder()
 
 		ctx.CanSealHandler(w, req)
@@ -649,7 +663,7 @@ func TestCanSealHandler(t *testing.T) {
 		setupTestService(t, "test-backend")
 
 		ctx := newTestHandlerContext()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can-seal?backend=INVALID_Backend!", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=INVALID_Backend!", nil)
 		w := httptest.NewRecorder()
 
 		ctx.CanSealHandler(w, req)
@@ -666,7 +680,7 @@ func TestCanSealHandler(t *testing.T) {
 		setupTestService(t, "test-backend")
 
 		ctx := newTestHandlerContext()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can-seal?backend=nonexistent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=nonexistent", nil)
 		w := httptest.NewRecorder()
 
 		ctx.CanSealHandler(w, req)
@@ -686,7 +700,7 @@ func TestCanSealHandler(t *testing.T) {
 		keychain.Reset()
 
 		ctx := newTestHandlerContext()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/can-seal", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
 
 		ctx.CanSealHandler(w, req)
@@ -787,6 +801,13 @@ func TestSealHandlerEdgeCases(t *testing.T) {
 	t.Run("handles special characters in key_id", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
 
+		// Configure mock to return a key matching the CN
+		ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+			return []*types.KeyAttributes{
+				{CN: "my-key_v1-0", StoreType: types.StoreSoftware, KeyType: types.KeyTypeSigning},
+			}, nil
+		}
+
 		ks.SealFunc = func(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
 			return &types.SealedData{
 				Backend:    types.BackendTypeSoftware,
@@ -795,8 +816,8 @@ func TestSealHandlerEdgeCases(t *testing.T) {
 		}
 
 		ctx := newTestHandlerContext()
-		// Valid key_id with allowed special characters
-		reqBody := `{"backend":"test-backend","data":"dGVzdA==","key_id":"my-key_v1.0"}`
+		// Valid key_id with allowed special characters (alphanumeric, hyphens, underscores)
+		reqBody := `{"backend":"test-backend","data":"dGVzdA==","key_id":"my-key_v1-0"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/seal", strings.NewReader(reqBody))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -833,6 +854,13 @@ func TestUnsealHandlerEdgeCases(t *testing.T) {
 	t.Run("handles unseal with all optional fields", func(t *testing.T) {
 		ks := setupTestService(t, "test-backend")
 
+		// Configure mock to return a key matching the CN
+		ks.ListKeysFunc = func() ([]*types.KeyAttributes, error) {
+			return []*types.KeyAttributes{
+				{CN: "my-key", StoreType: types.StoreSoftware, KeyType: types.KeyTypeSigning},
+			}, nil
+		}
+
 		var capturedSealed *types.SealedData
 		var capturedOpts *types.UnsealOptions
 		ks.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
@@ -862,7 +890,9 @@ func TestUnsealHandlerEdgeCases(t *testing.T) {
 		assert.Equal(t, []byte("cipher"), capturedSealed.Ciphertext)
 		assert.Equal(t, []byte("nonce"), capturedSealed.Nonce)
 		assert.Equal(t, []byte("tag"), capturedSealed.Tag)
-		assert.Equal(t, "my-key", capturedSealed.KeyID)
+		// KeyID uses attrs.ID() format which includes all components
+		// Now the handler looks up the key so we get the full ID with StoreType and KeyType
+		assert.Equal(t, "software:signing:my-key:unknown", capturedSealed.KeyID)
 		require.NotNil(t, capturedOpts)
 		assert.Equal(t, []byte("aad"), capturedOpts.AAD)
 		require.NotNil(t, capturedOpts.KeyAttributes)

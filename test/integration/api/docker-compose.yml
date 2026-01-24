@@ -137,7 +137,7 @@ services:
       - KEYSTORE_GRPC_ADDR=keychain-server:9443
       - KEYSTORE_QUIC_URL=https://keychain-server:8444
       - KEYSTORE_MCP_ADDR=keychain-server:9444
-      - KEYSTORE_CLI_BIN=/app/build/bin/keychain
+      - KEYSTORE_CLI_BIN=/app/build/bin/keychainctl
       # TLS configuration - use insecure for self-signed certs
       - KEYSTORE_TLS_CA=/etc/keychain/certs/ca.crt
       - KEYSTORE_TLS_INSECURE=true
@@ -160,7 +160,7 @@ services:
       ls -la /etc/keychain/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -tags=frost -o /app/build/bin/keychain ./cmd/cli/main.go &&
+      CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl &&
       echo 'Running integration tests...' &&
       go test -v -tags=integration,frost ./test/integration/api/... -timeout 15m
       "

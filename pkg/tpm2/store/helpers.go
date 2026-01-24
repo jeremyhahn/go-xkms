@@ -151,10 +151,10 @@ func AvailableHashes() map[string]crypto.Hash {
 
 // ECCConfig contains ECC configuration from config files
 type ECCConfig struct {
-	Curve string
+	Curve string `yaml:"curve" json:"curve" mapstructure:"curve"`
 }
 
 // RSAConfig contains RSA configuration from config files
 type RSAConfig struct {
-	KeySize int
+	KeySize int `yaml:"keysize" json:"keysize" mapstructure:"keysize"`
 }

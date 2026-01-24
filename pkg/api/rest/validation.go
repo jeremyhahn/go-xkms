@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	// keyIDPattern matches safe key identifiers (alphanumeric, dash, underscore, dot)
-	// This prevents path traversal and other injection attacks
-	keyIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
+	// keyIDPattern matches safe key identifiers (alphanumeric, dash, underscore, dot, colon)
+	// This prevents path traversal and other injection attacks while supporting extended key ID format
+	keyIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.:]+$`)
 )
 
 // ValidateKeyID checks if a key ID is safe to use.
@@ -54,9 +54,9 @@ func ValidateKeyID(keyID string) error {
 		return fmt.Errorf("key ID contains invalid path components")
 	}
 
-	// Only allow safe characters (alphanumeric, dash, underscore, dot)
+	// Only allow safe characters (alphanumeric, dash, underscore, dot, colon for extended format)
 	if !keyIDPattern.MatchString(keyID) {
-		return fmt.Errorf("key ID contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, .)")
+		return fmt.Errorf("key ID contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, ., :)")
 	}
 
 	// Additional length check (prevent DoS via extremely long names)

@@ -26,8 +26,8 @@ import (
 
 	"google.golang.org/grpc"
 
-	pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
 	grpcinternal "github.com/jeremyhahn/go-keychain/pkg/api/grpc"
+	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
 )
 
 // DefaultSocketPath is the default path for the Unix socket

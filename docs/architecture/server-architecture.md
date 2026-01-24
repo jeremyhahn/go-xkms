@@ -383,7 +383,7 @@ POST /api/v1/keys
 
 ### 2. gRPC API (`internal/grpc/`)
 
-**Protocol Buffer Definition:** `api/proto/keychainv1/keychain.proto`
+**Protocol Buffer Definition:** `pkg/api/grpc/proto/keychainv1/keychain.proto`
 
 ```protobuf
 service KeystoreService {

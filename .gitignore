@@ -54,3 +54,13 @@ CLAUDE.md
 # SoftHSM2 test files
 softhsm2.conf
 softhsm2/
+
+# Node.js / Playwright
+node_modules/
+test-results/
+playwright-report/
+
+# Binary outputs (root only, not cmd/ directories)
+/keychaind
+/keychainctl
+/vfido2

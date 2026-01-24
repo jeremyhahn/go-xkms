@@ -397,7 +397,7 @@ syntax = "proto3";
 
 package keychain.v1;
 
-option go_package = "github.com/jeremyhahn/go-keychain/api/proto/keychainv1";
+option go_package = "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1";
 
 // KeystoreService provides key management and cryptographic operations
 service KeystoreService {
@@ -469,7 +469,7 @@ message SignResponse {
 **Go Client:**
 ```go
 import (
-    pb "github.com/jeremyhahn/go-keychain/api/proto/keychainv1"
+    pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
     "google.golang.org/grpc"
     "google.golang.org/grpc/credentials/insecure"
 )

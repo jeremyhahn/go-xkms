@@ -2,7 +2,7 @@
 # Supports PKCS#11 (SoftHSM2), TPM 2.0 (SWTPM), and Quantum-Safe Cryptography (liboqs)
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
-FROM golang:1.25.5-bookworm AS builder
+FROM golang:bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -51,7 +51,7 @@ RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /build/l
     DESTDIR=/build/liboqs-install ninja install
 
 # Stage 2: Test runtime environment
-FROM golang:1.25.5-bookworm
+FROM golang:bookworm
 
 LABEL maintainer="go-keychain"
 LABEL description="Integration testing environment for go-keychain with PKCS#11 and TPM 2.0 support"
@@ -179,6 +179,9 @@ RUN mkdir -p ${SWTPM_STATE_DIR}/state
 # Copy go module files first for better layer caching
 COPY --chown=testuser:testuser go.mod go.sum ./
 
+# Copy the SDK module files before go mod download (required for replace directive)
+COPY --chown=testuser:testuser sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
 # Download dependencies (cached if go.mod/go.sum unchanged)
 RUN go mod download
 
@@ -233,7 +236,7 @@ USER testuser
 # Build the server binary with all backends enabled (including quantum-safe cryptography and FROST)
 RUN mkdir -p /app && \
     CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum,frost" \
-    -o /app/keychaind ./cmd/server/main.go
+    -o /app/keychaind ./cmd/keychaind/main.go
 
 # Validate that the server binary exists
 RUN test -f /app/keychaind || (echo "ERROR: Server binary not built" && exit 1)

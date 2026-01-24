@@ -1,0 +1,196 @@
+# Docker Compose configuration for SDK integration tests
+#
+# This file sets up the keychain server and all required services
+# for running SDK integration tests against real protocol endpoints.
+#
+# Usage:
+#   make integration-test-sdk       # Full test suite with docker-compose
+#   make integration-test-sdk-go    # Go SDK tests only (uses devcontainer)
+#
+# Or manually:
+#   docker compose -f test/integration/sdk/docker-compose.yml up -d
+#   docker compose -f test/integration/sdk/docker-compose.yml run --rm sdk-tests
+#   docker compose -f test/integration/sdk/docker-compose.yml down -v
+
+services:
+  # Keychain server with all protocols enabled
+  keychain-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        - VERSION=${VERSION:-0.0.1-dev}
+    image: go-keychain-sdk-test:latest
+    container_name: keychain-sdk-server
+    ports:
+      - "8443:8443"       # REST API (HTTPS)
+      - "9443:9443"       # gRPC
+      - "8444:8444/udp"   # QUIC (UDP)
+      - "8444:8444/tcp"   # QUIC fallback (TCP)
+      - "9444:9444"       # MCP
+      - "9090:9090"       # Metrics
+    # Required for QUIC UDP buffer settings
+    privileged: true
+    volumes:
+      - keychain-data:/data
+      - keychain-socket:/var/run/keychain
+      - keychain-certs:/etc/keychain/certs
+      - ./config.sdk.yaml:/etc/keychain/keychaind.yaml:ro
+      - ./scripts:/scripts:ro
+    environment:
+      - KEYCHAIN_CONFIG=/etc/keychain/keychaind.yaml
+      - KEYSTORE_LOG_LEVEL=debug
+      - KEYSTORE_DATA_DIR=/data
+      # TPM configuration
+      - TPM_DEVICE_PATH=tcp://swtpm:2321
+      - TPM_USE_SIMULATOR=true
+      # PKCS#11 configuration
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+      # Certificate directory
+      - CERT_DIR=/etc/keychain/certs
+    depends_on:
+      swtpm:
+        condition: service_healthy
+      softhsm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:8443/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    networks:
+      - keychain-sdk
+    # Run as root for integration tests (allows cert generation and UDP buffer config)
+    user: root
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # Set UDP buffer sizes for QUIC
+        echo "Configuring UDP buffers for QUIC..."
+        echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo "Warning: Could not set rmem_max"
+        echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo "Warning: Could not set wmem_max"
+        # Ensure directories exist
+        mkdir -p /etc/keychain/certs /var/run/keychain /data
+        # Generate TLS certificates for QUIC/HTTPS
+        if [ -f /scripts/generate-test-certs.sh ]; then
+          echo "Generating TLS certificates..."
+          /scripts/generate-test-certs.sh
+        fi
+        # Verify certificates were created
+        ls -la /etc/keychain/certs/ || true
+        echo "Starting keychain server..."
+        exec /app/keychaind
+
+  # SWTPM TPM 2.0 Simulator
+  swtpm:
+    build:
+      context: ../../../test/docker/swtpm
+      dockerfile: Dockerfile
+    image: go-keychain-swtpm:sdk-test
+    container_name: keychain-sdk-swtpm
+    ports:
+      - "2321:2321"  # TPM command port
+      - "2322:2322"  # TPM control port
+    volumes:
+      - swtpm-data:/var/lib/swtpm/tpmstate
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2321"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - keychain-sdk
+
+  # SoftHSM PKCS#11 Service
+  softhsm:
+    build:
+      context: ../../../test/docker/softhsm
+      dockerfile: Dockerfile
+    image: go-keychain-softhsm:sdk-test
+    container_name: keychain-sdk-softhsm
+    volumes:
+      - softhsm-tokens:/tokens
+    environment:
+      - SOFTHSM2_CONF=/home/softhsm/softhsm2.conf
+      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+    healthcheck:
+      test: ["CMD", "test", "-f", "/usr/local/lib/softhsm/libsofthsm2.so"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - keychain-sdk
+
+  # SDK integration test runner
+  sdk-tests:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    image: go-keychain-sdk-test:latest
+    container_name: keychain-sdk-tests
+    # Required for QUIC UDP buffer settings
+    privileged: true
+    user: root
+    depends_on:
+      keychain-server:
+        condition: service_healthy
+    volumes:
+      - ../../..:/workspace
+      - keychain-socket:/var/run/keychain
+      - keychain-certs:/etc/keychain/certs:ro
+      - go-cache:/root/go
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      - CGO_ENABLED=1
+      # Server endpoints (container network addresses)
+      - KEYSTORE_UNIX_SOCKET=/var/run/keychain/keychain.sock
+      - KEYSTORE_REST_URL=https://keychain-server:8443
+      - KEYSTORE_GRPC_ADDR=keychain-server:9443
+      - KEYSTORE_QUIC_URL=https://keychain-server:8444
+      - KEYSTORE_MCP_ADDR=keychain-server:9444
+      # TLS configuration - use insecure for self-signed certs
+      - KEYSTORE_TLS_CA=/etc/keychain/certs/ca.crt
+      - KEYSTORE_TLS_INSECURE=true
+      # Test configuration
+      - INTEGRATION_TIMEOUT=120s
+      - GO_TEST_FLAGS=-v -tags=integration
+    working_dir: /workspace
+    networks:
+      - keychain-sdk
+    command: >
+      sh -c "
+      echo 'Configuring UDP buffers for QUIC...' &&
+      echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo 'Warning: Could not set rmem_max' &&
+      echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo 'Warning: Could not set wmem_max' &&
+      echo 'Waiting for server to be ready...' &&
+      sleep 5 &&
+      echo 'Checking Unix socket...' &&
+      ls -la /var/run/keychain/ || true &&
+      echo 'Checking TLS certificates...' &&
+      ls -la /etc/keychain/certs/ || true &&
+      echo 'Running SDK integration tests...' &&
+      go test -v -tags=integration ./test/integration/sdk/go/... -timeout 15m
+      "
+
+volumes:
+  keychain-data:
+    driver: local
+  keychain-socket:
+    driver: local
+  keychain-certs:
+    driver: local
+  softhsm-tokens:
+    driver: local
+  swtpm-data:
+    driver: local
+  go-cache:
+    driver: local
+  go-build-cache:
+    driver: local
+
+networks:
+  keychain-sdk:
+    driver: bridge
