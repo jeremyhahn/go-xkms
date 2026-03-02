@@ -62,7 +62,7 @@ jobs:
           fail_ci_if_error: true
 
       - name: Upload coverage reports as artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-reports
           path: |
