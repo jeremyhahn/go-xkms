@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,10 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package grpc provides a gRPC server implementation for the go-keychain library.
+// Package grpc provides a gRPC server implementation for the go-xkms library.
 //
 // The gRPC server exposes key management and cryptographic operations through
-// a standardized API defined in the keychain.proto file. It supports multiple
+// a standardized API defined in the xkms.proto file. It supports multiple
 // backend providers including software keystores (PKCS#8), hardware security
 // modules (PKCS#11), TPM 2.0, and cloud KMS services (AWS, GCP, Azure, Vault).
 //
@@ -36,7 +36,7 @@
 //	keyStorage := file.NewKeyStorage("/var/lib/keys")
 //	certStorage := file.NewCertStorage("/var/lib/certs")
 //	pkcs8Backend := pkcs8.NewBackend(keyStorage)
-//	keystore, _ := keychain.New(&keychain.Config{
+//	keystore, _ := xkms.New(&xkms.BackendConfig{
 //	    Backend:     pkcs8Backend,
 //	    CertStorage: certStorage,
 //	})

@@ -25,10 +25,10 @@ func TestClearPassword_NewPassword(t *testing.T) {
 	assert.Equal(t, "test-password", str)
 }
 
-func TestClearPassword_NewClearPassword(t *testing.T) {
+func TestClearPassword_NewPassword_DifferentValue(t *testing.T) {
 	password := []byte("clear-password")
 
-	p := NewClearPassword(password)
+	p := NewPassword(password)
 	require.NotNil(t, p)
 
 	// Verify Bytes returns the password

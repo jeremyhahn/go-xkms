@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,18 +16,16 @@
 package server
 
 import (
-	"fmt"
-
-	"github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-func createAWSKMSBackend(config BackendConfig) (types.Backend, error) {
+func createAWSKMSBackend(config BackendConfig) (types.KeyProvider, error) {
 	region, _ := config.Config["region"].(string)
 	if region == "" {
-		return nil, fmt.Errorf("region is required for AWS KMS backend")
+		return nil, &ErrConfigRequired{Field: "region", Backend: "AWS KMS"}
 	}
 
 	accessKeyID, _ := config.Config["access_key_id"].(string)
@@ -52,7 +50,7 @@ func createAWSKMSBackend(config BackendConfig) (types.Backend, error) {
 	} else {
 		keyStorage, err = file.New(keyDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create key storage: %w", err)
+			return nil, &ErrStorageCreate{Resource: "key storage", Err: err}
 		}
 	}
 
@@ -62,7 +60,7 @@ func createAWSKMSBackend(config BackendConfig) (types.Backend, error) {
 	} else {
 		certStorage, err = file.New(certDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create cert storage: %w", err)
+			return nil, &ErrStorageCreate{Resource: "cert storage", Err: err}
 		}
 	}
 

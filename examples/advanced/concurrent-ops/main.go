@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,11 +27,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func main() {
@@ -55,7 +55,7 @@ func main() {
 	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     pkcs8Backend,
 		CertStorage: storage,
 	})
@@ -90,7 +90,7 @@ func main() {
 }
 
 // demonstrateConcurrentGeneration shows concurrent key generation
-func demonstrateConcurrentGeneration(ks keychain.KeyStore) {
+func demonstrateConcurrentGeneration(ks xkms.Backend) {
 	const numKeys = 10
 	var wg sync.WaitGroup
 	var successCount atomic.Int64
@@ -135,7 +135,7 @@ func demonstrateConcurrentGeneration(ks keychain.KeyStore) {
 }
 
 // demonstrateConcurrentSigning shows concurrent signing operations
-func demonstrateConcurrentSigning(ks keychain.KeyStore) {
+func demonstrateConcurrentSigning(ks xkms.Backend) {
 	// Generate a key for signing
 	keyAttrs := &types.KeyAttributes{
 		CN:           "signing-key",
@@ -194,7 +194,7 @@ func demonstrateConcurrentSigning(ks keychain.KeyStore) {
 }
 
 // demonstrateConcurrentReads shows concurrent read operations
-func demonstrateConcurrentReads(ks keychain.KeyStore) {
+func demonstrateConcurrentReads(ks xkms.Backend) {
 	// Generate keys for reading
 	const numKeys = 5
 	keyAttrs := make([]*types.KeyAttributes, numKeys)
@@ -253,7 +253,7 @@ func demonstrateConcurrentReads(ks keychain.KeyStore) {
 }
 
 // demonstrateMixedOperations shows mixed read/write operations
-func demonstrateMixedOperations(ks keychain.KeyStore) {
+func demonstrateMixedOperations(ks xkms.Backend) {
 	const numOperations = 50
 	var wg sync.WaitGroup
 	var readCount atomic.Int64
@@ -317,7 +317,7 @@ func demonstrateMixedOperations(ks keychain.KeyStore) {
 }
 
 // demonstrateLoadTest performs a stress test
-func demonstrateLoadTest(ks keychain.KeyStore) {
+func demonstrateLoadTest(ks xkms.Backend) {
 	const duration = 3 * time.Second
 	const numWorkers = 10
 

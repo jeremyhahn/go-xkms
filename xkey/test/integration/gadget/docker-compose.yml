@@ -1,0 +1,78 @@
+services:
+  gadget-tests:
+    build:
+      context: ../../../..
+      dockerfile: xkey/test/integration/gadget/Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../../go-qrdb
+        go-quicraft: ../../../../../go-quicraft
+    privileged: true
+    pid: host
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - /sys:/sys
+      - /usr/src:/usr/src:ro
+      - /dev:/dev
+      - ./modules:/opt/gadget-modules:ro
+    command: >
+      sh -c "
+        set -e &&
+        echo '=== USB Gadget Integration Test Setup ===' &&
+
+        echo 'Step 1: Mount ConfigFS...' &&
+        mount -t configfs none /sys/kernel/config 2>/dev/null || true &&
+
+        echo 'Step 2: Load libcomposite...' &&
+        modprobe libcomposite 2>/dev/null || true &&
+
+        echo 'Step 3: Load dummy_hcd...' &&
+        if ! ls /sys/class/udc/ 2>/dev/null | grep -q .; then
+          if modprobe dummy_hcd num=1 2>/dev/null; then
+            echo '  dummy_hcd loaded via modprobe';
+          elif insmod /opt/gadget-modules/dummy_hcd.ko num=1 2>/dev/null; then
+            echo '  dummy_hcd loaded from pre-built signed module';
+          else
+            echo '  Building dummy_hcd from source...' &&
+            build-dummy-hcd.sh all 2>&1 || {
+              echo 'FATAL: Cannot load dummy_hcd.' &&
+              echo 'Secure Boot may be blocking unsigned modules.' &&
+              echo 'Options:' &&
+              echo '  1. Disable Secure Boot in BIOS' &&
+              echo '  2. Sign the module: see build-dummy-hcd.sh' &&
+              echo '  3. Load on host: sudo insmod /tmp/dummy-hcd-build/dummy_hcd.ko num=1' &&
+              exit 1;
+            };
+          fi;
+        else
+          echo '  UDC already available';
+        fi &&
+
+        echo 'Step 4: Verify prerequisites...' &&
+        ls /sys/kernel/config/usb_gadget/ >/dev/null 2>&1 || {
+          echo 'FATAL: /sys/kernel/config/usb_gadget/ not available' && exit 1;
+        } &&
+        ls /sys/class/udc/ 2>/dev/null | grep -q . || {
+          echo 'FATAL: No UDC controller found in /sys/class/udc/' && exit 1;
+        } &&
+
+        echo 'Step 5: Cleanup stale gadgets...' &&
+        for g in /sys/kernel/config/usb_gadget/xkey-test-*; do
+          if [ -d \"$$g\" ]; then
+            echo \"  Cleaning up stale gadget: $$g\" &&
+            echo '' > \"$$g/UDC\" 2>/dev/null || true &&
+            find \"$$g/configs\" -maxdepth 2 -type l -exec rm -f {} + 2>/dev/null || true &&
+            find \"$$g/configs\" -mindepth 2 -type d -name '0x*' -exec rmdir {} + 2>/dev/null || true &&
+            find \"$$g/configs\" -mindepth 1 -type d -exec rmdir {} + 2>/dev/null || true &&
+            find \"$$g/functions\" -mindepth 1 -type d -exec rmdir {} + 2>/dev/null || true &&
+            find \"$$g/strings\" -mindepth 1 -type d -exec rmdir {} + 2>/dev/null || true &&
+            rmdir \"$$g\" 2>/dev/null || true;
+          fi;
+        done &&
+
+        echo 'Prerequisites verified:' &&
+        echo '  UDC:' && ls /sys/class/udc/ &&
+        echo '  ConfigFS: /sys/kernel/config/usb_gadget/' &&
+        echo '' &&
+        echo '=== Running integration tests ===' &&
+        go test -tags 'integration linux' -v -count=1 -timeout=5m ./test/integration/gadget/...
+      "

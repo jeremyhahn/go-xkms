@@ -1,12 +1,12 @@
-# Keychain Daemon Configuration
+# xKMS Daemon Configuration
 
-This directory contains configuration files and examples for the keychain daemon (`keychaind`).
+This directory contains configuration files and examples for the xkms daemon (`xkmsd`).
 
 ## Files
 
-- `keychaind.yaml.example` - Comprehensive example configuration with all available options
-- `keychaind.yaml` - Minimal working configuration for development/testing
-- `keychaind.service` - Systemd service unit file
+- `xkmsd.yaml.example` - Comprehensive example configuration with all available options
+- `xkmsd.yaml` - Minimal working configuration for development/testing
+- `xkmsd.service` - Systemd service unit file
 - `README.md` - This file
 
 ## Quick Start
@@ -15,64 +15,64 @@ This directory contains configuration files and examples for the keychain daemon
 
 1. Copy the minimal config:
    ```bash
-   cp configs/keychaind.yaml /tmp/keychaind-dev.yaml
+   cp configs/xkmsd.yaml /tmp/xkmsd-dev.yaml
    ```
 
 2. Start the daemon:
    ```bash
-   ./bin/keychaind -c /tmp/keychaind-dev.yaml
+   ./bin/xkmsd -c /tmp/xkmsd-dev.yaml
    ```
 
 ### Production Installation
 
-1. Create the keychain user and group:
+1. Create the xkms user and group:
    ```bash
-   sudo useradd --system --no-create-home --shell /bin/false keychain
+   sudo useradd --system --no-create-home --shell /bin/false xkms
    ```
 
 2. Create required directories:
    ```bash
-   sudo mkdir -p /etc/keychain /var/lib/keychain /var/run/keychain
-   sudo chown keychain:keychain /var/lib/keychain /var/run/keychain
-   sudo chmod 750 /var/lib/keychain /var/run/keychain
+   sudo mkdir -p /etc/xkms /var/lib/xkms /var/run/xkms
+   sudo chown xkms:xkms /var/lib/xkms /var/run/xkms
+   sudo chmod 750 /var/lib/xkms /var/run/xkms
    ```
 
 3. Copy and customize the configuration:
    ```bash
-   sudo cp configs/keychaind.yaml.example /etc/keychain/keychaind.yaml
-   sudo chown keychain:keychain /etc/keychain/keychaind.yaml
-   sudo chmod 640 /etc/keychain/keychaind.yaml
-   sudo vi /etc/keychain/keychaind.yaml  # Customize as needed
+   sudo cp configs/xkmsd.yaml.example /etc/xkms/xkmsd.yaml
+   sudo chown xkms:xkms /etc/xkms/xkmsd.yaml
+   sudo chmod 640 /etc/xkms/xkmsd.yaml
+   sudo vi /etc/xkms/xkmsd.yaml  # Customize as needed
    ```
 
 4. Install the binary:
    ```bash
-   sudo cp bin/keychaind /usr/bin/keychaind
-   sudo chown root:root /usr/bin/keychaind
-   sudo chmod 755 /usr/bin/keychaind
+   sudo cp bin/xkmsd /usr/bin/xkmsd
+   sudo chown root:root /usr/bin/xkmsd
+   sudo chmod 755 /usr/bin/xkmsd
    ```
 
 5. Install and enable the systemd service:
    ```bash
-   sudo cp configs/keychaind.service /etc/systemd/system/
+   sudo cp configs/xkmsd.service /etc/systemd/system/
    sudo systemctl daemon-reload
-   sudo systemctl enable keychaind
-   sudo systemctl start keychaind
+   sudo systemctl enable xkmsd
+   sudo systemctl start xkmsd
    ```
 
 6. Check the service status:
    ```bash
-   sudo systemctl status keychaind
-   sudo journalctl -u keychaind -f
+   sudo systemctl status xkmsd
+   sudo journalctl -u xkmsd -f
    ```
 
 ## Command Line Options
 
 ```
-keychaind [OPTIONS]
+xkmsd [OPTIONS]
 
 Options:
-  -c, --config PATH        Path to configuration file (default: /etc/keychain/keychaind.yaml)
+  -c, --config PATH        Path to configuration file (default: /etc/xkms/xkmsd.yaml)
   -d, --daemon             Run as daemon (deprecated - use systemd instead)
   --pid-file PATH          Write PID to file
   --version                Show version information
@@ -83,28 +83,28 @@ Options:
 The following environment variables can override configuration file settings:
 
 ### Server Configuration
-- `KEYCHAIN_CONFIG` - Configuration file path
-- `KEYCHAIN_HOST` - Server host address
-- `KEYCHAIN_REST_PORT` - REST API port
-- `KEYCHAIN_GRPC_PORT` - gRPC server port
-- `KEYCHAIN_QUIC_PORT` - QUIC server port
-- `KEYCHAIN_MCP_PORT` - MCP server port
+- `XKMS_CONFIG` - Configuration file path
+- `XKMS_HOST` - Server host address
+- `XKMS_REST_PORT` - REST API port
+- `XKMS_GRPC_PORT` - gRPC server port
+- `XKMS_QUIC_PORT` - QUIC server port
+- `XKMS_MCP_PORT` - MCP server port
 
 ### Unix Socket Configuration
-- `KEYCHAIN_SOCKET_PATH` - Unix socket file path
-- `KEYCHAIN_SOCKET_MODE` - Unix socket permissions (e.g., "0660")
-- `KEYCHAIN_UNIX_PROTOCOL` - Unix socket protocol ("grpc" or "http")
+- `XKMS_SOCKET_PATH` - Unix socket file path
+- `XKMS_SOCKET_MODE` - Unix socket permissions (e.g., "0660")
+- `XKMS_UNIX_PROTOCOL` - Unix socket protocol ("grpc" or "http")
 
 ### Logging Configuration
-- `KEYCHAIN_LOG_LEVEL` - Log level (debug, info, warn, error, fatal)
-- `KEYCHAIN_LOG_FORMAT` - Log format (json, text, console)
+- `XKMS_LOG_LEVEL` - Log level (debug, info, warn, error, fatal)
+- `XKMS_LOG_FORMAT` - Log format (json, text, console)
 
 ### Storage Configuration
-- `KEYCHAIN_DATA_DIR` - Data storage directory
+- `XKMS_DATA_DIR` - Data storage directory
 
 ### RNG Configuration
-- `KEYCHAIN_RNG_MODE` - RNG mode (auto, software, tpm2, pkcs11)
-- `KEYCHAIN_RNG_FALLBACK` - RNG fallback mode
+- `XKMS_RNG_MODE` - RNG mode (auto, software, tpm2, pkcs11)
+- `XKMS_RNG_FALLBACK` - RNG fallback mode
 
 ## Signal Handling
 
@@ -118,15 +118,15 @@ The daemon responds to the following signals:
 To reload the configuration without restarting:
 
 ```bash
-sudo systemctl reload keychaind
+sudo systemctl reload xkmsd
 # or
-sudo kill -HUP $(cat /var/run/keychaind.pid)
+sudo kill -HUP $(cat /var/run/xkmsd.pid)
 ```
 
 **Note:** Currently only logging configuration can be reloaded. Changes to protocols, backends, or network settings require a full restart:
 
 ```bash
-sudo systemctl restart keychaind
+sudo systemctl restart xkmsd
 ```
 
 ## Configuration Options
@@ -172,18 +172,18 @@ Supported key storage backends:
 
 ### Check service status
 ```bash
-sudo systemctl status keychaind
+sudo systemctl status xkmsd
 ```
 
 ### View logs
 ```bash
-sudo journalctl -u keychaind -f
+sudo journalctl -u xkmsd -f
 ```
 
 ### Test connectivity
 ```bash
 # Unix socket (gRPC)
-grpcurl -unix /var/run/keychain/keychain.sock list
+grpcurl -unix /var/run/xkms/xkms.sock list
 
 # REST API
 curl http://localhost:8443/health
@@ -191,7 +191,7 @@ curl http://localhost:8443/health
 
 ### Validate configuration
 ```bash
-keychaind --config /etc/keychain/keychaind.yaml --version
+xkmsd --config /etc/xkms/xkmsd.yaml --version
 ```
 
 ### Permission issues
@@ -200,19 +200,19 @@ If you encounter permission errors:
 
 ```bash
 # Check directory permissions
-ls -la /var/lib/keychain /var/run/keychain
+ls -la /var/lib/xkms /var/run/xkms
 
 # Check socket permissions
-ls -la /var/run/keychain/keychain.sock
+ls -la /var/run/xkms/xkms.sock
 
 # Verify user can access socket
-sudo -u keychain stat /var/run/keychain/keychain.sock
+sudo -u xkms stat /var/run/xkms/xkms.sock
 ```
 
 ## Security Considerations
 
 1. **File Permissions** - Ensure proper permissions on config files and data directories
-2. **Unix Socket** - The socket should be readable/writable by the keychain group only
+2. **Unix Socket** - The socket should be readable/writable by the xkms group only
 3. **TLS Certificates** - Use proper TLS certificates for network protocols
 4. **Authentication** - Enable authentication for network-exposed protocols
 5. **Rate Limiting** - Enable rate limiting to prevent abuse
@@ -221,5 +221,5 @@ sudo -u keychain stat /var/run/keychain/keychain.sock
 ## See Also
 
 - Main project README: `/README.md`
-- Example configuration: `keychaind.yaml.example`
+- Example configuration: `xkmsd.yaml.example`
 - API documentation: `/docs/`

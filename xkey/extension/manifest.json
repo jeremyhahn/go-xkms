@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzhTi2X0jO46E/nwDHdp3tgICMRXHA4AHN6fCy98xrpabLKy1gdNywqg5dTeUqIeIQiFgARJ7OJ1/QFc1nouqWkrRTi1lD0CwlJZONgFd/JZYbpYAUlzug7pU3YfrV0yuPWCWwoGf30fjSR/eJXMnFAaM0Hrx2zNXTiE9bfAk+wgDFQJrHw9sUAWYPUN7GG7QeJLquE9khwuSa0u1Mr9vCX+iiOxUSBM6T36Nq/l8DElx2gQuOiDbE6gz3vlVh1IH0mI81aTU0ujj1muHgDhB4nP98SIFU9R821x6aCd4W8iKIRs/rtJ7sFwXx4L2/I5rF6tFgQNmBtAkR2PDTkOZpQIDAQAB",
+  "name": "xKey AutoFill",
+  "version": "1.0.0",
+  "description": "Secure autofill for passwords and TOTP codes from xKey",
+  "permissions": [
+    "nativeMessaging",
+    "activeTab",
+    "tabs",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "xkey@automatethethings.com"
+    }
+  }
+}

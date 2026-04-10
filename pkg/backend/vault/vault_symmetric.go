@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,9 +21,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // vaultSymmetricKey implements types.SymmetricKey for Vault Transit engine symmetric keys.
@@ -85,7 +85,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	keyName := b.sanitizeKeyName(attrs.CN)
 
 	// Check if key already exists in metadata
-	exists, err := storage.KeyExists(b.config.KeyStorage, attrs.CN)
+	exists, err := storage.KeyExists(context.Background(), b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check key existence: %w", err)
 	}
@@ -124,7 +124,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := storage.SaveKey(b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+	if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
@@ -161,7 +161,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 	}
 
 	// Load metadata
-	metadataBytes, err := storage.GetKey(b.config.KeyStorage, attrs.CN)
+	metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
@@ -214,7 +214,7 @@ func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.Symmetri
 
 	// Load metadata to verify key exists
 	b.mu.RLock()
-	metadataBytes, err := storage.GetKey(b.config.KeyStorage, attrs.CN)
+	metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
 	b.mu.RUnlock()
 
 	if err != nil {
@@ -347,7 +347,14 @@ func (e *vaultSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types
 	return plaintext, nil
 }
 
+// GetTracker returns the AEAD safety tracker for this backend.
+// This allows external code to inspect tracking state and configuration.
+func (b *Backend) GetTracker() types.AEADSafetyTracker {
+	return b.tracker
+}
+
 // Verify interface compliance at compile time
-var _ types.SymmetricBackend = (*Backend)(nil)
+var _ types.SymmetricKeyProvider = (*Backend)(nil)
+var _ types.SymmetricKeyProviderWithTracking = (*Backend)(nil)
 var _ types.SymmetricKey = (*vaultSymmetricKey)(nil)
 var _ types.SymmetricEncrypter = (*vaultSymmetricEncrypter)(nil)

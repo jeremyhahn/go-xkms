@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -31,6 +31,7 @@ const (
 	CategoryVersion  CommandCategory = "version"
 	CategoryBackends CommandCategory = "backends"
 	CategorySealing  CommandCategory = "sealing"
+	CategoryCA       CommandCategory = "ca"
 )
 
 // CommandDefinition defines a CLI command with its arguments and expected behavior
@@ -93,7 +94,7 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
-	return append(append(append(append(append(append(append(
+	return append(append(append(append(append(append(append(append(
 		BackendCommands(),
 		KeyCommands()...),
 		CertCommands()...),
@@ -101,6 +102,7 @@ func AllCommands() []CommandDefinition {
 		FrostCommands()...),
 		FIDO2Commands()...),
 		SealingCommands()...),
+		CACommands()...),
 		VersionCommands()...)
 }
 
@@ -405,7 +407,7 @@ func FrostCommands() []CommandDefinition {
 }
 
 // FIDO2Commands returns FIDO2/WebAuthn-related commands
-// These commands interact with FIDO2 security keys (CanoKey, YubiKey, etc.)
+// These commands interact with FIDO2 security keys (YubiKey, etc.)
 func FIDO2Commands() []CommandDefinition {
 	return []CommandDefinition{
 		// List devices
@@ -445,8 +447,8 @@ func FIDO2Commands() []CommandDefinition {
 				{Flag: "", Value: "testuser", Description: "Username", IsPositional: true},
 			},
 			OptionalArgs: []ArgDefinition{
-				{Flag: "rp-id", Value: "go-keychain.local", Description: "Relying party ID"},
-				{Flag: "rp-name", Value: "Go Keychain Test", Description: "Relying party name"},
+				{Flag: "rp-id", Value: "go-xkms.local", Description: "Relying party ID"},
+				{Flag: "rp-name", Value: "Go xKMS Test", Description: "Relying party name"},
 				{Flag: "display-name", Value: "Test User", Description: "User display name"},
 				{Flag: "timeout", Value: "60s", Description: "User presence timeout"},
 				{Flag: "device", Value: "", Description: "Specific device path"},
@@ -468,7 +470,7 @@ func FIDO2Commands() []CommandDefinition {
 				{Flag: "salt", Value: "", Description: "Salt from registration"},
 			},
 			OptionalArgs: []ArgDefinition{
-				{Flag: "rp-id", Value: "go-keychain.local", Description: "Relying party ID"},
+				{Flag: "rp-id", Value: "go-xkms.local", Description: "Relying party ID"},
 				{Flag: "timeout", Value: "60s", Description: "User presence timeout"},
 				{Flag: "device", Value: "", Description: "Specific device path"},
 				{Flag: "user-verification", Value: "", Description: "Require PIN verification"},
@@ -537,6 +539,110 @@ func SealingCommands() []CommandDefinition {
 			RequiresBackend:        false, // Optional - checks default if not specified
 			RequiresServer:         true,
 			ExpectedOutputContains: []string{"can_seal"},
+		},
+	}
+}
+
+// CACommands returns Certificate Authority commands
+// These commands interact with the XKMS Certificate Authority for certificate lifecycle management.
+// All CA commands require a server connection.
+func CACommands() []CommandDefinition {
+	return []CommandDefinition{
+		// Bundle - get CA certificate bundle
+		{
+			Name:                   "ca-bundle",
+			Category:               CategoryCA,
+			Command:                []string{"ca", "bundle"},
+			Description:            "Get CA certificate bundle in PEM format",
+			RequiresServer:         true,
+			ExpectedOutputContains: []string{"CERTIFICATE"},
+		},
+		// Certificate - get CA certificate info
+		{
+			Name:           "ca-certificate",
+			Category:       CategoryCA,
+			Command:        []string{"ca", "certificate"},
+			Description:    "Get CA certificate info",
+			RequiresServer: true,
+			OptionalArgs: []ArgDefinition{
+				{Flag: "identity", Value: "", Description: "CA identity/CN (empty for default CA)"},
+			},
+			ExpectedOutputContains: []string{"CA Certificate", "Subject"},
+		},
+		// Issue - issue a new certificate
+		{
+			Name:           "ca-issue",
+			Category:       CategoryCA,
+			Command:        []string{"ca", "issue"},
+			Description:    "Issue a new certificate from the CA",
+			RequiresServer: true,
+			RequiredArgs: []ArgDefinition{
+				{Flag: "cn", Value: "test.example.com", Description: "Common name for the certificate"},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "profile", Value: "server", Description: "Certificate profile"},
+				{Flag: "org", Value: "Test Org", Description: "Organization name"},
+				{Flag: "sans", Value: "DNS:test.example.com", Description: "Subject alternative names"},
+				{Flag: "validity", Value: "365", Description: "Validity period in days"},
+				{Flag: "algorithm", Value: "ecdsa-p256", Description: "Key algorithm"},
+				{Flag: "output", Value: "", Description: "Output file for certificate PEM"},
+			},
+		},
+		// Sign CSR - sign a certificate signing request
+		{
+			Name:           "ca-sign-csr",
+			Category:       CategoryCA,
+			Command:        []string{"ca", "sign-csr"},
+			Description:    "Sign a Certificate Signing Request",
+			RequiresServer: true,
+			RequiresSetup:  true, // Requires a CSR file
+			RequiredArgs: []ArgDefinition{
+				{Flag: "csr", Value: "request.pem", Description: "Path to CSR PEM file"},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "profile", Value: "server", Description: "Certificate profile"},
+				{Flag: "validity", Value: "365", Description: "Validity period in days"},
+				{Flag: "output", Value: "", Description: "Output file for signed certificate PEM"},
+			},
+		},
+		// Revoke - revoke a certificate
+		{
+			Name:           "ca-revoke",
+			Category:       CategoryCA,
+			Command:        []string{"ca", "revoke"},
+			Description:    "Revoke a certificate by serial number",
+			RequiresServer: true,
+			RequiresSetup:  true, // Requires a valid serial number
+			RequiredArgs: []ArgDefinition{
+				{Flag: "serial", Value: "01AB23CD", Description: "Certificate serial number in hex"},
+			},
+			OptionalArgs: []ArgDefinition{
+				{Flag: "reason", Value: "0", Description: "RFC 5280 revocation reason code"},
+			},
+		},
+		// CRL - generate certificate revocation list
+		{
+			Name:           "ca-crl",
+			Category:       CategoryCA,
+			Command:        []string{"ca", "crl"},
+			Description:    "Generate a Certificate Revocation List",
+			RequiresServer: true,
+			OptionalArgs: []ArgDefinition{
+				{Flag: "output", Value: "", Description: "Output file for CRL PEM"},
+			},
+			ExpectedOutputContains: []string{"CRL"},
+		},
+		// Status - check certificate revocation status
+		{
+			Name:           "ca-status",
+			Category:       CategoryCA,
+			Command:        []string{"ca", "status"},
+			Description:    "Check certificate revocation status",
+			RequiresServer: true,
+			RequiresSetup:  true, // Requires a valid serial number
+			RequiredArgs: []ArgDefinition{
+				{Flag: "serial", Value: "01AB23CD", Description: "Certificate serial number in hex"},
+			},
 		},
 	}
 }

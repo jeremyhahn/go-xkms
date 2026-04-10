@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,14 +19,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // defaultMigrator implements the Migrator interface.
 type defaultMigrator struct {
-	source types.Backend
-	dest   types.Backend
+	source types.KeyProvider
+	dest   types.KeyProvider
 	closed bool
 	mu     sync.RWMutex
 }
@@ -34,7 +34,7 @@ type defaultMigrator struct {
 // NewMigrator creates a new Migrator for migrating keys between backends.
 // Both source and destination backends must be non-nil.
 // Returns an error if either backend is nil.
-func NewMigrator(source, dest types.Backend) (Migrator, error) {
+func NewMigrator(source, dest types.KeyProvider) (Migrator, error) {
 	if source == nil {
 		return nil, fmt.Errorf("source backend cannot be nil")
 	}
@@ -49,12 +49,12 @@ func NewMigrator(source, dest types.Backend) (Migrator, error) {
 }
 
 // SourceBackend returns the source backend.
-func (m *defaultMigrator) SourceBackend() types.Backend {
+func (m *defaultMigrator) SourceBackend() types.KeyProvider {
 	return m.source
 }
 
 // DestBackend returns the destination backend.
-func (m *defaultMigrator) DestBackend() types.Backend {
+func (m *defaultMigrator) DestBackend() types.KeyProvider {
 	return m.dest
 }
 
@@ -238,7 +238,7 @@ func (m *defaultMigrator) ValidateMigration(attrs *types.KeyAttributes) (*Valida
 		}
 
 		// Try to sign test data
-		testData := []byte("keychain-migration-validation")
+		testData := []byte("xkms-migration-validation")
 		_, err = signer.Sign(nil, testData, attrs.Hash)
 		if err != nil {
 			result.IsValid = false

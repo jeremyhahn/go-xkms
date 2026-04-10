@@ -14,7 +14,7 @@ import (
 	"math/big"
 	"testing"
 
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // TestIntegration_PlatformQuote_BasicQuote tests basic platform quote generation

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -49,9 +49,6 @@ type Config struct {
 
 	// AllowedProducts limits devices to specific product IDs
 	AllowedProducts []uint16 `yaml:"allowed-products,omitempty" json:"allowed_products,omitempty" mapstructure:"allowed-products"`
-
-	// WorkaroundCanoKey enables workaround for CanoKey CBOR truncation bug
-	WorkaroundCanoKey bool `yaml:"workaround-canokey" json:"workaround_canokey" mapstructure:"workaround-canokey"`
 }
 
 // DefaultConfig returns the default FIDO2 configuration
@@ -61,10 +58,9 @@ var DefaultConfig = Config{
 	RetryCount:              DefaultRetryCount,
 	RetryDelay:              DefaultRetryDelay,
 	Debug:                   false,
-	RelyingPartyID:          "go-keychain",
-	RelyingPartyName:        "Go Keychain",
+	RelyingPartyID:          "go-xkms",
+	RelyingPartyName:        "Go xKMS",
 	RequireUserVerification: false,
-	WorkaroundCanoKey:       true,
 }
 
 // Validate checks if the configuration is valid
@@ -82,10 +78,10 @@ func (c *Config) Validate() error {
 		c.RetryDelay = DefaultRetryDelay
 	}
 	if c.RelyingPartyID == "" {
-		c.RelyingPartyID = "go-keychain"
+		c.RelyingPartyID = "go-xkms"
 	}
 	if c.RelyingPartyName == "" {
-		c.RelyingPartyName = "Go Keychain"
+		c.RelyingPartyName = "Go xKMS"
 	}
 	return nil
 }

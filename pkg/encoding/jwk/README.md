@@ -1,6 +1,6 @@
 # JWK - JSON Web Key Package
 
-This package provides RFC-compliant JSON Web Key (JWK) encoding/decoding and JWK thumbprint computation for go-keychain.
+This package provides RFC-compliant JSON Web Key (JWK) encoding/decoding and JWK thumbprint computation for go-xkms.
 
 ## Features
 
@@ -21,7 +21,7 @@ This package provides RFC-compliant JSON Web Key (JWK) encoding/decoding and JWK
 ### Converting Keys to JWK
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/encoding/jwk"
+import "github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 
 // RSA Public Key
 rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -240,7 +240,7 @@ SHA-256:     [32 bytes of hash output]
 Thumbprint:  NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs
 ```
 
-## Integration with go-keychain
+## Integration with go-xkms
 
 This package is used internally by cloud backends (Azure Key Vault, GCP KMS, AWS KMS) for key import/export operations and can be used standalone for JWK operations.
 
@@ -288,7 +288,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/encoding/jwk"
+    "github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 )
 
 func main() {

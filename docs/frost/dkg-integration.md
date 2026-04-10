@@ -111,8 +111,8 @@ type PublicKeyPackage struct {
 package mydkg
 
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // MyDKG implements a custom Distributed Key Generation protocol
@@ -338,8 +338,8 @@ func (d *MyDKG) finalizeKeys(
 package main
 
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
     "github.com/yourorg/mydkg"
 )
 
@@ -358,8 +358,8 @@ func main() {
 
     // Create FROST backend with custom DKG
     backend, err := frost.NewBackend(&frost.Config{
-        PublicStorage: file.NewBackend("./frost-public"),
-        SecretBackend: file.NewBackend("./frost-secret"),
+        PublicStorage: file.New("./frost-public"),
+        SecretBackend: file.New("./frost-secret"),
         DKG:           dkg,  // Use custom DKG
         Algorithm:     types.FrostAlgorithmEd25519,
     })
@@ -397,7 +397,7 @@ import (
     "crypto/rand"
     "fmt"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
     "filippo.io/edwards25519"
 )
 
@@ -656,7 +656,7 @@ Import DKG-generated keys using the CLI:
 my-dkg-tool generate --output dkg-package.json
 
 # Import into FROST backend
-keychain frost import-dkg \
+xkmsctl frost import-dkg \
   --package dkg-package.json \
   --key-id my-dkg-key
 ```

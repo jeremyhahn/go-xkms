@@ -1,10 +1,10 @@
-# go-keychain Documentation
+# go-xkms Documentation
 
-Comprehensive documentation for the go-keychain cryptographic key management library.
+Comprehensive documentation for the go-xkms cryptographic key management library.
 
 ## Overview
 
-go-keychain is a unified cryptographic key management library for Go that provides a consistent interface across multiple storage backends, from software-based file storage to hardware security modules and cloud key management services.
+go-xkms is a unified cryptographic key management library for Go that provides a consistent interface across multiple storage backends, from software-based file storage to hardware security modules and cloud key management services.
 
 ## Documentation Structure
 
@@ -12,17 +12,18 @@ go-keychain is a unified cryptographic key management library for Go that provid
 Core architectural concepts, design patterns, and technical specifications:
 - [Overview](architecture/overview.md) - System architecture and design philosophy
 - [API Specifications](architecture/api-specifications.md) - API design and interface contracts
-- [Backend Registry](architecture/backend-registry.md) - Backend registration and discovery
-- [Storage Abstraction](architecture/storage-abstraction.md) - Unified storage interface
+- [Server Architecture](architecture/server-architecture.md) - Server design and backend registry
+- [Storage](architecture/storage.md) - Storage interfaces and abstraction layer
 - [Symmetric Encryption](architecture/symmetric-encryption.md) - Symmetric key support architecture
 - [Hardware Certificate Storage](architecture/hardware-certificate-storage.md) - HSM certificate storage design
 - [RBAC](architecture/rbac.md) - Role-based access control
 
 ### [Backends](backends/)
 Backend-specific documentation for all supported storage systems:
-- **Software**: [PKCS#8](backends/pkcs8.md), [AES](architecture/symmetric-encryption.md)
-- **Hardware**: [PKCS#11](backends/pkcs11.md), [SmartCard-HSM](backends/smartcardhsm.md), [TPM 2.0](backends/tpm2.md), [YubiKey](backends/yubikey.md)
+- **Software**: [Software](backends/software.md) (asymmetric + symmetric, default backend), [PKCS#8](backends/pkcs8.md)
+- **Hardware**: [TPM 2.0](backends/tpm2.md), [PKCS#11](backends/pkcs11.md), [Nitrokey HSM](backends/nitrokey-hsm.md)
 - **Cloud**: [AWS KMS](backends/awskms.md), [GCP KMS](backends/gcpkms.md), [Azure Key Vault](backends/azurekv.md), [HashiCorp Vault](backends/vault.md)
+- **Quantum**: [Post-Quantum Cryptography](backends/quantum.md)
 
 ### [Configuration](configuration/)
 Configuration guides for various components:
@@ -31,14 +32,15 @@ Configuration guides for various components:
 - [Symmetric Encryption](configuration/symmetric-encryption.md) - Symmetric key configuration
 - [TPM2 Session Encryption](configuration/tpm2-session-encryption.md) - TPM session security
 
-### [Usage](usage/)
-User guides and tutorials:
-- [Getting Started](usage/getting-started.md) - Quick start guide
-- [Key Import/Export](usage/key-import-export.md) - Key management operations
-- [Certificate Management](usage/certificate-management.md) - X.509 certificate handling
-- [API Parity](usage/api-parity.md) - Cross-backend compatibility
-- [User Management](usage/user.md) - User accounts, roles, and sessions
-- [WebAuthn](usage/webauthn.md) - Passwordless authentication with FIDO2/passkeys
+### [Bootstrap](bootstrap/)
+Secure trust establishment and server initialization:
+- [Overview](bootstrap/README.md) - Bootstrap architecture, DANE/Noise/SPKI trust methods, custodian setup
+
+### [Usage](../xkey/docs/usage/)
+CLI usage guides and tutorials have moved to [xkey/docs/usage/](../xkey/docs/usage/README.md).
+
+### [xKey Application](../xkey/docs/)
+xKey is the desktop GUI and CLI application built on go-xkms. All xKey documentation (setup wizard, auto-unseal, FIDO2 daemon, enterprise mode, password management, etc.) lives in [xkey/docs/](../xkey/docs/README.md).
 
 ### [Testing](testing/)
 Testing documentation and best practices:
@@ -50,31 +52,88 @@ Deployment guides and production configurations:
 - [Docker Deployment](deployment/docker.md) - Complete Docker deployment guide
 - [Docker Quick Start](deployment/docker-quickstart.md) - 5-minute Docker setup
 
+### [Sealed Storage](sealed-storage/)
+Encrypted-at-rest storage and credential management:
+- [Sealed Backend](sealed-storage/README.md) - Transparent value encryption via types.Sealer
+- [PlatformStore](platform-store/README.md) - Named-secret credential store (macOS Keychain analog)
+- [Static Passwords](staticpw/README.md) - Password manager with multi-tenant support and encryption
+
+### [FIPS 140](fips/)
+FIPS compliance and algorithm selection:
+- [FIPS Strategy](fips/README.md) - GOFIPS140 detection, KDF selection, and PasswordHasher
+
 ### [Development](development/)
 Development and contributor documentation:
 - [Encoding Interop Status](development/encoding-interop-status.md) - JWK/JWT/JWE test implementation status
 
 ## Quick Start
 
+The simplest way to get started is with `AutoInitialize`, which discovers all compiled-in backends and sets them up automatically:
+
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
+    "crypto/elliptic"
+    "crypto/x509"
+    "fmt"
+    "log"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// Create a software backend
-backend := software.NewSoftwareBackend(config)
+func main() {
+    // See what backends are compiled in
+    fmt.Println("Available backends:", xkms.SupportedBackends())
 
-// Create keychain
-kc := keychain.New(backend)
+    // Auto-initialize all compiled-in backends with defaults
+    if err := xkms.AutoInitialize(nil); err != nil {
+        log.Fatal(err)
+    }
+    defer xkms.Close()
 
-// Generate a key
-keyID, err := kc.GenerateKey(keychain.KeyTypeRSA, 2048)
+    // Generate a key using the service API
+    key, err := xkms.GenerateKey(&types.KeyAttributes{
+        CN:           "my-signing-key",
+        StoreType:    types.BackendType("software"),
+        KeyAlgorithm: x509.ECDSA,
+        ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Sign data
+    sig, err := xkms.Sign("software:::my-signing-key", []byte("hello"), nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Signature: %x\n", sig)
+}
 ```
+
+For client/server deployments, use the Go SDK:
+
+```go
+import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+
+client, _ := xkms.NewFromURL("https://localhost:8443")
+defer client.Close()
+client.Connect(ctx)
+
+resp, _ := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
+    KeyID:   "my-key",
+    Backend: "software",
+    KeyType: "EC",
+    Curve:   "P-256",
+})
+```
+
+See the [Getting Started](usage/getting-started.md) guide for all initialization patterns.
 
 ## Key Features
 
 - **Unified Interface**: Single API across all backends
+- **Auto-Discovery**: Registry auto-discovers compiled-in backends at startup
 - **Multiple Backends**: Support for file, HSM, TPM, and cloud storage
 - **Key Types**: RSA, ECDSA, Ed25519, AES
 - **Standards Compliant**: PKCS#8, PKCS#11, TPM 2.0, JWK, JWT

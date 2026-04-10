@@ -1,8 +1,8 @@
-# Keychain Daemon Configuration Updates
+# xKMS Daemon Configuration Updates
 
 ## Summary
 
-Updated the keychain daemon (`keychaind`) to properly support daemon operation with comprehensive configuration file support, signal handling, and systemd integration.
+Updated the xkms daemon (`xkmsd`) to properly support daemon operation with comprehensive configuration file support, signal handling, and systemd integration.
 
 ## Changes Made
 
@@ -11,13 +11,13 @@ Updated the keychain daemon (`keychaind`) to properly support daemon operation w
 Added the following features:
 
 - **Configuration flag support**:
-  - `--config` / `-c` - Path to configuration file (default: `/etc/keychain/keychaind.yaml`)
+  - `--config` / `-c` - Path to configuration file (default: `/etc/xkms/xkmsd.yaml`)
   - `--daemon` / `-d` - Run as daemon flag (for compatibility)
   - `--pid-file` - PID file path support
   - `--version` - Show version information
 
 - **Environment variable support**:
-  - `KEYCHAIN_CONFIG` - Override config file path
+  - `XKMS_CONFIG` - Override config file path
 
 - **Signal handling**:
   - `SIGTERM` / `SIGINT` - Graceful shutdown
@@ -42,10 +42,10 @@ Added and enhanced:
   - Validated in `Validate()` method
 
 - **Environment variable support**:
-  - `KEYCHAIN_SOCKET_PATH` - Override Unix socket path
-  - `KEYCHAIN_SOCKET_MODE` - Override Unix socket permissions
-  - `KEYCHAIN_UNIX_PROTOCOL` - Override Unix socket protocol
-  - All new `KEYCHAIN_*` prefixed variables
+  - `XKMS_SOCKET_PATH` - Override Unix socket path
+  - `XKMS_SOCKET_MODE` - Override Unix socket permissions
+  - `XKMS_UNIX_PROTOCOL` - Override Unix socket protocol
+  - All new `XKMS_*` prefixed variables
   - Backward compatibility with `KEYSTORE_*` variables
 
 - **Enhanced validation**:
@@ -74,7 +74,7 @@ New file implementing configuration reload functionality:
 
 ### 5. Created Configuration Files
 
-#### `configs/keychaind.yaml.example`
+#### `configs/xkmsd.yaml.example`
 Comprehensive example configuration with:
 - All available server options
 - Detailed comments for each setting
@@ -86,14 +86,14 @@ Comprehensive example configuration with:
 - RNG configuration
 - Environment variable documentation
 
-#### `configs/keychaind.yaml`
+#### `configs/xkmsd.yaml`
 Minimal working configuration for development/testing:
 - Software backend only
 - Unix socket enabled
 - Temporary file paths for testing
 - Simplified settings for quick start
 
-#### `configs/keychaind.service`
+#### `configs/xkmsd.service`
 Production-ready systemd service file with:
 - Proper service configuration
 - Security hardening (NoNewPrivileges, ProtectSystem, etc.)
@@ -118,8 +118,8 @@ Complete documentation including:
 Installation script that:
 - Creates system user and group
 - Creates required directories with proper permissions
-- Installs binary to `/usr/bin/keychaind`
-- Installs configuration to `/etc/keychain/`
+- Installs binary to `/usr/bin/xkmsd`
+- Installs configuration to `/etc/xkms/`
 - Installs systemd service
 - Provides post-installation instructions
 
@@ -145,27 +145,27 @@ Installation script that:
 All configuration can be overridden via environment variables:
 
 **Server:**
-- `KEYCHAIN_HOST`
-- `KEYCHAIN_REST_PORT`
-- `KEYCHAIN_GRPC_PORT`
-- `KEYCHAIN_QUIC_PORT`
-- `KEYCHAIN_MCP_PORT`
+- `XKMS_HOST`
+- `XKMS_REST_PORT`
+- `XKMS_GRPC_PORT`
+- `XKMS_QUIC_PORT`
+- `XKMS_MCP_PORT`
 
 **Unix Socket:**
-- `KEYCHAIN_SOCKET_PATH`
-- `KEYCHAIN_SOCKET_MODE`
-- `KEYCHAIN_UNIX_PROTOCOL`
+- `XKMS_SOCKET_PATH`
+- `XKMS_SOCKET_MODE`
+- `XKMS_UNIX_PROTOCOL`
 
 **Logging:**
-- `KEYCHAIN_LOG_LEVEL`
-- `KEYCHAIN_LOG_FORMAT`
+- `XKMS_LOG_LEVEL`
+- `XKMS_LOG_FORMAT`
 
 **Storage:**
-- `KEYCHAIN_DATA_DIR`
+- `XKMS_DATA_DIR`
 
 **RNG:**
-- `KEYCHAIN_RNG_MODE`
-- `KEYCHAIN_RNG_FALLBACK`
+- `XKMS_RNG_MODE`
+- `XKMS_RNG_FALLBACK`
 
 ### Unix Socket Protocol Support
 
@@ -173,7 +173,7 @@ The Unix socket can now use either:
 - **gRPC** (default) - More efficient, native protobuf support
 - **HTTP** - REST-like access, easier debugging
 
-Configure via `unix.protocol` in config file or `KEYCHAIN_UNIX_PROTOCOL` environment variable.
+Configure via `unix.protocol` in config file or `XKMS_UNIX_PROTOCOL` environment variable.
 
 ### Production Deployment
 
@@ -209,13 +209,13 @@ The systemd service file includes:
 
 ```bash
 # Build the binary
-go build -o bin/keychaind ./cmd/server
+go build -o bin/xkmsd ./cmd/server
 
 # Run with development config
-./bin/keychaind -c configs/keychaind.yaml
+./bin/xkmsd -c configs/xkmsd.yaml
 
 # Run with custom config and PID file
-./bin/keychaind --config /tmp/my-config.yaml --pid-file /tmp/keychaind.pid
+./bin/xkmsd --config /tmp/my-config.yaml --pid-file /tmp/xkmsd.pid
 ```
 
 ### Production Installation
@@ -225,26 +225,26 @@ go build -o bin/keychaind ./cmd/server
 sudo ./configs/install.sh
 
 # Or manually:
-sudo useradd --system --no-create-home keychain
-sudo mkdir -p /etc/keychain /var/lib/keychain /var/run/keychain
-sudo cp bin/keychaind /usr/bin/
-sudo cp configs/keychaind.yaml.example /etc/keychain/keychaind.yaml
-sudo cp configs/keychaind.service /etc/systemd/system/
+sudo useradd --system --no-create-home xkms
+sudo mkdir -p /etc/xkms /var/lib/xkms /var/run/xkms
+sudo cp bin/xkmsd /usr/bin/
+sudo cp configs/xkmsd.yaml.example /etc/xkms/xkmsd.yaml
+sudo cp configs/xkmsd.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now keychaind
+sudo systemctl enable --now xkmsd
 ```
 
 ### Configuration Reload
 
 ```bash
 # Edit configuration
-sudo vi /etc/keychain/keychaind.yaml
+sudo vi /etc/xkms/xkmsd.yaml
 
 # Reload configuration
-sudo systemctl reload keychaind
+sudo systemctl reload xkmsd
 
 # Or send SIGHUP directly
-sudo kill -HUP $(cat /var/run/keychaind.pid)
+sudo kill -HUP $(cat /var/run/xkmsd.pid)
 ```
 
 ## Testing
@@ -253,22 +253,22 @@ Build and test the daemon:
 
 ```bash
 # Build
-go build -o bin/keychaind ./cmd/server
+go build -o bin/xkmsd ./cmd/server
 
 # Test version
-./bin/keychaind --version
+./bin/xkmsd --version
 
 # Test with config
-./bin/keychaind -c configs/keychaind.yaml
+./bin/xkmsd -c configs/xkmsd.yaml
 
 # Test in background with PID file
-./bin/keychaind -c configs/keychaind.yaml --pid-file /tmp/keychaind.pid &
+./bin/xkmsd -c configs/xkmsd.yaml --pid-file /tmp/xkmsd.pid &
 
 # Reload configuration
-kill -HUP $(cat /tmp/keychaind.pid)
+kill -HUP $(cat /tmp/xkmsd.pid)
 
 # Shutdown
-kill -TERM $(cat /tmp/keychaind.pid)
+kill -TERM $(cat /tmp/xkmsd.pid)
 ```
 
 ## Backward Compatibility
@@ -307,9 +307,9 @@ Potential improvements for config reload:
 
 ## Files Created
 
-- `configs/keychaind.yaml.example` - Example configuration
-- `configs/keychaind.yaml` - Development configuration
-- `configs/keychaind.service` - Systemd service file
+- `configs/xkmsd.yaml.example` - Example configuration
+- `configs/xkmsd.yaml` - Development configuration
+- `configs/xkmsd.service` - Systemd service file
 - `configs/README.md` - Configuration documentation
 - `configs/install.sh` - Installation script
 - `configs/CHANGES.md` - This file

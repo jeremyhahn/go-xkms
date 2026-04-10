@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -44,7 +44,7 @@ func TestNewHandler_NilConfig(t *testing.T) {
 
 	// Should use default config
 	assert.NotNil(t, handler.config)
-	assert.Equal(t, "go-keychain", handler.config.RelyingPartyID)
+	assert.Equal(t, "go-xkms", handler.config.RelyingPartyID)
 }
 
 func TestNewHandler_NilEnumerator(t *testing.T) {
@@ -418,8 +418,8 @@ func TestHandler_IsFIDO2Device(t *testing.T) {
 func TestDefaultEnrollmentConfig(t *testing.T) {
 	config := DefaultEnrollmentConfig("alice")
 
-	assert.Equal(t, "go-keychain", config.RelyingParty.ID)
-	assert.Equal(t, "Go Keychain", config.RelyingParty.Name)
+	assert.Equal(t, "go-xkms", config.RelyingParty.ID)
+	assert.Equal(t, "Go xKMS", config.RelyingParty.Name)
 	assert.Equal(t, "alice", config.User.Name)
 	assert.Equal(t, "alice", config.User.DisplayName)
 	assert.False(t, config.RequireUserVerification)
@@ -432,7 +432,7 @@ func TestDefaultAuthenticationConfig(t *testing.T) {
 
 	config := DefaultAuthenticationConfig(credID, salt)
 
-	assert.Equal(t, "go-keychain", config.RelyingPartyID)
+	assert.Equal(t, "go-xkms", config.RelyingPartyID)
 	assert.Equal(t, credID, config.CredentialID)
 	assert.Equal(t, salt, config.Salt)
 	assert.False(t, config.RequireUserVerification)

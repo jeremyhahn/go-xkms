@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // SealRequest represents a request to seal data
@@ -71,6 +71,10 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.authorize(w, r, "seal", "use") {
+		return
+	}
+
 	var req SealRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -95,7 +99,7 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 	// If KeyID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
 		// Get the backend to look up the key
-		ks, err := keychain.Backend(req.Backend)
+		ks, err := xkms.GetBackend(req.Backend)
 		if err != nil {
 			s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %v", err))
 			return
@@ -124,9 +128,9 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 		opts.KeyAttributes = targetAttr
 	}
 
-	// Seal the data using the keychain service
+	// Seal the data using the xkms service
 	ctx := r.Context()
-	sealed, err := keychain.SealWithBackend(ctx, req.Backend, req.Data, opts)
+	sealed, err := xkms.SealWithBackend(ctx, req.Backend, req.Data, opts)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to seal data: %v", err))
 		return
@@ -148,6 +152,10 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.authorize(w, r, "seal", "use") {
+		return
+	}
+
 	var req UnsealRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -165,7 +173,7 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get backend to determine backend type for sealed data
-	ks, err := keychain.Backend(req.Backend)
+	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %v", err))
 		return
@@ -173,7 +181,7 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 
 	// Build sealed data from request
 	sealed := &types.SealedData{
-		Backend:    ks.Backend().Type(),
+		Backend:    ks.KeyProvider().Type(),
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
@@ -210,9 +218,9 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
 	}
 
-	// Unseal the data using the keychain service
+	// Unseal the data using the xkms service
 	ctx := r.Context()
-	plaintext, err := keychain.UnsealWithBackend(ctx, req.Backend, sealed, opts)
+	plaintext, err := xkms.UnsealWithBackend(ctx, req.Backend, sealed, opts)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unseal data: %v", err))
 		return
@@ -227,6 +235,10 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCanSeal(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost && r.Method != http.MethodGet {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "seal", "read") {
 		return
 	}
 
@@ -246,9 +258,9 @@ func (s *Server) handleCanSeal(w http.ResponseWriter, r *http.Request) {
 
 	var canSeal bool
 	if backendName != "" {
-		canSeal = keychain.CanSeal(backendName)
+		canSeal = xkms.CanSeal(backendName)
 	} else {
-		canSeal = keychain.CanSeal()
+		canSeal = xkms.CanSeal()
 	}
 
 	s.sendJSON(w, http.StatusOK, CanSealResponse{

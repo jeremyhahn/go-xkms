@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,13 +27,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // createTestBackend creates a test backend with in-memory storage
-func createTestBackend(t *testing.T) (types.SymmetricBackend, storage.Backend) {
+func createTestBackend(t *testing.T) (types.SymmetricKeyProvider, storage.Backend) {
 	t.Helper()
 
 	keyStorage := storage.New()
@@ -498,13 +498,13 @@ func TestDecrypter(t *testing.T) {
 
 	// Encrypt some data with the public key
 	plaintext := []byte("secret message")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, &rsaKey.PublicKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &rsaKey.PublicKey, plaintext, nil)
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
 
 	// Decrypt with the decrypter
-	decrypted, err := decrypter.Decrypt(rand.Reader, ciphertext, nil)
+	decrypted, err := decrypter.Decrypt(rand.Reader, ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
 	if err != nil {
 		t.Fatalf("Decrypt failed: %v", err)
 	}
@@ -604,9 +604,6 @@ func TestListKeys(t *testing.T) {
 		t.Fatalf("ListKeys failed: %v", err)
 	}
 
-	// Note: We expect 4 unique keys, but the current implementation might
-	// return duplicates since both backends share the same storage.
-	// The key IDs are different, so we won't get exact duplicates.
 	if len(keys) < 4 {
 		t.Errorf("Expected at least 4 keys, got %d", len(keys))
 	}
@@ -938,7 +935,6 @@ func TestRotateKey_NonExistentKey(t *testing.T) {
 	defer func() { _ = be.Close() }()
 
 	// Rotating a non-existent key succeeds by creating a new key
-	// (DeleteKey ignores ErrKeyNotFound, then GenerateKey creates the key)
 	attrs := createRSAAttrs("non-existent-key", 2048)
 	err := be.RotateKey(attrs)
 	if err != nil {
@@ -1029,7 +1025,6 @@ func TestGetTracker(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	// Cast to SoftwareBackend to access GetTracker
 	softBe, ok := be.(*SoftwareBackend)
 	if !ok {
 		t.Fatal("Expected *SoftwareBackend")
@@ -1040,8 +1035,6 @@ func TestGetTracker(t *testing.T) {
 		t.Fatal("GetTracker returned nil")
 	}
 
-	// Verify tracker has expected interface methods
-	// CheckNonce should return nil for a new nonce
 	err := tracker.CheckNonce("test-key", []byte("test-nonce-12345"))
 	if err != nil {
 		t.Logf("CheckNonce returned: %v (may be expected if tracking enabled)", err)
@@ -1067,7 +1060,6 @@ func TestExportKey_NotExportable(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	// Create a non-exportable key (Exportable defaults to false)
 	attrs := createRSAAttrs("non-exportable", 2048)
 	attrs.Exportable = false
 
@@ -1090,7 +1082,6 @@ func TestExportKey_SymmetricKeyGetFailure(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	// Create exportable attributes but don't create the key
 	attrs := createAESAttrs("non-existent-export", 256, types.SymmetricAES256GCM)
 	attrs.Exportable = true
 
@@ -1105,7 +1096,6 @@ func TestExportKey_AsymmetricKeyGetFailure(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	// Create exportable attributes but don't create the key
 	attrs := createRSAAttrs("non-existent-export.com", 2048)
 	attrs.Exportable = true
 
@@ -1120,14 +1110,13 @@ func TestWrapKey_InvalidPublicKeyType(t *testing.T) {
 	be, _ := createTestBackend(t)
 	defer func() { _ = be.Close() }()
 
-	// Create params with non-RSA public key
 	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate EC key: %v", err)
 	}
 
 	params := &backend.ImportParameters{
-		WrappingPublicKey: &ecKey.PublicKey, // ECDSA public key instead of RSA
+		WrappingPublicKey: &ecKey.PublicKey,
 		ImportToken:       []byte("test-token"),
 		Algorithm:         backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 	}
@@ -1153,7 +1142,6 @@ func TestWrapKey_UnsupportedAlgorithm(t *testing.T) {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
 
-	// Modify algorithm to unsupported value
 	params.Algorithm = backend.WrappingAlgorithm("UNSUPPORTED_ALGORITHM")
 
 	keyMaterial := make([]byte, 32)
@@ -1217,17 +1205,14 @@ func TestUnwrapKey_UnsupportedAlgorithm(t *testing.T) {
 		t.Fatalf("GetImportParameters failed: %v", err)
 	}
 
-	// Wrap with valid algorithm first
 	keyMaterial := make([]byte, 32)
 	wrapped, err := be.(backend.ImportExportBackend).WrapKey(keyMaterial, params)
 	if err != nil {
 		t.Fatalf("WrapKey failed: %v", err)
 	}
 
-	// Change algorithm to unsupported value
 	wrapped.Algorithm = backend.WrappingAlgorithm("UNSUPPORTED")
 
-	// Cast to access internal structure to update the token
 	swBe := be.(*SoftwareBackend)
 	swBe.importMu.Lock()
 	if tokenData, ok := swBe.importTokens[string(wrapped.ImportToken)]; ok {
@@ -1241,5 +1226,232 @@ func TestUnwrapKey_UnsupportedAlgorithm(t *testing.T) {
 	}
 	if !errors.Is(err, backend.ErrInvalidAlgorithm) {
 		t.Errorf("Expected ErrInvalidAlgorithm, got %v", err)
+	}
+}
+
+// TestExportKeyMaterial_SymmetricKey tests exporting raw symmetric key material
+func TestExportKeyMaterial_SymmetricKey(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	attrs := createAESAttrs("test-export-material", 256, types.SymmetricAES256GCM)
+	attrs.Exportable = true
+
+	genKey, err := be.GenerateSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("GenerateSymmetricKey failed: %v", err)
+	}
+
+	expectedRaw, err := genKey.Raw()
+	if err != nil {
+		t.Fatalf("Failed to get raw key: %v", err)
+	}
+
+	swBe := be.(*SoftwareBackend)
+	material, err := swBe.ExportKeyMaterial(attrs)
+	if err != nil {
+		t.Fatalf("ExportKeyMaterial failed: %v", err)
+	}
+
+	if len(material) != 32 {
+		t.Errorf("Expected 32 bytes, got %d", len(material))
+	}
+
+	if string(material) != string(expectedRaw) {
+		t.Error("Exported key material does not match original")
+	}
+}
+
+// TestExportKeyMaterial_NilAttributes tests ExportKeyMaterial with nil attributes
+func TestExportKeyMaterial_NilAttributes(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	swBe := be.(*SoftwareBackend)
+	_, err := swBe.ExportKeyMaterial(nil)
+	if err == nil {
+		t.Error("Expected error for nil attributes, got nil")
+	}
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("Expected ErrInvalidAttributes, got %v", err)
+	}
+}
+
+// TestExportKeyMaterial_AsymmetricKeyRejected tests that asymmetric keys are rejected
+func TestExportKeyMaterial_AsymmetricKeyRejected(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	attrs := createRSAAttrs("test-export-asym", 2048)
+	attrs.Exportable = true
+
+	swBe := be.(*SoftwareBackend)
+	_, err := swBe.ExportKeyMaterial(attrs)
+	if err == nil {
+		t.Error("Expected error for asymmetric key export, got nil")
+	}
+	if !errors.Is(err, backend.ErrAsymmetricKeyExportNotAllowed) {
+		t.Errorf("Expected ErrAsymmetricKeyExportNotAllowed, got %v", err)
+	}
+}
+
+// TestExportKeyMaterial_NotExportable tests ExportKeyMaterial with non-exportable key
+func TestExportKeyMaterial_NotExportable(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	attrs := createAESAttrs("test-not-exportable", 256, types.SymmetricAES256GCM)
+	attrs.Exportable = false
+
+	swBe := be.(*SoftwareBackend)
+	_, err := swBe.ExportKeyMaterial(attrs)
+	if err == nil {
+		t.Error("Expected error for non-exportable key, got nil")
+	}
+	if !errors.Is(err, backend.ErrKeyNotExportable) {
+		t.Errorf("Expected ErrKeyNotExportable, got %v", err)
+	}
+}
+
+// TestExportKeyMaterial_ClosedBackend tests ExportKeyMaterial on closed backend
+func TestExportKeyMaterial_ClosedBackend(t *testing.T) {
+	be, _ := createTestBackend(t)
+	swBe := be.(*SoftwareBackend)
+	_ = be.Close()
+
+	attrs := createAESAttrs("test-closed-export", 256, types.SymmetricAES256GCM)
+	attrs.Exportable = true
+
+	_, err := swBe.ExportKeyMaterial(attrs)
+	if err == nil {
+		t.Error("Expected error on closed backend, got nil")
+	}
+	if !errors.Is(err, ErrStorageClosed) {
+		t.Errorf("Expected ErrStorageClosed, got %v", err)
+	}
+}
+
+// TestExportKeyMaterial_NonExistentKey tests ExportKeyMaterial for non-existent key
+func TestExportKeyMaterial_NonExistentKey(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	attrs := createAESAttrs("test-nonexistent-material", 256, types.SymmetricAES256GCM)
+	attrs.Exportable = true
+
+	swBe := be.(*SoftwareBackend)
+	_, err := swBe.ExportKeyMaterial(attrs)
+	if err == nil {
+		t.Error("Expected error for non-existent key, got nil")
+	}
+}
+
+// TestNewBackend_WithCustomTracker tests NewBackend with custom AEAD tracker
+func TestNewBackend_WithCustomTracker(t *testing.T) {
+	keyStorage := storage.New()
+	tracker := backend.NewMemoryAEADTracker()
+
+	config := &Config{
+		KeyStorage: keyStorage,
+		Tracker:    tracker,
+	}
+
+	be, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend with custom tracker failed: %v", err)
+	}
+	defer func() { _ = be.Close() }()
+
+	swBe := be.(*SoftwareBackend)
+	if swBe.GetTracker() == nil {
+		t.Error("Expected non-nil tracker")
+	}
+}
+
+// TestExportKey_ClosedBackend tests ExportKey on a closed backend
+func TestExportKey_ClosedBackend(t *testing.T) {
+	be, _ := createTestBackend(t)
+	_ = be.Close()
+
+	attrs := createRSAAttrs("test-export-closed", 2048)
+	attrs.Exportable = true
+
+	_, err := be.(backend.ImportExportBackend).ExportKey(attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
+	if err == nil {
+		t.Error("Expected error on closed backend, got nil")
+	}
+	if !errors.Is(err, ErrStorageClosed) {
+		t.Errorf("Expected ErrStorageClosed, got %v", err)
+	}
+}
+
+// TestImportKey_NilAttributes tests ImportKey with nil attributes
+func TestImportKey_NilAttributes(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	err := be.(backend.ImportExportBackend).ImportKey(nil, nil)
+	if err == nil {
+		t.Error("Expected error for nil attributes, got nil")
+	}
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("Expected ErrInvalidAttributes, got %v", err)
+	}
+}
+
+// TestImportKey_NilWrappedMaterial tests ImportKey with nil wrapped material
+func TestImportKey_NilWrappedMaterial(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	attrs := createRSAAttrs("test-import-nil-material", 2048)
+	err := be.(backend.ImportExportBackend).ImportKey(attrs, nil)
+	if err == nil {
+		t.Error("Expected error for nil wrapped material, got nil")
+	}
+	if !errors.Is(err, backend.ErrInvalidAttributes) {
+		t.Errorf("Expected ErrInvalidAttributes, got %v", err)
+	}
+}
+
+// TestImportKey_ClosedBackend tests ImportKey on a closed backend
+func TestImportKey_ClosedBackend(t *testing.T) {
+	be, _ := createTestBackend(t)
+	_ = be.Close()
+
+	attrs := createRSAAttrs("test-import-closed", 2048)
+	wrapped := &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte{1, 2, 3},
+		Algorithm:   backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
+		ImportToken: []byte("test-token"),
+	}
+	err := be.(backend.ImportExportBackend).ImportKey(attrs, wrapped)
+	if err == nil {
+		t.Error("Expected error on closed backend, got nil")
+	}
+	if !errors.Is(err, ErrStorageClosed) {
+		t.Errorf("Expected ErrStorageClosed, got %v", err)
+	}
+}
+
+// TestCanSeal_Open tests CanSeal on open backend
+func TestCanSeal_Open(t *testing.T) {
+	be, _ := createTestBackend(t)
+	defer func() { _ = be.Close() }()
+
+	swBe := be.(*SoftwareBackend)
+	if !swBe.CanSeal() {
+		t.Error("Expected CanSeal to return true for open backend")
+	}
+}
+
+// TestCanSeal_Closed tests CanSeal on closed backend
+func TestCanSeal_Closed(t *testing.T) {
+	be, _ := createTestBackend(t)
+	swBe := be.(*SoftwareBackend)
+	_ = be.Close()
+
+	if swBe.CanSeal() {
+		t.Error("Expected CanSeal to return false for closed backend")
 	}
 }

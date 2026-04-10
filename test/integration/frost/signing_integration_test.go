@@ -3,17 +3,18 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 
 package frost_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,8 @@ type multiParticipantSetup struct {
 // createMultiParticipantSetup creates a test setup with properly distributed key packages.
 func createMultiParticipantSetup(t *testing.T, keyID string, threshold, total int, algorithm types.FrostAlgorithm) *multiParticipantSetup {
 	t.Helper()
+
+	ctx := context.Background()
 
 	// Generate all key packages using TrustedDealer directly
 	td := frost.NewTrustedDealer()
@@ -71,23 +74,23 @@ func createMultiParticipantSetup(t *testing.T, keyID string, threshold, total in
 		pkg := packages[i]
 
 		// Store public components (metadata, group public key, verification shares)
-		err = publicStore.Put("frost/keys/"+keyID+"/metadata.json",
+		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/metadata.json",
 			[]byte(fmt.Sprintf(`{"key_id":"%s","algorithm":"%s","threshold":%d,"total":%d,"participant_id":%d,"created_at":0,"secret_backend_type":"pkcs8"}`,
-				keyID, algorithm, threshold, total, participantID)), nil)
+				keyID, algorithm, threshold, total, participantID)))
 		require.NoError(t, err)
 
-		err = publicStore.Put("frost/keys/"+keyID+"/group_public.bin", pkg.GroupPublicKey, nil)
+		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/group_public.bin", pkg.GroupPublicKey)
 		require.NoError(t, err)
 
 		// Store verification shares for all participants
 		for pid, vs := range pkg.VerificationShares {
 			path := fmt.Sprintf("frost/keys/%s/verification_shares/%d.bin", keyID, pid)
-			err = publicStore.Put(path, vs, nil)
+			err = publicStore.Put(ctx, path, vs)
 			require.NoError(t, err)
 		}
 
 		// Store secret share
-		err = secretBackend.Storage().Put("frost/secrets/"+keyID+".secret", pkg.SecretShare.Value, nil)
+		err = secretBackend.Storage().Put(ctx, "frost/secrets/"+keyID+".secret", pkg.SecretShare.Value)
 		require.NoError(t, err)
 	}
 
@@ -114,6 +117,8 @@ func TestFrostSigning_MinimalThreshold(t *testing.T) {
 	keyID := "minimal-threshold-key"
 	threshold := 2
 	total := 2
+
+	ctx := context.Background()
 
 	// Generate all key packages using TrustedDealer directly
 	td := frost.NewTrustedDealer()
@@ -165,23 +170,23 @@ func TestFrostSigning_MinimalThreshold(t *testing.T) {
 		}
 
 		// Store public components
-		err = publicStore.Put("frost/keys/"+keyID+"/metadata.json",
+		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/metadata.json",
 			[]byte(fmt.Sprintf(`{"key_id":"%s","algorithm":"%s","threshold":%d,"total":%d,"participant_id":%d,"created_at":0,"secret_backend_type":"pkcs8"}`,
-				keyID, types.FrostAlgorithmEd25519, threshold, total, participantID)), nil)
+				keyID, types.FrostAlgorithmEd25519, threshold, total, participantID)))
 		require.NoError(t, err)
 
-		err = publicStore.Put("frost/keys/"+keyID+"/group_public.bin", pkg.GroupPublicKey, nil)
+		err = publicStore.Put(ctx, "frost/keys/"+keyID+"/group_public.bin", pkg.GroupPublicKey)
 		require.NoError(t, err)
 
 		// Store verification shares for all participants
 		for pid, vs := range pkg.VerificationShares {
 			path := fmt.Sprintf("frost/keys/%s/verification_shares/%d.bin", keyID, pid)
-			err = publicStore.Put(path, vs, nil)
+			err = publicStore.Put(ctx, path, vs)
 			require.NoError(t, err)
 		}
 
 		// Store secret share
-		err = secretBackend.Storage().Put("frost/secrets/"+keyID+".secret", pkg.SecretShare.Value, nil)
+		err = secretBackend.Storage().Put(ctx, "frost/secrets/"+keyID+".secret", pkg.SecretShare.Value)
 		require.NoError(t, err)
 
 		t.Logf("Stored key package for participant %d", participantID)

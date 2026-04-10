@@ -1,6 +1,6 @@
 # FROST Backend Integration Guide
 
-This guide covers how to configure different go-keychain backends for storing FROST secret key shares.
+This guide covers how to configure different go-xkms backends for storing FROST secret key shares.
 
 ## Backend Overview
 
@@ -8,7 +8,7 @@ This guide covers how to configure different go-keychain backends for storing FR
 |---------|------|----------|---------|----------|
 | TPM2 | Hardware | High | Low | On-premise servers |
 | PKCS#11 | Hardware | High | Low | Enterprise HSM |
-| SmartCard-HSM | Hardware | High | Low | Portable tokens |
+
 | AWS KMS | Cloud | High | Medium | AWS deployments |
 | GCP KMS | Cloud | High | Medium | GCP deployments |
 | Azure Key Vault | Cloud | High | Medium | Azure deployments |
@@ -33,9 +33,9 @@ tpm2_getcap properties-fixed
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/tpm2"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func tpm2Config() (*frost.Config, error) {
@@ -61,7 +61,7 @@ func tpm2Config() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage:       file.NewBackend("/var/lib/frost/public"),
+        PublicStorage:       file.New("/var/lib/frost/public"),
         SecretBackend:       tpmBackend,
         Algorithm:           types.FrostAlgorithmP256,
         EnableNonceTracking: true,
@@ -73,7 +73,7 @@ func tpm2Config() (*frost.Config, error) {
 
 ```bash
 # Generate keys with TPM storage
-keychain frost keygen \
+xkms frost keygen \
   --secret-backend tpm2 \
   --threshold 3 \
   --total 5 \
@@ -105,9 +105,9 @@ softhsm2-util --init-token --slot 0 --label "frost-token" --pin 1234 --so-pin 12
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func pkcs11Config() (*frost.Config, error) {
@@ -128,7 +128,7 @@ func pkcs11Config() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage:       file.NewBackend("/var/lib/frost/public"),
+        PublicStorage:       file.New("/var/lib/frost/public"),
         SecretBackend:       hsmBackend,
         Algorithm:           types.FrostAlgorithmP256,
         EnableNonceTracking: true,
@@ -150,7 +150,7 @@ func pkcs11Config() (*frost.Config, error) {
 
 ```bash
 # Generate keys with HSM storage
-keychain frost keygen \
+xkms frost keygen \
   --secret-backend pkcs11 \
   --pkcs11-library /usr/lib/softhsm/libsofthsm2.so \
   --pkcs11-token frost-token \
@@ -176,18 +176,18 @@ aws kms create-key --description "FROST master key"
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func awsConfig() (*frost.Config, error) {
     // File storage for public data (or use a custom adapter for S3)
     // NOTE: For cloud object storage (S3, GCS, etc.), create an adapter
-    // that implements storage.Backend. go-keychain's interface is compatible
+    // that implements storage.Backend. go-xkms's interface is compatible
     // with libraries like go-objstore, allowing you to pass cloud backends
     // from your application.
-    publicStorage := file.NewBackend("/var/lib/frost/public")
+    publicStorage := file.New("/var/lib/frost/public")
 
     // AWS KMS for secret storage
     kmsBackend, err := awskms.NewBackend(&awskms.Config{
@@ -248,7 +248,7 @@ func awsConfig() (*frost.Config, error) {
 
 ```bash
 # Generate keys with AWS KMS
-keychain frost keygen \
+xkms frost keygen \
   --secret-backend awskms \
   --aws-region us-east-1 \
   --aws-kms-key alias/frost-master-key \
@@ -278,17 +278,17 @@ gcloud kms keys create frost-master-key \
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func gcpConfig() (*frost.Config, error) {
     // File storage for public data (or use a custom adapter for GCS)
     // NOTE: For cloud object storage, create an adapter that implements
-    // storage.Backend. go-keychain's interface is compatible with libraries
+    // storage.Backend. go-xkms's interface is compatible with libraries
     // like go-objstore, allowing you to pass cloud backends from your app.
-    publicStorage := file.NewBackend("/var/lib/frost/public")
+    publicStorage := file.New("/var/lib/frost/public")
 
     // GCP KMS for secret storage
     kmsBackend, err := gcpkms.NewBackend(&gcpkms.Config{
@@ -314,7 +314,7 @@ func gcpConfig() (*frost.Config, error) {
 
 ```bash
 # Generate keys with GCP KMS
-keychain frost keygen \
+xkms frost keygen \
   --secret-backend gcpkms \
   --gcp-project my-project \
   --gcp-keyring frost-keyring \
@@ -344,17 +344,17 @@ az keyvault create \
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/azurekv"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func azureConfig() (*frost.Config, error) {
     // File storage for public data (or use a custom adapter for Azure Blob)
     // NOTE: For cloud object storage, create an adapter that implements
-    // storage.Backend. go-keychain's interface is compatible with libraries
+    // storage.Backend. go-xkms's interface is compatible with libraries
     // like go-objstore, allowing you to pass cloud backends from your app.
-    publicStorage := file.NewBackend("/var/lib/frost/public")
+    publicStorage := file.New("/var/lib/frost/public")
 
     // Azure Key Vault for secret storage
     kvBackend, err := azurekv.NewBackend(&azurekv.Config{
@@ -381,7 +381,7 @@ func azureConfig() (*frost.Config, error) {
 
 ```bash
 # Generate keys with Azure Key Vault
-keychain frost keygen \
+xkms frost keygen \
   --secret-backend azurekv \
   --azure-vault-url https://frost-keyvault.vault.azure.net/ \
   --threshold 3 \
@@ -409,9 +409,9 @@ vault write -f transit/keys/frost-master
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/vault"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/vault"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func vaultConfig() (*frost.Config, error) {
@@ -437,7 +437,7 @@ func vaultConfig() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage:       file.NewBackend("/var/lib/frost/public"),
+        PublicStorage:       file.New("/var/lib/frost/public"),
         SecretBackend:       vaultBackend,
         Algorithm:           types.FrostAlgorithmEd25519,
         EnableNonceTracking: true,
@@ -466,7 +466,7 @@ path "secret/data/frost/*" {
 
 ```bash
 # Generate keys with Vault
-keychain frost keygen \
+xkms frost keygen \
   --secret-backend vault \
   --vault-addr https://vault.example.com:8200 \
   --vault-token $VAULT_TOKEN \
@@ -482,14 +482,14 @@ For development and testing only. **Not recommended for production.**
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/software"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func softwareConfig() (*frost.Config, error) {
-    // PKCS#8 encrypted file storage
-    secretBackend, err := pkcs8.NewBackend(&pkcs8.Config{
+    // Software encrypted file storage
+    secretBackend, err := software.NewBackend(&software.Config{
         Directory: "./frost-secrets",
         Password:  []byte(os.Getenv("FROST_SECRET_PASSWORD")),
     })
@@ -498,7 +498,7 @@ func softwareConfig() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage:       file.NewBackend("./frost-public"),
+        PublicStorage:       file.New("./frost-public"),
         SecretBackend:       secretBackend,
         Algorithm:           types.FrostAlgorithmEd25519,
         EnableNonceTracking: true,
@@ -510,7 +510,7 @@ func softwareConfig() (*frost.Config, error) {
 
 ```bash
 # Generate keys with software storage
-keychain frost keygen \
+xkms frost keygen \
   --secret-backend software \
   --threshold 2 \
   --total 3 \
@@ -523,11 +523,12 @@ Implement `storage.Backend` for custom storage solutions.
 
 ```go
 type Backend interface {
-    Get(key string) ([]byte, error)
-    Put(key string, value []byte, opts *Options) error
-    Delete(key string) error
-    Exists(key string) (bool, error)
-    List(prefix string) ([]string, error)
+    Get(ctx context.Context, key string) ([]byte, error)
+    Put(ctx context.Context, key string, value []byte) error
+    Delete(ctx context.Context, key string) error
+    List(ctx context.Context, prefix string) ([]string, error)
+    Scan(ctx context.Context, prefix string) (map[string][]byte, error)
+    Exists(ctx context.Context, key string) (bool, error)
     Close() error
 }
 ```
@@ -540,25 +541,25 @@ type RedisBackend struct {
     prefix string
 }
 
-func (r *RedisBackend) Get(key string) ([]byte, error) {
-    return r.client.Get(context.Background(), r.prefix+key).Bytes()
+func (r *RedisBackend) Get(ctx context.Context, key string) ([]byte, error) {
+    return r.client.Get(ctx, r.prefix+key).Bytes()
 }
 
-func (r *RedisBackend) Put(key string, value []byte, opts *storage.Options) error {
-    return r.client.Set(context.Background(), r.prefix+key, value, 0).Err()
+func (r *RedisBackend) Put(ctx context.Context, key string, value []byte) error {
+    return r.client.Set(ctx, r.prefix+key, value, 0).Err()
 }
 
-func (r *RedisBackend) Delete(key string) error {
-    return r.client.Del(context.Background(), r.prefix+key).Err()
+func (r *RedisBackend) Delete(ctx context.Context, key string) error {
+    return r.client.Del(ctx, r.prefix+key).Err()
 }
 
-func (r *RedisBackend) Exists(key string) (bool, error) {
-    n, err := r.client.Exists(context.Background(), r.prefix+key).Result()
+func (r *RedisBackend) Exists(ctx context.Context, key string) (bool, error) {
+    n, err := r.client.Exists(ctx, r.prefix+key).Result()
     return n > 0, err
 }
 
-func (r *RedisBackend) List(prefix string) ([]string, error) {
-    keys, err := r.client.Keys(context.Background(), r.prefix+prefix+"*").Result()
+func (r *RedisBackend) List(ctx context.Context, prefix string) ([]string, error) {
+    keys, err := r.client.Keys(ctx, r.prefix+prefix+"*").Result()
     if err != nil {
         return nil, err
     }
@@ -566,6 +567,22 @@ func (r *RedisBackend) List(prefix string) ([]string, error) {
     result := make([]string, len(keys))
     for i, k := range keys {
         result[i] = strings.TrimPrefix(k, r.prefix)
+    }
+    return result, nil
+}
+
+func (r *RedisBackend) Scan(ctx context.Context, prefix string) (map[string][]byte, error) {
+    keys, err := r.List(ctx, prefix)
+    if err != nil {
+        return nil, err
+    }
+    result := make(map[string][]byte, len(keys))
+    for _, key := range keys {
+        data, err := r.Get(ctx, key)
+        if err != nil {
+            return nil, err
+        }
+        result[key] = data
     }
     return result, nil
 }

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,7 +15,7 @@
 
 // Package awskms provides a cloud-backed keystore implementation using AWS KMS.
 //
-// This package implements the keychain.KeyStore interface for managing cryptographic
+// This package implements the xkms.Backend interface for managing cryptographic
 // keys in AWS Key Management Service (KMS). Private keys never leave AWS KMS,
 // providing enhanced security for cryptographic operations.
 //
@@ -55,8 +55,8 @@
 //	attrs := &types.KeyAttributes{
 //	    CN:           "my-kms-key",
 //	    KeyAlgorithm: x509.RSA,
-//	    KeyType:      keychain.KeyTypeSigning,
-//	    StoreType:    keychain.StorePKCS11,
+//	    KeyType:      xkms.KeyTypeSigning,
+//	    StoreType:    xkms.StorePKCS11,
 //	    RSAAttributes: &types.RSAAttributes{KeySize: 2048},
 //	}
 //	key, err := ks.GenerateRSA(attrs)
@@ -74,15 +74,15 @@ import (
 	"io"
 	"sync"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	awskmsbackend "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
-	"github.com/jeremyhahn/go-keychain/pkg/certstore"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/opaque"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	awskmsbackend "github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/opaque"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// KeyStore implements the keychain.KeyStore interface for AWS KMS.
+// KeyStore implements the xkms.Backend interface for AWS KMS.
 // It provides secure key management with private keys that never leave AWS KMS.
 type KeyStore struct {
 	backend     *awskmsbackend.Backend
@@ -102,12 +102,12 @@ type KeyStore struct {
 //   - certStorage: Certificate storage backend for managing certificates
 //
 // Returns a new KeyStore instance or an error if the backend is invalid.
-func NewKeyStore(backend *awskmsbackend.Backend, certStorage certstore.CertificateStorageAdapter) (keychain.KeyStore, error) {
+func NewKeyStore(backend *awskmsbackend.Backend, certStorage certstore.CertificateStorageAdapter) (xkms.Backend, error) {
 	if backend == nil {
-		return nil, keychain.ErrBackendNotInitialized
+		return nil, xkms.ErrBackendNotInitialized
 	}
 	if certStorage == nil {
-		return nil, keychain.ErrCertStorageRequired
+		return nil, xkms.ErrCertStorageRequired
 	}
 
 	return &KeyStore{
@@ -117,8 +117,8 @@ func NewKeyStore(backend *awskmsbackend.Backend, certStorage certstore.Certifica
 }
 
 // Backend returns the underlying storage backend.
-func (ks *KeyStore) Backend() types.Backend {
-	// Convert awskmsbackend.Backend to types.Backend wrapper
+func (ks *KeyStore) KeyProvider() types.KeyProvider {
+	// Convert awskmsbackend.Backend to types.KeyProvider wrapper
 	return &backendWrapper{backend: ks.backend}
 }
 
@@ -130,7 +130,7 @@ func (ks *KeyStore) Type() types.StoreType {
 // Initialize prepares the AWS KMS keystore for use.
 //
 // For AWS KMS, this is a no-op as initialization happens at the backend level
-// with AWS credentials. This method is included to satisfy the KeyStore interface.
+// with AWS credentials. This method is included to satisfy the Backend interface.
 //
 // Parameters:
 //   - soPIN: Not used for AWS KMS
@@ -143,16 +143,16 @@ func (ks *KeyStore) Initialize(soPIN, userPIN types.Password) error {
 	return nil
 }
 
-// Close releases resources held by the keychain.
+// Close releases resources held by the xkms.
 //
 // This method closes the backend and performs any necessary cleanup.
-// After calling Close, the keychain should not be used.
+// After calling Close, the xkms should not be used.
 func (ks *KeyStore) Close() error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
 	if ks.closed {
-		return keychain.ErrStorageClosed
+		return xkms.ErrStorageClosed
 	}
 
 	ks.closed = true
@@ -180,7 +180,7 @@ func (ks *KeyStore) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, 
 		// Ed25519 is not supported by AWS KMS
 		return nil, backend.ErrInvalidKeyType
 	default:
-		return nil, keychain.ErrInvalidKeyAlgorithm
+		return nil, xkms.ErrInvalidKeyAlgorithm
 	}
 }
 
@@ -203,7 +203,7 @@ func (ks *KeyStore) GenerateRSA(attrs *types.KeyAttributes) (crypto.PrivateKey, 
 
 	// Validate key algorithm
 	if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm && attrs.KeyAlgorithm != x509.RSA {
-		return nil, fmt.Errorf("%w: expected RSA, got %s", keychain.ErrInvalidKeyAlgorithm, attrs.KeyAlgorithm)
+		return nil, fmt.Errorf("%w: expected RSA, got %s", xkms.ErrInvalidKeyAlgorithm, attrs.KeyAlgorithm)
 	}
 
 	// Apply default key size if not specified
@@ -392,7 +392,7 @@ func (ks *KeyStore) RotateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 	case x509.Ed25519:
 		return nil, backend.ErrInvalidKeyType
 	default:
-		return nil, keychain.ErrInvalidKeyAlgorithm
+		return nil, xkms.ErrInvalidKeyAlgorithm
 	}
 }
 
@@ -413,7 +413,7 @@ func (ks *KeyStore) Equal(opaqueKey crypto.PrivateKey, x crypto.PrivateKey) bool
 	if !ok {
 		return false
 	}
-	return keychain.CompareOpaqueKeyEquality(opaqueImpl, x)
+	return xkms.CompareOpaqueKeyEquality(opaqueImpl, x)
 }
 
 // Signer returns a crypto.Signer for the specified key.
@@ -615,7 +615,7 @@ func (ks *KeyStore) ListKeys() ([]*types.KeyAttributes, error) {
 	defer ks.mu.RUnlock()
 
 	if ks.closed {
-		return nil, keychain.ErrStorageClosed
+		return nil, xkms.ErrStorageClosed
 	}
 
 	// Delegate to backend's ListKeys implementation
@@ -647,7 +647,7 @@ func (ks *KeyStore) GetTLSCertificate(keyID string, attrs *types.KeyAttributes) 
 
 	// Get the certificate chain if available
 	chain, err := ks.GetCertChain(keyID)
-	if err != nil && err != keychain.ErrCertNotFound {
+	if err != nil && err != xkms.ErrCertNotFound {
 		return tls.Certificate{}, fmt.Errorf("failed to get certificate chain: %w", err)
 	}
 
@@ -678,10 +678,10 @@ func (ks *KeyStore) SaveCert(keyID string, cert *x509.Certificate) error {
 	defer ks.mu.Unlock()
 
 	if ks.closed {
-		return keychain.ErrStorageClosed
+		return xkms.ErrStorageClosed
 	}
 
-	return ks.certStorage.SaveCert(keyID, cert)
+	return ks.certStorage.SaveCert(context.Background(), keyID, cert)
 }
 
 // GetCert retrieves a certificate by key ID.
@@ -690,10 +690,10 @@ func (ks *KeyStore) GetCert(keyID string) (*x509.Certificate, error) {
 	defer ks.mu.RUnlock()
 
 	if ks.closed {
-		return nil, keychain.ErrStorageClosed
+		return nil, xkms.ErrStorageClosed
 	}
 
-	return ks.certStorage.GetCert(keyID)
+	return ks.certStorage.GetCert(context.Background(), keyID)
 }
 
 // DeleteCert removes a certificate by key ID.
@@ -702,10 +702,10 @@ func (ks *KeyStore) DeleteCert(keyID string) error {
 	defer ks.mu.Unlock()
 
 	if ks.closed {
-		return keychain.ErrStorageClosed
+		return xkms.ErrStorageClosed
 	}
 
-	return ks.certStorage.DeleteCert(keyID)
+	return ks.certStorage.DeleteCert(context.Background(), keyID)
 }
 
 // SaveCertChain stores a certificate chain for the given key ID.
@@ -714,10 +714,10 @@ func (ks *KeyStore) SaveCertChain(keyID string, chain []*x509.Certificate) error
 	defer ks.mu.Unlock()
 
 	if ks.closed {
-		return keychain.ErrStorageClosed
+		return xkms.ErrStorageClosed
 	}
 
-	return ks.certStorage.SaveCertChain(keyID, chain)
+	return ks.certStorage.SaveCertChain(context.Background(), keyID, chain)
 }
 
 // GetCertChain retrieves a certificate chain by key ID.
@@ -726,10 +726,10 @@ func (ks *KeyStore) GetCertChain(keyID string) ([]*x509.Certificate, error) {
 	defer ks.mu.RUnlock()
 
 	if ks.closed {
-		return nil, keychain.ErrStorageClosed
+		return nil, xkms.ErrStorageClosed
 	}
 
-	return ks.certStorage.GetCertChain(keyID)
+	return ks.certStorage.GetCertChain(context.Background(), keyID)
 }
 
 // ListCerts returns all certificate IDs currently stored.
@@ -738,10 +738,10 @@ func (ks *KeyStore) ListCerts() ([]string, error) {
 	defer ks.mu.RUnlock()
 
 	if ks.closed {
-		return nil, keychain.ErrStorageClosed
+		return nil, xkms.ErrStorageClosed
 	}
 
-	return ks.certStorage.ListCerts()
+	return ks.certStorage.ListCerts(context.Background())
 }
 
 // CertExists checks if a certificate exists for the given key ID.
@@ -750,14 +750,14 @@ func (ks *KeyStore) CertExists(keyID string) (bool, error) {
 	defer ks.mu.RUnlock()
 
 	if ks.closed {
-		return false, keychain.ErrStorageClosed
+		return false, xkms.ErrStorageClosed
 	}
 
-	return ks.certStorage.CertExists(keyID)
+	return ks.certStorage.CertExists(context.Background(), keyID)
 }
 
-// backendWrapper wraps awskmsbackend.Backend to implement types.Backend interface.
-// It does not own the backend lifecycle - the keychain is responsible for closing
+// backendWrapper wraps awskmsbackend.Backend to implement types.KeyProvider interface.
+// It does not own the backend lifecycle - the xkms is responsible for closing
 // the backend when appropriate.
 type backendWrapper struct {
 	backend *awskmsbackend.Backend
@@ -829,11 +829,11 @@ func (bw *backendWrapper) RotateKey(attrs *types.KeyAttributes) error {
 }
 
 // Close is a no-op for the backend wrapper.
-// The wrapper does not own the backend lifecycle - the keychain that created
-// this wrapper is responsible for closing the backend when the keychain itself
+// The wrapper does not own the backend lifecycle - the xkms that created
+// this wrapper is responsible for closing the backend when the xkms itself
 // is closed.
 func (bw *backendWrapper) Close() error {
-	// Do not close the backend - the keychain owns the backend lifecycle
+	// Do not close the backend - the xkms owns the backend lifecycle
 	return nil
 }
 
@@ -873,10 +873,10 @@ func (ks *KeyStore) Seal(ctx context.Context, data []byte, opts *types.SealOptio
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 	if ks.closed {
-		return nil, keychain.ErrStorageClosed
+		return nil, xkms.ErrStorageClosed
 	}
 	if !ks.backend.CanSeal() {
-		return nil, keychain.ErrSealingNotSupported
+		return nil, xkms.ErrSealingNotSupported
 	}
 	return ks.backend.Seal(ctx, data, opts)
 }
@@ -886,10 +886,10 @@ func (ks *KeyStore) Unseal(ctx context.Context, sealed *types.SealedData, opts *
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 	if ks.closed {
-		return nil, keychain.ErrStorageClosed
+		return nil, xkms.ErrStorageClosed
 	}
 	if sealed == nil {
-		return nil, keychain.ErrInvalidSealedData
+		return nil, xkms.ErrInvalidSealedData
 	}
 	return ks.backend.Unseal(ctx, sealed, opts)
 }

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,96 +11,55 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build pkcs11
-
-// Package yubikey provides a backend implementation for YubiKey hardware tokens
-// using the PIV (Personal Identity Verification) application.
+// Package yubikey provides a backend for YubiKey PIV devices.
 //
-// # YubiKey PIV Backend
+// YubiKey PIV provides hardware-backed key storage conforming to the
+// PIV (Personal Identity Verification) standard (FIPS 201).
 //
-// The YubiKey backend is a specialized adapter that provides optimized support
-// for YubiKey hardware tokens while maintaining compatibility with the standard
-// backend.Backend interface. It wraps PKCS#11 operations with YubiKey-specific
-// features and constraints.
+// # Features
 //
-// Key Features:
+//   - Standard PKCS#11 operations via embedded pkcs11.Backend
+//   - Key attestation using slot 0xF9 (Yubico-specific)
+//   - Hardware-backed key generation and storage
+//   - Support for RSA and EC keys
 //
-//   - PIV slot management (9a, 9c, 9d, 9e, 82-95)
-//   - Management key authentication for administrative operations
-//   - Automatic token detection and configuration
-//   - YubiKey-specific error messages and diagnostics
-//   - Hardware-backed key storage and operations
+// # PIV Slots
 //
-// PIV Slots:
+// YubiKey PIV provides the following key slots:
 //
-// YubiKey PIV supports specific slots for key storage:
+//   - 0x9A: PIV Authentication
+//   - 0x9C: Digital Signature
+//   - 0x9D: Key Management
+//   - 0x9E: Card Authentication
+//   - 0xF9: Attestation (Yubico-specific)
 //
-//   - 0x9a: PIV Authentication - General authentication, requires PIN
-//   - 0x9c: Digital Signature - Always requires PIN for operations
-//   - 0x9d: Key Management - Used for encryption/decryption, requires PIN
-//   - 0x9e: Card Authentication - No PIN required for operations
-//   - 0x82-0x95: Retired Key Management - 20 additional storage slots
+// # Key Attestation
 //
-// Management Key:
+// YubiKey supports key attestation which proves that a key was generated
+// on genuine YubiKey hardware. The attestation certificate chains to
+// Yubico's attestation CA.
 //
-// Administrative operations (key generation, deletion) require authentication
-// with the management key. The default management key is:
+// Example:
 //
-//	010203040506070801020304050607080102030405060708 (hex)
+//	certs, err := backend.GenerateAttestationStatement(yubikey.SlotAuthentication)
+//	// certs[0] = attestation certificate for the key
+//	// certs[1] = Yubico intermediate CA (if available)
 //
-// Usage Example:
+// # Build Tags
 //
-//	import "github.com/jeremyhahn/go-keychain/pkg/backend/yubikey"
+// This package requires the "pkcs11" build tag:
 //
-//	// Create YubiKey backend
-//	config := &yubikey.Config{
-//		PIN:           "123456",              // Default YubiKey PIN
-//		ManagementKey: yubikey.DefaultMgmtKey, // Or custom management key
-//	}
+//	go build -tags pkcs11
 //
-//	backend, err := yubikey.NewBackend(config)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//	defer backend.Close()
+// # Dependencies
 //
-//	// Initialize backend
-//	err = backend.Initialize()
-//	if err != nil {
-//		log.Fatal(err)
-//	}
+// This package requires libykcs11 (YubiKey PKCS#11 library):
 //
-//	// Generate RSA key in PIV Authentication slot
-//	attrs := &types.KeyAttributes{
-//		CN:           "my-yubikey-key",
-//		KeyAlgorithm: x509.RSA,
-//		RSAAttributes: &types.RSAAttributes{
-//			KeySize: 2048,
-//		},
-//	}
+// On Debian/Ubuntu:
 //
-//	// Specify PIV slot using KeyID
-//	attrs.KeyID = yubikey.SlotAuthentication
+//	apt install ykcs11
 //
-//	key, err := backend.GenerateRSA(attrs)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
+// On macOS:
 //
-// Compatibility:
-//
-// The YubiKey backend implements the standard backend.Backend interface,
-// making it fully compatible with existing code that uses the backend
-// abstraction. It can be used as a drop-in replacement for other backends.
-//
-// Requirements:
-//
-//   - YubiKey 4 or later (PIV application support)
-//   - Yubico PIV Tool and libykcs11.so library installed
-//   - Appropriate USB permissions for YubiKey access
-//
-// See also:
-//
-//   - https://developers.yubico.com/PIV/Introduction/
-//   - https://github.com/Yubico/yubico-piv-tool
+//	brew install yubico-piv-tool
 package yubikey

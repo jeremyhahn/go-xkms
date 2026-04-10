@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // setupIDevIDTPM ensures TPM is properly provisioned with IAK and IDevID config for CSR tests

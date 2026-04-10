@@ -1,5 +1,5 @@
 # Dockerfile for FROST threshold signature integration tests
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
 ENV GOTOOLCHAIN=auto
 
@@ -16,13 +16,16 @@ WORKDIR /workspace
 # Copy SDK module first (required for go.mod replace directive)
 COPY sdk/go ./sdk/go
 
+# Copy the xkey module files (required for go.mod replace directive)
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
 # Download dependencies
 COPY go.mod go.sum ./
-RUN go mod download
+RUN go mod download || true
 
 # Build the CLI with frost support for CLI tests
 RUN --mount=type=bind,source=.,target=/workspace \
-    go build -tags="frost" -o /usr/local/bin/keychainctl ./cmd/keychainctl || true
+    go build -tags="frost" -o /usr/local/bin/xkmsctl ./cmd/xkmsctl || true
 
 # Default command runs tests
-CMD ["go", "test", "-v", "-tags=integration frost", "-timeout", "30m", "./test/integration/frost/..."]
+CMD ["go", "test", "-v", "-tags=integration frost codec_cbor codec_json codec_msgpack", "-timeout", "30m", "./test/integration/frost/..."]

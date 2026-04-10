@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -24,7 +24,7 @@ import (
 	"crypto/rsa"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/encoding/jwe"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwe"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -231,11 +231,11 @@ func TestJWEIntegration_SymmetricEncryption(t *testing.T) {
 	})
 }
 
-// TestJWEIntegration_KeychainIntegration tests keychain-backed JWE operations
-func TestJWEIntegration_KeychainIntegration(t *testing.T) {
-	plaintext := []byte("keychain encrypted data")
+// TestJWEIntegration_XKMSIntegration tests xkms-backed JWE operations
+func TestJWEIntegration_XKMSIntegration(t *testing.T) {
+	plaintext := []byte("xkms encrypted data")
 
-	t.Run("RSA_KeychainEncryption", func(t *testing.T) {
+	t.Run("RSA_XKMSEncryption", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
@@ -243,8 +243,8 @@ func TestJWEIntegration_KeychainIntegration(t *testing.T) {
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// Create keychain encrypter
-		encrypter, err := jwe.NewKeychainEncrypter(
+		// Create xkms encrypter
+		encrypter, err := jwe.NewXKMSEncrypter(
 			"RSA-OAEP-256",
 			"A256GCM",
 			setup.GetPublicKeyByID,
@@ -261,14 +261,14 @@ func TestJWEIntegration_KeychainIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, keyID, kid)
 
-		// Decrypt with keychain decrypter
-		decrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		// Decrypt with xkms decrypter
+		decrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		decrypted, err := decrypter.DecryptWithAutoKeyID(jweString)
 		require.NoError(t, err)
 		assert.Equal(t, plaintext, decrypted)
 	})
 
-	t.Run("ECDSA_P256_KeychainEncryption", func(t *testing.T) {
+	t.Run("ECDSA_P256_XKMSEncryption", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
@@ -276,7 +276,7 @@ func TestJWEIntegration_KeychainIntegration(t *testing.T) {
 		err := setup.GenerateECDSAKey(keyID, elliptic.P256())
 		require.NoError(t, err)
 
-		encrypter, err := jwe.NewKeychainEncrypter(
+		encrypter, err := jwe.NewXKMSEncrypter(
 			"ECDH-ES+A256KW",
 			"A256GCM",
 			setup.GetPublicKeyByID,
@@ -305,7 +305,7 @@ func TestJWEIntegration_KeychainIntegration(t *testing.T) {
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		encrypter, err := jwe.NewKeychainEncrypter(
+		encrypter, err := jwe.NewXKMSEncrypter(
 			"RSA-OAEP",
 			"A256GCM",
 			setup.GetPublicKeyByID,
@@ -316,7 +316,7 @@ func TestJWEIntegration_KeychainIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Decrypt using auto kid extraction
-		decrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		decrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		decrypted, err := decrypter.Decrypt(jweString)
 		require.NoError(t, err)
 		assert.Equal(t, plaintext, decrypted)
@@ -335,7 +335,7 @@ func TestJWEIntegration_KeychainIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Encrypt with key1
-		encrypter, err := jwe.NewKeychainEncrypter(
+		encrypter, err := jwe.NewXKMSEncrypter(
 			"RSA-OAEP-256",
 			"A256GCM",
 			setup.GetPublicKeyByID,
@@ -346,7 +346,7 @@ func TestJWEIntegration_KeychainIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Decrypt with key1 explicitly (should work)
-		decrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		decrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		decrypted, err := decrypter.DecryptWithKeyID(jweString, keyID1)
 		require.NoError(t, err)
 		assert.Equal(t, plaintext, decrypted)
@@ -486,11 +486,11 @@ func TestJWEIntegration_ErrorHandling(t *testing.T) {
 		assert.Error(t, err)
 	})
 
-	t.Run("KeychainKeyNotFound", func(t *testing.T) {
+	t.Run("XKMSKeyNotFound", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		encrypter, err := jwe.NewKeychainEncrypter(
+		encrypter, err := jwe.NewXKMSEncrypter(
 			"RSA-OAEP",
 			"A256GCM",
 			setup.GetPublicKeyByID,
@@ -524,7 +524,7 @@ func TestJWEIntegration_ErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Try to decrypt with auto kid (should fail - no kid in header)
-		decrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		decrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		_, err = decrypter.DecryptWithAutoKeyID(jweString)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "kid")

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -115,13 +116,13 @@ func TestSaveCertParsed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := SaveCertParsed(backend, tt.id, tt.cert)
+			err := SaveCertParsed(context.Background(), backend, tt.id, tt.cert)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify the certificate was saved correctly
-				retrieved, err := GetCertParsed(backend, tt.id)
+				retrieved, err := GetCertParsed(context.Background(), backend, tt.id)
 				require.NoError(t, err)
 				assert.Equal(t, tt.cert.Subject.CommonName, retrieved.Subject.CommonName)
 				assert.Equal(t, tt.cert.SerialNumber, retrieved.SerialNumber)
@@ -145,7 +146,7 @@ func TestGetCertParsed(t *testing.T) {
 			setupFunc: func() Backend {
 				b := newMockBackend()
 				cert := createTestCertificate(t, "test.example.com")
-				err := SaveCertParsed(b, "test-cert", cert)
+				err := SaveCertParsed(context.Background(), b, "test-cert", cert)
 				require.NoError(t, err)
 				return b
 			},
@@ -177,7 +178,7 @@ func TestGetCertParsed(t *testing.T) {
 				b := newMockBackend()
 				// Save invalid cert data
 				certPath := CertPath("invalid-cert")
-				err := b.Put(certPath, []byte("invalid certificate data"), nil)
+				err := b.Put(context.Background(), certPath, []byte("invalid certificate data"))
 				require.NoError(t, err)
 				return b
 			},
@@ -198,7 +199,7 @@ func TestGetCertParsed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			cert, err := GetCertParsed(backend, tt.id)
+			cert, err := GetCertParsed(context.Background(), backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				assert.Nil(t, cert)
@@ -298,7 +299,7 @@ func TestSaveCertChainParsed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := SaveCertChainParsed(backend, tt.id, tt.chain)
+			err := SaveCertChainParsed(context.Background(), backend, tt.id, tt.chain)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
@@ -306,7 +307,7 @@ func TestSaveCertChainParsed(t *testing.T) {
 				// Only verify retrieval for single-cert chains
 				// Multi-cert chains have a bug in GetCertChainParsed (uses ParseCertificate instead of ParseCertificates)
 				if len(tt.chain) == 1 {
-					retrieved, err := GetCertChainParsed(backend, tt.id)
+					retrieved, err := GetCertChainParsed(context.Background(), backend, tt.id)
 					require.NoError(t, err)
 					assert.Len(t, retrieved, len(tt.chain))
 					for i, cert := range tt.chain {
@@ -336,7 +337,7 @@ func TestGetCertChainParsed(t *testing.T) {
 				chain := []*x509.Certificate{
 					createTestCertificate(t, "cert1.example.com"),
 				}
-				err := SaveCertChainParsed(b, "chain-1", chain)
+				err := SaveCertChainParsed(context.Background(), b, "chain-1", chain)
 				require.NoError(t, err)
 				return b
 			},
@@ -354,7 +355,7 @@ func TestGetCertChainParsed(t *testing.T) {
 					createTestCertificate(t, "cert2.example.com"),
 					createTestCertificate(t, "cert3.example.com"),
 				}
-				err := SaveCertChainParsed(b, "chain-2", chain)
+				err := SaveCertChainParsed(context.Background(), b, "chain-2", chain)
 				require.NoError(t, err)
 				return b
 			},
@@ -390,7 +391,7 @@ func TestGetCertChainParsed(t *testing.T) {
 				b := newMockBackend()
 				// Save invalid chain data
 				chainPath := CertChainPath("invalid-chain")
-				err := b.Put(chainPath, []byte("invalid certificate chain data"), nil)
+				err := b.Put(context.Background(), chainPath, []byte("invalid certificate chain data"))
 				require.NoError(t, err)
 				return b
 			},
@@ -405,7 +406,7 @@ func TestGetCertChainParsed(t *testing.T) {
 				b := newMockBackend()
 				// Save empty chain data
 				chainPath := CertChainPath("empty-chain")
-				err := b.Put(chainPath, []byte{}, nil)
+				err := b.Put(context.Background(), chainPath, []byte{})
 				require.NoError(t, err)
 				return b
 			},
@@ -428,7 +429,7 @@ func TestGetCertChainParsed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			chain, err := GetCertChainParsed(backend, tt.id)
+			chain, err := GetCertChainParsed(context.Background(), backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				assert.Nil(t, chain)
@@ -455,11 +456,11 @@ func TestGetCertChainParsed_ExactFit(t *testing.T) {
 
 	// Save just this one certificate
 	chainPath := CertChainPath("exact-fit")
-	err := backend.Put(chainPath, cert1.Raw, nil)
+	err := backend.Put(context.Background(), chainPath, cert1.Raw)
 	require.NoError(t, err)
 
 	// Parse the chain - this should hit the case where len(remaining) == len(cert.Raw)
-	chain, err := GetCertChainParsed(backend, "exact-fit")
+	chain, err := GetCertChainParsed(context.Background(), backend, "exact-fit")
 	assert.NoError(t, err)
 	require.Len(t, chain, 1)
 	assert.Equal(t, cert1.Subject.CommonName, chain[0].Subject.CommonName)
@@ -480,11 +481,11 @@ func TestGetCertChainParsed_PartialParse(t *testing.T) {
 
 	// Save the mixed data
 	chainPath := CertChainPath("partial-chain")
-	err := backend.Put(chainPath, chainData, nil)
+	err := backend.Put(context.Background(), chainPath, chainData)
 	require.NoError(t, err)
 
 	// Try to parse the chain
-	chain, err := GetCertChainParsed(backend, "partial-chain")
+	chain, err := GetCertChainParsed(context.Background(), backend, "partial-chain")
 
 	// The implementation uses ASN.1-based parsing which properly handles
 	// concatenated certificates. According to the implementation logic,
@@ -507,21 +508,21 @@ func TestParsedAdapters_Integration(t *testing.T) {
 		cert := createTestCertificate(t, "integration.example.com")
 
 		// Save
-		err := SaveCertParsed(backend, certID, cert)
+		err := SaveCertParsed(context.Background(), backend, certID, cert)
 		require.NoError(t, err)
 
 		// Get
-		retrieved, err := GetCertParsed(backend, certID)
+		retrieved, err := GetCertParsed(context.Background(), backend, certID)
 		require.NoError(t, err)
 		assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName)
 		assert.Equal(t, cert.SerialNumber, retrieved.SerialNumber)
 
 		// Delete
-		err = DeleteCert(backend, certID)
+		err = DeleteCert(context.Background(), backend, certID)
 		require.NoError(t, err)
 
 		// Verify deleted
-		exists, err := CertExists(backend, certID)
+		exists, err := CertExists(context.Background(), backend, certID)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -534,21 +535,21 @@ func TestParsedAdapters_Integration(t *testing.T) {
 		}
 
 		// Save
-		err := SaveCertChainParsed(backend, chainID, chain)
+		err := SaveCertChainParsed(context.Background(), backend, chainID, chain)
 		require.NoError(t, err)
 
 		// Get (only works for single cert chains due to implementation bug)
-		retrieved, err := GetCertChainParsed(backend, chainID)
+		retrieved, err := GetCertChainParsed(context.Background(), backend, chainID)
 		require.NoError(t, err)
 		assert.Len(t, retrieved, 1)
 		assert.Equal(t, chain[0].Subject.CommonName, retrieved[0].Subject.CommonName)
 
 		// Delete
-		err = DeleteCertChain(backend, chainID)
+		err = DeleteCertChain(context.Background(), backend, chainID)
 		require.NoError(t, err)
 
 		// Verify deleted
-		exists, err := CertChainExists(backend, chainID)
+		exists, err := CertChainExists(context.Background(), backend, chainID)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -559,16 +560,16 @@ func TestParsedAdapters_Integration(t *testing.T) {
 		cert := createTestCertificate(t, "mixed.example.com")
 
 		// Save using parsed adapter
-		err := SaveCertParsed(backend, id, cert)
+		err := SaveCertParsed(context.Background(), backend, id, cert)
 		require.NoError(t, err)
 
 		// Get using raw adapter
-		rawData, err := GetCert(backend, id)
+		rawData, err := GetCert(context.Background(), backend, id)
 		require.NoError(t, err)
 		assert.Equal(t, cert.Raw, rawData)
 
 		// Get using parsed adapter
-		parsed, err := GetCertParsed(backend, id)
+		parsed, err := GetCertParsed(context.Background(), backend, id)
 		require.NoError(t, err)
 		assert.Equal(t, cert.Subject.CommonName, parsed.Subject.CommonName)
 	})

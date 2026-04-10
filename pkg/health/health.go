@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -116,7 +116,7 @@ func (c *Checker) MarkNotStarted() {
 // state and needs to be restarted. Temporary failures (network issues, etc.)
 // should NOT cause liveness to fail.
 //
-// For our keychain service, liveness simply checks if the process is running.
+// For our xkms service, liveness simply checks if the process is running.
 func (c *Checker) Live(ctx context.Context) CheckResult {
 	start := time.Now()
 	return CheckResult{

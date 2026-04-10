@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,9 +23,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // FROST request/response types
@@ -197,6 +197,10 @@ func (s *Server) handleFrostKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleFrostListKeys handles listing FROST keys
 func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r, "keys", "read") {
+		return
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, err.Error())
@@ -241,6 +245,10 @@ func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleFrostGenerateKey handles FROST key generation
 func (s *Server) handleFrostGenerateKey(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r, "keys", "write") {
+		return
+	}
+
 	var req FrostGenerateKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -399,6 +407,10 @@ func (s *Server) handleFrostKeyOperations(w http.ResponseWriter, r *http.Request
 
 // handleFrostGetKey handles retrieving a FROST key
 func (s *Server) handleFrostGetKey(w http.ResponseWriter, r *http.Request, keyID string) {
+	if !s.authorize(w, r, "keys", "read") {
+		return
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, err.Error())
@@ -452,6 +464,10 @@ func (s *Server) handleFrostGetKey(w http.ResponseWriter, r *http.Request, keyID
 
 // handleFrostDeleteKey handles deleting a FROST key
 func (s *Server) handleFrostDeleteKey(w http.ResponseWriter, r *http.Request, keyID string) {
+	if !s.authorize(w, r, "keys", "delete") {
+		return
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, err.Error())
@@ -482,6 +498,10 @@ func (s *Server) handleFrostGenerateNonces(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "use") {
+		return
+	}
+
 	be, err := s.getFrostBackend()
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, err.Error())
@@ -508,6 +528,10 @@ func (s *Server) handleFrostGenerateNonces(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleFrostSignRound(w http.ResponseWriter, r *http.Request, keyID string) {
 	if r.Method != http.MethodPost {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "keys", "use") {
 		return
 	}
 
@@ -622,6 +646,10 @@ func (s *Server) handleFrostImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "write") {
+		return
+	}
+
 	var req FrostImportKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -703,6 +731,10 @@ func (s *Server) handleFrostImport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFrostAggregate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "keys", "use") {
 		return
 	}
 
@@ -791,6 +823,10 @@ func (s *Server) handleFrostVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "use") {
+		return
+	}
+
 	var req FrostVerifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -834,15 +870,15 @@ func (s *Server) handleFrostVerify(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getFrostBackend retrieves the FROST backend from the keychain service
+// getFrostBackend retrieves the FROST backend from the xkms service
 func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
-	backends := keychain.Backends()
+	backends := xkms.Backends()
 	for _, name := range backends {
-		ks, err := keychain.Backend(name)
+		ks, err := xkms.GetBackend(name)
 		if err != nil {
 			continue
 		}
-		backend := ks.Backend()
+		backend := ks.KeyProvider()
 		if backend.Type() == types.BackendTypeFrost {
 			if fb, ok := backend.(*frost.FrostBackend); ok {
 				return fb, nil

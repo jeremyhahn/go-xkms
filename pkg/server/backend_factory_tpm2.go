@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,17 +14,15 @@
 package server
 
 import (
-	"fmt"
-
-	tpm2backend "github.com/jeremyhahn/go-keychain/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-func createTPM2Backend(config BackendConfig) (types.Backend, error) {
+func createTPM2Backend(config BackendConfig) (types.KeyProvider, error) {
 	// Extract configuration values
 	cn, _ := config.Config["cn"].(string)
 	if cn == "" {
-		cn = "keychain"
+		cn = "xkms"
 	}
 
 	device, _ := config.Config["device"].(string)
@@ -95,7 +93,7 @@ func createTPM2Backend(config BackendConfig) (types.Backend, error) {
 
 	backend, err := tpm2backend.NewBackend(tpmConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TPM2 backend: %w", err)
+		return nil, &ErrBackendCreate{Backend: "TPM2", Err: err}
 	}
 
 	return backend, nil

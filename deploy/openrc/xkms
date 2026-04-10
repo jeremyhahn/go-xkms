@@ -1,0 +1,64 @@
+#!/sbin/openrc-run
+# OpenRC init script for go-xkms server
+# Install to: /etc/init.d/xkms
+#
+# Usage:
+#   rc-update add xkms default
+#   rc-service xkms start
+
+name="xkms"
+description="Go xKMS - Cryptographic Key Management Service"
+command="/usr/bin/xkmsd"
+command_args="-config ${XKMS_CONFIG:-/etc/xkms/config.yaml}"
+command_user="xkms:xkms"
+command_background="yes"
+pidfile="/run/xkms/xkms.pid"
+start_stop_daemon_args="--stdout /var/log/xkms/xkms.log --stderr /var/log/xkms/xkms.log"
+
+# Optional dependencies
+depend() {
+    need net
+    after firewall tpm2-abrmd pcscd
+    use logger
+}
+
+start_pre() {
+    # Create runtime directory
+    checkpath --directory --owner xkms:xkms --mode 0755 /run/xkms
+
+    # Create log directory if it doesn't exist
+    checkpath --directory --owner xkms:xkms --mode 0750 /var/log/xkms
+
+    # Create data directory if it doesn't exist
+    checkpath --directory --owner xkms:xkms --mode 0750 /var/lib/xkms
+    checkpath --directory --owner xkms:xkms --mode 0700 /var/lib/xkms/keys
+    checkpath --directory --owner xkms:xkms --mode 0750 /var/lib/xkms/certs
+
+    # Verify config exists
+    if [ ! -f "${XKMS_CONFIG:-/etc/xkms/config.yaml}" ]; then
+        eerror "Configuration file not found: ${XKMS_CONFIG:-/etc/xkms/config.yaml}"
+        return 1
+    fi
+}
+
+stop_post() {
+    # Clean up pid file if it exists
+    rm -f "${pidfile}"
+}
+
+reload() {
+    ebegin "Reloading ${name}"
+    start-stop-daemon --signal HUP --pidfile "${pidfile}"
+    eend $?
+}
+
+status() {
+    if [ -f "${pidfile}" ]; then
+        if kill -0 "$(cat "${pidfile}")" 2>/dev/null; then
+            einfo "status: started"
+            return 0
+        fi
+    fi
+    einfo "status: stopped"
+    return 3
+}

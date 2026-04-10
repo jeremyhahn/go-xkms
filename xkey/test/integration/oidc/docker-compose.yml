@@ -1,0 +1,41 @@
+services:
+  hydra:
+    image: oryd/hydra:v2.2.0
+    container_name: xkey-oidc-hydra
+    ports:
+      - "4444:4444"  # Public API
+      - "4445:4445"  # Admin API
+    environment:
+      - SECRETS_SYSTEM=xkey-test-secret-change-in-prod
+      - DSN=memory
+      - URLS_SELF_ISSUER=http://127.0.0.1:4444/
+      - URLS_CONSENT=http://127.0.0.1:3000/consent
+      - URLS_LOGIN=http://127.0.0.1:3000/login
+      - SERVE_PUBLIC_PORT=4444
+      - SERVE_ADMIN_PORT=4445
+      - SERVE_PUBLIC_CORS_ENABLED=true
+      - SERVE_ADMIN_CORS_ENABLED=true
+      - LOG_LEVEL=error
+    command: serve all --dev
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4444/health/ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  test-runner:
+    build:
+      context: ../../../../
+      dockerfile: xkey/test/integration/oidc/Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../../go-qrdb
+        go-quicraft: ../../../../../go-quicraft
+    container_name: xkey-oidc-test
+    depends_on:
+      hydra:
+        condition: service_healthy
+    environment:
+      - HYDRA_PUBLIC_URL=http://hydra:4444
+      - HYDRA_ADMIN_URL=http://hydra:4445
+      - XKEY_BINARY=/usr/local/bin/xkey
+    working_dir: /workspace/xkey

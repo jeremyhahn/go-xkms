@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,10 +21,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	keychainmocks "github.com/jeremyhahn/go-keychain/pkg/keychain/mocks"
-	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,17 +34,17 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// setupTestKeychain initializes the keychain service with a mock backend
-func setupTestKeychain(t *testing.T) *keychainmocks.MockKeyStore {
+// setupTestXKMS initializes the xkms service with a mock backend
+func setupTestXKMS(t *testing.T) *xkmsmocks.MockKeyStore {
 	t.Helper()
 
-	// Reset any existing keychain state
-	keychain.Reset()
+	// Reset any existing xkms state
+	xkms.Reset()
 
-	mockKS := keychainmocks.NewMockKeyStore()
+	mockKS := xkmsmocks.NewMockKeyStore()
 
-	err := keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err := xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": mockKS,
 		},
 		DefaultBackend: "software",
@@ -54,14 +54,14 @@ func setupTestKeychain(t *testing.T) *keychainmocks.MockKeyStore {
 	return mockKS
 }
 
-// cleanupKeychain resets the keychain state after test
-func cleanupKeychain() {
-	keychain.Reset()
+// cleanupXKMS resets the xkms state after test
+func cleanupXKMS() {
+	xkms.Reset()
 }
 
 func TestNewServer_Success(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	cfg := &Config{
@@ -78,8 +78,8 @@ func TestNewServer_Success(t *testing.T) {
 }
 
 func TestNewServer_DefaultAddr(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	cfg := &Config{
@@ -95,8 +95,8 @@ func TestNewServer_DefaultAddr(t *testing.T) {
 }
 
 func TestNewServer_WithTLSConfig(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	tlsCfg := &tls.Config{
@@ -118,8 +118,8 @@ func TestNewServer_WithTLSConfig(t *testing.T) {
 }
 
 func TestNewServer_WithAuthenticator(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	authenticator := auth.NewNoOpAuthenticator()
@@ -138,8 +138,8 @@ func TestNewServer_WithAuthenticator(t *testing.T) {
 }
 
 func TestNewServer_WithRateLimiter(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	rateLimiter := ratelimit.New(&ratelimit.Config{
@@ -162,9 +162,9 @@ func TestNewServer_WithRateLimiter(t *testing.T) {
 	assert.Equal(t, rateLimiter, server.rateLimiter)
 }
 
-func TestNewServer_KeychainNotInitialized(t *testing.T) {
-	// Make sure keychain is not initialized
-	keychain.Reset()
+func TestNewServer_XKMSNotInitialized(t *testing.T) {
+	// Make sure xkms is not initialized
+	xkms.Reset()
 
 	cfg := &Config{
 		Addr:   "localhost:8444",
@@ -174,12 +174,12 @@ func TestNewServer_KeychainNotInitialized(t *testing.T) {
 	server, err := NewServer(cfg)
 	assert.Nil(t, server)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "keychain service must be initialized")
+	assert.Contains(t, err.Error(), "xkms service must be initialized")
 }
 
 func TestNewServer_DefaultLogger(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	cfg := &Config{
@@ -195,8 +195,8 @@ func TestNewServer_DefaultLogger(t *testing.T) {
 }
 
 func TestNewServer_DefaultAuthenticator(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	cfg := &Config{
@@ -214,8 +214,8 @@ func TestNewServer_DefaultAuthenticator(t *testing.T) {
 }
 
 func TestServer_Stop_NotStarted(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	cfg := &Config{
@@ -234,8 +234,8 @@ func TestServer_Stop_NotStarted(t *testing.T) {
 
 // TestServerMiddleware tests the middleware chain
 func TestServerMiddleware_CorrelationID(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	cfg := &Config{
@@ -280,8 +280,8 @@ func TestServerMiddleware_CorrelationID(t *testing.T) {
 }
 
 func TestServerMiddleware_Authentication(t *testing.T) {
-	mockKS := setupTestKeychain(t)
-	defer cleanupKeychain()
+	mockKS := setupTestXKMS(t)
+	defer cleanupXKMS()
 	_ = mockKS
 
 	// Create a test authenticator that requires valid token

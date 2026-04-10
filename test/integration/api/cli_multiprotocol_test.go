@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -35,15 +35,16 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC, MCP)
+	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
+	// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
 	needsTLS := strings.HasPrefix(serverURL, "https://") ||
 		strings.HasPrefix(serverURL, "grpc://") ||
 		strings.HasPrefix(serverURL, "grpcs://") ||
-		strings.HasPrefix(serverURL, "quic://") ||
-		strings.HasPrefix(serverURL, "mcp://")
+		strings.HasPrefix(serverURL, "quic://")
 
 	if needsTLS {
-		prefixArgs = append(prefixArgs, "--tls-insecure")
+		caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
+		prefixArgs = append(prefixArgs, "--tls-ca", caFile)
 	}
 
 	args = append(prefixArgs, args...)
@@ -523,7 +524,7 @@ func TestCLIServerFlagFormats(t *testing.T) {
 		name   string
 		format string
 	}{
-		{"unix socket", "unix:///var/run/keychain/keychain.sock"},
+		{"unix socket", "unix:///var/run/xkms/xkms.sock"},
 		{"http", "http://localhost:8443"},
 		{"https", "https://localhost:8443"},
 		{"grpc", "grpcs://localhost:9443"},
@@ -574,13 +575,15 @@ func TestCLILocalFlag(t *testing.T) {
 	t.Logf("CLI --protocol embedded flag works correctly for embedded mode")
 }
 
-// TestCLIMCPProtocol tests MCP protocol specifically
+// TestCLIMCPProtocol tests MCP protocol specifically.
+// The SDK MCP transport communicates using JSON-RPC 2.0 over raw TCP,
+// matching the MCP server protocol.
 func TestCLIMCPProtocol(t *testing.T) {
 	cfg := LoadTestConfig()
 	requireCLI(t, cfg)
 
 	if !cfg.IsProtocolAvailable(t, ProtocolMCP) {
-		t.Skip("MCP server not available")
+		t.Fatal("MCP server not available")
 	}
 
 	// Test backends list via MCP

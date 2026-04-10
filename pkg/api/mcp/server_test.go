@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -28,21 +29,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// setupTestKeychain initializes the global keychain service for tests
-func setupTestKeychain(t *testing.T) {
+// setupTestXKMS initializes the global xkms service for tests
+func setupTestXKMS(t *testing.T) {
 	t.Helper()
 
 	// Reset any previous state
-	keychain.Reset()
+	xkms.Reset()
 
 	// Create in-memory storage
 	keyStorage := storage.New()
@@ -55,15 +56,15 @@ func setupTestKeychain(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create keystore
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
 	require.NoError(t, err)
 
-	// Initialize the global keychain service with software backend as default
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	// Initialize the global xkms service with software backend as default
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software":  ks,
 			"symmetric": ks, // Use same backend for symmetric tests
 		},
@@ -72,14 +73,14 @@ func setupTestKeychain(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// cleanupKeychain resets the keychain after tests
-func cleanupKeychain() {
-	keychain.Reset()
+// cleanupXKMS resets the xkms after tests
+func cleanupXKMS() {
+	xkms.Reset()
 }
 
 func TestNewServer_Success(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	config := &Config{
 		Addr: "localhost:0",
@@ -96,8 +97,8 @@ func TestNewServer_Success(t *testing.T) {
 }
 
 func TestNewServer_DefaultAddress(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	config := &Config{} // Empty address
 
@@ -109,8 +110,8 @@ func TestNewServer_DefaultAddress(t *testing.T) {
 }
 
 func TestNewServer_WithAuthenticator(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	authenticator := auth.NewNoOpAuthenticator()
 	config := &Config{
@@ -126,8 +127,8 @@ func TestNewServer_WithAuthenticator(t *testing.T) {
 }
 
 func TestNewServer_WithRateLimiter(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	limiter := ratelimit.New(&ratelimit.Config{
 		Enabled:           true,
@@ -149,8 +150,8 @@ func TestNewServer_WithRateLimiter(t *testing.T) {
 }
 
 func TestNewServer_NotInitialized(t *testing.T) {
-	// Ensure keychain is not initialized
-	keychain.Reset()
+	// Ensure xkms is not initialized
+	xkms.Reset()
 
 	config := &Config{
 		Addr: "localhost:0",
@@ -158,12 +159,12 @@ func TestNewServer_NotInitialized(t *testing.T) {
 
 	_, err := NewServer(config)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "keychain service must be initialized")
+	assert.Contains(t, err.Error(), "xkms service must be initialized")
 }
 
 func TestServer_StartStop(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	config := &Config{
 		Addr: "localhost:0",
@@ -184,8 +185,8 @@ func TestServer_StartStop(t *testing.T) {
 }
 
 func TestServer_StartInvalidAddress(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	config := &Config{
 		Addr: "invalid:address:too:many:colons",
@@ -200,8 +201,8 @@ func TestServer_StartInvalidAddress(t *testing.T) {
 }
 
 func TestServer_HandleRequest_InvalidVersion(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -220,8 +221,8 @@ func TestServer_HandleRequest_InvalidVersion(t *testing.T) {
 }
 
 func TestServer_HandleRequest_MethodNotFound(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -239,8 +240,8 @@ func TestServer_HandleRequest_MethodNotFound(t *testing.T) {
 }
 
 func TestServer_HandleRequest_NoResponseForNotification(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -257,8 +258,8 @@ func TestServer_HandleRequest_NoResponseForNotification(t *testing.T) {
 }
 
 func TestServer_HandleRequest_WithCorrelationID(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -276,8 +277,8 @@ func TestServer_HandleRequest_WithCorrelationID(t *testing.T) {
 }
 
 func TestServer_HandleRequest_GeneratesCorrelationID(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -295,8 +296,8 @@ func TestServer_HandleRequest_GeneratesCorrelationID(t *testing.T) {
 }
 
 func TestServer_MakeErrorResponse(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -313,8 +314,8 @@ func TestServer_MakeErrorResponse(t *testing.T) {
 }
 
 func TestServer_NotifyEvent(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -361,8 +362,8 @@ func TestServer_NotifyEvent(t *testing.T) {
 }
 
 func TestServer_NotifyEvent_NoMatchingSubscribers(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -384,38 +385,16 @@ func TestServer_NotifyEvent_NoMatchingSubscribers(t *testing.T) {
 	server.NotifyEvent("key.created", "test-key", nil)
 }
 
-func TestServer_RouteFrostMethods_StubBehavior(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
-
-	server, err := NewServer(&Config{Addr: "localhost:0"})
-	require.NoError(t, err)
-
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "frost.generateNonces",
-		ID:      1,
-	}
-
-	result, frostErr, handled := server.routeFrostMethods(req)
-
-	// When built without frost tag, FROST methods return an error
-	assert.True(t, handled)
-	assert.Nil(t, result)
-	assert.Error(t, frostErr)
-	assert.Contains(t, frostErr.Error(), "FROST support not compiled")
-}
-
 func TestServer_RouteFrostMethods_NonFrostMethod(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
 
 	req := &JSONRPCRequest{
 		JSONRPC: "2.0",
-		Method:  "keychain.health",
+		Method:  "xkms.health",
 		ID:      1,
 	}
 
@@ -424,8 +403,8 @@ func TestServer_RouteFrostMethods_NonFrostMethod(t *testing.T) {
 }
 
 func TestServer_ClientConnection(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -470,8 +449,8 @@ func TestServer_ClientConnection(t *testing.T) {
 }
 
 func TestServer_BatchRequest(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -488,7 +467,7 @@ func TestServer_BatchRequest(t *testing.T) {
 	// Send batch request
 	batch := []JSONRPCRequest{
 		{JSONRPC: "2.0", Method: "health", ID: 1},
-		{JSONRPC: "2.0", Method: "keychain.listBackends", ID: 2},
+		{JSONRPC: "2.0", Method: "xkms.listBackends", ID: 2},
 	}
 	batchBytes, err := json.Marshal(batch)
 	require.NoError(t, err)
@@ -508,8 +487,8 @@ func TestServer_BatchRequest(t *testing.T) {
 }
 
 func TestServer_InvalidJSON(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -540,8 +519,8 @@ func TestServer_InvalidJSON(t *testing.T) {
 }
 
 func TestServer_WithTLS(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	// Generate a self-signed certificate for testing
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -579,9 +558,14 @@ func TestServer_WithTLS(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = server.Stop() }()
 
-	// Connect with TLS
+	// Connect with TLS — trust the self-signed server certificate
+	testCert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+	certPool := x509.NewCertPool()
+	certPool.AddCert(testCert)
+
 	clientTLSConfig := &tls.Config{
-		InsecureSkipVerify: true, // For testing only
+		RootCAs: certPool,
 	}
 
 	conn, err := tls.Dial("tcp", server.listener.Addr().String(), clientTLSConfig)
@@ -613,19 +597,19 @@ func TestServer_WithTLS(t *testing.T) {
 
 // TestServer_HandleRequest_AllMethods tests that handleRequest routes to various handlers
 func TestServer_HandleRequest_AllMethods(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
 
 	ctx := context.Background()
 
-	// Test keychain.listBackends through handleRequest
-	t.Run("routes keychain.listBackends", func(t *testing.T) {
+	// Test xkms.listBackends through handleRequest
+	t.Run("routes xkms.listBackends", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listBackends",
+			Method:  "xkms.listBackends",
 			ID:      1,
 		}
 
@@ -635,11 +619,11 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 		assert.NotNil(t, resp.Result)
 	})
 
-	// Test keychain.listKeys through handleRequest
-	t.Run("routes keychain.listKeys", func(t *testing.T) {
+	// Test xkms.listKeys through handleRequest
+	t.Run("routes xkms.listKeys", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listKeys",
+			Method:  "xkms.listKeys",
 			ID:      2,
 		}
 
@@ -648,11 +632,11 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	// Test keychain.listCerts through handleRequest
-	t.Run("routes keychain.listCerts", func(t *testing.T) {
+	// Test xkms.listCerts through handleRequest
+	t.Run("routes xkms.listCerts", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listCerts",
+			Method:  "xkms.listCerts",
 			ID:      3,
 		}
 
@@ -668,7 +652,7 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      4,
 		}
@@ -682,8 +666,8 @@ func TestServer_HandleRequest_AllMethods(t *testing.T) {
 
 // TestServer_HandleRequest_MoreMethods tests additional method routing
 func TestServer_HandleRequest_MoreMethods(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -701,7 +685,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 
 	genReq := &JSONRPCRequest{
 		JSONRPC: "2.0",
-		Method:  "keychain.generateKey",
+		Method:  "xkms.generateKey",
 		Params:  genParamsJSON,
 		ID:      1,
 	}
@@ -710,8 +694,8 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
-	// Test keychain.getKey through handleRequest
-	t.Run("routes keychain.getKey", func(t *testing.T) {
+	// Test xkms.getKey through handleRequest
+	t.Run("routes xkms.getKey", func(t *testing.T) {
 		params := map[string]string{
 			"key_id":  "test-req-key",
 			"backend": "software",
@@ -720,7 +704,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getKey",
+			Method:  "xkms.getKey",
 			Params:  paramsJSON,
 			ID:      2,
 		}
@@ -730,8 +714,8 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	// Test keychain.sign through handleRequest
-	t.Run("routes keychain.sign", func(t *testing.T) {
+	// Test xkms.sign through handleRequest
+	t.Run("routes xkms.sign", func(t *testing.T) {
 		params := SignParams{
 			KeyID:   "test-req-key",
 			Backend: "software",
@@ -742,7 +726,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -752,8 +736,8 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	// Test keychain.deleteKey through handleRequest
-	t.Run("routes keychain.deleteKey", func(t *testing.T) {
+	// Test xkms.deleteKey through handleRequest
+	t.Run("routes xkms.deleteKey", func(t *testing.T) {
 		// First generate a key to delete
 		delParams := map[string]interface{}{
 			"key_id":   "test-delete-req-key",
@@ -765,7 +749,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 
 		genReq := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  delParamsJSON,
 			ID:      10,
 		}
@@ -779,7 +763,7 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      4,
 		}
@@ -792,8 +776,8 @@ func TestServer_HandleRequest_MoreMethods(t *testing.T) {
 
 // TestServer_HandleRequest_EncryptDecrypt tests encrypt/decrypt routing
 func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -811,7 +795,7 @@ func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
 
 	genReq := &JSONRPCRequest{
 		JSONRPC: "2.0",
-		Method:  "keychain.generateKey",
+		Method:  "xkms.generateKey",
 		Params:  genParamsJSON,
 		ID:      1,
 	}
@@ -820,7 +804,7 @@ func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
-	t.Run("routes keychain.encrypt", func(t *testing.T) {
+	t.Run("routes xkms.encrypt", func(t *testing.T) {
 		params := EncryptParams{
 			KeyID:     "test-sym-req-key",
 			Backend:   "software",
@@ -830,7 +814,7 @@ func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      2,
 		}
@@ -843,8 +827,8 @@ func TestServer_HandleRequest_EncryptDecrypt(t *testing.T) {
 
 // TestServer_HandleRequest_AsymmetricOps tests asymmetric operations routing
 func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -862,7 +846,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 
 	genReq := &JSONRPCRequest{
 		JSONRPC: "2.0",
-		Method:  "keychain.generateKey",
+		Method:  "xkms.generateKey",
 		Params:  genParamsJSON,
 		ID:      1,
 	}
@@ -871,7 +855,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 	require.NotNil(t, resp)
 	assert.Nil(t, resp.Error)
 
-	t.Run("routes keychain.asymmetricEncrypt", func(t *testing.T) {
+	t.Run("routes xkms.asymmetricEncrypt", func(t *testing.T) {
 		params := AsymmetricEncryptParams{
 			KeyID:     "test-asym-req-key",
 			Backend:   "software",
@@ -881,7 +865,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      2,
 		}
@@ -891,7 +875,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.rotateKey", func(t *testing.T) {
+	t.Run("routes xkms.rotateKey", func(t *testing.T) {
 		params := RotateKeyParams{
 			KeyID:   "test-asym-req-key",
 			Backend: "software",
@@ -900,7 +884,7 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -913,8 +897,8 @@ func TestServer_HandleRequest_AsymmetricOps(t *testing.T) {
 
 // TestServer_HandleRequest_CertOps tests certificate operations routing
 func TestServer_HandleRequest_CertOps(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -939,7 +923,7 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 		Bytes: certDER,
 	})
 
-	t.Run("routes keychain.saveCert", func(t *testing.T) {
+	t.Run("routes xkms.saveCert", func(t *testing.T) {
 		params := SaveCertParams{
 			KeyID:   "test-cert-req",
 			CertPEM: string(certPEM),
@@ -948,7 +932,7 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -958,13 +942,13 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.getCert", func(t *testing.T) {
+	t.Run("routes xkms.getCert", func(t *testing.T) {
 		params := GetCertParams{KeyID: "test-cert-req"}
 		paramsJSON, _ := json.Marshal(params)
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCert",
+			Method:  "xkms.getCert",
 			Params:  paramsJSON,
 			ID:      2,
 		}
@@ -974,13 +958,13 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.certExists", func(t *testing.T) {
+	t.Run("routes xkms.certExists", func(t *testing.T) {
 		params := CertExistsParams{KeyID: "test-cert-req"}
 		paramsJSON, _ := json.Marshal(params)
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.certExists",
+			Method:  "xkms.certExists",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -990,13 +974,13 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.deleteCert", func(t *testing.T) {
+	t.Run("routes xkms.deleteCert", func(t *testing.T) {
 		params := DeleteCertParams{KeyID: "test-cert-req"}
 		paramsJSON, _ := json.Marshal(params)
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteCert",
+			Method:  "xkms.deleteCert",
 			Params:  paramsJSON,
 			ID:      4,
 		}
@@ -1009,8 +993,8 @@ func TestServer_HandleRequest_CertOps(t *testing.T) {
 
 // TestServer_HandleRequest_VerifyRoute tests verify method routing
 func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1028,7 +1012,7 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 
 	genReq := &JSONRPCRequest{
 		JSONRPC: "2.0",
-		Method:  "keychain.generateKey",
+		Method:  "xkms.generateKey",
 		Params:  genParamsJSON,
 		ID:      1,
 	}
@@ -1045,14 +1029,14 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 		Hash:    "SHA256",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 2}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 2}
 	signResp := server.handleRequest(ctx, signReq, nil)
 	require.NotNil(t, signResp)
 	require.Nil(t, signResp.Error)
 
 	signResult := signResp.Result.(SignResult)
 
-	t.Run("routes keychain.verify", func(t *testing.T) {
+	t.Run("routes xkms.verify", func(t *testing.T) {
 		params := VerifyParams{
 			KeyID:     "test-verify-route-key",
 			Backend:   "software",
@@ -1064,7 +1048,7 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -1077,8 +1061,8 @@ func TestServer_HandleRequest_VerifyRoute(t *testing.T) {
 
 // TestServer_HandleRequest_DecryptRoute tests decrypt method routing
 func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1096,7 +1080,7 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 
 	genReq := &JSONRPCRequest{
 		JSONRPC: "2.0",
-		Method:  "keychain.generateKey",
+		Method:  "xkms.generateKey",
 		Params:  genParamsJSON,
 		ID:      1,
 	}
@@ -1112,14 +1096,14 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 		Plaintext: []byte("secret data"),
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
-	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.encrypt", Params: encryptParamsJSON, ID: 2}
+	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 2}
 	encryptResp := server.handleRequest(ctx, encryptReq, nil)
 	require.NotNil(t, encryptResp)
 	require.Nil(t, encryptResp.Error)
 
 	encResult := encryptResp.Result.(EncryptResult)
 
-	t.Run("routes keychain.decrypt", func(t *testing.T) {
+	t.Run("routes xkms.decrypt", func(t *testing.T) {
 		params := DecryptParams{
 			KeyID:      "test-decrypt-route-key",
 			Backend:    "software",
@@ -1131,7 +1115,7 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -1144,8 +1128,8 @@ func TestServer_HandleRequest_DecryptRoute(t *testing.T) {
 
 // TestServer_HandleRequest_AsymmetricDecryptRoute tests asymmetric decrypt method routing
 func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1163,7 +1147,7 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 
 	genReq := &JSONRPCRequest{
 		JSONRPC: "2.0",
-		Method:  "keychain.generateKey",
+		Method:  "xkms.generateKey",
 		Params:  genParamsJSON,
 		ID:      1,
 	}
@@ -1184,10 +1168,10 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 
 	// Encrypt using standard PKCS1v15 which matches the decrypt path
 	plaintext := []byte("asymmetric secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPubKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
 	require.NoError(t, err)
 
-	t.Run("routes keychain.asymmetricDecrypt", func(t *testing.T) {
+	t.Run("routes xkms.asymmetricDecrypt", func(t *testing.T) {
 		params := AsymmetricDecryptParams{
 			KeyID:      "test-asym-dec-route-key",
 			Backend:    "software",
@@ -1197,7 +1181,7 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -1210,15 +1194,15 @@ func TestServer_HandleRequest_AsymmetricDecryptRoute(t *testing.T) {
 
 // TestServer_HandleRequest_ImportExportRoutes tests import/export method routing
 func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
 
 	ctx := context.Background()
 
-	t.Run("routes keychain.getImportParameters", func(t *testing.T) {
+	t.Run("routes xkms.getImportParameters", func(t *testing.T) {
 		params := GetImportParametersParams{
 			KeyID:     "test-import-route-key",
 			Backend:   "software",
@@ -1228,7 +1212,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getImportParameters",
+			Method:  "xkms.getImportParameters",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1238,7 +1222,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.wrapKey with invalid data", func(t *testing.T) {
+	t.Run("routes xkms.wrapKey with invalid data", func(t *testing.T) {
 		params := WrapKeyParams{
 			KeyMaterial:          []byte("key"),
 			WrappingPublicKeyPEM: "invalid",
@@ -1248,7 +1232,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.wrapKey",
+			Method:  "xkms.wrapKey",
 			Params:  paramsJSON,
 			ID:      2,
 		}
@@ -1258,7 +1242,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 		assert.NotNil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.importKey with invalid data", func(t *testing.T) {
+	t.Run("routes xkms.importKey with invalid data", func(t *testing.T) {
 		params := ImportKeyParams{
 			KeyID:      "test-import",
 			Backend:    "software",
@@ -1269,7 +1253,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.importKey",
+			Method:  "xkms.importKey",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -1279,7 +1263,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 		assert.NotNil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.exportKey with non-existent key", func(t *testing.T) {
+	t.Run("routes xkms.exportKey with non-existent key", func(t *testing.T) {
 		params := ExportKeyParams{
 			KeyID:     "non-existent-export-route",
 			Backend:   "software",
@@ -1289,7 +1273,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.exportKey",
+			Method:  "xkms.exportKey",
 			Params:  paramsJSON,
 			ID:      4,
 		}
@@ -1299,7 +1283,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 		assert.NotNil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.copyKey with missing params", func(t *testing.T) {
+	t.Run("routes xkms.copyKey with missing params", func(t *testing.T) {
 		params := CopyKeyParams{
 			SourceBackend: "software",
 			// Missing other required params
@@ -1308,7 +1292,7 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      5,
 		}
@@ -1321,8 +1305,8 @@ func TestServer_HandleRequest_ImportExportRoutes(t *testing.T) {
 
 // TestServer_HandleRequest_CertChainRoutes tests certificate chain method routing
 func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1347,7 +1331,7 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 		Bytes: certDER,
 	})
 
-	t.Run("routes keychain.saveCertChain", func(t *testing.T) {
+	t.Run("routes xkms.saveCertChain", func(t *testing.T) {
 		params := SaveCertChainParams{
 			KeyID:     "test-chain-route",
 			ChainPEMs: []string{string(certPEM)},
@@ -1356,7 +1340,7 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1366,13 +1350,13 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.getCertChain", func(t *testing.T) {
+	t.Run("routes xkms.getCertChain", func(t *testing.T) {
 		params := GetCertChainParams{KeyID: "test-chain-route"}
 		paramsJSON, _ := json.Marshal(params)
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCertChain",
+			Method:  "xkms.getCertChain",
 			Params:  paramsJSON,
 			ID:      2,
 		}
@@ -1382,7 +1366,7 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 		assert.Nil(t, resp.Error)
 	})
 
-	t.Run("routes keychain.getTLSCertificate with missing key", func(t *testing.T) {
+	t.Run("routes xkms.getTLSCertificate with missing key", func(t *testing.T) {
 		params := GetTLSCertificateParams{
 			KeyID:   "non-existent-tls-key",
 			Backend: "software",
@@ -1391,7 +1375,7 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      3,
 		}
@@ -1404,8 +1388,8 @@ func TestServer_HandleRequest_CertChainRoutes(t *testing.T) {
 
 // TestServer_HandleRequest_Subscribe tests subscribe method routing
 func TestServer_HandleRequest_Subscribe(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1417,7 +1401,7 @@ func TestServer_HandleRequest_Subscribe(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("routes keychain.subscribe", func(t *testing.T) {
+	t.Run("routes xkms.subscribe", func(t *testing.T) {
 		params := SubscribeParams{
 			Events: []string{"key.created", "key.deleted"},
 		}
@@ -1425,7 +1409,7 @@ func TestServer_HandleRequest_Subscribe(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.subscribe",
+			Method:  "xkms.subscribe",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1438,8 +1422,8 @@ func TestServer_HandleRequest_Subscribe(t *testing.T) {
 
 // TestServer_BatchWithNotifications tests batch requests with notifications
 func TestServer_BatchWithNotifications(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1478,8 +1462,8 @@ func TestServer_BatchWithNotifications(t *testing.T) {
 
 // TestServer_StopWithTLS tests stopping server with TLS configuration
 func TestServer_StopWithTLS(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	// Generate a self-signed certificate for testing
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -1523,8 +1507,8 @@ func TestServer_StopWithTLS(t *testing.T) {
 
 // TestServer_ConnectionWithRateLimit tests connection handling with rate limiter
 func TestServer_ConnectionWithRateLimit(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	limiter := ratelimit.New(&ratelimit.Config{
 		Enabled:           true,
@@ -1574,8 +1558,8 @@ func TestServer_ConnectionWithRateLimit(t *testing.T) {
 
 // TestServer_EmptyBatchRequest tests handling of empty batch requests
 func TestServer_EmptyBatchRequest(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1600,8 +1584,8 @@ func TestServer_EmptyBatchRequest(t *testing.T) {
 
 // TestServer_InvalidBatchRequest tests handling of invalid batch JSON
 func TestServer_InvalidBatchRequest(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1632,8 +1616,8 @@ func TestServer_InvalidBatchRequest(t *testing.T) {
 
 // TestServer_WithMTLS tests mTLS client certificate authentication
 func TestServer_WithMTLS(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	// Generate CA certificate
 	caPrivKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -1722,9 +1706,8 @@ func TestServer_WithMTLS(t *testing.T) {
 
 	// Client TLS config with client certificate
 	clientTLSConfig := &tls.Config{
-		Certificates:       []tls.Certificate{clientTLSCert},
-		RootCAs:            caPool,
-		InsecureSkipVerify: true, // For testing only
+		Certificates: []tls.Certificate{clientTLSCert},
+		RootCAs:      caPool,
 	}
 
 	conn, err := tls.Dial("tcp", server.listener.Addr().String(), clientTLSConfig)
@@ -1756,8 +1739,8 @@ func TestServer_WithMTLS(t *testing.T) {
 
 // TestServer_NotifyEvent_ClosedConnection tests NotifyEvent with a closed connection
 func TestServer_NotifyEvent_ClosedConnection(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1783,8 +1766,8 @@ func TestServer_NotifyEvent_ClosedConnection(t *testing.T) {
 
 // TestServer_StopWithoutStart tests stopping a server that was never started
 func TestServer_StopWithoutStart(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1796,8 +1779,8 @@ func TestServer_StopWithoutStart(t *testing.T) {
 
 // TestServer_HandleRequest_FrostMethodWithError tests FROST method that returns error
 func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -1817,38 +1800,10 @@ func TestServer_HandleRequest_FrostMethodWithError(t *testing.T) {
 	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
 }
 
-// TestServer_HandleRequest_FrostMethodAsNotification tests FROST method as notification (no ID)
-// Note: According to the actual implementation in server.go (lines 298-303), FROST methods
-// return an error response even for notifications when an error occurs.
-func TestServer_HandleRequest_FrostMethodAsNotification(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
-
-	server, err := NewServer(&Config{Addr: "localhost:0"})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Test a FROST method as a notification (no ID)
-	// The FROST stub returns an error, and the server returns an error response
-	// even for notifications in this case (see server.go lines 298-303)
-	req := &JSONRPCRequest{
-		JSONRPC: "2.0",
-		Method:  "frost.someMethod",
-		// No ID = notification
-	}
-
-	resp := server.handleRequest(ctx, req, nil)
-	// FROST methods that fail return an error response even for notifications
-	require.NotNil(t, resp)
-	assert.NotNil(t, resp.Error)
-	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
-}
-
 // TestServer_HandleRequest_WithAuthenticatedIdentity tests request with identity in context
 func TestServer_HandleRequest_WithAuthenticatedIdentity(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)

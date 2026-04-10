@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -59,7 +59,7 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			expectError: false,
 			checkFields: func(t *testing.T, c *Config) {
-				assert.Equal(t, "go-keychain", c.RelyingPartyID)
+				assert.Equal(t, "go-xkms", c.RelyingPartyID)
 			},
 		},
 	}
@@ -146,8 +146,8 @@ func TestCreateClientDataHash(t *testing.T) {
 func TestEnrollmentConfig_Defaults(t *testing.T) {
 	config := DefaultEnrollmentConfig("testuser")
 
-	assert.Equal(t, "go-keychain", config.RelyingParty.ID)
-	assert.Equal(t, "Go Keychain", config.RelyingParty.Name)
+	assert.Equal(t, "go-xkms", config.RelyingParty.ID)
+	assert.Equal(t, "Go xKMS", config.RelyingParty.Name)
 	assert.Equal(t, "testuser", config.User.Name)
 	assert.Equal(t, "testuser", config.User.DisplayName)
 	assert.False(t, config.RequireUserVerification)
@@ -160,7 +160,7 @@ func TestAuthenticationConfig_Defaults(t *testing.T) {
 
 	config := DefaultAuthenticationConfig(credID, salt)
 
-	assert.Equal(t, "go-keychain", config.RelyingPartyID)
+	assert.Equal(t, "go-xkms", config.RelyingPartyID)
 	assert.Equal(t, credID, config.CredentialID)
 	assert.Equal(t, salt, config.Salt)
 	assert.False(t, config.RequireUserVerification)

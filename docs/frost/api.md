@@ -6,8 +6,8 @@ This document provides comprehensive Go API documentation for the FROST backend.
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 ```
 
@@ -576,15 +576,15 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
     // Create storage
-    publicStorage := file.NewBackend("./frost-data/public")
-    secretStorage := file.NewBackend("./frost-data/secret")
+    publicStorage := file.New("./frost-data/public")
+    secretStorage := file.New("./frost-data/secret")
 
     // Create backend
     backend, err := frost.NewBackend(&frost.Config{
@@ -649,9 +649,9 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Simulates distributed signing with 3 participants
@@ -673,8 +673,8 @@ func main() {
     for i := range participants {
         p := &participants[i]
         backend, err := frost.NewBackend(&frost.Config{
-            PublicStorage:       file.NewBackend(fmt.Sprintf("./frost-data/%s/public", p.name)),
-            SecretBackend:       file.NewBackend(fmt.Sprintf("./frost-data/%s/secret", p.name)),
+            PublicStorage:       file.New(fmt.Sprintf("./frost-data/%s/public", p.name)),
+            SecretBackend:       file.New(fmt.Sprintf("./frost-data/%s/secret", p.name)),
             Algorithm:           types.FrostAlgorithmSecp256k1,
             ParticipantID:       p.id,
             DefaultThreshold:    2,
@@ -744,10 +744,10 @@ package main
 import (
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/tpm2"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
@@ -762,7 +762,7 @@ func main() {
 
     // Create FROST backend with TPM-protected secrets
     backend, err := frost.NewBackend(&frost.Config{
-        PublicStorage:       file.NewBackend("/var/lib/frost/public"),
+        PublicStorage:       file.New("/var/lib/frost/public"),
         SecretBackend:       tpmBackend,
         Algorithm:           types.FrostAlgorithmP256,
         ParticipantID:       1,
@@ -787,9 +787,9 @@ package main
 import (
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // MyDKG implements the KeyGenerator interface
@@ -805,8 +805,8 @@ func (d *MyDKG) Generate(config frost.FrostConfig) (*frost.KeyPackage, *frost.Pu
 
 func main() {
     backend, err := frost.NewBackend(&frost.Config{
-        PublicStorage: file.NewBackend("./frost-data/public"),
-        SecretBackend: file.NewBackend("./frost-data/secret"),
+        PublicStorage: file.New("./frost-data/public"),
+        SecretBackend: file.New("./frost-data/secret"),
         DKG:           &MyDKG{}, // Use custom DKG
         Algorithm:     types.FrostAlgorithmEd25519,
     })

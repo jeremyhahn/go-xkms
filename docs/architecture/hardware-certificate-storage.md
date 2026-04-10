@@ -6,7 +6,7 @@ This document describes the hardware certificate storage architecture for PKCS#1
 
 ### Current Architecture
 
-The go-keychain repository follows a clean separation of concerns:
+The go-xkms repository follows a clean separation of concerns:
 
 ```
 Backend (keys) -> CertificateStorage (certificates)
@@ -375,7 +375,7 @@ backend.Initialize(soPIN, userPIN)
 backend.Login()
 
 certStorage, _ := file.New("/var/lib/certs")
-keychain := keychain.New(backend, certStorage)
+kc := xkms.New(backend, certStorage)
 ```
 
 ### Example 2: PKCS#11 with Hardware Storage
@@ -392,7 +392,7 @@ certConfig := &pkcs11.CertStorageConfig{
 }
 
 certStorage, _ := backend.CreateCertificateStorage(certConfig)
-keychain := keychain.New(backend, certStorage)
+kc := xkms.New(backend, certStorage)
 ```
 
 ### Example 3: TPM2 with Hybrid Storage
@@ -411,7 +411,7 @@ certConfig := &tpm2.CertStorageConfig{
 }
 
 certStorage, _ := ks.CreateCertificateStorage(certConfig)
-keychain := keychain.New(ks, certStorage)
+kc := xkms.New(ks, certStorage)
 ```
 
 ### Example 4: Migration from External to Hardware

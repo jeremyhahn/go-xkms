@@ -5,8 +5,8 @@ package integration
 import (
 	"testing"
 
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // setupPolicyTPM provisions TPM for policy session testing
@@ -31,7 +31,7 @@ func TestIntegration_PlatformPolicySession_Create(t *testing.T) {
 
 	t.Run("CreatePolicySession", func(t *testing.T) {
 		// Create platform policy session
-		session, closer, err := tpmInstance.PlatformPolicySession()
+		session, closer, err := tpmInstance.PlatformPolicySession(nil)
 		if err != nil {
 			t.Fatalf("Failed to create platform policy session: %v", err)
 		}
@@ -56,7 +56,7 @@ func TestIntegration_PlatformPolicySession_Create(t *testing.T) {
 		const numSessions = 3
 
 		for i := 0; i < numSessions; i++ {
-			session, closer, err := tpmInstance.PlatformPolicySession()
+			session, closer, err := tpmInstance.PlatformPolicySession(nil)
 			if err != nil {
 				t.Fatalf("Failed to create policy session %d: %v", i, err)
 			}
@@ -87,7 +87,7 @@ func TestIntegration_PlatformPolicySession_PCRPolicy(t *testing.T) {
 
 	t.Run("PCRPolicyDigest", func(t *testing.T) {
 		// Create policy session
-		session, closer, err := tpmInstance.PlatformPolicySession()
+		session, closer, err := tpmInstance.PlatformPolicySession(nil)
 		if err != nil {
 			t.Fatalf("Failed to create policy session: %v", err)
 		}
@@ -95,7 +95,10 @@ func TestIntegration_PlatformPolicySession_PCRPolicy(t *testing.T) {
 
 		// The PlatformPolicySession should have set up PCR policy
 		// Verify the policy digest is set
-		policyDigest := tpmInstance.PlatformPolicyDigest()
+		policyDigest, pdErr := tpmInstance.PlatformPolicyDigest()
+		if pdErr != nil {
+			t.Fatalf("PlatformPolicyDigest failed: %v", pdErr)
+		}
 		if len(policyDigest.Buffer) == 0 {
 			t.Error("Platform policy digest is empty")
 		}
@@ -107,7 +110,7 @@ func TestIntegration_PlatformPolicySession_PCRPolicy(t *testing.T) {
 
 	t.Run("PolicySessionReuse", func(t *testing.T) {
 		// Create first session
-		session1, closer1, err := tpmInstance.PlatformPolicySession()
+		session1, closer1, err := tpmInstance.PlatformPolicySession(nil)
 		if err != nil {
 			t.Fatalf("Failed to create first policy session: %v", err)
 		}
@@ -121,7 +124,7 @@ func TestIntegration_PlatformPolicySession_PCRPolicy(t *testing.T) {
 		}
 
 		// Create second session
-		session2, closer2, err := tpmInstance.PlatformPolicySession()
+		session2, closer2, err := tpmInstance.PlatformPolicySession(nil)
 		if err != nil {
 			t.Fatalf("Failed to create second policy session: %v", err)
 		}
@@ -145,7 +148,7 @@ func TestIntegration_PlatformPolicySession_ErrorHandling(t *testing.T) {
 	defer cleanup()
 
 	t.Run("DoubleClose", func(t *testing.T) {
-		session, closer, err := tpmInstance.PlatformPolicySession()
+		session, closer, err := tpmInstance.PlatformPolicySession(nil)
 		if err != nil {
 			t.Fatalf("Failed to create policy session: %v", err)
 		}
@@ -371,7 +374,7 @@ func TestIntegration_Session_Lifecycle(t *testing.T) {
 	t.Run("CompletePolicySessionLifecycle", func(t *testing.T) {
 		// Step 1: Create session
 		t.Log("Step 1: Creating platform policy session...")
-		session, closer, err := tpmInstance.PlatformPolicySession()
+		session, closer, err := tpmInstance.PlatformPolicySession(nil)
 		if err != nil {
 			t.Fatalf("Failed to create session: %v", err)
 		}
@@ -388,7 +391,11 @@ func TestIntegration_Session_Lifecycle(t *testing.T) {
 
 		// Step 3: Get policy digest
 		t.Log("Step 3: Getting policy digest...")
-		policyDigest := tpmInstance.PlatformPolicyDigest()
+		policyDigest, pdErr := tpmInstance.PlatformPolicyDigest()
+		if pdErr != nil {
+			closer()
+			t.Fatalf("PlatformPolicyDigest failed: %v", pdErr)
+		}
 		if len(policyDigest.Buffer) == 0 {
 			closer()
 			t.Error("Policy digest is empty")
@@ -445,7 +452,7 @@ func TestIntegration_Session_ConcurrentAccess(t *testing.T) {
 		const numIterations = 5
 
 		for i := 0; i < numIterations; i++ {
-			session, closer, err := tpmInstance.PlatformPolicySession()
+			session, closer, err := tpmInstance.PlatformPolicySession(nil)
 			if err != nil {
 				t.Fatalf("Iteration %d: Failed to create session: %v", i, err)
 			}
@@ -480,7 +487,7 @@ func TestIntegration_Session_PasswordAuth(t *testing.T) {
 		}
 
 		// Create key attributes with password
-		password := types.NewClearPassword([]byte("test-password"))
+		password := types.NewPassword([]byte("test-password"))
 		keyAttrs := &types.KeyAttributes{
 			CN:       "test-password-session",
 			Parent:   srkAttrs,

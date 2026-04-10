@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TestListKeys_ReadDirError tests ListKeys when os.ReadDir fails with non-NotExist error
@@ -207,8 +207,8 @@ func TestConfig_Validate_AllDefaults(t *testing.T) {
 	if config.PlatformPCRBank != "SHA256" {
 		t.Errorf("PlatformPCRBank: expected SHA256, got %s", config.PlatformPCRBank)
 	}
-	if config.CN != "keychain" {
-		t.Errorf("CN: expected keychain, got %s", config.CN)
+	if config.CN != "xkms" {
+		t.Errorf("CN: expected xkms, got %s", config.CN)
 	}
 }
 

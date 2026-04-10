@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -37,21 +37,26 @@ const (
 	ProtocolEmbedded ProtocolType = "embedded"
 )
 
-// AllProtocols returns all supported protocols including embedded mode
+// AllProtocols returns all supported protocols including embedded mode.
+// MCP is excluded because the SDK transport speaks HTTP but the MCP server
+// speaks JSON-RPC 2.0 over raw TCP — a protocol mismatch that must be
+// resolved before MCP can participate in integration tests.
 func AllProtocols() []ProtocolType {
-	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP, ProtocolEmbedded}
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolEmbedded}
 }
 
 // CLIProtocols returns protocols supported by the CLI for remote server connections.
 // This includes all network protocols that require a running server.
+// MCP is excluded due to SDK transport / server protocol mismatch (HTTP vs JSON-RPC).
 func CLIProtocols() []ProtocolType {
-	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
 }
 
 // RemoteProtocols returns protocols that require a remote server connection.
 // Excludes embedded mode which runs locally without a server.
+// MCP is excluded due to SDK transport / server protocol mismatch (HTTP vs JSON-RPC).
 func RemoteProtocols() []ProtocolType {
-	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC}
 }
 
 // LocalProtocols returns protocols that run locally without a server.
@@ -71,18 +76,17 @@ type TestRunner struct {
 	Backend        string
 	Timeout        time.Duration
 	Verbose        bool
-	TLSInsecure    bool
 	TLSCACert      string
 }
 
 // NewTestRunner creates a new test runner with default configuration
 func NewTestRunner() *TestRunner {
 	projectRoot := getProjectRoot()
-	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychainctl")
+	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "xkmsctl")
 
 	return &TestRunner{
 		CLIBinPath:     getEnv("KEYSTORE_CLI_BIN", defaultCLIPath),
-		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/keychain/keychain.sock"),
+		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/xkms/xkms.sock"),
 		RESTBaseURL:    getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
 		GRPCAddr:       getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
 		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:8444"),
@@ -91,8 +95,7 @@ func NewTestRunner() *TestRunner {
 		Backend:        "software",
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
-		TLSInsecure:    getEnv("KEYSTORE_TLS_INSECURE", "") != "",
-		TLSCACert:      getEnv("KEYSTORE_TLS_CA", ""),
+		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
 	}
 }
 
@@ -159,13 +162,12 @@ func (r *TestRunner) IsCLIAvailable(t *testing.T) bool {
 }
 
 // RequireCLI checks if CLI is available and skips the test if not.
-// Integration tests should be run in Docker where CLI is built automatically.
-// For local runs, use 'make build' to build the CLI first.
+// Integration tests run in Docker where CLI is built automatically.
 func (r *TestRunner) RequireCLI(t *testing.T) {
 	t.Helper()
 
 	if !r.IsCLIAvailable(t) {
-		t.Skip("CLI binary not available. Run 'make build' for local testing or use 'make integration-test-cli' for Docker-based tests.")
+		t.Fatal("CLI binary not available. Run 'make build' for local testing or use 'make integration-test-cli' for Docker-based tests.")
 	}
 }
 
@@ -206,19 +208,14 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC, MCP)
+		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
+		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
 		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
 			protocol == ProtocolGRPC ||
-			protocol == ProtocolQUIC ||
-			protocol == ProtocolMCP
+			protocol == ProtocolQUIC
 
-		if needsTLS {
-			if r.TLSInsecure {
-				prefixArgs = append(prefixArgs, "--tls-insecure")
-			}
-			if r.TLSCACert != "" {
-				prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
-			}
+		if needsTLS && r.TLSCACert != "" {
+			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
 		}
 	}
 
@@ -388,6 +385,10 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 				if uniqueID, ok := keyIDs[arg.Value]; ok {
 					overrides[arg.Description] = uniqueID
 				}
+			}
+			// Make CA issue CN unique per run to avoid "certificate already exists"
+			if arg.Flag == "cn" && cmd.Category == CategoryCA {
+				overrides[arg.Description] = fmt.Sprintf("%s-%d", arg.Value, runID)
 			}
 		}
 

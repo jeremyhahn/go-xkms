@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package certstore
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -43,7 +44,7 @@ func newMockCertStorage() *mockCertStorage {
 	}
 }
 
-func (m *mockCertStorage) SaveCert(id string, cert *x509.Certificate) error {
+func (m *mockCertStorage) SaveCert(ctx context.Context, id string, cert *x509.Certificate) error {
 	if m.closed {
 		return ErrStorageClosed
 	}
@@ -51,7 +52,7 @@ func (m *mockCertStorage) SaveCert(id string, cert *x509.Certificate) error {
 	return nil
 }
 
-func (m *mockCertStorage) GetCert(id string) (*x509.Certificate, error) {
+func (m *mockCertStorage) GetCert(ctx context.Context, id string) (*x509.Certificate, error) {
 	if m.closed {
 		return nil, ErrStorageClosed
 	}
@@ -62,7 +63,7 @@ func (m *mockCertStorage) GetCert(id string) (*x509.Certificate, error) {
 	return cert, nil
 }
 
-func (m *mockCertStorage) DeleteCert(id string) error {
+func (m *mockCertStorage) DeleteCert(ctx context.Context, id string) error {
 	if m.closed {
 		return ErrStorageClosed
 	}
@@ -74,7 +75,7 @@ func (m *mockCertStorage) DeleteCert(id string) error {
 	return nil
 }
 
-func (m *mockCertStorage) SaveCertChain(id string, chain []*x509.Certificate) error {
+func (m *mockCertStorage) SaveCertChain(ctx context.Context, id string, chain []*x509.Certificate) error {
 	if m.closed {
 		return ErrStorageClosed
 	}
@@ -82,7 +83,7 @@ func (m *mockCertStorage) SaveCertChain(id string, chain []*x509.Certificate) er
 	return nil
 }
 
-func (m *mockCertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
+func (m *mockCertStorage) GetCertChain(ctx context.Context, id string) ([]*x509.Certificate, error) {
 	if m.closed {
 		return nil, ErrStorageClosed
 	}
@@ -93,7 +94,7 @@ func (m *mockCertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
 	return chain, nil
 }
 
-func (m *mockCertStorage) ListCerts() ([]string, error) {
+func (m *mockCertStorage) ListCerts(ctx context.Context) ([]string, error) {
 	if m.closed {
 		return nil, ErrStorageClosed
 	}
@@ -104,7 +105,7 @@ func (m *mockCertStorage) ListCerts() ([]string, error) {
 	return ids, nil
 }
 
-func (m *mockCertStorage) CertExists(id string) (bool, error) {
+func (m *mockCertStorage) CertExists(ctx context.Context, id string) (bool, error) {
 	if m.closed {
 		return false, ErrStorageClosed
 	}

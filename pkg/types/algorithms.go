@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -483,6 +483,78 @@ func (k CLIKeyType) ToKeyType() KeyType {
 		return KeyTypeSecret
 	default:
 		return 0
+	}
+}
+
+// =============================================================================
+// Key Type String Constants (YAML/Config level)
+// =============================================================================
+// KeyTypeString represents key type identifiers used in YAML/JSON configuration.
+// These are converted to the internal KeyType enum via ParseKeyType().
+
+// KeyTypeString represents key type string identifiers for configuration.
+type KeyTypeString string
+
+const (
+	KeyTypeStringAttestation KeyTypeString = "attestation"
+	KeyTypeStringCA          KeyTypeString = "ca"
+	KeyTypeStringEncryption  KeyTypeString = "encryption"
+	KeyTypeStringEndorsement KeyTypeString = "endorsement"
+	KeyTypeStringHMAC        KeyTypeString = "hmac"
+	KeyTypeStringIDevID      KeyTypeString = "idevid"
+	KeyTypeStringLDevID      KeyTypeString = "ldevid"
+	KeyTypeStringSecret      KeyTypeString = "secret"
+	KeyTypeStringSigning     KeyTypeString = "signing"
+	KeyTypeStringStorage     KeyTypeString = "storage"
+	KeyTypeStringTLS         KeyTypeString = "tls"
+	KeyTypeStringTPM         KeyTypeString = "tpm"
+)
+
+// String returns the string representation.
+func (k KeyTypeString) String() string {
+	return string(k)
+}
+
+// Lower returns the lowercase form.
+func (k KeyTypeString) Lower() string {
+	return strings.ToLower(string(k))
+}
+
+// Equals performs case-insensitive comparison.
+func (k KeyTypeString) Equals(s string) bool {
+	return strings.EqualFold(string(k), s)
+}
+
+// ParseKeyTypeString converts a string to KeyTypeString.
+func ParseKeyTypeString(s string) KeyTypeString {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case "attestation":
+		return KeyTypeStringAttestation
+	case "ca":
+		return KeyTypeStringCA
+	case "encryption":
+		return KeyTypeStringEncryption
+	case "endorsement":
+		return KeyTypeStringEndorsement
+	case "hmac":
+		return KeyTypeStringHMAC
+	case "idevid":
+		return KeyTypeStringIDevID
+	case "ldevid":
+		return KeyTypeStringLDevID
+	case "secret":
+		return KeyTypeStringSecret
+	case "signing":
+		return KeyTypeStringSigning
+	case "storage":
+		return KeyTypeStringStorage
+	case "tls":
+		return KeyTypeStringTLS
+	case "tpm":
+		return KeyTypeStringTPM
+	default:
+		return ""
 	}
 }
 

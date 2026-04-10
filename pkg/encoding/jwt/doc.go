@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -12,9 +12,9 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package jwt provides JSON Web Token (JWT) signing and verification
-// using cryptographic keys from the go-keychain library.
+// using cryptographic keys from the go-xkms library.
 //
-// This package integrates the golang-jwt/jwt library with go-keychain,
+// This package integrates the golang-jwt/jwt library with go-xkms,
 // allowing you to sign and verify JWTs using hardware-backed keys
 // (HSM, TPM, cloud KMS) without exposing private key material.
 //
@@ -46,14 +46,14 @@
 //	    log.Fatal("invalid token")
 //	}
 //
-// # Keychain Integration
+// # xKMS Integration
 //
-// The package provides KeychainSigner and KeychainVerifier for
-// signing and verifying JWTs using keys from the keychain.
+// The package provides XKMSSigner and XKMSVerifier for
+// signing and verifying JWTs using keys from the xkms.
 //
-// Signing with a keychain key:
+// Signing with a xkms key:
 //
-//	signer := jwt.NewKeychainSigner(
+//	signer := jwt.NewXKMSSigner(
 //	    func(keyID string) (crypto.PrivateKey, error) {
 //	        return keystore.GetKeyByID(keyID)
 //	    },
@@ -70,7 +70,7 @@
 //
 // Verifying with automatic key lookup:
 //
-//	verifier := jwt.NewKeychainVerifier(func(keyID string) (crypto.PrivateKey, error) {
+//	verifier := jwt.NewXKMSVerifier(func(keyID string) (crypto.PrivateKey, error) {
 //	    return keystore.GetKeyByID(keyID)
 //	})
 //
@@ -119,7 +119,7 @@
 //
 //	opts := &jwt.VerifyOptions{
 //	    ValidateIssuer:   true,
-//	    ExpectedIssuer:   "go-keychain",
+//	    ExpectedIssuer:   "go-xkms",
 //	    ValidateAudience: true,
 //	    ExpectedAudience: "my-app",
 //	}
@@ -127,7 +127,7 @@
 //
 // # Hardware-Backed Keys
 //
-// The keychain integration allows signing JWTs with keys that never
+// The xkms integration allows signing JWTs with keys that never
 // leave hardware security modules:
 //
 //	// Sign with TPM-backed key

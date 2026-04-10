@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/attestation"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // AttestKey generates an attestation statement for a key stored in an HSM.
@@ -51,7 +51,7 @@ func (b *Backend) AttestKey(attrs *types.KeyAttributes, nonce []byte) (interface
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.ctx == nil {
+	if b.pool == nil {
 		return nil, errors.New("pkcs11: HSM not initialized")
 	}
 
@@ -191,7 +191,7 @@ func (b *Backend) findKeyObject(attrs *types.KeyAttributes) (interface{}, error)
 
 // getPublicKeyFromObject extracts the public key from a PKCS#11 object
 func (b *Backend) getPublicKeyFromObject(obj interface{}) (crypto.PublicKey, error) {
-	// This is a placeholder - actual implementation would use crypto11
+	// This is a placeholder - actual implementation would use raw PKCS#11
 	// or PKCS#11 APIs to extract the public key from an object
 	return nil, fmt.Errorf("pkcs11: public key extraction not implemented")
 }

@@ -1,0 +1,93 @@
+# Integration test xkmsd configuration
+# Uses shared socket volume for devcontainer communication
+
+server:
+  host: "0.0.0.0"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 8445
+
+protocols:
+  unix: true
+  rest: true
+  grpc: true
+  quic: true
+  mcp: true
+
+unix:
+  enabled: true
+  socket_path: "/var/run/xkms/xkms.sock"
+  socket_mode: "0666"
+  protocol: "grpc"
+
+logging:
+  level: "debug"
+  format: "json"
+
+tls:
+  enabled: true
+  server_cn: "xkms-server"
+
+auth:
+  enabled: false
+  type: "noop"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: true
+  path: "/metrics"
+  port: 9090
+
+health:
+  enabled: true
+  path: "/health"
+
+storage:
+  backend: "file"
+  path: "/data/storage"
+
+rng:
+  mode: "software"
+  fallback_mode: "software"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "/data/keys"
+
+  # SoftHSM2 backend for pkcs11 backend testing
+  # Uses SoftHSM installed in the xkms-server container
+  pkcs11:
+    enabled: true
+    library: "/usr/lib/softhsm/libsofthsm2.so"
+    token: "xkms-test"
+    pin: "1234"
+
+# Certificate Authority configuration
+# Auto-initialized on first startup, loaded on subsequent startups
+ca:
+  identity:
+    - subject:
+        cn: "Integration Test Root CA"
+        organization: "go-xkms Integration Tests"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc_curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key_type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "/data/ca"

@@ -1,12 +1,16 @@
 package tpm2
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // CertificateToTPMPublic converts an X.509 certificate's public key to a TPM public structure.
@@ -110,8 +114,8 @@ func ecdsaPublicKeyToTPMPublic(pub *ecdsa.PublicKey) (*tpm2.TPMTPublic, error) {
 
 	// Pad coordinates to curve size
 	byteLen := (pub.Curve.Params().BitSize + 7) / 8
-	xBytes := pub.X.Bytes()
-	yBytes := pub.Y.Bytes()
+	xBytes := pub.X.Bytes() //nolint:staticcheck // TPM2 wire format requires raw EC coordinates
+	yBytes := pub.Y.Bytes() //nolint:staticcheck // TPM2 wire format requires raw EC coordinates
 
 	// Pad to fixed size
 	xPadded := make([]byte, byteLen)
@@ -143,4 +147,98 @@ func ecdsaPublicKeyToTPMPublic(pub *ecdsa.PublicKey) (*tpm2.TPMTPublic, error) {
 			},
 		),
 	}, nil
+}
+
+// writeCertToStore writes a certificate to the certificate store.
+func (tpm *TPM2) writeCertToStore(keyAttrs *types.KeyAttributes, cert *x509.Certificate) error {
+	if tpm.certStore == nil {
+		return ErrCertStoreNotConfigured
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
+
+	_, err := tpm.certStore.ImportCertificate(keyAttrs, certPEM)
+	return err
+}
+
+// validateCertPublicKey validates that the certificate's public key matches the TPM key.
+func validateCertPublicKey(cert *x509.Certificate, keyAttrs *types.KeyAttributes) error {
+	if keyAttrs == nil || keyAttrs.TPMAttributes == nil {
+		return ErrInvalidKeyAttributes
+	}
+
+	// Get the public key bytes from the TPM key
+	tpmPubBytes := keyAttrs.TPMAttributes.BPublic.Bytes()
+
+	// For now, we verify by comparing the public key from the certificate
+	// with the TPM's public area. This is a basic validation.
+	certPubDER, err := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	if err != nil {
+		return err
+	}
+
+	// The TPM public area format is different from PKIX, so we need to
+	// reconstruct the public key from the TPM public area and compare.
+	pub := keyAttrs.TPMAttributes.Public
+
+	var reconstructedPubDER []byte
+
+	switch pub.Type {
+	case tpm2.TPMAlgRSA:
+		rsaDetail, err := pub.Parameters.RSADetail()
+		if err != nil {
+			return err
+		}
+		rsaUnique, err := pub.Unique.RSA()
+		if err != nil {
+			return err
+		}
+		rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
+		if err != nil {
+			return err
+		}
+		reconstructedPubDER, err = x509.MarshalPKIXPublicKey(rsaPub)
+		if err != nil {
+			return err
+		}
+
+	case tpm2.TPMAlgECC:
+		ecDetail, err := pub.Parameters.ECCDetail()
+		if err != nil {
+			return err
+		}
+		crv, err := ecDetail.CurveID.Curve()
+		if err != nil {
+			return err
+		}
+		eccUnique, err := pub.Unique.ECC()
+		if err != nil {
+			return err
+		}
+		ecPub := &ecdsa.PublicKey{
+			Curve: crv,
+			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
+			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
+		}
+		reconstructedPubDER, err = x509.MarshalPKIXPublicKey(ecPub)
+		if err != nil {
+			return err
+		}
+
+	default:
+		// For unsupported types, just verify that the public bytes are present
+		if len(tpmPubBytes) == 0 {
+			return ErrInvalidKeyAttributes
+		}
+		return nil
+	}
+
+	if !bytes.Equal(certPubDER, reconstructedPubDER) {
+		return ErrCertPublicKeyMismatch
+	}
+
+	return nil
 }

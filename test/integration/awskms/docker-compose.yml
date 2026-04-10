@@ -29,6 +29,9 @@ services:
       - AWS_REGION=us-east-1
     volumes:
       - ../../..:/app
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
     working_dir: /app
 
 volumes:
@@ -36,4 +39,4 @@ volumes:
 
 networks:
   default:
-    name: keychain-awskms-test
+    name: xkms-awskms-test

@@ -30,8 +30,11 @@ services:
       - VAULT_SKIP_VERIFY=true
     volumes:
       - ../../..:/app
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
     working_dir: /app
 
 networks:
   default:
-    name: keychain-vault-test
+    name: xkms-vault-test

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,9 +18,9 @@ import (
 	"log/slog"
 	"os"
 
-	pkgtpm2 "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Config holds the configuration for the TPM2 backend
@@ -102,7 +102,7 @@ func (c *Config) Validate() error {
 	}
 
 	if c.CN == "" {
-		c.CN = "keychain"
+		c.CN = "xkms"
 	}
 
 	// Check if device exists (unless using simulator)
@@ -131,6 +131,7 @@ func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 		Tracker:         c.Tracker,
 		EK: &pkgtpm2.EKConfig{
 			Handle:       c.EKHandle,
+			CertHandle:   0x01C00002, // TCG standard RSA EK cert NV index
 			KeyAlgorithm: "RSA",
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,

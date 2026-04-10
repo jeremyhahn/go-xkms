@@ -2,7 +2,7 @@
 
 ## Overview
 
-The go-keychain library provides intelligent AEAD (Authenticated Encryption with Associated Data) algorithm selection based on hardware capabilities. This ensures optimal performance and security across different CPU architectures and deployment scenarios.
+The go-xkms library provides intelligent AEAD (Authenticated Encryption with Associated Data) algorithm selection based on hardware capabilities. This ensures optimal performance and security across different CPU architectures and deployment scenarios.
 
 ## Algorithm Selection Logic
 
@@ -36,7 +36,7 @@ For software-based encryption, the algorithm is selected based on CPU capabiliti
 The library automatically detects CPU capabilities:
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+import "github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 
 // Check if CPU has AES-NI support
 if aead.HasAESNI() {
@@ -54,7 +54,7 @@ Supported architectures:
 ### JWE Encryption
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/encoding/jwe"
+import "github.com/jeremyhahn/go-xkms/pkg/encoding/jwe"
 
 // Auto-detect optimal algorithm (empty string)
 encrypter, err := jwe.NewEncrypter("RSA-OAEP-256", "", publicKey)
@@ -70,8 +70,8 @@ jweString, err := encrypter.Encrypt(plaintext)
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 )
 
 // Create key attributes with auto-selection
@@ -92,7 +92,7 @@ key, err := backend.GenerateSymmetricKey(attrs)
 ### Direct Algorithm Selection
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+import "github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 
 // For software keys - adapts to CPU
 softwareAlg := aead.SelectOptimal(false)
@@ -109,7 +109,7 @@ hardwareAlg := aead.SelectOptimal(true)
 The library supports two naming conventions:
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+import "github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 
 // Backend format (lowercase with hyphens)
 backendAlg := aead.SelectOptimalBackend(false)
@@ -166,7 +166,7 @@ attrs := &backend.KeyAttributes{
 ## Algorithm Detection Helpers
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+import "github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 
 // Check algorithm type
 if aead.IsAESGCM("A256GCM") {
@@ -245,7 +245,7 @@ if runtime.GOARCH == "amd64" {
 
 After:
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+import "github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 
 algorithm := backend.KeyAlgorithm(aead.SelectOptimalBackend(false))
 ```

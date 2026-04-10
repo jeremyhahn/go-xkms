@@ -1,0 +1,221 @@
+# Docker Compose for PKCS#11 module integration testing
+#
+# This setup tests the go-xkms PKCS#11 module (libxkms_pkcs11.so)
+# with pkcs11-tool and custom integration tests.
+#
+# Architecture:
+#   xkms-server: gRPC server providing key management backend
+#   pkcs11-test: Test container with PKCS#11 module and pkcs11-tool
+#
+# Connection modes:
+#   - Unix socket: /var/run/xkms/xkms.sock (default, fastest)
+#   - TCP: xkms-server:9443 (gRPC)
+#
+# Usage:
+#   docker-compose -f test/integration/pkcs11/module/docker-compose.yml up --build --abort-on-container-exit
+#   docker-compose -f test/integration/pkcs11/module/docker-compose.yml down -v
+
+services:
+  # xKMS gRPC server providing backend for PKCS#11 module
+  xkms-server:
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../../go-qrdb
+        go-quicraft: ../../../../../go-quicraft
+      args:
+        - VERSION=${VERSION:-0.0.1-dev}
+    image: go-xkms-pkcs11-server:latest
+    container_name: xkms-pkcs11-server
+    ports:
+      - "9443:9443"       # gRPC
+      - "8443:8443"       # REST (health checks)
+    volumes:
+      - xkms-data:/data
+      - xkms-socket:/var/run/xkms
+      - xkms-certs:/etc/xkms/certs
+      - ./config.yaml:/etc/xkms/xkmsd.yaml:ro
+    environment:
+      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
+      - KEYSTORE_LOG_LEVEL=debug
+      - KEYSTORE_DATA_DIR=/data
+      - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 15s
+    networks:
+      - xkms-pkcs11
+    user: root
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # Ensure directories exist with proper permissions
+        mkdir -p /var/run/xkms /data /etc/xkms/certs
+        chmod 755 /var/run/xkms
+
+        # Generate self-signed certs if needed
+        if [ ! -f /etc/xkms/certs/server.crt ]; then
+          echo "Generating TLS certificates..."
+          openssl req -x509 -newkey rsa:4096 -keyout /etc/xkms/certs/server.key \
+            -out /etc/xkms/certs/server.crt -days 365 -nodes \
+            -subj "/CN=xkms-server/O=go-xkms/C=US" 2>/dev/null
+          # Copy server cert as CA cert for self-signed setup
+          cp /etc/xkms/certs/server.crt /etc/xkms/certs/ca.crt
+        fi
+
+        echo "Starting xkms server..."
+        exec /app/xkmsd
+
+  # PKCS#11 module test runner
+  pkcs11-test:
+    build:
+      context: ../../../..
+      dockerfile: test/integration/pkcs11/module/Dockerfile
+    image: go-xkms-pkcs11-test:latest
+    container_name: xkms-pkcs11-test
+    depends_on:
+      xkms-server:
+        condition: service_healthy
+    volumes:
+      - ../../../..:/workspace:ro
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../../go-quicraft:/go-quicraft:cached
+      - xkms-socket:/var/run/xkms
+      - xkms-certs:/etc/xkms/certs:ro
+      - pkcs11-data:/data
+      - go-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      - CGO_ENABLED=1
+      # PKCS#11 module configuration
+      - PKCS11_MODULE=/usr/local/lib/libxkms_pkcs11.so
+      - PKCS11_TOKEN_LABEL=xkms-token
+      - PKCS11_PIN=1234
+      - PKCS11_SO_PIN=12345678
+      # Connection configuration (Unix socket - preferred)
+      - XKMS_UNIX_SOCKET=/var/run/xkms/xkms.sock
+      - XKMS_CONNECTION_MODE=unix
+      # Connection configuration (TCP - alternative)
+      - XKMS_GRPC_ADDR=xkms-server:9443
+      - XKMS_GRPC_TLS_CA=/etc/xkms/certs/ca.crt
+      # Data directory
+      - XKMS_DATA_DIR=/data
+      # Test configuration
+      - INTEGRATION_TIMEOUT=120s
+      - GO_TEST_FLAGS=-v -tags=integration,pkcs11
+    working_dir: /workspace
+    networks:
+      - xkms-pkcs11
+    command: >
+      sh -c "
+      echo '================================================' &&
+      echo 'PKCS#11 Module Integration Test' &&
+      echo '================================================' &&
+      echo '' &&
+      echo 'Waiting for xkms server...' &&
+      sleep 3 &&
+
+      echo 'Checking Unix socket availability...' &&
+      if [ -S /var/run/xkms/xkms.sock ]; then
+        echo 'Unix socket: AVAILABLE' &&
+        export XKMS_CONNECTION_MODE=unix;
+      else
+        echo 'Unix socket: NOT AVAILABLE (falling back to TCP)' &&
+        export XKMS_CONNECTION_MODE=tcp;
+      fi &&
+
+      echo '' &&
+      echo 'Testing PKCS#11 module with pkcs11-tool...' &&
+      echo '------------------------------------------------' &&
+
+      echo 'Listing slots...' &&
+      pkcs11-tool --module /usr/local/lib/libxkms_pkcs11.so --list-slots 2>&1 || echo 'Note: Slots may not be initialized yet' &&
+
+      echo '' &&
+      echo 'Listing mechanisms...' &&
+      pkcs11-tool --module /usr/local/lib/libxkms_pkcs11.so --list-mechanisms 2>&1 || echo 'Note: Mechanisms listing may require initialization' &&
+
+      echo '' &&
+      echo '------------------------------------------------' &&
+      echo 'Running Go integration tests...' &&
+      echo '------------------------------------------------' &&
+
+      cd /workspace &&
+      go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/pkcs11/module/... -timeout 10m &&
+
+      echo '' &&
+      echo '================================================' &&
+      echo 'PKCS#11 Module Integration Tests: PASSED' &&
+      echo '================================================'
+      "
+
+  # Optional: Standalone test for pkcs11-tool compatibility only
+  pkcs11-compat-test:
+    build:
+      context: ../../../..
+      dockerfile: test/integration/pkcs11/module/Dockerfile
+    image: go-xkms-pkcs11-test:latest
+    container_name: xkms-pkcs11-compat
+    profiles:
+      - compat
+    depends_on:
+      xkms-server:
+        condition: service_healthy
+    volumes:
+      - xkms-socket:/var/run/xkms
+    environment:
+      - PKCS11_MODULE=/usr/local/lib/libxkms_pkcs11.so
+      - XKMS_UNIX_SOCKET=/var/run/xkms/xkms.sock
+    networks:
+      - xkms-pkcs11
+    command: >
+      sh -c "
+      echo 'PKCS#11 Compatibility Test with pkcs11-tool' &&
+      echo '============================================' &&
+      sleep 3 &&
+
+      echo '' &&
+      echo '1. Module Info:' &&
+      pkcs11-tool --module $$PKCS11_MODULE --show-info || true &&
+
+      echo '' &&
+      echo '2. List Slots:' &&
+      pkcs11-tool --module $$PKCS11_MODULE --list-slots || true &&
+
+      echo '' &&
+      echo '3. List Mechanisms:' &&
+      pkcs11-tool --module $$PKCS11_MODULE --list-mechanisms || true &&
+
+      echo '' &&
+      echo '4. List Objects (if token initialized):' &&
+      pkcs11-tool --module $$PKCS11_MODULE --list-objects --pin 1234 || true &&
+
+      echo '' &&
+      echo '============================================' &&
+      echo 'Compatibility test complete'
+      "
+
+volumes:
+  xkms-data:
+    driver: local
+  xkms-socket:
+    driver: local
+  xkms-certs:
+    driver: local
+  pkcs11-data:
+    driver: local
+  go-cache:
+    driver: local
+  go-build-cache:
+    driver: local
+
+networks:
+  xkms-pkcs11:
+    driver: bridge
+    name: xkms-pkcs11-network

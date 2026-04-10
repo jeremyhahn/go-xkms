@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -154,7 +154,7 @@ func SelectOptimal(isHardwareBacked bool) string {
 // SelectOptimalBackend selects the optimal AEAD algorithm for backend use.
 // Returns backend-compatible algorithm names (lowercase with hyphens).
 //
-// This is identical to SelectOptimal but returns backend.KeyAlgorithm compatible
+// This is identical to SelectOptimal but returns string compatible
 // strings instead of JWE algorithm names.
 //
 // Parameters:
@@ -166,7 +166,7 @@ func SelectOptimal(isHardwareBacked bool) string {
 // Example:
 //
 //	attrs := &types.KeyAttributes{
-//	    KeyAlgorithm: backend.KeyAlgorithm(aead.SelectOptimalBackend(false)),
+//	    SymmetricAlgorithm: types.SymmetricAlgorithm(aead.SelectOptimalBackend(false)),
 //	}
 func SelectOptimalBackend(isHardwareBacked bool) string {
 	// Hardware-backed keys - always use AES-256-GCM

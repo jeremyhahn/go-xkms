@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -24,10 +24,10 @@ import (
 	"time"
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/wrapping"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Ensure Backend implements ImportExportBackend interface
@@ -246,7 +246,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			return fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
@@ -302,6 +302,18 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 	// You would need to use GetPublicKey for asymmetric keys (public key only)
 	// Private key material cannot be exported from GCP KMS for security reasons
 
+	return nil, backend.ErrExportNotSupported
+}
+
+// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
+// GCP KMS does not support exporting raw key material from HSM-protected keys.
+// This method returns ErrExportNotSupported.
+func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+
+	// GCP KMS does not support exporting raw key material
 	return nil, backend.ErrExportNotSupported
 }
 

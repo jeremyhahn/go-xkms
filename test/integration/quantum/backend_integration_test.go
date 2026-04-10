@@ -1,9 +1,9 @@
-//go:build integration && quantum
+//go:build integration
 
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 
 package quantum_test
 
@@ -11,14 +11,14 @@ import (
 	"crypto"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/quantum"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestQuantumSafeBackend_InterfaceCompliance verifies the backend implements types.Backend
+// TestQuantumSafeBackend_InterfaceCompliance verifies the backend implements types.KeyProvider
 func TestQuantumSafeBackend_InterfaceCompliance(t *testing.T) {
 	store, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
@@ -28,7 +28,7 @@ func TestQuantumSafeBackend_InterfaceCompliance(t *testing.T) {
 	defer backend.Close()
 
 	// Verify interface compliance
-	var _ types.Backend = backend
+	var _ types.KeyProvider = backend
 
 	// Check backend type
 	assert.Equal(t, types.BackendTypeQuantum, backend.Type())

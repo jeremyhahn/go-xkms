@@ -7,9 +7,12 @@ services:
       - GO_TEST_TIMEOUT=10m
     volumes:
       - ../../../:/workspace
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
     working_dir: /workspace
     command: >
-      sh -c "go test -v -tags=integration
+      sh -c "go test -v -tags='integration codec_cbor codec_json codec_msgpack'
       -timeout=10m
       -coverprofile=/tmp/coverage.out
       ./test/integration/certstore/... &&

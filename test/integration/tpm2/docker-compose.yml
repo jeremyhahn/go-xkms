@@ -36,8 +36,11 @@ services:
       - TPM2_SIMULATOR_PORT=2421
     volumes:
       - ../../..:/app
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
     working_dir: /app
 
 networks:
   default:
-    name: keychain-tpm2-test
+    name: xkms-tpm2-test

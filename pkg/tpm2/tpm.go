@@ -31,10 +31,10 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
-	kbackend "github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/threshold/shamir"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // SimulatorInterface abstracts the TPM simulator for conditional compilation
@@ -54,6 +54,16 @@ type TrustedPlatformModule interface {
 	CalculateName(algID tpm2.TPMAlgID, publicArea []byte)
 	Clear(lockoutAuth []byte) error
 	Close() error
+	FactoryReset(ownerAuth []byte) error
+	// FactoryResetWithClear is FactoryReset preceded by a destructive
+	// TPM2_Clear via the LOCKOUT hierarchy with empty auth. Callers MUST
+	// gate this behind explicit operator opt-in — it resets owner /
+	// endorsement / lockout hierarchy auths and wipes all persistent
+	// objects in those hierarchies. Manufacturer EK certificates in the
+	// Platform hierarchy are preserved. See FactoryReset doc comment for
+	// when to use which.
+	FactoryResetWithClear(ownerAuth []byte) error
+	ForceClear() error
 	Config() *Config
 	CreateECDSA(
 		keyAttrs *types.KeyAttributes,
@@ -81,31 +91,33 @@ type TrustedPlatformModule interface {
 		idevidAttrs *types.KeyAttributes) (TCG_CSR_IDEVID, error)
 	DeleteKey(keyAttrs *types.KeyAttributes, backend store.KeyBackend) error
 	Device() string
-	EK() crypto.PublicKey
-	EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic)
+	EK() (crypto.PublicKey, error)
+	EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error)
 	EKAttributes() (*types.KeyAttributes, error)
 	EKCertificate() (*x509.Certificate, error)
-	EKECC() *ecdsa.PublicKey
-	EKRSA() *rsa.PublicKey
+	EKCertificateRSA() (*x509.Certificate, error)
+	EKCertificateEC() (*x509.Certificate, error)
+	EKECC() (*ecdsa.PublicKey, error)
+	EKRSA() (*rsa.PublicKey, error)
 	EventLog() ([]byte, error)
 	FixedProperties() (*PropertiesFixed, error)
 	Flush(handle tpm2.TPMHandle)
-	GoldenMeasurements() []byte
+	GoldenMeasurements() ([]byte, error)
 	HMAC(auth []byte) tpm2.Session
 	HMACSaltedSession(
 		handle tpm2.TPMHandle,
 		pub tpm2.TPMTPublic,
 		auth []byte) (s tpm2.Session, close func() error, err error)
 	HMACSession(auth []byte) (s tpm2.Session, close func() error, err error)
-	IAK() crypto.PublicKey
+	IAK() (crypto.PublicKey, error)
 	IAKAttributes() (*types.KeyAttributes, error)
-	IDevID() crypto.PublicKey
+	IDevID() (crypto.PublicKey, error)
 	IDevIDAttributes() (*types.KeyAttributes, error)
 	Info() (string, error)
 	IsFIPS140_2() (bool, error)
 	IsPlatformPCRExtended() (bool, error)
 	ExtendPCR(pcrIndex int, hashAlg string, data []byte) error
-	Install(soPIN types.Password) error
+	Install(soPIN types.Password, opts *InstallOptions) error
 	KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, error)
 	LoadKeyPair(
 		keyAttrs *types.KeyAttributes,
@@ -133,13 +145,14 @@ type TrustedPlatformModule interface {
 	ParsedEventLog() ([]Event, error)
 	ParsePublicKey(tpm2BPublic []byte) (crypto.PublicKey, error)
 	PlatformPolicyDigestHash() ([]byte, error)
-	PlatformPolicyDigest() tpm2.TPM2BDigest
-	PlatformPolicySession() (tpm2.Session, func() error, error)
+	PlatformPolicyDigest() (tpm2.TPM2BDigest, error)
+	PlatformPolicySession(auth []byte) (tpm2.Session, func() error, error)
 	PlatformQuote(keyAttrs *types.KeyAttributes) (Quote, []byte, error)
 	Provision(soPIN types.Password) error
 	ProvisionEKCert(hierarchyAuth, ekCert []byte) error
 	ProvisionOwner(hierarchyAuth types.Password) (*types.KeyAttributes, error)
 	Quote(pcrs []uint, nonce []byte) (Quote, error)
+	CertifyKey(keyAttrs *types.KeyAttributes, nonce []byte, backend store.KeyBackend) (*CertifyResult, error)
 	Random() ([]byte, error)
 	RandomBytes(fixedLength int) ([]byte, error)
 	RandomHex(fixedLength int) ([]byte, error)
@@ -164,10 +177,28 @@ type TrustedPlatformModule interface {
 		overwrite bool) (*tpm2.CreateResponse, error)
 	Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) (signature []byte, err error)
 	SetHierarchyAuth(oldSecret, newSecret types.Password, hierarchy *tpm2.TPMHandle) error
+
+	// VerifyAuth verifies the auth value on a persistent key at the given handle.
+	// The TPM validates the auth by executing a lightweight command (Create)
+	// with the provided authValue as the session auth.
+	VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error
+
+	// ChangeAuth changes the auth value on a persistent primary key.
+	// For primary keys, recreates with same template (deterministic key material)
+	// and new auth, then evicts and re-persists at the same handle.
+	ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) error
 	SecretFromShares(shares []string) (string, error)
 	ShareSecret(secret []byte, shares int) ([]string, error)
-	SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic)
+	SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error)
 	SSRKAttributes() (*types.KeyAttributes, error)
+	PlatformSRKAttributes() (*types.KeyAttributes, error)
+	// SSRK returns the Storage Root Key configuration.
+	SSRK() *SRKConfig
+	// PlatformKeyStore returns the platform key store, or nil if not configured.
+	PlatformKeyStore() PlatformKeyStorer
+	SupportedAlgorithms() ([]string, error)
+	SupportedCommands() ([]string, error)
+	SupportedECCCurves() ([]string, error)
 	Transport() transport.TPM
 	// Unseal implements types.Sealer - unseals data from the TPM
 	Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error)
@@ -178,11 +209,11 @@ type TrustedPlatformModule interface {
 	WriteEKCert(ekCert []byte) error
 
 	// IDevID/IAK Certificate management
-	ReadIDevIDCertificate() (*x509.Certificate, error)
-	WriteIDevIDCertificate(cert *x509.Certificate) error
+	IDevIDCertificate() (*x509.Certificate, error)
+	ProvisionIDevIDCert(cert *x509.Certificate) error
 	DeleteIDevIDCertificate() error
-	ReadIAKCertificate() (*x509.Certificate, error)
-	WriteIAKCertificate(cert *x509.Certificate) error
+	IAKCertificate() (*x509.Certificate, error)
+	ProvisionIAKCert(cert *x509.Certificate) error
 	DeleteIAKCertificate() error
 
 	VerifyTCGCSR(
@@ -203,6 +234,24 @@ type TrustedPlatformModule interface {
 	Hash(
 		keyAttrs *types.KeyAttributes,
 		data []byte) ([]byte, []byte, error)
+
+	// ECDHZGen performs ECDH key agreement using TPM2_ECDH_ZGen command.
+	// It computes the shared secret Z = [privateKey]Q where Q is the peer's public key.
+	// The result is the X coordinate of the shared point as per NIST SP 800-56A.
+	// Per TCG TPM 2.0 specification Part 3, section 14.5.
+	ECDHZGen(
+		keyAttrs *types.KeyAttributes,
+		peerPublicKey *tpm2.TPMSECCPoint,
+		backend store.KeyBackend) ([]byte, error)
+
+	// Dictionary attack lockout management
+	// DictionaryAttackLockoutReset resets the DA lockout counter using the lockout hierarchy auth.
+	DictionaryAttackLockoutReset(lockoutAuth []byte) error
+
+	// Symmetric key operations
+	GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error)
+	GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error)
+	SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error)
 }
 
 type Params struct {
@@ -231,16 +280,18 @@ type TPM2 struct {
 	ekRSAPubKey  *rsa.PublicKey
 	fqdn         string
 	// hash         crypto.Hash
-	iakAttrs     *types.KeyAttributes
-	idevidAttrs  *types.KeyAttributes
-	logger       *slog.Logger
-	policyDigest tpm2.TPM2BDigest
-	random       io.Reader
-	signerStore  store.SignerStorer
-	simulator    SimulatorInterface
-	ssrkAttrs    *types.KeyAttributes
-	tracker      types.AEADSafetyTracker
-	transport    transport.TPM
+	iakAttrs         *types.KeyAttributes
+	idevidAttrs      *types.KeyAttributes
+	logger           *slog.Logger
+	policyDigest     tpm2.TPM2BDigest
+	platformKeyStore PlatformKeyStorer
+	platformSRKAttrs *types.KeyAttributes
+	random           io.Reader
+	signerStore      store.SignerStorer
+	simulator        SimulatorInterface
+	ssrkAttrs        *types.KeyAttributes
+	tracker          types.AEADSafetyTracker
+	transport        transport.TPM
 	TrustedPlatformModule
 }
 
@@ -279,6 +330,11 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	// Set default Hash if not specified
 	if params.Config.Hash == "" {
 		params.Config.Hash = DefaultConfig.Hash
+	}
+
+	// Ensure PlatformSRK config is set with defaults
+	if params.Config.PlatformSRK == nil {
+		params.Config.PlatformSRK = DefaultConfig.PlatformSRK
 	}
 
 	// Create default logger if none provided
@@ -364,21 +420,37 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		tpm.random = rand.Reader
 	}
 
-	// Return ErrNotInitialized if the EK persistent handle can't be read
+	// Check if the TPM is initialized by attempting to read the EK.
+	// First, try the persistent EK handle (created during provisioning).
+	// If that fails, fall back to checking for manufacturer EK certificate in NV RAM.
 	_, err = tpm2.ReadPublic{
 		ObjectHandle: tpm2.TPMHandle(params.Config.EK.Handle),
 	}.Execute(tpm.transport)
 	if err != nil {
-		if err == tpm2.TPMRC(0x184) {
-			// TPM_RC_VALUE (handle 1): value is out of range or is not correct for the context
+		// Persistent EK handle doesn't exist — always fall back to checking for
+		// manufacturer EK certificate in NV RAM. TPMs return varying response codes
+		// (TPM_RC_VALUE 0x184, TPM_RC_HANDLE 0x18b, or other format-1 codes) depending
+		// on firmware, so we do not match specific TPMRC values.
+		tpm.logger.Debug("persistent EK not found, checking NV RAM for manufacturer certificate",
+			slog.String("ekHandle", fmt.Sprintf("0x%08X", params.Config.EK.Handle)),
+			slog.String("readPublicError", err.Error()))
+
+		_, nvErr := tpm2.NVReadPublic{
+			NVIndex: tpm2.TPMHandle(params.Config.EK.CertHandle),
+		}.Execute(tpm.transport)
+
+		if nvErr != nil {
+			// Neither persistent EK nor manufacturer certificate exists
+			tpm.logger.Debug("TPM not initialized: no persistent EK and no manufacturer EK certificate",
+				slog.String("ekHandle", fmt.Sprintf("0x%08X", params.Config.EK.Handle)),
+				slog.String("certHandle", fmt.Sprintf("0x%08X", params.Config.EK.CertHandle)))
 			return tpm, ErrNotInitialized
-		} else if err == tpm2.TPMRC(0x18b) {
-			// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
-			return tpm, ErrNotInitialized
-		} else {
-			tpm.logger.Error("failed to read EK public", slog.String("error", err.Error()))
-			return nil, err
 		}
+
+		// Manufacturer EK certificate exists in NV RAM — TPM can be used for read operations
+		// but provisioning is still needed to create the persistent EK key
+		tpm.logger.Debug("Manufacturer EK certificate found in NV RAM",
+			slog.String("certHandle", fmt.Sprintf("0x%08X", params.Config.EK.CertHandle)))
 	}
 
 	return tpm, nil
@@ -516,22 +588,89 @@ func (tpm *TPM2) AlgID() tpm2.TPMAlgID {
 	return tpm.algID
 }
 
-// Returns the platform policy digest used to satisfy
-// platform PCR authorization values
-func (tpm *TPM2) PlatformPolicyDigest() tpm2.TPM2BDigest {
-	if tpm.policyDigest.Buffer == nil {
-		_, closer, err := tpm.PlatformPolicySession()
-		if err != nil {
-			tpm.logger.Error("fatal error getting platform policy session", slog.String("error", err.Error()))
-			panic(err)
-		}
-		defer func() {
-			if err := closer(); err != nil {
-				tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
-			}
-		}()
+// PlatformPolicyDigest computes a PolicyOR digest that combines two policy
+// branches: a PCR-based branch (PolicyPCR) and a password-based branch
+// (PolicyAuthValue). This digest is used as the AuthPolicy when creating
+// TPM objects with compound policy, enabling both automatic PCR-based
+// unlock and manual PIN-based fallback.
+//
+// The computation follows the TPM 2.0 specification (Part 3, Section 23.6):
+//  1. Compute Branch 1 digest: trial PolicyPCR
+//  2. Compute Branch 2 digest: trial PolicyAuthValue
+//  3. Compute PolicyOR over both branch digests
+func (tpm *TPM2) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
+
+	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
 	}
-	return tpm.policyDigest
+
+	pcrDigest, err := tpm.PlatformPolicyDigestHash()
+	if err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+	}
+
+	// Branch 1: PolicyPCR digest (computed via trial/calculator)
+	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+	}
+
+	pcrCmd := tpm2.PolicyPCR{
+		PcrDigest: tpm2.TPM2BDigest{
+			Buffer: pcrDigest,
+		},
+		Pcrs: tpm2.TPMLPCRSelection{
+			PCRSelections: []tpm2.TPMSPCRSelection{{
+				Hash:      hashAlgID,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
+			}},
+		},
+	}
+	if err := pcrCmd.Update(pcrCalc); err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: PolicyPCR trial: %v", ErrPlatformPolicyDigestCompute, err)
+	}
+	branch1Digest := pcrCalc.Hash().Digest
+
+	// Branch 2: PolicyAuthValue digest (computed via trial/calculator)
+	authCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+	}
+
+	authCmd := tpm2.PolicyAuthValue{}
+	if err := authCmd.Update(authCalc); err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: PolicyAuthValue trial: %v", ErrPlatformPolicyDigestCompute, err)
+	}
+	branch2Digest := authCalc.Hash().Digest
+
+	tpm.logger.Debug("tpm: PlatformPolicyDigest - branch digests",
+		slog.String("pcr_branch", fmt.Sprintf("%x", branch1Digest)),
+		slog.String("auth_branch", fmt.Sprintf("%x", branch2Digest)))
+
+	// Compute PolicyOR over both branches
+	orCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
+	if err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: %v", ErrPlatformPolicyDigestCompute, err)
+	}
+
+	orCmd := tpm2.PolicyOr{
+		PHashList: tpm2.TPMLDigest{
+			Digests: []tpm2.TPM2BDigest{
+				{Buffer: branch1Digest},
+				{Buffer: branch2Digest},
+			},
+		},
+	}
+	if err := orCmd.Update(orCalc); err != nil {
+		return tpm2.TPM2BDigest{}, fmt.Errorf("%w: PolicyOR trial: %v", ErrPlatformPolicyDigestCompute, err)
+	}
+	compoundDigest := orCalc.Hash().Digest
+
+	tpm.logger.Info("tpm: PlatformPolicyDigest computed",
+		slog.String("digest", fmt.Sprintf("%x", compoundDigest)))
+
+	return tpm2.TPM2BDigest{Buffer: compoundDigest}, nil
 }
 
 // Returns the TPM device path
@@ -614,6 +753,24 @@ func (tpm *TPM2) Config() *Config {
 	return tpm.config
 }
 
+// SSRK returns the Storage Root Key configuration from the TPM config.
+func (tpm *TPM2) SSRK() *SRKConfig {
+	if tpm.config == nil {
+		return nil
+	}
+	return tpm.config.SSRK
+}
+
+// PlatformKeyStore returns the platform key store, or nil if not configured.
+func (tpm *TPM2) PlatformKeyStore() PlatformKeyStorer {
+	return tpm.platformKeyStore
+}
+
+// SetPlatformKeyStore sets the platform key store on the TPM instance.
+func (tpm *TPM2) SetPlatformKeyStore(pks PlatformKeyStorer) {
+	tpm.platformKeyStore = pks
+}
+
 // Takes ownership of the TPM by setting the Owner, Endorsement and
 // Lockout hierarchy authorization passwords, as described in TCG
 // TPM 2.0 Part 1 - Architecture - Section 13.8.1 - Taking Ownership
@@ -687,11 +844,16 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 // is managed using an internal certificate store. If an EK cert-handle is defined, the
 // certificate is retrieved from TPM NVRAM. If the certificate is not found in NVRAM, an
 // attempt is made to download the certificate from the Manufacturer's EK cert service.
+// If the configured certificate location fails, it falls back to checking both RSA and EC
+// standard NV indices.
 func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 
 	tpm.logger.Debug("retrieving EK certificate")
 
-	policyDigest := tpm.PlatformPolicyDigest()
+	policyDigest, err := tpm.PlatformPolicyDigest()
+	if err != nil {
+		return nil, err
+	}
 	ekAttrs, err := EKAttributesFromConfig(*tpm.config.EK, &policyDigest, tpm.config.IDevID)
 	if err != nil {
 		return nil, err
@@ -711,114 +873,140 @@ func (tpm *TPM2) EKCertificate() (*x509.Certificate, error) {
 		return ekCert, nil
 	}
 
-	// Load the EK cert
-	var ekCertIndex tpm2.TPMHandle
-	var usedTPMAttrsCertHandle bool
+	// Build list of NV indices to try (configured first, then standard locations)
+	var indicesToTry []tpm2.TPMHandle
+
+	// Add configured/attribute-based index first
 	if ekAttrs.TPMAttributes != nil && ekAttrs.TPMAttributes.CertHandle != 0 {
-		// ... using EK cert index provided by TPM attributes
-		certHandle := ekAttrs.TPMAttributes.CertHandle
-		if certHandle > 0 {
-			ekCertIndex = certHandle
-			usedTPMAttrsCertHandle = true
+		indicesToTry = append(indicesToTry, ekAttrs.TPMAttributes.CertHandle)
+	} else if tpm.config.EK.CertHandle > 0 {
+		indicesToTry = append(indicesToTry, tpm2.TPMHandle(tpm.config.EK.CertHandle))
+	}
+
+	// Add standard RSA and EC locations as fallbacks (avoiding duplicates)
+	rsaIndex := tpm2.TPMHandle(ekCertIndexRSA2048)
+	ecIndex := tpm2.TPMHandle(ekCertIndexECCP256)
+
+	if len(indicesToTry) == 0 || indicesToTry[0] != rsaIndex {
+		indicesToTry = append(indicesToTry, rsaIndex)
+	}
+	if len(indicesToTry) < 2 || (indicesToTry[0] != ecIndex && indicesToTry[1] != ecIndex) {
+		indicesToTry = append(indicesToTry, ecIndex)
+	}
+
+	// Try each NV index until we find a valid certificate
+	var lastErr error
+	for _, ekCertIndex := range indicesToTry {
+		cert, err := tpm.readEKCertFromNV(ekCertIndex)
+		if err == nil {
+			return cert, nil
+		}
+		lastErr = err
+		tpm.logger.Debug("EK certificate not found at index, trying next",
+			slog.String("index", fmt.Sprintf("0x%08X", ekCertIndex)),
+			slog.String("error", err.Error()))
+	}
+
+	// Try certificate store fallback
+	if tpm.certStore != nil {
+		tpm.logger.Debug("NVRAM read failed, trying certificate store fallback")
+		if ekCert, certErr := tpm.certStore.Get(ekAttrs); certErr == nil {
+			return ekCert, nil
 		}
 	}
 
-	if !usedTPMAttrsCertHandle && tpm.config.EK.CertHandle > 0 {
-
-		// ... using Load EK cert index provided by platform configuration
-		ekCertIndex = tpm2.TPMHandle(tpm.config.EK.CertHandle)
-
-	} else if !usedTPMAttrsCertHandle {
-
-		// Load the EK cert using the recommended indexes for
-		// the key algorithm
-		if ekAttrs.KeyAlgorithm == x509.RSA { //nolint:staticcheck // QF1003: if-else preferred over switch
-			ekCertIndex = tpm2.TPMHandle(ekCertIndexRSA2048)
-		} else if ekAttrs.KeyAlgorithm == x509.ECDSA {
-			ekCertIndex = tpm2.TPMHandle(ekCertIndexECCP256)
-		} else {
-			return nil, store.ErrInvalidKeyAlgorithm
-		}
+	// As a last resort, try downloading from the manufacturer EK certificate service
+	cert, err := tpm.downloadEKCertFromManufacturer(indicesToTry[0])
+	if err == nil {
+		return cert, nil
 	}
 
-	// Read the EK cert from NVRAM using the proper two-step process:
-	// 1. First read NV public area to get the Name and DataSize
-	// 2. Then read NV data using proper AuthHandle structures with the Name
+	// If all attempts failed, return the last error
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, ErrEndorsementCertNotFound
+}
 
+// readEKCertFromNV reads an EK certificate from the specified NV RAM index.
+// Returns the parsed certificate or an error if the certificate cannot be read.
+func (tpm *TPM2) readEKCertFromNV(ekCertIndex tpm2.TPMHandle) (*x509.Certificate, error) {
 	// Step 1: Read NV public area to get Name and DataSize
 	nvPub, err := tpm2.NVReadPublic{
 		NVIndex: ekCertIndex,
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error("failed to read NV public", slog.String("error", err.Error()))
-		// Try certificate store first (fallback for swtpm with large certs)
-		if tpm.certStore != nil {
-			tpm.logger.Debug("NVRAM read failed, trying certificate store fallback")
-			if ekCert, certErr := tpm.certStore.Get(ekAttrs); certErr == nil {
-				return ekCert, nil
-			}
-		}
-		// As a last resort, try downloading from the manufacturer EK certificate service
-		return tpm.downloadEKCertFromManufacturer(ekCertIndex)
+		return nil, fmt.Errorf("failed to read NV public at 0x%08X: %w", ekCertIndex, err)
 	}
 
 	// Get the NV public contents
 	nvPublic, err := nvPub.NVPublic.Contents()
 	if err != nil {
-		tpm.logger.Error("failed to get NV public contents", slog.String("error", err.Error()))
 		return nil, fmt.Errorf("failed to get NV public contents: %w", err)
 	}
 
 	// Check if the area is readable
 	if nvPublic.DataSize == 0 {
-		tpm.logger.Warn("NV area has zero size, trying certificate store fallback")
-		// Try certificate store first (fallback for swtpm with large certs)
-		if tpm.certStore != nil {
-			if ekCert, certErr := tpm.certStore.Get(ekAttrs); certErr == nil {
-				return ekCert, nil
-			}
-		}
-		return tpm.downloadEKCertFromManufacturer(ekCertIndex)
+		return nil, fmt.Errorf("NV area at 0x%08X has zero size", ekCertIndex)
 	}
 
-	// Step 2: Read NV data using proper AuthHandle structures with the Name from NVReadPublic
-	response, err := tpm2.NVRead{
-		AuthHandle: tpm2.AuthHandle{
-			Handle: tpm2.TPMRHOwner,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		NVIndex: tpm2.AuthHandle{
-			Handle: ekCertIndex,
-			Name:   nvPub.NVName, // This is the key - use the Name from NVReadPublic
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		Size:   nvPublic.DataSize,
-		Offset: 0,
-	}.Execute(tpm.transport)
+	// Step 2: Read NV data in chunks (TPM has max buffer size, typically 1024 bytes)
+	// Use the NV index's own handle for auth (authread attribute)
+	const maxNVBufferSize = 512 // Conservative chunk size for compatibility
+	totalSize := nvPublic.DataSize
+	certData := make([]byte, 0, totalSize)
 
-	if err != nil {
-		tpm.logger.Error("failed to read NV data", slog.String("error", err.Error()))
-		// Try certificate store first (fallback for swtpm with large certs)
-		if tpm.certStore != nil {
-			tpm.logger.Debug("NVRAM read failed, trying certificate store fallback")
-			if ekCert, certErr := tpm.certStore.Get(ekAttrs); certErr == nil {
-				return ekCert, nil
-			}
+	for offset := uint16(0); offset < totalSize; {
+		chunkSize := totalSize - offset
+		if chunkSize > maxNVBufferSize {
+			chunkSize = maxNVBufferSize
 		}
-		// As a last resort, try downloading from the manufacturer EK certificate service
-		return tpm.downloadEKCertFromManufacturer(ekCertIndex)
+
+		response, err := tpm2.NVRead{
+			AuthHandle: tpm2.AuthHandle{
+				Handle: ekCertIndex, // Use NV index handle for authread
+				Name:   nvPub.NVName,
+				Auth:   tpm2.PasswordAuth(nil),
+			},
+			NVIndex: tpm2.AuthHandle{
+				Handle: ekCertIndex,
+				Name:   nvPub.NVName,
+				Auth:   tpm2.PasswordAuth(nil),
+			},
+			Size:   chunkSize,
+			Offset: offset,
+		}.Execute(tpm.transport)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to read NV chunk at offset %d: %w", offset, err)
+		}
+
+		certData = append(certData, response.Data.Buffer...)
+		offset += chunkSize
 	}
 
-	tpm.logger.Debug("raw NVRAM EK certificate", slog.String("cert", string(response.Data.Buffer)))
+	tpm.logger.Debug("read NVRAM EK certificate",
+		slog.String("index", fmt.Sprintf("0x%08X", ekCertIndex)),
+		slog.Int("size", len(certData)))
 
 	// Try to parse as PEM first, then DER
-	cert, err := store.DecodePEM(response.Data.Buffer)
+	cert, err := store.DecodePEM(certData)
 	if err != nil {
-		tpm.logger.Warn("error decoding PEM certificate, trying DER", slog.String("error", err.Error()))
-		return x509.ParseCertificate(response.Data.Buffer)
+		tpm.logger.Debug("not PEM encoded, trying DER", slog.String("error", err.Error()))
+		return x509.ParseCertificate(certData)
 	}
 
 	return x509.ParseCertificate(cert.Bytes)
+}
+
+// EKCertificateRSA returns the RSA EK certificate from NV RAM at index 0x01C00002.
+func (tpm *TPM2) EKCertificateRSA() (*x509.Certificate, error) {
+	return tpm.readEKCertFromNV(tpm2.TPMHandle(ekCertIndexRSA2048))
+}
+
+// EKCertificateEC returns the EC EK certificate from NV RAM at index 0x01C0000A.
+func (tpm *TPM2) EKCertificateEC() (*x509.Certificate, error) {
+	return tpm.readEKCertFromNV(tpm2.TPMHandle(ekCertIndexECCP256))
 }
 
 // Signs the requested data using the key attributes
@@ -873,7 +1061,7 @@ func (tpm *TPM2) Sign(
 
 		digest, validationDigest, _ := tpm.Hash(keyAttrs, digest)
 
-		// TPMT_TK_HASHCHECK – This ticket is used to indicate that
+		// TPMT_TK_HASHCHECK -- This ticket is used to indicate that
 		// a digest of external data is safe to sign using a restricted
 		// signing key. A restricted signing key may only sign a digest
 		// that was produced by the TPM. If the digest was produced from
@@ -1477,7 +1665,7 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 	supportedBanks := make(map[string]tpm2.TPMAlgID, 4)
 	supportedBanks["SHA1"] = tpm2.TPMAlgSHA1
 	supportedBanks["SHA256"] = tpm2.TPMAlgSHA256
-	supportedBanks["SHA386"] = tpm2.TPMAlgSHA384
+	supportedBanks["SHA384"] = tpm2.TPMAlgSHA384
 	supportedBanks["SHA512"] = tpm2.TPMAlgSHA512
 
 	for name, algo := range supportedBanks {
@@ -1488,6 +1676,7 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 			Algorithm: name,
 			PCRs:      make([]PCR, 0),
 		}
+		bankUnsupported := false
 		for _, pcr := range pcrList {
 			if pcr > maxPCR {
 				tpm.logger.Error("invalid PCR index",
@@ -1507,24 +1696,26 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 			}
 			response, err := pcrRead.Execute(tpm.transport)
 			if err != nil {
-				if strings.Contains(err.Error(), ErrHashAlgorithmNotSupported.Error()) {
-					tpm.logger.Warn("error reading PCR bank",
-						slog.String("algorithm", fmt.Sprintf("%v", algo)),
-						slog.String("error", err.Error()))
-					return banks, nil
+				errMsg := err.Error()
+				if strings.Contains(errMsg, ErrHashAlgorithmNotSupported.Error()) ||
+					strings.Contains(errMsg, "hash algorithm not supported or not appropriate") {
+					tpm.logger.Warn("PCR bank not supported, skipping",
+						slog.String("bank", name),
+						slog.String("error", errMsg))
+					bankUnsupported = true
+					break
 				}
+				tpm.logger.Error("error reading PCR",
+					slog.String("bank", name),
+					slog.Uint64("pcr", uint64(pcr)),
+					slog.String("error", errMsg))
+				bankUnsupported = true
+				break
 			}
 			if response == nil {
-				if strings.Contains(err.Error(), "hash algorithm not supported or not appropriate") {
-					continue
-				}
-				tpm.logger.Error("error reading PCR bank",
-					slog.String("bank", name),
-					slog.String("error", err.Error()))
-				return banks, nil
+				continue
 			}
 			if len(response.PCRValues.Digests) == 0 {
-				// Strange issue encountered: PCR bank present but doesn't have any populated PCR digests
 				continue
 			}
 			buf := response.PCRValues.Digests[0].Buffer
@@ -1536,7 +1727,9 @@ func (tpm *TPM2) ReadPCRs(pcrList []uint) ([]PCRBank, error) {
 				slog.Int("pcr", int(pcr)),
 				slog.String("value", fmt.Sprintf("%x", buf)))
 		}
-		banks = append(banks, bank)
+		if !bankUnsupported && len(bank.PCRs) > 0 {
+			banks = append(banks, bank)
+		}
 	}
 
 	return banks, nil

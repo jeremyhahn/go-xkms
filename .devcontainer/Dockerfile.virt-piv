@@ -54,12 +54,12 @@ mkdir -p "$CERT_DIR"
 openssl genpkey -algorithm RSA -out "$CERT_DIR/ca.key" -pkeyopt rsa_keygen_bits:2048
 openssl req -new -x509 -days 3650 -key "$CERT_DIR/ca.key" \
     -out "$CERT_DIR/ca.crt" \
-    -subj "/CN=Virtual PIV CA/O=go-keychain/OU=Testing"
+    -subj "/CN=Virtual PIV CA/O=go-xkms/OU=Testing"
 
 # Generate PIV Authentication key (slot 9a)
 openssl genpkey -algorithm RSA -out "$CERT_DIR/piv-auth.key" -pkeyopt rsa_keygen_bits:2048
 openssl req -new -key "$CERT_DIR/piv-auth.key" -out "$CERT_DIR/piv-auth.csr" \
-    -subj "/CN=PIV Authentication/O=go-keychain/OU=Testing"
+    -subj "/CN=PIV Authentication/O=go-xkms/OU=Testing"
 openssl x509 -req -days 365 -in "$CERT_DIR/piv-auth.csr" \
     -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
     -out "$CERT_DIR/piv-auth.crt"
@@ -67,7 +67,7 @@ openssl x509 -req -days 365 -in "$CERT_DIR/piv-auth.csr" \
 # Generate Digital Signature key (slot 9c)
 openssl genpkey -algorithm RSA -out "$CERT_DIR/piv-sign.key" -pkeyopt rsa_keygen_bits:2048
 openssl req -new -key "$CERT_DIR/piv-sign.key" -out "$CERT_DIR/piv-sign.csr" \
-    -subj "/CN=Digital Signature/O=go-keychain/OU=Testing"
+    -subj "/CN=Digital Signature/O=go-xkms/OU=Testing"
 openssl x509 -req -days 365 -in "$CERT_DIR/piv-sign.csr" \
     -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
     -out "$CERT_DIR/piv-sign.crt"
@@ -75,7 +75,7 @@ openssl x509 -req -days 365 -in "$CERT_DIR/piv-sign.csr" \
 # Generate Key Management key (slot 9d)
 openssl genpkey -algorithm RSA -out "$CERT_DIR/piv-keymgmt.key" -pkeyopt rsa_keygen_bits:2048
 openssl req -new -key "$CERT_DIR/piv-keymgmt.key" -out "$CERT_DIR/piv-keymgmt.csr" \
-    -subj "/CN=Key Management/O=go-keychain/OU=Testing"
+    -subj "/CN=Key Management/O=go-xkms/OU=Testing"
 openssl x509 -req -days 365 -in "$CERT_DIR/piv-keymgmt.csr" \
     -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
     -out "$CERT_DIR/piv-keymgmt.crt"
@@ -84,7 +84,7 @@ openssl x509 -req -days 365 -in "$CERT_DIR/piv-keymgmt.csr" \
 openssl genpkey -algorithm EC -out "$CERT_DIR/piv-cardauth.key" \
     -pkeyopt ec_paramgen_curve:P-256
 openssl req -new -key "$CERT_DIR/piv-cardauth.key" -out "$CERT_DIR/piv-cardauth.csr" \
-    -subj "/CN=Card Authentication/O=go-keychain/OU=Testing"
+    -subj "/CN=Card Authentication/O=go-xkms/OU=Testing"
 openssl x509 -req -days 365 -in "$CERT_DIR/piv-cardauth.csr" \
     -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
     -out "$CERT_DIR/piv-cardauth.crt"

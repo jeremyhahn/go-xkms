@@ -10,7 +10,7 @@ env:
   GO_VERSION: 'stable'
   COVERAGE_THRESHOLD: 90
   REGISTRY: ghcr.io
-  IMAGE_NAME: jeremyhahn/keychain-cli
+  IMAGE_NAME: jeremyhahn/xkms-cli
   GOPROXY: direct
   GOSUMDB: off
 
@@ -86,7 +86,7 @@ jobs:
         with:
           files: ./build/coverage/coverage.out
           flags: unittests
-          name: go-keychain-coverage
+          name: go-xkms-coverage
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -274,12 +274,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - binary: keychainctl
-            output: keychainctl
-          - binary: keychaind
-            output: keychaind
-          - binary: vfido2
-            output: vfido2
+          - binary: xkmsctl
+            output: xkmsctl
+          - binary: xkmsd
+            output: xkmsd
+          - binary: xkey
+            output: xkey
 
     steps:
       - name: Checkout code
@@ -460,4 +460,4 @@ jobs:
         env:
           CGO_ENABLED: 1
           SOFTHSM2_CONF: ${{ github.workspace }}/softhsm2.conf
-        run: go test -race -short -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault" ./...
+        run: go test -race -short -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack" ./...

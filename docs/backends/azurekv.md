@@ -53,6 +53,78 @@ Azure Key Vault handles key generation, automatic rotation, and lifecycle manage
 - Integration with Azure DevOps and CI/CD pipelines
 - Support for Azure Arc for hybrid scenarios
 
+## Service Integration
+
+### Build Tag
+
+The Azure Key Vault backend requires the `azurekv` build tag:
+
+```bash
+go build -tags azurekv ./...
+```
+
+When compiled with this tag, the backend auto-registers with the xkms service registry via an `init()` function in `pkg/xkms/register_azurekv.go`.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendAzureKV) {
+    fmt.Println("Azure Key Vault backend is available")
+}
+
+// List all compiled-in backends
+for _, b := range xkms.SupportedBackends() {
+    fmt.Println("Available:", b)
+}
+```
+
+### Using via Service API
+
+Once initialized, use the xkms service API to work with Azure Key Vault keys without managing backend instances directly:
+
+```go
+import (
+    "crypto/x509"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a key on Azure Key Vault
+key, err := xkms.GenerateKeyWithBackend("azurekv", &types.KeyAttributes{
+    CN:           "my-azure-key",
+    KeyAlgorithm: x509.ECDSA,
+    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+})
+
+// Sign using key ID format: backend:type:algo:keyname
+sig, err := xkms.Sign("azurekv:::my-azure-key", data, nil)
+
+// Seal data with Azure Key Vault envelope encryption
+sealed, err := xkms.SealWithBackend(ctx, "azurekv", secretData, opts)
+```
+
+### Auto-Initialize with Config
+
+Azure Key Vault uses environment variables for authentication by default via the Azure SDK's `DefaultAzureCredential`. Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` in your environment, or use managed identity on Azure resources.
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DefaultBackend: "azurekv",
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendAzureKV: {
+            "vault_url":     "https://my-vault.vault.azure.net/",
+            "tenant_id":     os.Getenv("AZURE_TENANT_ID"),
+            "client_id":     os.Getenv("AZURE_CLIENT_ID"),
+            "client_secret": os.Getenv("AZURE_CLIENT_SECRET"),
+        },
+    },
+})
+defer xkms.Close()
+```
+
 ## Configuration Options
 
 ### Config Structure
@@ -304,8 +376,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/azurekv"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
 )
 
 func main() {

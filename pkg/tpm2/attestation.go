@@ -1,6 +1,8 @@
 package tpm2
 
 import (
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/asn1"
 	"errors"
@@ -10,9 +12,273 @@ import (
 	"os"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
+
+// CertifyResult holds the output of a TPM2_Certify operation.
+// Per TCG TPM 2.0 Part 3 - Commands, Section 18.2, TPM2_Certify proves
+// that an object with a specific Name is loaded in the TPM. The signing
+// key (IAK) produces a signature over the TPMS_ATTEST structure that
+// includes the Name of the certified object.
+type CertifyResult struct {
+	// CertifyInfo is the raw TPMS_ATTEST structure produced by TPM2_Certify
+	CertifyInfo []byte
+
+	// Signature is the IAK signature over CertifyInfo
+	Signature []byte
+
+	// SignatureAlgorithm is the x509 signature algorithm used by the IAK
+	SignatureAlgorithm x509.SignatureAlgorithm
+
+	// AttestingKeyPublic is the IAK public key that signed the attestation
+	AttestingKeyPublic crypto.PublicKey
+
+	// AttestedKeyPublic is the certified key's public key
+	AttestedKeyPublic crypto.PublicKey
+
+	// Nonce is the echoed qualifying data from the caller
+	Nonce []byte
+}
+
+// CertifyKey performs TPM2_Certify on a key, producing a signed
+// TPMS_ATTEST structure that proves the key is resident in this TPM.
+// The IAK (Initial Attestation Key) signs the certification.
+//
+// Per TCG TPM 2.0 Part 3 - Commands, Section 18.2:
+//   - ObjectHandle: the key to be certified
+//   - SignHandle: the key used to sign the attestation (IAK)
+//   - QualifyingData: caller-supplied nonce for freshness
+//   - InScheme: TPM_ALG_NULL lets the TPM use the key's default scheme
+//
+// Persistent handles (0x81000000-0x81FFFFFF) are certified directly since
+// they are already resident in the TPM. Transient keys are loaded from
+// blob storage via the provided key backend before certification.
+func (tpm *TPM2) CertifyKey(
+	keyAttrs *types.KeyAttributes,
+	nonce []byte,
+	backend store.KeyBackend) (*CertifyResult, error) {
+
+	if tpm.transport == nil {
+		return nil, ErrNotInitialized
+	}
+
+	if tpm.iakAttrs == nil {
+		return nil, ErrIAKNotProvisioned
+	}
+
+	if keyAttrs == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
+
+	tpm.logger.Info("Performing TPM2_Certify",
+		slog.String("cn", keyAttrs.CN))
+
+	// Determine the target key handle and public area.
+	// Persistent handles (0x81xxxxxx) are already resident in the TPM and
+	// can be certified directly via ReadPublic. Transient keys must first
+	// be loaded from blob storage.
+	var targetHandle tpm2.TPMHandle
+	var targetPubResp *tpm2.ReadPublicResponse
+
+	handle := keyAttrs.TPMAttributes.Handle
+	if uint32(handle) >= 0x81000000 && uint32(handle) <= 0x81FFFFFF {
+		// Persistent handle — already resident in the TPM.
+		targetHandle = handle
+		var err error
+		targetPubResp, err = tpm2.ReadPublic{
+			ObjectHandle: targetHandle,
+		}.Execute(tpm.transport)
+		if err != nil {
+			tpm.logger.Error("failed to read persistent key public",
+				slog.String("handle", fmt.Sprintf("0x%08X", handle)),
+				slog.String("error", err.Error()))
+			return nil, fmt.Errorf("failed to read persistent key public: %w", err)
+		}
+	} else {
+		// Transient key — load from blob storage.
+		loadResp, err := tpm.LoadKeyPair(keyAttrs, nil, backend)
+		if err != nil {
+			tpm.logger.Error("failed to load target key for certification",
+				slog.String("error", err.Error()))
+			return nil, fmt.Errorf("%w: failed to load target key: %v", ErrInvalidKeyAttributes, err)
+		}
+		defer tpm.Flush(loadResp.ObjectHandle)
+		targetHandle = loadResp.ObjectHandle
+
+		targetPubResp, err = tpm2.ReadPublic{
+			ObjectHandle: targetHandle,
+		}.Execute(tpm.transport)
+		if err != nil {
+			tpm.logger.Error("failed to read target key public",
+				slog.String("error", err.Error()))
+			return nil, fmt.Errorf("failed to read target key public: %w", err)
+		}
+	}
+
+	// Determine target key auth
+	var targetAuth []byte
+	if keyAttrs.Password != nil {
+		targetAuth = keyAttrs.Password.Bytes()
+	}
+
+	// Determine IAK auth
+	var iakAuth []byte
+	if tpm.iakAttrs.Password != nil {
+		iakAuth = tpm.iakAttrs.Password.Bytes()
+	}
+
+	// Execute TPM2_Certify: the IAK signs a TPMS_ATTEST structure
+	// containing the Name of the target key
+	certify := tpm2.Certify{
+		ObjectHandle: tpm2.AuthHandle{
+			Handle: targetHandle,
+			Name:   targetPubResp.Name,
+			Auth:   tpm2.PasswordAuth(targetAuth),
+		},
+		SignHandle: tpm2.AuthHandle{
+			Handle: tpm.iakAttrs.TPMAttributes.Handle,
+			Name:   tpm.iakAttrs.TPMAttributes.Name,
+			Auth:   tpm2.PasswordAuth(iakAuth),
+		},
+		QualifyingData: tpm2.TPM2BData{
+			Buffer: nonce,
+		},
+		InScheme: tpm2.TPMTSigScheme{
+			Scheme: tpm2.TPMAlgNull,
+		},
+	}
+	rspCert, err := certify.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("TPM2_Certify failed",
+			slog.String("error", err.Error()))
+		return nil, fmt.Errorf("TPM2_Certify failed: %w", err)
+	}
+
+	// Read IAK public to determine signature type
+	iakPubResp, err := tpm2.ReadPublic{
+		ObjectHandle: tpm.iakAttrs.TPMAttributes.Handle,
+	}.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("failed to read IAK public",
+			slog.String("error", err.Error()))
+		return nil, fmt.Errorf("failed to read IAK public: %w", err)
+	}
+
+	iakPub, err := iakPubResp.OutPublic.Contents()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get IAK public contents: %w", err)
+	}
+
+	// Extract the signature from the Certify response, following the same
+	// pattern as Quote() for handling RSA and ECDSA signatures
+	var signature []byte
+
+	if iakPub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
+
+		var rsaSig *tpm2.TPMSSignatureRSA
+		if store.IsRSAPSS(tpm.iakAttrs.SignatureAlgorithm) {
+			rsaSig, err = rspCert.Signature.Signature.RSAPSS()
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract RSA-PSS signature: %w", err)
+			}
+		} else {
+			rsaSig, err = rspCert.Signature.Signature.RSASSA()
+			if err != nil {
+				return nil, fmt.Errorf("failed to extract RSASSA signature: %w", err)
+			}
+		}
+		signature = rsaSig.Sig.Buffer
+
+	} else if iakPub.Type == tpm2.TPMAlgECC {
+
+		sig, err := rspCert.Signature.Signature.ECDSA()
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract ECDSA signature: %w", err)
+		}
+		r := big.NewInt(0).SetBytes(sig.SignatureR.Buffer)
+		s := big.NewInt(0).SetBytes(sig.SignatureS.Buffer)
+		asn1Struct := struct{ R, S *big.Int }{r, s}
+		signature, err = asn1.Marshal(asn1Struct)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal ECDSA signature: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("%w: unsupported IAK key type: %v",
+			store.ErrUnsupportedKeyAlgorithm, iakPub.Type)
+	}
+
+	// Extract IAK public key
+	iakPubKey, err := tpm.extractPublicKey(iakPub)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract IAK public key: %w", err)
+	}
+
+	// Extract target key public key
+	targetPub, err := targetPubResp.OutPublic.Contents()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get target key public contents: %w", err)
+	}
+	targetPubKey, err := tpm.extractPublicKey(targetPub)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract target public key: %w", err)
+	}
+
+	tpm.logger.Debug("TPM2_Certify completed",
+		slog.String("cn", keyAttrs.CN),
+		slog.Int("certify_info_len", len(rspCert.CertifyInfo.Bytes())),
+		slog.Int("signature_len", len(signature)))
+
+	return &CertifyResult{
+		CertifyInfo:        rspCert.CertifyInfo.Bytes(),
+		Signature:          signature,
+		SignatureAlgorithm: tpm.iakAttrs.SignatureAlgorithm,
+		AttestingKeyPublic: iakPubKey,
+		AttestedKeyPublic:  targetPubKey,
+		Nonce:              nonce,
+	}, nil
+}
+
+// extractPublicKey converts a TPMTPublic to a crypto.PublicKey.
+func (tpm *TPM2) extractPublicKey(pub *tpm2.TPMTPublic) (crypto.PublicKey, error) {
+	if pub.Type == tpm2.TPMAlgRSA { //nolint:staticcheck // QF1003: if-else preferred over switch
+		rsaDetail, err := pub.Parameters.RSADetail()
+		if err != nil {
+			return nil, err
+		}
+		rsaUnique, err := pub.Unique.RSA()
+		if err != nil {
+			return nil, err
+		}
+		rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
+		if err != nil {
+			return nil, err
+		}
+		return rsaPub, nil
+
+	} else if pub.Type == tpm2.TPMAlgECC {
+		eccDetail, err := pub.Parameters.ECCDetail()
+		if err != nil {
+			return nil, err
+		}
+		curve, err := eccDetail.CurveID.Curve()
+		if err != nil {
+			return nil, err
+		}
+		eccUnique, err := pub.Unique.ECC()
+		if err != nil {
+			return nil, err
+		}
+		return &ecdsa.PublicKey{
+			Curve: curve,
+			X:     big.NewInt(0).SetBytes(eccUnique.X.Buffer),
+			Y:     big.NewInt(0).SetBytes(eccUnique.Y.Buffer),
+		}, nil
+	}
+
+	return nil, fmt.Errorf("%w: unsupported key type: %v",
+		store.ErrUnsupportedKeyAlgorithm, pub.Type)
+}
 
 // Returns an Attestation Key Profile (EK, AK, AK Name, TCG_CSR_IDEVID)
 func (tpm *TPM2) AKProfile() (AKProfile, error) {

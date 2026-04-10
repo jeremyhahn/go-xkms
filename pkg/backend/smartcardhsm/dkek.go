@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,284 +11,301 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build pkcs11
+//go:build smartcardhsm
 
 package smartcardhsm
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/secretsharing"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
 )
 
-// DKEK represents a Device Key Encryption Key handler for SmartCard-HSM.
-// It implements the DKEK protocol using Shamir's Secret Sharing to split
-// the device key into multiple shares that can be distributed securely.
-//
-// The DKEK is used for:
-//   - Backing up keys from the SmartCard-HSM
-//   - Restoring keys to the SmartCard-HSM
-//   - Sharing keys across multiple SmartCard-HSM devices
-//   - Distributed key management in raft clusters
-type DKEK struct {
-	shamir    *secretsharing.Shamir
-	storage   storage.Backend
-	threshold int
-	shares    int
+// DKEKStatus represents the current DKEK initialization status.
+type DKEKStatus struct {
+	// Initialized indicates if DKEK is fully initialized.
+	Initialized bool `json:"initialized"`
+
+	// TotalShares is the total number of shares (N).
+	TotalShares int `json:"total_shares"`
+
+	// Threshold is the minimum shares required (M).
+	Threshold int `json:"threshold"`
+
+	// SharesImported is the number of shares currently imported.
+	SharesImported int `json:"shares_imported"`
+
+	// SharesRemaining is the number of shares still needed.
+	SharesRemaining int `json:"shares_remaining"`
 }
 
-// DKEKShare represents a single share of the DKEK.
+// DKEKShare represents a single DKEK share for M-of-N reconstruction.
 type DKEKShare struct {
-	// Index is the share number (1-based)
-	Index byte `json:"index"`
+	// Index is the share index (1-based).
+	Index int `json:"index"`
 
-	// Value is the share data
-	Value []byte `json:"value"`
-
-	// Checksum is the SHA-256 hash for integrity verification
-	Checksum []byte `json:"checksum"`
+	// Data is the 32-byte share data.
+	Data []byte `json:"data"`
 }
 
-// NewDKEK creates a new DKEK handler.
+// GenerateDKEKShares generates N DKEK shares where M are required to reconstruct.
+// This creates a new random 256-bit DKEK and splits it using Shamir's Secret Sharing.
+// The shares should be distributed to key custodians for safekeeping.
 //
 // Parameters:
-//   - threshold: Minimum number of shares needed to reconstruct the DKEK (M)
-//   - shares: Total number of shares to create (N)
-//   - storage: Storage backend for persisting DKEK shares
+//   - n: Total number of shares to generate
+//   - m: Minimum number of shares required to reconstruct (threshold)
 //
-// Returns an error if the parameters are invalid.
-func NewDKEK(threshold, shares int, storage storage.Backend) (*DKEK, error) {
-	if threshold < 1 || threshold > 255 {
-		return nil, fmt.Errorf("threshold must be between 1 and 255, got %d", threshold)
+// Returns a slice of DKEKShare structs containing the share data.
+func GenerateDKEKShares(n, m int) ([]DKEKShare, error) {
+	if n < 1 || n > 8 {
+		return nil, fmt.Errorf("smartcardhsm: invalid share count %d (must be 1-8)", n)
 	}
-	if shares < threshold || shares > 255 {
-		return nil, fmt.Errorf("shares must be between %d and 255, got %d", threshold, shares)
-	}
-	if storage == nil {
-		return nil, fmt.Errorf("storage is required")
+	if m < 1 || m > n {
+		return nil, ErrDKEKThresholdInvalid
 	}
 
-	// Create Shamir instance
-	shamir, err := secretsharing.NewShamir(&secretsharing.ShareConfig{
-		Threshold:   threshold,
-		TotalShares: shares,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create shamir: %w", err)
-	}
-
-	return &DKEK{
-		shamir:    shamir,
-		storage:   storage,
-		threshold: threshold,
-		shares:    shares,
-	}, nil
-}
-
-// Generate generates a new DKEK and splits it into shares.
-// The DKEK itself is not stored; only the shares are persisted.
-//
-// Returns:
-//   - The generated shares
-//   - An error if generation or splitting fails
-func (d *DKEK) Generate() ([]DKEKShare, error) {
 	// Generate random 256-bit DKEK
 	dkek := make([]byte, 32)
 	if _, err := rand.Read(dkek); err != nil {
-		return nil, fmt.Errorf("failed to generate dkek: %w", err)
+		return nil, fmt.Errorf("smartcardhsm: failed to generate DKEK: %w", err)
 	}
 
-	// Split DKEK into shares
-	shamirShares, err := d.shamir.Split(dkek)
+	// Split using Shamir's Secret Sharing
+	shares, err := shamir.Split(dkek, n, m)
 	if err != nil {
-		return nil, fmt.Errorf("failed to split dkek: %w", err)
+		return nil, fmt.Errorf("smartcardhsm: failed to split DKEK: %w", err)
 	}
 
-	// Convert to DKEK shares
-	shares := make([]DKEKShare, len(shamirShares))
-	for i, share := range shamirShares {
-		shares[i] = DKEKShare{
-			Index:    share.Index,
-			Value:    share.Value,
-			Checksum: share.Checksum,
+	result := make([]DKEKShare, len(shares))
+	for i, share := range shares {
+		result[i] = DKEKShare{
+			Index: share.Index,
+			Data:  share.Value,
 		}
 	}
 
-	// Persist shares to storage
-	if err := d.saveShares(shares); err != nil {
-		return nil, fmt.Errorf("failed to save shares: %w", err)
-	}
-
-	return shares, nil
+	return result, nil
 }
 
-// Reconstruct reconstructs the DKEK from a subset of shares.
-// At least 'threshold' number of shares must be provided.
-//
-// Parameters:
-//   - shares: The DKEK shares to combine (must be >= threshold)
-//
-// Returns:
-//   - The reconstructed DKEK
-//   - An error if reconstruction fails or too few shares provided
-func (d *DKEK) Reconstruct(shares []DKEKShare) ([]byte, error) {
-	if len(shares) < d.threshold {
-		return nil, fmt.Errorf("insufficient shares: need %d, got %d", d.threshold, len(shares))
+// ReconstructDKEK reconstructs the DKEK from the provided shares.
+// At least 'threshold' shares must be provided.
+func ReconstructDKEK(shares []DKEKShare, threshold int) ([]byte, error) {
+	if len(shares) < threshold {
+		return nil, fmt.Errorf("smartcardhsm: insufficient shares (%d < %d)", len(shares), threshold)
 	}
 
-	// Convert to Shamir shares
-	shamirShares := make([]secretsharing.Share, len(shares))
+	// Convert to shamir shares
+	shamirShares := make([]shamir.Share, len(shares))
 	for i, share := range shares {
-		shamirShares[i] = secretsharing.Share{
-			Index:    share.Index,
-			Value:    share.Value,
-			Checksum: share.Checksum,
+		shamirShares[i] = shamir.Share{
+			Index: share.Index,
+			Value: share.Data,
 		}
 	}
 
-	// Reconstruct DKEK
-	dkek, err := d.shamir.Combine(shamirShares)
+	// Reconstruct
+	dkek, err := shamir.Combine(shamirShares)
 	if err != nil {
-		return nil, fmt.Errorf("failed to reconstruct dkek: %w", err)
+		return nil, fmt.Errorf("smartcardhsm: failed to reconstruct DKEK: %w", err)
 	}
 
 	return dkek, nil
 }
 
-// LoadShare loads a specific DKEK share from storage.
-//
-// Parameters:
-//   - index: The share index to load (1-based)
-//
-// Returns:
-//   - The loaded share
-//   - An error if the share doesn't exist or loading fails
-func (d *DKEK) LoadShare(index byte) (*DKEKShare, error) {
-	shareID := fmt.Sprintf("dkek-share-%d", index)
-	data, err := d.storage.Get(shareID)
+// GetDKEKStatus queries the current DKEK status from the card.
+func (b *Backend) GetDKEKStatus() (*DKEKStatus, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.card == nil {
+		return nil, ErrNotInitialized
+	}
+
+	apdu := BuildReadDKEKStatusAPDU()
+	resp, err := b.transmit(apdu)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load share %d: %w", index, err)
+		return nil, err
 	}
 
-	// Parse share data (format: index:value:checksum in hex)
-	var share DKEKShare
-	if _, err := fmt.Sscanf(string(data), "%d:%x:%x", &share.Index, &share.Value, &share.Checksum); err != nil {
-		return nil, fmt.Errorf("failed to parse share %d: %w", index, err)
+	if !resp.IsSuccess() {
+		return nil, NewAPDUError("GetDKEKStatus", resp.StatusWord())
 	}
 
-	return &share, nil
+	// Parse response
+	// Response format: status (1 byte) | shares_imported (1 byte) | shares_remaining (1 byte)
+	if len(resp.Data) < 3 {
+		return nil, fmt.Errorf("smartcardhsm: invalid DKEK status response")
+	}
+
+	status := &DKEKStatus{
+		Initialized:     resp.Data[0] == DKEKStatusComplete,
+		SharesImported:  int(resp.Data[1]),
+		SharesRemaining: int(resp.Data[2]),
+	}
+
+	// Calculate total and threshold from imported + remaining
+	status.TotalShares = status.SharesImported + status.SharesRemaining
+	if status.Initialized {
+		status.Threshold = status.SharesImported
+	}
+
+	return status, nil
 }
 
-// LoadAllShares loads all DKEK shares from storage.
-//
-// Returns:
-//   - All available shares
-//   - An error if loading fails
-func (d *DKEK) LoadAllShares() ([]DKEKShare, error) {
-	shares := make([]DKEKShare, 0, d.shares)
+// ImportDKEKShare imports a single DKEK share into the card.
+// Must be called 'threshold' times with different shares to complete DKEK initialization.
+// Returns the number of shares still needed.
+func (b *Backend) ImportDKEKShare(share DKEKShare) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	for i := byte(1); i <= byte(d.shares); i++ {
-		share, err := d.LoadShare(i)
-		if err != nil {
-			// Share might not exist, skip it
-			continue
+	if b.card == nil {
+		return 0, ErrNotInitialized
+	}
+
+	if len(share.Data) != 32 {
+		return 0, ErrDKEKShareInvalid
+	}
+
+	apdu := BuildImportDKEKShareAPDU(share.Data)
+	resp, err := b.transmit(apdu)
+	if err != nil {
+		return 0, err
+	}
+
+	if !resp.IsSuccess() {
+		switch resp.StatusWord() {
+		case SW_SECURITY_NOT_SAT:
+			return 0, ErrAuthenticationFailed
+		case SW_CONDITIONS_NOT_SAT:
+			return 0, ErrDKEKAlreadyInitialized
+		case SW_WRONG_DATA:
+			return 0, ErrDKEKShareInvalid
+		default:
+			return 0, NewAPDUError("ImportDKEKShare", resp.StatusWord())
 		}
-		shares = append(shares, *share)
 	}
 
-	if len(shares) == 0 {
-		return nil, fmt.Errorf("no shares found in storage")
+	// Response contains remaining shares count
+	if len(resp.Data) > 0 {
+		return int(resp.Data[0]), nil
 	}
 
-	return shares, nil
+	return 0, nil
 }
 
-// DeleteShare deletes a specific DKEK share from storage.
-//
-// Parameters:
-//   - index: The share index to delete (1-based)
-//
-// Returns an error if deletion fails.
-func (d *DKEK) DeleteShare(index byte) error {
-	shareID := fmt.Sprintf("dkek-share-%d", index)
-	return d.storage.Delete(shareID)
-}
+// WrapKey wraps a key with the DKEK for export/backup.
+// The key must exist on the card at the specified key reference.
+// Returns the wrapped key blob that can be imported to another card with the same DKEK.
+func (b *Backend) WrapKey(keyRef byte) ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
 
-// DeleteAllShares deletes all DKEK shares from storage.
-// This is a destructive operation and cannot be undone.
-//
-// Returns an error if any deletion fails.
-func (d *DKEK) DeleteAllShares() error {
-	for i := byte(1); i <= byte(d.shares); i++ {
-		if err := d.DeleteShare(i); err != nil {
-			// Continue deleting other shares even if one fails
-			continue
+	if b.card == nil {
+		return nil, ErrNotInitialized
+	}
+
+	// Check DKEK status first
+	status, err := b.getDKEKStatusLocked()
+	if err != nil {
+		return nil, err
+	}
+	if !status.Initialized {
+		return nil, ErrDKEKNotInitialized
+	}
+
+	apdu := BuildWrapKeyAPDU(keyRef)
+	resp, err := b.transmit(apdu)
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.IsSuccess() {
+		switch resp.StatusWord() {
+		case SW_CONDITIONS_NOT_SAT:
+			return nil, ErrDKEKNotInitialized
+		case SW_WRONG_P1P2:
+			return nil, ErrKeyNotFound
+		default:
+			return nil, NewAPDUError("WrapKey", resp.StatusWord())
 		}
 	}
+
+	if len(resp.Data) == 0 {
+		return nil, ErrKeyWrapFailed
+	}
+
+	return resp.Data, nil
+}
+
+// UnwrapKey imports a DKEK-wrapped key blob into the card.
+// The key will be stored at the specified key reference.
+// The card must have the same DKEK that was used to wrap the key.
+func (b *Backend) UnwrapKey(keyRef byte, wrappedKey []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.card == nil {
+		return ErrNotInitialized
+	}
+
+	// Check DKEK status first
+	status, err := b.getDKEKStatusLocked()
+	if err != nil {
+		return err
+	}
+	if !status.Initialized {
+		return ErrDKEKNotInitialized
+	}
+
+	if len(wrappedKey) == 0 {
+		return ErrKeyUnwrapFailed
+	}
+
+	apdu := BuildUnwrapKeyAPDU(keyRef, wrappedKey)
+	resp, err := b.transmit(apdu)
+	if err != nil {
+		return err
+	}
+
+	if !resp.IsSuccess() {
+		switch resp.StatusWord() {
+		case SW_SECURITY_NOT_SAT:
+			return ErrAuthenticationFailed
+		case SW_CONDITIONS_NOT_SAT:
+			return ErrDKEKNotInitialized
+		case SW_WRONG_DATA:
+			return ErrKeyUnwrapFailed
+		default:
+			return NewAPDUError("UnwrapKey", resp.StatusWord())
+		}
+	}
+
 	return nil
 }
 
-// saveShares persists DKEK shares to storage.
-func (d *DKEK) saveShares(shares []DKEKShare) error {
-	for _, share := range shares {
-		shareID := fmt.Sprintf("dkek-share-%d", share.Index)
-
-		// Format: index:value:checksum (all in hex)
-		data := fmt.Sprintf("%d:%s:%s",
-			share.Index,
-			hex.EncodeToString(share.Value),
-			hex.EncodeToString(share.Checksum))
-
-		if err := d.storage.Put(shareID, []byte(data), nil); err != nil {
-			return fmt.Errorf("failed to save share %d: %w", share.Index, err)
-		}
-	}
-	return nil
-}
-
-// GetThreshold returns the minimum number of shares needed for reconstruction.
-func (d *DKEK) GetThreshold() int {
-	return d.threshold
-}
-
-// GetTotalShares returns the total number of shares that were created.
-func (d *DKEK) GetTotalShares() int {
-	return d.shares
-}
-
-// VerifyShares verifies the integrity of a set of shares.
-// It checks that each share has a valid checksum and that there are
-// enough shares to reconstruct the DKEK.
-//
-// Parameters:
-//   - shares: The shares to verify
-//
-// Returns:
-//   - true if shares are valid and sufficient
-//   - An error describing what's wrong if validation fails
-func (d *DKEK) VerifyShares(shares []DKEKShare) error {
-	if len(shares) < d.threshold {
-		return fmt.Errorf("insufficient shares: need %d, got %d", d.threshold, len(shares))
+// getDKEKStatusLocked queries DKEK status without acquiring the lock.
+// Caller must hold at least a read lock.
+func (b *Backend) getDKEKStatusLocked() (*DKEKStatus, error) {
+	apdu := BuildReadDKEKStatusAPDU()
+	resp, err := b.transmit(apdu)
+	if err != nil {
+		return nil, err
 	}
 
-	// Convert to Shamir shares for verification
-	shamirShares := make([]secretsharing.Share, len(shares))
-	for i, share := range shares {
-		shamirShares[i] = secretsharing.Share{
-			Index:    share.Index,
-			Value:    share.Value,
-			Checksum: share.Checksum,
-		}
+	if !resp.IsSuccess() {
+		return nil, NewAPDUError("GetDKEKStatus", resp.StatusWord())
 	}
 
-	// Verify checksums by attempting reconstruction
-	// If checksums are invalid, reconstruction will fail
-	if _, err := d.shamir.Combine(shamirShares); err != nil {
-		return fmt.Errorf("share verification failed: %w", err)
+	if len(resp.Data) < 3 {
+		return nil, fmt.Errorf("smartcardhsm: invalid DKEK status response")
 	}
 
-	return nil
+	return &DKEKStatus{
+		Initialized:     resp.Data[0] == DKEKStatusComplete,
+		SharesImported:  int(resp.Data[1]),
+		SharesRemaining: int(resp.Data[2]),
+	}, nil
 }

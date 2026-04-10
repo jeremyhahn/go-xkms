@@ -8,8 +8,8 @@ on:
 env:
   GO_VERSION: 'stable'
   REGISTRY: ghcr.io
-  IMAGE_NAME_SERVER: jeremyhahn/keychain-server
-  IMAGE_NAME_CLI: jeremyhahn/keychain-cli
+  IMAGE_NAME_SERVER: jeremyhahn/xkms-server
+  IMAGE_NAME_CLI: jeremyhahn/xkms-cli
   GOPROXY: direct
   GOSUMDB: off
 
@@ -62,27 +62,27 @@ jobs:
           Download platform-specific binaries directly - ready to use immediately!
 
           **Available Binaries**:
-          - \`keychainctl-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard CLI
-          - \`keychaind-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Server
-          - \`vfido2-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}\` - Virtual FIDO2 Device
-          - \`keychainctl-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant CLI
-          - \`keychaind-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant Server
+          - \`xkmsctl-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard CLI
+          - \`xkmsd-${{ steps.get_version.outputs.version }}-{linux,darwin}-{amd64,arm64}\` - Standard Server
+          - \`xkey-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}\` - Virtual FIDO2 Device
+          - \`xkmsctl-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant CLI
+          - \`xkmsd-${{ steps.get_version.outputs.version }}-linux-{amd64,arm64}-fips\` - FIPS 140-3 compliant Server
 
           **Quick Start**:
           \`\`\`bash
           # Download and run CLI directly (Linux amd64 example)
-          wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/keychainctl-${{ steps.get_version.outputs.version }}-linux-amd64
-          chmod +x keychainctl-${{ steps.get_version.outputs.version }}-linux-amd64
-          ./keychainctl-${{ steps.get_version.outputs.version }}-linux-amd64 --help
+          wget https://github.com/${{ github.repository }}/releases/download/v${{ steps.get_version.outputs.version }}/xkmsctl-${{ steps.get_version.outputs.version }}-linux-amd64
+          chmod +x xkmsctl-${{ steps.get_version.outputs.version }}-linux-amd64
+          ./xkmsctl-${{ steps.get_version.outputs.version }}-linux-amd64 --help
           \`\`\`
 
           ### Docker Images
           \`\`\`bash
           # Multi-protocol server (REST, gRPC, QUIC, MCP)
-          docker pull ghcr.io/jeremyhahn/keychain-server:${{ steps.get_version.outputs.version }}
+          docker pull ghcr.io/jeremyhahn/xkms-server:${{ steps.get_version.outputs.version }}
 
           # CLI tool
-          docker pull ghcr.io/jeremyhahn/keychain-cli:${{ steps.get_version.outputs.version }}
+          docker pull ghcr.io/jeremyhahn/xkms-cli:${{ steps.get_version.outputs.version }}
           \`\`\`
 
           ### Verify Checksums
@@ -158,8 +158,6 @@ jobs:
             libtss2-dev \
             ca-certificates \
             file \
-            cmake \
-            ninja-build \
             libssl-dev \
             git
 
@@ -196,26 +194,26 @@ jobs:
           mkdir -p /workspace/dist
 
           # Build CLI
-          echo "Building keychainctl..."
+          echo "Building xkmsctl..."
           CGO_ENABLED=${CGO_MODE} go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o /workspace/dist/keychainctl \
-            ./cmd/keychainctl
+            -o /workspace/dist/xkmsctl \
+            ./cmd/xkmsctl
 
           # Build multi-protocol Server (supports REST, gRPC, QUIC, MCP)
-          echo "Building keychaind..."
+          echo "Building xkmsd..."
           CGO_ENABLED=${CGO_MODE} go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o /workspace/dist/keychaind \
-            ./cmd/keychaind
+            -o /workspace/dist/xkmsd \
+            ./cmd/xkmsd
 
           # Build Virtual FIDO2 Device (Linux only, requires CGO for UHID)
-          # Note: vfido2 is Linux-only due to UHID dependency
+          # Note: xkey is Linux-only due to UHID dependency
           if [ "$CGO_MODE" = "1" ]; then
-            echo "Building vfido2..."
+            echo "Building xkey..."
             CGO_ENABLED=1 go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-              -o /workspace/dist/vfido2 \
-              ./cmd/vfido2
+              -o /workspace/dist/xkey \
+              ./cmd/xkey
           else
-            echo "Skipping vfido2 for FIPS build (requires CGO)"
+            echo "Skipping xkey for FIPS build (requires CGO)"
           fi
 
           # Verify binaries are statically linked
@@ -266,7 +264,7 @@ jobs:
           # Create renamed binaries with platform/variant info
           cd dist
 
-          for binary in keychainctl keychaind vfido2; do
+          for binary in xkmsctl xkmsd xkey; do
             if [ -f "$binary" ]; then
               # Create binary with full name including platform/arch/variant
               NEW_NAME="${binary}-${VERSION}-linux-${ARCH}${VARIANT_SUFFIX}"
@@ -282,24 +280,24 @@ jobs:
           cd ..
 
           echo "Created release assets:"
-          ls -lh keychainctl-* keychaind-* vfido2-* 2>/dev/null || ls -lh keychainctl-* keychaind-*
+          ls -lh xkmsctl-* xkmsd-* xkey-* 2>/dev/null || ls -lh xkmsctl-* xkmsd-*
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            keychainctl-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
-            keychainctl-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
-            keychaind-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
-            keychaind-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
+            xkmsctl-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
+            xkmsctl-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
+            xkmsd-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}
+            xkmsd-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}${{ matrix.variant == 'fips' && '-fips' || '' }}.sha256
 
-      - name: Upload vfido2 release assets
+      - name: Upload xkey release assets
         if: matrix.variant == 'standard'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            vfido2-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}
-            vfido2-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.sha256
+            xkey-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}
+            xkey-${{ needs.create-release.outputs.version }}-linux-${{ matrix.arch }}.sha256
 
   build-darwin-binaries:
     name: Build Darwin Binaries (${{ matrix.arch }})
@@ -339,18 +337,18 @@ jobs:
           echo "Build flags: ${BUILD_FLAGS}"
 
           # Build CLI
-          echo "Building keychainctl..."
+          echo "Building xkmsctl..."
           go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o dist/keychainctl \
-            ./cmd/keychainctl
+            -o dist/xkmsctl \
+            ./cmd/xkmsctl
 
           # Build Server
-          echo "Building keychaind..."
+          echo "Building xkmsd..."
           go build -buildvcs=false -ldflags="${LDFLAGS}" ${BUILD_FLAGS} \
-            -o dist/keychaind \
-            ./cmd/keychaind
+            -o dist/xkmsd \
+            ./cmd/xkmsd
 
-          # Note: vfido2 is Linux-only (requires UHID)
+          # Note: xkey is Linux-only (requires UHID)
 
           # Verify binaries
           echo "Build artifacts:"
@@ -365,7 +363,7 @@ jobs:
           # Create renamed binaries with platform/arch info
           cd dist
 
-          for binary in keychainctl keychaind; do
+          for binary in xkmsctl xkmsd; do
             if [ -f "$binary" ]; then
               # Create binary with full name including platform/arch
               NEW_NAME="${binary}-${VERSION}-darwin-${ARCH}"
@@ -381,16 +379,16 @@ jobs:
           cd ..
 
           echo "Created release assets:"
-          ls -lh keychainctl-* keychaind-*
+          ls -lh xkmsctl-* xkmsd-*
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            keychainctl-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
-            keychainctl-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
-            keychaind-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
-            keychaind-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
+            xkmsctl-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
+            xkmsctl-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
+            xkmsd-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}
+            xkmsd-${{ needs.create-release.outputs.version }}-darwin-${{ matrix.arch }}.sha256
 
   build-docker:
     name: Build Docker Server Image
@@ -428,7 +426,7 @@ jobs:
         run: |
           # Create a production Dockerfile for the multi-protocol server
           cat > Dockerfile.release << 'EOF'
-          # Multi-stage Dockerfile for keychain production deployment
+          # Multi-stage Dockerfile for xkms production deployment
           # Stage 1: Builder
           FROM golang:bookworm AS builder
 
@@ -462,8 +460,8 @@ jobs:
               -buildvcs=false \
               -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,frost" \
               -ldflags="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
-              -o /build/keychaind \
-              ./cmd/keychaind
+              -o /build/xkmsd \
+              ./cmd/xkmsd
 
           # Stage 2: Runtime
           FROM debian:bookworm-slim
@@ -478,23 +476,23 @@ jobs:
               && rm -rf /var/lib/apt/lists/*
 
           # Create non-root user
-          RUN useradd -m -u 1000 keychain
+          RUN useradd -m -u 1000 xkms
 
           # Create directories
-          RUN mkdir -p /etc/keychain /var/lib/keychain /var/lib/softhsm/tokens && \
-              chown -R keychain:keychain /etc/keychain /var/lib/keychain /var/lib/softhsm
+          RUN mkdir -p /etc/xkms /var/lib/xkms /var/lib/softhsm/tokens && \
+              chown -R xkms:xkms /etc/xkms /var/lib/xkms /var/lib/softhsm
 
           # Copy binary from builder
-          COPY --from=builder /build/keychaind /usr/local/bin/keychaind
+          COPY --from=builder /build/xkmsd /usr/local/bin/xkmsd
 
           # Switch to non-root user
-          USER keychain
+          USER xkms
 
           # Expose ports for all protocols: REST, gRPC, QUIC, MCP
           EXPOSE 8080 8443 9090 9091
 
-          ENTRYPOINT ["/usr/local/bin/keychaind"]
-          CMD ["-config", "/etc/keychain/config.yaml"]
+          ENTRYPOINT ["/usr/local/bin/xkmsd"]
+          CMD ["-config", "/etc/xkms/config.yaml"]
           EOF
 
       - name: Build and push Docker image
@@ -615,7 +613,7 @@ jobs:
             });
 
             const currentBody = release.data.body || '';
-            const dockerInfo = `\n\n## Docker Images\n\nMulti-protocol server supporting REST, gRPC, QUIC, and MCP:\n\n- \`ghcr.io/jeremyhahn/keychain-server:${{ needs.create-release.outputs.version }}\`\n\nCLI tool:\n\n- \`ghcr.io/jeremyhahn/keychain-cli:${{ needs.create-release.outputs.version }}\`\n\nAll images support both \`linux/amd64\` and \`linux/arm64\` platforms.\n`;
+            const dockerInfo = `\n\n## Docker Images\n\nMulti-protocol server supporting REST, gRPC, QUIC, and MCP:\n\n- \`ghcr.io/jeremyhahn/xkms-server:${{ needs.create-release.outputs.version }}\`\n\nCLI tool:\n\n- \`ghcr.io/jeremyhahn/xkms-cli:${{ needs.create-release.outputs.version }}\`\n\nAll images support both \`linux/amd64\` and \`linux/arm64\` platforms.\n`;
 
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
@@ -632,18 +630,18 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Binaries" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **keychainctl** - CLI tool" >> $GITHUB_STEP_SUMMARY
-          echo "- **keychaind** - Multi-protocol server (REST, gRPC, QUIC, MCP)" >> $GITHUB_STEP_SUMMARY
-          echo "- **vfido2** - Virtual FIDO2 device (Linux only)" >> $GITHUB_STEP_SUMMARY
+          echo "- **xkmsctl** - CLI tool" >> $GITHUB_STEP_SUMMARY
+          echo "- **xkmsd** - Multi-protocol server (REST, gRPC, QUIC, MCP)" >> $GITHUB_STEP_SUMMARY
+          echo "- **xkey** - Virtual FIDO2 device (Linux only)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Artifacts Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Linux Binaries" >> $GITHUB_STEP_SUMMARY
-          echo "- **Standard** (amd64, arm64) - keychainctl, keychaind, vfido2" >> $GITHUB_STEP_SUMMARY
-          echo "- **FIPS 140-3** (amd64, arm64) - keychainctl, keychaind (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Standard** (amd64, arm64) - xkmsctl, xkmsd, xkey" >> $GITHUB_STEP_SUMMARY
+          echo "- **FIPS 140-3** (amd64, arm64) - xkmsctl, xkmsd (GOFIPS140=v1.0.0)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### macOS/Darwin Binaries" >> $GITHUB_STEP_SUMMARY
-          echo "- **Standard** (amd64, arm64) - keychainctl, keychaind" >> $GITHUB_STEP_SUMMARY
+          echo "- **Standard** (amd64, arm64) - xkmsctl, xkmsd" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "#### Docker Images" >> $GITHUB_STEP_SUMMARY
           echo "- Multi-arch (amd64, arm64)" >> $GITHUB_STEP_SUMMARY
@@ -653,8 +651,8 @@ jobs:
           echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
           echo "# Multi-protocol server (REST, gRPC, QUIC, MCP)" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/jeremyhahn/keychain-server:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/jeremyhahn/xkms-server:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "# CLI tool" >> $GITHUB_STEP_SUMMARY
-          echo "docker pull ghcr.io/jeremyhahn/keychain-cli:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "docker pull ghcr.io/jeremyhahn/xkms-cli:${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

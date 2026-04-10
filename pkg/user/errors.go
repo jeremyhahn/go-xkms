@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -51,4 +51,17 @@ var (
 
 	// ErrInvalidRole is returned when a role is invalid.
 	ErrInvalidRole = errors.New("invalid role")
+
+	// ErrRoleRevocationDenied is returned when a role cannot be revoked because
+	// there is no lower privilege role available (FIPS 140-2 compliance).
+	ErrRoleRevocationDenied = errors.New("role revocation denied: no lower privilege role available")
+
+	// ErrCertBindingNotFound is returned when a certificate binding is not found.
+	ErrCertBindingNotFound = errors.New("certificate binding not found")
+
+	// ErrCertBindingAlreadyExists is returned when a certificate binding already exists.
+	ErrCertBindingAlreadyExists = errors.New("certificate binding already exists")
+
+	// ErrInvalidTenantID is returned when a tenant ID is invalid.
+	ErrInvalidTenantID = errors.New("invalid tenant ID")
 )

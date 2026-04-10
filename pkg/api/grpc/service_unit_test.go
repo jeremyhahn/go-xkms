@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,18 +23,18 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// setupServiceTest initializes keychain for service tests
+// setupServiceTest initializes xkms for service tests
 func setupServiceTest(t *testing.T) *Service {
 	t.Helper()
-	keychain.Reset()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	certStorage := storage.New()
@@ -46,7 +46,7 @@ func setupServiceTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -54,21 +54,21 @@ func setupServiceTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": ks,
 		},
 		DefaultBackend: "software",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService()
+	return NewService(nil, nil)
 }
 
 func TestNewService(t *testing.T) {
-	service := NewService()
+	service := NewService(nil, nil)
 	if service == nil {
 		t.Fatal("Expected non-nil service")
 	}
@@ -76,7 +76,7 @@ func TestNewService(t *testing.T) {
 
 func TestService_Health(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns healthy status", func(t *testing.T) {
 		resp, err := service.Health(context.Background(), &pb.HealthRequest{})
@@ -95,7 +95,7 @@ func TestService_Health(t *testing.T) {
 
 func TestService_ListBackends(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("lists all backends", func(t *testing.T) {
 		resp, err := service.ListBackends(context.Background(), &pb.ListBackendsRequest{})
@@ -128,7 +128,7 @@ func TestService_ListBackends(t *testing.T) {
 
 func TestService_GetBackendInfo(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns backend info", func(t *testing.T) {
 		resp, err := service.GetBackendInfo(context.Background(), &pb.GetBackendInfoRequest{
@@ -183,7 +183,7 @@ func TestService_GetBackendInfo(t *testing.T) {
 
 func TestService_GenerateKey(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("generates RSA key", func(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -334,7 +334,7 @@ func TestService_GenerateKey(t *testing.T) {
 
 func TestService_ListKeys(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate a key first
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -410,7 +410,7 @@ func TestService_ListKeys(t *testing.T) {
 
 func TestService_GetKey(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate a key first
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -495,7 +495,7 @@ func TestService_GetKey(t *testing.T) {
 
 func TestService_Sign(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate a key for signing
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -580,7 +580,7 @@ func TestService_Sign(t *testing.T) {
 
 func TestService_Verify(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate a key and sign data
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -695,7 +695,7 @@ func TestService_Verify(t *testing.T) {
 
 func TestService_DeleteKey(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate a key to delete
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -777,7 +777,7 @@ func TestService_DeleteKey(t *testing.T) {
 
 func TestService_RotateKey(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate a key to rotate
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -877,7 +877,7 @@ func createTestCertificate(t *testing.T) *x509.Certificate {
 
 func TestService_SaveCert(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	cert := createTestCertificate(t)
 	certPEM := encodeCertToPEM(cert)
@@ -951,7 +951,7 @@ func TestService_SaveCert(t *testing.T) {
 
 func TestService_GetCert(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save a certificate first
 	cert := createTestCertificate(t)
@@ -1013,7 +1013,7 @@ func TestService_GetCert(t *testing.T) {
 
 func TestService_DeleteCert(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save a certificate first
 	cert := createTestCertificate(t)
@@ -1058,7 +1058,7 @@ func TestService_DeleteCert(t *testing.T) {
 
 func TestService_ListCerts(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save a certificate first
 	cert := createTestCertificate(t)
@@ -1086,7 +1086,7 @@ func TestService_ListCerts(t *testing.T) {
 
 func TestService_CertExists(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save a certificate first
 	cert := createTestCertificate(t)
@@ -1144,7 +1144,7 @@ func TestService_CertExists(t *testing.T) {
 
 func TestService_SaveCertChain(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	cert := createTestCertificate(t)
 	certPEM := encodeCertToPEM(cert)
@@ -1201,7 +1201,7 @@ func TestService_SaveCertChain(t *testing.T) {
 
 func TestService_GetCertChain(t *testing.T) {
 	service := setupServiceTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save a certificate chain first
 	cert := createTestCertificate(t)

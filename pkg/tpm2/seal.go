@@ -2,12 +2,13 @@ package tpm2
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // sealKeyInternal creates a new key under the provided Storage Root Key (SRK),
@@ -57,9 +58,19 @@ func (tpm *TPM2) sealKeyInternal(
 	}
 
 	if keyAttrs.PlatformPolicy {
-		// Attach platform PCR policy digest if configured
+		// Attach platform policy digest (PolicyOR of PolicyPCR + PolicyAuthValue)
+		// This MUST match what PlatformPolicySession() produces during unseal.
+		// The SRK uses PlatformPolicyDigest (key.go), and CreateKeySession uses
+		// PlatformPolicySession -- the sealed object must use the same digest.
 		tpl := keyAttrs.TPMAttributes.Template
-		tpl.AuthPolicy = tpm.PlatformPolicyDigest()
+		policyDigest, err := tpm.PlatformPolicyDigest()
+		if err != nil {
+			return nil, err
+		}
+		tpm.logger.Info("tpm: sealKeyInternal - using PlatformPolicyDigest for sealed object AuthPolicy",
+			slog.String("policy_digest", fmt.Sprintf("%x", policyDigest.Buffer)),
+			slog.String("cn", keyAttrs.CN))
+		tpl.AuthPolicy = policyDigest
 		keyAttrs.TPMAttributes.Template = tpl
 	}
 
@@ -329,6 +340,9 @@ func (tpm *TPM2) unsealFromBlobs(
 	defer tpm.Flush(sealKey.ObjectHandle)
 
 	// Create key session
+	tpm.logger.Info("tpm: unsealFromBlobs - creating key session",
+		slog.Bool("platform_policy", keyAttrs.PlatformPolicy),
+		slog.String("cn", keyAttrs.CN))
 	session2, closer2, err2 := tpm.CreateKeySession(keyAttrs)
 	defer func() {
 		if err := closer2(); err != nil {

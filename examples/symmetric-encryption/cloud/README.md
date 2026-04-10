@@ -1,10 +1,10 @@
 # Symmetric Encryption Examples
 
-This directory contains comprehensive examples demonstrating symmetric encryption using the go-keychain library. These examples show how to use AES-GCM encryption with both software-based (PKCS#8) and cloud-based Key Management Services (KMS).
+This directory contains comprehensive examples demonstrating symmetric encryption using the go-xkms library. These examples show how to use AES-GCM encryption with both software-based (PKCS#8) and cloud-based Key Management Services (KMS).
 
 ## Overview
 
-Symmetric encryption uses the same key for both encryption and decryption. The go-keychain library provides a unified interface for symmetric encryption across multiple backends:
+Symmetric encryption uses the same key for both encryption and decryption. The go-xkms library provides a unified interface for symmetric encryption across multiple backends:
 
 - **Symmetric Backend**: Local AES-GCM encryption with password-protected key storage
 - **AWS KMS**: Hardware-backed encryption using AWS Key Management Service
@@ -89,7 +89,7 @@ go build -tags awskms
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/credentials.json"
 export GCP_PROJECT_ID="your-project-id"
 export GCP_LOCATION="global"
-export GCP_KEYRING="go-keychain"
+export GCP_KEYRING="go-xkms"
 ```
 
 **Build and Run:**

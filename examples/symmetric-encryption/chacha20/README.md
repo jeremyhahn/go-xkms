@@ -1,6 +1,6 @@
 # ChaCha20-Poly1305 Encryption Examples
 
-This directory contains examples demonstrating ChaCha20-Poly1305 and XChaCha20-Poly1305 AEAD encryption using the go-keychain library.
+This directory contains examples demonstrating ChaCha20-Poly1305 and XChaCha20-Poly1305 AEAD encryption using the go-xkms library.
 
 ## Overview
 

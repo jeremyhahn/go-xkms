@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,8 +17,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 // StorageFactory provides a convenient way to create storage backends
@@ -62,10 +62,26 @@ func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, er
 		return nil, err
 	}
 
+	blobStore, err := NewFSBlobStore(logger, backend)
+	if err != nil {
+		if closeErr := backend.Close(); closeErr != nil {
+			logger.Error("failed to close backend",
+				slog.String("error", closeErr.Error()))
+		}
+		if tempDir != "" {
+			if rmErr := os.RemoveAll(tempDir); rmErr != nil {
+				logger.Error("failed to remove temp directory",
+					slog.String("path", tempDir),
+					slog.String("error", rmErr.Error()))
+			}
+		}
+		return nil, err
+	}
+
 	return &StorageFactory{
 		logger:    logger,
 		backend:   backend,
-		blobStore: NewFSBlobStore(logger, backend),
+		blobStore: blobStore,
 		keyStore:  NewFileBackend(logger, backend),
 		tempDir:   tempDir,
 	}, nil
@@ -76,10 +92,15 @@ func NewStorageFactory(logger *slog.Logger, baseDir string) (*StorageFactory, er
 func NewMemoryStorageFactory(logger *slog.Logger) (*StorageFactory, error) {
 	backend := storage.NewMemory()
 
+	blobStore, err := NewFSBlobStore(logger, backend)
+	if err != nil {
+		return nil, err
+	}
+
 	return &StorageFactory{
 		logger:    logger,
 		backend:   backend,
-		blobStore: NewFSBlobStore(logger, backend),
+		blobStore: blobStore,
 		keyStore:  NewFileBackend(logger, backend),
 	}, nil
 }

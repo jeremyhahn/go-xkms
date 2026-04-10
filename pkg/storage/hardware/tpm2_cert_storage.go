@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,12 +17,13 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"hash/fnv"
 	"sync"
+
+	"github.com/cespare/xxhash/v2"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // TPM2CertStorage implements HardwareCertStorage for TPM 2.0 devices.
@@ -40,7 +41,7 @@ import (
 // NV Index Layout:
 //
 //	Base Index: 0x01800000 (TPM_NV_INDEX_FIRST)
-//	Cert Index: Base + (FNV-1a hash of ID % 0x003FFFFF)
+//	Cert Index: Base + (xxhash64 of ID % 0x003FFFFF)
 //
 // Limitations:
 //   - Limited NV RAM capacity (typically 2KB-8KB total)
@@ -441,12 +442,9 @@ func (t *TPM2CertStorage) Compact() error {
 }
 
 // certIndexFromID computes the NV index for a certificate ID
-// using FNV-1a hash to distribute IDs across index space.
+// using xxhash64 (truncated to 32 bits) to distribute IDs across index space.
 func (t *TPM2CertStorage) certIndexFromID(id string) uint32 {
-	// Use FNV-1a hash for consistent distribution
-	h := fnv.New32a()
-	h.Write([]byte(id))
-	hash := h.Sum32()
+	hash := uint32(xxhash.Sum64String(id))
 
 	// Map to NV index range (0x01800000 - 0x01BFFFFF)
 	// Use modulo to wrap into 0x00400000 range

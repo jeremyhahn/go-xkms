@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build integration && quantum
+//go:build integration
 
 package quantum_test
 
@@ -22,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/quantum/dilithium2"
+	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
+	"github.com/jeremyhahn/go-xkms/pkg/quantum/dilithium2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,13 +40,14 @@ func TestDilithium2Integration_KeyGeneration(t *testing.T) {
 	// Verify key sizes match expected Dilithium2 parameters
 	assert.Equal(t, d.PublicKeyLength(), len(pubKey), "Public key size mismatch")
 
+	// ExportSecretKey returns the 32-byte seed, not the expanded private key
 	secretKey := d.ExportSecretKey()
-	assert.Equal(t, d.SecretKeyLength(), len(secretKey), "Secret key size mismatch")
+	assert.Equal(t, mldsa44.SeedSize, len(secretKey), "Exported secret key should be 32-byte seed")
+	assert.Equal(t, mldsa44.SeedSize, d.SecretKeyLength(), "SecretKeyLength should match seed size")
 
 	// ML-DSA-44 specific sizes (from NIST FIPS 204 standard)
-	// Note: Sizes may vary slightly from draft Dilithium2 spec
-	assert.Greater(t, len(pubKey), 1000, "ML-DSA-44 public key should be >1000 bytes")
-	assert.Greater(t, len(secretKey), 2000, "ML-DSA-44 secret key should be >2000 bytes")
+	assert.Equal(t, mldsa44.PublicKeySize, len(pubKey), "ML-DSA-44 public key should be 1312 bytes")
+	assert.Equal(t, mldsa44.SeedSize, len(secretKey), "ML-DSA-44 exported seed should be 32 bytes")
 }
 
 // TestDilithium2Integration_SignatureWorkflow tests complete sign/verify workflow
@@ -61,7 +63,6 @@ func TestDilithium2Integration_SignatureWorkflow(t *testing.T) {
 		name    string
 		message []byte
 	}{
-		// Note: Empty messages cause panic in liboqs-go, so we skip that case
 		{"Small message", []byte("Hello, Quantum World!")},
 		{"Medium message", make([]byte, 1024)},
 		{"Large message", make([]byte, 1024*1024)}, // 1MB
@@ -134,10 +135,10 @@ func TestDilithium2Integration_KeyPersistence(t *testing.T) {
 	pubKey, err := d1.GenerateKeyPair()
 	require.NoError(t, err)
 
-	// Export the secret key
+	// Export the secret key (32-byte seed)
 	secretKey := d1.ExportSecretKey()
 	require.NotEmpty(t, secretKey)
-	t.Logf("Secret key export successful: %d bytes", len(secretKey))
+	t.Logf("Secret key export successful: %d bytes (seed)", len(secretKey))
 
 	// Sign with original key
 	message := []byte("Persistence test message")
@@ -162,7 +163,7 @@ func TestDilithium2Integration_KeyPersistence(t *testing.T) {
 	assert.Equal(t, secretKey, exportedKey2, "Exported secret key should be consistent")
 
 	// Verify key sizes are correct
-	assert.Equal(t, d1.SecretKeyLength(), len(secretKey), "Secret key size should match")
+	assert.Equal(t, mldsa44.SeedSize, len(secretKey), "Exported seed should be 32 bytes")
 	assert.Equal(t, d1.PublicKeyLength(), len(pubKey), "Public key size should match")
 }
 
@@ -327,9 +328,9 @@ func TestDilithium2Integration_Details(t *testing.T) {
 
 	// ML-DSA-44 is the NIST standard name for Dilithium2
 	assert.Equal(t, "ML-DSA-44", details.Name)
-	assert.Greater(t, details.LengthPublicKey, 1000)
-	assert.Greater(t, details.LengthSecretKey, 2000)
-	assert.Greater(t, details.MaxLengthSignature, 2000)
+	assert.Equal(t, mldsa44.PublicKeySize, details.LengthPublicKey)
+	assert.Equal(t, mldsa44.SeedSize, details.LengthSecretKey)
+	assert.Equal(t, mldsa44.SignatureSize, details.MaxLengthSignature)
 
 	// Verify helper methods match details
 	assert.Equal(t, details.LengthPublicKey, d.PublicKeyLength())
@@ -338,7 +339,7 @@ func TestDilithium2Integration_Details(t *testing.T) {
 
 	t.Logf("ML-DSA-44 (Dilithium2) parameters:")
 	t.Logf("  Public key: %d bytes", details.LengthPublicKey)
-	t.Logf("  Secret key: %d bytes", details.LengthSecretKey)
+	t.Logf("  Secret key (seed): %d bytes", details.LengthSecretKey)
 	t.Logf("  Max signature: %d bytes", details.MaxLengthSignature)
 }
 
@@ -352,7 +353,7 @@ func TestDilithium2Integration_DocumentSigning(t *testing.T) {
 	authorityPubKey, err := authority.GenerateKeyPair()
 	require.NoError(t, err)
 
-	// Store authority's secret key for persistence
+	// Store authority's secret key (32-byte seed) for persistence
 	authoritySecretKey := authority.ExportSecretKey()
 
 	// Simulate documents to sign
@@ -382,7 +383,7 @@ func TestDilithium2Integration_DocumentSigning(t *testing.T) {
 			doc.name, len(doc.content), len(signature))
 	}
 
-	// Simulate authority restart (recreate from stored key)
+	// Simulate authority restart (recreate from stored seed)
 	authority.Clean()
 	authority2, err := dilithium2.Create(authoritySecretKey)
 	require.NoError(t, err)

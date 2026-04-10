@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	storagepkg "github.com/jeremyhahn/go-keychain/pkg/storage"
+	storagepkg "github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -84,12 +84,10 @@ func generateTestCertificateChain(count int) ([]*x509.Certificate, error) {
 
 // Test cases - Unit tests that don't require real PKCS#11 hardware
 
-func TestNewPKCS11CertStorage_NilContext(t *testing.T) {
+func TestNewPKCS11CertStorage_NilPool(t *testing.T) {
 	storage, err := NewPKCS11CertStorage(
 		nil,
-		1,
 		"test-token",
-		0,
 	)
 
 	require.Error(t, err)
@@ -207,6 +205,7 @@ func TestPKCS11CertStorage_InterfaceMethods(t *testing.T) {
 
 func TestPKCS11CertStorage_Validation(t *testing.T) {
 	// Test input validation without requiring PKCS#11 context
+	// closed=false but pool=nil -- validation checks run before pool access
 	storage := &PKCS11CertStorage{
 		closed: false,
 	}

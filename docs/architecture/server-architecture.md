@@ -1,4 +1,4 @@
-# Go-Keychain Server Architecture
+# Go-xKMS Server Architecture
 
 
 ## Table of Contents
@@ -17,7 +17,7 @@
 
 ## Overview
 
-The go-keychain server exposes the KeyStore interface through multiple protocols:
+The go-xkms server exposes the KeyStore interface through multiple protocols:
 - **REST API** (HTTP/1.1 + HTTP/2) - Standard JSON REST API
 - **gRPC** - High-performance RPC with Protocol Buffers
 - **MCP** (Model Context Protocol) - JSON-RPC 2.0 for AI agent integration
@@ -40,7 +40,7 @@ All protocols share a common service layer that interacts with the KeyStore inte
                     │
         ┌───────────▼───────────┐
         │   Service Layer       │
-        │  (internal/service)   │
+        │  (pkg/server)         │
         │  - KeyManager         │
         │  - BackendRegistry    │
         │  - Validators         │
@@ -48,12 +48,12 @@ All protocols share a common service layer that interacts with the KeyStore inte
                     │
         ┌───────────▼───────────┐
         │   KeyStore Interface  │
-        │  (pkg/keychain)       │
+        │  (pkg/xkms)       │
         └───────────┬───────────┘
                     │
         ┌───────────▼───────────┐
         │   Backend Layer       │
-        │  - PKCS#8             │
+        │  - Software            │
         │  - PKCS#11            │
         │  - TPM2               │
         │  - Cloud KMS          │
@@ -98,114 +98,69 @@ All protocols share a common service layer that interacts with the KeyStore inte
 ## Directory Structure
 
 ```
-go-keychain/
+go-xkms/
 ├── cmd/
-│   ├── server/                    # Multi-protocol server binary
-│   │   ├── main.go               # Entry point, server initialization
-│   │   └── config.go             # Configuration loading
-│   └── cli/                       # CLI binary
+│   ├── xkmsd/                     # Multi-protocol server binary
+│   │   └── main.go               # Entry point, server initialization
+│   └── xkmsctl/                   # CLI binary
 │       ├── main.go               # CLI entry point
 │       ├── root.go               # Root command (Cobra)
 │       └── commands/             # Command implementations
-│           ├── backends.go       # Backend management commands
-│           ├── key.go            # Key operations commands
-│           ├── sign.go           # Signing operations
-│           ├── verify.go         # Verification operations
-│           └── version.go        # Version command
 │
-├── internal/
-│   ├── server/                    # Server orchestration
+├── pkg/
+│   ├── server/                    # Server orchestration & service layer
 │   │   ├── server.go             # Main server struct, lifecycle
-│   │   ├── shutdown.go           # Graceful shutdown logic
-│   │   └── middleware/           # Cross-cutting concerns
-│   │       ├── logging.go        # Request logging
-│   │       ├── metrics.go        # Prometheus metrics
-│   │       ├── auth.go           # Authentication middleware
-│   │       ├── cors.go           # CORS handling
-│   │       └── recovery.go       # Panic recovery
+│   │   ├── reload.go             # Configuration reload
+│   │   └── backend_factory.go    # Backend registration/selection
 │   │
 │   ├── config/                    # Configuration management
 │   │   ├── config.go             # Configuration structs
-│   │   ├── loader.go             # Config loading (file, env, flags)
-│   │   ├── validator.go          # Config validation
-│   │   └── defaults.go           # Default values
+│   │   ├── auth.go               # Auth configuration
+│   │   └── tls.go                # TLS configuration
 │   │
-│   ├── service/                   # Business logic layer
-│   │   ├── keymanager.go         # Key management service
-│   │   ├── backend_registry.go   # Backend registration/selection
-│   │   ├── validators.go         # Input validation
-│   │   ├── errors.go             # Service-level errors
-│   │   └── types.go              # Common types/DTOs
+│   ├── api/
+│   │   ├── rest/                  # REST API implementation
+│   │   │   ├── server.go         # REST server setup
+│   │   │   ├── handlers.go       # HTTP handlers
+│   │   │   ├── middleware.go     # REST-specific middleware
+│   │   │   ├── errors.go         # HTTP error mapping
+│   │   │   ├── validation.go     # Input validation
+│   │   │   └── types.go          # REST request/response types
+│   │   │
+│   │   ├── grpc/                  # gRPC implementation
+│   │   │   ├── server.go         # gRPC server setup
+│   │   │   ├── service.go        # gRPC service implementation
+│   │   │   └── interceptor_correlation.go  # Correlation interceptor
+│   │   │
+│   │   ├── mcp/                   # Model Context Protocol
+│   │   │   ├── server.go         # MCP server setup (JSON-RPC 2.0)
+│   │   │   ├── handlers.go       # JSON-RPC method handlers
+│   │   │   ├── utils.go          # Utilities
+│   │   │   └── types.go          # JSON-RPC types
+│   │   │
+│   │   ├── quic/                  # QUIC/HTTP3 implementation
+│   │   │   ├── server.go         # HTTP/3 server setup
+│   │   │   ├── handlers.go       # HTTP/3 handlers
+│   │   │   └── utils.go          # QUIC utilities
+│   │   │
+│   │   └── unix/                  # Unix socket gRPC
+│   │       └── grpc_server.go    # Unix socket server
 │   │
-│   ├── rest/                      # REST API implementation
-│   │   ├── server.go             # REST server setup
-│   │   ├── router.go             # Route definitions
-│   │   ├── handlers/             # HTTP handlers
-│   │   │   ├── health.go         # Health check endpoint
-│   │   │   ├── backends.go       # Backend endpoints
-│   │   │   ├── keys.go           # Key CRUD endpoints
-│   │   │   ├── sign.go           # Signing endpoint
-│   │   │   └── verify.go         # Verification endpoint
-│   │   ├── middleware.go         # REST-specific middleware
-│   │   ├── errors.go             # HTTP error mapping
-│   │   └── types.go              # REST request/response types
-│   │
-│   ├── grpc/                      # gRPC implementation
-│   │   ├── server.go             # gRPC server setup
-│   │   ├── service.go            # gRPC service implementation
-│   │   ├── interceptors/         # gRPC interceptors
-│   │   │   ├── logging.go        # Request logging
-│   │   │   ├── auth.go           # Authentication
-│   │   │   ├── recovery.go       # Panic recovery
-│   │   │   └── metrics.go        # Metrics collection
-│   │   ├── errors.go             # gRPC error mapping
-│   │   └── helpers.go            # Protocol buffer helpers
-│   │
-│   ├── mcp/                       # Model Context Protocol
-│   │   ├── server.go             # MCP server setup (JSON-RPC 2.0)
-│   │   ├── handlers.go           # JSON-RPC method handlers
-│   │   ├── transport.go          # TCP/WebSocket transport
-│   │   ├── notifications.go      # Server-sent notifications
-│   │   ├── batch.go              # Batch request handling
-│   │   ├── errors.go             # JSON-RPC error codes
-│   │   └── types.go              # JSON-RPC types
-│   │
-│   ├── quic/                      # QUIC/HTTP3 implementation
-│   │   ├── server.go             # HTTP/3 server setup
-│   │   ├── router.go             # HTTP/3 route definitions
-│   │   ├── handlers/             # Shared with REST (thin wrapper)
-│   │   ├── tls.go                # TLS certificate management
-│   │   └── errors.go             # HTTP/3 error handling
-│   │
-│   └── cli/                       # CLI implementation
-│       ├── client.go             # Client for remote server
-│       ├── local.go              # Local KeyStore operations
-│       ├── formatter.go          # Output formatting (JSON, table, YAML)
-│       ├── config.go             # CLI configuration
-│       └── helpers.go            # Common CLI utilities
-│
-├── api/                           # API definitions
-│   ├── proto/                    # Protocol Buffer definitions
-│   │   └── keychainv1/
-│   │       ├── keychain.proto    # Main service definition
-│   │       ├── types.proto       # Common types
-│   │       └── errors.proto      # Error definitions
-│   └── openapi/                  # OpenAPI/Swagger specs
-│       └── keychain.yaml         # REST API specification
-│
-├── pkg/                           # Public packages
-│   ├── keychain/                 # KeyStore interface (existing)
-│   └── backend/                  # Backend interface (existing)
+│   ├── backend/                   # Backend interface & implementations
+│   ├── crypto/                    # Cryptographic primitives
+│   ├── encoding/                  # Encoding (JWK, JWE, JWT, PEM)
+│   ├── storage/                   # Storage layer
+│   └── types/                     # Common types
 │
 └── test/
     └── integration/
-        └── api/                   # Integration tests (existing)
+        └── api/                   # Integration tests
 ```
 
 
 ## Core Components
 
-### 1. Server Orchestrator (`internal/server/server.go`)
+### 1. Server Orchestrator (`pkg/server/server.go`)
 
 The main server component that manages all protocol servers.
 
@@ -233,7 +188,25 @@ type Server struct {
 - Health checking across all protocols
 - Metrics collection and exposure
 
-### 2. Configuration Management (`internal/config/`)
+### Subsystem Wiring
+
+After `xkms.Initialize()` creates the `XKMSService` singleton with backends, the server wires additional subsystems via setter methods. This approach is necessary because subsystems (barrier, PIN, users, etc.) are initialized *after* `xkms.Initialize()`:
+
+```go
+// In server.go, after each subsystem is initialized:
+svc, _ := xkms.Get()
+if s.barrier != nil       { svc.SetBarrier(s.barrier) }
+if s.pinManager != nil    { svc.SetPINManager(s.pinManager) }
+if s.userStore != nil     { svc.SetUserStore(s.userStore) }
+if s.passwordStore != nil { svc.SetPasswordStore(s.passwordStore) }
+if s.platformStore != nil { svc.SetPlatformStore(s.platformStore) }
+if s.policyManager != nil { svc.SetPolicyManager(s.policyManager) }
+// ... etc.
+```
+
+Once all subsystems are wired, the `XKMSService` satisfies the full `XKMSServicer` interface and can be used with the embedded SDK transport (`sdk.NewEmbedded(svc)`) for in-process clients like the xkey GUI.
+
+### 2. Configuration Management (`pkg/config/`)
 
 Hierarchical configuration system using Viper:
 
@@ -258,7 +231,7 @@ type Config struct {
 3. Configuration file (YAML)
 4. Defaults
 
-### 3. Service Layer (`internal/service/`)
+### 3. Service Layer (`pkg/server/`)
 
 Business logic shared across all protocols.
 
@@ -266,7 +239,7 @@ Business logic shared across all protocols.
 
 ```go
 type KeyManager struct {
-    keystore keychain.KeyStore
+    keystore xkms.KeyStore
     registry *BackendRegistry
     validator *Validator
 }
@@ -284,13 +257,13 @@ type KeyManager struct {
 
 ```go
 type BackendRegistry struct {
-    backends map[string]keychain.KeyStore
+    backends map[string]xkms.KeyStore
     mu       sync.RWMutex
 }
 
 // Operations:
-// - Register(name string, ks keychain.KeyStore) error
-// - Get(name string) (keychain.KeyStore, error)
+// - Register(name string, ks xkms.KeyStore) error
+// - Get(name string) (xkms.KeyStore, error)
 // - List() []BackendInfo
 // - GetInfo(name string) (*BackendInfo, error)
 ```
@@ -311,7 +284,7 @@ type Validator struct{}
 
 ## Protocol Implementations
 
-### 1. REST API (`internal/rest/`)
+### 1. REST API (`pkg/api/rest/`)
 
 **Framework:** Standard library `net/http` with custom router or `chi`
 
@@ -346,7 +319,7 @@ POST   /api/v1/keys/{id}/rotate   - Rotate key (if supported)
 POST /api/v1/keys
 {
   "key_id": "my-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "key_type": "rsa",
   "key_size": 2048,
   "curve": ""  // For ECDSA
@@ -355,7 +328,7 @@ POST /api/v1/keys
 // Generate Key Response (201 Created)
 {
   "key_id": "my-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "key_type": "rsa",
   "key_size": 2048,
   "public_key_pem": "-----BEGIN PUBLIC KEY-----...",
@@ -381,9 +354,9 @@ POST /api/v1/keys
 - 500 Internal Server Error - Server error
 - 503 Service Unavailable - Backend unavailable
 
-### 2. gRPC API (`internal/grpc/`)
+### 2. gRPC API (`pkg/api/grpc/`)
 
-**Protocol Buffer Definition:** `pkg/api/grpc/proto/keychainv1/keychain.proto`
+**Protocol Buffer Definition:** `pkg/api/grpc/proto/xkmsv1/xkms.proto`
 
 ```protobuf
 service KeystoreService {
@@ -412,11 +385,11 @@ service KeystoreService {
 
 **Interceptors:**
 1. Logging - Request/response logging
-2. Authentication - API key/JWT validation
+2. Authentication - JWT/mTLS/OIDC validation
 3. Recovery - Panic recovery with stack traces
 4. Metrics - Request duration, counts
 
-### 3. MCP (Model Context Protocol) (`internal/mcp/`)
+### 3. MCP (Model Context Protocol) (`pkg/api/mcp/`)
 
 **Protocol:** JSON-RPC 2.0 over TCP or WebSocket
 
@@ -432,15 +405,15 @@ service KeystoreService {
 {"jsonrpc": "2.0", "method": "health", "id": 1}
 
 // List Backends
-{"jsonrpc": "2.0", "method": "keychain.listBackends", "id": 2}
+{"jsonrpc": "2.0", "method": "xkms.listBackends", "id": 2}
 
 // Generate Key
 {
   "jsonrpc": "2.0",
-  "method": "keychain.generateKey",
+  "method": "xkms.generateKey",
   "params": {
     "key_id": "my-key",
-    "backend": "pkcs8",
+    "backend": "software",
     "key_type": "rsa",
     "key_size": 2048
   },
@@ -450,7 +423,7 @@ service KeystoreService {
 // Subscribe to Events (notifications)
 {
   "jsonrpc": "2.0",
-  "method": "keychain.subscribe",
+  "method": "xkms.subscribe",
   "params": {
     "events": ["key.created", "key.deleted", "key.rotated"]
   },
@@ -466,7 +439,7 @@ service KeystoreService {
   "method": "key.created",
   "params": {
     "key_id": "my-key",
-    "backend": "pkcs8",
+    "backend": "software",
     "timestamp": "2025-11-05T12:00:00Z"
   }
 }
@@ -478,7 +451,7 @@ service KeystoreService {
 - Long-lived connections
 - WebSocket fallback
 
-### 4. QUIC/HTTP3 (`internal/quic/`)
+### 4. QUIC/HTTP3 (`pkg/api/quic/`)
 
 **Framework:** `quic-go/quic-go` with HTTP/3 support
 
@@ -495,7 +468,7 @@ service KeystoreService {
 - Protocol: HTTP/3 instead of HTTP/2
 - Multiplexing: Native stream multiplexing without head-of-line blocking
 
-### 5. CLI (`cmd/cli/`)
+### 5. CLI (`cmd/xkmsctl/`)
 
 **Framework:** Cobra (commands) + Viper (config)
 
@@ -503,18 +476,18 @@ service KeystoreService {
 
 1. **Local Mode:** Direct KeyStore access
    ```bash
-   keychain key generate my-key --backend pkcs8 --key-type rsa --key-size 2048
+   xkmsctl key generate my-key --backend software --key-type rsa --key-size 2048
    ```
 
 2. **Remote Mode:** HTTP/gRPC client to server
    ```bash
-   keychain --server http://localhost:8080 key generate my-key --backend pkcs8
+   xkmsctl --server http://localhost:8080 key generate my-key --backend software
    ```
 
 **Command Structure:**
 
 ```
-keychain
+xkmsctl
 ├── version                        # Show version
 ├── backends
 │   ├── list                      # List backends
@@ -544,7 +517,7 @@ keychain
 ```yaml
 # Server configuration
 server:
-  data_dir: /var/lib/keychain
+  data_dir: /var/lib/xkms
   log_level: info
   log_format: json
 
@@ -554,8 +527,8 @@ rest:
   address: :8443
   tls:
     enabled: true
-    cert_file: /etc/keychain/tls/server.crt
-    key_file: /etc/keychain/tls/server.key
+    cert_file: /etc/xkms/tls/server.crt
+    key_file: /etc/xkms/tls/server.key
 
 # gRPC
 grpc:
@@ -563,8 +536,8 @@ grpc:
   address: :9443
   tls:
     enabled: true
-    cert_file: /etc/keychain/tls/server.crt
-    key_file: /etc/keychain/tls/server.key
+    cert_file: /etc/xkms/tls/server.crt
+    key_file: /etc/xkms/tls/server.key
 
 # MCP (Model Context Protocol)
 mcp:
@@ -577,16 +550,16 @@ quic:
   enabled: true
   address: :8444
   tls:
-    cert_file: /etc/keychain/tls/server.crt
-    key_file: /etc/keychain/tls/server.key
+    cert_file: /etc/xkms/tls/server.crt
+    key_file: /etc/xkms/tls/server.key
 
 # Authentication
 auth:
   enabled: true
-  type: api_key  # api_key, jwt, mtls
-  api_keys:
-    - key: "test-api-key"
-      name: "test-client"
+  type: adaptive  # jwt, mtls, oidc, adaptive, composite
+  jwt:
+    issuer: "my-issuer"
+    audience: ["xkms"]
 
 # TLS Configuration
 tls:
@@ -603,11 +576,11 @@ metrics:
 
 # Backends
 backends:
-  - name: pkcs8
-    type: pkcs8
+  - name: software
+    type: software
     config:
-      key_dir: /var/lib/keychain/keys
-      cert_dir: /var/lib/keychain/certs
+      key_dir: /var/lib/xkms/keys
+      cert_dir: /var/lib/xkms/certs
 
   - name: pkcs11
     type: pkcs11
@@ -627,12 +600,12 @@ backends:
 All configuration can be overridden via environment:
 
 ```bash
-KEYCHAIN_SERVER_LOG_LEVEL=debug
-KEYCHAIN_REST_ADDRESS=:8080
-KEYCHAIN_GRPC_ADDRESS=:9090
-KEYCHAIN_AUTH_ENABLED=true
-KEYCHAIN_BACKENDS_0_NAME=pkcs8
-KEYCHAIN_BACKENDS_0_TYPE=pkcs8
+XKMS_SERVER_LOG_LEVEL=debug
+XKMS_REST_ADDRESS=:8080
+XKMS_GRPC_ADDRESS=:9090
+XKMS_AUTH_ENABLED=true
+XKMS_BACKENDS_0_NAME=software
+XKMS_BACKENDS_0_TYPE=software
 ```
 
 
@@ -669,10 +642,10 @@ var (
 {
   "error": {
     "code": "KEY_NOT_FOUND",
-    "message": "Key with ID 'my-key' not found in backend 'pkcs8'",
+    "message": "Key with ID 'my-key' not found in backend 'software'",
     "details": {
       "key_id": "my-key",
-      "backend": "pkcs8"
+      "backend": "software"
     }
   }
 }
@@ -692,7 +665,7 @@ status.Errorf(codes.NotFound, "key not found: %s", keyID)
     "message": "Key not found",
     "data": {
       "key_id": "my-key",
-      "backend": "pkcs8"
+      "backend": "software"
     }
   },
   "id": 1
@@ -705,13 +678,16 @@ status.Errorf(codes.NotFound, "key not found: %s", keyID)
 ### 1. Authentication
 
 **Supported Methods:**
-- API Key (X-API-Key header)
-- JWT (Bearer token)
-- Mutual TLS (client certificates)
+- JWT (Bearer token with public key signature verification)
+- Mutual TLS (client certificate authentication)
+- OIDC (OpenID Connect with automatic provider discovery)
+- Adaptive (auto-switches between bootstrap and secured mode)
+- Composite (chains multiple authenticators)
+- PKCS#11-backed TLS (hardware token client authentication)
 
 **Implementation:**
-- Middleware validates credentials
-- Context propagation for user identity
+- Middleware validates cryptographic credentials
+- Context propagation for authenticated identity
 - Rate limiting per client
 
 ### 2. Authorization
@@ -800,7 +776,7 @@ status.Errorf(codes.NotFound, "key not found: %s", keyID)
 ```go
 // Service layer constructor
 func NewKeyManager(
-    ks keychain.KeyStore,
+    ks xkms.KeyStore,
     registry *BackendRegistry,
     validator *Validator,
 ) *KeyManager {
@@ -926,21 +902,21 @@ All protocols must provide equivalent functionality:
 
 ```
 # Key operations
-keychain_key_generate_total{backend, key_type}
-keychain_key_generate_duration_seconds{backend, key_type}
-keychain_key_delete_total{backend}
-keychain_sign_total{backend}
-keychain_sign_duration_seconds{backend}
+xkms_key_generate_total{backend, key_type}
+xkms_key_generate_duration_seconds{backend, key_type}
+xkms_key_delete_total{backend}
+xkms_sign_total{backend}
+xkms_sign_duration_seconds{backend}
 
 # API requests
-keychain_http_requests_total{method, path, status}
-keychain_http_request_duration_seconds{method, path}
-keychain_grpc_requests_total{method, status}
-keychain_grpc_request_duration_seconds{method}
+xkms_http_requests_total{method, path, status}
+xkms_http_request_duration_seconds{method, path}
+xkms_grpc_requests_total{method, status}
+xkms_grpc_request_duration_seconds{method}
 
 # System metrics
-keychain_backends_available{backend}
-keychain_keys_total{backend}
+xkms_backends_available{backend}
+xkms_keys_total{backend}
 ```
 
 ### Logging
@@ -968,16 +944,16 @@ keychain_keys_total{backend}
 ### Docker
 
 ```dockerfile
-FROM golang:1.21-alpine AS builder
+FROM golang:1.26.1-alpine AS builder
 WORKDIR /build
 COPY . .
-RUN go build -o keychaind ./cmd/server
+RUN go build -o xkmsd ./cmd/server
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
-COPY --from=builder /build/keychaind /usr/local/bin/
+COPY --from=builder /build/xkmsd /usr/local/bin/
 EXPOSE 8443 9443 9444 9090
-ENTRYPOINT ["keychaind"]
+ENTRYPOINT ["xkmsd"]
 ```
 
 ### Kubernetes
@@ -986,7 +962,7 @@ ENTRYPOINT ["keychaind"]
 apiVersion: v1
 kind: Service
 metadata:
-  name: keychain-server
+  name: xkms-server
 spec:
   ports:
     - name: rest
@@ -998,24 +974,24 @@ spec:
     - name: metrics
       port: 9090
   selector:
-    app: keychain-server
+    app: xkms-server
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: keychain-server
+  name: xkms-server
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: keychain-server
+      app: xkms-server
   template:
     metadata:
       labels:
-        app: keychain-server
+        app: xkms-server
     spec:
       containers:
-      - name: keychain-server
-        image: go-keychain:latest
+      - name: xkms-server
+        image: go-xkms:latest
         ports:
         - containerPort: 8443
         - containerPort: 9443
@@ -1035,7 +1011,7 @@ spec:
 ## References
 
 ### Related Documents
-- [KeyStore Interface](../../pkg/keychain/keystore.go)
+- [KeyStore Interface](../../pkg/xkms/keystore.go)
 - [Backend Interface](../../pkg/backend/backend.go)
 - [Integration Tests](../../test/integration/api/)
 

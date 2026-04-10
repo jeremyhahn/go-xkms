@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -23,6 +24,8 @@ import (
 
 // TestSaveKey tests the SaveKey adapter function.
 func TestSaveKey(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -73,7 +76,7 @@ func TestSaveKey(t *testing.T) {
 			keyData: []byte("new-data"),
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("test-key"), []byte("old-data"), nil)
+				_ = b.Put(ctx, KeyPath("test-key"), []byte("old-data"))
 				return b
 			},
 			wantErr: nil,
@@ -83,14 +86,14 @@ func TestSaveKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := SaveKey(backend, tt.id, tt.keyData)
+			err := SaveKey(ctx, backend, tt.id, tt.keyData)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify the data was saved correctly
 				if tt.id != "" {
-					data, err := backend.Get(KeyPath(tt.id))
+					data, err := backend.Get(ctx, KeyPath(tt.id))
 					assert.NoError(t, err)
 					assert.Equal(t, tt.keyData, data)
 				}
@@ -101,6 +104,8 @@ func TestSaveKey(t *testing.T) {
 
 // TestGetKey tests the GetKey adapter function.
 func TestGetKey(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -113,7 +118,7 @@ func TestGetKey(t *testing.T) {
 			id:   "test-key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("test-key"), []byte("test-data"), nil)
+				_ = b.Put(ctx, KeyPath("test-key"), []byte("test-data"))
 				return b
 			},
 			wantData: []byte("test-data"),
@@ -151,7 +156,7 @@ func TestGetKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			data, err := GetKey(backend, tt.id)
+			data, err := GetKey(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				assert.Nil(t, data)
@@ -165,6 +170,8 @@ func TestGetKey(t *testing.T) {
 
 // TestDeleteKey tests the DeleteKey adapter function.
 func TestDeleteKey(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -176,7 +183,7 @@ func TestDeleteKey(t *testing.T) {
 			id:   "test-key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("test-key"), []byte("test-data"), nil)
+				_ = b.Put(ctx, KeyPath("test-key"), []byte("test-data"))
 				return b
 			},
 			wantErr: nil,
@@ -210,13 +217,13 @@ func TestDeleteKey(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := DeleteKey(backend, tt.id)
+			err := DeleteKey(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify the key was deleted
-				exists, err := backend.Exists(KeyPath(tt.id))
+				exists, err := backend.Exists(ctx, KeyPath(tt.id))
 				assert.NoError(t, err)
 				assert.False(t, exists)
 			}
@@ -226,6 +233,8 @@ func TestDeleteKey(t *testing.T) {
 
 // TestKeyExists tests the KeyExists adapter function.
 func TestKeyExists(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name       string
 		id         string
@@ -238,7 +247,7 @@ func TestKeyExists(t *testing.T) {
 			id:   "test-key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("test-key"), []byte("test-data"), nil)
+				_ = b.Put(ctx, KeyPath("test-key"), []byte("test-data"))
 				return b
 			},
 			wantExists: true,
@@ -276,7 +285,7 @@ func TestKeyExists(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			exists, err := KeyExists(backend, tt.id)
+			exists, err := KeyExists(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
@@ -289,6 +298,8 @@ func TestKeyExists(t *testing.T) {
 
 // TestSaveCert tests the SaveCert adapter function.
 func TestSaveCert(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -338,7 +349,7 @@ func TestSaveCert(t *testing.T) {
 			certData: []byte("new-cert"),
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("test-cert"), []byte("old-cert"), nil)
+				_ = b.Put(ctx, CertPath("test-cert"), []byte("old-cert"))
 				return b
 			},
 			wantErr: nil,
@@ -348,14 +359,14 @@ func TestSaveCert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := SaveCert(backend, tt.id, tt.certData)
+			err := SaveCert(ctx, backend, tt.id, tt.certData)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify the data was saved correctly
 				if tt.id != "" {
-					data, err := backend.Get(CertPath(tt.id))
+					data, err := backend.Get(ctx, CertPath(tt.id))
 					assert.NoError(t, err)
 					assert.Equal(t, tt.certData, data)
 				}
@@ -366,6 +377,8 @@ func TestSaveCert(t *testing.T) {
 
 // TestGetCert tests the GetCert adapter function.
 func TestGetCert(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -378,7 +391,7 @@ func TestGetCert(t *testing.T) {
 			id:   "test-cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
+				_ = b.Put(ctx, CertPath("test-cert"), []byte("cert-data"))
 				return b
 			},
 			wantData: []byte("cert-data"),
@@ -416,7 +429,7 @@ func TestGetCert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			data, err := GetCert(backend, tt.id)
+			data, err := GetCert(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				assert.Nil(t, data)
@@ -430,6 +443,8 @@ func TestGetCert(t *testing.T) {
 
 // TestDeleteCert tests the DeleteCert adapter function.
 func TestDeleteCert(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -441,7 +456,7 @@ func TestDeleteCert(t *testing.T) {
 			id:   "test-cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
+				_ = b.Put(ctx, CertPath("test-cert"), []byte("cert-data"))
 				return b
 			},
 			wantErr: nil,
@@ -475,13 +490,13 @@ func TestDeleteCert(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := DeleteCert(backend, tt.id)
+			err := DeleteCert(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify the cert was deleted
-				exists, err := backend.Exists(CertPath(tt.id))
+				exists, err := backend.Exists(ctx, CertPath(tt.id))
 				assert.NoError(t, err)
 				assert.False(t, exists)
 			}
@@ -491,6 +506,8 @@ func TestDeleteCert(t *testing.T) {
 
 // TestCertExists tests the CertExists adapter function.
 func TestCertExists(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name       string
 		id         string
@@ -503,7 +520,7 @@ func TestCertExists(t *testing.T) {
 			id:   "test-cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("test-cert"), []byte("cert-data"), nil)
+				_ = b.Put(ctx, CertPath("test-cert"), []byte("cert-data"))
 				return b
 			},
 			wantExists: true,
@@ -541,7 +558,7 @@ func TestCertExists(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			exists, err := CertExists(backend, tt.id)
+			exists, err := CertExists(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
@@ -554,6 +571,8 @@ func TestCertExists(t *testing.T) {
 
 // TestSaveCertChain tests the SaveCertChain adapter function.
 func TestSaveCertChain(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -603,7 +622,7 @@ func TestSaveCertChain(t *testing.T) {
 			chainData: []byte("new-chain"),
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("test-chain"), []byte("old-chain"), nil)
+				_ = b.Put(ctx, CertChainPath("test-chain"), []byte("old-chain"))
 				return b
 			},
 			wantErr: nil,
@@ -613,14 +632,14 @@ func TestSaveCertChain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := SaveCertChain(backend, tt.id, tt.chainData)
+			err := SaveCertChain(ctx, backend, tt.id, tt.chainData)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify the data was saved correctly
 				if tt.id != "" {
-					data, err := backend.Get(CertChainPath(tt.id))
+					data, err := backend.Get(ctx, CertChainPath(tt.id))
 					assert.NoError(t, err)
 					assert.Equal(t, tt.chainData, data)
 				}
@@ -631,6 +650,8 @@ func TestSaveCertChain(t *testing.T) {
 
 // TestGetCertChain tests the GetCertChain adapter function.
 func TestGetCertChain(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -643,7 +664,7 @@ func TestGetCertChain(t *testing.T) {
 			id:   "test-chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
+				_ = b.Put(ctx, CertChainPath("test-chain"), []byte("chain-data"))
 				return b
 			},
 			wantData: []byte("chain-data"),
@@ -681,7 +702,7 @@ func TestGetCertChain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			data, err := GetCertChain(backend, tt.id)
+			data, err := GetCertChain(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				assert.Nil(t, data)
@@ -695,6 +716,8 @@ func TestGetCertChain(t *testing.T) {
 
 // TestDeleteCertChain tests the DeleteCertChain adapter function.
 func TestDeleteCertChain(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		id        string
@@ -706,7 +729,7 @@ func TestDeleteCertChain(t *testing.T) {
 			id:   "test-chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
+				_ = b.Put(ctx, CertChainPath("test-chain"), []byte("chain-data"))
 				return b
 			},
 			wantErr: nil,
@@ -740,13 +763,13 @@ func TestDeleteCertChain(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			err := DeleteCertChain(backend, tt.id)
+			err := DeleteCertChain(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
 				assert.NoError(t, err)
 				// Verify the chain was deleted
-				exists, err := backend.Exists(CertChainPath(tt.id))
+				exists, err := backend.Exists(ctx, CertChainPath(tt.id))
 				assert.NoError(t, err)
 				assert.False(t, exists)
 			}
@@ -756,6 +779,8 @@ func TestDeleteCertChain(t *testing.T) {
 
 // TestCertChainExists tests the CertChainExists adapter function.
 func TestCertChainExists(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name       string
 		id         string
@@ -768,7 +793,7 @@ func TestCertChainExists(t *testing.T) {
 			id:   "test-chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("test-chain"), []byte("chain-data"), nil)
+				_ = b.Put(ctx, CertChainPath("test-chain"), []byte("chain-data"))
 				return b
 			},
 			wantExists: true,
@@ -806,7 +831,7 @@ func TestCertChainExists(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			exists, err := CertChainExists(backend, tt.id)
+			exists, err := CertChainExists(ctx, backend, tt.id)
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 			} else {
@@ -819,6 +844,7 @@ func TestCertChainExists(t *testing.T) {
 
 // TestAdaptersIntegration tests that all adapters work together correctly.
 func TestAdaptersIntegration(t *testing.T) {
+	ctx := context.Background()
 	backend := newMockBackend()
 
 	// Test key operations
@@ -827,25 +853,25 @@ func TestAdaptersIntegration(t *testing.T) {
 		keyData := []byte("secret-key-data")
 
 		// Save
-		err := SaveKey(backend, keyID, keyData)
+		err := SaveKey(ctx, backend, keyID, keyData)
 		require.NoError(t, err)
 
 		// Check exists
-		exists, err := KeyExists(backend, keyID)
+		exists, err := KeyExists(ctx, backend, keyID)
 		require.NoError(t, err)
 		assert.True(t, exists)
 
 		// Get
-		retrieved, err := GetKey(backend, keyID)
+		retrieved, err := GetKey(ctx, backend, keyID)
 		require.NoError(t, err)
 		assert.Equal(t, keyData, retrieved)
 
 		// Delete
-		err = DeleteKey(backend, keyID)
+		err = DeleteKey(ctx, backend, keyID)
 		require.NoError(t, err)
 
 		// Verify deleted
-		exists, err = KeyExists(backend, keyID)
+		exists, err = KeyExists(ctx, backend, keyID)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -856,25 +882,25 @@ func TestAdaptersIntegration(t *testing.T) {
 		certData := []byte("-----BEGIN CERTIFICATE-----")
 
 		// Save
-		err := SaveCert(backend, certID, certData)
+		err := SaveCert(ctx, backend, certID, certData)
 		require.NoError(t, err)
 
 		// Check exists
-		exists, err := CertExists(backend, certID)
+		exists, err := CertExists(ctx, backend, certID)
 		require.NoError(t, err)
 		assert.True(t, exists)
 
 		// Get
-		retrieved, err := GetCert(backend, certID)
+		retrieved, err := GetCert(ctx, backend, certID)
 		require.NoError(t, err)
 		assert.Equal(t, certData, retrieved)
 
 		// Delete
-		err = DeleteCert(backend, certID)
+		err = DeleteCert(ctx, backend, certID)
 		require.NoError(t, err)
 
 		// Verify deleted
-		exists, err = CertExists(backend, certID)
+		exists, err = CertExists(ctx, backend, certID)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -885,25 +911,25 @@ func TestAdaptersIntegration(t *testing.T) {
 		chainData := []byte("-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----")
 
 		// Save
-		err := SaveCertChain(backend, chainID, chainData)
+		err := SaveCertChain(ctx, backend, chainID, chainData)
 		require.NoError(t, err)
 
 		// Check exists
-		exists, err := CertChainExists(backend, chainID)
+		exists, err := CertChainExists(ctx, backend, chainID)
 		require.NoError(t, err)
 		assert.True(t, exists)
 
 		// Get
-		retrieved, err := GetCertChain(backend, chainID)
+		retrieved, err := GetCertChain(ctx, backend, chainID)
 		require.NoError(t, err)
 		assert.Equal(t, chainData, retrieved)
 
 		// Delete
-		err = DeleteCertChain(backend, chainID)
+		err = DeleteCertChain(ctx, backend, chainID)
 		require.NoError(t, err)
 
 		// Verify deleted
-		exists, err = CertChainExists(backend, chainID)
+		exists, err = CertChainExists(ctx, backend, chainID)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -913,38 +939,38 @@ func TestAdaptersIntegration(t *testing.T) {
 		id := "shared-id"
 
 		// Save key, cert, and chain with same ID
-		err := SaveKey(backend, id, []byte("key-data"))
+		err := SaveKey(ctx, backend, id, []byte("key-data"))
 		require.NoError(t, err)
 
-		err = SaveCert(backend, id, []byte("cert-data"))
+		err = SaveCert(ctx, backend, id, []byte("cert-data"))
 		require.NoError(t, err)
 
-		err = SaveCertChain(backend, id, []byte("chain-data"))
+		err = SaveCertChain(ctx, backend, id, []byte("chain-data"))
 		require.NoError(t, err)
 
 		// Verify all exist independently
-		keyExists, err := KeyExists(backend, id)
+		keyExists, err := KeyExists(ctx, backend, id)
 		require.NoError(t, err)
 		assert.True(t, keyExists)
 
-		certExists, err := CertExists(backend, id)
+		certExists, err := CertExists(ctx, backend, id)
 		require.NoError(t, err)
 		assert.True(t, certExists)
 
-		chainExists, err := CertChainExists(backend, id)
+		chainExists, err := CertChainExists(ctx, backend, id)
 		require.NoError(t, err)
 		assert.True(t, chainExists)
 
 		// Retrieve and verify correct data
-		keyData, err := GetKey(backend, id)
+		keyData, err := GetKey(ctx, backend, id)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("key-data"), keyData)
 
-		certData, err := GetCert(backend, id)
+		certData, err := GetCert(ctx, backend, id)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("cert-data"), certData)
 
-		chainData, err := GetCertChain(backend, id)
+		chainData, err := GetCertChain(ctx, backend, id)
 		require.NoError(t, err)
 		assert.Equal(t, []byte("chain-data"), chainData)
 	})
@@ -952,57 +978,58 @@ func TestAdaptersIntegration(t *testing.T) {
 
 // TestAdaptersWithCustomErrors tests adapters with custom backend errors.
 func TestAdaptersWithCustomErrors(t *testing.T) {
+	ctx := context.Background()
 	customErr := errors.New("custom backend error")
 
 	t.Run("custom Get error", func(t *testing.T) {
 		backend := &errorMockBackend{getErr: customErr}
 
-		_, err := GetKey(backend, "test")
+		_, err := GetKey(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 
-		_, err = GetCert(backend, "test")
+		_, err = GetCert(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 
-		_, err = GetCertChain(backend, "test")
+		_, err = GetCertChain(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 	})
 
 	t.Run("custom Put error", func(t *testing.T) {
 		backend := &errorMockBackend{putErr: customErr}
 
-		err := SaveKey(backend, "test", []byte("data"))
+		err := SaveKey(ctx, backend, "test", []byte("data"))
 		assert.ErrorIs(t, err, customErr)
 
-		err = SaveCert(backend, "test", []byte("data"))
+		err = SaveCert(ctx, backend, "test", []byte("data"))
 		assert.ErrorIs(t, err, customErr)
 
-		err = SaveCertChain(backend, "test", []byte("data"))
+		err = SaveCertChain(ctx, backend, "test", []byte("data"))
 		assert.ErrorIs(t, err, customErr)
 	})
 
 	t.Run("custom Delete error", func(t *testing.T) {
 		backend := &errorMockBackend{deleteErr: customErr}
 
-		err := DeleteKey(backend, "test")
+		err := DeleteKey(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 
-		err = DeleteCert(backend, "test")
+		err = DeleteCert(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 
-		err = DeleteCertChain(backend, "test")
+		err = DeleteCertChain(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 	})
 
 	t.Run("custom Exists error", func(t *testing.T) {
 		backend := &errorMockBackend{existsErr: customErr}
 
-		_, err := KeyExists(backend, "test")
+		_, err := KeyExists(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 
-		_, err = CertExists(backend, "test")
+		_, err = CertExists(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 
-		_, err = CertChainExists(backend, "test")
+		_, err = CertChainExists(ctx, backend, "test")
 		assert.ErrorIs(t, err, customErr)
 	})
 }

@@ -1,4 +1,4 @@
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -50,7 +50,7 @@ for i in $(seq 1 60); do\n\
 done\n\
 \n\
 echo "Running IDevID-specific integration tests..."\n\
-go test -v -p 1 -tags="integration tpm2 idevid" -timeout=30m \\\n\
+go test -v -p 1 -tags="integration tpm2 idevid codec_cbor codec_json codec_msgpack" -timeout=30m \\\n\
     -coverprofile=/app/coverage-idevid.out \\\n\
     -covermode=atomic \\\n\
     -coverpkg=github.com/jeremyhahn/go-tpm/tpm2 \\\n\

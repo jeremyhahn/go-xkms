@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,13 +14,14 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // FileBackend implements KeyBackend using storage.Backend.
@@ -42,7 +43,7 @@ func NewFileBackend(logger *slog.Logger, backend storage.Backend) KeyBackend {
 // Get retrieves key data from storage
 func (fb *FileBackend) Get(attrs *types.KeyAttributes, ext types.FSExtension) ([]byte, error) {
 	key := attrs.CN + string(ext)
-	data, err := fb.storage.Get(key)
+	data, err := fb.storage.Get(context.Background(), key)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read key %s: %w", key, err)
 	}
@@ -55,7 +56,7 @@ func (fb *FileBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.F
 
 	// Check if key exists when overwrite is false
 	if !overwrite {
-		exists, err := fb.storage.Exists(key)
+		exists, err := fb.storage.Exists(context.Background(), key)
 		if err != nil {
 			return fmt.Errorf("failed to check key existence %s: %w", key, err)
 		}
@@ -65,7 +66,7 @@ func (fb *FileBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.F
 	}
 
 	// Write to storage
-	if err := fb.storage.Put(key, data, storage.DefaultOptions()); err != nil {
+	if err := fb.storage.Put(context.Background(), key, data); err != nil {
 		return fmt.Errorf("failed to write key %s: %w", key, err)
 	}
 
@@ -84,7 +85,7 @@ func (fb *FileBackend) Delete(attrs *types.KeyAttributes) error {
 	var lastErr error
 	for _, ext := range extensions {
 		key := attrs.CN + ext
-		if err := fb.storage.Delete(key); err != nil {
+		if err := fb.storage.Delete(context.Background(), key); err != nil {
 			// Ignore "not found" errors - the file may not exist
 			// Check for both storage.ErrNotFound and OS-level not found errors
 			if !errors.Is(err, storage.ErrNotFound) && !os.IsNotExist(err) {

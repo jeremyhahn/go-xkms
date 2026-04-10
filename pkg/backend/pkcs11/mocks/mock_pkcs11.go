@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -48,7 +48,7 @@ type GenerateECDSACall struct {
 	Error  error
 }
 
-// MockPKCS11Context is a mock implementation of crypto11.Context for testing.
+// MockPKCS11Context is a mock implementation of PKCS#11 context for testing.
 // It simulates PKCS#11 HSM operations without requiring actual hardware.
 //
 // The mock supports:
@@ -323,9 +323,9 @@ func (m *MockDecrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 		return m.DecryptFunc(rand, ciphertext, opts)
 	}
 
-	// Use real decryption for RSA
+	// Use real decryption for RSA with OAEP (SHA-256)
 	if key, ok := m.privateKey.(*rsa.PrivateKey); ok {
-		return rsa.DecryptPKCS1v15(rand, key, ciphertext)
+		return key.Decrypt(rand, ciphertext, opts)
 	}
 
 	return nil, fmt.Errorf("key type does not support decryption")

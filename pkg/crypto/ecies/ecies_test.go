@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -44,7 +44,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/ecdh"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecdh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -510,7 +510,11 @@ func TestDecrypt_AllErrorPaths(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestEncrypt_FailingRandomReaderEarly tests encryption with an immediately failing random reader
+// TestEncrypt_FailingRandomReaderEarly tests encryption with an immediately failing random reader.
+// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
+// io.Reader. The custom reader is only consumed by the nonce generation (io.ReadFull).
+// This test verifies that a completely broken reader causes Encrypt to fail with
+// a nonce generation error.
 func TestEncrypt_FailingRandomReaderEarly(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -522,8 +526,10 @@ func TestEncrypt_FailingRandomReaderEarly(t *testing.T) {
 
 	_, err = Encrypt(failingReader, &priv.PublicKey, plaintext, nil)
 	assert.Error(t, err)
-	// This will fail during ephemeral key generation
-	assert.Contains(t, err.Error(), "failed to generate ephemeral key")
+	// In Go 1.26+, ecdsa.GenerateKey ignores the provided reader and uses crypto/rand
+	// internally, so ephemeral key generation succeeds. The failure occurs when the
+	// broken reader is used for nonce generation via io.ReadFull.
+	assert.Contains(t, err.Error(), "failed to generate nonce")
 }
 
 // failingRandomReader is a custom io.Reader that always fails
@@ -1182,20 +1188,21 @@ func (r *byteCountingRandomReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// TestEncrypt_NonceGenerationFailureTargeted specifically triggers the nonce error path
+// TestEncrypt_NonceGenerationFailureTargeted specifically triggers the nonce error path.
+// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
+// io.Reader, so the custom reader is only consumed by the 12-byte nonce generation.
+// Providing fewer than 12 bytes triggers the nonce failure.
 func TestEncrypt_NonceGenerationFailureTargeted(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	plaintext := []byte("test")
 
-	// P-256 ECDSA key generation typically requires ~32 bytes for the scalar
-	// After key gen succeeds, the next read is for the 12-byte nonce
-	// We need to provide enough bytes for key gen but fail on nonce
-
-	// Test a range of byte limits to find the sweet spot
+	// In Go 1.26+, ecdsa.GenerateKey ignores the provided reader and uses crypto/rand
+	// internally. The custom reader is only consumed by io.ReadFull for the 12-byte
+	// nonce. Providing 0 bytes triggers the nonce failure immediately.
 	nonceErrorFound := false
-	for bytesAllowed := 32; bytesAllowed <= 80; bytesAllowed++ {
+	for bytesAllowed := 0; bytesAllowed <= 11; bytesAllowed++ {
 		reader := &byteCountingRandomReader{bytesBeforeFail: bytesAllowed}
 		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
 
@@ -1210,14 +1217,16 @@ func TestEncrypt_NonceGenerationFailureTargeted(t *testing.T) {
 	assert.True(t, nonceErrorFound, "Expected to trigger 'failed to generate nonce' error")
 }
 
-// TestEncrypt_ExhaustiveByteFailures tests random reader failures at various byte counts
+// TestEncrypt_ExhaustiveByteFailures tests random reader failures at various byte counts.
+// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
+// io.Reader. The custom reader is only consumed by the 12-byte nonce generation.
+// Limits 0-11 trigger nonce errors, limits >= 12 succeed.
 func TestEncrypt_ExhaustiveByteFailures(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	plaintext := []byte("test")
 
-	ephemeralErrors := 0
 	nonceErrors := 0
 	otherErrors := 0
 	successes := 0
@@ -1231,9 +1240,7 @@ func TestEncrypt_ExhaustiveByteFailures(t *testing.T) {
 			successes++
 		} else {
 			errMsg := err.Error()
-			if strings.Contains(errMsg, "failed to generate ephemeral key") {
-				ephemeralErrors++
-			} else if strings.Contains(errMsg, "failed to generate nonce") {
+			if strings.Contains(errMsg, "failed to generate nonce") {
 				nonceErrors++
 			} else {
 				otherErrors++
@@ -1241,12 +1248,13 @@ func TestEncrypt_ExhaustiveByteFailures(t *testing.T) {
 		}
 	}
 
-	// We should have at least some of each type of error
-	t.Logf("Ephemeral key errors: %d, Nonce errors: %d, Other errors: %d, Successes: %d",
-		ephemeralErrors, nonceErrors, otherErrors, successes)
+	t.Logf("Nonce errors: %d, Other errors: %d, Successes: %d",
+		nonceErrors, otherErrors, successes)
 
-	// The nonce error should be triggered at some point
+	// The nonce error should be triggered for byte limits 0-11
 	assert.Greater(t, nonceErrors, 0, "Expected at least one nonce generation error")
+	// Byte limits >= 12 should succeed (nonce needs exactly 12 bytes)
+	assert.Greater(t, successes, 0, "Expected at least one success for byte limits >= 12")
 }
 
 // TestDecrypt_P224RecipientKeyConversionFailure tests the recipient key ECDH conversion failure path
@@ -1672,20 +1680,22 @@ func (r *limitedBytesReader) Read(p []byte) (n int, err error) {
 	return n, err
 }
 
-// TestEncrypt_NonceGenerationFailureDirect directly tests the nonce failure path
+// TestEncrypt_NonceGenerationFailureDirect directly tests the nonce failure path.
+// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
+// io.Reader. The custom reader is only consumed by the 12-byte nonce generation.
+// Providing fewer than 12 bytes triggers the nonce failure.
 func TestEncrypt_NonceGenerationFailureDirect(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	plaintext := []byte("test")
 
-	// For P-256, key generation typically needs around 32 bytes
-	// After key gen, nonce generation needs 12 bytes via io.ReadFull
-	// We iterate through byte limits to find the exact point where nonce fails
-
+	// In Go 1.26+, ecdsa.GenerateKey ignores the provided reader and uses crypto/rand
+	// internally. The custom reader is only consumed by io.ReadFull for the 12-byte
+	// nonce. Providing 0 bytes triggers the nonce failure immediately.
 	foundNonceError := false
 
-	for limit := 32; limit <= 80; limit++ {
+	for limit := 0; limit <= 11; limit++ {
 		reader := &limitedBytesReader{bytesRemaining: limit}
 		_, err := Encrypt(reader, &priv.PublicKey, plaintext, nil)
 
@@ -1699,14 +1709,16 @@ func TestEncrypt_NonceGenerationFailureDirect(t *testing.T) {
 	assert.True(t, foundNonceError, "Expected to find nonce generation failure")
 }
 
-// TestEncrypt_ManyByteCountScenarios tests encryption with various random reader byte limits
+// TestEncrypt_ManyByteCountScenarios tests encryption with various random reader byte limits.
+// In Go 1.26+, ecdsa.GenerateKey uses crypto/rand internally and ignores the provided
+// io.Reader. The custom reader is only consumed by the 12-byte nonce generation.
+// Limits 0-11 trigger nonce errors, limits >= 12 succeed.
 func TestEncrypt_ManyByteCountScenarios(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
 	plaintext := []byte("test message")
 
-	ephemeralKeyErrors := 0
 	nonceErrors := 0
 	otherErrors := 0
 	successes := 0
@@ -1719,9 +1731,7 @@ func TestEncrypt_ManyByteCountScenarios(t *testing.T) {
 			successes++
 		} else {
 			errStr := err.Error()
-			if strings.Contains(errStr, "failed to generate ephemeral key") {
-				ephemeralKeyErrors++
-			} else if strings.Contains(errStr, "failed to generate nonce") {
+			if strings.Contains(errStr, "failed to generate nonce") {
 				nonceErrors++
 			} else {
 				otherErrors++
@@ -1729,12 +1739,13 @@ func TestEncrypt_ManyByteCountScenarios(t *testing.T) {
 		}
 	}
 
-	t.Logf("Results: ephemeral=%d, nonce=%d, other=%d, success=%d",
-		ephemeralKeyErrors, nonceErrors, otherErrors, successes)
+	t.Logf("Results: nonce=%d, other=%d, success=%d",
+		nonceErrors, otherErrors, successes)
 
-	// We expect to see both types of errors
-	assert.Greater(t, ephemeralKeyErrors, 0, "Expected ephemeral key errors")
-	assert.Greater(t, nonceErrors, 0, "Expected nonce generation errors")
+	// Limits 0-11 should trigger nonce errors (nonce needs 12 bytes via io.ReadFull)
+	assert.Greater(t, nonceErrors, 0, "Expected nonce generation errors for byte limits < 12")
+	// Limits >= 12 should succeed
+	assert.Greater(t, successes, 0, "Expected successes for byte limits >= 12")
 }
 
 // TestDecrypt_CurveSizeMismatch tests decryption with wrong curve sizes

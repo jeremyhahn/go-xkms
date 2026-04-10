@@ -3,7 +3,7 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 
 package frost_test
 
@@ -585,13 +585,13 @@ func TestCLI_FrostAllAlgorithms(t *testing.T) {
 	}
 }
 
-// runCLI executes the keychain CLI with given arguments
+// runCLI executes the xkms CLI with given arguments
 func runCLI(args ...string) (string, error) {
 	// Try to find the CLI binary
 	cliPath := findCLI()
 	if cliPath == "" {
 		// Fall back to go run
-		allArgs := append([]string{"run", "-tags=frost", "./cmd/keychainctl"}, args...)
+		allArgs := append([]string{"run", "-tags=frost", "./cmd/xkmsctl"}, args...)
 		cmd := exec.Command("go", allArgs...)
 		cmd.Dir = getProjectRoot()
 		var stdout, stderr bytes.Buffer
@@ -615,18 +615,18 @@ func runCLI(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// findCLI looks for the keychainctl CLI binary
+// findCLI looks for the xkmsctl CLI binary
 func findCLI() string {
 	// Check if installed in PATH
-	if path, err := exec.LookPath("keychainctl"); err == nil {
+	if path, err := exec.LookPath("xkmsctl"); err == nil {
 		return path
 	}
 
 	// Check common locations
 	locations := []string{
-		"/usr/local/bin/keychainctl",
-		"./bin/keychainctl",
-		"../../../bin/keychainctl",
+		"/usr/local/bin/xkmsctl",
+		"./bin/xkmsctl",
+		"../../../bin/xkmsctl",
 	}
 
 	for _, loc := range locations {

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -29,14 +29,13 @@ import (
 )
 
 // CLITestSuite provides comprehensive testing of all CLI commands across all protocols.
-// This ensures 100% of the keychain service is implemented and working across all interfaces.
+// This ensures 100% of the xkms service is implemented and working across all interfaces.
 type CLITestSuite struct {
-	t           *testing.T
-	cfg         *TestConfig
-	keyDir      string
-	certDir     string
-	tlsInsecure bool
-	tlsCACert   string
+	t         *testing.T
+	cfg       *TestConfig
+	keyDir    string
+	certDir   string
+	tlsCACert string
 }
 
 // NewCLITestSuite creates a new CLI test suite
@@ -45,7 +44,7 @@ func NewCLITestSuite(t *testing.T) *CLITestSuite {
 	cfg := LoadTestConfig()
 	requireCLI(t, cfg)
 
-	keyDir := filepath.Join(os.TempDir(), fmt.Sprintf("keychain-test-%d", time.Now().UnixNano()))
+	keyDir := filepath.Join(os.TempDir(), fmt.Sprintf("xkms-test-%d", time.Now().UnixNano()))
 	certDir := filepath.Join(keyDir, "certs")
 
 	if err := os.MkdirAll(keyDir, 0755); err != nil {
@@ -56,12 +55,11 @@ func NewCLITestSuite(t *testing.T) *CLITestSuite {
 	}
 
 	return &CLITestSuite{
-		t:           t,
-		cfg:         cfg,
-		keyDir:      keyDir,
-		certDir:     certDir,
-		tlsInsecure: os.Getenv("KEYSTORE_TLS_INSECURE") != "",
-		tlsCACert:   os.Getenv("KEYSTORE_TLS_CA"),
+		t:         t,
+		cfg:       cfg,
+		keyDir:    keyDir,
+		certDir:   certDir,
+		tlsCACert: getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
 	}
 }
 
@@ -87,13 +85,8 @@ func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string,
 		strings.HasPrefix(serverURL, "grpcs://") ||
 		strings.HasPrefix(serverURL, "quic://")
 
-	if needsTLS {
-		if s.tlsInsecure {
-			prefixArgs = append(prefixArgs, "--tls-insecure")
-		}
-		if s.tlsCACert != "" {
-			prefixArgs = append(prefixArgs, "--tls-ca", s.tlsCACert)
-		}
+	if needsTLS && s.tlsCACert != "" {
+		prefixArgs = append(prefixArgs, "--tls-ca", s.tlsCACert)
 	}
 
 	args = append(prefixArgs, args...)
@@ -918,11 +911,11 @@ func TestCLICompleteTLSFlags(t *testing.T) {
 	suite := NewCLITestSuite(t)
 	defer suite.Cleanup()
 
-	// Test that TLS flags are accepted
-	t.Run("tls_insecure_flag", func(t *testing.T) {
+	// Test that CA file flag is accepted
+	t.Run("tls_ca_file_flag", func(t *testing.T) {
 		args := []string{
 			"--server", "https://localhost:8443",
-			"--tls-insecure",
+			"--tls-ca", "/etc/xkms/certs/ca.crt",
 			"version",
 		}
 
@@ -931,7 +924,7 @@ func TestCLICompleteTLSFlags(t *testing.T) {
 		_ = err
 		output := stdout + stderr
 		assertNotEmpty(t, output, "Output should not be empty")
-		t.Log("TLS insecure flag accepted")
+		t.Log("TLS CA file flag accepted")
 	})
 }
 
@@ -1013,7 +1006,7 @@ func TestCLICompleteServerFlagFormats(t *testing.T) {
 		name   string
 		format string
 	}{
-		{"unix_socket", "unix:///var/run/keychain/keychain.sock"},
+		{"unix_socket", "unix:///var/run/xkms/xkms.sock"},
 		{"http", "http://localhost:8443"},
 		{"https", "https://localhost:8443"},
 		{"grpc", "grpc://localhost:9443"},

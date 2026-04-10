@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -58,4 +58,31 @@ var (
 
 	// ErrTokenNotFound is returned when the specified token cannot be found.
 	ErrTokenNotFound = errors.New("pkcs11: token not found")
+
+	// ErrInvalidKeyAttributes is returned when key attributes are nil or invalid.
+	ErrInvalidKeyAttributes = errors.New("pkcs11: invalid key attributes")
+
+	// ErrInvalidPeerPublicKey is returned when the peer's public key is invalid or empty.
+	ErrInvalidPeerPublicKey = errors.New("pkcs11: invalid peer public key")
+
+	// ErrInvalidKDFParams is returned when KDF parameters are nil or invalid.
+	ErrInvalidKDFParams = errors.New("pkcs11: invalid KDF parameters")
+
+	// ErrECDHNotSupported is returned when ECDH is not supported by the token.
+	ErrECDHNotSupported = errors.New("pkcs11: ECDH not supported by token")
+
+	// ErrCurveMismatch is returned when the private and peer public keys use different curves.
+	ErrCurveMismatch = errors.New("pkcs11: curve mismatch between private and peer public keys")
+
+	// ErrSessionPoolClosed is returned when an operation is attempted on a closed session pool.
+	ErrSessionPoolClosed = errors.New("pkcs11: session pool is closed")
+
+	// ErrSessionPoolNilContext is returned when a nil PKCS#11 context is passed to the pool.
+	ErrSessionPoolNilContext = errors.New("pkcs11: session pool requires non-nil PKCS#11 context")
+
+	// ErrSessionPoolOpen is returned when the pool fails to open sessions.
+	ErrSessionPoolOpen = errors.New("pkcs11: failed to open session pool sessions")
+
+	// ErrSessionPoolLogin is returned when the pool fails to log in.
+	ErrSessionPoolLogin = errors.New("pkcs11: session pool login failed")
 )

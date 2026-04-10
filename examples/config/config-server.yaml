@@ -1,7 +1,7 @@
-# Example configuration for unified go-keychain server
+# Example configuration for unified go-xkms server
 # Supports all protocols: Unix socket (local), REST, gRPC, QUIC, MCP
 #
-# By default, keychaind only listens on Unix socket for local IPC.
+# By default, xkmsd only listens on Unix socket for local IPC.
 # This example enables all protocols for demonstration purposes.
 
 server:
@@ -23,7 +23,7 @@ protocols:
 
 # Unix socket configuration
 unix:
-  socket_path: /var/run/keychain/keychain.sock
+  socket_path: /var/run/xkms/xkms.sock
   socket_mode: "0660"
 
 logging:
@@ -32,14 +32,14 @@ logging:
 
 tls:
   enabled: true
-  cert_file: /etc/keychain/server.crt
-  key_file: /etc/keychain/server.key
-  ca_file: /etc/keychain/ca.crt
+  cert_file: /etc/xkms/server.crt
+  key_file: /etc/xkms/server.key
+  ca_file: /etc/xkms/ca.crt
 
   # Client certificate verification (mTLS)
   client_auth: require_and_verify  # none, request, require, verify, require_and_verify
   client_cas:
-    - /etc/keychain/client-ca.crt
+    - /etc/xkms/client-ca.crt
 
   # TLS version
   min_version: TLS1.2
@@ -66,7 +66,7 @@ health:
 
 storage:
   backend: file
-  path: /var/lib/keychain/metadata
+  path: /var/lib/xkms/metadata
 
 # Default backend for key operations
 default_backend: pkcs8
@@ -74,7 +74,7 @@ default_backend: pkcs8
 backends:
   pkcs8:
     enabled: true
-    path: /var/lib/keychain/keys
+    path: /var/lib/xkms/keys
 
   # Uncomment to enable additional backends
 
@@ -85,7 +85,7 @@ backends:
   # pkcs11:
   #   enabled: true
   #   library: /usr/lib/softhsm/libsofthsm2.so
-  #   token_label: keychain-token
+  #   token_label: xkms-token
   #   pin: 1234
 
   # awskms:
@@ -98,8 +98,8 @@ backends:
   #   enabled: true
   #   project_id: my-project
   #   location: global
-  #   key_ring: keychain
-  #   credentials_file: /etc/keychain/gcp-credentials.json
+  #   key_ring: xkms
+  #   credentials_file: /etc/xkms/gcp-credentials.json
 
   # azurekv:
   #   enabled: true
@@ -112,4 +112,4 @@ backends:
   #   enabled: true
   #   address: https://vault.example.com:8200
   #   token: ${VAULT_TOKEN}
-  #   mount_path: keychain
+  #   mount_path: xkms

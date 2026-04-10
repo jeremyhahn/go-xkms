@@ -1,30 +1,36 @@
 services:
   # Keystore server with all protocols enabled
-  keychain-server:
+  xkms-server:
     build:
       context: ../../..
       dockerfile: Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../go-qrdb
+        go-quicraft: ../../../../go-quicraft
       args:
         - VERSION=${VERSION:-0.0.1-alpha}
-    image: go-keychain-integration:latest
-    container_name: keychain-integration-server
-    ports:
-      - "8443:8443"       # REST API
-      - "9443:9443"       # gRPC
-      - "8444:8444/udp"   # QUIC (UDP)
-      - "8444:8444/tcp"   # QUIC fallback (TCP)
-      - "9444:9444"       # MCP
-      - "9090:9090"       # Metrics
+    image: go-xkms-integration:latest
+    container_name: xkms-integration-server
+    # Ports are exposed but NOT published to the host to avoid conflicts
+    # with the devcontainer. Test containers communicate via the Docker
+    # network using the container name (xkms-server:8443, etc.).
+    expose:
+      - "8443"       # REST API
+      - "9443"       # gRPC
+      - "8444/udp"   # QUIC (UDP)
+      - "8444/tcp"   # QUIC fallback (TCP)
+      - "9444"       # MCP
+      - "9090"       # Metrics
     # Required for QUIC UDP buffer settings
     privileged: true
     volumes:
-      - keychain-data:/data
-      - keychain-socket:/var/run/keychain
-      - keychain-certs:/etc/keychain/certs
-      - ./config.test.yaml:/etc/keychain/keychaind.yaml
+      - xkms-data:/data
+      - xkms-socket:/var/run/xkms
+      - xkms-certs:/etc/xkms/certs
+      - ./config.test.yaml:/etc/xkms/xkmsd.yaml
       - ./scripts:/scripts:ro
     environment:
-      - KEYCHAIN_CONFIG=/etc/keychain/keychaind.yaml
+      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration
@@ -34,20 +40,20 @@ services:
       - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
       # Certificate directory
-      - CERT_DIR=/etc/keychain/certs
+      - CERT_DIR=/etc/xkms/certs
     depends_on:
       swtpm:
         condition: service_healthy
       softhsm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 5s
       retries: 15
       start_period: 20s
     networks:
-      - keychain-integration
+      - xkms-integration
     # Run as root for integration tests (allows cert generation and UDP buffer config)
     user: root
     entrypoint:
@@ -60,25 +66,25 @@ services:
         echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo "Warning: Could not set wmem_max"
         cat /proc/sys/net/core/rmem_max || true
         # Ensure directories exist
-        mkdir -p /etc/keychain/certs /var/run/keychain /data
+        mkdir -p /etc/xkms/certs /var/run/xkms /data
         # Generate TLS certificates for QUIC
         echo "Generating TLS certificates..."
         /scripts/generate-test-certs.sh
         # Verify certificates were created
-        ls -la /etc/keychain/certs/
-        echo "Starting keychain server..."
-        exec /app/keychaind
+        ls -la /etc/xkms/certs/
+        echo "Starting xkms server..."
+        exec /app/xkmsd
 
   # SWTPM TPM 2.0 Simulator
   swtpm:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-keychain-swtpm:latest
-    container_name: keychain-integration-swtpm
-    ports:
-      - "2321:2321"  # TPM command port
-      - "2322:2322"  # TPM control port
+    image: go-xkms-swtpm:latest
+    container_name: xkms-integration-swtpm
+    expose:
+      - "2321"  # TPM command port
+      - "2322"  # TPM control port
     volumes:
       - swtpm-data:/var/lib/swtpm/tpmstate
     healthcheck:
@@ -87,15 +93,15 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - keychain-integration
+      - xkms-integration
 
   # SoftHSM PKCS#11 Service
   softhsm:
     build:
       context: ../../../test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-keychain-softhsm:latest
-    container_name: keychain-integration-softhsm
+    image: go-xkms-softhsm:latest
+    container_name: xkms-integration-softhsm
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -107,46 +113,51 @@ services:
       timeout: 3s
       retries: 3
     networks:
-      - keychain-integration
+      - xkms-integration
 
   # Integration test runner
   integration-tests:
     build:
       context: ../../..
       dockerfile: Dockerfile
-    image: go-keychain-integration:latest
-    container_name: keychain-integration-tests
+      additional_contexts:
+        go-qrdb: ../../../../go-qrdb
+        go-quicraft: ../../../../go-quicraft
+    image: go-xkms-integration:latest
+    container_name: xkms-integration-tests
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root
     depends_on:
-      keychain-server:
+      xkms-server:
         condition: service_healthy
     volumes:
       - ../../..:/workspace
-      - keychain-socket:/var/run/keychain
-      - keychain-certs:/etc/keychain/certs:ro
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
+      - xkms-socket:/var/run/xkms
+      - xkms-certs:/etc/xkms/certs:ro
       - cli-build:/app/build
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
       # Server endpoints (all use TLS now)
-      - KEYSTORE_UNIX_SOCKET=/var/run/keychain/keychain.sock
-      - KEYSTORE_REST_URL=https://keychain-server:8443
-      - KEYSTORE_GRPC_ADDR=keychain-server:9443
-      - KEYSTORE_QUIC_URL=https://keychain-server:8444
-      - KEYSTORE_MCP_ADDR=keychain-server:9444
-      - KEYSTORE_CLI_BIN=/app/build/bin/keychainctl
-      # TLS configuration - use insecure for self-signed certs
-      - KEYSTORE_TLS_CA=/etc/keychain/certs/ca.crt
-      - KEYSTORE_TLS_INSECURE=true
+      - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
+      - KEYSTORE_REST_URL=https://xkms-server:8443
+      - KEYSTORE_GRPC_ADDR=xkms-server:9443
+      - KEYSTORE_QUIC_URL=https://xkms-server:8444
+      - KEYSTORE_MCP_ADDR=xkms-server:9444
+      - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
+      # TLS configuration - use CA certificate for proper verification
+      - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost
     working_dir: /workspace
     networks:
-      - keychain-integration
+      - xkms-integration
     command: >
       sh -c "
       echo 'Configuring UDP buffers for QUIC...' &&
@@ -155,22 +166,22 @@ services:
       echo 'Waiting for server to be ready...' &&
       sleep 5 &&
       echo 'Checking Unix socket...' &&
-      ls -la /var/run/keychain/ || true &&
+      ls -la /var/run/xkms/ || true &&
       echo 'Checking TLS certificates...' &&
-      ls -la /etc/keychain/certs/ || true &&
+      ls -la /etc/xkms/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl &&
+      CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
       echo 'Running integration tests...' &&
-      go test -v -tags=integration,frost ./test/integration/api/... -timeout 15m
+      go test -v -tags=integration,frost,codec_cbor,codec_json,codec_msgpack ./test/integration/api/... -timeout 15m
       "
 
 volumes:
-  keychain-data:
+  xkms-data:
     driver: local
-  keychain-socket:
+  xkms-socket:
     driver: local
-  keychain-certs:
+  xkms-certs:
     driver: local
   softhsm-tokens:
     driver: local
@@ -184,5 +195,5 @@ volumes:
     driver: local
 
 networks:
-  keychain-integration:
+  xkms-integration:
     driver: bridge

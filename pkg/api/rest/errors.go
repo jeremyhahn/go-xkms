@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,25 +19,25 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // Common errors
 var (
-	ErrInvalidRequest         = errors.New("invalid request")
-	ErrInvalidBackend         = errors.New("invalid backend")
-	ErrInvalidKeyType         = errors.New("invalid key type")
-	ErrMissingKeyID           = errors.New("missing key_id")
-	ErrMissingBackend         = errors.New("missing backend parameter")
-	ErrMissingData            = errors.New("missing data")
-	ErrMissingCiphertext      = errors.New("missing ciphertext")
-	ErrBackendNotFound        = errors.New("backend not found")
-	ErrInternalError          = errors.New("internal server error")
-	ErrUnauthorized           = errors.New("unauthorized")
-	ErrForbidden              = errors.New("forbidden")
-	ErrVersioningNotSupported = errors.New("key versioning is not yet supported - requires VersioningAdapter integration")
-	ErrSealingNotSupported    = errors.New("backend does not support sealing operations")
+	ErrInvalidRequest      = errors.New("invalid request")
+	ErrInvalidBackend      = errors.New("invalid backend")
+	ErrInvalidKeyType      = errors.New("invalid key type")
+	ErrMissingKeyID        = errors.New("missing key_id")
+	ErrMissingBackend      = errors.New("missing backend parameter")
+	ErrMissingData         = errors.New("missing data")
+	ErrMissingCiphertext   = errors.New("missing ciphertext")
+	ErrBackendNotFound     = errors.New("backend not found")
+	ErrInternalError       = errors.New("internal server error")
+	ErrUnauthorized        = errors.New("unauthorized")
+	ErrForbidden           = errors.New("forbidden")
+	ErrServiceUnavailable  = errors.New("service unavailable")
+	ErrSealingNotSupported = errors.New("backend does not support sealing operations")
 )
 
 // writeError writes an error response to the client.
@@ -90,8 +90,8 @@ func mapErrorToStatusCode(err error) int {
 		return http.StatusBadRequest
 	case errors.Is(err, storage.ErrAlreadyExists):
 		return http.StatusConflict
-	case errors.Is(err, ErrVersioningNotSupported):
-		return http.StatusNotImplemented
+	case errors.Is(err, ErrServiceUnavailable):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}

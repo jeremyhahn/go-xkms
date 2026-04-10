@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,8 +23,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // awsKMSSymmetricKey implements types.SymmetricKey for AWS KMS symmetric keys.
@@ -338,7 +338,14 @@ func (e *awsKMSSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	return output.Plaintext, nil
 }
 
+// GetTracker returns the AEAD safety tracker for this backend.
+// This allows external code to inspect tracking state and configuration.
+func (b *Backend) GetTracker() types.AEADSafetyTracker {
+	return b.tracker
+}
+
 // Verify interface compliance at compile time
-var _ types.SymmetricBackend = (*Backend)(nil)
+var _ types.SymmetricKeyProvider = (*Backend)(nil)
+var _ types.SymmetricKeyProviderWithTracking = (*Backend)(nil)
 var _ types.SymmetricKey = (*awsKMSSymmetricKey)(nil)
 var _ types.SymmetricEncrypter = (*awsKMSSymmetricEncrypter)(nil)

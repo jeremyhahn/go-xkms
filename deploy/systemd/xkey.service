@@ -1,0 +1,90 @@
+# systemd service file for xKey Virtual FIDO2 Authenticator
+# Install to: /etc/systemd/system/xkey.service
+#
+# Prerequisites:
+#   - Install udev rule: cp deploy/udev/70-xkey.rules /etc/udev/rules.d/
+#   - Reload udev: udevadm control --reload-rules && udevadm trigger
+#   - Create sysusers: systemd-sysusers (uses xkms.conf)
+#
+# Usage:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable xkey
+#   sudo systemctl start xkey
+
+[Unit]
+Description=xKey - Virtual FIDO2/WebAuthn Authenticator
+Documentation=https://github.com/jeremyhahn/go-xkms
+After=systemd-udevd.service
+Wants=systemd-udevd.service
+# Start after xKMS server if both are running
+After=xkms.service
+
+[Service]
+Type=simple
+User=xkms
+Group=xkms
+
+# Environment configuration
+Environment=XKEY_CONFIG=/etc/xkms/xkey.yaml
+EnvironmentFile=-/etc/xkms/environment
+
+# Working directory and binary
+WorkingDirectory=/var/lib/xkms
+ExecStart=/usr/bin/xkey -config /etc/xkms/xkey.yaml
+
+# Graceful shutdown
+ExecReload=/bin/kill -HUP $MAINPID
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Restart behavior
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xkey
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RemoveIPC=true
+
+# Device access: UHID for creating virtual HID devices, TPM for key backend
+DeviceAllow=/dev/uhid rw
+DeviceAllow=/dev/tpm0 rw
+DeviceAllow=/dev/tpmrm0 rw
+
+# File system access
+ReadWritePaths=/var/lib/xkms
+ReadWritePaths=/var/log/xkms
+ReadOnlyPaths=/etc/xkms
+
+# Capabilities
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# No network needed - xKey is a local virtual device
+RestrictAddressFamilies=AF_UNIX
+
+# System call filtering
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

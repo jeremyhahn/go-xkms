@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package store
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -23,166 +24,145 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/cespare/xxhash/v2"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-const (
-	// FSEXT_SIGNER is the file extension for stored signers
-	FSEXT_SIGNER = ".signer"
-)
-
-// SignerStore implements SignerStorer using storage.Backend.
+// SignerStore implements SignerStorer using a go-qrdb GenericDAO for
+// signer persistence and a separate DAO for signature storage.
 // The storage.Backend interface is compatible with external object storage
-// libraries like go-objstore. Higher-level applications can create adapters
-// to use cloud storage (S3, Azure, GCS) by implementing storage.Backend.
+// libraries like go-objstore.
 type SignerStore struct {
-	logger  *slog.Logger
-	storage storage.Backend
+	logger *slog.Logger
+	dao    qrdbsdk.GenericDAO[*SignerEntry]
+	sigDAO qrdbsdk.GenericDAO[*SignatureEntry]
+	idGen  *signerEntryIDGenerator
 }
 
 // NewSignerStore creates a new signer store using the storage.Backend interface.
 // The backend can be any implementation of storage.Backend, including custom
 // adapters that wrap external storage libraries like go-objstore.
 func NewSignerStore(logger *slog.Logger, backend storage.Backend) SignerStorer {
+	kvStore, err := kvadapter.New(backend)
+	if err != nil {
+		// Backend should never be nil when called correctly. If it is, fall
+		// back to a no-op store that returns errors. In practice this path
+		// should not be hit since callers validate inputs.
+		if logger != nil {
+			logger.Error("failed to create KVStore adapter for signer store", slog.String("error", err.Error()))
+		}
+		return &SignerStore{logger: logger}
+	}
+
+	idGen := &signerEntryIDGenerator{}
+
+	signerDAO, daoErr := qrdbsdk.NewDAO(
+		kvStore,
+		"signers",
+		func() *SignerEntry { return &SignerEntry{} },
+		qrdbsdk.WithIDGenerator(idGen),
+	)
+	if daoErr != nil {
+		if logger != nil {
+			logger.Error("failed to create signer DAO", slog.String("error", daoErr.Error()))
+		}
+		return &SignerStore{logger: logger}
+	}
+
+	sigDAO, sigErr := qrdbsdk.NewDAO(
+		kvStore,
+		"signatures",
+		func() *SignatureEntry { return &SignatureEntry{} },
+		qrdbsdk.WithIDGenerator(idGen),
+	)
+	if sigErr != nil {
+		if logger != nil {
+			logger.Error("failed to create signature DAO", slog.String("error", sigErr.Error()))
+		}
+		return &SignerStore{logger: logger, dao: signerDAO}
+	}
+
 	return &SignerStore{
-		logger:  logger,
-		storage: backend,
+		logger: logger,
+		dao:    signerDAO,
+		sigDAO: sigDAO,
+		idGen:  idGen,
 	}
 }
 
-// Get retrieves a crypto.Signer from storage
+// computeSignerID computes the deterministic entity ID for a CN.
+func computeSignerID(cn string) uint64 {
+	return xxhash.Sum64String(cn)
+}
+
+// Get retrieves a crypto.Signer from storage.
 func (s *SignerStore) Get(attrs *types.KeyAttributes) (interface{}, error) {
-	key := attrs.CN + FSEXT_SIGNER
-	data, err := s.storage.Get(key)
+	if s.dao == nil {
+		return nil, ErrSignerStoreNotInitialized
+	}
+
+	entryID := computeSignerID(attrs.CN)
+	entry, err := s.dao.Get(context.Background(), entryID)
 	if err != nil {
-		if err == storage.ErrNotFound {
-			return nil, fmt.Errorf("signer not found for %s: %w", attrs.CN, err)
+		if qrdbsdk.IsDAONotFound(err) {
+			return nil, &ErrSignerNotFound{CN: attrs.CN}
 		}
-		return nil, fmt.Errorf("failed to get signer %s: %w", key, err)
+		return nil, &ErrSignerGet{CN: attrs.CN, Cause: err}
 	}
 
 	// Decode PEM
-	block, err := DecodePEM(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode PEM for %s: %w", attrs.CN, err)
+	block, pemErr := DecodePEM(entry.KeyPEM)
+	if pemErr != nil {
+		return nil, &ErrSignerPEMDecode{CN: attrs.CN, Cause: pemErr}
 	}
 
-	// Parse private key based on algorithm
-	var signer crypto.Signer
-	switch attrs.KeyAlgorithm {
-	case x509.RSA:
-		privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			// Try PKCS1 format as fallback
-			rsaKey, rsaErr := x509.ParsePKCS1PrivateKey(block.Bytes)
-			if rsaErr != nil {
-				return nil, fmt.Errorf("failed to parse RSA private key for %s: %w (pkcs8: %v)", attrs.CN, rsaErr, err)
-			}
-			signer = rsaKey
-		} else {
-			rsaKey, ok := privateKey.(*rsa.PrivateKey)
-			if !ok {
-				return nil, fmt.Errorf("key is not an RSA private key for %s", attrs.CN)
-			}
-			signer = rsaKey
-		}
-
-	case x509.ECDSA:
-		privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			// Try EC format as fallback
-			ecKey, ecErr := x509.ParseECPrivateKey(block.Bytes)
-			if ecErr != nil {
-				return nil, fmt.Errorf("failed to parse ECDSA private key for %s: %w (pkcs8: %v)", attrs.CN, ecErr, err)
-			}
-			signer = ecKey
-		} else {
-			ecKey, ok := privateKey.(*ecdsa.PrivateKey)
-			if !ok {
-				return nil, fmt.Errorf("key is not an ECDSA private key for %s", attrs.CN)
-			}
-			signer = ecKey
-		}
-
-	case x509.Ed25519:
-		privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse Ed25519 private key for %s: %w", attrs.CN, err)
-		}
-		ed25519Key, ok := privateKey.(ed25519.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("key is not an Ed25519 private key for %s", attrs.CN)
-		}
-		signer = ed25519Key
-
-	default:
-		return nil, fmt.Errorf("unsupported key algorithm for %s: %v", attrs.CN, attrs.KeyAlgorithm)
-	}
-
-	return signer, nil
+	// Parse private key based on algorithm.
+	return parsePrivateKey(attrs, block)
 }
 
-// Save stores a crypto.Signer to storage
+// Save stores a crypto.Signer to storage.
 func (s *SignerStore) Save(attrs *types.KeyAttributes, signer interface{}) error {
+	if s.dao == nil {
+		return ErrSignerStoreNotInitialized
+	}
+
 	if signer == nil {
-		return fmt.Errorf("signer is nil for %s", attrs.CN)
+		return &ErrSignerNil{CN: attrs.CN}
 	}
 
-	// Extract the private key from the signer
-	var privateKey interface{}
-	switch v := signer.(type) {
-	case *rsa.PrivateKey:
-		privateKey = v
-	case *ecdsa.PrivateKey:
-		privateKey = v
-	case ed25519.PrivateKey:
-		privateKey = v
-	case crypto.Signer:
-		// Try to extract the underlying key if it's wrapped
-		switch key := v.Public().(type) {
-		case *rsa.PublicKey:
-			if rsaKey, ok := v.(*rsa.PrivateKey); ok {
-				privateKey = rsaKey
-			} else {
-				return fmt.Errorf("unable to extract RSA private key from signer for %s", attrs.CN)
-			}
-		case *ecdsa.PublicKey:
-			if ecKey, ok := v.(*ecdsa.PrivateKey); ok {
-				privateKey = ecKey
-			} else {
-				return fmt.Errorf("unable to extract ECDSA private key from signer for %s", attrs.CN)
-			}
-		case ed25519.PublicKey:
-			if edKey, ok := v.(ed25519.PrivateKey); ok {
-				privateKey = edKey
-			} else {
-				return fmt.Errorf("unable to extract Ed25519 private key from signer for %s", attrs.CN)
-			}
-		default:
-			return fmt.Errorf("unsupported public key type for %s: %T", attrs.CN, key)
-		}
-	default:
-		return fmt.Errorf("unsupported signer type for %s: %T", attrs.CN, signer)
+	// Extract the private key from the signer.
+	privateKey, err := extractPrivateKey(attrs.CN, signer)
+	if err != nil {
+		return err
 	}
 
-	// Marshal to PKCS8 format
+	// Marshal to PKCS8 format.
 	keyData, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
-		return fmt.Errorf("failed to marshal private key for %s: %w", attrs.CN, err)
+		return &ErrSignerMarshal{CN: attrs.CN, Cause: err}
 	}
 
-	// Encode to PEM
+	// Encode to PEM.
 	pemBlock := &pem.Block{
 		Type:  "PRIVATE KEY",
 		Bytes: keyData,
 	}
 	pemData := pem.EncodeToMemory(pemBlock)
 
-	// Store in backend
-	key := attrs.CN + FSEXT_SIGNER
-	if err := s.storage.Put(key, pemData, storage.DefaultOptions()); err != nil {
-		return fmt.Errorf("failed to save signer %s: %w", key, err)
+	// Create entry with deterministic ID.
+	entry := &SignerEntry{
+		CN:        attrs.CN,
+		KeyPEM:    pemData,
+		Algorithm: attrs.KeyAlgorithm.String(),
+	}
+	entry.SetEntityID(computeSignerID(attrs.CN))
+
+	if err := s.dao.Save(context.Background(), entry); err != nil {
+		return &ErrSignerSave{CN: attrs.CN, Cause: err}
 	}
 
 	if s.logger != nil {
@@ -192,16 +172,24 @@ func (s *SignerStore) Save(attrs *types.KeyAttributes, signer interface{}) error
 	return nil
 }
 
-// Delete removes a crypto.Signer from storage
+// Delete removes a crypto.Signer from storage.
 func (s *SignerStore) Delete(attrs *types.KeyAttributes) error {
-	key := attrs.CN + FSEXT_SIGNER
-	if err := s.storage.Delete(key); err != nil {
-		if err != storage.ErrNotFound {
-			return fmt.Errorf("failed to delete signer %s: %w", key, err)
+	if s.dao == nil {
+		return ErrSignerStoreNotInitialized
+	}
+
+	entryID := computeSignerID(attrs.CN)
+
+	stub := &SignerEntry{}
+	stub.SetEntityID(entryID)
+	if err := s.dao.Delete(context.Background(), stub); err != nil {
+		// DAO Delete is idempotent for the underlying kvstore, but we check
+		// for real errors. Not-found is not an error for delete operations.
+		if !qrdbsdk.IsDAONotFound(err) {
+			return &ErrSignerDelete{CN: attrs.CN, Cause: err}
 		}
-		// Not found is not an error for delete
 		if s.logger != nil {
-			s.logger.Debug("signer not found for deletion", slog.String("key", key))
+			s.logger.Debug("signer not found for deletion", slog.String("cn", attrs.CN))
 		}
 	}
 
@@ -212,13 +200,17 @@ func (s *SignerStore) Delete(attrs *types.KeyAttributes) error {
 	return nil
 }
 
-// SaveSignature stores a signature and digest for auditing/verification purposes
+// SaveSignature stores a signature and digest for auditing/verification purposes.
 func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) error {
 	if opts == nil || opts.KeyAttributes == nil {
 		return ErrInvalidSignerOpts
 	}
 
-	// Create a unique key for the signature using CN and blob CN if available
+	if s.sigDAO == nil {
+		return ErrSignerStoreNotInitialized
+	}
+
+	// Create a unique key for the signature using CN and blob CN if available.
 	var key string
 	if opts.BlobCN != nil && *opts.BlobCN != "" {
 		key = fmt.Sprintf("%s.%s.sig", opts.KeyAttributes.CN, *opts.BlobCN)
@@ -226,11 +218,17 @@ func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) 
 		key = fmt.Sprintf("%s.sig", opts.KeyAttributes.CN)
 	}
 
-	// Store signature and digest together
+	// Store signature and digest together.
 	data := fmt.Sprintf("digest=%x\nsignature=%x\n", digest, signature)
 
-	if err := s.storage.Put(key, []byte(data), storage.DefaultOptions()); err != nil {
-		return fmt.Errorf("failed to save signature %s: %w", key, err)
+	entry := &SignatureEntry{
+		Key:  key,
+		Data: data,
+	}
+	entry.SetEntityID(computeSignerID(key))
+
+	if err := s.sigDAO.Save(context.Background(), entry); err != nil {
+		return &ErrSignatureSave{Key: key, Cause: err}
 	}
 
 	if s.logger != nil {
@@ -238,4 +236,109 @@ func (s *SignerStore) SaveSignature(opts *SignerOpts, signature, digest []byte) 
 	}
 
 	return nil
+}
+
+// parsePrivateKey parses a PEM-decoded private key block based on the key algorithm.
+func parsePrivateKey(attrs *types.KeyAttributes, block *pem.Block) (crypto.Signer, error) {
+	switch attrs.KeyAlgorithm {
+	case x509.RSA:
+		return parseRSAKey(attrs.CN, block)
+	case x509.ECDSA:
+		return parseECDSAKey(attrs.CN, block)
+	case x509.Ed25519:
+		return parseEd25519Key(attrs.CN, block)
+	default:
+		return nil, &ErrUnsupportedAlgorithm{CN: attrs.CN, Algorithm: attrs.KeyAlgorithm}
+	}
+}
+
+// parseRSAKey parses an RSA private key from a PEM block.
+func parseRSAKey(cn string, block *pem.Block) (*rsa.PrivateKey, error) {
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		// Try PKCS1 format as fallback.
+		rsaKey, rsaErr := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if rsaErr != nil {
+			return nil, &ErrSignerKeyParse{CN: cn, Algorithm: "RSA", Cause: rsaErr, FallbackCause: err}
+		}
+		return rsaKey, nil
+	}
+
+	rsaKey, ok := privateKey.(*rsa.PrivateKey)
+	if !ok {
+		return nil, &ErrSignerKeyTypeMismatch{CN: cn, Expected: "RSA", Actual: fmt.Sprintf("%T", privateKey)}
+	}
+	return rsaKey, nil
+}
+
+// parseECDSAKey parses an ECDSA private key from a PEM block.
+func parseECDSAKey(cn string, block *pem.Block) (*ecdsa.PrivateKey, error) {
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		// Try EC format as fallback.
+		ecKey, ecErr := x509.ParseECPrivateKey(block.Bytes)
+		if ecErr != nil {
+			return nil, &ErrSignerKeyParse{CN: cn, Algorithm: "ECDSA", Cause: ecErr, FallbackCause: err}
+		}
+		return ecKey, nil
+	}
+
+	ecKey, ok := privateKey.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, &ErrSignerKeyTypeMismatch{CN: cn, Expected: "ECDSA", Actual: fmt.Sprintf("%T", privateKey)}
+	}
+	return ecKey, nil
+}
+
+// parseEd25519Key parses an Ed25519 private key from a PEM block.
+func parseEd25519Key(cn string, block *pem.Block) (ed25519.PrivateKey, error) {
+	privateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, &ErrSignerKeyParse{CN: cn, Algorithm: "Ed25519", Cause: err}
+	}
+
+	ed25519Key, ok := privateKey.(ed25519.PrivateKey)
+	if !ok {
+		return nil, &ErrSignerKeyTypeMismatch{CN: cn, Expected: "Ed25519", Actual: fmt.Sprintf("%T", privateKey)}
+	}
+	return ed25519Key, nil
+}
+
+// extractPrivateKey extracts the private key material from a signer value.
+func extractPrivateKey(cn string, signer interface{}) (interface{}, error) {
+	switch v := signer.(type) {
+	case *rsa.PrivateKey:
+		return v, nil
+	case *ecdsa.PrivateKey:
+		return v, nil
+	case ed25519.PrivateKey:
+		return v, nil
+	case crypto.Signer:
+		return extractFromCryptoSigner(cn, v)
+	default:
+		return nil, &ErrUnsupportedSignerType{CN: cn, Type: fmt.Sprintf("%T", signer)}
+	}
+}
+
+// extractFromCryptoSigner extracts the private key from a crypto.Signer interface.
+func extractFromCryptoSigner(cn string, signer crypto.Signer) (interface{}, error) {
+	switch signer.Public().(type) {
+	case *rsa.PublicKey:
+		if rsaKey, ok := signer.(*rsa.PrivateKey); ok {
+			return rsaKey, nil
+		}
+		return nil, &ErrSignerExtract{CN: cn, Algorithm: "RSA"}
+	case *ecdsa.PublicKey:
+		if ecKey, ok := signer.(*ecdsa.PrivateKey); ok {
+			return ecKey, nil
+		}
+		return nil, &ErrSignerExtract{CN: cn, Algorithm: "ECDSA"}
+	case ed25519.PublicKey:
+		if edKey, ok := signer.(ed25519.PrivateKey); ok {
+			return edKey, nil
+		}
+		return nil, &ErrSignerExtract{CN: cn, Algorithm: "Ed25519"}
+	default:
+		return nil, &ErrUnsupportedPublicKeyType{CN: cn, Type: fmt.Sprintf("%T", signer.Public())}
+	}
 }

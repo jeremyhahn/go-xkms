@@ -98,8 +98,8 @@ fi
 ((TESTS_RUN++))
 
 # Test 7: Verify images exist
-run_test "SWTPM image exists" "docker images | grep -q go-keychain-swtpm"
-run_test "SoftHSM image exists" "docker images | grep -q go-keychain-softhsm"
+run_test "SWTPM image exists" "docker images | grep -q go-xkms-swtpm"
+run_test "SoftHSM image exists" "docker images | grep -q go-xkms-softhsm"
 
 # Test 8: Start services
 log_info "Starting services..."
@@ -117,14 +117,14 @@ log_info "Waiting for services to be healthy..."
 sleep 5
 
 # Test 9: Check SWTPM container is running
-run_test "SWTPM container is running" "docker ps | grep -q go-keychain-swtpm"
+run_test "SWTPM container is running" "docker ps | grep -q go-xkms-swtpm"
 
 # Test 10: Check SoftHSM container is running
-run_test "SoftHSM container is running" "docker ps | grep -q go-keychain-softhsm"
+run_test "SoftHSM container is running" "docker ps | grep -q go-xkms-softhsm"
 
 # Test 11: Check SWTPM health
 log_info "Checking SWTPM health..."
-SWTPM_HEALTH=$(docker inspect go-keychain-swtpm --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
+SWTPM_HEALTH=$(docker inspect go-xkms-swtpm --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
 if [ "$SWTPM_HEALTH" = "healthy" ]; then
     log_success "SWTPM is healthy"
     ((TESTS_PASSED++))
@@ -136,7 +136,7 @@ fi
 
 # Test 12: Check SoftHSM health
 log_info "Checking SoftHSM health..."
-SOFTHSM_HEALTH=$(docker inspect go-keychain-softhsm --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
+SOFTHSM_HEALTH=$(docker inspect go-xkms-softhsm --format='{{.State.Health.Status}}' 2>/dev/null || echo "unhealthy")
 if [ "$SOFTHSM_HEALTH" = "healthy" ]; then
     log_success "SoftHSM is healthy"
     ((TESTS_PASSED++))
@@ -173,7 +173,7 @@ run_test "SWTPM volume exists" "docker volume ls | grep -q swtpm-data"
 run_test "SoftHSM volume exists" "docker volume ls | grep -q softhsm-tokens"
 
 # Test 16: Check network is created
-run_test "Docker network exists" "docker network ls | grep -q keychain-test"
+run_test "Docker network exists" "docker network ls | grep -q xkms-test"
 
 # Test 17: Test SWTPM logs
 log_info "Checking SWTPM logs..."
@@ -188,8 +188,8 @@ fi
 
 # Test 18: Test image sizes
 log_info "Checking image sizes..."
-SWTPM_SIZE=$(docker images go-keychain-swtpm:latest --format "{{.Size}}")
-SOFTHSM_SIZE=$(docker images go-keychain-softhsm:latest --format "{{.Size}}")
+SWTPM_SIZE=$(docker images go-xkms-swtpm:latest --format "{{.Size}}")
+SOFTHSM_SIZE=$(docker images go-xkms-softhsm:latest --format "{{.Size}}")
 log_info "SWTPM image size: $SWTPM_SIZE"
 log_info "SoftHSM image size: $SOFTHSM_SIZE"
 log_success "Image size check complete"

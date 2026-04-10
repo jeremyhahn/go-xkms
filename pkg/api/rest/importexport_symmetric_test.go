@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -37,11 +37,11 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/certstore"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
-	localwebauthn "github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	localwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -401,6 +401,19 @@ func (m *mockImportExportSymmetricBackend) ExportKey(attrs *types.KeyAttributes,
 	}, nil
 }
 
+// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
+func (m *mockImportExportSymmetricBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	key, ok := m.symmetricKeys[attrs.CN]
+	if !ok {
+		return nil, fmt.Errorf("symmetric key not found: %s", attrs.CN)
+	}
+
+	return key.rawKey, nil
+}
+
 // SymmetricBackend interface implementation
 func (m *mockImportExportSymmetricBackend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
 	if m.GenerateSymmetricKeyFunc != nil {
@@ -488,11 +501,11 @@ func (m *mockImportExportSymmetricBackend) SetSymmetricKey(keyID string, rawKey 
 }
 
 // Verify interface compliance
-var _ types.Backend = (*mockImportExportSymmetricBackend)(nil)
+var _ types.KeyProvider = (*mockImportExportSymmetricBackend)(nil)
 var _ backend.ImportExportBackend = (*mockImportExportSymmetricBackend)(nil)
-var _ types.SymmetricBackend = (*mockImportExportSymmetricBackend)(nil)
+var _ types.SymmetricKeyProvider = (*mockImportExportSymmetricBackend)(nil)
 
-// mockKeyStoreWithImportExport wraps the mock backend to implement keychain.KeyStore
+// mockKeyStoreWithImportExport wraps the mock backend to implement xkms.Backend
 type mockKeyStoreWithImportExport struct {
 	backend *mockImportExportSymmetricBackend
 }
@@ -503,7 +516,7 @@ func newMockKeyStoreWithImportExport() *mockKeyStoreWithImportExport {
 	}
 }
 
-func (m *mockKeyStoreWithImportExport) Backend() types.Backend {
+func (m *mockKeyStoreWithImportExport) KeyProvider() types.KeyProvider {
 	return m.backend
 }
 
@@ -614,10 +627,10 @@ func setupImportExportTestService(t *testing.T, backendName string) *mockKeyStor
 	t.Helper()
 	ks := newMockKeyStoreWithImportExport()
 
-	keychain.Reset()
+	xkms.Reset()
 
-	err := keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err := xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			backendName: ks,
 		},
 		DefaultBackend: backendName,
@@ -625,7 +638,7 @@ func setupImportExportTestService(t *testing.T, backendName string) *mockKeyStor
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		keychain.Reset()
+		xkms.Reset()
 	})
 
 	return ks
@@ -985,10 +998,10 @@ func TestCopyKeyHandler_ImportExportSuccessPath(t *testing.T) {
 		srcKs := newMockKeyStoreWithImportExport()
 		dstKs := newMockKeyStoreWithImportExport()
 
-		keychain.Reset()
+		xkms.Reset()
 
-		err := keychain.Initialize(&keychain.ServiceConfig{
-			Backends: map[string]keychain.KeyStore{
+		err := xkms.Initialize(&xkms.ServiceConfig{
+			Backends: map[string]xkms.Backend{
 				"src-backend": srcKs,
 				"dst-backend": dstKs,
 			},
@@ -997,7 +1010,7 @@ func TestCopyKeyHandler_ImportExportSuccessPath(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Cleanup(func() {
-			keychain.Reset()
+			xkms.Reset()
 		})
 
 		// Create a key in source backend
@@ -1034,10 +1047,10 @@ func TestCopyKeyHandler_SourceKeyNotFoundError(t *testing.T) {
 		srcKs := newMockKeyStoreWithImportExport()
 		dstKs := newMockKeyStoreWithImportExport()
 
-		keychain.Reset()
+		xkms.Reset()
 
-		err := keychain.Initialize(&keychain.ServiceConfig{
-			Backends: map[string]keychain.KeyStore{
+		err := xkms.Initialize(&xkms.ServiceConfig{
+			Backends: map[string]xkms.Backend{
 				"src-backend": srcKs,
 				"dst-backend": dstKs,
 			},
@@ -1046,7 +1059,7 @@ func TestCopyKeyHandler_SourceKeyNotFoundError(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Cleanup(func() {
-			keychain.Reset()
+			xkms.Reset()
 		})
 
 		ctx := newTestHandlerContext()
@@ -1073,10 +1086,10 @@ func TestCopyKeyHandler_ExportError(t *testing.T) {
 		srcKs := newMockKeyStoreWithImportExport()
 		dstKs := newMockKeyStoreWithImportExport()
 
-		keychain.Reset()
+		xkms.Reset()
 
-		err := keychain.Initialize(&keychain.ServiceConfig{
-			Backends: map[string]keychain.KeyStore{
+		err := xkms.Initialize(&xkms.ServiceConfig{
+			Backends: map[string]xkms.Backend{
 				"src-backend": srcKs,
 				"dst-backend": dstKs,
 			},
@@ -1085,7 +1098,7 @@ func TestCopyKeyHandler_ExportError(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Cleanup(func() {
-			keychain.Reset()
+			xkms.Reset()
 		})
 
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -1119,10 +1132,10 @@ func TestCopyKeyHandler_ImportError(t *testing.T) {
 		srcKs := newMockKeyStoreWithImportExport()
 		dstKs := newMockKeyStoreWithImportExport()
 
-		keychain.Reset()
+		xkms.Reset()
 
-		err := keychain.Initialize(&keychain.ServiceConfig{
-			Backends: map[string]keychain.KeyStore{
+		err := xkms.Initialize(&xkms.ServiceConfig{
+			Backends: map[string]xkms.Backend{
 				"src-backend": srcKs,
 				"dst-backend": dstKs,
 			},
@@ -1131,7 +1144,7 @@ func TestCopyKeyHandler_ImportError(t *testing.T) {
 		require.NoError(t, err)
 
 		t.Cleanup(func() {
-			keychain.Reset()
+			xkms.Reset()
 		})
 
 		key, _ := rsa.GenerateKey(rand.Reader, 2048)

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -36,7 +36,7 @@ type QUICTestClient struct {
 	jwtToken string
 }
 
-// newQUICClient creates a new QUIC/HTTP3 test client
+// newQUICClient creates a new QUIC/HTTP3 test client with proper CA certificate verification
 func newQUICClient(baseURL string) *QUICTestClient {
 	return &QUICTestClient{
 		baseURL:  baseURL,
@@ -44,7 +44,7 @@ func newQUICClient(baseURL string) *QUICTestClient {
 		client: &http.Client{
 			Transport: &http3.Transport{
 				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true, // Test only
+					RootCAs: loadCACertPool(),
 				},
 			},
 			Timeout: 10 * time.Second,

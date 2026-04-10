@@ -55,8 +55,8 @@ const (
 	// Trusted Platform EK and SRK stored under the Platform Hierarchy
 	// Registry of Reserved TPM 2.0 Handles and Localities, Section 2.3.1 - Key Handle Assignments
 	tpEKIndex   = 0x81800001
-	tpSRKIndex  = 0x81800002
-	tpSealIndex = 0x81000002
+	tpSRKIndex  = 0x81000002
+	tpSealIndex = 0x81000003
 
 	manufacturerIntel          = "Intel"
 	intelEKCertServiceURL      = "https://ekop.intel.com/ekcertservice/"
@@ -76,36 +76,74 @@ var (
 	debugPCR     = uint(16)      //nolint:unused // used in tests
 	debugPCRBank = PCRBankSHA256 //nolint:unused // used in tests
 
-	ErrInvalidAKAttributes          = errors.New("tpm: invalid AK attributes")
-	ErrInvalidEKCertFormat          = errors.New("tpm: invalid endorsement certificate format")
-	ErrInvalidEKAttributes          = errors.New("tpm: invalid EK attributes")
-	ErrInvalidEKCert                = errors.New("tpm: failed to verify endorsement key certificate")
-	ErrDeviceAlreadyOpen            = errors.New("tpm: device already open")
-	ErrOpeningDevice                = errors.New("tpm: error opening device")
-	ErrInvalidSessionType           = errors.New("tpm: invalid session type")
-	ErrInvalidSRKAuth               = errors.New("tpm: invalid storage root key auth")
-	ErrInvalidActivationCredential  = errors.New("tpm: invalid activation credential")
-	ErrHashAlgorithmNotSupported    = errors.New("tpm: hash algorithm not supported")
-	ErrInvalidKeyAttributes         = errors.New("tpm: invalid key attributes")
-	ErrInvalidPolicyDigest          = errors.New("tpm: invalid policy digest")
-	ErrInvalidHandle                = errors.New("tpm: invalid entity handle")
-	ErrUnexpectedRandomBytes        = errors.New("tpm: unexpected number of random bytes read")
-	ErrInvalidRandomBytesLength     = errors.New("tpm: invalid random bytes length")
-	ErrInvalidPCRIndex              = errors.New("tpm: invalid PCR index")
-	ErrInvalidNonce                 = errors.New("tpm: invalid nonce")
-	ErrNotInitialized               = errors.New("tpm: not initialized")
-	ErrNotConfigured                = errors.New("tpm: IDevID not configured")
-	ErrEndorsementCertNotFound      = errors.New("tpm: endorsement certificate not found")
-	ErrInvalidKeyStoreConfiguration = errors.New("tpm: invalid key store configuration")
-	ErrInvalidHashFunction          = errors.New("tpm: invalid hash function")
-	ErrInvalidSessionAuthorization  = errors.New("tpm: invalid session authorization")
-	ErrMissingMeasurementLog        = errors.New("tpm: binary measurement log not found")
-	ErrRSAPSSNotSupported           = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
-	ErrInvalidEnrollmentStrategy    = errors.New("tpm: invalid enrollment strategy")
-	ErrInvalidCryptoHashAlgID       = errors.New("tpm: crypto.Hash doesn't map to a supported TPMAlgID")
-	ErrCurveNotSupported            = errors.New("tpm: ECC curve not supported by TPM")
-	ErrInvalidKeySize               = errors.New("tpm: invalid key size")
-	ErrInvalidNVExtendData          = errors.New("tpm: invalid NV extend data - data cannot be nil or empty")
+	ErrInvalidAKAttributes             = errors.New("tpm: invalid AK attributes")
+	ErrInvalidEKCertFormat             = errors.New("tpm: invalid endorsement certificate format")
+	ErrInvalidEKAttributes             = errors.New("tpm: invalid EK attributes")
+	ErrInvalidEKCert                   = errors.New("tpm: failed to verify endorsement key certificate")
+	ErrDeviceAlreadyOpen               = errors.New("tpm: device already open")
+	ErrOpeningDevice                   = errors.New("tpm: error opening device")
+	ErrInvalidSessionType              = errors.New("tpm: invalid session type")
+	ErrInvalidSRKAuth                  = errors.New("tpm: invalid storage root key auth")
+	ErrInvalidActivationCredential     = errors.New("tpm: invalid activation credential")
+	ErrHashAlgorithmNotSupported       = errors.New("tpm: hash algorithm not supported")
+	ErrInvalidKeyAttributes            = errors.New("tpm: invalid key attributes")
+	ErrInvalidPolicyDigest             = errors.New("tpm: invalid policy digest")
+	ErrInvalidHandle                   = errors.New("tpm: invalid entity handle")
+	ErrUnexpectedRandomBytes           = errors.New("tpm: unexpected number of random bytes read")
+	ErrInvalidRandomBytesLength        = errors.New("tpm: invalid random bytes length")
+	ErrInvalidPCRIndex                 = errors.New("tpm: invalid PCR index")
+	ErrInvalidNonce                    = errors.New("tpm: invalid nonce")
+	ErrNotInitialized                  = errors.New("tpm: not initialized")
+	ErrNotConfigured                   = errors.New("tpm: IDevID not configured")
+	ErrEndorsementCertNotFound         = errors.New("tpm: endorsement certificate not found")
+	ErrInvalidPlatformSRKConfiguration = errors.New("tpm: invalid platform SRK configuration")
+	ErrInvalidHashFunction             = errors.New("tpm: invalid hash function")
+	ErrInvalidSessionAuthorization     = errors.New("tpm: invalid session authorization")
+	ErrMissingMeasurementLog           = errors.New("tpm: binary measurement log not found")
+	ErrRSAPSSNotSupported              = errors.New("tpm: RSA-PSS / FIPS 140-2 not supported by this TPM")
+	ErrInvalidEnrollmentStrategy       = errors.New("tpm: invalid enrollment strategy")
+	ErrInvalidCryptoHashAlgID          = errors.New("tpm: crypto.Hash doesn't map to a supported TPMAlgID")
+	ErrCurveNotSupported               = errors.New("tpm: ECC curve not supported by TPM")
+	ErrInvalidKeySize                  = errors.New("tpm: invalid key size")
+	ErrInvalidNVExtendData             = errors.New("tpm: invalid NV extend data - data cannot be nil or empty")
+	ErrIAKNotProvisioned               = errors.New("tpm: IAK not provisioned")
+	ErrTransportNotInitialized         = errors.New("tpm: transport not initialized")
+	ErrLockoutResetFailed              = errors.New("tpm: dictionary attack lockout reset failed")
+	ErrEKNotInitialized                = errors.New("tpm: endorsement key not initialized")
+	ErrEKPublicRead                    = errors.New("tpm: failed to read endorsement key public area")
+	ErrEKRSAParse                      = errors.New("tpm: failed to parse RSA endorsement key")
+	ErrEKECCParse                      = errors.New("tpm: failed to parse ECC endorsement key")
+	ErrSRKPublicRead                   = errors.New("tpm: failed to read storage root key public area")
+	ErrIAKNotInitialized               = errors.New("tpm: initial attestation key not initialized")
+	ErrIAKPublicParse                  = errors.New("tpm: failed to parse IAK public key")
+	ErrIDevIDNotInitialized            = errors.New("tpm: initial device identifier not initialized")
+	ErrIDevIDPublicParse               = errors.New("tpm: failed to parse IDevID public key")
+	ErrGoldenMeasurements              = errors.New("tpm: failed to compute golden measurements")
+	ErrPolicyDigest                    = errors.New("tpm: failed to compute platform policy digest")
+	ErrIAKConfigFailed                 = errors.New("tpm: failed to create IAK attributes from config")
+	ErrCSRFieldTooLarge                = errors.New("tpm: CSR field exceeds maximum size")
+	ErrNVSecretTooLarge                = errors.New("tpm: NV secret data exceeds maximum size")
+	ErrInvalidHierarchy                = errors.New("tpm: invalid hierarchy")
+	ErrFactoryReset                    = errors.New("tpm: factory reset failed")
+	ErrForceClear                      = errors.New("tpm: force clear via PPI failed")
+	ErrEKConfigNil                     = errors.New("tpm: EK config is nil")
+	ErrIAKConfigNil                    = errors.New("tpm: IAK config is nil")
+	ErrIDevIDConfigNil                 = errors.New("tpm: IDevID config is nil")
+	ErrSSRKConfigNil                   = errors.New("tpm: SSRK config is nil")
+
+	// Handle enumeration errors
+	ErrListPersistentHandles = errors.New("tpm: list persistent handles")
+	ErrListTransientHandles  = errors.New("tpm: list transient handles")
+	ErrListNVIndexes         = errors.New("tpm: list NV indexes")
+
+	// Sealer errors
+	ErrSealFailed                = errors.New("tpm: seal operation failed")
+	ErrUnsealFailed              = errors.New("tpm: unseal operation failed")
+	ErrNilSealedData             = errors.New("tpm: sealed data is required")
+	ErrSealedDataBackendMismatch = errors.New("tpm: sealed data was not created by TPM2 backend")
+	ErrNoStorageBackend          = errors.New("tpm: no storage backend available for sealed data")
+	ErrInvalidSealBackend        = errors.New("tpm: opts.Backend must implement store.KeyBackend")
+	ErrSSRKNotAvailable          = errors.New("tpm: SSRK not available, TPM may not be provisioned")
 
 	// TPM_RC errors
 	ErrCommandNotSupported = tpm2.TPMRC(0xb0143)
@@ -784,23 +822,32 @@ type PCR struct {
 	Value []byte
 }
 
-func HierarchyName(hierarchy tpm2.TPMHandle) string {
+// NVIndexInfo describes an NV index defined on the TPM.
+type NVIndexInfo struct {
+	Handle    tpm2.TPMHandle
+	Type      string // "ordinary", "counter", "extend"
+	Size      uint16
+	AuthRead  bool
+	AuthWrite bool
+}
+
+func HierarchyName(hierarchy tpm2.TPMHandle) (string, error) {
 	switch hierarchy {
 
 	case tpm2.TPMRHPlatform:
-		return "PLATFORM"
+		return "PLATFORM", nil
 
 	case tpm2.TPMRHOwner:
-		return "OWNER"
+		return "OWNER", nil
 
 	case tpm2.TPMRHEndorsement:
-		return "ENDORSEMENT"
+		return "ENDORSEMENT", nil
 
 	case tpm2.TPMRHNull:
-		return "NULL"
+		return "NULL", nil
 	}
 
-	panic("tpm: invalid hierarchy")
+	return "", ErrInvalidHierarchy
 }
 
 // ParseHash converts a string representation of a hash algorithm to crypto.Hash

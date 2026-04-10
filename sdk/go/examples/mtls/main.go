@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"log"
 
-	keychain "github.com/jeremyhahn/go-keychain/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func main() {
@@ -18,18 +18,17 @@ func main() {
 
 	// mTLS configuration
 	// In production, these paths would point to real certificates
-	cfg := &keychain.Config{
-		Protocol:              keychain.ProtocolREST,
-		Address:               "https://localhost:8443",
-		TLSEnabled:            true,
-		TLSInsecureSkipVerify: false,
-		TLSCAFile:             "/path/to/ca.pem",     // CA certificate
-		TLSCertFile:           "/path/to/client.pem", // Client certificate
-		TLSKeyFile:            "/path/to/client-key.pem",
+	cfg := &xkms.BackendConfig{
+		Protocol:    xkms.ProtocolREST,
+		Address:     "https://localhost:8443",
+		TLSEnabled:  true,
+		TLSCAFile:   "/path/to/ca.pem",     // CA certificate
+		TLSCertFile: "/path/to/client.pem", // Client certificate
+		TLSKeyFile:  "/path/to/client-key.pem",
 	}
 
 	// Create client with mTLS configuration
-	client, err := keychain.New(cfg)
+	client, err := xkms.New(cfg)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}

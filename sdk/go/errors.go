@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package keychain
+package xkms
 
 import (
 	"errors"
@@ -80,9 +80,9 @@ func (c ErrorCode) String() string {
 	}
 }
 
-// KeychainError is a typed error that provides detailed information about
-// errors that occur during keychain operations.
-type KeychainError struct {
+// XKMSError is a typed error that provides detailed information about
+// errors that occur during xkms operations.
+type XKMSError struct {
 	// Code is the error classification code.
 	Code ErrorCode
 	// Message is a human-readable error message.
@@ -94,7 +94,7 @@ type KeychainError struct {
 }
 
 // Error implements the error interface.
-func (e *KeychainError) Error() string {
+func (e *XKMSError) Error() string {
 	var msg string
 	if e.Operation != "" {
 		msg = fmt.Sprintf("%s: %s", e.Operation, e.Message)
@@ -109,15 +109,15 @@ func (e *KeychainError) Error() string {
 }
 
 // Unwrap returns the underlying error for use with errors.Unwrap and errors.Is.
-func (e *KeychainError) Unwrap() error {
+func (e *XKMSError) Unwrap() error {
 	return e.Underlying
 }
 
 // Is implements error comparison for errors.Is().
-// It matches against both the specific KeychainError and sentinel errors.
-func (e *KeychainError) Is(target error) bool {
-	// Check if target is a KeychainError with the same code
-	var ke *KeychainError
+// It matches against both the specific XKMSError and sentinel errors.
+func (e *XKMSError) Is(target error) bool {
+	// Check if target is a XKMSError with the same code
+	var ke *XKMSError
 	if errors.As(target, &ke) {
 		return e.Code == ke.Code
 	}
@@ -143,26 +143,26 @@ func (e *KeychainError) Is(target error) bool {
 	return false
 }
 
-// NewError creates a new KeychainError with the specified code and message.
-func NewError(code ErrorCode, message string) *KeychainError {
-	return &KeychainError{
+// NewError creates a new XKMSError with the specified code and message.
+func NewError(code ErrorCode, message string) *XKMSError {
+	return &XKMSError{
 		Code:    code,
 		Message: message,
 	}
 }
 
-// NewErrorWithOperation creates a new KeychainError with operation context.
-func NewErrorWithOperation(code ErrorCode, operation, message string) *KeychainError {
-	return &KeychainError{
+// NewErrorWithOperation creates a new XKMSError with operation context.
+func NewErrorWithOperation(code ErrorCode, operation, message string) *XKMSError {
+	return &XKMSError{
 		Code:      code,
 		Message:   message,
 		Operation: operation,
 	}
 }
 
-// WrapError wraps an existing error with a KeychainError.
-func WrapError(code ErrorCode, message string, err error) *KeychainError {
-	return &KeychainError{
+// WrapError wraps an existing error with a XKMSError.
+func WrapError(code ErrorCode, message string, err error) *XKMSError {
+	return &XKMSError{
 		Code:       code,
 		Message:    message,
 		Underlying: err,
@@ -170,8 +170,8 @@ func WrapError(code ErrorCode, message string, err error) *KeychainError {
 }
 
 // WrapErrorWithOperation wraps an error with operation context.
-func WrapErrorWithOperation(code ErrorCode, operation, message string, err error) *KeychainError {
-	return &KeychainError{
+func WrapErrorWithOperation(code ErrorCode, operation, message string, err error) *XKMSError {
+	return &XKMSError{
 		Code:       code,
 		Message:    message,
 		Operation:  operation,
@@ -190,8 +190,8 @@ func IsNotFound(err error) bool {
 		return true
 	}
 
-	// Check KeychainError
-	var ke *KeychainError
+	// Check XKMSError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		return ke.Code == ErrCodeNotFound
 	}
@@ -211,8 +211,8 @@ func IsRetryable(err error) bool {
 		return true
 	}
 
-	// Check KeychainError
-	var ke *KeychainError
+	// Check XKMSError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		switch ke.Code {
 		case ErrCodeConnection, ErrCodeTimeout, ErrCodeBackendUnavailable:
@@ -234,8 +234,8 @@ func IsConnectionError(err error) bool {
 		return true
 	}
 
-	// Check KeychainError
-	var ke *KeychainError
+	// Check XKMSError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		switch ke.Code {
 		case ErrCodeConnection, ErrCodeNotConnected:
@@ -252,7 +252,7 @@ func IsAuthenticationError(err error) bool {
 		return false
 	}
 
-	var ke *KeychainError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		return ke.Code == ErrCodeAuthentication
 	}
@@ -266,7 +266,7 @@ func IsPermissionError(err error) bool {
 		return false
 	}
 
-	var ke *KeychainError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		return ke.Code == ErrCodePermission
 	}
@@ -285,7 +285,7 @@ func IsInvalidRequest(err error) bool {
 		return true
 	}
 
-	var ke *KeychainError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		return ke.Code == ErrCodeInvalidRequest
 	}
@@ -299,7 +299,7 @@ func IsTimeout(err error) bool {
 		return false
 	}
 
-	var ke *KeychainError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		return ke.Code == ErrCodeTimeout
 	}
@@ -308,13 +308,13 @@ func IsTimeout(err error) bool {
 }
 
 // GetErrorCode extracts the ErrorCode from an error, returning ErrCodeUnknown
-// if the error is not a KeychainError.
+// if the error is not a XKMSError.
 func GetErrorCode(err error) ErrorCode {
 	if err == nil {
 		return ErrCodeUnknown
 	}
 
-	var ke *KeychainError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		return ke.Code
 	}
@@ -322,77 +322,77 @@ func GetErrorCode(err error) ErrorCode {
 	return ErrCodeUnknown
 }
 
-// ConvertSentinelError converts a sentinel error to a KeychainError.
+// ConvertSentinelError converts a sentinel error to a XKMSError.
 // If the error is not a recognized sentinel error, it wraps it as unknown.
-func ConvertSentinelError(err error) *KeychainError {
+func ConvertSentinelError(err error) *XKMSError {
 	if err == nil {
 		return nil
 	}
 
-	// Already a KeychainError
-	var ke *KeychainError
+	// Already a XKMSError
+	var ke *XKMSError
 	if errors.As(err, &ke) {
 		return ke
 	}
 
-	// Map sentinel errors to KeychainError
+	// Map sentinel errors to XKMSError
 	switch {
 	case errors.Is(err, ErrUnsupportedProtocol):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeProtocolUnsupported,
 			Message:    ErrUnsupportedProtocol.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrConnectionFailed):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeConnection,
 			Message:    ErrConnectionFailed.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrNotConnected):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeNotConnected,
 			Message:    ErrNotConnected.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrNotSupported):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeOperationUnsupported,
 			Message:    ErrNotSupported.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrNilService):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeNilService,
 			Message:    ErrNilService.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrKeyNotFound):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeNotFound,
 			Message:    ErrKeyNotFound.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrCertificateNotFound):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeNotFound,
 			Message:    ErrCertificateNotFound.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrBackendNotFound):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeNotFound,
 			Message:    ErrBackendNotFound.Error(),
 			Underlying: err,
 		}
 	case errors.Is(err, ErrInvalidRequest):
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeInvalidRequest,
 			Message:    ErrInvalidRequest.Error(),
 			Underlying: err,
 		}
 	default:
-		return &KeychainError{
+		return &XKMSError{
 			Code:       ErrCodeUnknown,
 			Message:    err.Error(),
 			Underlying: err,

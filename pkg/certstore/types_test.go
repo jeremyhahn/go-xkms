@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,9 +21,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"math/big"
 	"net"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -163,22 +165,22 @@ func TestIsTrustedPlatformOID_ExtendedTPArc(t *testing.T) {
 }
 
 // ========================================================================
-// Test keyUsageToString
+// Test KeyUsageToString
 // ========================================================================
 
 func TestKeyUsageToString_None(t *testing.T) {
-	result := keyUsageToString(0)
+	result := KeyUsageToString(0)
 	assert.Equal(t, "None", result)
 }
 
 func TestKeyUsageToString_DigitalSignature(t *testing.T) {
-	result := keyUsageToString(x509.KeyUsageDigitalSignature)
+	result := KeyUsageToString(x509.KeyUsageDigitalSignature)
 	assert.Equal(t, "DigitalSignature", result)
 }
 
 func TestKeyUsageToString_MultipleUsages(t *testing.T) {
 	usage := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
-	result := keyUsageToString(usage)
+	result := KeyUsageToString(usage)
 	assert.Contains(t, result, "DigitalSignature")
 	assert.Contains(t, result, "KeyEncipherment")
 }
@@ -189,7 +191,7 @@ func TestKeyUsageToString_AllUsages(t *testing.T) {
 		x509.KeyUsageKeyAgreement | x509.KeyUsageCertSign |
 		x509.KeyUsageCRLSign | x509.KeyUsageEncipherOnly |
 		x509.KeyUsageDecipherOnly
-	result := keyUsageToString(usage)
+	result := KeyUsageToString(usage)
 	assert.Contains(t, result, "DigitalSignature")
 	assert.Contains(t, result, "ContentCommitment")
 	assert.Contains(t, result, "KeyEncipherment")
@@ -203,13 +205,13 @@ func TestKeyUsageToString_AllUsages(t *testing.T) {
 
 func TestKeyUsageToString_CAUsages(t *testing.T) {
 	usage := x509.KeyUsageCertSign | x509.KeyUsageCRLSign
-	result := keyUsageToString(usage)
+	result := KeyUsageToString(usage)
 	assert.Contains(t, result, "CertSign")
 	assert.Contains(t, result, "CRLSign")
 }
 
 // ========================================================================
-// Test extKeyUsageToString
+// Test ExtKeyUsageToString
 // ========================================================================
 
 func TestExtKeyUsageToString_AllKnownUsages(t *testing.T) {
@@ -231,27 +233,27 @@ func TestExtKeyUsageToString_AllKnownUsages(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.expected, func(t *testing.T) {
-			result := extKeyUsageToString(tc.usage)
+			result := ExtKeyUsageToString(tc.usage)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
 func TestExtKeyUsageToString_UnknownUsage(t *testing.T) {
-	result := extKeyUsageToString(x509.ExtKeyUsage(999))
+	result := ExtKeyUsageToString(x509.ExtKeyUsage(999))
 	assert.Contains(t, result, "Unknown")
 	assert.Contains(t, result, "999")
 }
 
 // ========================================================================
-// Test publicKeyTypeString
+// Test PublicKeyTypeString
 // ========================================================================
 
 func TestPublicKeyTypeString_RSA(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	result := publicKeyTypeString(&key.PublicKey)
+	result := PublicKeyTypeString(&key.PublicKey)
 	assert.Contains(t, result, "RSA")
 	assert.Contains(t, result, "2048")
 }
@@ -260,7 +262,7 @@ func TestPublicKeyTypeString_ECDSA_P256(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	result := publicKeyTypeString(&key.PublicKey)
+	result := PublicKeyTypeString(&key.PublicKey)
 	assert.Contains(t, result, "ECDSA")
 	assert.Contains(t, result, "P-256")
 }
@@ -269,7 +271,7 @@ func TestPublicKeyTypeString_ECDSA_P384(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	require.NoError(t, err)
 
-	result := publicKeyTypeString(&key.PublicKey)
+	result := PublicKeyTypeString(&key.PublicKey)
 	assert.Contains(t, result, "ECDSA")
 	assert.Contains(t, result, "P-384")
 }
@@ -278,18 +280,18 @@ func TestPublicKeyTypeString_ECDSA_P521(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	require.NoError(t, err)
 
-	result := publicKeyTypeString(&key.PublicKey)
+	result := PublicKeyTypeString(&key.PublicKey)
 	assert.Contains(t, result, "ECDSA")
 	assert.Contains(t, result, "P-521")
 }
 
 func TestPublicKeyTypeString_Unknown(t *testing.T) {
-	result := publicKeyTypeString("unknown")
+	result := PublicKeyTypeString("unknown")
 	assert.Contains(t, result, "Unknown")
 }
 
 // ========================================================================
-// Test parseExtensionValue
+// Test ParseExtensionValue
 // ========================================================================
 
 func TestParseExtensionValue_SubjectKeyIdentifier(t *testing.T) {
@@ -302,7 +304,7 @@ func TestParseExtensionValue_SubjectKeyIdentifier(t *testing.T) {
 		Value: skiEncoded,
 	}
 
-	result := parseExtensionValue(ext)
+	result := ParseExtensionValue(ext)
 	assert.Equal(t, "0102030405", result)
 }
 
@@ -318,7 +320,7 @@ func TestParseExtensionValue_AuthorityKeyIdentifier(t *testing.T) {
 		Value: akiEncoded,
 	}
 
-	result := parseExtensionValue(ext)
+	result := ParseExtensionValue(ext)
 	assert.Contains(t, result, "KeyID")
 	assert.Contains(t, result, "aabbcc")
 }
@@ -333,7 +335,7 @@ func TestParseExtensionValue_TCGOIDWithString(t *testing.T) {
 		Value: strEncoded,
 	}
 
-	result := parseExtensionValue(ext)
+	result := ParseExtensionValue(ext)
 	assert.Equal(t, strVal, result)
 }
 
@@ -347,7 +349,7 @@ func TestParseExtensionValue_TCGOIDWithBoolean(t *testing.T) {
 		Value: boolEncoded,
 	}
 
-	result := parseExtensionValue(ext)
+	result := ParseExtensionValue(ext)
 	assert.Equal(t, "true", result)
 }
 
@@ -362,8 +364,9 @@ func TestParseExtensionValue_LongValue(t *testing.T) {
 		Value: longValue,
 	}
 
-	result := parseExtensionValue(ext)
-	assert.Contains(t, result, "...")
+	result := ParseExtensionValue(ext)
+	// Full hex is returned without truncation
+	assert.Equal(t, hex.EncodeToString(longValue), result)
 }
 
 func TestParseExtensionValue_ShortValue(t *testing.T) {
@@ -374,8 +377,76 @@ func TestParseExtensionValue_ShortValue(t *testing.T) {
 		Value: shortValue,
 	}
 
-	result := parseExtensionValue(ext)
+	result := ParseExtensionValue(ext)
 	assert.Equal(t, "010203", result)
+}
+
+func TestParseExtensionValue_SubjectAltNameOID(t *testing.T) {
+	// Build a SAN with DNS name to exercise the ParseSubjectAltName dispatch.
+	dnsName := asn1.RawValue{
+		Class: asn1.ClassContextSpecific,
+		Tag:   2,
+		Bytes: []byte("example.com"),
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dnsName})
+	require.NoError(t, err)
+
+	ext := pkix.Extension{
+		Id:    OIDSubjectAltName,
+		Value: sanBytes,
+	}
+	result := ParseExtensionValue(ext)
+	assert.Contains(t, result, "DNS:example.com")
+}
+
+func TestParseExtensionValue_AuthorityInfoAccessOID(t *testing.T) {
+	// Build AIA with CA Issuers URI.
+	aiaBytes := buildAIA(t, oidCAIssuers, 6, []byte("http://ca.example.com/ca.crt"))
+
+	ext := pkix.Extension{
+		Id:    oidAuthorityInfoAccess,
+		Value: aiaBytes,
+	}
+	result := ParseExtensionValue(ext)
+	assert.Contains(t, result, "CA Issuers")
+	assert.Contains(t, result, "http://ca.example.com/ca.crt")
+}
+
+func TestParseExtensionValue_SubjectDirectoryAttributesOID(t *testing.T) {
+	// Build SDA with a UTF8 string attribute.
+	sdaBytes := buildSDAString(t, OIDTCGAttributeTPMModel, "TestModel")
+
+	ext := pkix.Extension{
+		Id:    OIDSubjectDirectoryAttributes,
+		Value: sdaBytes,
+	}
+	result := ParseExtensionValue(ext)
+	assert.Contains(t, result, "TestModel")
+}
+
+func TestParseExtensionValue_TCGOIDWithHexFallback(t *testing.T) {
+	// Raw bytes that cannot be parsed as string or boolean.
+	rawValue := []byte{0x04, 0x02, 0xAB, 0xCD}
+
+	ext := pkix.Extension{
+		Id:    asn1.ObjectIdentifier{2, 23, 133, 2, 15}, // tcg-at-tpmIdLabel
+		Value: rawValue,
+	}
+	result := ParseExtensionValue(ext)
+	assert.Equal(t, hex.EncodeToString(rawValue), result)
+}
+
+func TestParseExtensionValue_TrustedPlatformOIDWithString(t *testing.T) {
+	strVal := "FIPS 140-2"
+	strEncoded, err := asn1.Marshal(strVal)
+	require.NoError(t, err)
+
+	ext := pkix.Extension{
+		Id:    OIDTPFIPS140,
+		Value: strEncoded,
+	}
+	result := ParseExtensionValue(ext)
+	assert.Equal(t, strVal, result)
 }
 
 // ========================================================================
@@ -512,6 +583,33 @@ func TestToString_CACertificateWithMaxPathLenZero(t *testing.T) {
 	assert.Contains(t, result, "0")
 }
 
+func TestToString_CACertificateUnlimitedPathLen(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Root CA Unlimited",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		// MaxPathLen defaults to 0, MaxPathLenZero defaults to false -> "unlimited"
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	result := ToString(cert)
+	assert.Contains(t, result, "unlimited")
+}
+
 func TestToString_CertificateWithSANs(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -568,6 +666,125 @@ func TestToString_ECDSACertificate(t *testing.T) {
 	result := ToString(cert)
 	assert.Contains(t, result, "ECDSA")
 	assert.Contains(t, result, "P-256")
+}
+
+func TestToString_WithTCGExtensions(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	strVal := "TestManufacturer"
+	strEncoded, err := asn1.Marshal(strVal)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "TCG Ext Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDTCGAttributeTPMManufacturer,
+				Value: strEncoded,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	result := ToString(cert)
+	assert.Contains(t, result, "TCG Extensions")
+	assert.Contains(t, result, "TestManufacturer")
+}
+
+func TestToString_WithTrustedPlatformExtensions(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	strVal := "SoftHSM"
+	strEncoded, err := asn1.Marshal(strVal)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "TP Ext Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDTPKeyStore,
+				Value: strEncoded,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	result := ToString(cert)
+	assert.Contains(t, result, "Trusted Platform Extensions")
+	assert.Contains(t, result, "SoftHSM")
+}
+
+func TestToString_WithOtherExtensions(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Other Ext Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 7}, // challengePassword
+				Value: []byte{0x04, 0x03, 0x41, 0x42, 0x43},
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	result := ToString(cert)
+	assert.Contains(t, result, "Other Extensions")
+}
+
+func TestToString_WithCriticalExtension(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	boolVal := true
+	boolEncoded, err := asn1.Marshal(boolVal)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Critical Ext Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:       OIDTCGVerifiedTPMResidency,
+				Critical: true,
+				Value:    boolEncoded,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	result := ToString(cert)
+	assert.Contains(t, result, "[CRITICAL]")
 }
 
 // ========================================================================
@@ -681,4 +898,884 @@ func TestChainToString_MultipleCertificates(t *testing.T) {
 	assert.Contains(t, result, "End Entity")
 	assert.Contains(t, result, "Intermediate CA")
 	assert.Contains(t, result, "Root CA")
+}
+
+// ========================================================================
+// Test ParseTCGAttributes
+// ========================================================================
+
+func TestParseTCGAttributes_NilCert(t *testing.T) {
+	attrs := ParseTCGAttributes(nil)
+	assert.Equal(t, "", attrs.Manufacturer)
+	assert.Equal(t, "", attrs.Model)
+	assert.Equal(t, "", attrs.Version)
+	assert.Equal(t, "", attrs.SpecFamily)
+	assert.Equal(t, 0, attrs.SpecLevel)
+	assert.Equal(t, 0, attrs.SpecRevision)
+}
+
+func TestParseTCGAttributes_NoExtensions(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "", attrs.Manufacturer)
+	assert.Equal(t, "", attrs.Model)
+}
+
+func TestParseTCGAttributes_SANWithTCGDirName(t *testing.T) {
+	// Build an RDN sequence with TCG manufacturer/model/version
+	rdnSeq := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMManufacturer,
+				Value: "id:49465800",
+			},
+		},
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMModel,
+				Value: "SLB 9670",
+			},
+		},
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMVersion,
+				Value: "id:00070055",
+			},
+		},
+	}
+
+	rdnBytes, err := asn1.Marshal(rdnSeq)
+	require.NoError(t, err)
+
+	// Wrap in directoryName (context tag 4, constructed)
+	dirName := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      rdnBytes,
+	}
+
+	// Wrap in GeneralNames SEQUENCE
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dirName})
+	require.NoError(t, err)
+
+	// Create a certificate with this SAN extension
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "EK Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDSubjectAltName,
+				Value: sanBytes,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "id:49465800", attrs.Manufacturer)
+	assert.Equal(t, "Infineon", attrs.ManufacturerName)
+	assert.Equal(t, "SLB 9670", attrs.Model)
+	assert.Equal(t, "id:00070055", attrs.Version)
+	// No SDA extension, so spec fields should be empty
+	assert.Equal(t, "", attrs.SpecFamily)
+	assert.Equal(t, 0, attrs.SpecLevel)
+}
+
+func TestParseTCGAttributes_SubjectDirectoryAttributes(t *testing.T) {
+	// Build a tpmSpecification: SEQUENCE { UTF8String "2.0", INTEGER 0, INTEGER 116 }
+	type tpmSpec struct {
+		Family   string
+		Level    int
+		Revision int
+	}
+	specBytes, err := asn1.Marshal(tpmSpec{Family: "2.0", Level: 0, Revision: 116})
+	require.NoError(t, err)
+
+	// Wrap in SET
+	specSet := asn1.RawValue{
+		Class:      asn1.ClassUniversal,
+		Tag:        asn1.TagSet,
+		IsCompound: true,
+		Bytes:      specBytes,
+	}
+
+	// Build Attribute: SEQUENCE { OID, SET { value } }
+	type attribute struct {
+		Type   asn1.ObjectIdentifier
+		Values asn1.RawValue `asn1:"set"`
+	}
+	attrBytes, err := asn1.Marshal([]attribute{
+		{
+			Type:   OIDTCGAttributeTPMSpecification,
+			Values: specSet,
+		},
+	})
+	require.NoError(t, err)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "SDA Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDSubjectDirectoryAttributes,
+				Value: attrBytes,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "2.0", attrs.SpecFamily)
+	assert.Equal(t, 0, attrs.SpecLevel)
+	assert.Equal(t, 116, attrs.SpecRevision)
+	// No SAN, so manufacturer/model/version should be empty
+	assert.Equal(t, "", attrs.Manufacturer)
+}
+
+func TestParseTCGAttributes_BothSANAndSDA(t *testing.T) {
+	// Build SAN with TCG DirName
+	rdnSeq := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMManufacturer,
+				Value: "id:49465800",
+			},
+		},
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMModel,
+				Value: "SLB 9670",
+			},
+		},
+	}
+	rdnBytes, err := asn1.Marshal(rdnSeq)
+	require.NoError(t, err)
+
+	dirName := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      rdnBytes,
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dirName})
+	require.NoError(t, err)
+
+	// Build SDA with tpmSpecification
+	type tpmSpec struct {
+		Family   string
+		Level    int
+		Revision int
+	}
+	specBytes, err := asn1.Marshal(tpmSpec{Family: "2.0", Level: 0, Revision: 138})
+	require.NoError(t, err)
+
+	specSet := asn1.RawValue{
+		Class:      asn1.ClassUniversal,
+		Tag:        asn1.TagSet,
+		IsCompound: true,
+		Bytes:      specBytes,
+	}
+
+	type attribute struct {
+		Type   asn1.ObjectIdentifier
+		Values asn1.RawValue `asn1:"set"`
+	}
+	sdaBytes, err := asn1.Marshal([]attribute{
+		{
+			Type:   OIDTCGAttributeTPMSpecification,
+			Values: specSet,
+		},
+	})
+	require.NoError(t, err)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Full TCG Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDSubjectAltName,
+				Value: sanBytes,
+			},
+			{
+				Id:    OIDSubjectDirectoryAttributes,
+				Value: sdaBytes,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "id:49465800", attrs.Manufacturer)
+	assert.Equal(t, "SLB 9670", attrs.Model)
+	assert.Equal(t, "2.0", attrs.SpecFamily)
+	assert.Equal(t, 138, attrs.SpecRevision)
+}
+
+func TestParseTCGAttributes_MalformedSAN(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Malformed SAN Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	// Inject a malformed SAN extension directly into the parsed certificate
+	cert.Extensions = append(cert.Extensions, pkix.Extension{
+		Id:    OIDSubjectAltName,
+		Value: []byte{0xFF, 0xFE, 0xFD},
+	})
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "", attrs.Manufacturer)
+	assert.Equal(t, "", attrs.Model)
+}
+
+func TestParseTCGAttributes_MalformedSDA(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Malformed SDA Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDSubjectDirectoryAttributes,
+				Value: []byte{0xFF, 0xFE, 0xFD},
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "", attrs.SpecFamily)
+	assert.Equal(t, 0, attrs.SpecLevel)
+}
+
+func TestParseTCGAttributes_ManufacturerResolution_STMicro(t *testing.T) {
+	rdnSeq := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMManufacturer,
+				Value: "id:53544D20",
+			},
+		},
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMModel,
+				Value: "ST33HTPHAHD8",
+			},
+		},
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMVersion,
+				Value: "id:00010102",
+			},
+		},
+	}
+
+	rdnBytes, err := asn1.Marshal(rdnSeq)
+	require.NoError(t, err)
+
+	dirName := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      rdnBytes,
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dirName})
+	require.NoError(t, err)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "ST Micro EK"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDSubjectAltName,
+				Value: sanBytes,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "id:53544D20", attrs.Manufacturer)
+	assert.Equal(t, "ST Microelectronics", attrs.ManufacturerName)
+	assert.Equal(t, "ST33HTPHAHD8", attrs.Model)
+	assert.Equal(t, "id:00010102", attrs.Version)
+}
+
+func TestParseTCGAttributes_ManufacturerResolution_UnknownVendor(t *testing.T) {
+	rdnSeq := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMManufacturer,
+				Value: "id:DEADBEEF",
+			},
+		},
+	}
+
+	rdnBytes, err := asn1.Marshal(rdnSeq)
+	require.NoError(t, err)
+
+	dirName := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      rdnBytes,
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dirName})
+	require.NoError(t, err)
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Unknown Vendor EK"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		ExtraExtensions: []pkix.Extension{
+			{
+				Id:    OIDSubjectAltName,
+				Value: sanBytes,
+			},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	attrs := ParseTCGAttributes(cert)
+	assert.Equal(t, "id:DEADBEEF", attrs.Manufacturer)
+	assert.Equal(t, "", attrs.ManufacturerName) // unknown vendor ID
+}
+
+// ========================================================================
+// Test formatRDNSequence
+// ========================================================================
+
+func TestFormatRDNSequence_StringValues(t *testing.T) {
+	rdnSeq := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMManufacturer,
+				Value: "id:49465800",
+			},
+		},
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMModel,
+				Value: "SLB 9670",
+			},
+		},
+	}
+
+	result := formatRDNSequence(rdnSeq)
+	assert.Contains(t, result, "tcg-at-tpmManufacturer=id:49465800")
+	assert.Contains(t, result, "tcg-at-tpmModel=SLB 9670")
+}
+
+func TestFormatRDNSequence_NonStringValue(t *testing.T) {
+	rdnSeq := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMVersion,
+				Value: 42, // integer, not string
+			},
+		},
+	}
+
+	result := formatRDNSequence(rdnSeq)
+	assert.Contains(t, result, "tcg-at-tpmVersion=42")
+}
+
+func TestFormatRDNSequence_Empty(t *testing.T) {
+	result := formatRDNSequence(pkix.RDNSequence{})
+	assert.Equal(t, "", result)
+}
+
+// ========================================================================
+// Test ParseSubjectAltName
+// ========================================================================
+
+func TestParseSubjectAltName_DNSName(t *testing.T) {
+	dnsName := asn1.RawValue{
+		Class: asn1.ClassContextSpecific,
+		Tag:   2,
+		Bytes: []byte("example.com"),
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dnsName})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Equal(t, "DNS:example.com", result)
+}
+
+func TestParseSubjectAltName_Email(t *testing.T) {
+	email := asn1.RawValue{
+		Class: asn1.ClassContextSpecific,
+		Tag:   1,
+		Bytes: []byte("user@example.com"),
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{email})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Equal(t, "email:user@example.com", result)
+}
+
+func TestParseSubjectAltName_URI(t *testing.T) {
+	uri := asn1.RawValue{
+		Class: asn1.ClassContextSpecific,
+		Tag:   6,
+		Bytes: []byte("https://example.com/cert"),
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{uri})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Equal(t, "URI:https://example.com/cert", result)
+}
+
+func TestParseSubjectAltName_IPv4(t *testing.T) {
+	ip := asn1.RawValue{
+		Class: asn1.ClassContextSpecific,
+		Tag:   7,
+		Bytes: []byte{192, 168, 1, 1},
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{ip})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Equal(t, "IP:192.168.1.1", result)
+}
+
+func TestParseSubjectAltName_IPv6(t *testing.T) {
+	ipv6 := net.ParseIP("::1")
+	ip := asn1.RawValue{
+		Class: asn1.ClassContextSpecific,
+		Tag:   7,
+		Bytes: []byte(ipv6),
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{ip})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Contains(t, result, "IP:")
+	assert.Contains(t, result, "01") // last byte of ::1
+}
+
+func TestParseSubjectAltName_UnknownTag(t *testing.T) {
+	unknown := asn1.RawValue{
+		Class: asn1.ClassContextSpecific,
+		Tag:   9, // not a standard SAN tag
+		Bytes: []byte{0xAB, 0xCD},
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{unknown})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Contains(t, result, "tag9:")
+	assert.Contains(t, result, "abcd")
+}
+
+func TestParseSubjectAltName_DirectoryName(t *testing.T) {
+	rdnSeq := pkix.RDNSequence{
+		pkix.RelativeDistinguishedNameSET{
+			pkix.AttributeTypeAndValue{
+				Type:  OIDTCGAttributeTPMManufacturer,
+				Value: "id:49465800",
+			},
+		},
+	}
+	rdnBytes, err := asn1.Marshal(rdnSeq)
+	require.NoError(t, err)
+
+	dirName := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      rdnBytes,
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dirName})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Contains(t, result, "DirName:")
+	assert.Contains(t, result, "tcg-at-tpmManufacturer=id:49465800")
+}
+
+func TestParseSubjectAltName_DirectoryNameParseError(t *testing.T) {
+	// directoryName with garbage bytes that fail RDN parsing
+	dirName := asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        4,
+		IsCompound: true,
+		Bytes:      []byte{0xFF, 0xFE},
+	}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dirName})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Contains(t, result, "DirName:<parse error>")
+}
+
+func TestParseSubjectAltName_InvalidASN1(t *testing.T) {
+	result := ParseSubjectAltName([]byte{0xFF, 0xFE, 0xFD})
+	// Falls back to hex encoding
+	assert.Equal(t, "fffefd", result)
+}
+
+func TestParseSubjectAltName_Multiple(t *testing.T) {
+	dns := asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 2, Bytes: []byte("a.com")}
+	email := asn1.RawValue{Class: asn1.ClassContextSpecific, Tag: 1, Bytes: []byte("b@c.com")}
+	sanBytes, err := asn1.Marshal([]asn1.RawValue{dns, email})
+	require.NoError(t, err)
+
+	result := ParseSubjectAltName(sanBytes)
+	assert.Contains(t, result, "DNS:a.com")
+	assert.Contains(t, result, "email:b@c.com")
+	assert.Contains(t, result, "; ")
+}
+
+// ========================================================================
+// Test ParseAuthorityInfoAccess
+// ========================================================================
+
+// buildAIA is a helper to construct AIA ASN.1 encoding.
+func buildAIA(t *testing.T, method asn1.ObjectIdentifier, locationTag int, locationBytes []byte) []byte {
+	t.Helper()
+	type ad struct {
+		AccessMethod   asn1.ObjectIdentifier
+		AccessLocation asn1.RawValue
+	}
+	aiaBytes, err := asn1.Marshal([]ad{
+		{
+			AccessMethod: method,
+			AccessLocation: asn1.RawValue{
+				Class: asn1.ClassContextSpecific,
+				Tag:   locationTag,
+				Bytes: locationBytes,
+			},
+		},
+	})
+	require.NoError(t, err)
+	return aiaBytes
+}
+
+func TestParseAuthorityInfoAccess_CAIssuersURI(t *testing.T) {
+	aiaBytes := buildAIA(t, oidCAIssuers, 6, []byte("http://ca.example.com/ca.crt"))
+
+	result := ParseAuthorityInfoAccess(aiaBytes)
+	assert.Contains(t, result, "CA Issuers")
+	assert.Contains(t, result, "http://ca.example.com/ca.crt")
+}
+
+func TestParseAuthorityInfoAccess_OCSPURI(t *testing.T) {
+	aiaBytes := buildAIA(t, oidOCSP, 6, []byte("http://ocsp.example.com"))
+
+	result := ParseAuthorityInfoAccess(aiaBytes)
+	assert.Contains(t, result, "OCSP")
+	assert.Contains(t, result, "http://ocsp.example.com")
+}
+
+func TestParseAuthorityInfoAccess_UnknownMethod(t *testing.T) {
+	unknownOID := asn1.ObjectIdentifier{1, 2, 3, 4, 5}
+	aiaBytes := buildAIA(t, unknownOID, 6, []byte("http://unknown.example.com"))
+
+	result := ParseAuthorityInfoAccess(aiaBytes)
+	assert.Contains(t, result, "1.2.3.4.5")
+	assert.Contains(t, result, "http://unknown.example.com")
+}
+
+func TestParseAuthorityInfoAccess_NonURILocation(t *testing.T) {
+	// Tag 2 = dNSName (not a URI tag 6)
+	aiaBytes := buildAIA(t, oidCAIssuers, 2, []byte{0xAB, 0xCD})
+
+	result := ParseAuthorityInfoAccess(aiaBytes)
+	assert.Contains(t, result, "CA Issuers")
+	assert.Contains(t, result, "abcd")
+}
+
+func TestParseAuthorityInfoAccess_InvalidASN1(t *testing.T) {
+	result := ParseAuthorityInfoAccess([]byte{0xFF, 0xFE})
+	assert.Equal(t, "fffe", result)
+}
+
+// ========================================================================
+// Test ParseSubjectDirectoryAttributes
+// ========================================================================
+
+// buildSDAString builds an SDA ASN.1 encoding with a single UTF8 string attribute.
+func buildSDAString(t *testing.T, oid asn1.ObjectIdentifier, value string) []byte {
+	t.Helper()
+	valBytes, err := asn1.Marshal(value)
+	require.NoError(t, err)
+
+	type attribute struct {
+		Type   asn1.ObjectIdentifier
+		Values asn1.RawValue `asn1:"set"`
+	}
+	sdaBytes, err := asn1.Marshal([]attribute{
+		{
+			Type: oid,
+			Values: asn1.RawValue{
+				Class:      asn1.ClassUniversal,
+				Tag:        asn1.TagSet,
+				IsCompound: true,
+				Bytes:      valBytes,
+			},
+		},
+	})
+	require.NoError(t, err)
+	return sdaBytes
+}
+
+func TestParseSubjectDirectoryAttributes_TPMSpecification(t *testing.T) {
+	type tpmSpec struct {
+		Family   string
+		Level    int
+		Revision int
+	}
+	specBytes, err := asn1.Marshal(tpmSpec{Family: "2.0", Level: 0, Revision: 138})
+	require.NoError(t, err)
+
+	type attribute struct {
+		Type   asn1.ObjectIdentifier
+		Values asn1.RawValue `asn1:"set"`
+	}
+	sdaBytes, err := asn1.Marshal([]attribute{
+		{
+			Type: OIDTCGAttributeTPMSpecification,
+			Values: asn1.RawValue{
+				Class:      asn1.ClassUniversal,
+				Tag:        asn1.TagSet,
+				IsCompound: true,
+				Bytes:      specBytes,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	result := ParseSubjectDirectoryAttributes(sdaBytes)
+	assert.Contains(t, result, "Family=2.0")
+	assert.Contains(t, result, "Level=0")
+	assert.Contains(t, result, "Revision=138")
+}
+
+func TestParseSubjectDirectoryAttributes_UTF8StringFallback(t *testing.T) {
+	sdaBytes := buildSDAString(t, OIDTCGAttributeTPMModel, "TestModel-XYZ")
+
+	result := ParseSubjectDirectoryAttributes(sdaBytes)
+	assert.Contains(t, result, "TestModel-XYZ")
+}
+
+func TestParseSubjectDirectoryAttributes_HexFallback(t *testing.T) {
+	// Build an attribute with raw binary that can't be parsed as string.
+	rawInner := []byte{0x04, 0x02, 0xAB, 0xCD} // OCTET STRING 2 bytes
+
+	type attribute struct {
+		Type   asn1.ObjectIdentifier
+		Values asn1.RawValue `asn1:"set"`
+	}
+	sdaBytes, err := asn1.Marshal([]attribute{
+		{
+			Type: OIDTCGAttributeTPMVersion,
+			Values: asn1.RawValue{
+				Class:      asn1.ClassUniversal,
+				Tag:        asn1.TagSet,
+				IsCompound: true,
+				Bytes:      rawInner,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	result := ParseSubjectDirectoryAttributes(sdaBytes)
+	// Should contain hex encoding of the raw inner bytes
+	assert.True(t, len(result) > 0)
+}
+
+func TestParseSubjectDirectoryAttributes_InvalidASN1(t *testing.T) {
+	result := ParseSubjectDirectoryAttributes([]byte{0xFF, 0xFE, 0xFD})
+	assert.Equal(t, "fffefd", result)
+}
+
+// ========================================================================
+// Test resolveManufacturerID
+// ========================================================================
+
+func TestResolveManufacturerID_NoPrefix(t *testing.T) {
+	result := resolveManufacturerID("DEADBEEF")
+	assert.Equal(t, "", result)
+}
+
+func TestResolveManufacturerID_WrongLength(t *testing.T) {
+	result := resolveManufacturerID("id:DEAD")
+	assert.Equal(t, "", result)
+}
+
+func TestResolveManufacturerID_InvalidHex(t *testing.T) {
+	result := resolveManufacturerID("id:ZZZZZZZZ")
+	assert.Equal(t, "", result)
+}
+
+func TestResolveManufacturerID_KnownVendor(t *testing.T) {
+	result := resolveManufacturerID("id:49465800")
+	assert.Equal(t, "Infineon", result)
+}
+
+func TestResolveManufacturerID_UnknownVendor(t *testing.T) {
+	result := resolveManufacturerID("id:DEADBEEF")
+	assert.Equal(t, "", result)
+}
+
+func TestResolveManufacturerID_AllKnownVendors(t *testing.T) {
+	testCases := []struct {
+		hex      string
+		expected string
+	}{
+		{"id:414D4400", "AMD"},
+		{"id:49424D00", "IBM"},
+		{"id:4D534654", "Microsoft"},
+		{"id:494E5443", "Intel"},
+		{"id:474F4F47", "Google"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.expected, func(t *testing.T) {
+			result := resolveManufacturerID(tc.hex)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// ========================================================================
+// Test ToString - additional extension grouping
+// ========================================================================
+
+func TestToString_StandardExtensionsSection(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	// Build a cert with a standard X.509 extension (2.5.29.x).
+	// SubjectKeyIdentifier is standard and will be auto-added.
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Std Ext Test"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		SubjectKeyId:          []byte{0x01, 0x02, 0x03},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	result := ToString(cert)
+	assert.Contains(t, result, "Standard X.509 Extensions")
+}
+
+func TestToString_MixedExtensions(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	strVal := "TestValue"
+	strEncoded, err := asn1.Marshal(strVal)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "Mixed Ext Test"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		SubjectKeyId: []byte{0x01, 0x02},
+		ExtraExtensions: []pkix.Extension{
+			{Id: OIDTCGAttributeTPMManufacturer, Value: strEncoded},
+			{Id: OIDTPKeyStore, Value: strEncoded},
+			{Id: asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 7}, Value: []byte{0x04, 0x01, 0x41}},
+		},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	result := ToString(cert)
+	// All 4 extension sections should appear.
+	assert.True(t, strings.Contains(result, "TCG Extensions"))
+	assert.True(t, strings.Contains(result, "Trusted Platform Extensions"))
+	assert.True(t, strings.Contains(result, "Standard X.509 Extensions"))
+	assert.True(t, strings.Contains(result, "Other Extensions"))
 }

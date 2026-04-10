@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,18 +19,18 @@ import (
 	"context"
 	"testing"
 
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// setupExtendedTest initializes keychain for extended tests
+// setupExtendedTest initializes xkms for extended tests
 func setupExtendedTest(t *testing.T) *Service {
 	t.Helper()
-	keychain.Reset()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	certStorage := storage.New()
@@ -42,7 +42,7 @@ func setupExtendedTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -50,190 +50,23 @@ func setupExtendedTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": ks,
 		},
 		DefaultBackend: "software",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService()
-}
-
-// TestFrostStubs tests all FROST stub methods return unimplemented
-func TestFrostStubs(t *testing.T) {
-	service := NewService()
-
-	t.Run("FrostGenerateKey returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostGenerateKey(context.Background(), &pb.FrostGenerateKeyRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostImportKey returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostImportKey(context.Background(), &pb.FrostImportKeyRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostListKeys returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostListKeys(context.Background(), &pb.FrostListKeysRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostGetKey returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostGetKey(context.Background(), &pb.FrostGetKeyRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostDeleteKey returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostDeleteKey(context.Background(), &pb.FrostDeleteKeyRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostGenerateNonces returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostGenerateNonces(context.Background(), &pb.FrostGenerateNoncesRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostSignRound returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostSignRound(context.Background(), &pb.FrostSignRoundRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostAggregate returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostAggregate(context.Background(), &pb.FrostAggregateRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("FrostVerify returns unimplemented", func(t *testing.T) {
-		resp, err := service.FrostVerify(context.Background(), &pb.FrostVerifyRequest{})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		if resp != nil {
-			t.Error("Expected nil response")
-		}
-
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
+	return NewService(nil, nil)
 }
 
 // TestSymmetricEncryptDecrypt tests symmetric encryption and decryption flow
 func TestSymmetricEncryptDecrypt(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("encrypts and decrypts with symmetric key", func(t *testing.T) {
 		// Generate symmetric key
@@ -371,7 +204,7 @@ func TestSymmetricEncryptDecrypt(t *testing.T) {
 // TestWrapKeyWithValidBackend tests wrap key functionality
 func TestWrapKeyWithValidBackend(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("wraps key material with valid parameters", func(t *testing.T) {
 		// Get import parameters to get a wrapping key
@@ -407,7 +240,7 @@ func TestWrapKeyWithValidBackend(t *testing.T) {
 // TestUnwrapKeyWithValidBackend tests unwrap key functionality
 func TestUnwrapKeyWithValidBackend(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("unwraps key material with valid parameters", func(t *testing.T) {
 		// Get import parameters
@@ -454,7 +287,7 @@ func TestUnwrapKeyWithValidBackend(t *testing.T) {
 // TestExportKeyWithValidBackend tests export key functionality
 func TestExportKeyWithValidBackend(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("exports key from backend", func(t *testing.T) {
 		// Generate an exportable key
@@ -507,7 +340,7 @@ func TestExportKeyWithValidBackend(t *testing.T) {
 // TestCopyKeyWithValidBackend tests key copying between backends
 func TestCopyKeyWithValidBackend(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("copies key within same backend", func(t *testing.T) {
 		// Generate an exportable source key
@@ -576,7 +409,7 @@ func TestCopyKeyWithValidBackend(t *testing.T) {
 // TestSignWithDifferentHashes tests signing with different hash algorithms
 func TestSignWithDifferentHashes(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate key for testing
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -658,7 +491,7 @@ func TestSignWithDifferentHashes(t *testing.T) {
 // TestVerifyWithDifferentHashes tests verification with different hash algorithms
 func TestVerifyWithDifferentHashes(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -731,7 +564,7 @@ func TestVerifyWithDifferentHashes(t *testing.T) {
 // TestListBackendsEdgeCases tests ListBackends edge cases
 func TestListBackendsEdgeCases(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns backend capabilities", func(t *testing.T) {
 		resp, err := service.ListBackends(context.Background(), &pb.ListBackendsRequest{})
@@ -762,7 +595,7 @@ func TestListBackendsEdgeCases(t *testing.T) {
 // TestDeleteCertEdgeCases tests DeleteCert edge cases
 func TestDeleteCertEdgeCases(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for nonexistent cert", func(t *testing.T) {
 		_, err := service.DeleteCert(context.Background(), &pb.DeleteCertRequest{
@@ -787,7 +620,7 @@ func TestDeleteCertEdgeCases(t *testing.T) {
 // TestListCertsEdgeCases tests ListCerts edge cases
 func TestListCertsEdgeCases(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns empty list when no certs", func(t *testing.T) {
 		resp, err := service.ListCerts(context.Background(), &pb.ListCertsRequest{})
@@ -805,7 +638,7 @@ func TestListCertsEdgeCases(t *testing.T) {
 // TestCertExistsEdgeCases tests CertExists edge cases
 func TestCertExistsEdgeCases(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns false for nonexistent certificate", func(t *testing.T) {
 		resp, err := service.CertExists(context.Background(), &pb.CertExistsRequest{
@@ -824,7 +657,7 @@ func TestCertExistsEdgeCases(t *testing.T) {
 // TestGenerateKeyWithAlgorithmField tests the Algorithm field behavior
 func TestGenerateKeyWithAlgorithmField(t *testing.T) {
 	service := setupExtendedTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("uses Algorithm field when provided", func(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{

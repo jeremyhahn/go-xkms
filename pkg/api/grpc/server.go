@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,11 +22,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/metrics"
-	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -51,6 +53,8 @@ type ServerConfig struct {
 	Port           int
 	TLSConfig      *tls.Config
 	Authenticator  auth.Authenticator
+	Authorizer     authz.Authorizer
+	AuditLogger    audit.Logger
 	Logger         *slog.Logger
 	EnableLogging  bool
 	EnableRecovery bool
@@ -58,7 +62,7 @@ type ServerConfig struct {
 }
 
 // NewServer creates a new gRPC server
-// The server uses the global keychain service for backend management
+// The server uses the global xkms service for backend management
 func NewServer(cfg *ServerConfig) (*Server, error) {
 	// Don't set a default port here - let Port 0 remain 0 for ephemeral ports
 	// The port will be set in Start() after the listener is created
@@ -75,8 +79,8 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 		log = slog.Default()
 	}
 
-	// Create service
-	service := NewService()
+	// Create service with authorizer and audit logger
+	service := NewService(cfg.Authorizer, cfg.AuditLogger)
 
 	// Create server instance for interceptor access
 	server := &Server{
@@ -110,6 +114,10 @@ func NewServer(cfg *ServerConfig) (*Server, error) {
 	// Authentication interceptor (third to establish identity)
 	unaryInterceptors = append(unaryInterceptors, server.authenticationUnaryInterceptor)
 	streamInterceptors = append(streamInterceptors, server.authenticationStreamInterceptor)
+
+	// Tenant enforcement interceptor (after authentication to use identity)
+	unaryInterceptors = append(unaryInterceptors, server.tenantUnaryInterceptor)
+	streamInterceptors = append(streamInterceptors, server.tenantStreamInterceptor)
 
 	// Logging interceptor
 	if cfg.EnableLogging {
@@ -209,10 +217,10 @@ func (s *Server) Stop() error {
 		s.grpcSrv.Stop()
 	}
 
-	// Close the keychain service
-	if err := keychain.Close(); err != nil {
-		s.logger.Error("Failed to close keychain service", slog.String("error", err.Error()))
-		return fmt.Errorf("failed to close keychain service: %w", err)
+	// Close the xkms service
+	if err := xkms.Close(); err != nil {
+		s.logger.Error("Failed to close xkms service", slog.String("error", err.Error()))
+		return fmt.Errorf("failed to close xkms service: %w", err)
 	}
 
 	return nil

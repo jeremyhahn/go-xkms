@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/google/go-tpm/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // CommandCall represents a recorded TPM command execution.
@@ -82,6 +83,11 @@ type MockTPM struct {
 	readPublicError       error
 	flushContextError     error
 	evictControlError     error
+
+	// Symmetric key operation mocks
+	GenerateSymmetricKeyFunc func(attrs *types.KeyAttributes) (types.SymmetricKey, error)
+	GetSymmetricKeyFunc      func(attrs *types.KeyAttributes) (types.SymmetricKey, error)
+	SymmetricEncrypterFunc   func(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error)
 }
 
 // NewMockTPM creates a new MockTPM with default behavior.
@@ -516,6 +522,30 @@ func (m *MockTPM) handleCommand(cmd any) (any, error) {
 	default:
 		return nil, fmt.Errorf("mock tpm: unsupported command type: %T", cmd)
 	}
+}
+
+// GenerateSymmetricKey mocks the symmetric key generation operation.
+func (m *MockTPM) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	if m.GenerateSymmetricKeyFunc != nil {
+		return m.GenerateSymmetricKeyFunc(attrs)
+	}
+	return nil, fmt.Errorf("mock tpm: GenerateSymmetricKey not configured")
+}
+
+// GetSymmetricKey mocks the symmetric key retrieval operation.
+func (m *MockTPM) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	if m.GetSymmetricKeyFunc != nil {
+		return m.GetSymmetricKeyFunc(attrs)
+	}
+	return nil, fmt.Errorf("mock tpm: GetSymmetricKey not configured")
+}
+
+// SymmetricEncrypter mocks the symmetric encrypter creation operation.
+func (m *MockTPM) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+	if m.SymmetricEncrypterFunc != nil {
+		return m.SymmetricEncrypterFunc(attrs)
+	}
+	return nil, fmt.Errorf("mock tpm: SymmetricEncrypter not configured")
 }
 
 // Close closes the TPM connection.

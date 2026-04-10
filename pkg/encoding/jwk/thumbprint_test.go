@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -515,5 +515,61 @@ func TestSerializeForThumbprintErrors(t *testing.T) {
 	_, err := jwk.ThumbprintSHA256()
 	if err == nil {
 		t.Error("Expected error for JWK missing required fields")
+	}
+}
+
+// TestThumbprintSHA384 verifies that SHA-384 thumbprint computation works
+func TestThumbprintSHA384(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	jwk, err := FromPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("FromPublicKey() error = %v", err)
+	}
+
+	thumbprint, err := jwk.Thumbprint(crypto.SHA384)
+	if err != nil {
+		t.Fatalf("Thumbprint(SHA384) error = %v", err)
+	}
+	if thumbprint == "" {
+		t.Fatal("Thumbprint(SHA384) returned empty string")
+	}
+
+	// SHA-384 produces a 48-byte hash; base64url encodes to 64 chars
+	if len(thumbprint) != 64 {
+		t.Errorf("Thumbprint(SHA384) length = %d, want 64", len(thumbprint))
+	}
+}
+
+// TestThumbprintUnsupportedHash verifies error for unsupported hash function
+func TestThumbprintUnsupportedHash(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	jwk, err := FromPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("FromPublicKey() error = %v", err)
+	}
+
+	_, err = jwk.Thumbprint(crypto.MD5)
+	if err == nil {
+		t.Fatal("Thumbprint(MD5) should return error for unsupported hash")
+	}
+}
+
+// TestGetRequiredThumbprintFields_UnknownKeyType verifies error for unknown kty
+func TestGetRequiredThumbprintFields_UnknownKeyType(t *testing.T) {
+	jwk := &JWK{
+		Kty: "UNKNOWN",
+		X:   "some-value",
+	}
+	_, err := jwk.ThumbprintSHA256()
+	if err == nil {
+		t.Fatal("ThumbprintSHA256() with unknown kty should return error")
 	}
 }

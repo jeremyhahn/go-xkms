@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,9 +23,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
 
@@ -286,7 +286,7 @@ func TestImportKey(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:                 "imported-test-key",
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
-		SymmetricAlgorithm: types.SymmetricAlgorithm(backend.ALG_AES256_GCM),
+		SymmetricAlgorithm: types.SymmetricAlgorithm("aes256-gcm"),
 		StoreType:          backend.STORE_PKCS11,
 	}
 
@@ -395,7 +395,7 @@ func TestImportExportRoundTrip(t *testing.T) {
 	attrs := &types.KeyAttributes{
 		CN:                 "roundtrip-aes-key",
 		KeyType:            backend.KEY_TYPE_ENCRYPTION,
-		SymmetricAlgorithm: types.SymmetricAlgorithm(backend.ALG_AES256_GCM),
+		SymmetricAlgorithm: types.SymmetricAlgorithm("aes256-gcm"),
 		StoreType:          backend.STORE_PKCS11,
 	}
 

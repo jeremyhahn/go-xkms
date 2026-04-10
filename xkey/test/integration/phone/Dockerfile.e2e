@@ -1,0 +1,26 @@
+FROM golang:1.26.1-bookworm
+
+# Install ADB for communicating with the Android emulator.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends android-sdk-platform-tools && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Copy go module files first for layer caching.
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Copy local replace directive dependencies.
+COPY --from=go-qrdb . /go-qrdb/
+COPY --from=go-quicraft . /go-quicraft/
+
+RUN go mod download
+
+# Copy the full source tree.
+COPY . .
+
+WORKDIR /workspace/xkey
+
+# Run the Android E2E integration tests.
+CMD ["go", "test", "-tags", "integration,androidemu", "-v", "-count=1", "-timeout", "10m", "./test/integration/phone/..."]

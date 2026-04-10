@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -305,7 +305,7 @@ func TestVirtualAuthenticator_UserVerification(t *testing.T) {
 }
 
 // TestE2E_WebAuthnRegistration tests the complete WebAuthn registration flow.
-// This test requires a running go-keychain server.
+// This test requires a running go-xkms server.
 func TestE2E_WebAuthnRegistration(t *testing.T) {
 	config := getTestConfig()
 
@@ -374,7 +374,7 @@ func TestE2E_WebAuthnRegistration(t *testing.T) {
 }
 
 // TestE2E_WebAuthnAuthentication tests the complete WebAuthn authentication flow.
-// This test requires a running go-keychain server with a registered user.
+// This test requires a running go-xkms server with a registered user.
 func TestE2E_WebAuthnAuthentication(t *testing.T) {
 	config := getTestConfig()
 

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -35,10 +35,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/health"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	keychainmocks "github.com/jeremyhahn/go-keychain/pkg/keychain/mocks"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/health"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -67,17 +67,17 @@ func newTestHandlerContext() *HandlerContext {
 	return NewHandlerContext("1.0.0")
 }
 
-// setupTestService initializes the keychain service with a mock backend for testing
-func setupTestService(t *testing.T, backendName string) *keychainmocks.MockKeyStore {
+// setupTestService initializes the xkms service with a mock backend for testing
+func setupTestService(t *testing.T, backendName string) *xkmsmocks.MockKeyStore {
 	t.Helper()
-	ks := keychainmocks.NewMockKeyStore()
+	ks := xkmsmocks.NewMockKeyStore()
 
 	// Reset any previous initialization
-	keychain.Reset()
+	xkms.Reset()
 
 	// Initialize with the mock backend
-	err := keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err := xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			backendName: ks,
 		},
 		DefaultBackend: backendName,
@@ -85,7 +85,7 @@ func setupTestService(t *testing.T, backendName string) *keychainmocks.MockKeySt
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		keychain.Reset()
+		xkms.Reset()
 	})
 
 	return ks
@@ -213,7 +213,7 @@ func TestHealthHandler(t *testing.T) {
 // TestListBackendsHandler tests listing backends
 func TestListBackendsHandler(t *testing.T) {
 	t.Run("returns empty list when not initialized", func(t *testing.T) {
-		keychain.Reset() // Ensure not initialized
+		xkms.Reset() // Ensure not initialized
 		ctx := newTestHandlerContext()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
 		w := httptest.NewRecorder()
@@ -2110,92 +2110,6 @@ func TestCopyKeyHandler(t *testing.T) {
 		ctx.CopyKeyHandler(w, req)
 
 		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-}
-
-// TestFrostHandlers tests FROST stub handlers
-func TestFrostHandlers(t *testing.T) {
-	ctx := newTestHandlerContext()
-
-	t.Run("FrostGenerateKeyHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/frost/keys", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostGenerateKeyHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostImportKeyHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/frost/keys/import", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostImportKeyHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostListKeysHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/frost/keys", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostListKeysHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostGetKeyHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/frost/keys/test", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostGetKeyHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostDeleteKeyHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/frost/keys/test", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostDeleteKeyHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostGenerateNoncesHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/frost/keys/test/nonces", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostGenerateNoncesHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostSignRoundHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/frost/keys/test/sign", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostSignRoundHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostAggregateHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/frost/aggregate", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostAggregateHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
-	})
-
-	t.Run("FrostVerifyHandler returns not implemented", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/frost/verify", nil)
-		w := httptest.NewRecorder()
-
-		ctx.FrostVerifyHandler(w, req)
-
-		assert.Equal(t, http.StatusNotImplemented, w.Code)
 	})
 }
 

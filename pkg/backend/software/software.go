@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -24,12 +24,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/wrapping"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // SoftwareBackend provides a unified interface for both asymmetric and symmetric
@@ -38,15 +39,17 @@ import (
 // This backend uses the Composite/Facade design pattern, delegating:
 //   - Asymmetric operations (RSA, ECDSA, Ed25519) to PKCS8Backend
 //   - Symmetric operations (AES-GCM, ChaCha20-Poly1305) to symmetric.Backend
+//   - Quantum-safe operations (ML-DSA, ML-KEM) to quantum.QuantumBackend
 //
 // This design provides a consistent interface similar to cloud backends
 // (AWS KMS, GCP KMS, Azure Key Vault) which also support both operation types.
 //
 // Thread-safe: Yes, uses a read-write mutex for concurrent access.
 type SoftwareBackend struct {
-	pkcs8Backend     *pkcs8.PKCS8Backend // Handles asymmetric operations
-	symmetricBackend *symmetric.Backend  // Handles symmetric operations
-	storage          storage.Backend     // Direct access to storage for import operations
+	pkcs8Backend     *pkcs8.PKCS8Backend     // Handles asymmetric operations
+	symmetricBackend *symmetric.Backend      // Handles symmetric operations
+	quantumBackend   *quantum.QuantumBackend // Handles quantum operations (ML-DSA, ML-KEM)
+	storage          storage.Backend         // Direct access to storage for import operations
 	closed           bool
 	mu               sync.RWMutex
 
@@ -66,7 +69,7 @@ type importTokenData struct {
 // SoftwareBackendWithKeyAgreement extends the software backend with KeyAgreement capabilities.
 // This interface is used internally by the Software backend to provide ECDH support.
 type SoftwareBackendWithKeyAgreement interface {
-	types.SymmetricBackend
+	types.SymmetricKeyProvider
 	types.KeyAgreement
 }
 
@@ -89,7 +92,7 @@ type SoftwareBackendWithKeyAgreement interface {
 //	    CN:           "example.com",
 //	    KeyType:      backend.KEY_TYPE_TLS,
 //	    StoreType:    backend.STORE_SW,
-//	    KeyAlgorithm: backend.ALG_RSA,
+//	    KeyAlgorithm: x509.RSA,
 //	    RSAAttributes: &types.RSAAttributes{
 //	        KeySize: 2048,
 //	    },
@@ -105,7 +108,7 @@ type SoftwareBackendWithKeyAgreement interface {
 //	    AEADOptions:       nil, // Use defaults (nonce tracking + bytes tracking enabled)
 //	}
 //	aesKey, err := backend.GenerateSymmetricKey(aesAttrs)
-func NewBackend(config *Config) (types.SymmetricBackend, error) {
+func NewBackend(config *Config) (types.SymmetricKeyProvider, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -136,9 +139,16 @@ func NewBackend(config *Config) (types.SymmetricBackend, error) {
 		return nil, fmt.Errorf("failed to create symmetric backend: %w", err)
 	}
 
+	// Create quantum backend for post-quantum operations (ML-DSA, ML-KEM)
+	quantumBackend, err := quantum.New(config.KeyStorage)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create quantum backend: %w", err)
+	}
+
 	return &SoftwareBackend{
 		pkcs8Backend:     pkcs8Backend.(*pkcs8.PKCS8Backend),
 		symmetricBackend: symmetricBackend.(*symmetric.Backend),
+		quantumBackend:   quantumBackend,
 		storage:          config.KeyStorage,
 		closed:           false,
 		importTokens:     make(map[string]*importTokenData),
@@ -152,6 +162,7 @@ func (b *SoftwareBackend) Type() types.BackendType {
 
 // Capabilities returns what features this backend supports.
 // The unified software backend supports BOTH asymmetric and symmetric operations.
+// SecurityLevel is Low - keys are protected by software encryption on disk.
 func (b *SoftwareBackend) Capabilities() types.Capabilities {
 	return types.Capabilities{
 		Keys:                true,
@@ -165,6 +176,9 @@ func (b *SoftwareBackend) Capabilities() types.Capabilities {
 		KeyAgreement:        true,  // ECDH key agreement via PKCS8 (X25519, P-256, P-384, P-521)
 		ECIES:               false, // Not currently supported
 		Sealing:             true,  // Sealing via PKCS8 (HKDF-derived key + AES-GCM)
+		QuantumSigning:      true,  // Post-quantum signatures via ML-DSA
+		KeyEncapsulation:    true,  // Key encapsulation via ML-KEM
+		SecurityLevel:       types.SecurityLevelLow,
 	}
 }
 
@@ -183,6 +197,10 @@ func (b *SoftwareBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Privat
 		return nil, ErrStorageClosed
 	}
 
+	if attrs.QuantumAttributes != nil {
+		return b.quantumBackend.GenerateKey(attrs)
+	}
+
 	return b.pkcs8Backend.GenerateKey(attrs)
 }
 
@@ -194,6 +212,10 @@ func (b *SoftwareBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey,
 
 	if b.closed {
 		return nil, ErrStorageClosed
+	}
+
+	if attrs.QuantumAttributes != nil {
+		return b.quantumBackend.GetKey(attrs)
 	}
 
 	return b.pkcs8Backend.GetKey(attrs)
@@ -209,6 +231,10 @@ func (b *SoftwareBackend) DeleteKey(attrs *types.KeyAttributes) error {
 		return ErrStorageClosed
 	}
 
+	if attrs.QuantumAttributes != nil {
+		return b.quantumBackend.DeleteKey(attrs)
+	}
+
 	// Determine if this is a symmetric or asymmetric key
 	if attrs.IsSymmetric() {
 		return b.symmetricBackend.DeleteKey(attrs)
@@ -217,7 +243,7 @@ func (b *SoftwareBackend) DeleteKey(attrs *types.KeyAttributes) error {
 }
 
 // ListKeys returns attributes for all keys managed by this backend.
-// This includes both asymmetric and symmetric keys.
+// This includes asymmetric, symmetric, and quantum keys.
 func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -226,7 +252,7 @@ func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, ErrStorageClosed
 	}
 
-	// Get keys from both backends
+	// Get keys from all backends
 	pkcs8Keys, err := b.pkcs8Backend.ListKeys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list PKCS8 keys: %w", err)
@@ -234,13 +260,19 @@ func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 
 	aesKeys, err := b.symmetricBackend.ListKeys()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list AES keys: %w", err)
+		return nil, fmt.Errorf("failed to list symmetric keys: %w", err)
+	}
+
+	quantumKeys, err := b.quantumBackend.ListKeys()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list quantum keys: %w", err)
 	}
 
 	// Combine results
-	allKeys := make([]*types.KeyAttributes, 0, len(pkcs8Keys)+len(aesKeys))
+	allKeys := make([]*types.KeyAttributes, 0, len(pkcs8Keys)+len(aesKeys)+len(quantumKeys))
 	allKeys = append(allKeys, pkcs8Keys...)
 	allKeys = append(allKeys, aesKeys...)
+	allKeys = append(allKeys, quantumKeys...)
 
 	return allKeys, nil
 }
@@ -253,6 +285,10 @@ func (b *SoftwareBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, err
 
 	if b.closed {
 		return nil, ErrStorageClosed
+	}
+
+	if attrs.QuantumAttributes != nil {
+		return b.quantumBackend.Signer(attrs)
 	}
 
 	return b.pkcs8Backend.Signer(attrs)
@@ -280,6 +316,10 @@ func (b *SoftwareBackend) RotateKey(attrs *types.KeyAttributes) error {
 
 	if b.closed {
 		return ErrStorageClosed
+	}
+
+	if attrs.QuantumAttributes != nil {
+		return b.quantumBackend.RotateKey(attrs)
 	}
 
 	if attrs.IsSymmetric() {
@@ -311,6 +351,10 @@ func (b *SoftwareBackend) Close() error {
 	// return immediately without error.
 	if err := b.symmetricBackend.Close(); err != nil {
 		return fmt.Errorf("failed to close symmetric backend: %w", err)
+	}
+
+	if err := b.quantumBackend.Close(); err != nil {
+		return fmt.Errorf("failed to close quantum backend: %w", err)
 	}
 
 	return nil
@@ -642,6 +686,54 @@ func (b *SoftwareBackend) ExportKey(attrs *types.KeyAttributes, algorithm backen
 	return wrapped, nil
 }
 
+// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
+// This method provides direct access to the plaintext key bytes without wrapping.
+//
+// Security restrictions:
+//   - ONLY works for symmetric keys (AES, ChaCha20, etc.)
+//   - Returns ErrAsymmetricKeyExportNotAllowed for asymmetric keys (RSA, ECDSA, Ed25519)
+//   - Key must have Exportable=true (equivalent to PKCS#11 CKA_EXTRACTABLE=true)
+//   - Returns ErrKeyNotExportable if the key is not marked as exportable
+//
+// For secure key transport between backends, prefer ExportKey which wraps the material.
+func (b *SoftwareBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+
+	// Security check: Reject asymmetric keys
+	// Exporting raw asymmetric private key material is a security risk
+	if !attrs.IsSymmetric() {
+		return nil, backend.ErrAsymmetricKeyExportNotAllowed
+	}
+
+	// Check if key is marked as exportable (CKA_EXTRACTABLE equivalent)
+	if !attrs.Exportable {
+		return nil, backend.ErrKeyNotExportable
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrStorageClosed
+	}
+
+	// Get the symmetric key
+	key, err := b.symmetricBackend.GetSymmetricKey(attrs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get symmetric key: %w", err)
+	}
+
+	// Extract the raw key material
+	keyMaterial, err := key.Raw()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get raw key material: %w", err)
+	}
+
+	return keyMaterial, nil
+}
+
 // importSymmetricKey imports a symmetric key from raw key material
 func (b *SoftwareBackend) importSymmetricKey(attrs *types.KeyAttributes, keyMaterial []byte) error {
 	// Validate key size
@@ -652,7 +744,7 @@ func (b *SoftwareBackend) importSymmetricKey(attrs *types.KeyAttributes, keyMate
 
 	// Store the raw key material directly (symmetric backend stores raw bytes)
 	keyID := attrs.ID()
-	if err := storage.SaveKey(b.storage, keyID, keyMaterial); err != nil {
+	if err := storage.SaveKey(context.Background(), b.storage, keyID, keyMaterial); err != nil {
 		return fmt.Errorf("failed to store symmetric key: %w", err)
 	}
 
@@ -674,7 +766,7 @@ func (b *SoftwareBackend) importAsymmetricKey(attrs *types.KeyAttributes, keyMat
 
 	// Store the PKCS8-encoded key material directly
 	keyID := attrs.ID()
-	if err := storage.SaveKey(b.storage, keyID, keyMaterial); err != nil {
+	if err := storage.SaveKey(context.Background(), b.storage, keyID, keyMaterial); err != nil {
 		return fmt.Errorf("failed to store asymmetric key: %w", err)
 	}
 
@@ -842,9 +934,9 @@ func (b *SoftwareBackend) Unseal(ctx context.Context, sealed *types.SealedData, 
 }
 
 // Verify interface compliance at compile time
-var _ types.Backend = (*SoftwareBackend)(nil)
-var _ types.SymmetricBackend = (*SoftwareBackend)(nil)
-var _ types.SymmetricBackendWithTracking = (*SoftwareBackend)(nil)
+var _ types.KeyProvider = (*SoftwareBackend)(nil)
+var _ types.SymmetricKeyProvider = (*SoftwareBackend)(nil)
+var _ types.SymmetricKeyProviderWithTracking = (*SoftwareBackend)(nil)
 var _ types.KeyAgreement = (*SoftwareBackend)(nil)
 var _ backend.ImportExportBackend = (*SoftwareBackend)(nil)
 var _ types.Sealer = (*SoftwareBackend)(nil)

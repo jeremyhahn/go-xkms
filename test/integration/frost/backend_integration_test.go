@@ -3,23 +3,24 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 
 package frost_test
 
 import (
+	"context"
 	"crypto"
 	"fmt"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestFrostBackend_InterfaceCompliance verifies the backend implements types.Backend
+// TestFrostBackend_InterfaceCompliance verifies the backend implements types.KeyProvider
 func TestFrostBackend_InterfaceCompliance(t *testing.T) {
 	publicStore, err := storage.NewMemoryBackend()
 	require.NoError(t, err)
@@ -41,7 +42,7 @@ func TestFrostBackend_InterfaceCompliance(t *testing.T) {
 	defer backend.Close()
 
 	// Verify interface compliance
-	var _ types.Backend = backend
+	var _ types.KeyProvider = backend
 
 	// Check backend type
 	assert.Equal(t, types.BackendTypeFrost, backend.Type())
@@ -388,12 +389,14 @@ func (b *testSecretBackend) Capabilities() types.Capabilities {
 }
 
 func (b *testSecretBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	ctx := context.Background()
+
 	// For FROST, store the secret share data from SealData
 	if attrs.SealData != nil {
 		data := attrs.SealData.Bytes()
 		if len(data) > 0 {
 			path := "frost/secrets/" + attrs.CN + ".secret"
-			if err := b.store.Put(path, data, nil); err != nil {
+			if err := b.store.Put(ctx, path, data); err != nil {
 				return nil, fmt.Errorf("failed to store secret: %w", err)
 			}
 		}
@@ -402,8 +405,10 @@ func (b *testSecretBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Priv
 }
 
 func (b *testSecretBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+	ctx := context.Background()
+
 	path := "frost/secrets/" + attrs.CN + ".secret"
-	data, err := b.store.Get(path)
+	data, err := b.store.Get(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get secret: %w", err)
 	}
@@ -411,8 +416,10 @@ func (b *testSecretBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 }
 
 func (b *testSecretBackend) DeleteKey(attrs *types.KeyAttributes) error {
+	ctx := context.Background()
+
 	path := "frost/secrets/" + attrs.CN + ".secret"
-	return b.store.Delete(path)
+	return b.store.Delete(ctx, path)
 }
 
 func (b *testSecretBackend) ListKeys() ([]*types.KeyAttributes, error) {

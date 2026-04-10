@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,8 +21,8 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
 
@@ -114,7 +114,7 @@ func (e *pkcs11SymmetricEncrypter) Encrypt(plaintext []byte, opts *types.Encrypt
 			return nil, fmt.Errorf("failed to login: %w", err)
 		}
 	}
-	// DO NOT LOGOUT - it would logout from all sessions including crypto11's session
+	// DO NOT LOGOUT - C_Logout affects ALL sessions on this token
 
 	// STEP 2: Generate or use provided nonce
 	nonceSize := 12 // Standard GCM nonce size
@@ -261,7 +261,7 @@ func (e *pkcs11SymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 			return nil, fmt.Errorf("failed to login: %w", err)
 		}
 	}
-	// DO NOT LOGOUT - it would logout from all sessions including crypto11's session
+	// DO NOT LOGOUT - C_Logout affects ALL sessions on this token
 
 	// Prepare GCM parameters for decryption
 	// PKCS#11 NewGCMParams expects tag size in BITS, not bytes
@@ -325,7 +325,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.ctx == nil {
+	if b.pool == nil {
 		return nil, ErrNotInitialized
 	}
 
@@ -371,7 +371,7 @@ func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKe
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if b.ctx == nil {
+	if b.pool == nil {
 		return nil, ErrNotInitialized
 	}
 
@@ -505,3 +505,15 @@ func (e *softwareEncrypter) Decrypt(data *types.EncryptedData, opts *types.Decry
 
 	return plaintext, nil
 }
+
+// GetTracker returns the AEAD safety tracker for this backend.
+// This allows external code to inspect tracking state and configuration.
+func (b *Backend) GetTracker() types.AEADSafetyTracker {
+	return b.tracker
+}
+
+// Verify interface compliance at compile time
+var _ types.SymmetricKeyProvider = (*Backend)(nil)
+var _ types.SymmetricKeyProviderWithTracking = (*Backend)(nil)
+var _ types.SymmetricKey = (*pkcs11SymmetricKey)(nil)
+var _ types.SymmetricEncrypter = (*pkcs11SymmetricEncrypter)(nil)

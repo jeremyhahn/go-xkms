@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,7 +21,10 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func TestExtractPublicKey_RSA(t *testing.T) {
@@ -61,7 +64,7 @@ func TestExtractPublicKey_ECDSA(t *testing.T) {
 		t.Fatalf("expected *ecdsa.PublicKey, got %T", pubKey)
 	}
 
-	if ecdsaPub.X.Cmp(privKey.X) != 0 || ecdsaPub.Y.Cmp(privKey.Y) != 0 {
+	if !ecdsaPub.Equal(&privKey.PublicKey) {
 		t.Error("extracted public key does not match")
 	}
 }
@@ -285,5 +288,108 @@ func TestExtractPublicKey_CryptoSigner(t *testing.T) {
 
 	if rsaPub.N.Cmp(rsaKey.N) != 0 {
 		t.Error("extracted public key does not match")
+	}
+}
+
+func TestGetPublicKey_RSA(t *testing.T) {
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+
+	pubKey := getPublicKey(privKey)
+	if pubKey == nil {
+		t.Fatal("expected non-nil public key")
+	}
+
+	rsaPub, ok := pubKey.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("expected *rsa.PublicKey, got %T", pubKey)
+	}
+
+	if rsaPub.N.Cmp(privKey.N) != 0 {
+		t.Error("extracted public key does not match")
+	}
+}
+
+func TestGetPublicKey_ECDSA(t *testing.T) {
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate ECDSA key: %v", err)
+	}
+
+	pubKey := getPublicKey(privKey)
+	if pubKey == nil {
+		t.Fatal("expected non-nil public key")
+	}
+
+	ecdsaPub, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("expected *ecdsa.PublicKey, got %T", pubKey)
+	}
+
+	if !ecdsaPub.Equal(&privKey.PublicKey) {
+		t.Error("extracted public key does not match")
+	}
+}
+
+func TestGetPublicKey_UnsupportedType(t *testing.T) {
+	pubKey := getPublicKey("not-a-key")
+	if pubKey != nil {
+		t.Errorf("expected nil for unsupported type, got %T", pubKey)
+	}
+}
+
+func TestGetAlgorithmString_SymmetricAlgorithm(t *testing.T) {
+	attrs := &types.KeyAttributes{
+		SymmetricAlgorithm: types.SymmetricAlgorithm("aes256-gcm"),
+	}
+
+	result := getAlgorithmString(attrs)
+	if result != "aes256-gcm" {
+		t.Errorf("expected aes256-gcm, got %s", result)
+	}
+}
+
+func TestGetAlgorithmString_AsymmetricAlgorithm(t *testing.T) {
+	attrs := &types.KeyAttributes{
+		KeyAlgorithm: x509.RSA,
+	}
+
+	result := getAlgorithmString(attrs)
+	if result != "RSA" {
+		t.Errorf("expected RSA, got %s", result)
+	}
+}
+
+func TestGetAlgorithmString_ECDSAAlgorithm(t *testing.T) {
+	attrs := &types.KeyAttributes{
+		KeyAlgorithm: x509.ECDSA,
+	}
+
+	result := getAlgorithmString(attrs)
+	if result != "ECDSA" {
+		t.Errorf("expected ECDSA, got %s", result)
+	}
+}
+
+func TestGetAlgorithmString_UnknownAlgorithm(t *testing.T) {
+	attrs := &types.KeyAttributes{}
+
+	result := getAlgorithmString(attrs)
+	if result != "" {
+		t.Errorf("expected empty string, got %s", result)
+	}
+}
+
+func TestGetAlgorithmString_SymmetricTakesPrecedence(t *testing.T) {
+	attrs := &types.KeyAttributes{
+		SymmetricAlgorithm: types.SymmetricAlgorithm("chacha20-poly1305"),
+		KeyAlgorithm:       x509.RSA,
+	}
+
+	result := getAlgorithmString(attrs)
+	if result != "chacha20-poly1305" {
+		t.Errorf("expected symmetric algorithm to take precedence, got %s", result)
 	}
 }

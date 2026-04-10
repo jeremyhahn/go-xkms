@@ -1,0 +1,12 @@
+# systemd-tmpfiles configuration for go-xkms
+# Install to: /usr/lib/tmpfiles.d/xkms.conf
+#
+# This creates required directories with proper ownership and permissions.
+# Run: systemd-tmpfiles --create /usr/lib/tmpfiles.d/xkms.conf
+
+# Type  Path                    Mode  User      Group     Age  Argument
+d       /etc/xkms               0750  root      xkms      -    -
+d       /var/lib/xkms           0750  xkms      xkms      -    -
+d       /var/lib/xkms/keys      0700  xkms      xkms      -    -
+d       /var/lib/xkms/certs     0750  xkms      xkms      -    -
+d       /var/log/xkms           0750  xkms      xkms      -    -

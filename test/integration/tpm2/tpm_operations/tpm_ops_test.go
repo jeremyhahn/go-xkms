@@ -14,8 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
+	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
 	"log/slog"
 	"math/big"
@@ -281,7 +281,8 @@ func TestTPMOps_CreateIDevIDFlow(t *testing.T) {
 		t.Fatal("EK attributes not available, skipping CreateIDevID test")
 	}
 	// Get EK public key
-	ekPub := sharedTPM.EK()
+	ekPub, ekErr := sharedTPM.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	require.NotNil(t, ekPub, "EK public key should not be nil")
 	// Create EK certificate
 	ekCert, ekCertDER, err := createSelfSignedEKCert(ekPub)
@@ -322,7 +323,8 @@ func TestTPMOps_CreateIDevIDWithVariousQualifyingData(t *testing.T) {
 	if err != nil || ekAttrs == nil || ekAttrs.TPMAttributes == nil {
 		t.Fatal("EK not available")
 	}
-	ekPub := sharedTPM.EK()
+	ekPub, ekErr := sharedTPM.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	ekCert, _, err := createSelfSignedEKCert(ekPub)
 	require.NoError(t, err, "Creating EK cert should succeed")
 	testCases := []struct {
@@ -557,7 +559,8 @@ func TestTPMOps_CreatePlatformPolicyVariations(t *testing.T) {
 	} else {
 		t.Log("CreatePlatformPolicy succeeded")
 		// Verify the policy digest was set
-		digest := sharedTPM.PlatformPolicyDigest()
+		digest, pdErr := sharedTPM.PlatformPolicyDigest()
+		require.NoError(t, pdErr, "PlatformPolicyDigest should succeed")
 		require.NotNil(t, digest, "Policy digest should be set after CreatePlatformPolicy")
 		t.Logf("Platform policy digest: %x (size: %d bytes)", digest.Buffer, len(digest.Buffer))
 	}
@@ -570,7 +573,8 @@ func TestTPMOps_ParsePublicKey(t *testing.T) {
 	require.NoError(t, err, "EKAttributes should succeed")
 	if ekAttrs.TPMAttributes != nil {
 		// Try to parse the public key
-		pubKey := sharedTPM.EK()
+		pubKey, ekErr := sharedTPM.EK()
+		require.NoError(t, ekErr, "EK should succeed")
 		require.NotNil(t, pubKey, "EK public key should not be nil")
 		t.Logf("Successfully retrieved EK public key")
 	}
@@ -598,7 +602,7 @@ func TestTPMOps_EKECC(t *testing.T) {
 // TestTPMOps_Install tests the Install function
 func TestTPMOps_Install(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
-	err := sharedTPM.Install(nil)
+	err := sharedTPM.Install(nil, nil)
 	if err != nil {
 		t.Logf("Install error (may be expected): %v", err)
 	} else {
@@ -1155,7 +1159,8 @@ func TestTPMOps_CreateECDSAKeyWithVariousCurves(t *testing.T) {
 func TestTPMOps_PlatformPolicyDigest(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	// Test PlatformPolicyDigest
-	digest := sharedTPM.PlatformPolicyDigest()
+	digest, pdErr := sharedTPM.PlatformPolicyDigest()
+	require.NoError(t, pdErr, "PlatformPolicyDigest should succeed")
 	require.NotNil(t, digest, "Platform policy digest should not be nil")
 	t.Logf("PlatformPolicyDigest: %x (size: %d bytes)", digest.Buffer, len(digest.Buffer))
 }
@@ -1164,7 +1169,8 @@ func TestTPMOps_PlatformPolicyDigest(t *testing.T) {
 func TestTPMOps_GoldenMeasurements(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	// Test GoldenMeasurements
-	measurements := sharedTPM.GoldenMeasurements()
+	measurements, gmErr := sharedTPM.GoldenMeasurements()
+	require.NoError(t, gmErr, "GoldenMeasurements should succeed")
 	require.NotNil(t, measurements, "Golden measurements should not be nil")
 	t.Logf("GoldenMeasurements: %x (size: %d bytes)", measurements, len(measurements))
 }
@@ -1388,7 +1394,8 @@ func TestTPMOps_CreateTCG_CSR_IDEVID(t *testing.T) {
 		t.Fatal("IDevID not available for CSR creation test")
 	}
 	// Get EK certificate
-	ekPub := sharedTPM.EK()
+	ekPub, ekErr := sharedTPM.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	require.NotNil(t, ekPub, "EK public key should not be nil")
 	ekCert, _, err := createSelfSignedEKCert(ekPub)
 	require.NoError(t, err, "Creating EK cert should succeed")
@@ -1405,7 +1412,8 @@ func TestTPMOps_CreateTCG_CSR_IDEVID(t *testing.T) {
 // TestTPMOps_CreateIDevIDWithNilAKAttrs tests CreateIDevID error paths
 func TestTPMOps_CreateIDevIDWithNilAKAttrs(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
-	ekPub := sharedTPM.EK()
+	ekPub, ekErr := sharedTPM.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	require.NotNil(t, ekPub, "EK public key should not be nil")
 	ekCert, _, err := createSelfSignedEKCert(ekPub)
 	require.NoError(t, err, "Creating EK cert should succeed")
@@ -1420,7 +1428,8 @@ func TestTPMOps_CreateIDevIDWithNilAKAttrs(t *testing.T) {
 // TestTPMOps_CreateIDevIDWithMissingParent tests CreateIDevID with missing parent
 func TestTPMOps_CreateIDevIDWithMissingParent(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
-	ekPub := sharedTPM.EK()
+	ekPub, ekErr := sharedTPM.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	require.NotNil(t, ekPub, "EK public key should not be nil")
 	ekCert, _, err := createSelfSignedEKCert(ekPub)
 	require.NoError(t, err, "Creating EK cert should succeed")
@@ -1989,7 +1998,8 @@ func TestTPMOps_DeleteKeyPersistent(t *testing.T) {
 func TestTPMOps_ProvisionEKCertWithNoCertHandle(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
 	// Get EK public key
-	ekPub := sharedTPM.EK()
+	ekPub, ekErr := sharedTPM.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	require.NotNil(t, ekPub, "EK public key should not be nil")
 	// Create a self-signed EK certificate
 	_, ekCertDER, err := createSelfSignedEKCert(ekPub)
@@ -2102,7 +2112,7 @@ func TestTPMOps_NonceSession(t *testing.T) {
 // TestTPMOps_PlatformPolicySession tests platform policy session creation
 func TestTPMOps_PlatformPolicySession(t *testing.T) {
 	require.NotNil(t, sharedTPM, "Shared TPM instance must be initialized")
-	session, closer, err := sharedTPM.PlatformPolicySession()
+	session, closer, err := sharedTPM.PlatformPolicySession(nil)
 	if err != nil {
 		t.Logf("PlatformPolicySession error: %v", err)
 	} else {
@@ -2158,7 +2168,8 @@ func TestTPMOps_EKPublic(t *testing.T) {
 			t.Logf("EKPublic recovered from panic: %v", r)
 		}
 	}()
-	name, pub := sharedTPM.EKPublic()
+	name, pub, ekPubErr := sharedTPM.EKPublic()
+	require.NoError(t, ekPubErr, "EKPublic should succeed")
 	require.NotNil(t, name, "EK name should not be nil")
 	require.NotNil(t, pub, "EK public should not be nil")
 	t.Logf("EK Name: %x", name.Buffer)
@@ -2173,7 +2184,8 @@ func TestTPMOps_EKRSA(t *testing.T) {
 			t.Logf("EKRSA recovered from panic: %v", r)
 		}
 	}()
-	rsaPub := sharedTPM.EKRSA()
+	rsaPub, rsaErr := sharedTPM.EKRSA()
+	require.NoError(t, rsaErr, "EKRSA should succeed")
 	require.NotNil(t, rsaPub, "EK RSA public key should not be nil")
 	require.NotNil(t, rsaPub.N, "RSA modulus should not be nil")
 	t.Logf("EK RSA key size: %d bits", rsaPub.Size()*8)
@@ -2191,7 +2203,8 @@ func TestTPMOps_IAK(t *testing.T) {
 			t.Logf("IAK recovered from panic: %v", r)
 		}
 	}()
-	iakPub := sharedTPM.IAK()
+	iakPub, iakErr := sharedTPM.IAK()
+	require.NoError(t, iakErr, "IAK should succeed")
 	require.NotNil(t, iakPub, "IAK public key should not be nil")
 	t.Logf("IAK public key retrieved successfully")
 }
@@ -2219,7 +2232,8 @@ func TestTPMOps_WriteEKCert(t *testing.T) {
 			t.Logf("WriteEKCert panicked (expected - requires specific TPM config): %v", r)
 		}
 	}()
-	ekPub := sharedTPM.EK()
+	ekPub, ekErr := sharedTPM.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	require.NotNil(t, ekPub, "EK public key should not be nil")
 	_, ekCertDER, err := createSelfSignedEKCert(ekPub)
 	require.NoError(t, err, "Creating EK cert should succeed")

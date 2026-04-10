@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,18 +17,18 @@ import (
 	"context"
 	"testing"
 
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// setupAsymVersionTest initializes keychain for asymmetric encryption and version tests
+// setupAsymVersionTest initializes xkms for asymmetric encryption and version tests
 func setupAsymVersionTest(t *testing.T) *Service {
 	t.Helper()
-	keychain.Reset()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	certStorage := storage.New()
@@ -40,7 +40,7 @@ func setupAsymVersionTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -48,23 +48,23 @@ func setupAsymVersionTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": ks,
 		},
 		DefaultBackend: "software",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService()
+	return NewService(nil, nil)
 }
 
 // TestService_EncryptAsym tests asymmetric encryption functionality
 func TestService_EncryptAsym(t *testing.T) {
 	service := setupAsymVersionTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.EncryptAsym(context.Background(), &pb.EncryptAsymRequest{
@@ -376,99 +376,6 @@ func TestService_EncryptAsym(t *testing.T) {
 		}
 		if st.Code() != codes.InvalidArgument {
 			t.Errorf("Expected InvalidArgument, got %v", st.Code())
-		}
-	})
-}
-
-// TestService_KeyVersioning tests key versioning endpoints (all unimplemented)
-func TestService_KeyVersioning(t *testing.T) {
-	service := setupAsymVersionTest(t)
-	defer keychain.Reset()
-
-	t.Run("ListKeyVersions returns unimplemented", func(t *testing.T) {
-		_, err := service.ListKeyVersions(context.Background(), &pb.ListKeyVersionsRequest{
-			KeyId:   "test-key",
-			Backend: "software",
-		})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("EnableKeyVersion returns unimplemented", func(t *testing.T) {
-		_, err := service.EnableKeyVersion(context.Background(), &pb.EnableKeyVersionRequest{
-			KeyId:   "test-key",
-			Backend: "software",
-			Version: 1,
-		})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("DisableKeyVersion returns unimplemented", func(t *testing.T) {
-		_, err := service.DisableKeyVersion(context.Background(), &pb.DisableKeyVersionRequest{
-			KeyId:   "test-key",
-			Backend: "software",
-			Version: 1,
-		})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("EnableAllKeyVersions returns unimplemented", func(t *testing.T) {
-		_, err := service.EnableAllKeyVersions(context.Background(), &pb.EnableAllKeyVersionsRequest{
-			KeyId:   "test-key",
-			Backend: "software",
-		})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
-		}
-	})
-
-	t.Run("DisableAllKeyVersions returns unimplemented", func(t *testing.T) {
-		_, err := service.DisableAllKeyVersions(context.Background(), &pb.DisableAllKeyVersionsRequest{
-			KeyId:   "test-key",
-			Backend: "software",
-		})
-		if err == nil {
-			t.Fatal("Expected error")
-		}
-		st, ok := status.FromError(err)
-		if !ok {
-			t.Fatal("Expected gRPC status error")
-		}
-		if st.Code() != codes.Unimplemented {
-			t.Errorf("Expected Unimplemented, got %v", st.Code())
 		}
 	})
 }

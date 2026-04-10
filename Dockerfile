@@ -1,13 +1,13 @@
-# Multi-stage Dockerfile for go-keychain integration testing
-# Supports PKCS#11 (SoftHSM2), TPM 2.0 (SWTPM), and Quantum-Safe Cryptography (liboqs)
+# Multi-stage Dockerfile for go-xkms integration testing
+# Supports PKCS#11 (SoftHSM2), TPM 2.0 (SWTPM), and quantum-safe cryptography (ML-DSA, ML-KEM)
 
 # Stage 1: Builder stage - compile dependencies and prepare environment
-FROM golang:bookworm AS builder
+FROM golang:1.26.1-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
-# Install build essentials and required packages for PKCS#11, TPM testing, and liboqs
+# Install build essentials and required packages for PKCS#11 and TPM testing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -28,8 +28,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls28-dev \
     libtasn1-6-dev \
     libssl-dev \
-    cmake \
-    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 # Build libtpms v0.10.1 from source to fix TPM_RC_RETRY issue
@@ -42,19 +40,11 @@ RUN git clone https://github.com/stefanberger/libtpms.git && \
     make -j$(nproc) && \
     make install DESTDIR=/build/libtpms-install
 
-# Build and install liboqs from source for quantum-safe cryptography
-RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /build/liboqs && \
-    cd /build/liboqs && \
-    mkdir build && cd build && \
-    cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
-    ninja && \
-    DESTDIR=/build/liboqs-install ninja install
-
 # Stage 2: Test runtime environment
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
-LABEL maintainer="go-keychain"
-LABEL description="Integration testing environment for go-keychain with PKCS#11 and TPM 2.0 support"
+LABEL maintainer="go-xkms"
+LABEL description="Integration testing environment for go-xkms with PKCS#11 and TPM 2.0 support"
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -74,6 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls30 \
     libtasn1-6 \
     libssl3 \
+    libusb-1.0-0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Remove old libtpms installed by swtpm-libs package
@@ -103,30 +94,8 @@ RUN DPKG_ARCH=$(dpkg --print-architecture) && \
     ln -sf /lib/${ARCH}-linux-gnu/libtpms.so.0.10.1 /lib/${ARCH}-linux-gnu/libtpms.so.0 && \
     ln -sf /lib/${ARCH}-linux-gnu/libtpms.so.0.10.1 /lib/${ARCH}-linux-gnu/libtpms.so
 
-# Copy built liboqs from builder stage
-COPY --from=builder /build/liboqs-install/usr/local /usr/local
-
-# Create liboqs-go.pc for the Go bindings (liboqs-go expects this name)
-RUN mkdir -p /usr/local/lib/pkgconfig && \
-    echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'exec_prefix=${prefix}' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'libdir=${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'includedir=${prefix}/include' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo '' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Name: liboqs-go' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Description: Open Quantum Safe liboqs library for Go bindings' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Version: 0.9.0' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Libs: -L${libdir} -loqs' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Cflags: -I${includedir}' >> /usr/local/lib/pkgconfig/liboqs-go.pc
-
-# Update library cache to recognize new libtpms and liboqs
+# Update library cache to recognize new libtpms
 RUN ldconfig
-
-# Set library paths for CGO (quantum-safe cryptography)
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-ENV CGO_LDFLAGS="-L/usr/local/lib"
-ENV CGO_CFLAGS="-I/usr/local/include"
 
 # Create non-root user for security best practices
 RUN groupadd -r testuser -g 1000 && \
@@ -137,18 +106,18 @@ RUN mkdir -p /workspace \
     /var/lib/softhsm/tokens \
     /var/lib/swtpm \
     /etc/softhsm \
-    /etc/keychain \
+    /etc/xkms \
     /data \
     /app/build/bin \
-    /var/run/keychain \
+    /var/run/xkms \
     && chown -R testuser:testuser /workspace \
     && chown -R testuser:testuser /var/lib/softhsm \
     && chown -R testuser:testuser /var/lib/swtpm \
     && chown -R testuser:testuser /etc/softhsm \
-    && chown -R testuser:testuser /etc/keychain \
+    && chown -R testuser:testuser /etc/xkms \
     && chown -R testuser:testuser /data \
     && chown -R testuser:testuser /app \
-    && chown -R testuser:testuser /var/run/keychain
+    && chown -R testuser:testuser /var/run/xkms
 
 # Switch to non-root user
 USER testuser
@@ -166,8 +135,8 @@ RUN echo "directories.tokendir = /var/lib/softhsm/tokens" > /etc/softhsm/softhsm
 ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
 
 # Initialize SoftHSM token for testing
-# Token: test-token, SO PIN: 1234, User PIN: 1234, Slot: 0
-RUN softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
+# Token: xkms-test, SO PIN: 1234, User PIN: 1234, Slot: 0
+RUN softhsm2-util --init-token --slot 0 --label "xkms-test" --so-pin 1234 --pin 1234
 
 # Configure SWTPM environment
 ENV SWTPM_STATE_DIR=/var/lib/swtpm
@@ -181,6 +150,14 @@ COPY --chown=testuser:testuser go.mod go.sum ./
 
 # Copy the SDK module files before go mod download (required for replace directive)
 COPY --chown=testuser:testuser sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+
+# Copy the xkey module files before go mod download (required for replace directive)
+COPY --chown=testuser:testuser xkey/go.mod xkey/go.sum ./xkey/
+
+# Copy sibling modules required by go.mod replace directives
+# These are provided via docker compose additional_contexts
+COPY --from=go-qrdb --chown=testuser:testuser . /go-qrdb
+COPY --from=go-quicraft --chown=testuser:testuser . /go-quicraft
 
 # Download dependencies (cached if go.mod/go.sum unchanged)
 RUN go mod download
@@ -233,16 +210,16 @@ fi\n' > /usr/local/bin/entrypoint.sh && chmod +x /usr/local/bin/entrypoint.sh
 # Switch back to non-root user for security
 USER testuser
 
-# Build the server binary with all backends enabled (including quantum-safe cryptography and FROST)
+# Build the server binary with all backends enabled
 RUN mkdir -p /app && \
-    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum,frost" \
-    -o /app/keychaind ./cmd/keychaind/main.go
+    CGO_ENABLED=1 go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost" \
+    -o /app/xkmsd ./cmd/xkmsd/
 
 # Validate that the server binary exists
-RUN test -f /app/keychaind || (echo "ERROR: Server binary not built" && exit 1)
+RUN test -f /app/xkmsd || (echo "ERROR: Server binary not built" && exit 1)
 
-# Build the application with all backends enabled (including quantum-safe cryptography and FROST)
-RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,quantum,frost" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
+# Build the application with all backends enabled
+RUN go build -buildvcs=false -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,frost" -v ./... 2>&1 | grep -v "build constraints exclude all Go files" || true
 
 # Health check to verify SoftHSM is accessible
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -266,6 +243,6 @@ ENV GOCACHE=/tmp/go-cache
 ENV GOFLAGS="-buildvcs=false"
 
 # Labels for documentation and metadata
-LABEL org.opencontainers.image.source="https://github.com/jeremyhahn/go-keychain"
-LABEL org.opencontainers.image.description="Integration testing environment with SoftHSM2, SWTPM, and quantum-safe cryptography (liboqs)"
-LABEL org.opencontainers.image.vendor="go-keychain"
+LABEL org.opencontainers.image.source="https://github.com/jeremyhahn/go-xkms"
+LABEL org.opencontainers.image.description="Integration testing environment with SoftHSM2, SWTPM, and quantum-safe cryptography"
+LABEL org.opencontainers.image.vendor="go-xkms"

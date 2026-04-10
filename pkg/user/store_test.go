@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +61,7 @@ func TestFileStore_Create(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("creates user successfully", func(t *testing.T) {
-		user, err := store.Create(ctx, "admin@example.com", "Admin User", RoleAdmin)
+		user, err := store.Create(ctx, "admin@example.com", "Admin User", RoleAdmin, "")
 		require.NoError(t, err)
 		require.NotNil(t, user)
 
@@ -74,27 +74,59 @@ func TestFileStore_Create(t *testing.T) {
 	})
 
 	t.Run("normalizes username to lowercase", func(t *testing.T) {
-		user, err := store.Create(ctx, "TEST@EXAMPLE.COM", "Test", RoleUser)
+		user, err := store.Create(ctx, "TEST@EXAMPLE.COM", "Test", RoleUser, "")
 		require.NoError(t, err)
 		assert.Equal(t, "test@example.com", user.Username)
 	})
 
 	t.Run("rejects empty username", func(t *testing.T) {
-		_, err := store.Create(ctx, "", "Display", RoleUser)
+		_, err := store.Create(ctx, "", "Display", RoleUser, "")
 		assert.ErrorIs(t, err, ErrInvalidUsername)
 	})
 
 	t.Run("rejects invalid role", func(t *testing.T) {
-		_, err := store.Create(ctx, "invalid@example.com", "Display", Role("invalid"))
+		_, err := store.Create(ctx, "invalid@example.com", "Display", Role("invalid"), "")
 		assert.ErrorIs(t, err, ErrInvalidRole)
 	})
 
 	t.Run("rejects duplicate username", func(t *testing.T) {
-		_, err := store.Create(ctx, "duplicate@example.com", "First", RoleUser)
+		_, err := store.Create(ctx, "duplicate@example.com", "First", RoleUser, "")
 		require.NoError(t, err)
 
-		_, err = store.Create(ctx, "duplicate@example.com", "Second", RoleUser)
+		_, err = store.Create(ctx, "duplicate@example.com", "Second", RoleUser, "")
 		assert.ErrorIs(t, err, ErrUserAlreadyExists)
+	})
+}
+
+func TestFileStore_Create_WithTenantID(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	t.Run("sets tenant ID on created user", func(t *testing.T) {
+		user, err := store.Create(ctx, "tenant-user@example.com", "Tenant User", RoleUser, "tenant-abc")
+		require.NoError(t, err)
+		require.NotNil(t, user)
+
+		assert.Equal(t, "tenant-abc", user.TenantID)
+		assert.Equal(t, "tenant-user@example.com", user.Username)
+		assert.Equal(t, RoleUser, user.Role)
+	})
+
+	t.Run("persists tenant ID through storage round-trip", func(t *testing.T) {
+		user, err := store.Create(ctx, "persist-tenant@example.com", "Persist", RoleOperator, "tenant-xyz")
+		require.NoError(t, err)
+
+		retrieved, err := store.GetByID(ctx, user.ID)
+		require.NoError(t, err)
+		assert.Equal(t, "tenant-xyz", retrieved.TenantID)
+	})
+
+	t.Run("empty tenant ID creates system-level user", func(t *testing.T) {
+		user, err := store.Create(ctx, "system-user@example.com", "System", RoleAdmin, "")
+		require.NoError(t, err)
+		assert.Empty(t, user.TenantID)
 	})
 }
 
@@ -105,7 +137,7 @@ func TestFileStore_GetByID(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns user by ID", func(t *testing.T) {
-		created, err := store.Create(ctx, "getbyid@example.com", "Test", RoleUser)
+		created, err := store.Create(ctx, "getbyid@example.com", "Test", RoleUser, "")
 		require.NoError(t, err)
 
 		retrieved, err := store.GetByID(ctx, created.ID)
@@ -127,7 +159,7 @@ func TestFileStore_GetByUsername(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns user by username", func(t *testing.T) {
-		created, err := store.Create(ctx, "getbyname@example.com", "Test", RoleOperator)
+		created, err := store.Create(ctx, "getbyname@example.com", "Test", RoleOperator, "")
 		require.NoError(t, err)
 
 		retrieved, err := store.GetByUsername(ctx, "getbyname@example.com")
@@ -137,7 +169,7 @@ func TestFileStore_GetByUsername(t *testing.T) {
 	})
 
 	t.Run("normalizes username lookup", func(t *testing.T) {
-		_, err := store.Create(ctx, "normalized@example.com", "Test", RoleUser)
+		_, err := store.Create(ctx, "normalized@example.com", "Test", RoleUser, "")
 		require.NoError(t, err)
 
 		retrieved, err := store.GetByUsername(ctx, "  NORMALIZED@EXAMPLE.COM  ")
@@ -158,7 +190,7 @@ func TestFileStore_Update(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("updates user successfully", func(t *testing.T) {
-		user, err := store.Create(ctx, "update@example.com", "Original", RoleUser)
+		user, err := store.Create(ctx, "update@example.com", "Original", RoleUser, "")
 		require.NoError(t, err)
 
 		user.DisplayName = "Updated"
@@ -187,9 +219,9 @@ func TestFileStore_Delete(t *testing.T) {
 
 	t.Run("deletes user successfully", func(t *testing.T) {
 		// Create two admins so we can delete one
-		user1, err := store.Create(ctx, "delete1@example.com", "Delete1", RoleAdmin)
+		user1, err := store.Create(ctx, "delete1@example.com", "Delete1", RoleAdmin, "")
 		require.NoError(t, err)
-		_, err = store.Create(ctx, "delete2@example.com", "Delete2", RoleAdmin)
+		_, err = store.Create(ctx, "delete2@example.com", "Delete2", RoleAdmin, "")
 		require.NoError(t, err)
 
 		err = store.Delete(ctx, user1.ID)
@@ -209,7 +241,7 @@ func TestFileStore_Delete(t *testing.T) {
 		store2, cleanup2 := newTestStore(t)
 		defer cleanup2()
 
-		admin, err := store2.Create(ctx, "lastadmin@example.com", "Last Admin", RoleAdmin)
+		admin, err := store2.Create(ctx, "lastadmin@example.com", "Last Admin", RoleAdmin, "")
 		require.NoError(t, err)
 
 		err = store2.Delete(ctx, admin.ID)
@@ -224,9 +256,9 @@ func TestFileStore_List(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("lists all users", func(t *testing.T) {
-		_, err := store.Create(ctx, "list1@example.com", "User1", RoleAdmin)
+		_, err := store.Create(ctx, "list1@example.com", "User1", RoleAdmin, "")
 		require.NoError(t, err)
-		_, err = store.Create(ctx, "list2@example.com", "User2", RoleUser)
+		_, err = store.Create(ctx, "list2@example.com", "User2", RoleUser, "")
 		require.NoError(t, err)
 
 		users, err := store.List(ctx)
@@ -244,6 +276,73 @@ func TestFileStore_List(t *testing.T) {
 	})
 }
 
+func TestFileStore_ListByTenant(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create users across different tenants
+	_, err := store.Create(ctx, "sys1@example.com", "System User", RoleAdmin, "")
+	require.NoError(t, err)
+	_, err = store.Create(ctx, "a1@example.com", "Tenant A User 1", RoleUser, "tenant-a")
+	require.NoError(t, err)
+	_, err = store.Create(ctx, "a2@example.com", "Tenant A User 2", RoleOperator, "tenant-a")
+	require.NoError(t, err)
+	_, err = store.Create(ctx, "b1@example.com", "Tenant B User", RoleUser, "tenant-b")
+	require.NoError(t, err)
+
+	t.Run("returns only tenant-a users", func(t *testing.T) {
+		users, err := store.ListByTenant(ctx, "tenant-a")
+		require.NoError(t, err)
+		assert.Len(t, users, 2)
+		for _, u := range users {
+			assert.Equal(t, "tenant-a", u.TenantID)
+		}
+	})
+
+	t.Run("returns only tenant-b users", func(t *testing.T) {
+		users, err := store.ListByTenant(ctx, "tenant-b")
+		require.NoError(t, err)
+		assert.Len(t, users, 1)
+		assert.Equal(t, "tenant-b", users[0].TenantID)
+	})
+
+	t.Run("empty tenantID returns system-level users", func(t *testing.T) {
+		users, err := store.ListByTenant(ctx, "")
+		require.NoError(t, err)
+		assert.Len(t, users, 1)
+		assert.Empty(t, users[0].TenantID)
+		assert.Equal(t, "sys1@example.com", users[0].Username)
+	})
+}
+
+func TestFileStore_ListByTenant_Empty(t *testing.T) {
+	store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a user in a different tenant
+	_, err := store.Create(ctx, "other@example.com", "Other", RoleUser, "other-tenant")
+	require.NoError(t, err)
+
+	// Query a tenant with no users
+	users, err := store.ListByTenant(ctx, "nonexistent-tenant")
+	require.NoError(t, err)
+	assert.Empty(t, users)
+}
+
+func TestFileStore_ListByTenant_Closed(t *testing.T) {
+	store, _ := newTestStore(t)
+	_ = store.Close()
+
+	ctx := context.Background()
+
+	_, err := store.ListByTenant(ctx, "any-tenant")
+	assert.ErrorIs(t, err, ErrStorageClosed)
+}
+
 func TestFileStore_Count(t *testing.T) {
 	store, cleanup := newTestStore(t)
 	defer cleanup()
@@ -254,7 +353,7 @@ func TestFileStore_Count(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 
-	_, err = store.Create(ctx, "count1@example.com", "User1", RoleUser)
+	_, err = store.Create(ctx, "count1@example.com", "User1", RoleUser, "")
 	require.NoError(t, err)
 
 	count, err = store.Count(ctx)
@@ -272,7 +371,7 @@ func TestFileStore_HasAnyUsers(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, hasUsers)
 
-	_, err = store.Create(ctx, "hasany@example.com", "User", RoleUser)
+	_, err = store.Create(ctx, "hasany@example.com", "User", RoleUser, "")
 	require.NoError(t, err)
 
 	hasUsers, err = store.HasAnyUsers(ctx)
@@ -290,11 +389,11 @@ func TestFileStore_CountAdmins(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 
-	_, err = store.Create(ctx, "admin1@example.com", "Admin1", RoleAdmin)
+	_, err = store.Create(ctx, "admin1@example.com", "Admin1", RoleAdmin, "")
 	require.NoError(t, err)
-	_, err = store.Create(ctx, "user1@example.com", "User1", RoleUser)
+	_, err = store.Create(ctx, "user1@example.com", "User1", RoleUser, "")
 	require.NoError(t, err)
-	_, err = store.Create(ctx, "admin2@example.com", "Admin2", RoleAdmin)
+	_, err = store.Create(ctx, "admin2@example.com", "Admin2", RoleAdmin, "")
 	require.NoError(t, err)
 
 	count, err = store.CountAdmins(ctx)
@@ -363,7 +462,7 @@ func TestFileStore_Close(t *testing.T) {
 	require.NoError(t, err)
 
 	// Operations should fail after close
-	_, err = store.Create(ctx, "closed@example.com", "Closed", RoleUser)
+	_, err = store.Create(ctx, "closed@example.com", "Closed", RoleUser, "")
 	assert.ErrorIs(t, err, ErrStorageClosed)
 
 	_, err = store.GetByID(ctx, []byte("id"))
@@ -458,4 +557,64 @@ func TestFileStore_HasAnyUsers_Error(t *testing.T) {
 
 	_, err := store.HasAnyUsers(ctx)
 	assert.ErrorIs(t, err, ErrStorageClosed)
+}
+
+func TestFileStore_GetByCertFingerprint(t *testing.T) {
+	t.Run("finds user by cert fingerprint", func(t *testing.T) {
+		backend, err := storage.NewMemoryBackend()
+		require.NoError(t, err)
+		store, err := NewFileStore(backend, WithCleanupInterval(100*time.Millisecond))
+		require.NoError(t, err)
+		defer func() { _ = store.Close() }()
+
+		ctx := context.Background()
+		u, err := store.Create(ctx, "certuser@example.com", "Cert User", RoleUser, "")
+		require.NoError(t, err)
+
+		u.CertBindings = []CertBinding{
+			{Fingerprint: "sha256:abc123", Name: "PIV 9a"},
+		}
+		err = store.Update(ctx, u)
+		require.NoError(t, err)
+
+		found, err := store.GetByCertFingerprint(ctx, "sha256:abc123")
+		require.NoError(t, err)
+		assert.Equal(t, "certuser@example.com", found.Username)
+	})
+
+	t.Run("returns error for unknown fingerprint", func(t *testing.T) {
+		backend, err := storage.NewMemoryBackend()
+		require.NoError(t, err)
+		store, err := NewFileStore(backend, WithCleanupInterval(100*time.Millisecond))
+		require.NoError(t, err)
+		defer func() { _ = store.Close() }()
+
+		ctx := context.Background()
+		_, err = store.GetByCertFingerprint(ctx, "unknown")
+		assert.ErrorIs(t, err, ErrCertBindingNotFound)
+	})
+
+	t.Run("returns error for empty fingerprint", func(t *testing.T) {
+		backend, err := storage.NewMemoryBackend()
+		require.NoError(t, err)
+		store, err := NewFileStore(backend, WithCleanupInterval(100*time.Millisecond))
+		require.NoError(t, err)
+		defer func() { _ = store.Close() }()
+
+		ctx := context.Background()
+		_, err = store.GetByCertFingerprint(ctx, "")
+		assert.ErrorIs(t, err, ErrCertBindingNotFound)
+	})
+
+	t.Run("returns error when closed", func(t *testing.T) {
+		backend, err := storage.NewMemoryBackend()
+		require.NoError(t, err)
+		store, err := NewFileStore(backend, WithCleanupInterval(100*time.Millisecond))
+		require.NoError(t, err)
+		_ = store.Close()
+
+		ctx := context.Background()
+		_, err = store.GetByCertFingerprint(ctx, "any")
+		assert.ErrorIs(t, err, ErrStorageClosed)
+	})
 }

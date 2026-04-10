@@ -1,11 +1,9 @@
-//go:build quantum
-
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -13,20 +11,22 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package dilithium2 provides Dilithium2 quantum-safe digital signatures
-// using the liboqs library. Dilithium is a NIST PQC standard finalist for
-// digital signatures.
+// Package dilithium2 provides ML-DSA-44 (Dilithium2) quantum-safe digital
+// signatures using the cloudflare/circl library. ML-DSA-44 is the NIST
+// FIPS 204 standard for post-quantum digital signatures at security level 2.
 package dilithium2
 
 import (
+	"crypto"
+	"crypto/rand"
 	"errors"
+	"io"
 
-	"github.com/open-quantum-safe/liboqs-go/oqs"
+	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
 )
 
 const (
-	// AlgorithmName is the OQS algorithm identifier
-	// Using ML-DSA-44 which is the NIST FIPS 204 standard name for Dilithium2
+	// AlgorithmName is the NIST FIPS 204 standard algorithm identifier
 	AlgorithmName = "ML-DSA-44"
 )
 
@@ -41,97 +41,149 @@ var (
 	ErrVerificationFailed = errors.New("dilithium2: verification failed")
 )
 
-// Dilithium2 wraps the liboqs Dilithium2 signature scheme
+// SignatureDetails holds the constant parameters for the ML-DSA-44 scheme
+type SignatureDetails struct {
+	Name               string
+	LengthPublicKey    int
+	LengthSecretKey    int // Seed size (32 bytes), not the expanded private key
+	MaxLengthSignature int
+}
+
+// Dilithium2 wraps the circl ML-DSA-44 signature scheme.
+// The 32-byte seed is stored internally for deterministic key reconstruction
+// and export. The expanded private key and public key are derived from the
+// seed and held in memory for signing and verification operations.
 type Dilithium2 struct {
-	signer *oqs.Signature
+	privateKey *mldsa44.PrivateKey
+	publicKey  *mldsa44.PublicKey
+	seed       [mldsa44.SeedSize]byte
+	hasSeed    bool
 }
 
-// New creates a new uninitialized Dilithium2 instance
+// New creates a new uninitialized Dilithium2 instance.
+// Call GenerateKeyPair to generate keys before signing.
 func New() (*Dilithium2, error) {
-	signer := oqs.Signature{}
-	if err := signer.Init(AlgorithmName, nil); err != nil {
-		return nil, err
-	}
-	return &Dilithium2{signer: &signer}, nil
+	return &Dilithium2{}, nil
 }
 
-// Create initializes Dilithium2 with an existing secret key
-func Create(secretKey []byte) (*Dilithium2, error) {
-	signer := oqs.Signature{}
-	if err := signer.Init(AlgorithmName, secretKey); err != nil {
+// Create initializes Dilithium2 from an existing 32-byte seed.
+// The seed is used to deterministically reconstruct the key pair.
+func Create(seed []byte) (*Dilithium2, error) {
+	if len(seed) != mldsa44.SeedSize {
 		return nil, ErrInvalidSecretKey
 	}
-	return &Dilithium2{signer: &signer}, nil
+
+	var seedArr [mldsa44.SeedSize]byte
+	copy(seedArr[:], seed)
+
+	pub, priv := mldsa44.NewKeyFromSeed(&seedArr)
+
+	return &Dilithium2{
+		privateKey: priv,
+		publicKey:  pub,
+		seed:       seedArr,
+		hasSeed:    true,
+	}, nil
 }
 
-// Clean releases resources held by the signer
-// This should always be called when done using the instance
+// Clean zeroes the internal seed bytes and releases key references.
+// This should always be called when done using the instance.
 func (d *Dilithium2) Clean() {
-	if d.signer != nil {
-		d.signer.Clean()
+	if d.hasSeed {
+		for i := range d.seed {
+			d.seed[i] = 0
+		}
+		d.hasSeed = false
 	}
+	d.privateKey = nil
+	d.publicKey = nil
 }
 
-// GenerateKeyPair generates a new Dilithium2 key pair
-// Returns the public key; the secret key is stored internally
+// GenerateKeyPair generates a new ML-DSA-44 key pair.
+// Returns the serialized public key (1312 bytes). The seed and expanded
+// private key are stored internally.
 func (d *Dilithium2) GenerateKeyPair() ([]byte, error) {
-	if d.signer == nil {
-		return nil, ErrNotInitialized
+	// Generate a random seed and derive the key pair from it so
+	// that we retain the seed for deterministic reconstruction.
+	var seed [mldsa44.SeedSize]byte
+	if _, err := io.ReadFull(rand.Reader, seed[:]); err != nil {
+		return nil, err
 	}
-	return d.signer.GenerateKeyPair()
+
+	pub, priv := mldsa44.NewKeyFromSeed(&seed)
+
+	d.privateKey = priv
+	d.publicKey = pub
+	d.seed = seed
+	d.hasSeed = true
+
+	return pub.Bytes(), nil
 }
 
-// ExportSecretKey returns the current secret key
+// ExportSecretKey returns a copy of the 32-byte seed.
+// Returns nil if no key has been generated or loaded.
 func (d *Dilithium2) ExportSecretKey() []byte {
-	if d.signer == nil {
+	if !d.hasSeed {
 		return nil
 	}
-	return d.signer.ExportSecretKey()
+	out := make([]byte, mldsa44.SeedSize)
+	copy(out, d.seed[:])
+	return out
 }
 
-// Sign creates a Dilithium2 signature for the given message
+// Sign creates an ML-DSA-44 signature for the given message.
+// The private key must have been generated or loaded via Create before calling.
 func (d *Dilithium2) Sign(message []byte) ([]byte, error) {
-	if d.signer == nil {
+	if d.privateKey == nil {
 		return nil, ErrNotInitialized
 	}
-	signature, err := d.signer.Sign(message)
+	sig, err := d.privateKey.Sign(nil, message, crypto.Hash(0))
 	if err != nil {
 		return nil, ErrSignatureFailed
 	}
-	return signature, nil
+	return sig, nil
 }
 
-// Verify verifies a Dilithium2 signature against a message and public key
+// Verify verifies an ML-DSA-44 signature against a message and public key.
+// The publicKey parameter is the serialized public key (1312 bytes). If nil,
+// the internally stored public key is used.
 func (d *Dilithium2) Verify(message, signature, publicKey []byte) (bool, error) {
-	if d.signer == nil {
+	var pk mldsa44.PublicKey
+
+	if publicKey != nil {
+		if err := pk.UnmarshalBinary(publicKey); err != nil {
+			return false, ErrVerificationFailed
+		}
+	} else if d.publicKey != nil {
+		pk = *d.publicKey
+	} else {
 		return false, ErrNotInitialized
 	}
-	valid, err := d.signer.Verify(message, signature, publicKey)
-	if err != nil {
-		return false, err
-	}
-	return valid, nil
+
+	return mldsa44.Verify(&pk, message, nil, signature), nil
 }
 
-// Details returns the algorithm details
-func (d *Dilithium2) Details() oqs.SignatureDetails {
-	if d.signer == nil {
-		return oqs.SignatureDetails{}
+// Details returns the algorithm parameters as constant values
+func (d *Dilithium2) Details() SignatureDetails {
+	return SignatureDetails{
+		Name:               AlgorithmName,
+		LengthPublicKey:    mldsa44.PublicKeySize,
+		LengthSecretKey:    mldsa44.SeedSize,
+		MaxLengthSignature: mldsa44.SignatureSize,
 	}
-	return d.signer.Details()
 }
 
-// PublicKeyLength returns the public key size in bytes
+// PublicKeyLength returns the public key size in bytes (1312)
 func (d *Dilithium2) PublicKeyLength() int {
-	return d.Details().LengthPublicKey
+	return mldsa44.PublicKeySize
 }
 
-// SecretKeyLength returns the secret key size in bytes
+// SecretKeyLength returns the seed size in bytes (32)
 func (d *Dilithium2) SecretKeyLength() int {
-	return d.Details().LengthSecretKey
+	return mldsa44.SeedSize
 }
 
-// SignatureLength returns the maximum signature size in bytes
+// SignatureLength returns the signature size in bytes (2420)
 func (d *Dilithium2) SignatureLength() int {
-	return d.Details().MaxLengthSignature
+	return mldsa44.SignatureSize
 }

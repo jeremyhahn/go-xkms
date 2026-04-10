@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,10 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build quantum
-
 // Package main demonstrates quantum-safe cryptography using ML-DSA and ML-KEM.
-// This example shows how quantum algorithms integrate seamlessly with the keychain API.
+// This example shows how quantum algorithms integrate seamlessly with the xkms API.
 package main
 
 import (
@@ -27,14 +25,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/quantum"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func main() {
-	// Create a temporary directory for the keychain
+	// Create a temporary directory for the xkms
 	tmpDir := filepath.Join(os.TempDir(), "quantum-example")
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
@@ -52,7 +50,7 @@ func main() {
 	defer func() { _ = quantumBackend.Close() }()
 
 	// Create keystore instance (optional, provides high-level API)
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     quantumBackend,
 		CertStorage: storage,
 	})
@@ -61,7 +59,7 @@ func main() {
 	}
 	defer func() { _ = ks.Close() }()
 
-	fmt.Println("=== Quantum Cryptography Examples ===\n")
+	fmt.Println("=== Quantum Cryptography Examples ===")
 
 	// Example 1: Generate ML-DSA-44 signing key (smallest, NIST Level 2)
 	fmt.Println("1. Generating ML-DSA-44 key...")
@@ -216,7 +214,7 @@ func main() {
 	fmt.Println("  • ML-DSA-65 (Dilithium3) - NIST FIPS 204, Security Level 3 (recommended)")
 	fmt.Println("  • ML-KEM-768 (Kyber768) - NIST FIPS 203, Security Level 3 (recommended)")
 	fmt.Println("\nKey Features Demonstrated:")
-	fmt.Println("  ✓ Seamless integration with keychain Backend interface")
+	fmt.Println("  ✓ Seamless integration with xkms Backend interface")
 	fmt.Println("  ✓ Standard crypto.Signer interface for ML-DSA")
 	fmt.Println("  ✓ Key Encapsulation Mechanism (KEM) for ML-KEM")
 	fmt.Println("  ✓ Key persistence and retrieval")

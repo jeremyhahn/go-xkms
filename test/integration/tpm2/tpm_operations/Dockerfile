@@ -1,4 +1,4 @@
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
 # Install dependencies
 RUN apt-get update && apt-get install -y \
@@ -47,7 +47,7 @@ echo "Running TPM operations tests with coverage..."\n\
 mkdir -p /app/coverage\n\
 \n\
 # Run tests for HashSequence, SignValidate, CreateIDevID flows\n\
-go test -v -p 1 -tags="integration tpm2 tpmops" -timeout=30m \\\n\
+go test -v -p 1 -tags="integration tpm2 tpmops codec_cbor codec_json codec_msgpack" -timeout=30m \\\n\
     -coverprofile=/app/coverage/tpm_operations.out \\\n\
     -covermode=atomic \\\n\
     -coverpkg=github.com/jeremyhahn/go-tpm/tpm2 \\\n\

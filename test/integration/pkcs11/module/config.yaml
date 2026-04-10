@@ -1,0 +1,67 @@
+# xKMS server configuration for PKCS#11 module integration testing
+#
+# This configuration enables the gRPC server with Unix socket support
+# for the PKCS#11 module to connect to.
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  rest_port: 8443
+  grpc_port: 9443
+
+# Protocol enablement
+protocols:
+  unix: true
+  rest: true
+  grpc: true
+  quic: false
+  mcp: false
+
+# Unix socket configuration
+unix:
+  enabled: true
+  socket_path: /var/run/xkms/xkms.sock
+  socket_mode: 0755
+
+# TLS configuration
+tls:
+  enabled: true
+  cert_file: /etc/xkms/certs/server.crt
+  key_file: /etc/xkms/certs/server.key
+  insecure_skip_verify: true
+
+# Logging configuration
+logging:
+  level: debug
+  format: json
+
+# Storage configuration
+storage:
+  backend: filesystem
+  path: /data
+
+# Default backend (software, pkcs11, tpm2, awskms, gcpkms, azurekv)
+default_backend: software
+
+# Backend configurations
+backends:
+  software:
+    enabled: true
+    path: /data/keys
+
+  # SoftHSM2 backend for pkcs11 testing
+  pkcs11:
+    enabled: true
+    library: /usr/lib/softhsm/libsofthsm2.so
+    token: "xkms-test"
+    pin: "1234"
+
+# Health check configuration
+health:
+  enabled: true
+  interval: 30s
+
+# Metrics (optional)
+metrics:
+  enabled: false
+  port: 9090

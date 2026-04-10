@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,10 +27,10 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/wrapping"
-	"github.com/jeremyhahn/go-keychain/pkg/encoding/jwk"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Ensure Backend implements backend.ImportExportBackend interface
@@ -443,6 +443,18 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 		return nil, backend.ErrKeyNotExportable
 	}
 
+	return nil, backend.ErrNotSupported
+}
+
+// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
+// Azure Key Vault does not support exporting raw key material.
+// This method returns ErrNotSupported.
+func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+	if attrs == nil {
+		return nil, backend.ErrInvalidAttributes
+	}
+
+	// Azure Key Vault does not support exporting raw key material
 	return nil, backend.ErrNotSupported
 }
 

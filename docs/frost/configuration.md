@@ -9,7 +9,7 @@ type Config struct {
     // Storage for public components (group public key, verification shares, metadata)
     PublicStorage storage.Backend
 
-    // Backend for secret key share storage (any go-keychain backend)
+    // Backend for secret key share storage (any go-xkms backend)
     SecretBackend types.Backend
 
     // Optional: Custom DKG implementation (if nil, uses TrustedDealer)
@@ -57,14 +57,14 @@ Storage backend for public components that don't require protection.
 - Custom storage adapters (implement `storage.Backend`)
 
 **Cloud Storage Integration:**
-go-keychain's `storage.Backend` interface is compatible with external object storage libraries like go-objstore. To use cloud storage (S3, GCS, Azure Blob), create an adapter in your application that bridges the external library to go-keychain's interface.
+go-xkms's `storage.Backend` interface is compatible with external object storage libraries like go-objstore. To use cloud storage (S3, GCS, Azure Blob), create an adapter in your application that bridges the external library to go-xkms's interface.
 
 ```go
 // File-based storage (built-in)
-publicStorage := file.NewBackend("/var/lib/frost/public")
+publicStorage := file.New("/var/lib/frost/public")
 
 // Memory storage (built-in, testing only)
-publicStorage := memory.NewBackend()
+publicStorage := storage.NewMemory()
 
 // Custom cloud storage adapter (implement in your application)
 // See docs/architecture/objstore-integration.md for adapter examples
@@ -81,7 +81,6 @@ Backend for storing the secret key share. This should be a secure backend.
 |---------|------|----------------|
 | TPM2 | Hardware | High (PCR-bound) |
 | PKCS#11 | Hardware | High (HSM) |
-| SmartCard-HSM | Hardware | High |
 | AWS KMS | Cloud | High (envelope encryption) |
 | GCP KMS | Cloud | High |
 | Azure Key Vault | Cloud | High |
@@ -109,7 +108,7 @@ awsBackend, _ := awskms.NewBackend(&awskms.Config{
 })
 
 // Software backend (development)
-softwareBackend, _ := pkcs8.NewBackend(&pkcs8.Config{
+softwareBackend, _ := software.NewBackend(&software.Config{
     Directory: "/var/lib/frost/secrets",
     Password:  []byte("secret-password"),
 })
@@ -170,7 +169,7 @@ Minimum number of participants required to sign (M in M-of-N).
 **Constraints:**
 - Minimum: 2
 - Maximum: 255
-- Must be ≤ DefaultTotal
+- Must be <= DefaultTotal
 
 ```go
 config := &frost.Config{
@@ -290,19 +289,19 @@ privateKey, err := backend.GenerateKey(attrs)
 package main
 
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/memory"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func developmentConfig() *frost.Config {
     return &frost.Config{
         // Use file storage for public data
-        PublicStorage: file.NewBackend("./frost-data/public"),
+        PublicStorage: file.New("./frost-data/public"),
 
         // Use file storage for secrets (development only!)
-        SecretBackend: file.NewBackend("./frost-data/secrets"),
+        SecretBackend: file.New("./frost-data/secrets"),
 
         // Use trusted dealer
         DKG: nil,
@@ -328,10 +327,10 @@ func developmentConfig() *frost.Config {
 package main
 
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/tpm2"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func productionTPMConfig() (*frost.Config, error) {
@@ -346,7 +345,7 @@ func productionTPMConfig() (*frost.Config, error) {
 
     return &frost.Config{
         // File storage for public data
-        PublicStorage: file.NewBackend("/var/lib/frost/public"),
+        PublicStorage: file.New("/var/lib/frost/public"),
 
         // TPM2 for secrets
         SecretBackend: tpmBackend,
@@ -377,18 +376,18 @@ func productionTPMConfig() (*frost.Config, error) {
 package main
 
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func productionAWSConfig() (*frost.Config, error) {
     // File storage for public data
     // NOTE: For S3 storage, create an adapter in your application that
-    // implements storage.Backend. go-keychain's interface is compatible
+    // implements storage.Backend. go-xkms's interface is compatible
     // with external libraries like go-objstore.
-    publicStorage := file.NewBackend("/var/lib/frost/public")
+    publicStorage := file.New("/var/lib/frost/public")
 
     // AWS KMS for secrets
     kmsBackend, err := awskms.NewBackend(&awskms.Config{
@@ -426,10 +425,10 @@ func productionAWSConfig() (*frost.Config, error) {
 package main
 
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/vault"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/vault"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func multiCloudConfig() (*frost.Config, error) {
@@ -444,7 +443,7 @@ func multiCloudConfig() (*frost.Config, error) {
     }
 
     return &frost.Config{
-        PublicStorage: file.NewBackend("/var/lib/frost/public"),
+        PublicStorage: file.New("/var/lib/frost/public"),
         SecretBackend: vaultBackend,
         Algorithm:     types.FrostAlgorithmEd25519,
 
@@ -482,7 +481,63 @@ The FROST backend validates configuration on initialization:
 1. **PublicStorage** must not be nil
 2. **SecretBackend** must not be nil
 3. **ParticipantID** must be 1 to DefaultTotal (if DefaultTotal > 0)
-4. **DefaultThreshold** must be ≥ 2 (if specified)
-5. **DefaultTotal** must be ≥ DefaultThreshold (if specified)
+4. **DefaultThreshold** must be >= 2 (if specified)
+5. **DefaultTotal** must be >= DefaultThreshold (if specified)
 6. **Participants** length must equal DefaultTotal (if both specified)
 7. **Algorithm** must be a valid FrostAlgorithm constant
+
+## Service Integration
+
+### Build Tag Registration
+
+The FROST backend registers itself with the xkms service registry when compiled with the `frost` build tag. This is handled automatically in an `init()` function within `pkg/xkms/register_frost.go`:
+
+```go
+//go:build frost
+
+func init() {
+    RegisterBackend(BackendFROST)
+    RegisterBackendFactory(BackendFROST, newFROSTKeyProvider)
+}
+```
+
+Build with FROST support:
+
+```bash
+go build -tags frost ./...
+```
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendFROST) {
+    // FROST operations are available
+}
+```
+
+### AutoInitialize Configuration
+
+The service factory accepts a subset of FROST configuration via the generic config map:
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `threshold` | `int` | 2 | Minimum signers required (M in M-of-N) |
+| `total` | `int` | 3 | Total participants (N in M-of-N) |
+| `participant_id` | `int` | 1 | This node's participant ID |
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DataDir: "/var/lib/xkms",
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendFROST: {
+            "threshold":      3,
+            "total":          5,
+            "participant_id": 1,
+        },
+    },
+})
+```
+
+The factory creates in-memory public storage and a PKCS#8 software backend for secret key shares by default. For production deployments with hardware-backed secret storage (TPM2, HSM, cloud KMS), use the direct `frost.Config` API documented in the sections above to configure `SecretBackend` explicitly.

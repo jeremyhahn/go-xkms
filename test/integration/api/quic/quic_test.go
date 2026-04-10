@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -13,14 +13,14 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package quic provides QUIC/HTTP3 integration tests for go-keychain.
+// Package quic provides QUIC/HTTP3 integration tests for go-xkms.
 // These tests verify that all CLI commands work correctly when using the QUIC protocol.
 package quic
 
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/test/integration/api/commands"
+	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
 // checkQUICAvailable checks if the QUIC server is available

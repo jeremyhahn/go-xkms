@@ -7,8 +7,8 @@ import (
 	"math"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // NVWrite seals a secret to an NV RAM index against the Platform Policy.
@@ -31,10 +31,18 @@ func (tpm *TPM2) NVWrite(
 
 	secretBytes = keyAttrs.SealData.Bytes()
 
+	if len(secretBytes) > math.MaxUint16 {
+		return ErrNVSecretTooLarge
+	}
+
 	var policyDigest tpm2.TPM2BDigest
 	var policyRead bool
 	if keyAttrs.PlatformPolicy {
-		policyDigest = tpm.PlatformPolicyDigest()
+		var pdErr error
+		policyDigest, pdErr = tpm.PlatformPolicyDigest()
+		if pdErr != nil {
+			return pdErr
+		}
 		policyRead = true
 	}
 
@@ -61,12 +69,7 @@ func (tpm *TPM2) NVWrite(
 					OwnerWrite: true,
 					PolicyRead: policyRead,
 				},
-				DataSize: func() uint16 {
-					if len(secretBytes) > math.MaxUint16 {
-						panic("secretBytes too large")
-					}
-					return uint16(len(secretBytes))
-				}(),
+				DataSize: uint16(len(secretBytes)), // #nosec G115 -- Bounds checked above
 			}),
 	}
 
@@ -129,26 +132,37 @@ func (tpm *TPM2) NVWrite(
 	return nil
 }
 
-// NVRead unseals data from NV RAM index protected by the Platform PCR policy.
+// NVRead reads data from an NV RAM index. When PlatformPolicy is set on the
+// key attributes, a policy session is used; otherwise, simple password
+// authorization is used (suitable for owner-hierarchy NV reads).
 // The NV index must have been defined with NT=Ordinary.
 func (tpm *TPM2) NVRead(
 	keyAttrs *types.KeyAttributes,
 	dataSize uint16) ([]byte, error) {
 
 	var hierarchyAuth []byte
-	var err error
 
 	if keyAttrs.TPMAttributes == nil {
 		return nil, store.ErrInvalidKeyAttributes
 	}
 
-	if keyAttrs.Parent.TPMAttributes.HierarchyAuth != nil {
+	if keyAttrs.Parent != nil && keyAttrs.Parent.TPMAttributes.HierarchyAuth != nil {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	session, closer, err := tpm.CreateSession(keyAttrs)
-	if err != nil {
-		return nil, err
+	// Build the NV index auth session. Platform policy requires a policy
+	// session; all other cases use simple password authorization.
+	var session tpm2.Session
+	var closer func() error
+	if keyAttrs.PlatformPolicy {
+		var err error
+		session, closer, err = tpm.CreateSession(keyAttrs)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		session = tpm2.PasswordAuth(hierarchyAuth)
+		closer = func() error { return nil }
 	}
 	defer func() {
 		if err := closer(); err != nil {
@@ -187,8 +201,8 @@ func (tpm *TPM2) NVRead(
 		return nil, err
 	}
 
-	tpm.logger.Debug("NVReadSecret: retrieved secret",
-		slog.String("secret", string(readRsp.Data.Buffer)))
+	tpm.logger.Debug("NVRead: retrieved data",
+		slog.Int("bytes", len(readRsp.Data.Buffer)))
 
 	return readRsp.Data.Buffer, nil
 }
@@ -215,7 +229,11 @@ func (tpm *TPM2) NVDefineCounter(keyAttrs *types.KeyAttributes) error {
 	var policyDigest tpm2.TPM2BDigest
 	var policyRead bool
 	if keyAttrs.PlatformPolicy {
-		policyDigest = tpm.PlatformPolicyDigest()
+		var pdErr error
+		policyDigest, pdErr = tpm.PlatformPolicyDigest()
+		if pdErr != nil {
+			return pdErr
+		}
 		policyRead = true
 	}
 
@@ -297,7 +315,11 @@ func (tpm *TPM2) NVDefineExtend(keyAttrs *types.KeyAttributes) error {
 	var policyDigest tpm2.TPM2BDigest
 	var policyRead bool
 	if keyAttrs.PlatformPolicy {
-		policyDigest = tpm.PlatformPolicyDigest()
+		var pdErr error
+		policyDigest, pdErr = tpm.PlatformPolicyDigest()
+		if pdErr != nil {
+			return pdErr
+		}
 		policyRead = true
 	}
 
@@ -531,9 +553,17 @@ func (tpm *TPM2) NVReadCounter(keyAttrs *types.KeyAttributes) (uint64, error) {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	session, closer, err := tpm.CreateSession(keyAttrs)
-	if err != nil {
-		return 0, err
+	var session tpm2.Session
+	var closer func() error
+	if keyAttrs.PlatformPolicy {
+		var err error
+		session, closer, err = tpm.CreateSession(keyAttrs)
+		if err != nil {
+			return 0, err
+		}
+	} else {
+		session = tpm2.PasswordAuth(hierarchyAuth)
+		closer = func() error { return nil }
 	}
 	defer func() {
 		if err := closer(); err != nil {
@@ -598,9 +628,17 @@ func (tpm *TPM2) NVReadExtend(keyAttrs *types.KeyAttributes) ([]byte, error) {
 		hierarchyAuth = keyAttrs.Parent.TPMAttributes.HierarchyAuth.Bytes()
 	}
 
-	session, closer, err := tpm.CreateSession(keyAttrs)
-	if err != nil {
-		return nil, err
+	var session tpm2.Session
+	var closer func() error
+	if keyAttrs.PlatformPolicy {
+		var err error
+		session, closer, err = tpm.CreateSession(keyAttrs)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		session = tpm2.PasswordAuth(hierarchyAuth)
+		closer = func() error { return nil }
 	}
 	defer func() {
 		if err := closer(); err != nil {
@@ -716,4 +754,127 @@ func hashAlgDigestSize(hashAlg tpm2.TPMIAlgHash) (uint16, error) {
 	default:
 		return 0, ErrHashAlgorithmNotSupported
 	}
+}
+
+// writeCertToNVRAM writes a DER-encoded certificate to TPM NVRAM.
+func (tpm *TPM2) writeCertToNVRAM(nvIndex tpm2.TPMHandle, certDER []byte) error {
+	tpm.logger.Debug("writing certificate to NV index",
+		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)),
+		slog.Int("size_bytes", len(certDER)))
+
+	// Define NV space
+	defs := tpm2.NVDefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		PublicInfo: tpm2.New2B(
+			tpm2.TPMSNVPublic{
+				NVIndex: nvIndex,
+				NameAlg: tpm.algID,
+				Attributes: tpm2.TPMANV{
+					OwnerWrite: true,
+					AuthWrite:  true,
+					OwnerRead:  true,
+					AuthRead:   true,
+					NoDA:       true,
+					NT:         tpm2.TPMNT(0x01),
+				},
+				DataSize: uint16(len(certDER)),
+			}),
+	}
+
+	_, err := defs.Execute(tpm.transport)
+	if err != nil {
+		tpm.logger.Error("failed to define NV space", slog.String("error", err.Error()))
+		return err
+	}
+
+	pub, err := defs.PublicInfo.Contents()
+	if err != nil {
+		tpm.logger.Error("failed to get NV public info", slog.String("error", err.Error()))
+		return err
+	}
+
+	nvName, err := tpm2.NVName(pub)
+	if err != nil {
+		tpm.logger.Error("failed to compute NV name", slog.String("error", err.Error()))
+		return err
+	}
+
+	write := tpm2.NVWrite{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		NVIndex: tpm2.NamedHandle{
+			Handle: pub.NVIndex,
+			Name:   *nvName,
+		},
+		Data: tpm2.TPM2BMaxNVBuffer{
+			Buffer: certDER,
+		},
+		Offset: 0,
+	}
+
+	if _, err := write.Execute(tpm.transport); err != nil {
+		tpm.logger.Error("failed to write NV data", slog.String("error", err.Error()))
+		return err
+	}
+
+	return nil
+}
+
+// readCertFromNVRAM reads a DER-encoded certificate from TPM NVRAM.
+func (tpm *TPM2) readCertFromNVRAM(nvIndex tpm2.TPMHandle) ([]byte, error) {
+	tpm.logger.Debug("reading certificate from NV index",
+		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
+
+	// Read NV public to get the Name and DataSize
+	nvPub, err := tpm2.NVReadPublic{
+		NVIndex: nvIndex,
+	}.Execute(tpm.transport)
+	if err != nil {
+		return nil, err
+	}
+
+	pub, err := nvPub.NVPublic.Contents()
+	if err != nil {
+		return nil, err
+	}
+
+	// Read NV data
+	nvRead, err := tpm2.NVRead{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		NVIndex: tpm2.NamedHandle{
+			Handle: nvIndex,
+			Name:   nvPub.NVName,
+		},
+		Size:   pub.DataSize,
+		Offset: 0,
+	}.Execute(tpm.transport)
+	if err != nil {
+		return nil, err
+	}
+
+	return nvRead.Data.Buffer, nil
+}
+
+// deleteCertFromNVRAM undefines an NV index from TPM NVRAM.
+func (tpm *TPM2) deleteCertFromNVRAM(nvIndex tpm2.TPMHandle) error {
+	tpm.logger.Debug("deleting certificate from NV index",
+		slog.String("nv_index", fmt.Sprintf("0x%08X", nvIndex)))
+
+	_, err := tpm2.NVUndefineSpace{
+		AuthHandle: tpm2.AuthHandle{
+			Handle: tpm2.TPMRHOwner,
+			Auth:   tpm2.PasswordAuth(nil),
+		},
+		NVIndex: nvIndex,
+	}.Execute(tpm.transport)
+
+	return err
 }

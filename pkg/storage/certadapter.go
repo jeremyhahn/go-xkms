@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 )
@@ -23,7 +24,7 @@ import (
 // DER-encoded bytes for storage.
 //
 // This adapter implements the CertificateStorageAdapter interface used by
-// the certstore and keychain packages.
+// the certstore and xkms packages.
 type CertAdapter struct {
 	backend Backend
 }
@@ -42,7 +43,7 @@ func (ca *CertAdapter) Backend() Backend {
 
 // SaveCert stores a certificate using the backend.
 // The certificate is DER-encoded before storage.
-func (ca *CertAdapter) SaveCert(id string, cert *x509.Certificate) error {
+func (ca *CertAdapter) SaveCert(ctx context.Context, id string, cert *x509.Certificate) error {
 	if id == "" {
 		return ErrInvalidID
 	}
@@ -56,17 +57,17 @@ func (ca *CertAdapter) SaveCert(id string, cert *x509.Certificate) error {
 	}
 
 	key := CertPath(id)
-	return ca.backend.Put(key, certData, nil)
+	return ca.backend.Put(ctx, key, certData)
 }
 
 // GetCert retrieves and parses a certificate from the backend.
-func (ca *CertAdapter) GetCert(id string) (*x509.Certificate, error) {
+func (ca *CertAdapter) GetCert(ctx context.Context, id string) (*x509.Certificate, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
 
 	key := CertPath(id)
-	certData, err := ca.backend.Get(key)
+	certData, err := ca.backend.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -80,18 +81,18 @@ func (ca *CertAdapter) GetCert(id string) (*x509.Certificate, error) {
 }
 
 // DeleteCert removes a certificate from the backend.
-func (ca *CertAdapter) DeleteCert(id string) error {
+func (ca *CertAdapter) DeleteCert(ctx context.Context, id string) error {
 	if id == "" {
 		return ErrInvalidID
 	}
 
 	key := CertPath(id)
-	return ca.backend.Delete(key)
+	return ca.backend.Delete(ctx, key)
 }
 
 // SaveCertChain stores a certificate chain using the backend.
 // The chain is PEM-encoded before storage.
-func (ca *CertAdapter) SaveCertChain(id string, chain []*x509.Certificate) error {
+func (ca *CertAdapter) SaveCertChain(ctx context.Context, id string, chain []*x509.Certificate) error {
 	if id == "" {
 		return ErrInvalidID
 	}
@@ -112,17 +113,17 @@ func (ca *CertAdapter) SaveCertChain(id string, chain []*x509.Certificate) error
 	}
 
 	key := CertChainPath(id)
-	return ca.backend.Put(key, chainData, nil)
+	return ca.backend.Put(ctx, key, chainData)
 }
 
 // GetCertChain retrieves and parses a certificate chain from the backend.
-func (ca *CertAdapter) GetCertChain(id string) ([]*x509.Certificate, error) {
+func (ca *CertAdapter) GetCertChain(ctx context.Context, id string) ([]*x509.Certificate, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
 
 	key := CertChainPath(id)
-	chainData, err := ca.backend.Get(key)
+	chainData, err := ca.backend.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -136,18 +137,18 @@ func (ca *CertAdapter) GetCertChain(id string) ([]*x509.Certificate, error) {
 }
 
 // ListCerts returns all certificate IDs from the backend.
-func (ca *CertAdapter) ListCerts() ([]string, error) {
-	return ListCerts(ca.backend)
+func (ca *CertAdapter) ListCerts(ctx context.Context) ([]string, error) {
+	return ListCerts(ctx, ca.backend)
 }
 
 // CertExists checks if a certificate exists in the backend.
-func (ca *CertAdapter) CertExists(id string) (bool, error) {
+func (ca *CertAdapter) CertExists(ctx context.Context, id string) (bool, error) {
 	if id == "" {
 		return false, ErrInvalidID
 	}
 
 	key := CertPath(id)
-	return ca.backend.Exists(key)
+	return ca.backend.Exists(ctx, key)
 }
 
 // Close releases resources held by the backend.

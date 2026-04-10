@@ -4,7 +4,7 @@
 
 set -e
 
-CERT_DIR="${CERT_DIR:-/etc/keychain/certs}"
+CERT_DIR="${CERT_DIR:-/etc/xkms/certs}"
 DAYS_VALID="${DAYS_VALID:-365}"
 
 echo "Generating test TLS certificates in ${CERT_DIR}..."
@@ -37,15 +37,15 @@ C = US
 ST = Test
 L = Test
 O = Test Server
-CN = keychain-server
+CN = xkms-server
 
 [req_ext]
 subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = localhost
-DNS.2 = keychain-server
-DNS.3 = keychain-sdk-server
+DNS.2 = xkms-server
+DNS.3 = xkms-sdk-server
 IP.1 = 127.0.0.1
 IP.2 = ::1
 EOF
@@ -63,8 +63,8 @@ subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = localhost
-DNS.2 = keychain-server
-DNS.3 = keychain-sdk-server
+DNS.2 = xkms-server
+DNS.3 = xkms-sdk-server
 IP.1 = 127.0.0.1
 IP.2 = ::1
 EOF

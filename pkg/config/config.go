@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,50 +15,94 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // Config represents the complete server configuration
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Protocols ProtocolsConfig `yaml:"protocols"`
-	Unix      UnixConfig      `yaml:"unix"`
-	Logging   LoggingConfig   `yaml:"logging"`
-	TLS       TLSConfig       `yaml:"tls"`
-	Auth      AuthConfig      `yaml:"auth"`
-	WebAuthn  *WebAuthnConfig `yaml:"webauthn,omitempty"`
-	RateLimit RateLimitConfig `yaml:"ratelimit"`
-	Metrics   MetricsConfig   `yaml:"metrics"`
-	Health    HealthConfig    `yaml:"health"`
-	Storage   StorageConfig   `yaml:"storage"`
-	RNG       RNGConfig       `yaml:"rng"`
-	Default   DefaultConfig   `yaml:"default_backend"`
-	Backends  BackendsConfig  `yaml:"backends"`
+	Server        ServerConfig              `yaml:"server"`
+	Protocols     ProtocolsConfig           `yaml:"protocols"`
+	Unix          UnixConfig                `yaml:"unix"`
+	Logging       LoggingConfig             `yaml:"logging"`
+	TLS           TLSConfig                 `yaml:"tls"`
+	Auth          AuthConfig                `yaml:"auth"`
+	WebAuthn      *WebAuthnConfig           `yaml:"webauthn,omitempty"`
+	RateLimit     RateLimitConfig           `yaml:"ratelimit"`
+	Metrics       MetricsConfig             `yaml:"metrics"`
+	Health        HealthConfig              `yaml:"health"`
+	Storage       StorageConfig             `yaml:"storage"`
+	RNG           RNGConfig                 `yaml:"rng"`
+	Default       DefaultConfig             `yaml:"default_backend"`
+	Backends      BackendsConfig            `yaml:"backends"`
+	Bootstrap     BootstrapConfig           `yaml:"bootstrap"`
+	Barrier       BarrierConfig             `yaml:"barrier"`
+	PIN           PINConfig                 `yaml:"pin"`
+	InitBootstrap InitBootstrapConfig       `yaml:"init_bootstrap"`
+	Credentials   CredentialsConfig         `yaml:"credentials"`
+	CA            *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
+}
+
+// BarrierConfig configures the barrier (seal/unseal) subsystem.
+type BarrierConfig struct {
+	Enabled         bool     `yaml:"enabled"`
+	RootKeyPath     string   `yaml:"root_key_path"`
+	PreferenceOrder []string `yaml:"preference_order,omitempty"`
+}
+
+// PINConfig configures the PIN management subsystem.
+type PINConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	Strategy        string `yaml:"strategy"`
+	MaxAttempts     int    `yaml:"max_attempts"`
+	LockoutDuration string `yaml:"lockout_duration"`
+}
+
+// InitBootstrapConfig configures the server initialization bootstrap (setup token + admin ceremony).
+type InitBootstrapConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	TokenTTL       time.Duration `yaml:"token_ttl"`
+	ThresholdMode  bool          `yaml:"threshold_mode"`
+	AdminThreshold int           `yaml:"admin_threshold"`
+	AdminTotal     int           `yaml:"admin_total"`
+}
+
+// CredentialsConfig configures how backend credentials (PKCS#11 User PIN, TPM2 auth, etc.)
+// are sealed at rest. Uses the same seal strategies as the barrier via PlatformStore/PlatformSealer.
+// NOTE: SO PIN is NEVER stored -- always verified against the actual backend.
+type CredentialsConfig struct {
+	// SealStrategy determines how backend credentials are sealed at rest.
+	// Valid values: manual, barrier, tpm2, pkcs11, aws_kms, gcp_kms, azure_kv, vault, software
+	// "manual" (default): credentials NOT stored -- operator enters at each startup.
+	SealStrategy string `yaml:"seal_strategy" json:"seal_strategy"`
 }
 
 // ServerConfig contains server-level settings
 type ServerConfig struct {
-	Host     string `yaml:"host"`
-	RESTPort int    `yaml:"rest_port"`
-	GRPCPort int    `yaml:"grpc_port"`
-	QUICPort int    `yaml:"quic_port"`
-	MCPPort  int    `yaml:"mcp_port"`
+	Host      string `yaml:"host"`
+	RESTPort  int    `yaml:"rest_port"`
+	GRPCPort  int    `yaml:"grpc_port"`
+	QUICPort  int    `yaml:"quic_port"`
+	MCPPort   int    `yaml:"mcp_port"`
+	NoisePort int    `yaml:"noise_port"`
 }
 
 // ProtocolsConfig controls which protocols are enabled
 type ProtocolsConfig struct {
 	// Unix enables the Unix domain socket for local IPC (default: true)
-	Unix bool `yaml:"unix"`
-	REST bool `yaml:"rest"`
-	GRPC bool `yaml:"grpc"`
-	QUIC bool `yaml:"quic"`
-	MCP  bool `yaml:"mcp"`
+	Unix  bool `yaml:"unix"`
+	REST  bool `yaml:"rest"`
+	GRPC  bool `yaml:"grpc"`
+	QUIC  bool `yaml:"quic"`
+	MCP   bool `yaml:"mcp"`
+	Noise bool `yaml:"noise"`
 }
 
 // UnixConfig contains Unix domain socket server settings
@@ -88,6 +132,10 @@ type TLSConfig struct {
 	KeyFile  string `yaml:"key_file"`
 	CAFile   string `yaml:"ca_file"`
 
+	// ServerCN is the Common Name for the server TLS certificate.
+	// Used with CA-backed TLS to identify which certificate to load.
+	ServerCN string `yaml:"server_cn" json:"server_cn"`
+
 	// Client certificate verification (mTLS)
 	ClientAuth string   `yaml:"client_auth"` // none, request, require, verify, require_and_verify
 	ClientCAs  []string `yaml:"client_cas"`  // Additional client CA certificates
@@ -105,7 +153,7 @@ type TLSConfig struct {
 // AuthConfig controls authentication and authorization
 type AuthConfig struct {
 	Enabled bool   `yaml:"enabled"`
-	Type    string `yaml:"type"` // noop, mtls, jwt, adaptive
+	Type    string `yaml:"type"` // noop, mtls, jwt, adaptive, composite
 
 	// JWT authentication
 	JWT *JWTConfig `yaml:"jwt,omitempty"`
@@ -120,6 +168,27 @@ type AuthConfig struct {
 
 	// RBAC enables role-based access control
 	EnableRBAC bool `yaml:"enable_rbac"`
+
+	// Composite authentication (chains multiple authenticators)
+	Composite *CompositeAuthConfig `yaml:"composite,omitempty"`
+
+	// Audit logging
+	Audit *AuditConfig `yaml:"audit,omitempty"`
+}
+
+// CompositeAuthConfig configures composite authentication that chains
+// multiple authenticators. A request is authenticated if any method succeeds.
+type CompositeAuthConfig struct {
+	// Methods lists the authentication methods to chain (e.g., ["jwt", "mtls"]).
+	Methods []string `yaml:"methods"`
+}
+
+// AuditConfig configures audit logging for authentication and authorization events.
+type AuditConfig struct {
+	// Enabled controls whether audit logging is active.
+	Enabled bool `yaml:"enabled"`
+	// Path is the file path for the audit log.
+	Path string `yaml:"path"`
 }
 
 // WebAuthnConfig controls WebAuthn/FIDO2 authentication
@@ -146,7 +215,7 @@ type WebAuthnConfig struct {
 	UserVerification        string `yaml:"user_verification"`        // "discouraged", "preferred", "required"
 
 	// JWT settings for token generation after successful authentication
-	JWTKeyID     string   `yaml:"jwt_key_id"`     // Key ID in keychain for JWT signing
+	JWTKeyID     string   `yaml:"jwt_key_id"`     // Key ID in xkms for JWT signing
 	JWTIssuer    string   `yaml:"jwt_issuer"`     // JWT issuer claim
 	JWTAudience  []string `yaml:"jwt_audience"`   // JWT audience claim
 	JWTExpiresIn string   `yaml:"jwt_expires_in"` // JWT expiration duration (e.g., "24h")
@@ -195,10 +264,24 @@ type HealthConfig struct {
 	Path    string `yaml:"path"`
 }
 
-// StorageConfig controls storage backend for metadata
+// StorageConfig controls storage backend for metadata.
+// Valid backends: "file", "memory", "pebble", "qrdb".
 type StorageConfig struct {
-	Backend string `yaml:"backend"`
-	Path    string `yaml:"path"`
+	Backend string     `yaml:"backend"`
+	Path    string     `yaml:"path"`
+	QRDB    QRDBConfig `yaml:"qrdb"`
+}
+
+// QRDBConfig configures the QRDB distributed storage backend.
+type QRDBConfig struct {
+	// Address is the QRDB cluster endpoint (e.g., "https://localhost:63002").
+	Address string `yaml:"address"`
+
+	// Transport specifies the SDK transport type: "rest", "grpc", or "embedded".
+	Transport string `yaml:"transport"`
+
+	// TLS configures the TLS settings for the QRDB connection.
+	TLS TLSConfig `yaml:"tls"`
 }
 
 // RNGConfig controls random number generation settings
@@ -247,7 +330,7 @@ type RNGPKCS11Config struct {
 	PINRequired bool `yaml:"pin_required"`
 
 	// PIN is the authentication PIN (if PINRequired is true)
-	// Note: Consider using environment variable KEYCHAIN_RNG_PKCS11_PIN instead
+	// Note: Consider using environment variable XKMS_RNG_PKCS11_PIN instead
 	PIN string `yaml:"pin,omitempty"`
 }
 
@@ -264,6 +347,7 @@ type BackendsConfig struct {
 	GCPKMS   *GCPKMSConfig   `yaml:"gcpkms,omitempty"`
 	AzureKV  *AzureKVConfig  `yaml:"azurekv,omitempty"`
 	Vault    *VaultConfig    `yaml:"vault,omitempty"`
+	Phone    *PhoneConfig    `yaml:"phone,omitempty"`
 }
 
 // SoftwareConfig contains software backend settings (uses PKCS#8 internally)
@@ -328,6 +412,88 @@ type VaultConfig struct {
 	MountPath string `yaml:"mount_path"`
 }
 
+// PhoneConfig contains phone backend settings for proxying key operations
+// to an Android phone via BLE or TCP (ADB USB forwarding) using
+// Noise-encrypted JSON-RPC.
+type PhoneConfig struct {
+	// Enabled controls whether the phone backend is active
+	Enabled bool `yaml:"enabled"`
+
+	// Transport specifies the transport type: "ble" or "tcp" (for ADB USB forwarding)
+	Transport string `yaml:"transport"`
+
+	// DeviceAddress is the BLE MAC address or TCP address (host:port) of the phone
+	DeviceAddress string `yaml:"device_address"`
+
+	// NoiseStaticKey is the hex-encoded Noise static private key for this host
+	NoiseStaticKey string `yaml:"noise_static_key"`
+
+	// PhoneStaticKey is the hex-encoded Noise static public key of the paired phone
+	PhoneStaticKey string `yaml:"phone_static_key"`
+
+	// RequestTimeout is the per-operation timeout for JSON-RPC requests to the phone.
+	// If zero, the phone backend applies its default (30s).
+	RequestTimeout time.Duration `yaml:"request_timeout"`
+
+	// ConfigPath is the path to a pairing config file (alternative to inline config)
+	ConfigPath string `yaml:"config_path"`
+}
+
+// BootstrapConfig controls secure CA bundle bootstrapping.
+// Bootstrap enables new nodes to securely obtain CA certificates
+// before TLS is configured (chicken-and-egg problem).
+type BootstrapConfig struct {
+	Noise NoiseBootstrapConfig `yaml:"noise"`
+	SPKI  SPKIBootstrapConfig  `yaml:"spki"`
+	DANE  DANEBootstrapConfig  `yaml:"dane"`
+}
+
+// NoiseBootstrapConfig configures the Noise_NK bootstrap server/client.
+type NoiseBootstrapConfig struct {
+	// Enabled controls whether Noise bootstrap is active
+	Enabled bool `yaml:"enabled"`
+
+	// StaticKeyFile is the path to the hex-encoded Noise static private key file
+	StaticKeyFile string `yaml:"static_key_file"`
+
+	// StaticKeyHex is an inline hex-encoded Noise static private key
+	StaticKeyHex string `yaml:"static_key_hex"`
+
+	// MaxConnections is the maximum concurrent bootstrap connections (default: 100)
+	MaxConnections int `yaml:"max_connections"`
+
+	// ReadTimeout is the per-read timeout (default: 10s)
+	ReadTimeout string `yaml:"read_timeout"`
+
+	// WriteTimeout is the per-write timeout (default: 10s)
+	WriteTimeout string `yaml:"write_timeout"`
+}
+
+// SPKIBootstrapConfig configures SPKI-pinned TLS bootstrap.
+type SPKIBootstrapConfig struct {
+	// Enabled controls whether SPKI-pinned TLS bootstrap is available
+	Enabled bool `yaml:"enabled"`
+
+	// PinSHA256 is the hex-encoded SHA-256 hash of the server's SubjectPublicKeyInfo
+	PinSHA256 string `yaml:"pin_sha256"`
+}
+
+// DANEBootstrapConfig configures DANE/TLSA-based certificate verification for bootstrap.
+type DANEBootstrapConfig struct {
+	// Enabled controls whether DANE bootstrap is active
+	Enabled bool `yaml:"enabled"`
+
+	// Hostname is the target hostname for TLSA record lookups
+	Hostname string `yaml:"hostname"`
+
+	// Port is the target port for TLSA record lookups (default: 443)
+	Port int `yaml:"port"`
+
+	// DNSServer is the DNS server to use for TLSA lookups (e.g., "8.8.8.8:53").
+	// If empty, the system default resolver is used.
+	DNSServer string `yaml:"dns_server"`
+}
+
 // Load reads configuration from a YAML file and applies environment variable overrides
 func Load(path string) (*Config, error) {
 	// Read the config file
@@ -357,130 +523,56 @@ func Load(path string) (*Config, error) {
 // applyEnvOverrides applies environment variable overrides to the configuration
 func applyEnvOverrides(cfg *Config) {
 	// Server settings
-	if host := os.Getenv("KEYCHAIN_HOST"); host != "" {
-		cfg.Server.Host = host
-	}
-	// Support legacy KEYSTORE_HOST
-	if host := os.Getenv("KEYSTORE_HOST"); host != "" {
+	if host := os.Getenv("XKMS_HOST"); host != "" {
 		cfg.Server.Host = host
 	}
 
-	if restPort := os.Getenv("KEYCHAIN_REST_PORT"); restPort != "" {
+	if restPort := os.Getenv("XKMS_REST_PORT"); restPort != "" {
 		if port, err := strconv.Atoi(restPort); err == nil && port >= 1 && port <= 65535 {
 			cfg.Server.RESTPort = port
 		}
 	}
-	// Support legacy KEYSTORE_REST_PORT
-	if restPort := os.Getenv("KEYSTORE_REST_PORT"); restPort != "" {
-		port, err := strconv.Atoi(restPort)
-		if err != nil {
-			log.Printf("Warning: invalid KEYSTORE_REST_PORT value %q, using default %d: %v",
-				restPort, cfg.Server.RESTPort, err)
-		} else if port < 1 || port > 65535 {
-			log.Printf("Warning: invalid KEYSTORE_REST_PORT value %q (out of range 1-65535), using default %d",
-				restPort, cfg.Server.RESTPort)
-		} else {
-			cfg.Server.RESTPort = port
-		}
-	}
 
-	if grpcPort := os.Getenv("KEYCHAIN_GRPC_PORT"); grpcPort != "" {
+	if grpcPort := os.Getenv("XKMS_GRPC_PORT"); grpcPort != "" {
 		if port, err := strconv.Atoi(grpcPort); err == nil && port >= 1 && port <= 65535 {
 			cfg.Server.GRPCPort = port
 		}
 	}
-	// Support legacy KEYSTORE_GRPC_PORT
-	if grpcPort := os.Getenv("KEYSTORE_GRPC_PORT"); grpcPort != "" {
-		port, err := strconv.Atoi(grpcPort)
-		if err != nil {
-			log.Printf("Warning: invalid KEYSTORE_GRPC_PORT value %q, using default %d: %v",
-				grpcPort, cfg.Server.GRPCPort, err)
-		} else if port < 1 || port > 65535 {
-			log.Printf("Warning: invalid KEYSTORE_GRPC_PORT value %q (out of range 1-65535), using default %d",
-				grpcPort, cfg.Server.GRPCPort)
-		} else {
-			cfg.Server.GRPCPort = port
-		}
-	}
 
-	if quicPort := os.Getenv("KEYCHAIN_QUIC_PORT"); quicPort != "" {
+	if quicPort := os.Getenv("XKMS_QUIC_PORT"); quicPort != "" {
 		if port, err := strconv.Atoi(quicPort); err == nil && port >= 1 && port <= 65535 {
 			cfg.Server.QUICPort = port
 		}
 	}
-	// Support legacy KEYSTORE_QUIC_PORT
-	if quicPort := os.Getenv("KEYSTORE_QUIC_PORT"); quicPort != "" {
-		port, err := strconv.Atoi(quicPort)
-		if err != nil {
-			log.Printf("Warning: invalid KEYSTORE_QUIC_PORT value %q, using default %d: %v",
-				quicPort, cfg.Server.QUICPort, err)
-		} else if port < 1 || port > 65535 {
-			log.Printf("Warning: invalid KEYSTORE_QUIC_PORT value %q (out of range 1-65535), using default %d",
-				quicPort, cfg.Server.QUICPort)
-		} else {
-			cfg.Server.QUICPort = port
-		}
-	}
 
-	if mcpPort := os.Getenv("KEYCHAIN_MCP_PORT"); mcpPort != "" {
+	if mcpPort := os.Getenv("XKMS_MCP_PORT"); mcpPort != "" {
 		if port, err := strconv.Atoi(mcpPort); err == nil && port >= 1 && port <= 65535 {
-			cfg.Server.MCPPort = port
-		}
-	}
-	// Support legacy KEYSTORE_MCP_PORT
-	if mcpPort := os.Getenv("KEYSTORE_MCP_PORT"); mcpPort != "" {
-		port, err := strconv.Atoi(mcpPort)
-		if err != nil {
-			log.Printf("Warning: invalid KEYSTORE_MCP_PORT value %q, using default %d: %v",
-				mcpPort, cfg.Server.MCPPort, err)
-		} else if port < 1 || port > 65535 {
-			log.Printf("Warning: invalid KEYSTORE_MCP_PORT value %q (out of range 1-65535), using default %d",
-				mcpPort, cfg.Server.MCPPort)
-		} else {
 			cfg.Server.MCPPort = port
 		}
 	}
 
 	// Unix socket settings
-	if socketPath := os.Getenv("KEYCHAIN_SOCKET_PATH"); socketPath != "" {
+	if socketPath := os.Getenv("XKMS_SOCKET_PATH"); socketPath != "" {
 		cfg.Unix.SocketPath = socketPath
 	}
-	if socketMode := os.Getenv("KEYCHAIN_SOCKET_MODE"); socketMode != "" {
+	if socketMode := os.Getenv("XKMS_SOCKET_MODE"); socketMode != "" {
 		cfg.Unix.SocketMode = socketMode
 	}
-	if protocol := os.Getenv("KEYCHAIN_UNIX_PROTOCOL"); protocol != "" {
+	if protocol := os.Getenv("XKMS_UNIX_PROTOCOL"); protocol != "" {
 		cfg.Unix.Protocol = protocol
 	}
 
 	// Logging
-	if level := os.Getenv("KEYCHAIN_LOG_LEVEL"); level != "" {
-		cfg.Logging.Level = level
-	}
-	// Support legacy KEYSTORE_LOG_LEVEL
-	if level := os.Getenv("KEYSTORE_LOG_LEVEL"); level != "" {
+	if level := os.Getenv("XKMS_LOG_LEVEL"); level != "" {
 		cfg.Logging.Level = level
 	}
 
-	if format := os.Getenv("KEYCHAIN_LOG_FORMAT"); format != "" {
-		cfg.Logging.Format = format
-	}
-	// Support legacy KEYSTORE_LOG_FORMAT
-	if format := os.Getenv("KEYSTORE_LOG_FORMAT"); format != "" {
+	if format := os.Getenv("XKMS_LOG_FORMAT"); format != "" {
 		cfg.Logging.Format = format
 	}
 
 	// Storage
-	if dataDir := os.Getenv("KEYCHAIN_DATA_DIR"); dataDir != "" {
-		cfg.Storage.Path = dataDir
-		// Also update backend paths relative to data dir
-		if cfg.Backends.PKCS8 != nil && cfg.Backends.PKCS8.Path != "" {
-			if !filepath.IsAbs(cfg.Backends.PKCS8.Path) {
-				cfg.Backends.PKCS8.Path = filepath.Join(dataDir, "pkcs8")
-			}
-		}
-	}
-	// Support legacy KEYSTORE_DATA_DIR
-	if dataDir := os.Getenv("KEYSTORE_DATA_DIR"); dataDir != "" {
+	if dataDir := os.Getenv("XKMS_DATA_DIR"); dataDir != "" {
 		cfg.Storage.Path = dataDir
 		// Also update backend paths relative to data dir
 		if cfg.Backends.PKCS8 != nil && cfg.Backends.PKCS8.Path != "" {
@@ -555,61 +647,107 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 
+	// Phone backend settings
+	if cfg.Backends.Phone != nil {
+		if transport := os.Getenv("XKMS_PHONE_TRANSPORT"); transport != "" {
+			cfg.Backends.Phone.Transport = transport
+		}
+		if deviceAddr := os.Getenv("XKMS_PHONE_DEVICE_ADDRESS"); deviceAddr != "" {
+			cfg.Backends.Phone.DeviceAddress = deviceAddr
+		}
+		if noiseKey := os.Getenv("XKMS_PHONE_NOISE_STATIC_KEY"); noiseKey != "" {
+			cfg.Backends.Phone.NoiseStaticKey = noiseKey
+		}
+		if phoneKey := os.Getenv("XKMS_PHONE_STATIC_KEY"); phoneKey != "" {
+			cfg.Backends.Phone.PhoneStaticKey = phoneKey
+		}
+		if configPath := os.Getenv("XKMS_PHONE_CONFIG_PATH"); configPath != "" {
+			cfg.Backends.Phone.ConfigPath = configPath
+		}
+		if timeout := os.Getenv("XKMS_PHONE_REQUEST_TIMEOUT"); timeout != "" {
+			if d, err := time.ParseDuration(timeout); err == nil && d > 0 {
+				cfg.Backends.Phone.RequestTimeout = d
+			}
+		}
+	}
+
+	// Bootstrap settings - Noise
+	if noiseEnabled := os.Getenv("XKMS_NOISE_ENABLED"); noiseEnabled != "" {
+		cfg.Bootstrap.Noise.Enabled = strings.ToLower(noiseEnabled) == "true"
+	}
+	if noiseKey := os.Getenv("XKMS_NOISE_STATIC_KEY"); noiseKey != "" {
+		cfg.Bootstrap.Noise.StaticKeyHex = noiseKey
+	}
+	if noiseKeyFile := os.Getenv("XKMS_NOISE_STATIC_KEY_FILE"); noiseKeyFile != "" {
+		cfg.Bootstrap.Noise.StaticKeyFile = noiseKeyFile
+	}
+	if noisePort := os.Getenv("XKMS_NOISE_PORT"); noisePort != "" {
+		if port, err := strconv.Atoi(noisePort); err == nil && port >= 1 && port <= 65535 {
+			cfg.Server.NoisePort = port
+		}
+	}
+
+	// Bootstrap settings - SPKI
+	if spkiPin := os.Getenv("XKMS_SPKI_PIN"); spkiPin != "" {
+		cfg.Bootstrap.SPKI.PinSHA256 = spkiPin
+		cfg.Bootstrap.SPKI.Enabled = true
+	}
+
+	// Bootstrap settings - DANE
+	if daneEnabled := os.Getenv("XKMS_DANE_ENABLED"); daneEnabled != "" {
+		cfg.Bootstrap.DANE.Enabled = strings.ToLower(daneEnabled) == "true"
+	}
+	if daneHostname := os.Getenv("XKMS_DANE_HOSTNAME"); daneHostname != "" {
+		cfg.Bootstrap.DANE.Hostname = daneHostname
+	}
+	if danePort := os.Getenv("XKMS_DANE_PORT"); danePort != "" {
+		if port, err := strconv.Atoi(danePort); err == nil && port >= 1 && port <= 65535 {
+			cfg.Bootstrap.DANE.Port = port
+		}
+	}
+	if daneDNS := os.Getenv("XKMS_DANE_DNS_SERVER"); daneDNS != "" {
+		cfg.Bootstrap.DANE.DNSServer = daneDNS
+	}
+
 	// Rate limiting settings
-	if enabled := os.Getenv("KEYCHAIN_RATELIMIT_ENABLED"); enabled != "" {
-		cfg.RateLimit.Enabled = strings.ToLower(enabled) == "true"
-	}
-	// Support legacy KEYSTORE_RATELIMIT_ENABLED
-	if enabled := os.Getenv("KEYSTORE_RATELIMIT_ENABLED"); enabled != "" {
+	if enabled := os.Getenv("XKMS_RATELIMIT_ENABLED"); enabled != "" {
 		cfg.RateLimit.Enabled = strings.ToLower(enabled) == "true"
 	}
 
-	if rpm := os.Getenv("KEYCHAIN_RATELIMIT_REQUESTS_PER_MIN"); rpm != "" {
-		if val, err := strconv.Atoi(rpm); err == nil && val > 0 {
-			cfg.RateLimit.RequestsPerMin = val
-		}
-	}
-	// Support legacy KEYSTORE_RATELIMIT_REQUESTS_PER_MIN
-	if rpm := os.Getenv("KEYSTORE_RATELIMIT_REQUESTS_PER_MIN"); rpm != "" {
+	if rpm := os.Getenv("XKMS_RATELIMIT_REQUESTS_PER_MIN"); rpm != "" {
 		if val, err := strconv.Atoi(rpm); err == nil && val > 0 {
 			cfg.RateLimit.RequestsPerMin = val
 		}
 	}
 
-	if burst := os.Getenv("KEYCHAIN_RATELIMIT_BURST"); burst != "" {
-		if val, err := strconv.Atoi(burst); err == nil && val > 0 {
-			cfg.RateLimit.Burst = val
-		}
-	}
-	// Support legacy KEYSTORE_RATELIMIT_BURST
-	if burst := os.Getenv("KEYSTORE_RATELIMIT_BURST"); burst != "" {
+	if burst := os.Getenv("XKMS_RATELIMIT_BURST"); burst != "" {
 		if val, err := strconv.Atoi(burst); err == nil && val > 0 {
 			cfg.RateLimit.Burst = val
 		}
 	}
 
 	// RNG settings
-	if mode := os.Getenv("KEYCHAIN_RNG_MODE"); mode != "" {
+	if mode := os.Getenv("XKMS_RNG_MODE"); mode != "" {
 		cfg.RNG.Mode = mode
 	}
-	if fallback := os.Getenv("KEYCHAIN_RNG_FALLBACK"); fallback != "" {
+	if fallback := os.Getenv("XKMS_RNG_FALLBACK"); fallback != "" {
 		cfg.RNG.FallbackMode = fallback
 	}
 	// TPM2 RNG settings
-	if tpmDevice := os.Getenv("KEYCHAIN_RNG_TPM2_DEVICE"); tpmDevice != "" {
+	if tpmDevice := os.Getenv("XKMS_RNG_TPM2_DEVICE"); tpmDevice != "" {
 		if cfg.RNG.TPM2 == nil {
 			cfg.RNG.TPM2 = &RNGTPM2Config{}
 		}
 		cfg.RNG.TPM2.Device = tpmDevice
 	}
-	if simHost := os.Getenv("KEYCHAIN_RNG_TPM2_SIMULATOR_HOST"); simHost != "" {
+	if simHost := os.Getenv("XKMS_RNG_TPM2_SIMULATOR_HOST"); simHost != "" {
 		if cfg.RNG.TPM2 == nil {
 			cfg.RNG.TPM2 = &RNGTPM2Config{}
 		}
 		cfg.RNG.TPM2.SimulatorHost = simHost
 		cfg.RNG.TPM2.UseSimulator = true
 	}
-	if simPort := os.Getenv("KEYCHAIN_RNG_TPM2_SIMULATOR_PORT"); simPort != "" {
+	if simPort := os.Getenv("XKMS_RNG_TPM2_SIMULATOR_PORT"); simPort != "" {
 		if val, err := strconv.Atoi(simPort); err == nil && val > 0 {
 			if cfg.RNG.TPM2 == nil {
 				cfg.RNG.TPM2 = &RNGTPM2Config{}
@@ -619,13 +757,13 @@ func applyEnvOverrides(cfg *Config) {
 		}
 	}
 	// PKCS#11 RNG settings
-	if pkcs11Module := os.Getenv("KEYCHAIN_RNG_PKCS11_MODULE"); pkcs11Module != "" {
+	if pkcs11Module := os.Getenv("XKMS_RNG_PKCS11_MODULE"); pkcs11Module != "" {
 		if cfg.RNG.PKCS11 == nil {
 			cfg.RNG.PKCS11 = &RNGPKCS11Config{}
 		}
 		cfg.RNG.PKCS11.Module = pkcs11Module
 	}
-	if slotID := os.Getenv("KEYCHAIN_RNG_PKCS11_SLOT"); slotID != "" {
+	if slotID := os.Getenv("XKMS_RNG_PKCS11_SLOT"); slotID != "" {
 		if val, err := strconv.ParseUint(slotID, 10, 32); err == nil {
 			if cfg.RNG.PKCS11 == nil {
 				cfg.RNG.PKCS11 = &RNGPKCS11Config{}
@@ -633,12 +771,17 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.RNG.PKCS11.SlotID = uint(val)
 		}
 	}
-	if pin := os.Getenv("KEYCHAIN_RNG_PKCS11_PIN"); pin != "" {
+	if pin := os.Getenv("XKMS_RNG_PKCS11_PIN"); pin != "" {
 		if cfg.RNG.PKCS11 == nil {
 			cfg.RNG.PKCS11 = &RNGPKCS11Config{}
 		}
 		cfg.RNG.PKCS11.PIN = pin
 		cfg.RNG.PKCS11.PINRequired = true
+	}
+
+	// Credentials seal strategy
+	if strategy := os.Getenv("XKMS_CREDENTIALS_SEAL_STRATEGY"); strategy != "" {
+		cfg.Credentials.SealStrategy = strategy
 	}
 }
 
@@ -657,9 +800,12 @@ func (c *Config) Validate() error {
 	if c.Protocols.MCP && (c.Server.MCPPort < 1 || c.Server.MCPPort > 65535) {
 		return fmt.Errorf("invalid MCP port: %d", c.Server.MCPPort)
 	}
+	if c.Protocols.Noise && (c.Server.NoisePort < 1 || c.Server.NoisePort > 65535) {
+		return fmt.Errorf("invalid Noise port: %d", c.Server.NoisePort)
+	}
 
 	// Validate at least one protocol is enabled (Unix socket counts as a protocol)
-	if !c.Protocols.Unix && !c.Protocols.REST && !c.Protocols.GRPC && !c.Protocols.QUIC && !c.Protocols.MCP {
+	if !c.Protocols.Unix && !c.Protocols.REST && !c.Protocols.GRPC && !c.Protocols.QUIC && !c.Protocols.MCP && !c.Protocols.Noise {
 		return fmt.Errorf("at least one protocol must be enabled")
 	}
 
@@ -690,13 +836,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid log format: %s (must be json, text, or console)", c.Logging.Format)
 	}
 
-	// Validate TLS settings
-	if c.TLS.Enabled {
+	// Validate TLS settings.
+	// When a CA is configured, TLS certificates are generated from the CA
+	// (hardware-backed crypto.Signer), so cert_file/key_file are not required.
+	if c.TLS.Enabled && c.CA == nil {
 		if c.TLS.CertFile == "" {
-			return fmt.Errorf("TLS cert_file is required when TLS is enabled")
+			return fmt.Errorf("TLS cert_file is required when TLS is enabled without CA")
 		}
 		if c.TLS.KeyFile == "" {
-			return fmt.Errorf("TLS key_file is required when TLS is enabled")
+			return fmt.Errorf("TLS key_file is required when TLS is enabled without CA")
 		}
 	}
 
@@ -704,8 +852,15 @@ func (c *Config) Validate() error {
 	if c.Storage.Backend == "" {
 		return fmt.Errorf("storage backend must be specified")
 	}
-	if c.Storage.Path == "" {
-		return fmt.Errorf("storage path must be specified")
+	switch strings.ToLower(c.Storage.Backend) {
+	case "qrdb":
+		if c.Storage.QRDB.Address == "" {
+			return fmt.Errorf("qrdb storage address is required when backend is qrdb")
+		}
+	default:
+		if c.Storage.Path == "" {
+			return fmt.Errorf("storage path must be specified")
+		}
 	}
 
 	// Validate RNG mode
@@ -769,6 +924,18 @@ func (c *Config) Validate() error {
 	if c.Backends.Vault != nil && c.Backends.Vault.Enabled {
 		hasEnabledBackend = true
 	}
+	if c.Backends.Phone != nil && c.Backends.Phone.Enabled {
+		hasEnabledBackend = true
+		if c.Backends.Phone.Transport == "" {
+			return fmt.Errorf("phone backend transport is required when enabled (ble or tcp)")
+		}
+		validTransports := map[string]bool{
+			"ble": true, "tcp": true,
+		}
+		if !validTransports[strings.ToLower(c.Backends.Phone.Transport)] {
+			return fmt.Errorf("invalid phone backend transport: %s (must be ble or tcp)", c.Backends.Phone.Transport)
+		}
+	}
 
 	if !hasEnabledBackend {
 		return fmt.Errorf("at least one backend must be enabled")
@@ -809,6 +976,9 @@ func (c *Config) GetEnabledBackends() []string {
 	}
 	if c.Backends.Vault != nil && c.Backends.Vault.Enabled {
 		backends = append(backends, "vault")
+	}
+	if c.Backends.Phone != nil && c.Backends.Phone.Enabled {
+		backends = append(backends, "phone")
 	}
 	return backends
 }

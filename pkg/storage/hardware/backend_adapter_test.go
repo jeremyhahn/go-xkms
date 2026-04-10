@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package hardware
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -22,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,7 +78,7 @@ func TestHardwareBackendAdapter_Get(t *testing.T) {
 		require.NoError(t, err)
 
 		// Get through adapter
-		data, err := adapter.Get("certs/test-cert.pem")
+		data, err := adapter.Get(context.Background(), "certs/test-cert.pem")
 		require.NoError(t, err)
 		assert.Equal(t, cert.Raw, data)
 	})
@@ -95,7 +96,7 @@ func TestHardwareBackendAdapter_Get(t *testing.T) {
 		require.NoError(t, err)
 
 		// Get through adapter
-		data, err := adapter.Get("certs/test-chain-chain.pem")
+		data, err := adapter.Get(context.Background(), "certs/test-chain-chain.pem")
 		require.NoError(t, err)
 
 		// Verify concatenated DER data
@@ -107,7 +108,7 @@ func TestHardwareBackendAdapter_Get(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		_, err := adapter.Get("keys/test.key")
+		_, err := adapter.Get(context.Background(), "keys/test.key")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "hardware storage only supports certificate keys")
 	})
@@ -116,7 +117,7 @@ func TestHardwareBackendAdapter_Get(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		_, err := adapter.Get("certs/test")
+		_, err := adapter.Get(context.Background(), "certs/test")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported key format")
 	})
@@ -125,7 +126,7 @@ func TestHardwareBackendAdapter_Get(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		_, err := adapter.Get("certs/nonexistent.pem")
+		_, err := adapter.Get(context.Background(), "certs/nonexistent.pem")
 		require.Error(t, err)
 		assert.Equal(t, storage.ErrNotFound, err)
 	})
@@ -134,7 +135,7 @@ func TestHardwareBackendAdapter_Get(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		_, err := adapter.Get("certs/nonexistent-chain.pem")
+		_, err := adapter.Get(context.Background(), "certs/nonexistent-chain.pem")
 		require.Error(t, err)
 		assert.Equal(t, storage.ErrNotFound, err)
 	})
@@ -149,7 +150,7 @@ func TestHardwareBackendAdapter_Put(t *testing.T) {
 		cert := generateTestCertForAdapter(t, "test")
 
 		// Put through adapter
-		err := adapter.Put("certs/test-cert.pem", cert.Raw, nil)
+		err := adapter.Put(context.Background(), "certs/test-cert.pem", cert.Raw)
 		require.NoError(t, err)
 
 		// Verify stored in hardware
@@ -167,7 +168,7 @@ func TestHardwareBackendAdapter_Put(t *testing.T) {
 
 		// Put single cert data through adapter using chain format
 		// This tests the parseDERChain with a single valid cert
-		err := adapter.Put("certs/test-chain-chain.pem", cert.Raw, nil)
+		err := adapter.Put(context.Background(), "certs/test-chain-chain.pem", cert.Raw)
 		require.NoError(t, err)
 
 		// Verify stored in hardware
@@ -181,7 +182,7 @@ func TestHardwareBackendAdapter_Put(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		err := adapter.Put("keys/test.key", []byte("data"), nil)
+		err := adapter.Put(context.Background(), "keys/test.key", []byte("data"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "hardware storage only supports certificate keys")
 	})
@@ -190,7 +191,7 @@ func TestHardwareBackendAdapter_Put(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		err := adapter.Put("certs/test", []byte("data"), nil)
+		err := adapter.Put(context.Background(), "certs/test", []byte("data"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unsupported key format")
 	})
@@ -199,7 +200,7 @@ func TestHardwareBackendAdapter_Put(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		err := adapter.Put("certs/test.pem", []byte("invalid cert data"), nil)
+		err := adapter.Put(context.Background(), "certs/test.pem", []byte("invalid cert data"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse certificate")
 	})
@@ -208,7 +209,7 @@ func TestHardwareBackendAdapter_Put(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		err := adapter.Put("certs/test-chain.pem", []byte("invalid chain data"), nil)
+		err := adapter.Put(context.Background(), "certs/test-chain.pem", []byte("invalid chain data"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to parse certificate chain")
 	})
@@ -225,7 +226,7 @@ func TestHardwareBackendAdapter_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		// Delete through adapter
-		err = adapter.Delete("certs/test-cert.pem")
+		err = adapter.Delete(context.Background(), "certs/test-cert.pem")
 		require.NoError(t, err)
 
 		// Verify deleted
@@ -249,7 +250,7 @@ func TestHardwareBackendAdapter_Delete(t *testing.T) {
 		require.NoError(t, err)
 
 		// Delete using chain format key
-		err = adapter.Delete("certs/test-chain-chain.pem")
+		err = adapter.Delete(context.Background(), "certs/test-chain-chain.pem")
 		require.NoError(t, err)
 
 		// Verify deleted
@@ -261,7 +262,7 @@ func TestHardwareBackendAdapter_Delete(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		err := adapter.Delete("keys/test.key")
+		err := adapter.Delete(context.Background(), "keys/test.key")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "hardware storage only supports certificate keys")
 	})
@@ -270,7 +271,7 @@ func TestHardwareBackendAdapter_Delete(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		err := adapter.Delete("certs/nonexistent.pem")
+		err := adapter.Delete(context.Background(), "certs/nonexistent.pem")
 		require.Error(t, err)
 		assert.Equal(t, storage.ErrNotFound, err)
 	})
@@ -290,7 +291,7 @@ func TestHardwareBackendAdapter_List(t *testing.T) {
 		require.NoError(t, err)
 
 		// List through adapter
-		keys, err := adapter.List("")
+		keys, err := adapter.List(context.Background(), "")
 		require.NoError(t, err)
 		assert.Len(t, keys, 2)
 		assert.Contains(t, keys, "certs/cert-a.pem")
@@ -306,7 +307,7 @@ func TestHardwareBackendAdapter_List(t *testing.T) {
 		require.NoError(t, err)
 
 		// List with matching prefix
-		keys, err := adapter.List("certs/test")
+		keys, err := adapter.List(context.Background(), "certs/test")
 		require.NoError(t, err)
 		assert.Len(t, keys, 1)
 		assert.Equal(t, "certs/test-cert.pem", keys[0])
@@ -321,7 +322,7 @@ func TestHardwareBackendAdapter_List(t *testing.T) {
 		require.NoError(t, err)
 
 		// List with non-matching prefix
-		keys, err := adapter.List("keys/")
+		keys, err := adapter.List(context.Background(), "keys/")
 		require.NoError(t, err)
 		assert.Empty(t, keys)
 	})
@@ -330,7 +331,7 @@ func TestHardwareBackendAdapter_List(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		keys, err := adapter.List("")
+		keys, err := adapter.List(context.Background(), "")
 		require.NoError(t, err)
 		assert.Empty(t, keys)
 	})
@@ -340,7 +341,7 @@ func TestHardwareBackendAdapter_List(t *testing.T) {
 		hw.failList = true
 		adapter := NewHardwareBackendAdapter(hw)
 
-		_, err := adapter.List("")
+		_, err := adapter.List(context.Background(), "")
 		require.Error(t, err)
 	})
 }
@@ -355,7 +356,7 @@ func TestHardwareBackendAdapter_Exists(t *testing.T) {
 		err := hw.SaveCert("test-cert", cert)
 		require.NoError(t, err)
 
-		exists, err := adapter.Exists("certs/test-cert.pem")
+		exists, err := adapter.Exists(context.Background(), "certs/test-cert.pem")
 		require.NoError(t, err)
 		assert.True(t, exists)
 	})
@@ -364,7 +365,7 @@ func TestHardwareBackendAdapter_Exists(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		exists, err := adapter.Exists("certs/nonexistent.pem")
+		exists, err := adapter.Exists(context.Background(), "certs/nonexistent.pem")
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -373,7 +374,7 @@ func TestHardwareBackendAdapter_Exists(t *testing.T) {
 		hw := newMockHardwareCertStorage(10)
 		adapter := NewHardwareBackendAdapter(hw)
 
-		exists, err := adapter.Exists("keys/test.key")
+		exists, err := adapter.Exists(context.Background(), "keys/test.key")
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
@@ -393,7 +394,7 @@ func TestHardwareBackendAdapter_Exists(t *testing.T) {
 		require.NoError(t, err)
 
 		// Check existence using chain format key
-		exists, err := adapter.Exists("certs/test-chain-chain.pem")
+		exists, err := adapter.Exists(context.Background(), "certs/test-chain-chain.pem")
 		require.NoError(t, err)
 		assert.True(t, exists)
 	})

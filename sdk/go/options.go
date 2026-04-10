@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,11 +11,12 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package keychain
+package xkms
 
 import (
 	"crypto/tls"
 	"errors"
+	"os"
 	"time"
 )
 
@@ -32,6 +33,9 @@ const (
 	DefaultMCPAddress   = "localhost:9444"
 )
 
+// defaultXKeySocketEnvVar is the environment variable for the xkey IPC socket path.
+const defaultXKeySocketEnvVar = "XKEY_IPC_SOCKET"
+
 // Option errors.
 var (
 	// ErrInvalidTimeout is returned when a non-positive timeout is specified.
@@ -46,9 +50,11 @@ var (
 	ErrMissingService = errors.New("service is required for embedded protocol")
 	// ErrServiceNotAllowed is returned when a service is specified for non-embedded protocols.
 	ErrServiceNotAllowed = errors.New("service option is only valid for embedded protocol")
+	// ErrXKeyAuthFailed is returned when xkey IPC authentication setup fails.
+	ErrXKeyAuthFailed = errors.New("xkey IPC authentication failed")
 )
 
-// Option is a functional option for configuring the keychain client.
+// Option is a functional option for configuring the xkms client.
 type Option func(*clientOptions) error
 
 // clientOptions holds all configurable options for the client.
@@ -60,12 +66,14 @@ type clientOptions struct {
 	address string
 
 	// TLS configuration.
-	tlsConfig             *tls.Config
-	tlsEnabled            bool
-	tlsInsecureSkipVerify bool
-	tlsCertFile           string
-	tlsKeyFile            string
-	tlsCAFile             string
+	tlsConfig   *tls.Config
+	tlsEnabled  bool
+	tlsCertFile string
+	tlsKeyFile  string
+	tlsCAFile   string
+
+	// SPKI pin for certificate pinning.
+	spkiPin string
 
 	// Timeout for operations.
 	timeout time.Duration
@@ -85,7 +93,7 @@ type clientOptions struct {
 	headers map[string]string
 
 	// Service for embedded protocol.
-	service KeychainServicer
+	service XKMSServicer
 }
 
 // newDefaultClientOptions returns clientOptions with default values.
@@ -122,7 +130,7 @@ func WithAddress(addr string) Option {
 }
 
 // WithTLS sets a custom tls.Config for advanced TLS configuration.
-// When this option is used, other TLS options (WithTLSEnabled, WithTLSInsecureSkipVerify,
+// When this option is used, other TLS options (WithTLSEnabled,
 // WithTLSCertFile, WithTLSKeyFile, WithTLSCAFile) are ignored.
 func WithTLS(cfg *tls.Config) Option {
 	return func(opts *clientOptions) error {
@@ -138,15 +146,6 @@ func WithTLS(cfg *tls.Config) Option {
 func WithTLSEnabled(enabled bool) Option {
 	return func(opts *clientOptions) error {
 		opts.tlsEnabled = enabled
-		return nil
-	}
-}
-
-// WithTLSInsecureSkipVerify sets whether to skip TLS certificate verification.
-// This is not recommended for production use.
-func WithTLSInsecureSkipVerify(skip bool) Option {
-	return func(opts *clientOptions) error {
-		opts.tlsInsecureSkipVerify = skip
 		return nil
 	}
 }
@@ -171,6 +170,18 @@ func WithTLSKeyFile(path string) Option {
 func WithTLSCAFile(path string) Option {
 	return func(opts *clientOptions) error {
 		opts.tlsCAFile = path
+		return nil
+	}
+}
+
+// WithSPKIPin sets the SPKI pin for TLS certificate pinning.
+// The pin is a hex-encoded SHA-256 hash of the server's SubjectPublicKeyInfo.
+// When set, the client verifies the server certificate's SPKI pin during TLS
+// handshake as additive security on top of CA chain validation.
+func WithSPKIPin(pin string) Option {
+	return func(opts *clientOptions) error {
+		opts.spkiPin = pin
+		opts.tlsEnabled = true
 		return nil
 	}
 }
@@ -232,16 +243,38 @@ func WithHeaders(headers map[string]string) Option {
 	}
 }
 
-// WithService sets the keychain service for the embedded protocol.
+// WithService sets the xkms service for the embedded protocol.
 // This option is only valid when using ProtocolEmbedded.
-func WithService(service KeychainServicer) Option {
+func WithService(service XKMSServicer) Option {
 	return func(opts *clientOptions) error {
 		opts.service = service
 		return nil
 	}
 }
 
-// NewWithOptions creates a new keychain client using functional options.
+// WithXKeyAuth configures the client to authenticate via xkey IPC. It creates
+// a crypto.Signer backed by the xkey daemon's PIV 9a slot and builds a TLS
+// config for mTLS client certificate authentication. If socketPath is empty,
+// the XKEY_IPC_SOCKET environment variable or the platform default is used.
+func WithXKeyAuth(socketPath string) Option {
+	return func(opts *clientOptions) error {
+		if socketPath == "" {
+			socketPath = os.Getenv(defaultXKeySocketEnvVar)
+		}
+
+		resolver := &xkeyAuthResolver{socketPath: socketPath}
+		tlsCfg, err := resolver.ResolveTLSConfig()
+		if err != nil {
+			return ErrXKeyAuthFailed
+		}
+
+		opts.tlsConfig = tlsCfg
+		opts.tlsEnabled = true
+		return nil
+	}
+}
+
+// NewWithOptions creates a new xkms client using functional options.
 // If no options are provided, it creates a client with default settings
 // (Unix socket gRPC with the default socket path).
 func NewWithOptions(opts ...Option) (Client, error) {
@@ -304,19 +337,20 @@ func defaultAddressForProtocol(p Protocol) string {
 	}
 }
 
-// toConfig converts clientOptions to Config for backward compatibility.
-func (o *clientOptions) toConfig() *Config {
-	return &Config{
-		Protocol:              o.protocol,
-		Address:               o.address,
-		TLSEnabled:            o.tlsEnabled,
-		TLSInsecureSkipVerify: o.tlsInsecureSkipVerify,
-		TLSCertFile:           o.tlsCertFile,
-		TLSKeyFile:            o.tlsKeyFile,
-		TLSCAFile:             o.tlsCAFile,
-		JWTToken:              o.jwtToken,
-		Headers:               o.headers,
-		Service:               o.service,
+// toConfig converts clientOptions to BackendConfig.
+func (o *clientOptions) toConfig() *BackendConfig {
+	return &BackendConfig{
+		Protocol:    o.protocol,
+		Address:     o.address,
+		TLSEnabled:  o.tlsEnabled,
+		TLSCertFile: o.tlsCertFile,
+		TLSKeyFile:  o.tlsKeyFile,
+		TLSCAFile:   o.tlsCAFile,
+		TLSConfig:   o.tlsConfig,
+		SPKIPin:     o.spkiPin,
+		JWTToken:    o.jwtToken,
+		Headers:     o.headers,
+		Service:     o.service,
 	}
 }
 

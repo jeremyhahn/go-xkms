@@ -1,10 +1,10 @@
 # Integration Tests
 
-End-to-end integration tests for all go-keychain interfaces.
+End-to-end integration tests for all go-xkms interfaces.
 
 ## Overview
 
-This directory contains comprehensive integration tests that verify the complete functionality of the keychain across all interfaces:
+This directory contains comprehensive integration tests that verify the complete functionality of the xkms across all interfaces:
 
 - **REST API** - HTTP/HTTPS endpoints
 - **gRPC API** - gRPC service calls
@@ -107,7 +107,7 @@ go test -v -tags=integration ./test/integration/api -run TestE2E
 
 The tests use Docker Compose to set up a complete test environment with:
 
-- **keychain-server** - The keychain server with all protocols enabled
+- **xkms-server** - The xkms server with all protocols enabled
 - **swtpm** - TPM 2.0 simulator for TPM backend tests
 - **softhsm** - PKCS#11 HSM simulator for HSM backend tests
 
@@ -124,7 +124,7 @@ Tests are idempotent and can run in parallel. Each test creates isolated resourc
 Environment variables:
 - `KEYSTORE_REST_URL` - REST API base URL (default: http://localhost:8443)
 - `KEYSTORE_GRPC_ADDR` - gRPC server address (default: localhost:9443)
-- `KEYSTORE_CLI_BIN` - Path to CLI binary (default: build/bin/keychain)
+- `KEYSTORE_CLI_BIN` - Path to CLI binary (default: build/bin/xkms)
 - `KEYSTORE_MCP_ADDR` - MCP server address (default: localhost:9444)
 - `INTEGRATION_TIMEOUT` - Test timeout (default: 30s)
 
@@ -158,7 +158,7 @@ func TestNewFeature(t *testing.T) {
 ## Troubleshooting
 
 ### Server not starting
-- Check Docker logs: `docker-compose logs keychain-server`
+- Check Docker logs: `docker-compose logs xkms-server`
 - Verify port availability: `netstat -tlnp | grep 8443`
 - Check TLS certificates are generated
 

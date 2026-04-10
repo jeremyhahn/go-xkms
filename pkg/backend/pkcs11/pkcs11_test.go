@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -28,10 +28,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ThalesGroup/crypto11"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
 
@@ -246,9 +245,9 @@ func TestBackend_Close(t *testing.T) {
 		}
 
 		b := &Backend{
-			config:  config,
-			ctx:     nil, // Simulate having a context
-			ownsCtx: true,
+			config: config,
+			// Simulate having a context
+			ownsP11ctx: true,
 		}
 
 		if err := b.Close(); err != nil {
@@ -256,7 +255,7 @@ func TestBackend_Close(t *testing.T) {
 		}
 
 		// Verify context is cleared
-		if b.ctx != nil {
+		if b.pool != nil {
 			t.Error("Backend.Close() did not clear context")
 		}
 	})
@@ -269,107 +268,16 @@ func TestBackend_Close(t *testing.T) {
 		}
 
 		b := &Backend{
-			config:  config,
-			ctx:     nil,
-			p11ctx:  nil, // Would be actual context in real scenario
-			ownsCtx: true,
+			config: config,
+
+			p11ctx:     nil, // Would be actual context in real scenario
+			ownsP11ctx: true,
 		}
 
 		if err := b.Close(); err != nil {
 			t.Errorf("Backend.Close() error = %v", err)
 		}
 	})
-}
-
-// TestContextCacheKey verifies the context cache key generation.
-func TestContextCacheKey(t *testing.T) {
-	tests := []struct {
-		name   string
-		config *Config
-		want   string
-	}{
-		{
-			name: "basic config",
-			config: &Config{
-				Library:    "/usr/lib/test.so",
-				TokenLabel: "token1",
-				PIN:        "1234",
-			},
-			want: "/usr/lib/test.so:token1:1234",
-		},
-		{
-			name: "different token",
-			config: &Config{
-				Library:    "/usr/lib/test.so",
-				TokenLabel: "token2",
-				PIN:        "1234",
-			},
-			want: "/usr/lib/test.so:token2:1234",
-		},
-		{
-			name: "different library",
-			config: &Config{
-				Library:    "/opt/lib/hsm.so",
-				TokenLabel: "token1",
-				PIN:        "1234",
-			},
-			want: "/opt/lib/hsm.so:token1:1234",
-		},
-		{
-			name: "different PIN",
-			config: &Config{
-				Library:    "/usr/lib/test.so",
-				TokenLabel: "token1",
-				PIN:        "5678",
-			},
-			want: "/usr/lib/test.so:token1:5678",
-		},
-		{
-			name: "empty PIN",
-			config: &Config{
-				Library:    "/usr/lib/test.so",
-				TokenLabel: "token1",
-				PIN:        "",
-			},
-			want: "/usr/lib/test.so:token1:",
-		},
-		{
-			name: "special characters in token label",
-			config: &Config{
-				Library:    "/usr/lib/test.so",
-				TokenLabel: "token:with:colons",
-				PIN:        "1234",
-			},
-			want: "/usr/lib/test.so:token:with:colons:1234",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := contextCacheKey(tt.config)
-			if got != tt.want {
-				t.Errorf("contextCacheKey() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestContextCacheKey_Uniqueness verifies that different configs produce different keys.
-func TestContextCacheKey_Uniqueness(t *testing.T) {
-	config1 := &Config{Library: "/usr/lib/test.so", TokenLabel: "token1", PIN: "1234"}
-	config2 := &Config{Library: "/usr/lib/test.so", TokenLabel: "token1", PIN: "5678"}
-	config3 := &Config{Library: "/usr/lib/test.so", TokenLabel: "token2", PIN: "1234"}
-
-	key1 := contextCacheKey(config1)
-	key2 := contextCacheKey(config2)
-	key3 := contextCacheKey(config3)
-
-	if key1 == key2 {
-		t.Error("contextCacheKey() produced same key for different PINs")
-	}
-	if key1 == key3 {
-		t.Error("contextCacheKey() produced same key for different token labels")
-	}
 }
 
 // TestBackend_Get verifies that Get returns proper errors.
@@ -668,8 +576,8 @@ func TestBackend_Login(t *testing.T) {
 	})
 }
 
-// TestBackend_Context verifies the Context method.
-func TestBackend_Context(t *testing.T) {
+// TestBackend_Pool verifies the Pool method.
+func TestBackend_Pool(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
 	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
@@ -683,10 +591,10 @@ func TestBackend_Context(t *testing.T) {
 		t.Fatalf("NewBackend() failed: %v", err)
 	}
 
-	// Context should return error when not initialized
-	_, err = b.Context()
-	if err != ErrNotInitialized {
-		t.Errorf("Backend.Context() error = %v, want %v", err, ErrNotInitialized)
+	// Pool should return nil when not initialized
+	pool := b.Pool()
+	if pool != nil {
+		t.Error("Backend.Pool() should return nil when not initialized")
 	}
 }
 
@@ -1087,7 +995,7 @@ func TestBackend_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			_ = b.Type()
 			_ = b.Config()
-			_, _ = b.Context()
+			_ = b.Pool()
 		}(i)
 	}
 	wg.Wait()
@@ -1114,51 +1022,6 @@ func TestBackend_MultipleClose(t *testing.T) {
 			t.Errorf("Close() iteration %d failed: %v", i, err)
 		}
 	}
-}
-
-// TestBackend_ContextCache verifies context caching behavior.
-func TestBackend_ContextCache(t *testing.T) {
-	// Clear the context cache before test
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
-	tempDir := t.TempDir()
-	tempLib := filepath.Join(tempDir, "libtest.so")
-	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create temp library: %v", err)
-	}
-
-	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-cache",
-		PIN:         "1234",
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
-	}
-
-	// Verify cache is empty
-	contextCacheMu.RLock()
-	initialSize := len(contextCache)
-	contextCacheMu.RUnlock()
-
-	if initialSize != 0 {
-		t.Errorf("Initial context cache size = %d, want 0", initialSize)
-	}
-
-	// Create backend (doesn't add to cache until login)
-	b, err := NewBackend(config)
-	if err != nil {
-		t.Fatalf("NewBackend() failed: %v", err)
-	}
-
-	// Verify context is nil initially
-	if b.ctx != nil {
-		t.Error("Backend context should be nil before login")
-	}
-
-	// Clean up
-	_ = b.Close()
 }
 
 // TestBackend_EdgeCases tests various edge cases.
@@ -1214,7 +1077,7 @@ func TestBackend_EdgeCases(t *testing.T) {
 	})
 }
 
-// TestBackend_OwnsCtxFlag verifies the ownsCtx flag behavior.
+// TestBackend_OwnsCtxFlag verifies the ownsP11ctx flag behavior.
 func TestBackend_OwnsCtxFlag(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
@@ -1229,16 +1092,16 @@ func TestBackend_OwnsCtxFlag(t *testing.T) {
 		t.Fatalf("NewBackend() failed: %v", err)
 	}
 
-	// Initially ownsCtx should be false
-	if b.ownsCtx {
-		t.Error("NewBackend() should set ownsCtx to false")
+	// Initially ownsP11ctx should be false
+	if b.ownsP11ctx {
+		t.Error("NewBackend() should set ownsP11ctx to false")
 	}
 
-	// Set ownsCtx to true to test Close behavior
-	b.ownsCtx = true
+	// Set ownsP11ctx to true to test Close behavior
+	b.ownsP11ctx = true
 
 	if err := b.Close(); err != nil {
-		t.Errorf("Close() with ownsCtx=true error = %v", err)
+		t.Errorf("Close() with ownsP11ctx=true error = %v", err)
 	}
 }
 
@@ -1313,120 +1176,6 @@ func TestBackend_Save_UnsupportedOperation(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestBackend_Close_WithContextCache tests Close with context cache scenarios.
-func TestBackend_Close_WithContextCache(t *testing.T) {
-	// Clear cache before test
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
-	tempDir := t.TempDir()
-	tempLib := filepath.Join(tempDir, "libtest.so")
-	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create temp library: %v", err)
-	}
-
-	t.Run("close with cache entry but not in cache", func(t *testing.T) {
-		config := &Config{
-			Library:     tempLib,
-			TokenLabel:  "test-cache-1",
-			PIN:         "1234",
-			KeyStorage:  storage.New(),
-			CertStorage: storage.New(),
-		}
-
-		b, err := NewBackend(config)
-		if err != nil {
-			t.Fatalf("NewBackend() failed: %v", err)
-		}
-
-		// Close when not in cache should succeed
-		if err := b.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
-
-	t.Run("close without owning context", func(t *testing.T) {
-		config := &Config{
-			Library:     tempLib,
-			TokenLabel:  "test-cache-2",
-			PIN:         "5678",
-			KeyStorage:  storage.New(),
-			CertStorage: storage.New(),
-		}
-
-		b, err := NewBackend(config)
-		if err != nil {
-			t.Fatalf("NewBackend() failed: %v", err)
-		}
-
-		b.ownsCtx = false
-		if err := b.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
-}
-
-// TestBackend_Initialize_CacheHit tests Initialize when context is already cached.
-func TestBackend_Initialize_CacheHit(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
-	tempDir := t.TempDir()
-	tempLib := filepath.Join(tempDir, "libtest.so")
-	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create temp library: %v", err)
-	}
-
-	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-init",
-		PIN:         "1234",
-		SOPIN:       "5678",
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
-	}
-
-	// Manually add a cache entry to simulate already initialized context
-	cacheKey := contextCacheKey(config)
-	contextCacheMu.Lock()
-	contextCache[cacheKey] = &contextRef{
-		ctx:      nil, // Would be real context in production
-		refCount: 1,
-	}
-	contextCacheMu.Unlock()
-
-	b, err := NewBackend(config)
-	if err != nil {
-		t.Fatalf("NewBackend() failed: %v", err)
-	}
-
-	// Initialize should return ErrAlreadyInitialized when context is cached
-	err = b.Initialize("5678", "1234")
-	if err != ErrAlreadyInitialized {
-		t.Errorf("Initialize() error = %v, want %v", err, ErrAlreadyInitialized)
-	}
-
-	// Verify ref count was incremented
-	contextCacheMu.RLock()
-	ref, exists := contextCache[cacheKey]
-	contextCacheMu.RUnlock()
-
-	if !exists {
-		t.Error("Initialize() should have kept cache entry")
-	}
-	if ref.refCount != 2 {
-		t.Errorf("Initialize() refCount = %d, want 2", ref.refCount)
-	}
-
-	// Clean up
-	contextCacheMu.Lock()
-	delete(contextCache, cacheKey)
-	contextCacheMu.Unlock()
 }
 
 // TestBackend_TypedNilChecks tests various nil and zero value scenarios.
@@ -1554,7 +1303,7 @@ func TestBackend_ConcurrentOperations(t *testing.T) {
 			defer wg.Done()
 			_ = b.Type()
 			_ = b.Config()
-			_, _ = b.Context()
+			_ = b.Pool()
 		}(i)
 	}
 
@@ -1608,8 +1357,8 @@ func TestBackend_Initialize_EdgeCases(t *testing.T) {
 		},
 		{
 			name:    "unicode in PINs",
-			soPIN:   "SO测试1234",
-			userPIN: "User测试5678",
+			soPIN:   "SO測試1234",
+			userPIN: "User測試5678",
 			wantErr: nil, // validation passes, library init fails
 		},
 		{
@@ -1701,141 +1450,6 @@ func TestBackend_Sign_EdgeCases(t *testing.T) {
 			}
 		})
 	}
-}
-
-// TestContextCacheKey_Consistency tests that cache keys are consistent.
-func TestContextCacheKey_Consistency(t *testing.T) {
-	config := &Config{
-		Library:    "/usr/lib/test.so",
-		TokenLabel: "token1",
-		PIN:        "1234",
-	}
-
-	// Generate key multiple times
-	keys := make([]string, 100)
-	for i := 0; i < 100; i++ {
-		keys[i] = contextCacheKey(config)
-	}
-
-	// All keys should be identical
-	firstKey := keys[0]
-	for i, key := range keys {
-		if key != firstKey {
-			t.Errorf("contextCacheKey() inconsistent at index %d: got %v, want %v", i, key, firstKey)
-		}
-	}
-}
-
-// TestBackend_Close_ReferenceCountingDetailed tests detailed reference counting scenarios.
-func TestBackend_Close_ReferenceCountingDetailed(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
-	tempDir := t.TempDir()
-	tempLib := filepath.Join(tempDir, "libtest.so")
-	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create temp library: %v", err)
-	}
-
-	config := &Config{
-		Library:    tempLib,
-		TokenLabel: "test-refcount",
-		PIN:        "1234",
-	}
-
-	t.Run("decrement ref count but not to zero", func(t *testing.T) {
-		// Clear cache
-		contextCacheMu.Lock()
-		contextCache = make(map[string]*contextRef)
-		contextCacheMu.Unlock()
-
-		// Manually create a cache entry with ref count > 1
-		cacheKey := contextCacheKey(config)
-		contextCacheMu.Lock()
-		contextCache[cacheKey] = &contextRef{
-			ctx:      nil,
-			refCount: 2, // Start with 2 references
-		}
-		contextCacheMu.Unlock()
-
-		b := &Backend{
-			config: config,
-			ctx:    &crypto11.Context{},
-		}
-
-		// Close should decrement but not remove from cache
-		err := b.Close()
-		if err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-
-		// Verify cache entry still exists with decremented count
-		contextCacheMu.RLock()
-		ref, exists := contextCache[cacheKey]
-		contextCacheMu.RUnlock()
-
-		if !exists {
-			t.Error("Close() should not remove cache entry when refCount > 1")
-		}
-		if ref.refCount != 1 {
-			t.Errorf("Close() refCount = %d, want 1", ref.refCount)
-		}
-	})
-
-	t.Run("decrement ref count to zero removes from cache", func(t *testing.T) {
-		// Clear cache
-		contextCacheMu.Lock()
-		contextCache = make(map[string]*contextRef)
-		contextCacheMu.Unlock()
-
-		// Manually create a cache entry with ref count = 1
-		cacheKey := contextCacheKey(config)
-		contextCacheMu.Lock()
-		contextCache[cacheKey] = &contextRef{
-			ctx:      nil,
-			refCount: 1,
-		}
-		contextCacheMu.Unlock()
-
-		b := &Backend{
-			config: config,
-			ctx:    &crypto11.Context{},
-		}
-
-		// Close should decrement to 0 and remove from cache
-		// Will error because ctx.Close() will fail with nil
-		_ = b.Close()
-
-		// Verify cache entry is removed
-		contextCacheMu.RLock()
-		_, exists := contextCache[cacheKey]
-		contextCacheMu.RUnlock()
-
-		if exists {
-			t.Error("Close() should remove cache entry when refCount reaches 0")
-		}
-	})
-
-	t.Run("close with context not in cache and ownsCtx false", func(t *testing.T) {
-		// Clear cache
-		contextCacheMu.Lock()
-		contextCache = make(map[string]*contextRef)
-		contextCacheMu.Unlock()
-
-		b := &Backend{
-			config:  config,
-			ctx:     nil,
-			ownsCtx: false,
-		}
-
-		// Close should succeed without trying to close context
-		err := b.Close()
-		if err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
 }
 
 // TestBackend_Verify_WithMockSigner tests Verify with different key types.
@@ -1933,65 +1547,6 @@ func TestBackend_Verify_SignatureValidation(t *testing.T) {
 	}
 }
 
-// TestBackend_LoginUser_CachePath tests loginUser with cached context.
-func TestBackend_LoginUser_CachePath(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
-	tempDir := t.TempDir()
-	tempLib := filepath.Join(tempDir, "libtest.so")
-	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create temp library: %v", err)
-	}
-
-	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-login",
-		PIN:         "1234",
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
-	}
-
-	// Create a cache entry
-	cacheKey := contextCacheKey(config)
-	contextCacheMu.Lock()
-	contextCache[cacheKey] = &contextRef{
-		ctx:      nil, // Would be real context
-		refCount: 1,
-	}
-	contextCacheMu.Unlock()
-
-	b, err := NewBackend(config)
-	if err != nil {
-		t.Fatalf("NewBackend() failed: %v", err)
-	}
-
-	// Login should use cached context
-	err = b.Login()
-	if err != nil {
-		// Expected to work from cache
-		t.Logf("Login() returned: %v (expected due to nil context)", err)
-	}
-
-	// Verify ref count was incremented
-	contextCacheMu.RLock()
-	ref := contextCache[cacheKey]
-	contextCacheMu.RUnlock()
-
-	if ref == nil {
-		t.Error("Cache entry should still exist")
-	} else if ref.refCount != 2 {
-		t.Errorf("Login() refCount = %d, want 2", ref.refCount)
-	}
-
-	// Clean up
-	contextCacheMu.Lock()
-	delete(contextCache, cacheKey)
-	contextCacheMu.Unlock()
-}
-
 // TestBackend_InitializeToken_AlreadyInitialized tests the already initialized path.
 func TestBackend_InitializeToken_AlreadyInitialized(t *testing.T) {
 	// This test verifies the error path when PKCS#11 library reports already initialized
@@ -2020,8 +1575,8 @@ func TestBackend_InitializeToken_AlreadyInitialized(t *testing.T) {
 	}
 }
 
-// TestBackend_Context_WithValidContext tests Context when initialized.
-func TestBackend_Context_WithValidContext(t *testing.T) {
+// TestBackend_Pool_WithValidPool tests Pool when a session pool is set.
+func TestBackend_Pool_WithValidPool(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
 	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
@@ -2035,21 +1590,16 @@ func TestBackend_Context_WithValidContext(t *testing.T) {
 		t.Fatalf("NewBackend() failed: %v", err)
 	}
 
-	// Set a mock context to test the success path
-	// In real usage, this would be set by Initialize/Login
-	mockCtx := &crypto11.Context{} // This will be a zero value but non-nil
-	b.ctx = mockCtx
+	// Set a non-nil pool sentinel
+	mockPool := &SessionPool{}
+	b.pool = mockPool
 
-	ctx, err := b.Context()
-	if err != nil {
-		t.Errorf("Context() error = %v, want nil", err)
-	}
-	if ctx != mockCtx {
-		t.Error("Context() should return the same context")
+	pool := b.Pool()
+	if pool != mockPool {
+		t.Error("Pool() should return the set pool")
 	}
 
-	// Clean up
-	b.ctx = nil
+	b.pool = nil
 }
 
 // TestBackend_Save_WithContext tests Save when context is initialized (still returns error).
@@ -2068,7 +1618,7 @@ func TestBackend_Save_WithContext(t *testing.T) {
 	}
 
 	// Set mock context
-	b.ctx = &crypto11.Context{}
+	b.pool = &SessionPool{}
 
 	attrs := &types.KeyAttributes{
 		CN:           "test",
@@ -2086,7 +1636,7 @@ func TestBackend_Save_WithContext(t *testing.T) {
 	}
 
 	// Clean up
-	b.ctx = nil
+	b.pool = nil
 }
 
 // TestBackend_InitializeToken_GetSlotListError tests error when getting slot list.
@@ -2136,8 +1686,8 @@ func TestBackend_Close_WithPanic(t *testing.T) {
 		config: config,
 		// Setting ctx to non-nil but invalid will cause Close to potentially panic
 		// The defer recover should handle it
-		ctx:     &crypto11.Context{},
-		ownsCtx: true,
+		pool:       &SessionPool{},
+		ownsP11ctx: true,
 	}
 
 	// Close should not panic even if internal operations fail
@@ -2146,7 +1696,7 @@ func TestBackend_Close_WithPanic(t *testing.T) {
 	t.Logf("Close() returned: %v", err)
 
 	// Verify context was cleared
-	if b.ctx != nil {
+	if b.pool != nil {
 		t.Error("Close() should clear context even after panic")
 	}
 }
@@ -2167,7 +1717,7 @@ func TestBackend_GenerateRSAWithSize_KeySizeNormalization(t *testing.T) {
 	}
 
 	// 	// Set mock context to test key size normalization
-	// 	b.ctx = &crypto11.Context{}
+	// 	b.pool = &SessionPool{}
 
 	attrs := &types.KeyAttributes{
 		CN:           "test",
@@ -2300,66 +1850,6 @@ func TestBackend_Verify_RSAWithValidPublicKey(t *testing.T) {
 	_ = digest
 }
 
-// TestContextCache_ConcurrentAccess tests concurrent access to context cache.
-func TestContextCache_ConcurrentAccess(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
-	tempDir := t.TempDir()
-	tempLib := filepath.Join(tempDir, "libtest.so")
-	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create temp library: %v", err)
-	}
-
-	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-concurrent-cache",
-		PIN:         "1234",
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
-	}
-
-	// Prepopulate cache
-	cacheKey := contextCacheKey(config)
-	contextCacheMu.Lock()
-	contextCache[cacheKey] = &contextRef{
-		ctx:      nil,
-		refCount: 10,
-	}
-	contextCacheMu.Unlock()
-
-	// Concurrent access to cache
-	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			b, err := NewBackend(config)
-			if err != nil {
-				return
-			}
-			_ = b.Login() // Will use cached context
-			_ = b.Close() // Will decrement ref count
-		}()
-	}
-
-	wg.Wait()
-
-	// Verify cache is still consistent
-	contextCacheMu.RLock()
-	ref, exists := contextCache[cacheKey]
-	contextCacheMu.RUnlock()
-
-	if !exists {
-		// May have been cleaned up
-		t.Log("Cache entry was cleaned up (expected if refCount reached 0)")
-	} else if ref.refCount < 0 {
-		t.Errorf("refCount should never be negative, got %d", ref.refCount)
-	}
-}
-
 // TestBackend_InitializeToken_CKRAlreadyInitialized tests the specific PKCS11 error code path.
 func TestBackend_InitializeToken_CKRAlreadyInitialized(t *testing.T) {
 	// This test verifies we handle pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED correctly
@@ -2369,4 +1859,662 @@ func TestBackend_InitializeToken_CKRAlreadyInitialized(t *testing.T) {
 	if pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED == 0 {
 		t.Error("Expected CKR_CRYPTOKI_ALREADY_INITIALIZED to be defined")
 	}
+}
+
+// TestCapabilities_QuantumDetection verifies that Capabilities correctly reflects
+// dynamic quantum mechanism detection from the PKCS#11 token.
+func TestCapabilities_QuantumDetection(t *testing.T) {
+	tempDir := t.TempDir()
+	tempLib := filepath.Join(tempDir, "libtest.so")
+	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create temp library: %v", err)
+	}
+
+	config := testConfig(tempLib, "test-quantum")
+
+	t.Run("no quantum support by default", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		caps := b.Capabilities()
+
+		// By default, quantum capabilities should be false since no token
+		// has been probed for mechanism support
+		if caps.QuantumSigning {
+			t.Error("Capabilities().QuantumSigning should be false when no ML-DSA support detected")
+		}
+		if caps.KeyEncapsulation {
+			t.Error("Capabilities().KeyEncapsulation should be false when no ML-KEM support detected")
+		}
+
+		// Verify other hardware capabilities are still set correctly
+		if !caps.HardwareBacked {
+			t.Error("Capabilities().HardwareBacked should be true for PKCS#11")
+		}
+		if !caps.SymmetricEncryption {
+			t.Error("Capabilities().SymmetricEncryption should be true for PKCS#11")
+		}
+		if !caps.Import {
+			t.Error("Capabilities().Import should be true for PKCS#11")
+		}
+		if !caps.Export {
+			t.Error("Capabilities().Export should be true for PKCS#11")
+		}
+	})
+
+	t.Run("ML-DSA support detected", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Simulate that probeQuantumMechanisms detected ML-DSA support
+		b.supportsMLDSA = true
+
+		caps := b.Capabilities()
+
+		if !caps.QuantumSigning {
+			t.Error("Capabilities().QuantumSigning should be true when ML-DSA is supported")
+		}
+		if caps.KeyEncapsulation {
+			t.Error("Capabilities().KeyEncapsulation should be false when only ML-DSA is supported")
+		}
+	})
+
+	t.Run("ML-KEM support detected", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Simulate that probeQuantumMechanisms detected ML-KEM support
+		b.supportsMLKEM = true
+
+		caps := b.Capabilities()
+
+		if caps.QuantumSigning {
+			t.Error("Capabilities().QuantumSigning should be false when only ML-KEM is supported")
+		}
+		if !caps.KeyEncapsulation {
+			t.Error("Capabilities().KeyEncapsulation should be true when ML-KEM is supported")
+		}
+	})
+
+	t.Run("both ML-DSA and ML-KEM support detected", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Simulate full quantum support
+		b.supportsMLDSA = true
+		b.supportsMLKEM = true
+
+		caps := b.Capabilities()
+
+		if !caps.QuantumSigning {
+			t.Error("Capabilities().QuantumSigning should be true when both ML-DSA and ML-KEM are supported")
+		}
+		if !caps.KeyEncapsulation {
+			t.Error("Capabilities().KeyEncapsulation should be true when both ML-DSA and ML-KEM are supported")
+		}
+	})
+}
+
+// TestCapabilities_QuantumDetection_ProbeNilP11Ctx verifies that probeQuantumMechanisms
+// is safe to call when p11ctx is nil (no-op behavior).
+func TestCapabilities_QuantumDetection_ProbeNilP11Ctx(t *testing.T) {
+	tempDir := t.TempDir()
+	tempLib := filepath.Join(tempDir, "libtest.so")
+	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create temp library: %v", err)
+	}
+
+	config := testConfig(tempLib, "test-probe-nil")
+
+	b, err := NewBackend(config)
+	if err != nil {
+		t.Fatalf("NewBackend() failed: %v", err)
+	}
+
+	// Ensure p11ctx is nil
+	if b.p11ctx != nil {
+		t.Fatal("p11ctx should be nil initially")
+	}
+
+	// probeQuantumMechanisms should be a safe no-op when p11ctx is nil
+	b.probeQuantumMechanisms()
+
+	// Fields should remain false
+	if b.supportsMLDSA {
+		t.Error("supportsMLDSA should remain false after probing with nil p11ctx")
+	}
+	if b.supportsMLKEM {
+		t.Error("supportsMLKEM should remain false after probing with nil p11ctx")
+	}
+}
+
+// TestGenerateKey_MLDSA_PKCS11 verifies quantum key generation dispatch through GenerateKey.
+func TestGenerateKey_MLDSA_PKCS11(t *testing.T) {
+	tempDir := t.TempDir()
+	tempLib := filepath.Join(tempDir, "libtest.so")
+	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
+		t.Fatalf("failed to create temp library: %v", err)
+	}
+
+	config := testConfig(tempLib, "test-quantum-gen")
+
+	t.Run("quantum dispatch without context returns ErrNotInitialized", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Set ML-DSA support to true to bypass the mechanism check
+		b.supportsMLDSA = true
+
+		attrs := &types.KeyAttributes{
+			CN:           "test-mldsa",
+			KeyAlgorithm: x509.RSA, // Algorithm field is ignored when QuantumAttributes is set
+			QuantumAttributes: &types.QuantumAttributes{
+				Algorithm: types.QuantumAlgorithmMLDSA44,
+			},
+		}
+
+		_, err = b.GenerateKey(attrs)
+		if err == nil {
+			t.Error("GenerateKey() with quantum attrs should return error without context")
+		}
+		if !errors.Is(err, ErrNotInitialized) {
+			t.Errorf("GenerateKey() error = %v, want %v", err, ErrNotInitialized)
+		}
+	})
+
+	t.Run("quantum dispatch takes priority over KeyAlgorithm", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Set quantum support to true
+		b.supportsMLDSA = true
+
+		// Even though KeyAlgorithm is RSA, QuantumAttributes should take priority
+		attrs := &types.KeyAttributes{
+			CN:           "test-priority",
+			KeyAlgorithm: x509.RSA,
+			QuantumAttributes: &types.QuantumAttributes{
+				Algorithm: types.QuantumAlgorithmMLDSA65,
+			},
+		}
+
+		_, err = b.GenerateKey(attrs)
+		if err == nil {
+			t.Error("GenerateKey() should return error without initialized context")
+		}
+		// The error should come from generateQuantumKey, not GenerateRSA
+		if !errors.Is(err, ErrNotInitialized) {
+			t.Errorf("GenerateKey() error = %v, want ErrNotInitialized from quantum path", err)
+		}
+	})
+
+	t.Run("ML-DSA unsupported by token", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Set context to non-nil so we pass the initialization check
+		b.pool = &SessionPool{}
+		// Leave supportsMLDSA as false
+
+		attrs := &types.KeyAttributes{
+			CN: "test-unsupported",
+			QuantumAttributes: &types.QuantumAttributes{
+				Algorithm: types.QuantumAlgorithmMLDSA44,
+			},
+		}
+
+		_, err = b.GenerateKey(attrs)
+		if err == nil {
+			t.Error("GenerateKey() should return error when ML-DSA is not supported")
+		}
+		if !errors.Is(err, ErrUnsupportedKeyAlgorithm) {
+			t.Errorf("GenerateKey() error = %v, want %v", err, ErrUnsupportedKeyAlgorithm)
+		}
+
+		// Clean up
+		b.pool = nil
+	})
+
+	t.Run("ML-KEM unsupported by token", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Set context to non-nil so we pass the initialization check
+		b.pool = &SessionPool{}
+		// Leave supportsMLKEM as false
+
+		attrs := &types.KeyAttributes{
+			CN: "test-unsupported-kem",
+			QuantumAttributes: &types.QuantumAttributes{
+				Algorithm: types.QuantumAlgorithmMLKEM768,
+			},
+		}
+
+		_, err = b.GenerateKey(attrs)
+		if err == nil {
+			t.Error("GenerateKey() should return error when ML-KEM is not supported")
+		}
+		if !errors.Is(err, ErrUnsupportedKeyAlgorithm) {
+			t.Errorf("GenerateKey() error = %v, want %v", err, ErrUnsupportedKeyAlgorithm)
+		}
+
+		// Clean up
+		b.pool = nil
+	})
+
+	t.Run("nil quantum attributes falls through to algorithm dispatch", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// With nil QuantumAttributes and RSA algorithm, should dispatch to GenerateRSA
+		attrs := &types.KeyAttributes{
+			CN:                "test-fallthrough",
+			KeyAlgorithm:      x509.RSA,
+			QuantumAttributes: nil,
+		}
+
+		_, err = b.GenerateKey(attrs)
+		if err == nil {
+			t.Error("GenerateKey() should return error without initialized context")
+		}
+		// Should get ErrNotInitialized from the RSA path, not quantum path
+		if !errors.Is(err, ErrNotInitialized) {
+			t.Errorf("GenerateKey() error = %v, want %v from RSA path", err, ErrNotInitialized)
+		}
+	})
+
+	t.Run("unsupported quantum algorithm", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Set context to non-nil
+		b.pool = &SessionPool{}
+
+		attrs := &types.KeyAttributes{
+			CN: "test-bad-algo",
+			QuantumAttributes: &types.QuantumAttributes{
+				Algorithm: types.QuantumAlgorithm("UNKNOWN-QUANTUM-42"),
+			},
+		}
+
+		_, err = b.GenerateKey(attrs)
+		if err == nil {
+			t.Error("GenerateKey() should return error for unsupported quantum algorithm")
+		}
+		if !errors.Is(err, ErrUnsupportedKeyAlgorithm) {
+			t.Errorf("GenerateKey() error = %v, want %v", err, ErrUnsupportedKeyAlgorithm)
+		}
+
+		// Clean up
+		b.pool = nil
+	})
+
+	t.Run("generateQuantumKey with nil quantum attributes returns ErrInvalidKeyAttributes", func(t *testing.T) {
+		b, err := NewBackend(config)
+		if err != nil {
+			t.Fatalf("NewBackend() failed: %v", err)
+		}
+
+		// Set context to non-nil to pass initialization check
+		b.pool = &SessionPool{}
+
+		attrs := &types.KeyAttributes{
+			CN:                "test-nil-quantum",
+			QuantumAttributes: nil,
+		}
+
+		// Call generateQuantumKey directly to test its own nil check
+		_, err = b.generateQuantumKey(attrs)
+		if err == nil {
+			t.Error("generateQuantumKey() should return error with nil QuantumAttributes")
+		}
+		if !errors.Is(err, ErrInvalidKeyAttributes) {
+			t.Errorf("generateQuantumKey() error = %v, want %v", err, ErrInvalidKeyAttributes)
+		}
+
+		// Clean up
+		b.pool = nil
+	})
+
+	t.Run("all ML-DSA security levels", func(t *testing.T) {
+		algorithms := []types.QuantumAlgorithm{
+			types.QuantumAlgorithmMLDSA44,
+			types.QuantumAlgorithmMLDSA65,
+			types.QuantumAlgorithmMLDSA87,
+		}
+
+		for _, algo := range algorithms {
+			t.Run(string(algo), func(t *testing.T) {
+				b, err := NewBackend(config)
+				if err != nil {
+					t.Fatalf("NewBackend() failed: %v", err)
+				}
+
+				// Set context and ML-DSA support
+				b.pool = &SessionPool{}
+				b.supportsMLDSA = true
+
+				attrs := &types.KeyAttributes{
+					CN: "test-" + string(algo),
+					QuantumAttributes: &types.QuantumAttributes{
+						Algorithm: algo,
+					},
+				}
+
+				// Will fail at PKCS#11 session level since library is fake,
+				// but should get past the mechanism support check
+				_, err = b.GenerateKey(attrs)
+				if err == nil {
+					t.Error("GenerateKey() should return error with fake library")
+				}
+				// Should NOT be ErrUnsupportedKeyAlgorithm since ML-DSA is supported
+				if errors.Is(err, ErrUnsupportedKeyAlgorithm) {
+					t.Errorf("GenerateKey(%s) should not return ErrUnsupportedKeyAlgorithm when ML-DSA is supported", algo)
+				}
+
+				// Clean up
+				b.pool = nil
+			})
+		}
+	})
+
+	t.Run("all ML-KEM security levels", func(t *testing.T) {
+		algorithms := []types.QuantumAlgorithm{
+			types.QuantumAlgorithmMLKEM512,
+			types.QuantumAlgorithmMLKEM768,
+			types.QuantumAlgorithmMLKEM1024,
+		}
+
+		for _, algo := range algorithms {
+			t.Run(string(algo), func(t *testing.T) {
+				b, err := NewBackend(config)
+				if err != nil {
+					t.Fatalf("NewBackend() failed: %v", err)
+				}
+
+				// Set context and ML-KEM support
+				b.pool = &SessionPool{}
+				b.supportsMLKEM = true
+
+				attrs := &types.KeyAttributes{
+					CN: "test-" + string(algo),
+					QuantumAttributes: &types.QuantumAttributes{
+						Algorithm: algo,
+					},
+				}
+
+				// Will fail at PKCS#11 session level since library is fake,
+				// but should get past the mechanism support check
+				_, err = b.GenerateKey(attrs)
+				if err == nil {
+					t.Error("GenerateKey() should return error with fake library")
+				}
+				// Should NOT be ErrUnsupportedKeyAlgorithm since ML-KEM is supported
+				if errors.Is(err, ErrUnsupportedKeyAlgorithm) {
+					t.Errorf("GenerateKey(%s) should not return ErrUnsupportedKeyAlgorithm when ML-KEM is supported", algo)
+				}
+
+				// Clean up
+				b.pool = nil
+			})
+		}
+	})
+}
+
+// TestCreateQuantumKeyID verifies the quantum key ID generation logic.
+func TestCreateQuantumKeyID(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs *types.KeyAttributes
+		want  string
+	}{
+		{
+			name: "ML-DSA-44 key",
+			attrs: &types.KeyAttributes{
+				CN: "test-key",
+				QuantumAttributes: &types.QuantumAttributes{
+					Algorithm: types.QuantumAlgorithmMLDSA44,
+				},
+			},
+			want: "test-key.ml-dsa-44",
+		},
+		{
+			name: "ML-DSA-65 key",
+			attrs: &types.KeyAttributes{
+				CN: "my-signing-key",
+				QuantumAttributes: &types.QuantumAttributes{
+					Algorithm: types.QuantumAlgorithmMLDSA65,
+				},
+			},
+			want: "my-signing-key.ml-dsa-65",
+		},
+		{
+			name: "ML-DSA-87 key",
+			attrs: &types.KeyAttributes{
+				CN: "high-security",
+				QuantumAttributes: &types.QuantumAttributes{
+					Algorithm: types.QuantumAlgorithmMLDSA87,
+				},
+			},
+			want: "high-security.ml-dsa-87",
+		},
+		{
+			name: "ML-KEM-768 key",
+			attrs: &types.KeyAttributes{
+				CN: "kem-key",
+				QuantumAttributes: &types.QuantumAttributes{
+					Algorithm: types.QuantumAlgorithmMLKEM768,
+				},
+			},
+			want: "kem-key.ml-kem-768",
+		},
+		{
+			name: "nil quantum attributes",
+			attrs: &types.KeyAttributes{
+				CN:                "no-quantum",
+				QuantumAttributes: nil,
+			},
+			want: "no-quantum.",
+		},
+		{
+			name: "empty CN with quantum attributes",
+			attrs: &types.KeyAttributes{
+				CN: "",
+				QuantumAttributes: &types.QuantumAttributes{
+					Algorithm: types.QuantumAlgorithmMLDSA44,
+				},
+			},
+			want: ".ml-dsa-44",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := createQuantumKeyID(tt.attrs)
+			if got != tt.want {
+				t.Errorf("createQuantumKeyID() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPkcs11QuantumPublicKey verifies the pkcs11QuantumPublicKey wrapper type.
+func TestPkcs11QuantumPublicKey(t *testing.T) {
+	t.Run("algorithm returns correct value", func(t *testing.T) {
+		pk := &pkcs11QuantumPublicKey{
+			handle:    pkcs11.ObjectHandle(42),
+			algorithm: "ML-DSA-44",
+		}
+
+		if got := pk.Algorithm(); got != "ML-DSA-44" {
+			t.Errorf("Algorithm() = %v, want ML-DSA-44", got)
+		}
+	})
+
+	t.Run("handle returns correct value", func(t *testing.T) {
+		pk := &pkcs11QuantumPublicKey{
+			handle:    pkcs11.ObjectHandle(99),
+			algorithm: "ML-KEM-768",
+		}
+
+		if got := pk.Handle(); got != pkcs11.ObjectHandle(99) {
+			t.Errorf("Handle() = %v, want 99", got)
+		}
+	})
+
+	t.Run("different algorithms", func(t *testing.T) {
+		algorithms := []string{"ML-DSA-44", "ML-DSA-65", "ML-DSA-87", "ML-KEM-512", "ML-KEM-768", "ML-KEM-1024"}
+		for _, algo := range algorithms {
+			pk := &pkcs11QuantumPublicKey{
+				handle:    pkcs11.ObjectHandle(1),
+				algorithm: algo,
+			}
+			if got := pk.Algorithm(); got != algo {
+				t.Errorf("Algorithm() = %v, want %v", got, algo)
+			}
+		}
+	})
+}
+
+// TestPkcs11MLDSASigner_Public verifies the Public() method of pkcs11MLDSASigner.
+func TestPkcs11MLDSASigner_Public(t *testing.T) {
+	t.Run("returns pkcs11QuantumPublicKey on first call", func(t *testing.T) {
+		signer := &pkcs11MLDSASigner{
+			pool:          &SessionPool{},
+			publicHandle:  pkcs11.ObjectHandle(1),
+			privateHandle: pkcs11.ObjectHandle(2),
+			label:         "test-key",
+			algorithm:     "ML-DSA-44",
+			signMechanism: CKM_ML_DSA,
+		}
+
+		pubKey := signer.Public()
+		if pubKey == nil {
+			t.Fatal("Public() returned nil")
+		}
+
+		qpk, ok := pubKey.(*pkcs11QuantumPublicKey)
+		if !ok {
+			t.Fatalf("Public() returned %T, want *pkcs11QuantumPublicKey", pubKey)
+		}
+
+		if qpk.Algorithm() != "ML-DSA-44" {
+			t.Errorf("Public().Algorithm() = %v, want ML-DSA-44", qpk.Algorithm())
+		}
+		if qpk.Handle() != pkcs11.ObjectHandle(1) {
+			t.Errorf("Public().Handle() = %v, want 1", qpk.Handle())
+		}
+	})
+
+	t.Run("returns cached public key on subsequent calls", func(t *testing.T) {
+		signer := &pkcs11MLDSASigner{
+			pool:          &SessionPool{},
+			publicHandle:  pkcs11.ObjectHandle(5),
+			privateHandle: pkcs11.ObjectHandle(6),
+			label:         "cached-key",
+			algorithm:     "ML-DSA-65",
+			signMechanism: CKM_ML_DSA,
+		}
+
+		// First call initializes the cached public key
+		first := signer.Public()
+		// Second call should return the same cached instance
+		second := signer.Public()
+
+		if first != second {
+			t.Error("Public() should return the same cached instance on subsequent calls")
+		}
+	})
+}
+
+// TestPkcs11MLDSASigner_Sign_NilP11Ctx verifies Sign returns error when pool is nil.
+func TestPkcs11MLDSASigner_Sign_NilP11Ctx(t *testing.T) {
+	// pool is nil by default
+	signer := &pkcs11MLDSASigner{
+		pool:          nil, // nil pool to test error path
+		publicHandle:  pkcs11.ObjectHandle(1),
+		privateHandle: pkcs11.ObjectHandle(2),
+		label:         "test",
+		algorithm:     "ML-DSA-44",
+		signMechanism: CKM_ML_DSA,
+	}
+
+	digest := make([]byte, 32)
+	_, err := signer.Sign(nil, digest, nil)
+	if err == nil {
+		t.Error("Sign() should return error when p11ctx is nil")
+	}
+}
+
+// TestQuantumMechanismConstants verifies that the PKCS#11 v3.2 quantum mechanism
+// constants have the correct values per the specification.
+func TestQuantumMechanismConstants(t *testing.T) {
+	// Verify ML-DSA constants match PKCS#11 v3.2 specification
+	if CKK_ML_DSA != 0x0000004A {
+		t.Errorf("CKK_ML_DSA = 0x%08x, want 0x0000004A", CKK_ML_DSA)
+	}
+	if CKM_ML_DSA_KEY_PAIR_GEN != 0x0000001c {
+		t.Errorf("CKM_ML_DSA_KEY_PAIR_GEN = 0x%08x, want 0x0000001c", CKM_ML_DSA_KEY_PAIR_GEN)
+	}
+	if CKM_ML_DSA != 0x0000001d {
+		t.Errorf("CKM_ML_DSA = 0x%08x, want 0x0000001d", CKM_ML_DSA)
+	}
+
+	// Verify ML-KEM constants match PKCS#11 v3.2 specification
+	if CKK_ML_KEM != 0x00000049 {
+		t.Errorf("CKK_ML_KEM = 0x%08x, want 0x00000049", CKK_ML_KEM)
+	}
+	if CKM_ML_KEM_KEY_PAIR_GEN != 0x0000000f {
+		t.Errorf("CKM_ML_KEM_KEY_PAIR_GEN = 0x%08x, want 0x0000000f", CKM_ML_KEM_KEY_PAIR_GEN)
+	}
+	if CKM_ML_KEM != 0x00000017 {
+		t.Errorf("CKM_ML_KEM = 0x%08x, want 0x00000017", CKM_ML_KEM)
+	}
+
+	// Verify Ed25519 constants for cross-reference
+	if CKK_EC_EDWARDS != 0x00000040 {
+		t.Errorf("CKK_EC_EDWARDS = 0x%08x, want 0x00000040", CKK_EC_EDWARDS)
+	}
+	if CKM_EC_EDWARDS_KEY_PAIR_GEN != 0x00001055 {
+		t.Errorf("CKM_EC_EDWARDS_KEY_PAIR_GEN = 0x%08x, want 0x00001055", CKM_EC_EDWARDS_KEY_PAIR_GEN)
+	}
+	if CKM_EDDSA != 0x00001057 {
+		t.Errorf("CKM_EDDSA = 0x%08x, want 0x00001057", CKM_EDDSA)
+	}
+}
+
+// TestCompileTimeInterfaceChecks verifies the compile-time interface assertions.
+func TestCompileTimeInterfaceChecks(t *testing.T) {
+	// These are compile-time checks that exist in the source file.
+	// If these were wrong, the code would not compile. This test
+	// verifies they are present and documents the expected interfaces.
+
+	// Backend implements types.KeyProvider
+	var _ types.KeyProvider = (*Backend)(nil)
+
+	// pkcs11MLDSASigner implements crypto.Signer
+	var _ crypto.Signer = (*pkcs11MLDSASigner)(nil)
+
+	// pkcs11Ed25519Signer implements crypto.Signer
+	var _ crypto.Signer = (*pkcs11Ed25519Signer)(nil)
 }

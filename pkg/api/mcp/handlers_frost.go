@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,9 +22,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // FROST request/response types
@@ -750,15 +750,15 @@ func (s *Server) handleFrostVerify(req *JSONRPCRequest) (interface{}, error) {
 	}, nil
 }
 
-// getFrostBackend retrieves the FROST backend from the keychain service
+// getFrostBackend retrieves the FROST backend from the xkms service
 func (s *Server) getFrostBackend() (*frost.FrostBackend, error) {
-	backends := keychain.Backends()
+	backends := xkms.Backends()
 	for _, name := range backends {
-		ks, err := keychain.Backend(name)
+		ks, err := xkms.GetBackend(name)
 		if err != nil {
 			continue
 		}
-		backend := ks.Backend()
+		backend := ks.KeyProvider()
 		if backend.Type() == types.BackendTypeFrost {
 			if fb, ok := backend.(*frost.FrostBackend); ok {
 				return fb, nil

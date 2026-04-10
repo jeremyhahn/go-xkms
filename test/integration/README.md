@@ -1,6 +1,6 @@
 # Integration Tests
 
-This directory contains integration tests for all go-keychain backends. Each backend has its own subdirectory with dedicated Docker configuration for isolated testing.
+This directory contains integration tests for all go-xkms backends. Each backend has its own subdirectory with dedicated Docker configuration for isolated testing.
 
 ## Structure
 

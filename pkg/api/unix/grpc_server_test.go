@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,7 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 )
 
 func TestNewGRPCServer_NilConfig(t *testing.T) {
@@ -122,7 +122,7 @@ func TestGRPCServer_SocketPath(t *testing.T) {
 
 func TestGRPCServer_StartStop(t *testing.T) {
 	// Create temp directory for socket
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGRPCServer_StartStop(t *testing.T) {
 
 func TestGRPCServer_StartExistingSocket(t *testing.T) {
 	// Create temp directory for socket
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestGRPCServer_StartExistingSocket(t *testing.T) {
 }
 
 func TestGRPCServer_StopWithoutStart(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestGRPCServer_StartInvalidSocketPath(t *testing.T) {
 
 func TestGRPCServer_ClientConnection(t *testing.T) {
 	// Create temp directory for socket
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestGRPCServer_ClientConnection(t *testing.T) {
 
 func TestGRPCServer_MultipleClients(t *testing.T) {
 	// Create temp directory for socket
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestGRPCServer_MultipleClients(t *testing.T) {
 }
 
 func TestGRPCServer_GracefulStopTimeout(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestGRPCServer_GracefulStopTimeout(t *testing.T) {
 }
 
 func TestGRPCServer_SocketPermissions(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -544,7 +544,7 @@ func TestGRPCServer_SocketPermissions(t *testing.T) {
 }
 
 func TestGRPCServer_MessageSizeLimits(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestGRPCServer_MessageSizeLimits(t *testing.T) {
 }
 
 func TestGRPCServer_ConcurrentStreamLimit(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "keychain-grpc-test-*")
+	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}

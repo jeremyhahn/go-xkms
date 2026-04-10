@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -25,22 +25,22 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	keychainmocks "github.com/jeremyhahn/go-keychain/pkg/keychain/mocks"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // createTestServerWithSealSupport creates a test server with a mock keystore
 // that supports sealing operations.
-func createTestServerWithSealSupport(t *testing.T) (*Server, *keychainmocks.MockKeyStore) {
+func createTestServerWithSealSupport(t *testing.T) (*Server, *xkmsmocks.MockKeyStore) {
 	t.Helper()
 
-	keychain.Reset()
+	xkms.Reset()
 
-	mockKS := keychainmocks.NewMockKeyStore()
+	mockKS := xkmsmocks.NewMockKeyStore()
 
 	// Configure the mock to support sealing
 	mockKS.CanSealFunc = func() bool {
@@ -81,8 +81,8 @@ func createTestServerWithSealSupport(t *testing.T) (*Server, *keychainmocks.Mock
 		return types.BackendTypeSoftware
 	}
 
-	err := keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err := xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": mockKS,
 		},
 		DefaultBackend: "software",
@@ -105,7 +105,7 @@ func createTestServerWithSealSupport(t *testing.T) (*Server, *keychainmocks.Mock
 func TestHandleSeal(t *testing.T) {
 	t.Run("POST seals data successfully", func(t *testing.T) {
 		server, mockKS := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		testData := []byte("secret data to seal")
 		reqBody := SealRequest{
@@ -140,7 +140,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("POST seals data without KeyID", func(t *testing.T) {
 		server, mockKS := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		testData := []byte("secret data")
 		reqBody := SealRequest{
@@ -163,7 +163,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("POST with invalid JSON returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/seal", strings.NewReader("{invalid json}"))
 		req.Header.Set("Content-Type", "application/json")
@@ -181,7 +181,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("POST with missing backend returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := SealRequest{
 			Data: []byte("test data"),
@@ -206,7 +206,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("POST with missing data returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := SealRequest{
 			Backend: "software",
@@ -232,7 +232,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("POST with empty data returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := SealRequest{
 			Backend: "software",
@@ -259,7 +259,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("POST with seal error returns internal server error", func(t *testing.T) {
 		server, mockKS := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		// Configure mock to return an error
 		mockKS.SealFunc = func(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
@@ -290,7 +290,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("GET method not allowed", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal", nil)
 		w := httptest.NewRecorder()
@@ -302,7 +302,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("PUT method not allowed", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/seal", nil)
 		w := httptest.NewRecorder()
@@ -314,7 +314,7 @@ func TestHandleSeal(t *testing.T) {
 
 	t.Run("DELETE method not allowed", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/seal", nil)
 		w := httptest.NewRecorder()
@@ -329,7 +329,7 @@ func TestHandleSeal(t *testing.T) {
 func TestHandleUnseal(t *testing.T) {
 	t.Run("POST unseals data successfully", func(t *testing.T) {
 		server, mockKS := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		originalData := []byte("original secret data")
 		reqBody := UnsealRequest{
@@ -362,7 +362,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("POST unseals data without KeyID", func(t *testing.T) {
 		server, mockKS := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := UnsealRequest{
 			Backend:    "software",
@@ -384,7 +384,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("POST with invalid JSON returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/unseal", strings.NewReader("{invalid json}"))
 		req.Header.Set("Content-Type", "application/json")
@@ -402,7 +402,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("POST with missing backend returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := UnsealRequest{
 			Ciphertext: []byte("encrypted data"),
@@ -427,7 +427,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("POST with missing ciphertext returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := UnsealRequest{
 			Backend: "software",
@@ -453,7 +453,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("POST with empty ciphertext returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := UnsealRequest{
 			Backend:    "software",
@@ -480,7 +480,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("POST with unseal error returns internal server error", func(t *testing.T) {
 		server, mockKS := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		// Configure mock to return an error
 		mockKS.UnsealFunc = func(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
@@ -511,7 +511,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("GET method not allowed", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/unseal", nil)
 		w := httptest.NewRecorder()
@@ -523,7 +523,7 @@ func TestHandleUnseal(t *testing.T) {
 
 	t.Run("PUT method not allowed", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/unseal", nil)
 		w := httptest.NewRecorder()
@@ -538,7 +538,7 @@ func TestHandleUnseal(t *testing.T) {
 func TestHandleCanSeal(t *testing.T) {
 	t.Run("GET with specific backend returns can_seal true", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability?backend=software", nil)
 		w := httptest.NewRecorder()
@@ -555,7 +555,7 @@ func TestHandleCanSeal(t *testing.T) {
 
 	t.Run("GET without backend uses default backend", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
@@ -572,7 +572,7 @@ func TestHandleCanSeal(t *testing.T) {
 
 	t.Run("POST with specific backend returns can_seal", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := CanSealRequest{
 			Backend: "software",
@@ -597,7 +597,7 @@ func TestHandleCanSeal(t *testing.T) {
 
 	t.Run("POST without backend uses default backend", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := CanSealRequest{}
 
@@ -620,7 +620,7 @@ func TestHandleCanSeal(t *testing.T) {
 
 	t.Run("POST with invalid JSON returns bad request", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/seal/capability", strings.NewReader("{invalid json}"))
 		req.Header.Set("Content-Type", "application/json")
@@ -638,7 +638,7 @@ func TestHandleCanSeal(t *testing.T) {
 
 	t.Run("PUT method not allowed", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodPut, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
@@ -650,7 +650,7 @@ func TestHandleCanSeal(t *testing.T) {
 
 	t.Run("DELETE method not allowed", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/seal/capability", nil)
 		w := httptest.NewRecorder()
@@ -661,23 +661,23 @@ func TestHandleCanSeal(t *testing.T) {
 	})
 
 	t.Run("GET returns can_seal false when backend does not support sealing", func(t *testing.T) {
-		keychain.Reset()
+		xkms.Reset()
 
-		mockKS := keychainmocks.NewMockKeyStore()
+		mockKS := xkmsmocks.NewMockKeyStore()
 
 		// Configure the mock to NOT support sealing
 		mockKS.CanSealFunc = func() bool {
 			return false
 		}
 
-		err := keychain.Initialize(&keychain.ServiceConfig{
-			Backends: map[string]keychain.KeyStore{
+		err := xkms.Initialize(&xkms.ServiceConfig{
+			Backends: map[string]xkms.Backend{
 				"software": mockKS,
 			},
 			DefaultBackend: "software",
 		})
 		require.NoError(t, err)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		cfg := &Config{
 			Addr:          "localhost:8444",
@@ -706,7 +706,7 @@ func TestHandleCanSeal(t *testing.T) {
 func TestSealUnsealRoundTrip(t *testing.T) {
 	t.Run("seal then unseal returns original data", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		originalData := []byte("this is my secret data that needs protection")
 
@@ -765,7 +765,7 @@ func TestSealUnsealRoundTrip(t *testing.T) {
 func TestHandleSealWithNonExistentBackend(t *testing.T) {
 	t.Run("POST with non-existent backend returns error", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := SealRequest{
 			Backend: "nonexistent-backend",
@@ -790,7 +790,7 @@ func TestHandleSealWithNonExistentBackend(t *testing.T) {
 func TestHandleUnsealWithNonExistentBackend(t *testing.T) {
 	t.Run("POST with non-existent backend returns error", func(t *testing.T) {
 		server, _ := createTestServerWithSealSupport(t)
-		defer keychain.Reset()
+		defer xkms.Reset()
 
 		reqBody := UnsealRequest{
 			Backend:    "nonexistent-backend",

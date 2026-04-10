@@ -7,23 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Standalone DKEK Package**: New `pkg/dkek/` package provides backend-agnostic Device Key Encryption Key support using Shamir's Secret Sharing. Works with any storage backend, no longer tied to PKCS#11.
+- **SymmetricKeyProvider parity**: All symmetric-capable backends (AWS KMS, GCP KMS, Azure KV, Vault, PKCS#11, TPM2, Software, Symmetric) now implement `SymmetricKeyProviderWithTracking` with `GetTracker()` for AEAD safety tracking.
+- **TPM2 Backend SymmetricKeyProvider**: The TPM2 backend (`pkg/backend/tpm2/`) now implements `SymmetricKeyProvider` interface, exposing `GenerateSymmetricKey()`, `GetSymmetricKey()`, and `SymmetricEncrypter()` through the Backend layer.
+- **XKMSServicer unit tests**: Comprehensive test suite for `pkg/xkms/` servicer (368+ tests, 80.5% coverage) covering keys, crypto, certificates, sealing, barrier, PIN, user, platform store, shares, custodian, policy, and password operations.
+- **GUI CustodianService**: New `xkey/pkg/gui/services/custodian_service.go` wrapping the SDK CustodianGroupService for Wails frontend with event emission, input validation, and 30 unit tests.
+- **GUI TenantService**: New `xkey/pkg/gui/services/tenant_service.go` wrapping the SDK TenantService for Wails frontend with event emission, barrier init/unseal support, and 29 unit tests.
+- **Custodian/Tenant events**: New event types for custodian group lifecycle (created, deleted, member added/removed, shares distributed) and tenant lifecycle (created, deleted, barrier initialized/unsealed).
+
+### Removed
+- **YubiKey Backend**: Removed `pkg/backend/yubikey/` -- YubiKey PIV devices are now supported through the generic PKCS#11 backend with `libykcs11`. This eliminates redundant code and provides stronger cryptographic operations via native PKCS#11 AES-GCM instead of envelope encryption.
+- **SmartCard-HSM Backend**: Removed `pkg/backend/smartcardhsm/` -- SmartCard-HSM devices are supported through the generic PKCS#11 backend. The DKEK (Device Key Encryption Key) functionality has been moved to the standalone `pkg/dkek/` package.
+- **Secret Sharing Duplication**: Removed `pkg/crypto/secretsharing/` -- consolidated on `pkg/threshold/shamir/` as the single Shamir's Secret Sharing implementation.
+
+### Migration Guide
+- **YubiKey users**: Replace `backend: yubikey` configuration with `backend: pkcs11` and set `library: /usr/lib/libykcs11.so` (or appropriate path for your OS). All PIV slot operations work identically through the PKCS#11 interface.
+- **SmartCard-HSM users**: Replace `backend: smartcardhsm` with `backend: pkcs11`. For DKEK functionality, use the `pkg/dkek` package directly or the `xkmsctl dkek` CLI commands which now work with any backend.
+
 ## [0.2.3-alpha] - 2026-01-15
 
 ### Added
 - Go SDK (`sdk/go/`) with multi-protocol client support (REST, gRPC, QUIC, MCP, Unix)
-- Virtual FIDO2 key binary (`cmd/vfido2`) with Linux UHID support
+- Virtual FIDO2 key binary (`cmd/xkey`) with Linux UHID support
 - Linux UHID interface package (`pkg/uhid`) for virtual USB HID device emulation
 - Native FIDO2 authenticator (`pkg/fido2/authenticator/`) with CTAP2 protocol support
 - Virtual FIDO2 device factory and native enumerator in `pkg/fido2/`
-- Integration tests for SDK, UHID, and vfido2 packages
+- Integration tests for SDK, UHID, and xkey packages
 - WebAuthn mock authenticator for integration testing
 - CLI documentation (`docs/usage/cli/`) for all commands
 - FIDO2 documentation (`docs/fido2/`)
 
 ### Changed
-- Renamed `cmd/cli` to `cmd/keychainctl` (CLI binary)
-- Renamed `cmd/server` to `cmd/keychaind` (daemon binary)
-- Moved `pkg/cli/` to `cmd/keychainctl/` (CLI is now a standalone command)
+- Renamed `cmd/cli` to `cmd/xkmsctl` (CLI binary)
+- Renamed `cmd/server` to `cmd/xkmsd` (daemon binary)
+- Moved `pkg/cli/` to `cmd/xkmsctl/` (CLI is now a standalone command)
 - Moved `pkg/client/` to `sdk/go/` (clients are now part of SDK)
 - Moved gRPC proto files to `pkg/api/grpc/proto/`
 - Updated all Dockerfiles to use `golang:bookworm` with `GOTOOLCHAIN=auto`
@@ -63,11 +81,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Test Coverage Improvements**: Increased coverage across 7 packages to 90%+ target
   - `pkg/types`: 66.6% → 97.0% (+30.4%)
-  - `pkg/keychain`: 86.8% → 90.6% (+3.8%)
+  - `pkg/xkms`: 86.8% → 90.6% (+3.8%)
   - `pkg/backend/symmetric`: 88.4% → 90.0% (+1.6%)
   - `pkg/client`: 86.3% → 90.1% (+3.8%)
   - `pkg/crypto/ecies`: 89.6% (all reachable code covered)
-  - `pkg/adapters/backup`: 89.7% → 91.0% (+1.3%)
+  - `pkg/backup`: 89.7% → 91.0% (+1.3%)
   - `pkg/webauthn/http`: 87.9% (improved edge case coverage)
 - **Consolidated AESAttributes**: Removed deprecated `AESAttributes` type, using `KeyAttributes` with `SymmetricAlgorithm` field
 - **TPM2 Symmetric Tests**: Updated tests for symmetric key generation and encryption validation
@@ -98,7 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Shorthand `my-key` now supported (equivalent to `:::my-key`)
   - All segments except keyname are optional
   - Refactored `ParseKeyID`, `ParseKeyIDToAttributes`, and validation to use unified format
-- **Keychain Service API**: Refactored service functions to use unified key ID format
+- **XKMS Service API**: Refactored service functions to use unified key ID format
   - Added `BackendFor(attrs)` helper for backend resolution based on StoreType
   - Added `ParseCertificateID()` using unified format
   - Renamed `getKeystoreForKey` to `getKeystoreForKID` with proper 4-part parsing
@@ -108,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Install()` now uses config's `EK.HierarchyAuth` for already-provisioned TPMs
   - Improved logging with INFO level for provisioning operations
   - `GoldenMeasurements()` returns empty if no PCRs configured (skip platform policy)
-- **Client Config**: Changed default Unix socket path to `keychain-data/keychain.sock`, removed `APIKey` field (use JWT via FIDO2 flow)
+- **Client Config**: Changed default Unix socket path to `xkms-data/xkms.sock`, removed `APIKey` field (use JWT via FIDO2 flow)
 - **Validation**: Updated `ValidateKeyReference()` to enforce 4-part key ID format
 
 ### Fixed
@@ -125,11 +143,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `EnableKeyVersion` / `DisableKeyVersion` - Enable or disable specific key versions
   - `EnableAllKeyVersions` / `DisableAllKeyVersions` - Bulk version state management
   - gRPC, REST, QUIC, and Unix socket client support
-  - Proto definitions in `pkg/api/grpc/proto/keychainv1/keychain.proto`
-- **JWT Authentication Adapter**: `pkg/adapters/auth/jwt.go` for token-based authentication
+  - Proto definitions in `pkg/api/grpc/proto/xkmsv1/xkms.proto`
+- **JWT Authentication Adapter**: `pkg/auth/jwt.go` for token-based authentication
   - Configurable issuer, audience, and signing key validation
   - Support for RS256, ES256, and EdDSA signing algorithms
-- **Adaptive Authentication**: `pkg/adapters/auth/adaptive.go` for multi-method auth
+- **Adaptive Authentication**: `pkg/auth/adaptive.go` for multi-method auth
   - Automatic fallback between authentication methods (mTLS → JWT → API Key)
   - Configurable authentication chain with priority ordering
 - **WebAuthn JWT Generator**: `pkg/webauthn/jwt_generator.go` for token generation after FIDO2 authentication
@@ -137,14 +155,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TPM2 Backend Integration**: Server-side TPM2 backend factory and operations
   - `internal/server/backend_factory_tpm2.go` - TPM2 backend initialization
   - `internal/server/backend_tpm2.go` - TPM2 server operations
-- **CanoKey Backend**: Complete PIV-compatible backend for CanoKey hardware tokens
-  - `pkg/backend/canokey/` - Full backend implementation with PKCS#11 wrapper
-  - Hardware and virtual (QEMU) device support for CI/CD testing
-  - PIV slot management (9a, 9c, 9d, 9e, 82-95) matching YubiKey compatibility
-  - Ed25519/X25519 support on firmware 3.0+
-  - Symmetric encryption via envelope encryption pattern
-  - Sealing/unsealing operations with hardware-backed keys
-  - Comprehensive documentation in `docs/backends/canokey.md`
 - **YubiKey Sealer Interface**: Hardware-backed data sealing for YubiKey PIV
   - `pkg/backend/yubikey/yubikey_sealer.go` - Envelope encryption sealing
   - RSA-OAEP key wrapping for DEK protection
@@ -158,13 +168,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New `RNGConfig` in server configuration for RNG source selection
   - Modes: `auto` (default), `software`, `tpm2`, `pkcs11`
   - Fallback mode support when primary RNG fails
-  - Environment variable overrides: `KEYCHAIN_RNG_MODE`, `KEYCHAIN_RNG_FALLBACK`, `KEYCHAIN_RNG_TPM2_*`, `KEYCHAIN_RNG_PKCS11_*`
-- **Unix Socket Client Package**: `pkg/client/` for Go applications to communicate with keychain server
+  - Environment variable overrides: `XKMS_RNG_MODE`, `XKMS_RNG_FALLBACK`, `XKMS_RNG_TPM2_*`, `XKMS_RNG_PKCS11_*`
+- **Unix Socket Client Package**: `pkg/client/` for Go applications to communicate with xkms server
 - **CLI Configuration Tests**: `internal/cli/config_test.go` with comprehensive config validation
 - **Extended CLI Integration Tests**: Multi-protocol and complete lifecycle tests
 - **User Documentation**: `docs/usage/user.md` for end-user documentation
-- **Daemon Configuration**: Complete daemon operation support for `keychaind`
-  - Configuration file support (`--config`, `KEYCHAIN_CONFIG`)
+- **Daemon Configuration**: Complete daemon operation support for `xkmsd`
+  - Configuration file support (`--config`, `XKMS_CONFIG`)
   - Signal handling: SIGTERM/SIGINT for graceful shutdown, SIGHUP for config reload
   - PID file management with automatic creation and cleanup
   - Runtime configuration reload without restart
@@ -172,8 +182,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - systemd service file with security hardening
   - Installation script and comprehensive documentation in `configs/`
 - **Comprehensive Test Suites**: New test files for sealer and symmetric operations
-  - `pkg/backend/canokey/canokey_sealer_test.go` (26 tests)
-  - `pkg/backend/canokey/canokey_symmetric_test.go` (20 tests)
   - `pkg/backend/yubikey/yubikey_sealer_test.go` (14 test functions)
   - `pkg/backend/yubikey/yubikey_symmetric_test.go` (20 tests)
 - **Deployment Documentation**: systemd and OpenRC service files for production deployments
@@ -183,7 +191,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enhanced README**: Expanded quick start guide with FIDO2 admin setup
   - Server Quick Start section with first-time setup instructions
   - Complete CLI examples for key, certificate, and admin management
-  - Keychain Service API overview with all service functions documented
+  - XKMS Service API overview with all service functions documented
   - Multi-backend configuration examples
 - **Admin CLI Commands**: `internal/cli/admin.go` for administrator management
   - Create, list, delete admin users
@@ -199,7 +207,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Integration with RBAC system
 - **Unix Socket HTTP Server**: `internal/unix/` for local IPC
   - HTTP server over Unix domain sockets
-  - Handlers for all keychain operations
+  - Handlers for all xkms operations
 
 ### Changed
 - **Test Coverage Improvements**: Increased coverage across multiple packages
@@ -208,13 +216,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `internal/config`: 83.1% → 96.0%
   - Testable code (excluding hardware) now at 93.4% average coverage
 - Extended environment variable configuration support for RNG, rate limiting, and logging
-- **API Naming**: Renamed `KeychainFacade` to `KeychainService` for clarity
+- **API Naming**: Renamed `XKMSFacade` to `XKMSService` for clarity
   - `FacadeConfig` → `ServiceConfig`
   - `facade.go` → `service.go`
   - Updated all documentation, tests, and code references
 - **Documentation**: Updated terminology from "facade" to "service" throughout
 - **Typed Errors**: Replaced all `fmt.Errorf` with typed errors in PIV backends
-  - CanoKey: 38 typed error variables, ~118 replacements
   - YubiKey: 37 typed error variables, ~139 replacements
   - Enables proper `errors.Is()` and `errors.As()` error handling
 - Extended `Resolver` interface with `Read(p []byte) (n int, err error)` method for `io.Reader` compatibility
@@ -236,13 +243,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TestPlatformPassword_CacheConcurrency` now passes with race detector enabled
 - Improved error handling and logging for ignored HTTP write errors
 - Integration test stability improvements across all backends
-- **Configuration**: Server socket path now defaults to `/var/run/keychain/keychain.sock` to match client defaults
-- **Configuration**: Added `keychaind-dev.yaml` for development/testing with `/tmp` paths
-- **Configuration**: Added `keychain-client.yaml` example client configuration
+- **Configuration**: Server socket path now defaults to `/var/run/xkms/xkms.sock` to match client defaults
+- **Configuration**: Added `xkmsd-dev.yaml` for development/testing with `/tmp` paths
+- **Configuration**: Added `xkms-client.yaml` example client configuration
 - **Scripts**: Moved test scripts from `scripts/` to `test/scripts/`
 
 ### Removed
-- **API Key Authentication**: Removed `pkg/adapters/auth/apikey.go` (replaced by JWT adapter)
+- **API Key Authentication**: Removed `pkg/auth/apikey.go` (replaced by JWT adapter)
 - **Logo**: Removed `logo.svg` from repository root
 - `test/integration/encoding/README_FIX.md` - Development-only fix notes
 - `pkg/metrics/implementation-summary.md` - Development-only implementation notes
@@ -269,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `POST /api/v1/webauthn/registration/finish` - Complete registration
   - `POST /api/v1/webauthn/login/begin` - Start authentication ceremony
   - `POST /api/v1/webauthn/login/finish` - Complete authentication
-- **Shared Mock Infrastructure**: `pkg/keychain/mocks/mock_keystore.go` for unit testing
+- **Shared Mock Infrastructure**: `pkg/xkms/mocks/mock_keystore.go` for unit testing
 - **WebAuthn Integration Tests**: Docker-based tests in `test/integration/api/`
 - **WebAuthn Documentation**: `docs/usage/webauthn.md`
 - **Unified Rate Limiting**: Consistent rate limiting across all public APIs
@@ -288,7 +295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.8-alpha] - 2025-12-06
 
 ### Changed
-- **Storage Independence**: Removed go-objstore dependency, go-keychain now has its own storage implementations
+- **Storage Independence**: Removed go-objstore dependency, go-xkms now has its own storage implementations
   - Local `pkg/storage/memory.go` provides in-memory storage backend
   - Local `pkg/storage/file/` provides file-based storage backend
   - Storage interface remains compatible with go-objstore for higher-level app integration
@@ -304,7 +311,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GOPRIVATE environment variables from all Dockerfiles
 
 ### Dependencies
-- Removed go-objstore dependency entirely (go-keychain is now self-contained for storage)
+- Removed go-objstore dependency entirely (go-xkms is now self-contained for storage)
 
 ## [0.1.7-alpha] - 2025-12-05
 
@@ -321,7 +328,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Supports RS256/384/512, PS256/384/512, ES256/384/512, EdDSA
   - `SignWithSigner()` and `SignWithSignerAndKID()` convenience methods
 - **Certificate Display Functions**: `pkg/certstore/types.go` with OID parsing, key usage display
-- **Composite Sealing**: `pkg/keychain/composite_seal.go` for multi-backend seal operations
+- **Composite Sealing**: `pkg/xkms/composite_seal.go` for multi-backend seal operations
 - **TPM2 Enhancements**: Certificate conversion, type re-exports, store abstraction
 - **Logging Package**: Structured logging infrastructure (`pkg/logging/`)
 - **Architecture Documentation**: Storage interfaces and BlobStorer refactoring guides
@@ -350,9 +357,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Simplified API: `server.Initialize()` instead of `server.InitializeService()`
-- Refactored keychain initialization with auto-backend detection
+- Refactored xkms initialization with auto-backend detection
 - Updated documentation and examples to reflect simplified API
-- Improved code coverage from 72.8% to 92.5% in keychain package
+- Improved code coverage from 72.8% to 92.5% in xkms package
 
 ### Security
 - Centralized validation at service layer protects ALL public APIs (REST, gRPC, QUIC, CLI, MCP)
@@ -422,7 +429,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Overview
 
-Initial alpha release of go-keychain - a production-ready cryptographic key and certificate management library for Go with 10 backends, 5 client interfaces, and dual licensing (AGPL-3.0 + Commercial).
+Initial alpha release of go-xkms - a production-ready cryptographic key and certificate management library for Go with 10 backends, 5 client interfaces, and dual licensing (AGPL-3.0 + Commercial).
 
 ### Added
 
@@ -514,7 +521,7 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - **Version Injection**: Automatic version embedding in binaries via ldflags
 - **Build Tags**: Conditional compilation for optional backends
 - **Binary Builds**: CLI and 5 server binaries with proper versioning
-- **Shared Library**: CGO-based libkeychain.so with version numbering
+- **Shared Library**: CGO-based libxkms.so with version numbering
 - **Cross-Platform**: Linux and macOS support (Windows experimental)
 - **CI/CD Ready**: GitLab CI configuration included
 
@@ -572,22 +579,22 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 - Jeremy Hahn (@jeremyhahn)
 
 ### Links
-- Repository: https://github.com/jeremyhahn/go-keychain
-- Documentation: https://github.com/jeremyhahn/go-keychain/tree/master/docs
+- Repository: https://github.com/jeremyhahn/go-xkms
+- Documentation: https://github.com/jeremyhahn/go-xkms/tree/master/docs
 - Commercial Licensing: licensing@automatethethings.com
 - AGPL-3.0 License: https://www.gnu.org/licenses/agpl-3.0.html
 
-[0.2.3-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.3-alpha
-[0.2.2-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.2-alpha
-[0.2.1-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.1-alpha
-[0.2.0-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.2.0-alpha
-[0.1.9-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.9-alpha
-[0.1.8-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.8-alpha
-[0.1.7-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.7-alpha
-[0.1.6-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.6-alpha
-[0.1.5-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.5-alpha
-[0.1.4-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.4-alpha
-[0.1.3-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.3-alpha
-[0.1.2-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.2-alpha
-[0.1.1-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.1-alpha
-[0.1.0-alpha]: https://github.com/jeremyhahn/go-keychain/releases/tag/v0.1.0-alpha
+[0.2.3-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.2.3-alpha
+[0.2.2-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.2.2-alpha
+[0.2.1-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.2.1-alpha
+[0.2.0-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.2.0-alpha
+[0.1.9-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.9-alpha
+[0.1.8-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.8-alpha
+[0.1.7-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.7-alpha
+[0.1.6-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.6-alpha
+[0.1.5-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.5-alpha
+[0.1.4-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.4-alpha
+[0.1.3-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.3-alpha
+[0.1.2-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.2-alpha
+[0.1.1-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.1-alpha
+[0.1.0-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.0-alpha

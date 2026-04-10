@@ -5,8 +5,11 @@ services:
       dockerfile: test/integration/pkcs8/Dockerfile
     volumes:
       - ../../..:/app
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
     working_dir: /app
 
 networks:
   default:
-    name: keychain-pkcs8-test
+    name: xkms-pkcs8-test

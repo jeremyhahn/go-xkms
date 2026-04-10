@@ -1,4 +1,4 @@
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
 RUN apt-get update && apt-get install -y ca-certificates curl netcat-openbsd && rm -rf /var/lib/apt/lists/*
 
@@ -14,4 +14,4 @@ CMD ["sh", "-c", "echo 'Waiting for Vault to be ready...'; \
      echo ''; \
      echo 'Transit engine setup complete!'; \
      echo 'Running tests...'; \
-     go test -v -tags='integration vault' ./test/integration/vault/..."]
+     go test -v -tags='integration vault codec_cbor codec_json codec_msgpack' ./test/integration/vault/..."]

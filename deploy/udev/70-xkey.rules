@@ -1,0 +1,22 @@
+# udev rules for xKey Virtual FIDO2 Authenticator
+# Install to: /etc/udev/rules.d/70-xkey.rules
+#
+# Reload rules:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# This file provides:
+#   1. /dev/uhid access for the xkms service user (to create virtual HID devices)
+#   2. Proper permissions on xKey hidraw devices for local console users
+
+# Grant /dev/uhid read-write access to the xkms group.
+# The xKey daemon needs this to create virtual FIDO2 devices via UHID.
+KERNEL=="uhid", SUBSYSTEM=="misc", GROUP="xkms", MODE="0660"
+
+# Tag xKey virtual FIDO2 hidraw devices for uaccess (automatic local user access).
+# The fido_id helper already sets ID_FIDO_TOKEN=1, which triggers the uaccess tag
+# via systemd's 73-seat-late.rules. This rule adds explicit matching by vendor ID
+# as a safety net in case fido_id ordering changes.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="f1d0", TAG+="uaccess"
+
+# For UHID-backed devices (no USB parent), match via the HID uevent instead.
+SUBSYSTEM=="hidraw", KERNELS=="0003:F1D0:*", TAG+="uaccess"

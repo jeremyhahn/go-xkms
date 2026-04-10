@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package tpm2 provides a types.Backend implementation for TPM 2.0 hardware security modules.
+// Package tpm2 provides a types.KeyProvider implementation for TPM 2.0 hardware security modules.
 //
 // This package wraps the low-level pkg/tpm2 library to provide a unified Backend interface
 // that can be used interchangeably with other backends (software, PKCS#11, cloud KMS).
@@ -30,7 +30,7 @@
 //
 //	config := &tpm2.Config{
 //	    Device:         "/dev/tpmrm0",
-//	    KeyDir:         "/var/lib/keychain/tpm2",
+//	    KeyDir:         "/var/lib/xkms/tpm2",
 //	    UseSimulator:   false,
 //	    EncryptSession: true,
 //	}

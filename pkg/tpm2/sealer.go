@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // KeyBackend is an alias for store.KeyBackend for cleaner internal use
@@ -21,19 +21,63 @@ func (tpm *TPM2) CanSeal() bool {
 	return tpm.transport != nil
 }
 
+// defaultSealKeyAttributes returns sensible default KeyAttributes for sealing
+// when the caller does not provide explicit KeyAttributes. It uses the Platform
+// Storage Root Key (Platform SRK) as the parent with a deterministic CN so the
+// same sealing key is reused across operations instead of creating a new key
+// per seal.
+func (tpm *TPM2) defaultSealKeyAttributes() (*types.KeyAttributes, error) {
+	srkAttrs, err := tpm.PlatformSRKAttributes()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidPlatformSRKConfiguration, err)
+	}
+	return &types.KeyAttributes{
+		CN:     "platform-sealing-key",
+		Parent: srkAttrs,
+	}, nil
+}
+
+// defaultUnsealKeyAttributes returns sensible default KeyAttributes for unsealing
+// when the caller does not provide explicit KeyAttributes. It uses the Platform
+// Storage Root Key (Platform SRK) as the parent and sets the CN from the sealed
+// data's KeyID (which was assigned during the original Seal operation).
+func (tpm *TPM2) defaultUnsealKeyAttributes(keyID string) (*types.KeyAttributes, error) {
+	srkAttrs, err := tpm.PlatformSRKAttributes()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidPlatformSRKConfiguration, err)
+	}
+	return &types.KeyAttributes{
+		CN:     keyID,
+		Parent: srkAttrs,
+	}, nil
+}
+
 // Seal encrypts/protects data using the TPM's sealing mechanism.
 // The data is sealed to the current PCR state (if PlatformPolicy is enabled)
 // and can only be unsealed when the same PCR values are present.
 //
+// When opts is nil or opts.KeyAttributes is nil, sensible defaults are provided
+// using the Platform Storage Root Key (Platform SRK) as the parent hierarchy.
+// This allows callers such as the barrier's TPM2Strategy to seal data without
+// needing to know TPM-specific key hierarchy details.
+//
 // Parameters:
 //   - ctx: Context for cancellation and timeouts
 //   - data: The plaintext data to seal
-//   - opts: Sealing options (KeyAttributes required, TPMPolicy optional)
+//   - opts: Sealing options (optional; defaults provided if nil)
 //
 // Returns SealedData containing the TPM public/private areas, or error.
 func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
-	if opts == nil || opts.KeyAttributes == nil {
-		return nil, fmt.Errorf("seal options with KeyAttributes required")
+	if opts == nil {
+		opts = &types.SealOptions{}
+	}
+
+	if opts.KeyAttributes == nil {
+		defaultAttrs, err := tpm.defaultSealKeyAttributes()
+		if err != nil {
+			return nil, err
+		}
+		opts.KeyAttributes = defaultAttrs
 	}
 
 	keyAttrs := opts.KeyAttributes
@@ -65,17 +109,17 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 		if kb, ok := opts.Backend.(store.KeyBackend); ok {
 			backend = kb
 		} else {
-			return nil, fmt.Errorf("opts.Backend must implement store.KeyBackend")
+			return nil, ErrInvalidSealBackend
 		}
 	}
 	if backend == nil {
-		return nil, fmt.Errorf("no storage backend available for sealed data")
+		return nil, ErrNoStorageBackend
 	}
 
 	// Call the internal seal operation
 	sealResponse, err := tpm.SealKey(keyAttrs, backend, true)
 	if err != nil {
-		return nil, fmt.Errorf("tpm seal failed: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrSealFailed, err)
 	}
 
 	// Marshal the TPM public area
@@ -102,10 +146,15 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 // Unseal decrypts/recovers data using the TPM's unsealing mechanism.
 // For TPM backends, this requires the same PCR state as when the data was sealed.
 //
+// When opts is nil or opts.KeyAttributes is nil, sensible defaults are provided
+// using the Platform Storage Root Key (Platform SRK) as the parent hierarchy and
+// the sealed data's KeyID as the CN. This allows callers such as the barrier's
+// TPM2Strategy to unseal data without needing to know TPM-specific details.
+//
 // Parameters:
 //   - ctx: Context for cancellation and timeouts
 //   - sealed: The sealed data from a previous Seal operation (TPMPublic/TPMPrivate used if set)
-//   - opts: Unsealing options (KeyAttributes required)
+//   - opts: Unsealing options (optional; defaults provided if nil)
 //
 // Returns the original plaintext data, or error if unsealing fails.
 //
@@ -114,18 +163,37 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 // without requiring prior storage of the sealed data.
 func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
 	if sealed == nil {
-		return nil, fmt.Errorf("sealed data is required")
+		return nil, ErrNilSealedData
 	}
 
 	if sealed.Backend != types.BackendTypeTPM2 {
-		return nil, fmt.Errorf("sealed data was not created by TPM2 backend (got %s)", sealed.Backend)
+		return nil, fmt.Errorf("%w: got %s", ErrSealedDataBackendMismatch, sealed.Backend)
 	}
 
-	if opts == nil || opts.KeyAttributes == nil {
-		return nil, fmt.Errorf("unseal options with KeyAttributes required")
+	if opts == nil {
+		opts = &types.UnsealOptions{}
+	}
+
+	if opts.KeyAttributes == nil {
+		defaultAttrs, err := tpm.defaultUnsealKeyAttributes(sealed.KeyID)
+		if err != nil {
+			return nil, err
+		}
+		opts.KeyAttributes = defaultAttrs
 	}
 
 	keyAttrs := opts.KeyAttributes
+
+	// Ensure Parent (SRK) is set when caller provides KeyAttributes without it.
+	// This happens when KeyAttributes are parsed from a stored KeyID string
+	// which doesn't include the TPM key hierarchy.
+	if keyAttrs.Parent == nil {
+		srkAttrs, err := tpm.PlatformSRKAttributes()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidPlatformSRKConfiguration, err)
+		}
+		keyAttrs.Parent = srkAttrs
+	}
 
 	// Apply password if provided
 	if opts.Password != nil {
@@ -146,17 +214,17 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 		if kb, ok := opts.Backend.(store.KeyBackend); ok {
 			backend = kb
 		} else {
-			return nil, fmt.Errorf("opts.Backend must implement store.KeyBackend")
+			return nil, ErrInvalidSealBackend
 		}
 	}
 	if backend == nil {
-		return nil, fmt.Errorf("no storage backend available for sealed data")
+		return nil, ErrNoStorageBackend
 	}
 
 	// Call the internal unseal operation
 	plaintext, err := tpm.UnsealKey(keyAttrs, backend)
 	if err != nil {
-		return nil, fmt.Errorf("tpm unseal failed: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrUnsealFailed, err)
 	}
 
 	return plaintext, nil

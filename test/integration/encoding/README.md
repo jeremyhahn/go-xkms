@@ -29,7 +29,7 @@ These tests provide comprehensive coverage of:
 
 - All key types (RSA, ECDSA, Ed25519, X25519, symmetric)
 - Multiple algorithms for each encoding format
-- Keychain integration scenarios
+- XKMS integration scenarios
 - Error handling and edge cases
 - Interoperability between JWK, JWT, and JWE
 - Real-world workflows (nested JWTs, encrypted tokens, etc.)

@@ -1,6 +1,6 @@
 # Symmetric Encryption
 
-go-keychain provides symmetric encryption capabilities using AEAD (Authenticated Encryption with Associated Data) algorithms across all backends that support it.
+go-xkms provides symmetric encryption capabilities using AEAD (Authenticated Encryption with Associated Data) algorithms across all backends that support it.
 
 ## Supported Algorithms
 
@@ -21,7 +21,7 @@ go-keychain provides symmetric encryption capabilities using AEAD (Authenticated
 
 ### Algorithm Selection
 
-go-keychain automatically selects the optimal algorithm based on the environment:
+go-xkms automatically selects the optimal algorithm based on the environment:
 
 - **Hardware-backed keys** (HSM, TPM, Cloud KMS): Always use AES-256-GCM
 - **Software keys with AES-NI**: Use AES-256-GCM (hardware acceleration)
@@ -29,15 +29,18 @@ go-keychain automatically selects the optimal algorithm based on the environment
 
 ## Supported Backends
 
-| Backend | AES-GCM | ChaCha20-Poly1305 | Notes |
-|---------|---------|-------------------|-------|
-| Software | 128/192/256 | Yes | Full support |
-| AWS KMS | 256 only | No | HSM-backed |
-| GCP KMS | 256 only | No | HSM-backed |
-| Azure Key Vault | 256 only | No | Premium tier for HSM |
-| HashiCorp Vault | 256 | No | Transit engine |
-| PKCS#11 | Varies | No | HSM-dependent |
-| TPM2 | 128/256 | No | Hardware constraints |
+| Backend | AES-GCM | ChaCha20-Poly1305 | GetTracker() | Notes |
+|---------|---------|-------------------|:------------:|-------|
+| Software | 128/192/256 | Yes | ✓ | Full support |
+| Symmetric | 128/192/256 | Yes | ✓ | Dedicated symmetric backend |
+| AWS KMS | 256 only | No | ✓ | HSM-backed |
+| GCP KMS | 256 only | No | ✓ | HSM-backed |
+| Azure Key Vault | 256 only | No | ✓ | Premium tier for HSM |
+| HashiCorp Vault | 256 | No | ✓ | Transit engine |
+| PKCS#11 | Varies | No | ✓ | HSM-dependent |
+| TPM2 | 128/256 | No | ✓ | Hardware-backed symmetric |
+
+All symmetric-capable backends implement `SymmetricKeyProviderWithTracking`, exposing `GetTracker()` for AEAD safety tracking (nonce reuse prevention and byte limit enforcement).
 
 ## Usage
 
@@ -51,7 +54,7 @@ attrs := &types.KeyAttributes{
     StoreType:          types.StoreSoftware,
     SymmetricAlgorithm: types.SymmetricAES256GCM,
 }
-key, err := keychain.GenerateSymmetricKey("sw", attrs)
+key, err := xkms.GenerateSymmetricKey("sw", attrs)
 
 // ChaCha20-Poly1305 key
 attrs := &types.KeyAttributes{
@@ -60,7 +63,7 @@ attrs := &types.KeyAttributes{
     StoreType:          types.StoreSoftware,
     SymmetricAlgorithm: types.SymmetricChaCha20Poly1305,
 }
-key, err := keychain.GenerateSymmetricKey("sw", attrs)
+key, err := xkms.GenerateSymmetricKey("sw", attrs)
 
 // XChaCha20-Poly1305 key (extended nonce)
 attrs := &types.KeyAttributes{
@@ -69,13 +72,13 @@ attrs := &types.KeyAttributes{
     StoreType:          types.StoreSoftware,
     SymmetricAlgorithm: types.SymmetricXChaCha20Poly1305,
 }
-key, err := keychain.GenerateSymmetricKey("sw", attrs)
+key, err := xkms.GenerateSymmetricKey("sw", attrs)
 ```
 
 ### Encrypt Data
 
 ```go
-encrypter, err := keychain.SymmetricEncrypter(attrs)
+encrypter, err := xkms.SymmetricEncrypter(attrs)
 
 encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
     AdditionalData: []byte("context"),
@@ -106,7 +109,7 @@ attrs := &types.KeyAttributes{
 
 ## AEAD Safety Tracking
 
-go-keychain enforces AEAD safety limits to prevent cryptographic failures:
+go-xkms enforces AEAD safety limits to prevent cryptographic failures:
 
 ### Nonce Tracking
 - Prevents nonce reuse (catastrophic for GCM security)
@@ -123,7 +126,7 @@ go-keychain enforces AEAD safety limits to prevent cryptographic failures:
 Rotating a key resets all tracking counters:
 
 ```go
-err := keychain.RotateSymmetricKey(attrs)
+err := xkms.RotateSymmetricKey(attrs)
 // Nonce and bytes counters reset to zero
 ```
 
@@ -144,7 +147,7 @@ err := keychain.RotateSymmetricKey(attrs)
 ### Best Practices
 
 1. **Use AES-256-GCM or ChaCha20-Poly1305** - Both provide 256-bit security
-2. **Never reuse nonces** - Let go-keychain generate them automatically
+2. **Never reuse nonces** - Let go-xkms generate them automatically
 3. **Use Additional Authenticated Data (AAD)** - Bind ciphertext to context
 4. **Rotate keys before limits** - Monitor AEAD tracking warnings
 5. **Password-protect sensitive keys** - Use strong passwords with Argon2id

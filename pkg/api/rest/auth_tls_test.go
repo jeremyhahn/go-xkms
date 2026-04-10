@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,16 +27,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/metadata"
 )
 
 // createTestKeyStore creates a simple in-memory keystore for testing
-func createTestKeyStore(t *testing.T) keychain.KeyStore {
+func createTestKeyStore(t *testing.T) xkms.Backend {
 	t.Helper()
 
 	// Create in-memory storage
@@ -52,7 +52,7 @@ func createTestKeyStore(t *testing.T) keychain.KeyStore {
 	}
 
 	// Create keystore
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -71,7 +71,7 @@ func waitForServer(t *testing.T, url string, client *http.Client, timeout time.D
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return
 			}
@@ -92,7 +92,7 @@ func TestRESTServer_NoOpAuthenticator_HTTP(t *testing.T) {
 	// Create REST server with HTTP (no TLS)
 	cfg := &Config{
 		Port: 0, // Use ephemeral port
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Authenticator: authenticator,
@@ -124,7 +124,7 @@ func TestRESTServer_NoOpAuthenticator_HTTP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Health check failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -137,7 +137,7 @@ func TestRESTServer_NoOpAuthenticator_HTTP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -222,7 +222,7 @@ func TestRESTServer_BearerTokenAuthenticator_HTTP(t *testing.T) {
 	// Create REST server
 	cfg := &Config{
 		Port: 0, // Use ephemeral port
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Authenticator: authenticator,
@@ -257,7 +257,7 @@ func TestRESTServer_BearerTokenAuthenticator_HTTP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -276,7 +276,7 @@ func TestRESTServer_BearerTokenAuthenticator_HTTP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("Expected status 401, got %d", resp.StatusCode)
@@ -289,7 +289,7 @@ func TestRESTServer_BearerTokenAuthenticator_HTTP(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("Expected status 401, got %d", resp.StatusCode)
@@ -342,7 +342,7 @@ func TestRESTServer_TLS_NoClientCert(t *testing.T) {
 	// Create REST server with TLS
 	cfg := &Config{
 		Port: 0, // Use ephemeral port
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		TLSConfig:     tlsConfig,
@@ -385,7 +385,7 @@ func TestRESTServer_TLS_NoClientCert(t *testing.T) {
 		if err != nil {
 			t.Fatalf("HTTPS request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -403,7 +403,7 @@ func TestRESTServer_TLS_NoClientCert(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -467,7 +467,7 @@ func TestRESTServer_mTLS_ClientCertRequired(t *testing.T) {
 	// Create REST server with mTLS
 	cfg := &Config{
 		Port: 0, // Use ephemeral port
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		TLSConfig:     tlsConfig,
@@ -522,7 +522,7 @@ func TestRESTServer_mTLS_ClientCertRequired(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("Expected status 200, got %d", resp.StatusCode)
@@ -615,7 +615,7 @@ func TestRESTServer_AuthenticationFailureScenarios(t *testing.T) {
 			// Create server with the specified authenticator
 			cfg := &Config{
 				Port: 0,
-				Backends: map[string]keychain.KeyStore{
+				Backends: map[string]xkms.Backend{
 					"test": ks,
 				},
 				Authenticator: tt.setupAuth(),
@@ -650,7 +650,7 @@ func TestRESTServer_AuthenticationFailureScenarios(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Request failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != tt.expectedCode {
 				t.Errorf("%s: Expected status %d, got %d", tt.description, tt.expectedCode, resp.StatusCode)

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -154,8 +154,8 @@ func (s *WebAuthnServer) handleRegisterBegin(w http.ResponseWriter, r *http.Requ
 	resp := RegistrationResponse{
 		Challenge: base64.RawURLEncoding.EncodeToString(challenge),
 		RelyingParty: map[string]string{
-			"id":   "go-keychain-test",
-			"name": "Go Keychain Test Server",
+			"id":   "go-xkms-test",
+			"name": "Go xKMS Test Server",
 		},
 		User: map[string]interface{}{
 			"id":          base64.RawURLEncoding.EncodeToString(userID),
@@ -271,7 +271,7 @@ func (s *WebAuthnServer) handleAuthenticateBegin(w http.ResponseWriter, r *http.
 		CredentialID: base64.StdEncoding.EncodeToString(session.CredentialID),
 		Salt:         base64.StdEncoding.EncodeToString(session.Salt),
 		Timeout:      60000,
-		RPID:         "go-keychain-test",
+		RPID:         "go-xkms-test",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -379,7 +379,7 @@ func TestWebAuthnServerRegistrationFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, regResp.Challenge)
-	assert.Equal(t, "go-keychain-test", regResp.RelyingParty["id"])
+	assert.Equal(t, "go-xkms-test", regResp.RelyingParty["id"])
 
 	t.Logf("Registration challenge received: %s", regResp.Challenge[:16]+"...")
 

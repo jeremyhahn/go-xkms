@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,7 +20,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Logger is a type alias for *slog.Logger
@@ -92,6 +92,9 @@ var (
 
 	// ErrPasswordRequired indicates a password is required but not provided
 	ErrPasswordRequired = errors.New("password required")
+
+	// ErrInvalidPublicKey indicates an invalid public key
+	ErrInvalidPublicKey = errors.New("invalid public key")
 )
 
 // BlobStorer provides binary blob storage

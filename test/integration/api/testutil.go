@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,6 +17,7 @@ package integration
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -65,11 +66,11 @@ func getProjectRoot() string {
 // LoadTestConfig loads test configuration from environment or defaults
 func LoadTestConfig() *TestConfig {
 	projectRoot := getProjectRoot()
-	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychainctl")
+	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "xkmsctl")
 
 	cfg := &TestConfig{
 		CLIBinPath:     getEnv("KEYSTORE_CLI_BIN", defaultCLIPath),
-		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/keychain/keychain.sock"),
+		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/xkms/xkms.sock"),
 		RESTBaseURL:    getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
 		GRPCAddr:       getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
 		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:9445"),
@@ -84,6 +85,21 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// loadCACertPool loads the test CA certificate pool from the environment or default path.
+// Returns nil if the CA cert cannot be loaded (e.g., running outside Docker).
+func loadCACertPool() *x509.CertPool {
+	caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil
+	}
+	return pool
 }
 
 // isCLIAvailable checks if the CLI binary is available
@@ -104,14 +120,13 @@ func isCLIAvailable(t *testing.T, cfg *TestConfig) bool {
 	return true
 }
 
-// requireCLI checks if CLI is available and skips the test if not.
-// Integration tests should be run in Docker where CLI is built automatically.
-// For local runs, use 'make build' to build the CLI first.
+// requireCLI checks if CLI is available and fails the test if not.
+// Integration tests run in Docker where CLI is built automatically.
 func requireCLI(t *testing.T, cfg *TestConfig) {
 	t.Helper()
 
 	if !isCLIAvailable(t, cfg) {
-		t.Skipf("CLI binary not available (path: %s). Run 'make build' for local testing or use 'make integration-test-cli' for Docker-based tests.", cfg.CLIBinPath)
+		t.Fatalf("CLI binary not available (path: %s). Run 'make build' for local testing or use 'make integration-test-cli' for Docker-based tests.", cfg.CLIBinPath)
 	}
 }
 
@@ -122,7 +137,7 @@ func isServerAvailable(t *testing.T, cfg *TestConfig) bool {
 	client := &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
 		},
 	}
 	resp, err := client.Get(cfg.RESTBaseURL + "/health")
@@ -295,7 +310,7 @@ const (
 	ProtocolEmbedded ProtocolType = "embedded"
 )
 
-// AllProtocols returns all supported protocols including embedded mode
+// AllProtocols returns all supported protocols including embedded mode.
 func AllProtocols() []ProtocolType {
 	return []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP, ProtocolEmbedded}
 }
@@ -363,7 +378,7 @@ func (cfg *TestConfig) IsProtocolAvailable(t *testing.T, protocol ProtocolType) 
 		client := &http.Client{
 			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
 			},
 		}
 		// Check REST health endpoint to verify server is up (QUIC shares same server)

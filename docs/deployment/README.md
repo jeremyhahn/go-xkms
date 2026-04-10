@@ -1,6 +1,6 @@
 # Deployment Documentation
 
-This directory contains deployment guides for go-keychain.
+This directory contains deployment guides for go-xkms.
 
 ## Available Guides
 
@@ -21,10 +21,10 @@ This directory contains deployment guides for go-keychain.
 
 ## Deployment Options
 
-go-keychain provides multiple deployment options:
+go-xkms provides multiple deployment options:
 
 1. **Unified Server** - Run all protocols (REST, gRPC, QUIC, MCP) in one container
 2. **Protocol-Specific Servers** - Deploy individual protocol servers for focused use cases
-3. **CLI Tool** - Command-line interface for direct keychain operations
+3. **CLI Tool** - Command-line interface for direct xkms operations
 
 See the individual guides for detailed instructions on each deployment option.

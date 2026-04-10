@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -29,22 +29,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
-// setupFinalGapsTest initializes keychain for final coverage gap tests
+// setupFinalGapsTest initializes xkms for final coverage gap tests
 func setupFinalGapsTest(t *testing.T) *Service {
 	t.Helper()
-	keychain.Reset()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	certStorage := storage.New()
@@ -56,7 +56,7 @@ func setupFinalGapsTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -64,23 +64,23 @@ func setupFinalGapsTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": ks,
 		},
 		DefaultBackend: "software",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService()
+	return NewService(nil, nil)
 }
 
 // TestVerifyErrorPaths tests Verify error handling paths
 func TestVerifyErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.Verify(context.Background(), &pb.VerifyRequest{
@@ -119,8 +119,20 @@ func TestVerifyErrorPaths(t *testing.T) {
 	})
 
 	t.Run("returns error for missing data", func(t *testing.T) {
-		_, err := service.Verify(context.Background(), &pb.VerifyRequest{
-			KeyId:     "test-key",
+		// First create an RSA key so we can test the empty data path
+		// (Ed25519 allows empty data per RFC 8032, so we need a non-Ed25519 key)
+		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+			KeyId:   "test-rsa-for-verify-empty-data",
+			Backend: "software",
+			KeyType: "RSA",
+			KeySize: 2048,
+		})
+		if err != nil {
+			t.Fatalf("Failed to generate RSA key: %v", err)
+		}
+
+		_, err = service.Verify(context.Background(), &pb.VerifyRequest{
+			KeyId:     "test-rsa-for-verify-empty-data",
 			Backend:   "software",
 			Signature: []byte("signature"),
 		})
@@ -177,7 +189,7 @@ func TestVerifyErrorPaths(t *testing.T) {
 // TestSignErrorPaths tests Sign error handling paths
 func TestSignErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.Sign(context.Background(), &pb.SignRequest{
@@ -214,8 +226,20 @@ func TestSignErrorPaths(t *testing.T) {
 	})
 
 	t.Run("returns error for missing data", func(t *testing.T) {
-		_, err := service.Sign(context.Background(), &pb.SignRequest{
-			KeyId:   "test-key",
+		// First create an RSA key so we can test the empty data path
+		// (Ed25519 allows empty data per RFC 8032, so we need a non-Ed25519 key)
+		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+			KeyId:   "test-rsa-for-empty-data",
+			Backend: "software",
+			KeyType: "RSA",
+			KeySize: 2048,
+		})
+		if err != nil {
+			t.Fatalf("Failed to generate RSA key: %v", err)
+		}
+
+		_, err = service.Sign(context.Background(), &pb.SignRequest{
+			KeyId:   "test-rsa-for-empty-data",
 			Backend: "software",
 		})
 		if err == nil {
@@ -252,7 +276,7 @@ func TestSignErrorPaths(t *testing.T) {
 // TestDeleteKeyErrorPaths tests DeleteKey error handling paths
 func TestDeleteKeyErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.DeleteKey(context.Background(), &pb.DeleteKeyRequest{
@@ -324,7 +348,7 @@ func TestDeleteKeyErrorPaths(t *testing.T) {
 // TestRotateKeyErrorPaths tests RotateKey error handling paths
 func TestRotateKeyErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.RotateKey(context.Background(), &pb.RotateKeyRequest{
@@ -396,7 +420,7 @@ func TestRotateKeyErrorPaths(t *testing.T) {
 // TestSaveCertErrorPaths tests SaveCert error handling paths
 func TestSaveCertErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.SaveCert(context.Background(), &pb.SaveCertRequest{
@@ -451,7 +475,7 @@ func TestSaveCertErrorPaths(t *testing.T) {
 // TestGetCertErrorPaths tests GetCert error handling paths
 func TestGetCertErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.GetCert(context.Background(), &pb.GetCertRequest{})
@@ -487,7 +511,7 @@ func TestGetCertErrorPaths(t *testing.T) {
 // TestDeleteCertErrorPaths tests DeleteCert error handling paths
 func TestDeleteCertErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.DeleteCert(context.Background(), &pb.DeleteCertRequest{})
@@ -524,7 +548,7 @@ func TestDeleteCertErrorPaths(t *testing.T) {
 // TestSaveCertChainErrorPaths tests SaveCertChain error handling paths
 func TestSaveCertChainErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.SaveCertChain(context.Background(), &pb.SaveCertChainRequest{
@@ -580,7 +604,7 @@ func TestSaveCertChainErrorPaths(t *testing.T) {
 // TestGetCertChainErrorPaths tests GetCertChain error handling paths
 func TestGetCertChainErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.GetCertChain(context.Background(), &pb.GetCertChainRequest{})
@@ -616,7 +640,7 @@ func TestGetCertChainErrorPaths(t *testing.T) {
 // TestGetTLSCertificateErrorPaths tests GetTLSCertificate error handling paths
 func TestGetTLSCertificateErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.GetTLSCertificate(context.Background(), &pb.GetTLSCertificateRequest{
@@ -671,7 +695,7 @@ func TestGetTLSCertificateErrorPaths(t *testing.T) {
 // TestListCertsWithCertsGaps tests ListCerts when certificates exist
 func TestListCertsWithCertsGaps(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// First save some certs
 	cert := createFinalGapsTestCert(t)
@@ -707,7 +731,7 @@ func TestListCertsWithCertsGaps(t *testing.T) {
 // TestCertExistsAfterSave tests CertExists returns true after SaveCert
 func TestCertExistsAfterSave(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save a cert first
 	cert := createFinalGapsTestCert(t)
@@ -737,7 +761,7 @@ func TestCertExistsAfterSave(t *testing.T) {
 // TestGetKeyErrorPaths tests GetKey error handling paths
 func TestGetKeyErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.GetKey(context.Background(), &pb.GetKeyRequest{
@@ -792,7 +816,7 @@ func TestGetKeyErrorPaths(t *testing.T) {
 // TestListKeysErrorPaths tests ListKeys error handling paths
 func TestListKeysErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing backend", func(t *testing.T) {
 		_, err := service.ListKeys(context.Background(), &pb.ListKeysRequest{})
@@ -828,7 +852,7 @@ func TestListKeysErrorPaths(t *testing.T) {
 // TestGenerateKeyErrorPaths tests GenerateKey error handling paths
 func TestGenerateKeyErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -942,7 +966,7 @@ func TestGenerateKeyErrorPaths(t *testing.T) {
 // TestEncryptErrorPaths tests Encrypt error handling paths
 func TestEncryptErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.Encrypt(context.Background(), &pb.EncryptRequest{
@@ -1017,7 +1041,7 @@ func TestEncryptErrorPaths(t *testing.T) {
 // TestDecryptErrorPaths tests Decrypt error handling paths
 func TestDecryptErrorPaths(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for missing key_id", func(t *testing.T) {
 		_, err := service.Decrypt(context.Background(), &pb.DecryptRequest{
@@ -1074,7 +1098,7 @@ func TestDecryptErrorPaths(t *testing.T) {
 // TestNewServerWithTLSConfig tests NewServer with TLS configuration
 func TestNewServerWithTLSConfig(t *testing.T) {
 	setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate TLS certificates for testing
 	tlsCert, err := generateTestTLSCert(t)
@@ -1109,7 +1133,7 @@ func TestNewServerWithTLSConfig(t *testing.T) {
 // TestNewServerWithRateLimiter tests NewServer with rate limiter
 func TestNewServerWithRateLimiter(t *testing.T) {
 	setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Create a rate limiter
 	limiter := ratelimit.New(&ratelimit.Config{
@@ -1141,7 +1165,7 @@ func TestNewServerWithRateLimiter(t *testing.T) {
 // TestVerifyWithEd25519Key tests Verify with Ed25519 key
 func TestVerifyWithEd25519Key(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate Ed25519 key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1184,7 +1208,7 @@ func TestVerifyWithEd25519Key(t *testing.T) {
 // TestListKeysPagination tests ListKeys with pagination
 func TestListKeysPagination(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate multiple keys
 	for i := 0; i < 5; i++ {
@@ -1244,7 +1268,7 @@ func TestListKeysPagination(t *testing.T) {
 // TestAuthenticationStreamInterceptorWithMissingMetadata tests stream auth interceptor
 func TestAuthenticationStreamInterceptorWithMissingMetadata(t *testing.T) {
 	setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	cfg := &ServerConfig{
 		Port:          0,
@@ -1282,7 +1306,7 @@ func TestAuthenticationStreamInterceptorWithMissingMetadata(t *testing.T) {
 // TestCorrelationStreamInterceptorWithRequestID tests correlation with x-request-id
 func TestCorrelationStreamInterceptorWithRequestID(t *testing.T) {
 	setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	cfg := &ServerConfig{
 		Port:          0,
@@ -1443,7 +1467,7 @@ func createFinalGapsTestCert(t *testing.T) *x509.Certificate {
 // TestCertExistsWithMissingKeyId tests CertExists with missing key_id
 func TestCertExistsWithMissingKeyId(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	_, err := service.CertExists(context.Background(), &pb.CertExistsRequest{
 		KeyId: "", // Missing key_id
@@ -1463,7 +1487,7 @@ func TestCertExistsWithMissingKeyId(t *testing.T) {
 // TestSignWithSHA512Hash tests Sign with SHA512 hash
 func TestSignWithSHA512Hash(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1495,7 +1519,7 @@ func TestSignWithSHA512Hash(t *testing.T) {
 // TestVerifyWithSHA512Hash tests Verify with SHA512 hash
 func TestVerifyWithSHA512Hash(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1541,7 +1565,7 @@ func TestVerifyWithSHA512Hash(t *testing.T) {
 // TestGenerateKeyWithDefaultKeySize tests GenerateKey RSA with default key size
 func TestGenerateKeyWithDefaultKeySize(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key with no key size specified
 	resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1562,7 +1586,7 @@ func TestGenerateKeyWithDefaultKeySize(t *testing.T) {
 // TestGenerateKeyECDSAWithDefaultCurve tests GenerateKey ECDSA with default curve
 func TestGenerateKeyECDSAWithDefaultCurve(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate ECDSA key with no curve specified
 	resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1583,7 +1607,7 @@ func TestGenerateKeyECDSAWithDefaultCurve(t *testing.T) {
 // TestGenerateSymmetricKeyWithAES128 tests GenerateKey with AES-128
 func TestGenerateSymmetricKeyWithAES128(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:     "aes128-test",
@@ -1604,7 +1628,7 @@ func TestGenerateSymmetricKeyWithAES128(t *testing.T) {
 // TestGenerateSymmetricKeyWithAES192 tests GenerateKey with AES-192
 func TestGenerateSymmetricKeyWithAES192(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:     "aes192-test",
@@ -1625,7 +1649,7 @@ func TestGenerateSymmetricKeyWithAES192(t *testing.T) {
 // TestGenerateSymmetricKeyWithDefaultSize tests GenerateKey symmetric with default size
 func TestGenerateSymmetricKeyWithDefaultSize(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		KeyId:     "sym-default-size-test",
@@ -1646,7 +1670,7 @@ func TestGenerateSymmetricKeyWithDefaultSize(t *testing.T) {
 // TestRotateKeyWithRSA tests RotateKey with RSA key
 func TestRotateKeyWithRSA(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	genResp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1678,7 +1702,7 @@ func TestRotateKeyWithRSA(t *testing.T) {
 // TestGetKeyWithRSA tests GetKey with RSA key
 func TestGetKeyWithRSA(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1711,7 +1735,7 @@ func TestGetKeyWithRSA(t *testing.T) {
 // TestSignVerifyWithECDSA tests Sign and Verify with ECDSA P384
 func TestSignVerifyWithECDSAP384(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate ECDSA P384 key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1757,7 +1781,7 @@ func TestSignVerifyWithECDSAP384(t *testing.T) {
 // TestDeleteCertAfterSave tests DeleteCert after saving a cert
 func TestDeleteCertAfterSave(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save a cert
 	cert := createFinalGapsTestCert(t)
@@ -1797,7 +1821,7 @@ func TestDeleteCertAfterSave(t *testing.T) {
 // TestVerifyWithInvalidSignatureECDSA tests Verify with invalid signature for ECDSA
 func TestVerifyWithInvalidSignatureECDSA(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate ECDSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1843,7 +1867,7 @@ func TestVerifyWithInvalidSignatureECDSA(t *testing.T) {
 // TestEncryptWithAsymmetricKey tests Encrypt error when using asymmetric key
 func TestEncryptWithAsymmetricKey(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key (asymmetric)
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1876,7 +1900,7 @@ func TestEncryptWithAsymmetricKey(t *testing.T) {
 // TestDecryptWithAsymmetricKey tests Decrypt error when using asymmetric key
 func TestDecryptWithAsymmetricKey(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key (asymmetric)
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1909,7 +1933,7 @@ func TestDecryptWithAsymmetricKey(t *testing.T) {
 // TestSignWithDefaultHash tests Sign with default hash (no hash specified)
 func TestSignWithDefaultHash(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1941,7 +1965,7 @@ func TestSignWithDefaultHash(t *testing.T) {
 // TestVerifyWithDefaultHash tests Verify with default hash (no hash specified)
 func TestVerifyWithDefaultHash(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -1985,7 +2009,7 @@ func TestVerifyWithDefaultHash(t *testing.T) {
 // TestSignWithInvalidHash tests Sign with invalid hash algorithm
 func TestSignWithInvalidHash(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -2017,7 +2041,7 @@ func TestSignWithInvalidHash(t *testing.T) {
 // TestVerifyWithWrongHash tests Verify with mismatched hash
 func TestVerifyWithWrongHash(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate RSA key
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -2063,7 +2087,7 @@ func TestVerifyWithWrongHash(t *testing.T) {
 // TestSaveCertWithBackendLookup tests SaveCert backend lookup
 func TestSaveCertWithBackendLookup(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	cert := createFinalGapsTestCert(t)
 	certPEM := encodeCertToPEM(cert)
@@ -2085,7 +2109,7 @@ func TestSaveCertWithBackendLookup(t *testing.T) {
 // TestGetKeyNonExistent tests GetKey with non-existent key
 func TestGetKeyNonExistent(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	_, err := service.GetKey(context.Background(), &pb.GetKeyRequest{
 		KeyId:   "non-existent-key-get",
@@ -2125,7 +2149,7 @@ func TestEncodePrivateKeyToPEMWithECDSAP384(t *testing.T) {
 // TestListKeyFilteredByType tests ListKeys with key filtering
 func TestListKeyFilteredByType(t *testing.T) {
 	service := setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate various key types
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -2164,7 +2188,7 @@ func TestListKeyFilteredByType(t *testing.T) {
 // TestServerStartStop tests starting and stopping the server
 func TestServerStartStop(t *testing.T) {
 	setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	cfg := &ServerConfig{
 		Port:          0, // Use ephemeral port
@@ -2212,7 +2236,7 @@ func TestServerStartStop(t *testing.T) {
 // TestServerStartWithTLS tests starting server with TLS
 func TestServerStartWithTLS(t *testing.T) {
 	setupFinalGapsTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate TLS certificates for testing
 	tlsCert, err := generateTestTLSCert(t)

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,19 +18,19 @@ import (
 	"strings"
 	"testing"
 
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// setupSealingTest initializes keychain service for sealing tests.
+// setupSealingTest initializes xkms service for sealing tests.
 // The software backend supports sealing via PKCS8 (HKDF + AES-GCM).
 func setupSealingTest(t *testing.T) *Service {
 	t.Helper()
-	keychain.Reset()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	certStorage := storage.New()
@@ -42,7 +42,7 @@ func setupSealingTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -50,17 +50,17 @@ func setupSealingTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": ks,
 		},
 		DefaultBackend: "software",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService()
+	return NewService(nil, nil)
 }
 
 // ============================================================================
@@ -71,7 +71,7 @@ func setupSealingTest(t *testing.T) *Service {
 // The handler should validate that backend is required and return InvalidArgument.
 func TestService_Seal_MissingBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 	testData := []byte("secret data to seal")
@@ -102,7 +102,7 @@ func TestService_Seal_MissingBackend(t *testing.T) {
 // The handler should validate that data is required and return InvalidArgument.
 func TestService_Seal_EmptyData(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -150,7 +150,7 @@ func TestService_Seal_EmptyData(t *testing.T) {
 // The handler should return Internal error when the backend is not found.
 func TestService_Seal_NonExistentBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 	testData := []byte("secret data to seal")
@@ -178,7 +178,7 @@ func TestService_Seal_NonExistentBackend(t *testing.T) {
 // The handler should reject backend names with injection attempts or invalid characters.
 func TestService_Seal_InvalidBackendName(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 	testData := []byte("test data")
@@ -219,7 +219,7 @@ func TestService_Seal_InvalidBackendName(t *testing.T) {
 // yet implemented in the handler. This test verifies the expected error behavior.
 func TestService_Seal_WithValidBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 	testData := []byte("secret data to seal")
@@ -304,7 +304,7 @@ func TestService_Seal_WithValidBackend(t *testing.T) {
 // The handler should validate that backend is required and return InvalidArgument.
 func TestService_Unseal_MissingBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -334,7 +334,7 @@ func TestService_Unseal_MissingBackend(t *testing.T) {
 // The handler should validate that ciphertext is required and return InvalidArgument.
 func TestService_Unseal_EmptyCiphertext(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -382,7 +382,7 @@ func TestService_Unseal_EmptyCiphertext(t *testing.T) {
 // The handler should return NotFound error when the backend is not found.
 func TestService_Unseal_NonExistentBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -410,7 +410,7 @@ func TestService_Unseal_NonExistentBackend(t *testing.T) {
 // yet implemented in the handler. This test verifies the expected error behavior.
 func TestService_Unseal_WithValidBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -464,7 +464,7 @@ func TestService_Unseal_WithValidBackend(t *testing.T) {
 // TestService_Unseal_InvalidBackendName tests Unseal with invalid backend name characters.
 func TestService_Unseal_InvalidBackendName(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -507,7 +507,7 @@ func TestService_Unseal_InvalidBackendName(t *testing.T) {
 // The handler should check if the specified backend supports sealing.
 func TestService_CanSeal_WithBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -548,7 +548,7 @@ func TestService_CanSeal_WithBackend(t *testing.T) {
 // The handler should check the default backend when no backend is specified.
 func TestService_CanSeal_WithoutBackend(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -589,7 +589,7 @@ func TestService_CanSeal_WithoutBackend(t *testing.T) {
 // These should not cause panics and should return false gracefully.
 func TestService_CanSeal_InvalidBackendNames(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -629,7 +629,7 @@ func TestService_CanSeal_InvalidBackendNames(t *testing.T) {
 // TestService_Seal_MultipleBackendValidation tests validation with various input combinations.
 func TestService_Seal_MultipleBackendValidation(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -690,7 +690,7 @@ func TestService_Seal_MultipleBackendValidation(t *testing.T) {
 // TestService_Unseal_MultipleBackendValidation tests validation with various input combinations.
 func TestService_Unseal_MultipleBackendValidation(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 
@@ -751,7 +751,7 @@ func TestService_Unseal_MultipleBackendValidation(t *testing.T) {
 // TestService_Seal_LargeData tests Seal behavior with large data payloads.
 func TestService_Seal_LargeData(t *testing.T) {
 	service := setupSealingTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	ctx := context.Background()
 

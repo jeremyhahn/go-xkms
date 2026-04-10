@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,14 +22,24 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/rbac"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/metrics"
-	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
-	"github.com/jeremyhahn/go-keychain/pkg/user"
-	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
-	webauthnhttp "github.com/jeremyhahn/go-keychain/pkg/webauthn/http"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/bootstrap"
+	"github.com/jeremyhahn/go-xkms/pkg/custodian"
+	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/rbac"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/user"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Server represents the REST API server.
@@ -41,12 +51,25 @@ type Server struct {
 	authenticator   auth.Authenticator
 	logger          *slog.Logger
 	rateLimiter     *ratelimit.Limiter
+	barrierRegistry *seal.BarrierRegistry
 	webauthnHandler *webauthnhttp.Handler
 	webauthnStores  *WebAuthnStores
 	userHandlers    *UserHandlers
 	userStore       user.Store
 	rbacAdapter     rbac.RBACAdapter
 	rbacMiddleware  *RBACMiddleware
+
+	// Bootstrap and custodian handlers
+	bootstrapHandlers  *BootstrapHandlers
+	custodianHandlers  *CustodianHandlers
+	shareHandlers      *ShareHandlers
+	tenantHandlers     *TenantHandlers
+	passwordHandlers   *PasswordHandlers
+	platformHandlers   *SealStoreHandlers
+	policyHandlers     *PolicyHandlers
+	initHandlers       *InitHandlers
+	credentialHandlers *CredentialHandlers
+	caHandlers         *CAHandlers
 }
 
 // BackendRegistry is defined in handlers.go
@@ -56,8 +79,8 @@ type Config struct {
 	// Port is the HTTP port to listen on (default: 8443)
 	Port int
 
-	// Backends is a map of backend ID to KeyStore instances
-	Backends map[string]keychain.KeyStore
+	// Backends is a map of backend ID to Backend instances
+	Backends map[string]xkms.Backend
 
 	// DefaultBackend is the default backend to use when not specified (optional)
 	DefaultBackend string
@@ -70,6 +93,9 @@ type Config struct {
 
 	// Authenticator is the authentication adapter (optional, defaults to NoOp)
 	Authenticator auth.Authenticator
+
+	// Authorizer is the authorization adapter (optional)
+	Authorizer authz.Authorizer
 
 	// Logger is the logging adapter (optional, uses stdlib if not provided)
 	Logger *slog.Logger
@@ -99,6 +125,46 @@ type Config struct {
 	// EnableRBAC enables role-based access control on API endpoints (default: false)
 	// When enabled, users must have appropriate permissions for each operation.
 	EnableRBAC bool
+
+	// AuditLogger is the audit logger (optional)
+	AuditLogger interface{}
+
+	// Barrier is the optional barrier for seal/unseal lifecycle management
+	Barrier *seal.Barrier
+
+	// PINManager is the optional PIN manager for SO/User PIN operations
+	PINManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+
+	// PasswordStore is the optional static password store
+	PasswordStore *staticpw.BackendStore
+
+	// PlatformStore is the optional sealed platform credential store
+	PlatformStore seal.PlatformStore
+
+	// PolicyManager is the optional policy manager
+	PolicyManager *policy.Manager
+
+	// BootstrapService is the optional bootstrap service
+	BootstrapService *bootstrap.Service
+
+	// BarrierRegistry is the optional barrier registry for multi-tenant isolation
+	BarrierRegistry *seal.BarrierRegistry
+
+	// CustodianService is the optional custodian group management service
+	CustodianService *custodian.Service
+
+	// ShareStore is the optional share store for Shamir shares
+	ShareStore sharestore.ShareStore
+
+	// CeremonyService is the optional init ceremony service
+	CeremonyService *initialize.CeremonyService
+
+	// CredentialService is the optional credential management service
+	CredentialService *credentialspkg.Service
+
+	// CA is the optional CA instance for certificate authority operations.
+	// Stored as any to break import cycles. Must implement caServicer methods.
+	CA any
 }
 
 // NewServer creates a new REST API server.
@@ -140,17 +206,28 @@ func NewServer(cfg *Config) (*Server, error) {
 		log = slog.Default()
 	}
 
-	// Create handler context (uses keychain service)
+	// Create handler context (uses xkms service)
 	handlers := NewHandlerContext(cfg.Version)
+
+	// Set barrier on handler context if provided
+	if cfg.Barrier != nil {
+		handlers.SetBarrier(cfg.Barrier)
+	}
+
+	// Set PIN manager on handler context if provided
+	if cfg.PINManager != nil {
+		handlers.SetPINManager(cfg.PINManager)
+	}
 
 	// Create server instance
 	server := &Server{
-		handlers:      handlers,
-		port:          cfg.Port,
-		tlsConfig:     cfg.TLSConfig,
-		authenticator: authenticator,
-		logger:        log,
-		rateLimiter:   cfg.RateLimiter,
+		handlers:        handlers,
+		port:            cfg.Port,
+		tlsConfig:       cfg.TLSConfig,
+		authenticator:   authenticator,
+		logger:          log,
+		rateLimiter:     cfg.RateLimiter,
+		barrierRegistry: cfg.BarrierRegistry,
 	}
 
 	// Set up user handlers if user store is configured
@@ -226,6 +303,78 @@ func NewServer(cfg *Config) (*Server, error) {
 			slog.String("rpid", cfg.WebAuthnConfig.RPID))
 	}
 
+	// Set up bootstrap handlers if bootstrap service is configured
+	if cfg.BootstrapService != nil {
+		server.bootstrapHandlers = NewBootstrapHandlers(cfg.BootstrapService, log)
+		log.Info("Bootstrap handlers enabled")
+	}
+
+	// Set up custodian handlers if custodian service is configured
+	if cfg.CustodianService != nil {
+		server.custodianHandlers = NewCustodianHandlers(cfg.CustodianService)
+		log.Info("Custodian handlers enabled")
+	}
+
+	// Set up share handlers if share store is configured
+	if cfg.ShareStore != nil {
+		server.shareHandlers = NewShareHandlers(cfg.ShareStore)
+		log.Info("Share handlers enabled")
+	}
+
+	// Set up tenant handlers if barrier registry is configured
+	if cfg.BarrierRegistry != nil {
+		server.tenantHandlers = NewTenantHandlers(cfg.BarrierRegistry)
+		log.Info("Tenant handlers enabled")
+	}
+
+	// Set up password handlers if password store is configured
+	if cfg.PasswordStore != nil {
+		var pwManager *staticpw.TenantPasswordStoreManager
+		if cfg.BarrierRegistry != nil {
+			var managerErr error
+			pwManager, managerErr = staticpw.NewTenantPasswordStoreManager(cfg.BarrierRegistry, cfg.PasswordStore)
+			if managerErr != nil {
+				log.Warn("Failed to create tenant password store manager", "error", managerErr)
+			} else {
+				log.Info("Tenant password store manager enabled")
+			}
+		}
+		server.passwordHandlers = NewPasswordHandlers(cfg.PasswordStore, pwManager)
+		log.Info("Password handlers enabled")
+	}
+
+	// Set up platform store handlers if platform store is configured
+	if cfg.PlatformStore != nil {
+		server.platformHandlers = NewSealStoreHandlers(cfg.PlatformStore)
+		log.Info("Platform store handlers enabled")
+	}
+
+	// Set up policy handlers if policy manager is configured
+	if cfg.PolicyManager != nil {
+		server.policyHandlers = NewPolicyHandlers(cfg.PolicyManager)
+		log.Info("Policy handlers enabled")
+	}
+
+	// Set up init ceremony handlers if ceremony service is configured
+	if cfg.CeremonyService != nil {
+		server.initHandlers = NewInitHandlers(cfg.CeremonyService, log)
+		log.Info("Init ceremony handlers enabled")
+	}
+
+	// Set up credential handlers if credential service is configured
+	if cfg.CredentialService != nil {
+		server.credentialHandlers = NewCredentialHandlers(cfg.CredentialService, log)
+		log.Info("Credential handlers enabled")
+	}
+
+	// Set up CA handlers if CA is configured
+	if cfg.CA != nil {
+		if caSvc, ok := cfg.CA.(caServicer); ok {
+			server.caHandlers = NewCAHandlers(caSvc, log)
+			log.Info("CA handlers enabled")
+		}
+	}
+
 	// Create router with middleware
 	router := server.setupRouter()
 
@@ -270,10 +419,16 @@ func (s *Server) setupRouter() *chi.Mux {
 	r.Get("/health/ready", s.handlers.ReadinessHandler)
 	r.Get("/health/startup", s.handlers.StartupHandler)
 
+	// Public algorithm discovery endpoint (no auth required)
+	r.Get("/api/v1/algorithms", s.handlers.AlgorithmsHandler)
+
 	// API v1 routes with authentication
 	r.Route("/api/v1", func(r chi.Router) {
 		// Apply authentication middleware to all API routes
 		r.Use(s.AuthenticationMiddleware())
+
+		// Apply tenant enforcement middleware after authentication
+		r.Use(s.TenantMiddleware())
 
 		// Backend endpoints
 		if s.rbacMiddleware != nil {
@@ -309,18 +464,6 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionDecrypt)).
 				Post("/keys/{id}/decrypt", s.handlers.DecryptHandler)
 
-			// Key version management endpoints (stub - returns 501)
-			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionList)).
-				Get("/keys/{id}/versions", s.handlers.ListKeyVersionsHandler)
-			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionUpdate)).
-				Post("/keys/{id}/versions/{version}/enable", s.handlers.EnableKeyVersionHandler)
-			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionUpdate)).
-				Post("/keys/{id}/versions/{version}/disable", s.handlers.DisableKeyVersionHandler)
-			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionUpdate)).
-				Post("/keys/{id}/versions/enable-all", s.handlers.EnableAllKeyVersionsHandler)
-			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionUpdate)).
-				Post("/keys/{id}/versions/disable-all", s.handlers.DisableAllKeyVersionsHandler)
-
 			// Import/Export endpoints
 			r.With(s.rbacMiddleware.RequirePermission(rbac.ResourceKeys, rbac.ActionImport)).
 				Post("/keys/import-params", s.handlers.GetImportParametersHandler)
@@ -347,13 +490,6 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.Post("/keys/{id}/encrypt", s.handlers.EncryptHandler)
 			r.Post("/keys/{id}/decrypt", s.handlers.DecryptHandler)
 			r.Post("/keys/{id}/encrypt-asym", s.handlers.EncryptAsymHandler)
-
-			// Key version management endpoints (stub - returns 501)
-			r.Get("/keys/{id}/versions", s.handlers.ListKeyVersionsHandler)
-			r.Post("/keys/{id}/versions/{version}/enable", s.handlers.EnableKeyVersionHandler)
-			r.Post("/keys/{id}/versions/{version}/disable", s.handlers.DisableKeyVersionHandler)
-			r.Post("/keys/{id}/versions/enable-all", s.handlers.EnableAllKeyVersionsHandler)
-			r.Post("/keys/{id}/versions/disable-all", s.handlers.DisableAllKeyVersionsHandler)
 
 			// Import/Export endpoints
 			r.Post("/keys/import-params", s.handlers.GetImportParametersHandler)
@@ -428,7 +564,191 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.Post("/aggregate", s.handlers.FrostAggregateHandler)
 			r.Post("/verify", s.handlers.FrostVerifyHandler)
 		})
+
+		// Barrier management endpoints
+		r.Route("/barrier", func(r chi.Router) {
+			r.Post("/initialize", s.handlers.BarrierInitializeHandler)
+			r.Post("/unseal", s.handlers.BarrierUnsealHandler)
+			r.Post("/seal", s.handlers.BarrierSealHandler)
+			r.Get("/status", s.handlers.BarrierStatusHandler)
+
+			// Shamir secret sharing endpoints
+			r.Post("/shamir/initialize", s.handlers.BarrierInitializeShamirHandler)
+			r.Post("/shamir/unseal-share", s.handlers.BarrierUnsealShareHandler)
+			r.Post("/shamir/unseal-shares", s.handlers.BarrierUnsealSharesHandler)
+			r.Get("/shamir/shares", s.handlers.BarrierShamirListSharesHandler)
+			r.Delete("/shamir/shares/{index}", s.handlers.BarrierShamirDeleteShareHandler)
+			r.Delete("/shamir/shares", s.handlers.BarrierShamirDeleteAllSharesHandler)
+			r.Post("/shamir/verify", s.handlers.BarrierShamirVerifyHandler)
+
+			// Rekey and recovery endpoints
+			r.Post("/rekey", s.handlers.BarrierRekeyHandler)
+			r.Post("/recovery/generate", s.handlers.BarrierGenerateRecoveryKeysHandler)
+			r.Post("/recovery/recover", s.handlers.BarrierRecoverWithKeysHandler)
+			r.Delete("/recovery/keys", s.handlers.BarrierDeleteRecoveryKeysHandler)
+			r.Post("/recovery/root-token", s.handlers.BarrierGenerateRootTokenHandler)
+		})
+
+		// PIN management endpoints
+		r.Route("/pin", func(r chi.Router) {
+			r.Post("/so/set", s.handlers.SetSOPINHandler)
+			r.Post("/user/set", s.handlers.SetUserPINHandler)
+			r.Post("/so/change", s.handlers.ChangeSOPINHandler)
+			r.Post("/user/change", s.handlers.ChangeUserPINHandler)
+			r.Post("/so/verify", s.handlers.VerifySOPINHandler)
+			r.Post("/user/verify", s.handlers.VerifyUserPINHandler)
+			r.Get("/lockout", s.handlers.GetLockoutStatusHandler)
+			r.Post("/lockout/reset", s.handlers.ResetLockoutHandler)
+		})
+
+		// PIV endpoints
+		r.Route("/piv", func(r chi.Router) {
+			r.Get("/slots", s.handlers.ListPIVSlotsHandler)
+			r.Get("/slots/{slot}/certificate", s.handlers.GetPIVCertificateHandler)
+			r.Post("/slots/{slot}/certificate", s.handlers.StorePIVCertificateHandler)
+			r.Delete("/slots/{slot}/certificate", s.handlers.DeletePIVCertificateHandler)
+			r.Post("/slots/{slot}/generate", s.handlers.GeneratePIVKeyHandler)
+			r.Post("/slots/{slot}/import", s.handlers.ImportPIVCertificateHandler)
+			r.Get("/slots/{slot}/export", s.handlers.ExportPIVCertificateHandler)
+			r.Post("/slots/{slot}/csr", s.handlers.GeneratePIVCSRHandler)
+		})
+
+		// CA endpoints
+		if s.caHandlers != nil {
+			r.Route("/ca", func(r chi.Router) {
+				r.Get("/bundle", s.caHandlers.HandleGetCABundle)
+				r.Get("/certificate", s.caHandlers.HandleGetCACertificate)
+				r.Post("/sign-csr", s.caHandlers.HandleSignCSR)
+				r.Post("/issue", s.caHandlers.HandleIssueCertificate)
+				r.Post("/revoke", s.caHandlers.HandleRevokeCertificate)
+				r.Post("/crl", s.caHandlers.HandleGenerateCRL)
+				r.Get("/revoked/{serial}", s.caHandlers.HandleIsRevoked)
+
+				// TCG CA endpoints
+				r.Post("/tcg/ek", s.caHandlers.HandleIssueEKCertificate)
+				r.Post("/tcg/ak", s.caHandlers.HandleIssueAKCertificate)
+				r.Post("/tcg/sign-csr", s.caHandlers.HandleSignTCGCSR)
+				r.Post("/tcg/enroll", s.caHandlers.HandleEnrollDevice)
+			})
+		} else {
+			// Fallback: legacy CA bundle endpoint (bootstrap only)
+			r.Get("/ca/bundle", s.handlers.GetCABundleHandler)
+		}
+
+		// Custodian group endpoints
+		if s.custodianHandlers != nil {
+			r.Route("/custodian/groups", func(r chi.Router) {
+				r.Post("/", s.custodianHandlers.CreateGroupHandler)
+				r.Get("/", s.custodianHandlers.ListGroupsHandler)
+				r.Get("/{id}", s.custodianHandlers.GetGroupHandler)
+				r.Delete("/{id}", s.custodianHandlers.DeleteGroupHandler)
+				r.Post("/{id}/members", s.custodianHandlers.AddMemberHandler)
+				r.Delete("/{id}/members/{userID}", s.custodianHandlers.RemoveMemberHandler)
+				r.Post("/{id}/distribute", s.custodianHandlers.DistributeSharesHandler)
+			})
+		}
+
+		// Share endpoints
+		if s.shareHandlers != nil {
+			r.Route("/shares", func(r chi.Router) {
+				r.Post("/submit", s.shareHandlers.SubmitShareHandler)
+				r.Get("/", s.shareHandlers.ListSharesHandler)
+				r.Get("/{serverURL}/{groupID}/{shareIndex}", s.shareHandlers.GetShareHandler)
+				r.Delete("/{serverURL}/{groupID}/{shareIndex}", s.shareHandlers.DeleteShareHandler)
+				r.Get("/status/{groupID}", s.shareHandlers.GetShareCollectionStatusHandler)
+			})
+		}
+
+		// Tenant endpoints
+		if s.tenantHandlers != nil {
+			r.Route("/tenants", func(r chi.Router) {
+				r.Post("/", s.tenantHandlers.CreateTenantHandler)
+				r.Get("/", s.tenantHandlers.ListTenantsHandler)
+				r.Get("/{tenantID}", s.tenantHandlers.GetTenantHandler)
+				r.Delete("/{tenantID}", s.tenantHandlers.DeleteTenantHandler)
+				r.Get("/{tenantID}/barrier/status", s.tenantHandlers.TenantBarrierStatusHandler)
+				r.Post("/{tenantID}/barrier/init", s.tenantHandlers.TenantBarrierInitHandler)
+				r.Post("/{tenantID}/barrier/unseal", s.tenantHandlers.TenantBarrierUnsealHandler)
+			})
+		}
+
+		// Password management endpoints
+		if s.passwordHandlers != nil {
+			r.Route("/passwords", func(r chi.Router) {
+				r.Post("/", s.passwordHandlers.AddPasswordHandler)
+				r.Get("/", s.passwordHandlers.ListPasswordsHandler)
+				r.Get("/{id}", s.passwordHandlers.GetPasswordHandler)
+				r.Put("/{id}", s.passwordHandlers.UpdatePasswordHandler)
+				r.Delete("/{id}", s.passwordHandlers.DeletePasswordHandler)
+				r.Post("/unlock", s.passwordHandlers.UnlockHandler)
+				r.Post("/lock", s.passwordHandlers.LockHandler)
+				r.Get("/status", s.passwordHandlers.StatusHandler)
+				r.Post("/access-mode", s.passwordHandlers.SetAccessModeHandler)
+				r.Post("/generate", s.passwordHandlers.GeneratePasswordHandler)
+			})
+		}
+
+		// Platform store endpoints
+		if s.platformHandlers != nil {
+			r.Route("/platform", func(r chi.Router) {
+				r.Put("/secrets/{key}", s.platformHandlers.PutSecretHandler)
+				r.Get("/secrets/{key}", s.platformHandlers.GetSecretHandler)
+				r.Delete("/secrets/{key}", s.platformHandlers.DeleteSecretHandler)
+				r.Get("/secrets", s.platformHandlers.ListSecretsHandler)
+				r.Post("/secrets/{key}/reseal", s.platformHandlers.ResealSecretHandler)
+				r.Get("/status", s.platformHandlers.StatusHandler)
+			})
+		}
+
+		// Policy management endpoints
+		if s.policyHandlers != nil {
+			r.Route("/policies", func(r chi.Router) {
+				r.Post("/", s.policyHandlers.CreatePolicyHandler)
+				r.Get("/", s.policyHandlers.ListPoliciesHandler)
+				r.Get("/{id}", s.policyHandlers.GetPolicyHandler)
+				r.Delete("/{id}", s.policyHandlers.DeletePolicyHandler)
+				r.Post("/{id}/refresh", s.policyHandlers.RefreshPolicyHandler)
+				r.Post("/{id}/verify", s.policyHandlers.VerifyPolicyHandler)
+				r.Get("/{id}/export", s.policyHandlers.ExportPolicyHandler)
+			})
+		}
+
+		// Init ceremony endpoints
+		if s.initHandlers != nil {
+			r.Route("/init", func(r chi.Router) {
+				r.Get("/status", s.initHandlers.HandleGetStatus)
+				r.Post("/claim-cert/begin", s.initHandlers.HandleClaimCertBegin)
+				r.Post("/claim-cert/complete", s.initHandlers.HandleClaimCertComplete)
+				r.Post("/claim-share", s.initHandlers.HandleClaimShare)
+			})
+		}
+
+		// Credential management endpoints
+		if s.credentialHandlers != nil {
+			r.Route("/credentials", func(r chi.Router) {
+				r.Post("/submit", s.credentialHandlers.HandleSubmit)
+				r.Get("/strategy", s.credentialHandlers.HandleGetStrategy)
+			})
+		}
 	})
+
+	// Bootstrap routes (unauthenticated - needed for initial setup)
+	if s.bootstrapHandlers != nil {
+		r.Route("/api/v1/bootstrap", func(r chi.Router) {
+			r.Get("/status", s.bootstrapHandlers.HandleGetStatus)
+			r.Post("/init", s.bootstrapHandlers.HandleInit)
+			r.Post("/threshold-init", s.bootstrapHandlers.HandleThresholdInit)
+		})
+	}
+
+	// go-truststrap bootstrap endpoint (unauthenticated - serves CA bundle for
+	// DANE/TLSA and SPKI-pin trust establishment). The upstream go-truststrap
+	// library hardcodes this path.
+	if s.caHandlers != nil {
+		r.Get("/v1/ca/bootstrap", s.caHandlers.HandleGetCABundle)
+	} else {
+		r.Get("/v1/ca/bootstrap", s.handlers.GetCABundleHandler)
+	}
 
 	// WebAuthn routes (no auth required - WebAuthn IS the auth mechanism)
 	if s.webauthnHandler != nil {

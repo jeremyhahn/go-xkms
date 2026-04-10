@@ -4,7 +4,7 @@
 
 The PKCS#11 backend provides integration with Hardware Security Modules (HSMs) and cryptographic tokens through the industry-standard PKCS#11 (Cryptoki) interface. This backend enables hardware-backed key generation, storage, and cryptographic operations using FIPS 140-2 validated devices from vendors including Thales, Utimaco, AWS CloudHSM, YubiKey, and software implementations like SoftHSM.
 
-PKCS#11 (Public-Key Cryptography Standards #11) defines a platform-independent API for cryptographic tokens. The go-keychain PKCS#11 backend uses the crypto11 library to provide high-level abstractions while maintaining direct access to hardware security features.
+PKCS#11 (Public-Key Cryptography Standards #11) defines a platform-independent API for cryptographic tokens. The go-xkms PKCS#11 backend uses the crypto11 library to provide high-level abstractions while maintaining direct access to hardware security features.
 
 ## Features and Capabilities
 
@@ -42,6 +42,68 @@ PKCS#11 (Public-Key Cryptography Standards #11) defines a platform-independent A
 - Nitrokey HSM
 - SoftHSM (software testing)
 - Any PKCS#11 compliant device
+
+## Service Integration
+
+### Build Tag
+
+Requires the `pkcs11` build tag:
+
+```bash
+go build -tags pkcs11 ./...
+```
+
+When compiled with this tag, the backend auto-registers with the xkms service registry.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendPKCS11) {
+    fmt.Println("PKCS#11 backend is available")
+}
+```
+
+### Using via Service API
+
+```go
+import (
+    "crypto/elliptic"
+    "crypto/x509"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a key on the PKCS#11 backend
+key, err := xkms.GenerateKeyWithBackend("pkcs11", &types.KeyAttributes{
+    CN:           "hsm-signing-key",
+    KeyAlgorithm: x509.ECDSA,
+    ECCAttributes: &types.ECCAttributes{
+        Curve: elliptic.P256(),
+    },
+})
+
+// Sign using the key ID with explicit backend
+sig, err := xkms.Sign("pkcs11:::hsm-signing-key", data, nil)
+```
+
+### Auto-Initialize
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendPKCS11: {
+            "library_path": "/usr/lib/softhsm/libsofthsm2.so",
+            "token_label":  "my-token",
+            "pin":          os.Getenv("HSM_PIN"),
+            "slot":         0,
+        },
+    },
+})
+defer xkms.Close()
+```
 
 ## Configuration Options
 
@@ -124,7 +186,7 @@ type Config struct {
 | 3072 bits | PKCS#1 v1.5, PSS | SHA-256, SHA-384, SHA-512 |
 | 4096 bits | PKCS#1 v1.5, PSS | SHA-256, SHA-384, SHA-512 |
 
-**Note**: All 10 backends support RSA 2048, 3072, and 4096-bit keys with full integration test coverage (151/151 tests passing).
+**Note**: All 9 backends support RSA 2048, 3072, and 4096-bit keys with full integration test coverage (151/151 tests passing).
 
 ### ECDSA Keys
 
@@ -134,7 +196,7 @@ type Config struct {
 | P-384 | secp384r1 | 384 bits | SHA-384 |
 | P-521 | secp521r1 | 521 bits | SHA-512 |
 
-**Note**: All 10 backends support ECDSA P-256, P-384, and P-521 curves with full integration test coverage (151/151 tests passing).
+**Note**: All 9 backends support ECDSA P-256, P-384, and P-521 curves with full integration test coverage (151/151 tests passing).
 
 ### Not Supported
 
@@ -157,8 +219,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 )
 
 func main() {
@@ -409,7 +471,7 @@ func multiAlgorithmExample() {
 
 ```go
 type SigningService struct {
-    keychain backend.Backend
+    xkms backend.Backend
     keyID    string
 }
 
@@ -422,11 +484,11 @@ func NewSigningService() (*SigningService, error) {
 
     store, err := pkcs11.NewBackend(config)
     if err != nil {
-        return nil, fmt.Errorf("failed to init keychain: %w", err)
+        return nil, fmt.Errorf("failed to init xkms: %w", err)
     }
 
     return &SigningService{
-        keychain: store,
+        xkms: store,
         keyID:    os.Getenv("SIGNING_KEY_ID"),
     }, nil
 }
@@ -434,7 +496,7 @@ func NewSigningService() (*SigningService, error) {
 func (s *SigningService) SignDocument(ctx context.Context, document []byte) ([]byte, error) {
     hash := sha256.Sum256(document)
 
-    signature, err := s.keychain.Sign(ctx, s.keyID, hash[:], crypto.SHA256)
+    signature, err := s.xkms.Sign(ctx, s.keyID, hash[:], crypto.SHA256)
     if err != nil {
         return nil, fmt.Errorf("signing failed: %w", err)
     }
@@ -443,7 +505,7 @@ func (s *SigningService) SignDocument(ctx context.Context, document []byte) ([]b
 }
 
 func (s *SigningService) Close() error {
-    return s.keychain.Close(context.Background())
+    return s.xkms.Close(context.Background())
 }
 
 func productionExample() {
@@ -1484,6 +1546,43 @@ if hwStorage, ok := certStorage.(hardware.HardwareCertStorage); ok {
 - Enable hardware storage only when security requirements justify the cost
 
 See [Certificate Management Guide](../certificate-management.md) for detailed information on certificate storage configuration and best practices.
+
+## YubiKey Support
+
+YubiKey PIV devices are supported through the PKCS#11 backend using Yubico's `libykcs11` library. This provides native PKCS#11 access to YubiKey PIV operations including key generation, signing, and certificate storage.
+
+### Configuration
+
+```go
+config := &pkcs11.Config{
+    LibraryPath: "/usr/lib/x86_64-linux-gnu/libykcs11.so",
+    SlotID:      0,
+    PIN:         os.Getenv("YUBIKEY_PIN"),
+}
+
+backend, err := pkcs11.NewBackend(config)
+```
+
+Library paths by platform:
+- **Linux**: `/usr/lib/x86_64-linux-gnu/libykcs11.so`
+- **macOS**: `/usr/local/lib/libykcs11.dylib`
+- **Windows**: `C:\Program Files\Yubico\Yubico PIV Tool\bin\libykcs11.dll`
+
+### PIV Slot Mappings
+
+| Slot | Name | Purpose | PIN Required |
+|------|------|---------|--------------|
+| 0x9a | Authentication | General authentication | Yes |
+| 0x9c | Digital Signature | Digital signatures | Always |
+| 0x9d | Key Management | Encryption/decryption | Yes |
+| 0x9e | Card Authentication | Card authentication | No |
+| 0x82-0x95 | Retired Key Management | 20 additional key slots | Yes |
+
+### Requirements
+
+- **Firmware**: PIV support requires YubiKey firmware 4.x or later
+- **Library**: Install `libykcs11` (`apt-get install libykcs11` on Debian/Ubuntu)
+- **pcscd**: The PC/SC daemon must be running (`systemctl start pcscd`)
 
 ## Limitations
 

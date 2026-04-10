@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Ensure Backend implements types.Sealer interface
@@ -31,7 +31,7 @@ var _ types.Sealer = (*Backend)(nil)
 func (b *Backend) CanSeal() bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.ctx != nil && b.p11ctx != nil
+	return b.pool != nil && b.p11ctx != nil
 }
 
 // Seal encrypts/protects data using an HSM-resident symmetric key.
@@ -58,7 +58,7 @@ func (b *Backend) Seal(ctx context.Context, data []byte, opts *types.SealOptions
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if b.ctx == nil || b.p11ctx == nil {
+	if b.pool == nil || b.p11ctx == nil {
 		return nil, ErrNotInitialized
 	}
 
@@ -135,7 +135,7 @@ func (b *Backend) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if b.ctx == nil || b.p11ctx == nil {
+	if b.pool == nil || b.p11ctx == nil {
 		return nil, ErrNotInitialized
 	}
 

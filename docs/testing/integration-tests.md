@@ -1,15 +1,15 @@
 # Integration Tests
 
-This document describes how to run integration tests for all go-keychain backends.
+This document describes how to run integration tests for all go-xkms backends.
 
 ## Overview
 
-The go-keychain library includes comprehensive integration tests for all backends. Tests are organized by backend in `test/integration/{backend}/` with Docker-based execution for consistency and isolation.
+The go-xkms library includes comprehensive integration tests for all backends. Tests are organized by backend in `test/integration/{backend}/` with Docker-based execution for consistency and isolation.
 
 **Test Statistics:**
 - Total: 151 tests passing
 - Coverage: 74.9%
-- Backends: 10 (PKCS#8, AES, PKCS#11, SmartCard-HSM, TPM2, YubiKey, AWS KMS, GCP KMS, Azure KV, Vault)
+- Backends: 9 (PKCS#8, AES, PKCS#11, TPM2, YubiKey, AWS KMS, GCP KMS, Azure KV, Vault)
 
 ## Test Strategy
 
@@ -29,10 +29,10 @@ Each backend has its own directory under `test/integration/`:
 ```
 test/integration/
 ├── common/                    # Shared test utilities
-├── pkcs8/                     # PKCS#8 software backend
+├── software/                  # Software backend
 │   ├── docker-compose.yml
 │   ├── Dockerfile
-│   └── pkcs8_integration_test.go
+│   └── software_integration_test.go
 ├── pkcs11/                    # PKCS#11/SoftHSM
 │   ├── docker-compose.yml
 │   ├── Dockerfile
@@ -72,14 +72,14 @@ This runs all backend integration tests sequentially.
 ### Individual Backend Tests
 
 ```bash
-# PKCS#8 software backend
-make integration-test-pkcs8
-
-# PKCS#11/SoftHSM
-make integration-test-pkcs11
+# Software backend
+make integration-test-software
 
 # TPM2 simulator
 make integration-test-tpm2
+
+# PKCS#11/SoftHSM
+make integration-test-pkcs11
 
 # AWS KMS with LocalStack
 make integration-test-awskms
@@ -95,7 +95,7 @@ make integration-test-vault
 ```
 
 
-## PKCS#8 Integration Tests
+## Software Backend Integration Tests
 
 ### What It Tests
 - RSA key generation (2048, 3072, 4096 bits)
@@ -108,13 +108,13 @@ make integration-test-vault
 ### Running
 
 ```bash
-make integration-test-pkcs8
+make integration-test-software
 ```
 
 ### Manual Execution
 
 ```bash
-cd test/integration/pkcs8
+cd test/integration/software
 docker-compose run --rm test
 docker-compose down -v
 ```
@@ -320,9 +320,9 @@ If you encounter permission errors:
 ### Slow Tests
 
 Integration tests run in Docker and may take several minutes:
-- PKCS#8: ~30 seconds
-- PKCS#11/SoftHSM: ~45 seconds
+- Software: ~30 seconds
 - TPM2: ~60 seconds (simulator startup)
+- PKCS#11/SoftHSM: ~45 seconds
 - AWS KMS/LocalStack: ~90 seconds (LocalStack initialization)
 - GCP KMS: ~30 seconds (mock)
 - Azure KV: ~30 seconds (mock)

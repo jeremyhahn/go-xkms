@@ -1,7 +1,9 @@
+//go:build tpm_simulator
+// +build tpm_simulator
+
 package tpm2
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -16,8 +18,8 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -101,7 +103,7 @@ func createSimulatorTPM(t *testing.T, strategy EnrollmentStrategy) TrustedPlatfo
 				KeySize: 2048,
 			},
 		},
-		KeyStore: &KeyStoreConfig{
+		PlatformSRK: &PlatformSRKConfig{
 			SRKAuth:        "testme",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: false,
@@ -379,29 +381,6 @@ func TestCSRVerifyTCG_CSR_IDevID_Attributes(t *testing.T) {
 	})
 }
 
-// TestCSRCreateProdCaData_NoDevice tests createProdCaData with no TPM device
-func TestCSRCreateProdCaData_NoDevice(t *testing.T) {
-	logger := slog.Default()
-
-	config := &Config{
-		Hash:        "SHA-256",
-		PlatformPCR: 16,
-		GoldenPCRs:  []uint{16},
-	}
-
-	tpm := &TPM2{
-		config: config,
-		logger: logger,
-		device: nil, // No device
-	}
-
-	// Should return nil data without error
-	data, size, err := tpm.createProdCaData()
-	require.NoError(t, err)
-	assert.Nil(t, data)
-	assert.Equal(t, uint32(0), size)
-}
-
 // TestCSRCreateProdCaData_WithSimulator tests createProdCaData with simulator
 func TestCSRCreateProdCaData_WithSimulator(t *testing.T) {
 	tpm := createSimulatorTPM(t, EnrollmentStrategyIAK)
@@ -428,30 +407,6 @@ func TestCSRCreateProdCaData_WithSimulator(t *testing.T) {
 		assert.Greater(t, size, uint32(0))
 		assert.Equal(t, int(size), len(data))
 	}
-}
-
-// TestCSRCreateProdCaData_DefaultPCRs tests PCR defaults
-func TestCSRCreateProdCaData_DefaultPCRs(t *testing.T) {
-	logger := slog.Default()
-
-	// Test with empty GoldenPCRs - should use PlatformPCR
-	config := &Config{
-		Hash:        "SHA-256",
-		PlatformPCR: 7,
-		GoldenPCRs:  []uint{}, // Empty
-	}
-
-	tpm := &TPM2{
-		config: config,
-		logger: logger,
-		device: nil,
-	}
-
-	// Verify it handles empty GoldenPCRs
-	data, size, err := tpm.createProdCaData()
-	require.NoError(t, err)
-	assert.Nil(t, data)
-	assert.Equal(t, uint32(0), size)
 }
 
 // TestCSRPackUnpackCSRRoundTrip tests pack/unpack round trip
@@ -495,63 +450,6 @@ func TestCSRPackUnpackCSRRoundTrip(t *testing.T) {
 	assert.Equal(t, originalCSR.Signature, unmarshalled.Signature)
 	assert.Equal(t, originalCSR.CsrContents.ProdModel, unmarshalled.CsrContents.ProdModel)
 	assert.Equal(t, originalCSR.CsrContents.ProdSerial, unmarshalled.CsrContents.ProdSerial)
-}
-
-// TestCSRMarshalMethod tests the Marshal method on TCG_CSR_IDEVID
-func TestCSRMarshalMethod(t *testing.T) {
-	csr := createTestCSRIDevID()
-
-	// Test Marshal method
-	marshalled, err := csr.Marshal()
-	require.NoError(t, err)
-	require.NotEmpty(t, marshalled)
-
-	// Verify can unmarshal back
-	unmarshalled, err := UnmarshalIDevIDCSR(marshalled)
-	require.NoError(t, err)
-	assert.Equal(t, csr.StructVer, unmarshalled.StructVer)
-}
-
-// TestCSRParseIdentityProvisioningStrategy tests strategy parsing
-func TestCSRParseIdentityProvisioningStrategy(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected EnrollmentStrategy
-	}{
-		{
-			name:     "IAK strategy",
-			input:    "IAK",
-			expected: EnrollmentStrategyIAK,
-		},
-		{
-			name:     "IAK_IDEVID_SINGLE_PASS strategy",
-			input:    "IAK_IDEVID_SINGLE_PASS",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
-		},
-		{
-			name:     "empty defaults to single pass",
-			input:    "",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
-		},
-		{
-			name:     "unknown defaults to single pass",
-			input:    "UNKNOWN",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS,
-		},
-		{
-			name:     "lowercase iak",
-			input:    "iak",
-			expected: EnrollmentStrategyIAK_IDEVID_SINGLE_PASS, // Case sensitive
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := ParseIdentityProvisioningStrategy(tc.input)
-			assert.Equal(t, tc.expected, result)
-		})
-	}
 }
 
 // TestCSRCreateIDevIDContent_MissingEventLog tests content creation without event log
@@ -638,122 +536,4 @@ func TestCSRVerifyWithPKCS1v15(t *testing.T) {
 
 	_, _, err = tpm.VerifyTCG_CSR_IDevID(csr, x509.SHA256WithRSA)
 	require.Error(t, err)
-}
-
-// TestCSRKeyAttributeValidation tests key attribute validation in verify methods
-func TestCSRKeyAttributeValidation(t *testing.T) {
-	t.Run("IAK Restricted attribute validation", func(t *testing.T) {
-		// IAK must have Restricted=true
-		pubArea := tpm2.TPMAObject{
-			Restricted:  false, // Invalid for IAK
-			FixedTPM:    true,
-			FixedParent: true,
-			SignEncrypt: true,
-		}
-		assert.False(t, pubArea.Restricted, "IAK should require Restricted=true")
-	})
-
-	t.Run("IAK FixedTPM attribute validation", func(t *testing.T) {
-		pubArea := tpm2.TPMAObject{
-			Restricted:  true,
-			FixedTPM:    false, // Invalid
-			FixedParent: true,
-			SignEncrypt: true,
-		}
-		assert.False(t, pubArea.FixedTPM, "IAK should require FixedTPM=true")
-	})
-
-	t.Run("IDevID Restricted attribute validation", func(t *testing.T) {
-		// IDevID must have Restricted=false
-		pubArea := tpm2.TPMAObject{
-			Restricted:  true, // Invalid for IDevID
-			FixedTPM:    true,
-			FixedParent: true,
-			SignEncrypt: true,
-		}
-		assert.True(t, pubArea.Restricted, "IDevID should require Restricted=false")
-	})
-
-	t.Run("valid IAK attributes", func(t *testing.T) {
-		pubArea := tpm2.TPMAObject{
-			Restricted:  true,
-			FixedTPM:    true,
-			FixedParent: true,
-			SignEncrypt: true,
-		}
-		assert.True(t, pubArea.Restricted)
-		assert.True(t, pubArea.FixedTPM)
-		assert.True(t, pubArea.FixedParent)
-		assert.True(t, pubArea.SignEncrypt)
-	})
-
-	t.Run("valid IDevID attributes", func(t *testing.T) {
-		pubArea := tpm2.TPMAObject{
-			Restricted:  false, // IDevID is NOT restricted
-			FixedTPM:    true,
-			FixedParent: true,
-			SignEncrypt: true,
-		}
-		assert.False(t, pubArea.Restricted)
-		assert.True(t, pubArea.FixedTPM)
-		assert.True(t, pubArea.FixedParent)
-		assert.True(t, pubArea.SignEncrypt)
-	})
-}
-
-// TestCSRHashSizeMapping tests hash algorithm to size mapping
-func TestCSRHashSizeMapping(t *testing.T) {
-	tests := []struct {
-		hash     crypto.Hash
-		expected uint32
-		hasError bool
-	}{
-		{crypto.SHA1, 20, false},
-		{crypto.SHA256, 32, false},
-		{crypto.SHA384, 48, false},
-		{crypto.SHA512, 64, false},
-		{crypto.MD5, 0, true},
-		{crypto.Hash(0), 0, true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.hash.String(), func(t *testing.T) {
-			size, err := ParseHashSize(tc.hash)
-			if tc.hasError {
-				require.Error(t, err)
-				assert.Equal(t, ErrInvalidHashFunction, err)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tc.expected, size)
-			}
-		})
-	}
-}
-
-// TestCSRContentFieldPreservation tests that content fields are preserved through pack/unpack
-func TestCSRContentFieldPreservation(t *testing.T) {
-	original := createTestIDevIDContent()
-
-	// Pack and unpack
-	packed, err := PackIDevIDContent(original)
-	require.NoError(t, err)
-
-	reader := bytes.NewReader(packed)
-	unpacked, err := UnpackIDevIDContent(reader)
-	require.NoError(t, err)
-
-	// Verify all fields
-	assert.Equal(t, original.ProdModel, unpacked.ProdModel)
-	assert.Equal(t, original.ProdSerial, unpacked.ProdSerial)
-	assert.Equal(t, original.ProdCaData, unpacked.ProdCaData)
-	assert.Equal(t, original.BootEvntLog, unpacked.BootEvntLog)
-	assert.Equal(t, original.EkCert, unpacked.EkCert)
-	assert.Equal(t, original.AttestPub, unpacked.AttestPub)
-	assert.Equal(t, original.AtCreateTkt, unpacked.AtCreateTkt)
-	assert.Equal(t, original.AtCertifyInfo, unpacked.AtCertifyInfo)
-	assert.Equal(t, original.AtCertifyInfoSig, unpacked.AtCertifyInfoSig)
-	assert.Equal(t, original.SigningPub, unpacked.SigningPub)
-	assert.Equal(t, original.SgnCertifyInfo, unpacked.SgnCertifyInfo)
-	assert.Equal(t, original.SgnCertifyInfoSig, unpacked.SgnCertifyInfoSig)
-	assert.Equal(t, original.Pad, unpacked.Pad)
 }

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,7 +17,6 @@ package fido2
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -41,7 +40,7 @@ type CLITestConfig struct {
 // LoadCLITestConfig loads CLI test configuration
 func LoadCLITestConfig() *CLITestConfig {
 	projectRoot := getProjectRoot()
-	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "keychain")
+	defaultCLIPath := filepath.Join(projectRoot, "build", "bin", "xkmsctl")
 
 	return &CLITestConfig{
 		CLIBinPath: getEnv("KEYSTORE_CLI_BIN", defaultCLIPath),
@@ -75,12 +74,12 @@ func (cfg *CLITestConfig) isCLIAvailable(t *testing.T) bool {
 	return cmd.Run() == nil
 }
 
-// requireCLI skips test if CLI is not available
+// requireCLI fails the test if CLI is not available
 func (cfg *CLITestConfig) requireCLI(t *testing.T) {
 	t.Helper()
 
 	if !cfg.isCLIAvailable(t) {
-		t.Skipf("CLI binary not available: %s. Run 'make build' first.", cfg.CLIBinPath)
+		t.Fatalf("CLI binary not available: %s. Run 'make build' first.", cfg.CLIBinPath)
 	}
 }
 
@@ -122,19 +121,21 @@ func TestCLIFIDO2ListDevices(t *testing.T) {
 
 		require.NoError(t, err, "list-devices with JSON output should succeed")
 
-		// Parse JSON output
-		var devices []map[string]interface{}
-		err = json.Unmarshal([]byte(stdout), &devices)
+		// Parse JSON output - CLI outputs {"devices": [...]} wrapper format
+		var result map[string]interface{}
+		err = json.Unmarshal([]byte(stdout), &result)
 		require.NoError(t, err, "Output should be valid JSON")
 
-		require.Greater(t, len(devices), 0, "Should have at least one device")
+		devicesList, ok := result["devices"].([]interface{})
+		require.True(t, ok, "JSON should have 'devices' array")
+		require.Greater(t, len(devicesList), 0, "Should have at least one device")
 
-		device := devices[0]
+		device := devicesList[0].(map[string]interface{})
 		assert.NotEmpty(t, device["path"], "Device should have path")
 		assert.NotZero(t, device["vendor_id"], "Device should have vendor ID")
 		assert.NotZero(t, device["product_id"], "Device should have product ID")
 
-		t.Logf("Found %d device(s) via CLI JSON output", len(devices))
+		t.Logf("Found %d device(s) via CLI JSON output", len(devicesList))
 	})
 
 	// Test with specific device path
@@ -200,7 +201,7 @@ func TestCLIFIDO2Register(t *testing.T) {
 	t.Run("BasicRegistration", func(t *testing.T) {
 		args := []string{
 			"fido2", "register", username,
-			"--rp-id", "go-keychain-test",
+			"--rp-id", "go-xkms-test",
 			"--rp-name", "CLI Integration Test",
 			"--timeout", "30s",
 		}
@@ -234,7 +235,7 @@ func TestCLIFIDO2Register(t *testing.T) {
 		args := []string{
 			"--output", "json",
 			"fido2", "register", username,
-			"--rp-id", "go-keychain-test",
+			"--rp-id", "go-xkms-test",
 			"--rp-name", "CLI Integration Test",
 			"--timeout", "30s",
 		}
@@ -279,16 +280,41 @@ func TestCLIFIDO2Authenticate(t *testing.T) {
 
 	t.Log("=== CLI FIDO2 Authenticate Test ===")
 
-	// First, register a credential using the API
+	// Set up persistent virtual device storage for cross-invocation credential persistence
+	if fido2Cfg.UseVirtualDevice() {
+		stateDir := t.TempDir()
+		t.Setenv("FIDO2_VIRTUAL_STATE_DIR", stateDir)
+	}
+
+	// Register a credential using the CLI so the same virtual device state is used
 	username := GenerateUniqueUsername("cli-auth-user")
-	enrollment, handler := fido2Cfg.EnrollTestCredential(t, username)
-	defer CleanupCredential(t, handler)
+	registerArgs := []string{
+		"--output", "json",
+		"fido2", "register", username,
+		"--rp-id", "go-xkms-test",
+		"--rp-name", "CLI Auth Test",
+		"--timeout", "30s",
+	}
+	if fido2Cfg.DevicePath != "" {
+		registerArgs = append(registerArgs, "--device", fido2Cfg.DevicePath)
+	}
 
-	// Encode credential ID and salt for CLI
-	credIDBase64 := base64.StdEncoding.EncodeToString(enrollment.CredentialID)
-	saltBase64 := base64.StdEncoding.EncodeToString(enrollment.Salt)
+	stdout, stderr, err := cfg.execCLI(t, registerArgs...)
+	if err != nil {
+		t.Logf("stdout: %s", stdout)
+		t.Logf("stderr: %s", stderr)
+	}
+	require.NoError(t, err, "Registration via CLI should succeed")
 
-	t.Log("Credential enrolled, now testing CLI authentication...")
+	// Parse registration result
+	var regResult map[string]interface{}
+	err = json.Unmarshal([]byte(stdout), &regResult)
+	require.NoError(t, err, "Registration output should be valid JSON")
+
+	credIDBase64 := regResult["credential_id"].(string)
+	saltBase64 := regResult["salt"].(string)
+
+	t.Log("Credential enrolled via CLI, now testing CLI authentication...")
 
 	// Test authentication
 	t.Run("BasicAuthentication", func(t *testing.T) {
@@ -296,7 +322,7 @@ func TestCLIFIDO2Authenticate(t *testing.T) {
 			"fido2", "authenticate",
 			"--credential-id", credIDBase64,
 			"--salt", saltBase64,
-			"--rp-id", "go-keychain-test",
+			"--rp-id", "go-xkms-test",
 			"--timeout", "30s",
 		}
 
@@ -328,7 +354,7 @@ func TestCLIFIDO2Authenticate(t *testing.T) {
 			"fido2", "authenticate",
 			"--credential-id", credIDBase64,
 			"--salt", saltBase64,
-			"--rp-id", "go-keychain-test",
+			"--rp-id", "go-xkms-test",
 			"--timeout", "30s",
 			"--hex",
 		}
@@ -429,6 +455,12 @@ func TestCLIFIDO2FullWorkflow(t *testing.T) {
 
 	t.Log("=== CLI FIDO2 Full Workflow Test ===")
 
+	// Set up persistent virtual device storage for cross-invocation credential persistence
+	if fido2Cfg.UseVirtualDevice() {
+		stateDir := t.TempDir()
+		t.Setenv("FIDO2_VIRTUAL_STATE_DIR", stateDir)
+	}
+
 	username := GenerateUniqueUsername("cli-workflow-user")
 
 	// Step 1: Register
@@ -437,7 +469,7 @@ func TestCLIFIDO2FullWorkflow(t *testing.T) {
 	registerArgs := []string{
 		"--output", "json",
 		"fido2", "register", username,
-		"--rp-id", "go-keychain-test",
+		"--rp-id", "go-xkms-test",
 		"--rp-name", "CLI Workflow Test",
 		"--timeout", "30s",
 	}
@@ -475,7 +507,7 @@ func TestCLIFIDO2FullWorkflow(t *testing.T) {
 		"fido2", "authenticate",
 		"--credential-id", credID,
 		"--salt", salt,
-		"--rp-id", "go-keychain-test",
+		"--rp-id", "go-xkms-test",
 		"--timeout", "30s",
 	}
 
@@ -499,7 +531,7 @@ func TestCLIFIDO2FullWorkflow(t *testing.T) {
 
 	assert.True(t, authResult["success"].(bool), "Authentication should be successful")
 	assert.NotEmpty(t, authResult["derived_key"], "Should have derived key")
-	assert.Equal(t, float64(32), authResult["key_length"].(float64), "Derived key should be 32 bytes")
+	assert.Equal(t, float64(64), authResult["key_length"].(float64), "Derived key should be 64 bytes (hmac-secret produces two 32-byte outputs)")
 
 	t.Log("Full workflow completed successfully!")
 	t.Logf("  Derived key length: %v bytes", authResult["key_length"])

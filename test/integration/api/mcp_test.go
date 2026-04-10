@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -72,8 +72,8 @@ func (c *MCPClient) Call(method string, params interface{}) (map[string]interfac
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Read response
-	buf := make([]byte, 8192)
+	// Read response (use large buffer for responses with PEM data)
+	buf := make([]byte, 256*1024)
 	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := c.conn.Read(buf)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestMCPListBackends(t *testing.T) {
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
-	resp, err := client.Call("keychain.listBackends", nil)
+	resp, err := client.Call("xkms.listBackends", nil)
 	assertNoError(t, err, "ListBackends failed")
 
 	result, ok := resp["result"].(map[string]interface{})
@@ -183,7 +183,7 @@ func TestMCPGenerateKey(t *testing.T) {
 		"key_size": 2048,
 	}
 
-	resp, err := client.Call("keychain.generateKey", params)
+	resp, err := client.Call("xkms.generateKey", params)
 	assertNoError(t, err, "GenerateKey failed")
 
 	result, ok := resp["result"].(map[string]interface{})
@@ -201,7 +201,7 @@ func TestMCPGenerateKey(t *testing.T) {
 	t.Logf("Generated key via MCP: %s", keyID)
 
 	// Cleanup
-	defer client.Call("keychain.deleteKey", map[string]interface{}{
+	defer client.Call("xkms.deleteKey", map[string]interface{}{
 		"key_id":  keyID,
 		"backend": "software",
 	})
@@ -227,17 +227,19 @@ func TestMCPListKeys(t *testing.T) {
 		"key_size": 2048,
 	}
 
-	_, err = client.Call("keychain.generateKey", params)
+	_, err = client.Call("xkms.generateKey", params)
 	assertNoError(t, err, "GenerateKey failed")
 
 	// Cleanup
-	defer client.Call("keychain.deleteKey", map[string]interface{}{
+	defer client.Call("xkms.deleteKey", map[string]interface{}{
 		"key_id":  keyID,
 		"backend": "software",
 	})
 
-	// List keys
-	resp, err := client.Call("keychain.listKeys", map[string]interface{}{})
+	// List keys (filter by backend to reduce response size)
+	resp, err := client.Call("xkms.listKeys", map[string]interface{}{
+		"backend": "software",
+	})
 	assertNoError(t, err, "ListKeys failed")
 
 	result, ok := resp["result"].(map[string]interface{})
@@ -257,8 +259,8 @@ func TestMCPListKeys(t *testing.T) {
 		if !ok {
 			continue
 		}
-		cn, ok := keyInfo["cn"].(string)
-		if ok && cn == keyID {
+		id, ok := keyInfo["key_id"].(string)
+		if ok && id == keyID {
 			found = true
 			break
 		}
@@ -287,7 +289,7 @@ func TestMCPSignVerify(t *testing.T) {
 	keyID := generateUniqueID("mcp-sign-key")
 
 	// Generate key
-	_, err = client.Call("keychain.generateKey", map[string]interface{}{
+	_, err = client.Call("xkms.generateKey", map[string]interface{}{
 		"key_id":   keyID,
 		"backend":  "software",
 		"key_type": "rsa",
@@ -295,7 +297,7 @@ func TestMCPSignVerify(t *testing.T) {
 	})
 	assertNoError(t, err, "Failed to generate key")
 
-	defer client.Call("keychain.deleteKey", map[string]interface{}{
+	defer client.Call("xkms.deleteKey", map[string]interface{}{
 		"key_id":  keyID,
 		"backend": "software",
 	})
@@ -303,7 +305,7 @@ func TestMCPSignVerify(t *testing.T) {
 	testData := []byte("test data for MCP signing")
 
 	// Sign data
-	signResp, err := client.Call("keychain.sign", map[string]interface{}{
+	signResp, err := client.Call("xkms.sign", map[string]interface{}{
 		"key_id":  keyID,
 		"backend": "software",
 		"data":    testData,
@@ -324,7 +326,7 @@ func TestMCPSignVerify(t *testing.T) {
 	t.Logf("Signed data via MCP")
 
 	// Verify signature
-	verifyResp, err := client.Call("keychain.verify", map[string]interface{}{
+	verifyResp, err := client.Call("xkms.verify", map[string]interface{}{
 		"key_id":    keyID,
 		"backend":   "software",
 		"data":      testData,
@@ -372,7 +374,7 @@ func TestMCPBatchRequests(t *testing.T) {
 		},
 		{
 			"jsonrpc": "2.0",
-			"method":  "keychain.listBackends",
+			"method":  "xkms.listBackends",
 			"id":      2,
 		},
 	}
@@ -419,14 +421,14 @@ func TestMCPStreamingNotifications(t *testing.T) {
 	defer client.Close()
 
 	// Subscribe to key events - verify subscribe API works
-	_, err = client.Call("keychain.subscribe", map[string]interface{}{
+	_, err = client.Call("xkms.subscribe", map[string]interface{}{
 		"events": []string{"key.created", "key.deleted"},
 	})
 	assertNoError(t, err, "Failed to subscribe to events")
 
 	// Create a key (should trigger notification)
 	keyID := generateUniqueID("mcp-notify-key")
-	_, err = client.Call("keychain.generateKey", map[string]interface{}{
+	_, err = client.Call("xkms.generateKey", map[string]interface{}{
 		"key_id":   keyID,
 		"backend":  "software",
 		"key_type": "rsa",
@@ -434,7 +436,7 @@ func TestMCPStreamingNotifications(t *testing.T) {
 	assertNoError(t, err, "Failed to generate key")
 
 	defer func() {
-		_, _ = client.Call("keychain.deleteKey", map[string]interface{}{
+		_, _ = client.Call("xkms.deleteKey", map[string]interface{}{
 			"key_id":  keyID,
 			"backend": "software",
 		})
@@ -494,12 +496,12 @@ func TestMCPErrorHandling(t *testing.T) {
 		},
 		{
 			name:   "Missing required params",
-			method: "keychain.generateKey",
+			method: "xkms.generateKey",
 			params: map[string]interface{}{},
 		},
 		{
 			name:   "Get non-existent key",
-			method: "keychain.getKey",
+			method: "xkms.getKey",
 			params: map[string]interface{}{
 				"key_id":  "non-existent",
 				"backend": "software",

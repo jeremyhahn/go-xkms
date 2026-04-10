@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -33,8 +33,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jeremyhahn/go-keychain/pkg/attestation"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
@@ -119,8 +119,8 @@ func main() {
 	fmt.Println("  • Compliance with security standards (FIPS 140-2, CC)")
 	fmt.Println()
 
-	// Step 6: Integration with keychain
-	fmt.Println("Step 6: Integration with go-keychain")
+	// Step 6: Integration with xkms
+	fmt.Println("Step 6: Integration with go-xkms")
 	fmt.Println("------------------------------------")
 	fmt.Println("Typical workflow:")
 	fmt.Println("  1. Initialize hardware backend (TPM2 or PKCS#11)")

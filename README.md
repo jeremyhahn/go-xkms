@@ -1,10 +1,10 @@
-# go-keychain
+# go-xkms
 
-[![Go Version](https://img.shields.io/badge/Go-1.25.1-blue.svg)](https://golang.org)
-[![Version](https://img.shields.io/badge/version-v0.2.0--alpha-green.svg)](https://github.com/jeremyhahn/go-keychain/releases)
+[![Go Version](https://img.shields.io/badge/Go-1.25.6-blue.svg)](https://golang.org)
+[![Version](https://img.shields.io/badge/version-v0.2.3--alpha-green.svg)](https://github.com/jeremyhahn/go-xkms/releases)
 [![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen.svg)](test/integration)
 [![Coverage](https://img.shields.io/badge/coverage-92.5%25-brightgreen.svg)](pkg)
-[![Backends](https://img.shields.io/badge/backends-10-blue.svg)](#backend-support-)
+[![Backends](https://img.shields.io/badge/backends-8-blue.svg)](#backend-support-)
 [![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE-AGPL-3.txt)
 [![Commercial License](https://img.shields.io/badge/license-Commercial-green.svg)](LICENSE-COMMERCIAL.md)
 
@@ -12,7 +12,7 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 
 ## Features at a Glance
 
-- **10 Production-Ready Backends**: PKCS#8, AES, PKCS#11, SmartCard-HSM, TPM2, YubiKey, AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault
+- **8 Production-Ready Backends**: Software, PKCS#11, TPM2, AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault, Phone
 - **Complete Key Management**: Generate, store, retrieve, rotate, and delete keys (RSA, ECDSA, Ed25519, AES)
 - **Symmetric Encryption**: AES-GCM (128/192/256-bit) with AEAD safety support across all backends
 - **Certificate Operations**: Full X.509 certificate lifecycle including chains and CRL support
@@ -24,7 +24,7 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 
 ## Overview
 
-**go-keychain** provides a unified interface for managing cryptographic keys and certificates across multiple backend types, from simple file-based storage to hardware security modules and cloud KMS services.
+**go-xkms** provides a unified interface for managing cryptographic keys and certificates across multiple backend types, from simple file-based storage to hardware security modules and cloud KMS services.
 
 ### Core Focus
 
@@ -40,7 +40,7 @@ A secure cryptographic key and certificate management solution for on-prem, hybr
 - **Unified Service API**: Single API for all backends - no leaky abstractions
 - **Thread-Safe**: Safe for concurrent operations
 - **Well-Tested**: 92.5% unit test coverage, 151 passing integration tests
-- **Production-Ready**: v0.2.0-alpha with 10 fully working backends
+- **Production-Ready**: v0.2.0-alpha with 8 fully working backends
 - **Focused Scope**: Just keys and certificates - no server/events/secrets
 
 ---
@@ -84,8 +84,6 @@ True backends support **all three** operation types: asymmetric, symmetric, and 
 | **Software** | ✓ | ✓ | ✓ | File-based keys using PKCS#8 + AES/ChaCha20 |
 | **PKCS#11** | ✓ | ✓ | ✓ | Hardware Security Modules |
 | **TPM2** | ✓ | ✓ | ✓ | Trusted Platform Module |
-| **YubiKey** | ✓ | ✓ | ✓ | YubiKey PIV (RSA/ECDSA/Ed25519 envelope encryption) |
-| **CanoKey** | ✓ | ✓ | ✓ | Open-source PIV key (virtual/hardware, CI/CD testing) |
 | **AWS KMS** | ✓ | ✓ | ✓ | Amazon Key Management Service |
 | **GCP KMS** | ✓ | ✓ | ✓ | Google Cloud KMS |
 | **Azure Key Vault** | ✓ | ✓ | ✓ | Azure Key Vault |
@@ -101,12 +99,13 @@ Building blocks and specialized cryptographic libraries:
 | **AES** | Symmetric encryption | AES-GCM (128/192/256-bit) |
 | **Quantum** | Post-quantum cryptography | ML-KEM key encapsulation, ML-DSA signatures |
 | **Threshold** | Secret sharing | Shamir's Secret Sharing, threshold signatures |
+| **DKEK** | Device Key Encryption Key | Backend-agnostic key wrapping with Shamir's Secret Sharing |
 
 ---
 
 ## Client Interfaces
 
-go-keychain provides **5 client interfaces** for accessing key and certificate operations:
+go-xkms provides **5 client interfaces** for accessing key and certificate operations:
 
 | Interface | Protocol | Coverage | Status | Use Case |
 |-----------|----------|----------|--------|----------|
@@ -123,33 +122,33 @@ All interfaces expose the complete KeyStore API for keys and certificates. See [
 **CLI (Command Line):**
 ```bash
 # Key Management
-keychain key generate --name my-key --type rsa --size 2048
-keychain key generate --name signing-key --type ecdsa --curve P-256
-keychain key generate --name ed-key --type ed25519
-keychain key list
-keychain key get my-key
-keychain key delete my-key
-keychain key rotate my-key
+xkmsctl key generate --name my-key --type rsa --size 2048
+xkmsctl key generate --name signing-key --type ecdsa --curve P-256
+xkmsctl key generate --name ed-key --type ed25519
+xkmsctl key list
+xkmsctl key get my-key
+xkmsctl key delete my-key
+xkmsctl key rotate my-key
 
 # Certificate Management
-keychain cert list
-keychain cert get my-key
-keychain cert delete my-key
+xkmsctl cert list
+xkmsctl cert get my-key
+xkmsctl cert delete my-key
 
 # Admin Management (requires FIDO2 security key)
-keychain admin status
-keychain admin create admin@example.com --display-name "Admin"
-keychain admin list
-keychain admin get admin@example.com
-keychain admin disable admin@example.com
-keychain admin enable admin@example.com
+xkmsctl admin status
+xkmsctl admin create admin@example.com --display-name "Admin"
+xkmsctl admin list
+xkmsctl admin get admin@example.com
+xkmsctl admin disable admin@example.com
+xkmsctl admin enable admin@example.com
 
 # FIDO2 Operations
-keychain fido2 list        # List connected security keys
-keychain fido2 info        # Show device information
+xkmsctl fido2 list        # List connected security keys
+xkmsctl fido2 info        # Show device information
 
 # Backend Information
-keychain backends          # List available backends
+xkmsctl backends          # List available backends
 ```
 
 **REST API:**
@@ -176,10 +175,10 @@ curl http://localhost:8443/api/v1/health
 
 **gRPC:**
 ```go
-import pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
+import pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 
 conn, _ := grpc.Dial("localhost:9443", grpc.WithInsecure())
-client := pb.NewKeychainServiceClient(conn)
+client := pb.NewXKMSServiceClient(conn)
 
 // Generate key
 resp, _ := client.GenerateKey(ctx, &pb.GenerateKeyRequest{
@@ -194,12 +193,12 @@ keys, _ := client.ListKeys(ctx, &pb.ListKeysRequest{})
 
 **MCP (Model Context Protocol - for AI assistants):**
 ```json
-{"jsonrpc": "2.0", "method": "keychain.generateKey",
+{"jsonrpc": "2.0", "method": "xkms.generateKey",
  "params": {"key_id": "my-key", "key_type": "rsa", "key_size": 2048}, "id": 1}
 
-{"jsonrpc": "2.0", "method": "keychain.listKeys", "params": {}, "id": 2}
+{"jsonrpc": "2.0", "method": "xkms.listKeys", "params": {}, "id": 2}
 
-{"jsonrpc": "2.0", "method": "keychain.sign",
+{"jsonrpc": "2.0", "method": "xkms.sign",
  "params": {"key_id": "my-key", "data": "base64data", "hash": "sha256"}, "id": 3}
 ```
 
@@ -217,7 +216,7 @@ curl --http3 https://localhost:8444/api/v1/health
 ### As a Library
 
 ```bash
-go get github.com/jeremyhahn/go-keychain
+go get github.com/jeremyhahn/go-xkms
 ```
 
 ### As a Server
@@ -227,7 +226,7 @@ go get github.com/jeremyhahn/go-keychain
 make build-server build-cli
 
 # Copy binaries to system path
-sudo cp bin/keychaind bin/keychain /usr/bin/
+sudo cp bin/xkmsd bin/xkmsctl /usr/bin/
 ```
 
 See [deploy/README.md](deploy/README.md) for systemd and OpenRC service installation.
@@ -238,18 +237,18 @@ See [deploy/README.md](deploy/README.md) for systemd and OpenRC service installa
 
 ### 1. First-Time Setup
 
-Before using go-keychain as a service, you must create an administrator account with a FIDO2 security key:
+Before using go-xkms as a service, you must create an administrator account with a FIDO2 security key:
 
 ```bash
 # Check if setup is required
-keychain admin status
+xkmsctl admin status
 
 # Create the first administrator (requires FIDO2 security key)
-keychain admin create admin@example.com --display-name "Admin User"
+xkmsctl admin create admin@example.com --display-name "Admin User"
 # Touch your security key when prompted...
 
 # Verify the admin was created
-keychain admin list
+xkmsctl admin list
 ```
 
 **Requirements:**
@@ -258,7 +257,7 @@ keychain admin list
 
 ### 2. Configure the Server
 
-Create a configuration file at `/etc/keychain/config.yaml`:
+Create a configuration file at `/etc/xkms/config.yaml`:
 
 ```yaml
 # Server configuration
@@ -275,17 +274,17 @@ default: pkcs8
 backends:
   pkcs8:
     enabled: true
-    key_dir: /var/lib/keychain/keys
+    key_dir: /var/lib/xkms/keys
 ```
 
 ### 3. Start the Server
 
 ```bash
 # Direct execution
-keychaind -config /etc/keychain/config.yaml
+xkmsd -config /etc/xkms/config.yaml
 
 # Or via systemd (after installing service files)
-sudo systemctl start keychain
+sudo systemctl start xkms
 ```
 
 ### 4. Verify Server is Running
@@ -295,26 +294,26 @@ sudo systemctl start keychain
 curl http://localhost:8443/api/v1/health
 
 # List keys via CLI
-keychain key list
+xkmsctl key list
 
 # Generate a test key
-keychain key generate --name test-key --type rsa --size 2048
+xkmsctl key generate --name test-key --type rsa --size 2048
 ```
 
 ---
 
 ## Quick Start (Library Usage)
 
-go-keychain provides two API patterns depending on your use case:
+go-xkms provides two API patterns depending on your use case:
 
 | API | Function | Use Case |
 |-----|----------|----------|
-| **`keychain.New()`** | Creates a single KeyStore instance | Libraries, embedded use, explicit resource management |
-| **`keychain.Initialize()`** | Sets up global service with multiple backends | Server applications, multi-backend scenarios |
+| **`xkms.New()`** | Creates a single KeyStore instance | Libraries, embedded use, explicit resource management |
+| **`xkms.Initialize()`** | Sets up global service with multiple backends | Server applications, multi-backend scenarios |
 
 ### Pattern 1: Direct KeyStore (Recommended for Libraries)
 
-Use `keychain.New()` when you need a single keystore instance with explicit lifecycle management:
+Use `xkms.New()` when you need a single keystore instance with explicit lifecycle management:
 
 ```go
 package main
@@ -324,10 +323,10 @@ import (
     "crypto/rand"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/software"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
@@ -351,7 +350,7 @@ func main() {
     defer backend.Close()
 
     // 3. Create the KeyStore
-    ks, err := keychain.New(&keychain.Config{
+    ks, err := xkms.New(&xkms.Config{
         Backend:     backend,
         CertStorage: certStorage,
     })
@@ -393,7 +392,7 @@ func main() {
 
 ### Pattern 2: Global Service (Recommended for Servers)
 
-Use `keychain.Initialize()` for server applications that need multiple backends with global access:
+Use `xkms.Initialize()` for server applications that need multiple backends with global access:
 
 ```go
 package main
@@ -402,10 +401,10 @@ import (
     "crypto"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/software"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
@@ -415,14 +414,14 @@ func main() {
 
     // Software backend supports asymmetric keys, symmetric encryption, and sealing
     softwareBackend, _ := software.NewBackend(&software.Config{KeyStorage: keyStorage})
-    softwareKS, _ := keychain.New(&keychain.Config{
+    softwareKS, _ := xkms.New(&xkms.Config{
         Backend:     softwareBackend,
         CertStorage: certStorage,
     })
 
     // 2. Initialize the global service
-    err := keychain.Initialize(&keychain.ServiceConfig{
-        Backends: map[string]keychain.KeyStore{
+    err := xkms.Initialize(&xkms.ServiceConfig{
+        Backends: map[string]xkms.KeyStore{
             "software": softwareKS,
         },
         DefaultBackend: "software",
@@ -430,7 +429,7 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    defer keychain.Close()
+    defer xkms.Close()
 
     // 3. Use global functions - keys are referenced as "backend:keyid" or just "keyid" for default
     attrs := &types.KeyAttributes{
@@ -440,13 +439,13 @@ func main() {
         RSAAttributes: &types.RSAAttributes{KeySize: 2048},
     }
 
-    _, err = keychain.GenerateKey(attrs)
+    _, err = xkms.GenerateKey(attrs)
     if err != nil {
         log.Fatal(err)
     }
 
     // Sign using the global service
-    signature, err := keychain.Sign("server-key", []byte("data"), &keychain.SignOptions{
+    signature, err := xkms.Sign("server-key", []byte("data"), &xkms.SignOptions{
         Hash: crypto.SHA256,
     })
     if err != nil {
@@ -456,7 +455,7 @@ func main() {
     log.Printf("Signature: %x...", signature[:16])
 
     // List available backends
-    backends := keychain.Backends()
+    backends := xkms.Backends()
     log.Printf("Available backends: %v", backends)
 }
 ```
@@ -469,10 +468,10 @@ package main
 import (
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/software"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
@@ -482,7 +481,7 @@ func main() {
     backend, _ := software.NewBackend(&software.Config{KeyStorage: keyStorage})
     defer backend.Close()
 
-    ks, _ := keychain.New(&keychain.Config{
+    ks, _ := xkms.New(&xkms.Config{
         Backend:     backend,
         CertStorage: certStorage,
     })
@@ -523,76 +522,76 @@ func main() {
 }
 ```
 
-For more examples, see the [examples/](examples/) directory and [docs/usage/getting-started.md](docs/usage/getting-started.md).
+For more examples, see the [examples/](examples/) directory and [xkey/docs/usage/getting-started.md](xkey/docs/usage/getting-started.md).
 
 ---
 
-## Keychain Service API
+## xKMS Service API
 
-The `keychain` package provides a simplified service API that abstracts backend complexity. After initialization, you can use simple function calls without managing KeyStore instances directly.
+The `xkms` package provides a simplified service API that abstracts backend complexity. After initialization, you can use simple function calls without managing KeyStore instances directly.
 
 ### Service Functions Overview
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/keychain"
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 // Initialization
-keychain.Initialize(config)     // Initialize with backends
-keychain.IsInitialized()        // Check if initialized
-keychain.Close()                // Close all backends
-keychain.Reset()                // Reset for testing
+xkms.Initialize(config)     // Initialize with backends
+xkms.IsInitialized()        // Check if initialized
+xkms.Close()                // Close all backends
+xkms.Reset()                // Reset for testing
 
 // Backend Access
-keychain.Backend("pkcs8")       // Get specific backend
-keychain.DefaultBackend()       // Get default backend
-keychain.Backends()             // List all backend names
+xkms.GetBackend("pkcs8")    // Get specific backend
+xkms.DefaultBackend()       // Get default backend
+xkms.Backends()             // List all backend names
 
 // Key Operations (use key references like "my-key" or "backend:my-key")
-keychain.GenerateKey(attrs)              // Generate key on default backend
-keychain.GenerateKeyWithBackend("tpm2", attrs)  // Generate on specific backend
-keychain.KeyByID("my-key")               // Get key by ID
-keychain.DeleteKey("my-key")             // Delete key
-keychain.RotateKey("my-key")             // Rotate key
-keychain.ListKeys()                      // List all keys
-keychain.ListKeys("pkcs8")               // List keys from specific backend
+xkms.GenerateKey(attrs)              // Generate key on default backend
+xkms.GenerateKeyWithBackend("tpm2", attrs)  // Generate on specific backend
+xkms.KeyByID("my-key")               // Get key by ID
+xkms.DeleteKey("my-key")             // Delete key
+xkms.RotateKey("my-key")             // Rotate key
+xkms.ListKeys()                      // List all keys
+xkms.ListKeys("pkcs8")               // List keys from specific backend
 
 // Crypto Operations
-keychain.Signer("my-key")                // Get crypto.Signer
-keychain.Decrypter("my-key")             // Get crypto.Decrypter
-keychain.Sign("my-key", data, opts)      // Sign data
-keychain.Verify("my-key", data, sig, opts)  // Verify signature
+xkms.Signer("my-key")                // Get crypto.Signer
+xkms.Decrypter("my-key")             // Get crypto.Decrypter
+xkms.Sign("my-key", data, opts)      // Sign data
+xkms.Verify("my-key", data, sig, opts)  // Verify signature
 
 // Symmetric Encryption
-keychain.GenerateSymmetricKey("aes", attrs)  // Generate symmetric key
-keychain.GetSymmetricKey("my-aes-key")       // Get symmetric key
-keychain.Encrypt("my-aes-key", data, opts)   // Encrypt data
-keychain.Decrypt("my-aes-key", encrypted, opts)  // Decrypt data
+xkms.GenerateSymmetricKey("aes", attrs)  // Generate symmetric key
+xkms.GetSymmetricKey("my-aes-key")       // Get symmetric key
+xkms.Encrypt("my-aes-key", data, opts)   // Encrypt data
+xkms.Decrypt("my-aes-key", encrypted, opts)  // Decrypt data
 
 // Certificate Operations
-keychain.SaveCertificate("my-key", cert)
-keychain.Certificate("my-key")
-keychain.DeleteCertificate("my-key")
-keychain.ListCertificates()
-keychain.SaveCertificateChain("my-key", chain)
-keychain.CertificateChain("my-key")
-keychain.CertificateExists("my-key")
+xkms.SaveCertificate("my-key", cert)
+xkms.Certificate("my-key")
+xkms.DeleteCertificate("my-key")
+xkms.ListCertificates()
+xkms.SaveCertificateChain("my-key", chain)
+xkms.CertificateChain("my-key")
+xkms.CertificateExists("my-key")
 
 // TLS Operations
-keychain.GetTLSCertificate("my-key")     // Get tls.Certificate
+xkms.GetTLSCertificate("my-key")     // Get tls.Certificate
 
 // Sealing Operations (hardware-backed encryption)
-keychain.Seal(ctx, data, opts)           // Seal with default backend
-keychain.SealWithBackend(ctx, "tpm2", data, opts)
-keychain.Unseal(ctx, sealed, opts)       // Unseal data
-keychain.CanSeal()                       // Check if sealing supported
+xkms.Seal(ctx, data, opts)           // Seal with default backend
+xkms.SealWithBackend(ctx, "tpm2", data, opts)
+xkms.Unseal(ctx, sealed, opts)       // Unseal data
+xkms.CanSeal()                       // Check if sealing supported
 
 // Import/Export Operations
-keychain.GetImportParameters(backend, attrs, algorithm)
-keychain.WrapKey(backend, keyMaterial, params)
-keychain.UnwrapKey(backend, wrapped, params)
-keychain.ImportKey(backend, attrs, wrapped)
-keychain.ExportKey("my-key", algorithm)
-keychain.CopyKey("source:my-key", "dest-backend", attrs)
+xkms.GetImportParameters(backend, attrs, algorithm)
+xkms.WrapKey(backend, keyMaterial, params)
+xkms.UnwrapKey(backend, wrapped, params)
+xkms.ImportKey(backend, attrs, wrapped)
+xkms.ExportKey("my-key", algorithm)
+xkms.CopyKey("source:my-key", "dest-backend", attrs)
 ```
 
 ### Key Reference Format
@@ -611,10 +610,10 @@ import (
     "crypto/x509"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend/software"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/software"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
@@ -623,20 +622,20 @@ func main() {
     certStorage, _ := file.New("./certs")
     backend, _ := software.NewBackend(&software.Config{KeyStorage: keyStorage})
 
-    ks, _ := keychain.New(&keychain.Config{
+    ks, _ := xkms.New(&xkms.Config{
         Backend:     backend,
         CertStorage: certStorage,
     })
 
     // 2. Initialize global service (for server applications)
-    err := keychain.Initialize(&keychain.ServiceConfig{
-        Backends:       map[string]keychain.KeyStore{"software": ks},
+    err := xkms.Initialize(&xkms.ServiceConfig{
+        Backends:       map[string]xkms.KeyStore{"software": ks},
         DefaultBackend: "software",
     })
     if err != nil {
         log.Fatal(err)
     }
-    defer keychain.Close()
+    defer xkms.Close()
 
     // 3. Generate an RSA key
     attrs := &types.KeyAttributes{
@@ -649,7 +648,7 @@ func main() {
         },
     }
 
-    key, err := keychain.GenerateKey(attrs)
+    key, err := xkms.GenerateKey(attrs)
     if err != nil {
         log.Fatal(err)
     }
@@ -657,7 +656,7 @@ func main() {
 
     // 4. Sign some data
     data := []byte("Hello, World!")
-    signature, err := keychain.Sign("my-signing-key", data, &keychain.SignOptions{
+    signature, err := xkms.Sign("my-signing-key", data, &xkms.SignOptions{
         Hash: crypto.SHA256,
     })
     if err != nil {
@@ -666,7 +665,7 @@ func main() {
     log.Printf("Signature: %x", signature[:16])
 
     // 5. Verify the signature
-    err = keychain.Verify("my-signing-key", data, signature, &types.VerifyOpts{
+    err = xkms.Verify("my-signing-key", data, signature, &types.VerifyOpts{
         Hash: crypto.SHA256,
     })
     if err != nil {
@@ -705,7 +704,7 @@ if err := ks.SaveCertChain("example.com", chain); err != nil {
 ### Package Structure
 
 ```
-go-keychain/
+go-xkms/
 ├── pkg/
 │   ├── storage/           # Storage interfaces
 │   │   ├── file/          # File-based storage
@@ -725,8 +724,9 @@ go-keychain/
 │   ├── verification/      # Signature verification
 │   ├── signing/           # Enhanced signer
 │   ├── opaque/            # OpaqueKey wrapper
+│   ├── dkek/              # Device Key Encryption Key
 │   │
-│   ├── keychain/          # Composite KeyStore
+│   ├── xkms/              # Composite KeyStore
 │   └── certstore/         # Certificate Store
 │
 ├── examples/              # Usage examples
@@ -842,16 +842,16 @@ backend, err := vault.New(&vault.Config{
 Full API documentation is available via GoDoc:
 
 ```bash
-go doc github.com/jeremyhahn/go-keychain/pkg/keychain
-go doc github.com/jeremyhahn/go-keychain/pkg/backend
-go doc github.com/jeremyhahn/go-keychain/pkg/certstore
+go doc github.com/jeremyhahn/go-xkms/pkg/xkms
+go doc github.com/jeremyhahn/go-xkms/pkg/backend
+go doc github.com/jeremyhahn/go-xkms/pkg/certstore
 ```
 
 ### Detailed Guides
 
 Comprehensive documentation is available in the [docs/](docs/) directory:
 
-- [Getting Started Guide](docs/getting-started.md) - Step-by-step guide to using go-keychain
+- [Getting Started Guide](docs/getting-started.md) - Step-by-step guide to using go-xkms
 - [Certificate Management](docs/certificate-management.md) - Certificate storage modes and best practices
 - [Backend Guide](docs/backends/) - Backend-specific configuration and usage
 - [Storage Abstraction](docs/storage-abstraction.md) - Storage layer architecture
@@ -906,8 +906,8 @@ This library focuses on cryptographic key and certificate management. Features o
 
 ```bash
 # Clone the repository
-git clone https://github.com/jeremyhahn/go-keychain
-cd go-keychain
+git clone https://github.com/jeremyhahn/go-xkms
+cd go-xkms
 
 # Install dependencies
 go mod download
@@ -925,11 +925,11 @@ go test -tags=integration ./test/integration/... -v
 
 [![AGPL-3.0](https://www.gnu.org/graphics/agplv3-155x51.png)](https://www.gnu.org/licenses/agpl-3.0.html)
 
-go-keychain is available under a **dual-license model**:
+go-xkms is available under a **dual-license model**:
 
 ### Option 1: GNU Affero General Public License v3.0 (AGPL-3.0)
 
-The open-source version of go-keychain is licensed under the [AGPL-3.0](LICENSE-AGPL-3.txt).
+The open-source version of go-xkms is licensed under the [AGPL-3.0](LICENSE-AGPL-3.txt).
 
 **What does this mean?**
 
@@ -942,7 +942,7 @@ The AGPL-3.0 requires that if you modify this software and provide it as a servi
 
 ### Option 2: Commercial License
 
-If you wish to use go-keychain in proprietary software without the source disclosure requirements of AGPL-3.0, a commercial license is available from **Automate The Things, LLC**.
+If you wish to use go-xkms in proprietary software without the source disclosure requirements of AGPL-3.0, a commercial license is available from **Automate The Things, LLC**.
 
 **Commercial License Benefits:**
 
@@ -957,9 +957,9 @@ If you wish to use go-keychain in proprietary software without the source disclo
 
 For pricing and commercial licensing inquiries:
 
-📧 licensing@automatethethings.com
+licensing@automatethethings.com
 <br/>
-🌐 https://automatethethings.com
+https://automatethethings.com
 
 See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for more details.
 
@@ -977,7 +977,7 @@ See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for more details.
 
 ---
 
-**Copyright © 2025 Automate The Things, LLC. All rights reserved.**
+**Copyright (c) 2025 Automate The Things, LLC. All rights reserved.**
 
 
 ## Support
@@ -989,4 +989,3 @@ I'm also available for international consulting opportunities. Please let me kno
 https://github.com/sponsors/jeremyhahn
 
 https://www.linkedin.com/in/jeremyhahn
-

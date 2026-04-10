@@ -58,7 +58,7 @@ jobs:
         with:
           files: ./build/coverage/coverage.out
           flags: unittests
-          name: go-keychain-coverage
+          name: go-xkms-coverage
           fail_ci_if_error: true
 
       - name: Upload coverage reports as artifacts

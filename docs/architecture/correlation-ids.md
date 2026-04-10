@@ -1,6 +1,6 @@
 # Request Correlation IDs for Distributed Tracing
 
-This document describes the request correlation ID implementation across all protocols in go-keychain.
+This document describes the request correlation ID implementation across all protocols in go-xkms.
 
 ## Overview
 
@@ -51,7 +51,7 @@ Available methods:
 
 ### REST API (HTTP/HTTPS)
 
-**Middleware**: `internal/rest/middleware_correlation.go`
+**Middleware**: `pkg/api/rest/middleware_correlation.go`
 
 **Header Handling**:
 - Extracts correlation ID from `X-Correlation-ID` or `X-Request-ID` headers
@@ -73,7 +73,7 @@ X-Correlation-ID: my-request-123
 
 ### gRPC
 
-**Interceptor**: `internal/grpc/interceptor_correlation.go`
+**Interceptor**: `pkg/api/grpc/interceptor_correlation.go`
 
 **Metadata Handling**:
 - Extracts from `x-correlation-id` or `x-request-id` metadata keys
@@ -96,13 +96,13 @@ ctx := metadata.NewOutgoingContext(ctx, md)
 
 ### MCP (JSON-RPC)
 
-**Implementation**: `internal/mcp/server.go`, `internal/mcp/types.go`
+**Implementation**: `pkg/api/mcp/server.go`, `pkg/api/mcp/types.go`
 
 **JSON-RPC Extension**:
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "keychain.generateKey",
+  "method": "xkms.generateKey",
   "params": {...},
   "id": 1,
   "correlation_id": "mcp-request-789"
@@ -127,7 +127,7 @@ Response includes:
 
 ### QUIC (HTTP/3)
 
-**Middleware**: `internal/quic/server.go`
+**Middleware**: `pkg/api/quic/server.go`
 
 **Header Handling**: Same as REST API
 - Extracts from `X-Correlation-ID` or `X-Request-ID` headers
@@ -249,12 +249,12 @@ Comprehensive test suites verify:
 
 **Test Coverage**:
 - `pkg/correlation`: 100%
-- `pkg/adapters/logger`: 96.2%
+- `pkg/audit`: 96.2%
 
 **Run Tests**:
 ```bash
 go test ./pkg/correlation/... -v
-go test ./pkg/adapters/logger/... -v -run Context
+go test ./pkg/audit/... -v -run Context
 ```
 
 ## Performance

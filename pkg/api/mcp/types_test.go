@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -410,7 +411,11 @@ func TestEventNotification_MarshalJSON(t *testing.T) {
 
 func TestListBackendsResult_MarshalJSON(t *testing.T) {
 	result := ListBackendsResult{
-		Backends: []string{"memory", "tpm2", "pkcs11"},
+		Backends: []BackendInfo{
+			{ID: "memory", Type: "software", HardwareBacked: false},
+			{ID: "tpm2", Type: "tpm2", HardwareBacked: true},
+			{ID: "pkcs11", Type: "pkcs11", HardwareBacked: true},
+		},
 	}
 
 	data, err := json.Marshal(result)
@@ -426,10 +431,19 @@ func TestListBackendsResult_MarshalJSON(t *testing.T) {
 	if len(decoded.Backends) != len(result.Backends) {
 		t.Errorf("Backends length mismatch: got %v, want %v", len(decoded.Backends), len(result.Backends))
 	}
+
+	if decoded.Backends[0].ID != "memory" {
+		t.Errorf("Backend ID mismatch: got %v, want memory", decoded.Backends[0].ID)
+	}
 }
 
 func TestKeyInfo_MarshalJSON(t *testing.T) {
-	keyInfo := KeyInfo{CN: "test-key-cn"}
+	keyInfo := KeyInfo{
+		KeyID:     "test-key-id",
+		KeyType:   "SIGNING",
+		Algorithm: "RSA",
+		Backend:   "software",
+	}
 
 	data, err := json.Marshal(keyInfo)
 	if err != nil {
@@ -441,16 +455,70 @@ func TestKeyInfo_MarshalJSON(t *testing.T) {
 		t.Fatalf("failed to unmarshal: %v", err)
 	}
 
-	if decoded.CN != keyInfo.CN {
-		t.Errorf("CN mismatch: got %v, want %v", decoded.CN, keyInfo.CN)
+	if decoded.KeyID != keyInfo.KeyID {
+		t.Errorf("KeyID mismatch: got %v, want %v", decoded.KeyID, keyInfo.KeyID)
+	}
+	if decoded.KeyType != keyInfo.KeyType {
+		t.Errorf("KeyType mismatch: got %v, want %v", decoded.KeyType, keyInfo.KeyType)
+	}
+	if decoded.Algorithm != keyInfo.Algorithm {
+		t.Errorf("Algorithm mismatch: got %v, want %v", decoded.Algorithm, keyInfo.Algorithm)
+	}
+	if decoded.Backend != keyInfo.Backend {
+		t.Errorf("Backend mismatch: got %v, want %v", decoded.Backend, keyInfo.Backend)
+	}
+}
+
+func TestKeyInfo_MarshalJSON_WithPublicKeyPEM(t *testing.T) {
+	keyInfo := KeyInfo{
+		KeyID:        "test-key-pem",
+		KeyType:      "ENCRYPTION",
+		Algorithm:    "ECDSA",
+		Backend:      "pkcs11",
+		PublicKeyPEM: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
+	}
+
+	data, err := json.Marshal(keyInfo)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded KeyInfo
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.PublicKeyPEM != keyInfo.PublicKeyPEM {
+		t.Errorf("PublicKeyPEM mismatch: got %v, want %v", decoded.PublicKeyPEM, keyInfo.PublicKeyPEM)
+	}
+}
+
+func TestKeyInfo_MarshalJSON_OmitsEmptyOptionalFields(t *testing.T) {
+	keyInfo := KeyInfo{
+		KeyID:   "minimal-key",
+		KeyType: "SIGNING",
+		Backend: "software",
+	}
+
+	data, err := json.Marshal(keyInfo)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	jsonStr := string(data)
+	if strings.Contains(jsonStr, "algorithm") {
+		t.Errorf("expected algorithm field to be omitted when empty, got: %s", jsonStr)
+	}
+	if strings.Contains(jsonStr, "public_key_pem") {
+		t.Errorf("expected public_key_pem field to be omitted when empty, got: %s", jsonStr)
 	}
 }
 
 func TestListKeysResult_MarshalJSON(t *testing.T) {
 	result := ListKeysResult{
 		Keys: []KeyInfo{
-			{CN: "key1"},
-			{CN: "key2"},
+			{KeyID: "key1", KeyType: "SIGNING", Algorithm: "RSA", Backend: "software"},
+			{KeyID: "key2", KeyType: "ENCRYPTION", Algorithm: "ECDSA", Backend: "software"},
 		},
 	}
 
@@ -466,6 +534,45 @@ func TestListKeysResult_MarshalJSON(t *testing.T) {
 
 	if len(decoded.Keys) != len(result.Keys) {
 		t.Errorf("Keys length mismatch: got %v, want %v", len(decoded.Keys), len(result.Keys))
+	}
+
+	if decoded.Keys[0].KeyID != "key1" {
+		t.Errorf("First key KeyID mismatch: got %v, want key1", decoded.Keys[0].KeyID)
+	}
+	if decoded.Keys[0].Backend != "software" {
+		t.Errorf("First key Backend mismatch: got %v, want software", decoded.Keys[0].Backend)
+	}
+}
+
+func TestListKeysParams_MarshalJSON(t *testing.T) {
+	params := ListKeysParams{Backend: "software"}
+
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	var decoded ListKeysParams
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+
+	if decoded.Backend != params.Backend {
+		t.Errorf("Backend mismatch: got %v, want %v", decoded.Backend, params.Backend)
+	}
+}
+
+func TestListKeysParams_MarshalJSON_EmptyBackend(t *testing.T) {
+	params := ListKeysParams{}
+
+	data, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+
+	jsonStr := string(data)
+	if strings.Contains(jsonStr, "backend") {
+		t.Errorf("expected backend field to be omitted when empty, got: %s", jsonStr)
 	}
 }
 

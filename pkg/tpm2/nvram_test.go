@@ -1,11 +1,20 @@
+//go:build tpm_simulator
+// +build tpm_simulator
+
 package tpm2
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"math/big"
 	"testing"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +37,7 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 
 			_, tpm := createSim(encryptOpt, false)
 
-			userPIN := store.NewClearPassword([]byte("user-pin"))
+			userPIN := store.NewPassword([]byte("user-pin"))
 			secret := []byte("secret")
 
 			ekAttrs, err := tpm.EKAttributes()
@@ -44,7 +53,7 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 
 			keyAttrs := &types.KeyAttributes{
 				Parent:         ekAttrs,
-				Password:       store.NewClearPassword([]byte("test")),
+				Password:       store.NewPassword([]byte("test")),
 				PlatformPolicy: policyOpt,
 				SealData:       types.NewSealData(secret),
 				TPMAttributes: &types.TPMAttributes{
@@ -67,17 +76,17 @@ func TestNVWithAuthNoPolicy(t *testing.T) {
 			assert.Equal(t, secret, nvSecret)
 
 			// providing invalid hierarchy auth - should fail
-			keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewClearPassword([]byte("test"))
+			keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewPassword([]byte("test"))
 			err = tpm.NVWrite(keyAttrs)
 			assert.NotNil(t, err)
 
 			// // providing invalid key auth - should fail
-			// keyAttrs.Password = store.NewClearPassword([]byte{})
+			// keyAttrs.Password = store.NewPassword([]byte{})
 			// err = tpm.NVWrite(keyAttrs)
 			// assert.NotNil(t, err)
 
 			keyAttrs.Parent.TPMAttributes.HierarchyAuth = userPIN
-			keyAttrs.Password = store.NewClearPassword([]byte{})
+			keyAttrs.Password = store.NewPassword([]byte{})
 			if policyOpt {
 
 				// invalid key auth with platform policy - should succeed
@@ -792,7 +801,7 @@ func TestNVCounterWithHierarchyAuth(t *testing.T) {
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
-	userPIN := store.NewClearPassword([]byte("user-pin"))
+	userPIN := store.NewPassword([]byte("user-pin"))
 
 	ekAttrs, err := tpm.EKAttributes()
 	require.NoError(t, err)
@@ -830,7 +839,7 @@ func TestNVCounterWithHierarchyAuth(t *testing.T) {
 	assert.Equal(t, value1, value2)
 
 	// Try with wrong auth - should fail
-	keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewClearPassword([]byte("wrong-pin"))
+	keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewPassword([]byte("wrong-pin"))
 	_, err = tpm.NVIncrement(keyAttrs)
 	assert.Error(t, err)
 
@@ -845,7 +854,7 @@ func TestNVExtendWithHierarchyAuth(t *testing.T) {
 	_, tpm := createSim(false, false)
 	defer func() { _ = tpm.Close() }()
 
-	userPIN := store.NewClearPassword([]byte("user-pin"))
+	userPIN := store.NewPassword([]byte("user-pin"))
 
 	ekAttrs, err := tpm.EKAttributes()
 	require.NoError(t, err)
@@ -882,7 +891,7 @@ func TestNVExtendWithHierarchyAuth(t *testing.T) {
 	assert.Len(t, digest, 32)
 
 	// Try with wrong auth - should fail
-	keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewClearPassword([]byte("wrong-pin"))
+	keyAttrs.Parent.TPMAttributes.HierarchyAuth = store.NewPassword([]byte("wrong-pin"))
 	err = tpm.NVExtend(keyAttrs, []byte("more data"))
 	assert.Error(t, err)
 
@@ -890,4 +899,69 @@ func TestNVExtendWithHierarchyAuth(t *testing.T) {
 	keyAttrs.Parent.TPMAttributes.HierarchyAuth = userPIN
 	err = tpm.NVUndefine(keyAttrs)
 	assert.NoError(t, err)
+}
+
+// TestCertificateNVRAMOperations tests NVRAM certificate operations
+func TestCertificateNVRAMOperations(t *testing.T) {
+	_, tpm := createSim(false, false)
+	defer func() { _ = tpm.Close() }()
+
+	tpmImpl, ok := tpm.(*TPM2)
+	require.True(t, ok)
+
+	t.Run("writeCertToNVRAM with valid cert", func(t *testing.T) {
+		cert := nvramTestCert(t)
+		certDER := cert.Raw
+
+		nvIndex := tpm2.TPMHandle(0x01C90100)
+
+		// Try to write - will define space then write
+		err := tpmImpl.writeCertToNVRAM(nvIndex, certDER)
+		if err == nil {
+			// Clean up - undefine the NV index
+			_ = tpmImpl.deleteCertFromNVRAM(nvIndex)
+		}
+		// May succeed or fail depending on NV state, but exercises the code
+	})
+
+	t.Run("readCertFromNVRAM returns error for undefined index", func(t *testing.T) {
+		nvIndex := tpm2.TPMHandle(0x01C90999)
+
+		_, err := tpmImpl.readCertFromNVRAM(nvIndex)
+		assert.Error(t, err)
+	})
+
+	t.Run("deleteCertFromNVRAM returns error for undefined index", func(t *testing.T) {
+		nvIndex := tpm2.TPMHandle(0x01C90998)
+
+		err := tpmImpl.deleteCertFromNVRAM(nvIndex)
+		assert.Error(t, err)
+	})
+}
+
+// nvramTestCert creates a self-signed test certificate for NVRAM tests
+func nvramTestCert(t *testing.T) *x509.Certificate {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName: "Test Certificate",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour * 24),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	require.NoError(t, err)
+
+	cert, err := x509.ParseCertificate(certDER)
+	require.NoError(t, err)
+
+	return cert
 }

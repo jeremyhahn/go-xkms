@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -32,9 +32,9 @@ import (
 
 	kms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -138,13 +138,13 @@ func (r *realKMSClient) ImportCryptoKeyVersion(ctx context.Context, req *kmspb.I
 	return r.KeyManagementClient.ImportCryptoKeyVersion(ctx, req)
 }
 
-// Backend implements the types.Backend interface using Google Cloud KMS.
+// Backend implements the types.KeyProvider interface using Google Cloud KMS.
 type Backend struct {
 	config  *Config
 	client  KMSClient
 	tracker types.AEADSafetyTracker // AEAD safety tracker for nonce/bytes tracking
 	mu      sync.RWMutex
-	types.Backend
+	types.KeyProvider
 }
 
 // NewBackend creates a new GCP KMS backend with the provided configuration.
@@ -215,6 +215,7 @@ func (b *Backend) Type() types.BackendType {
 
 // Capabilities returns the capabilities of this backend.
 // GCP KMS is a cloud-based HSM service with hardware-backed security.
+// SecurityLevel is Medium - keys are protected by cloud HSMs but network-dependent.
 func (b *Backend) Capabilities() types.Capabilities {
 	return types.Capabilities{
 		Keys:                true,
@@ -225,6 +226,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 		SymmetricEncryption: true,  // GCP KMS supports symmetric encryption
 		Import:              true,  // GCP KMS supports key import via wrapping
 		Export:              false, // GCP KMS does not allow key extraction
+		SecurityLevel:       types.SecurityLevelMedium,
 	}
 }
 
@@ -401,7 +403,7 @@ func (b *Backend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Signer, error)
 				Algorithm: algorithm,
 			},
 			Labels: map[string]string{
-				"created-by": "go-keychain",
+				"created-by": "go-xkms",
 			},
 		},
 	}
@@ -437,7 +439,7 @@ func (b *Backend) GenerateRSA(attrs *types.KeyAttributes) (crypto.Signer, error)
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			b.mu.Unlock()
 			return nil, fmt.Errorf("failed to save metadata: %w", err)
 		}
@@ -485,7 +487,7 @@ func (b *Backend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Signer, erro
 				Algorithm: algorithm,
 			},
 			Labels: map[string]string{
-				"created-by": "go-keychain",
+				"created-by": "go-xkms",
 			},
 		},
 	}
@@ -522,7 +524,7 @@ func (b *Backend) GenerateECDSA(attrs *types.KeyAttributes) (crypto.Signer, erro
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			b.mu.Unlock()
 			return nil, fmt.Errorf("failed to save metadata: %w", err)
 		}
@@ -577,7 +579,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 				Algorithm: kmspb.CryptoKeyVersion_GOOGLE_SYMMETRIC_ENCRYPTION,
 			},
 			Labels: map[string]string{
-				"created-by":    "go-keychain",
+				"created-by":    "go-xkms",
 				"key-type":      string(attrs.KeyType),
 				"key-algorithm": string(attrs.SymmetricAlgorithm),
 			},
@@ -612,7 +614,7 @@ func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.Symmet
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			return nil, fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
@@ -880,7 +882,7 @@ func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) 
 
 	// Check if metadata exists
 	if b.config.KeyStorage != nil {
-		_, err := storage.GetKey(b.config.KeyStorage, attrs.ID())
+		_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.ID())
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 		}
@@ -946,7 +948,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 
 	// Remove metadata
 	if b.config.KeyStorage != nil {
-		if err := storage.DeleteKey(b.config.KeyStorage, attrs.ID()); err != nil {
+		if err := storage.DeleteKey(context.Background(), b.config.KeyStorage, attrs.ID()); err != nil {
 			// Continue even if metadata deletion fails
 			// The key may not have metadata stored
 		}
@@ -996,7 +998,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 
 		// Try to load metadata to get additional attributes
 		if b.config.KeyStorage != nil {
-			metadataBytes, err := storage.GetKey(b.config.KeyStorage, attrs.ID())
+			metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.ID())
 			if err == nil {
 				var metadata map[string]interface{}
 				if err := json.Unmarshal(metadataBytes, &metadata); err == nil {
@@ -1443,7 +1445,14 @@ func (e *gcpKMSSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *type
 	return resp.Plaintext, nil
 }
 
+// GetTracker returns the AEAD safety tracker for this backend.
+// This allows external code to inspect tracking state and configuration.
+func (b *Backend) GetTracker() types.AEADSafetyTracker {
+	return b.tracker
+}
+
 // Verify interface compliance at compile time
-var _ types.SymmetricBackend = (*Backend)(nil)
+var _ types.SymmetricKeyProvider = (*Backend)(nil)
+var _ types.SymmetricKeyProviderWithTracking = (*Backend)(nil)
 var _ types.SymmetricKey = (*gcpKMSSymmetricKey)(nil)
 var _ types.SymmetricEncrypter = (*gcpKMSSymmetricEncrypter)(nil)

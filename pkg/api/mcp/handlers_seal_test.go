@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -28,12 +28,12 @@ import (
 // These tests document the current behavior.
 func TestHandler_Seal(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid params - malformed JSON", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  json.RawMessage(`invalid json`),
 			ID:      1,
 		}
@@ -54,7 +54,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -75,7 +75,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -96,7 +96,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -117,7 +117,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -143,7 +143,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		genReq := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  genParamsJSON,
 			ID:      1,
 		}
@@ -161,7 +161,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -185,7 +185,7 @@ func TestHandler_Seal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -204,12 +204,12 @@ func TestHandler_Seal(t *testing.T) {
 // These tests document the current behavior.
 func TestHandler_Unseal(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid params - malformed JSON", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  json.RawMessage(`invalid json`),
 			ID:      1,
 		}
@@ -231,7 +231,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -253,7 +253,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -275,7 +275,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -297,7 +297,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -322,7 +322,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -347,7 +347,7 @@ func TestHandler_Unseal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -362,7 +362,7 @@ func TestHandler_Unseal(t *testing.T) {
 // TestHandler_CanSeal tests the canSeal handler for checking sealing capability
 func TestHandler_CanSeal(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns true for software backend", func(t *testing.T) {
 		params := CanSealParams{
@@ -373,7 +373,7 @@ func TestHandler_CanSeal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.canSeal",
+			Method:  "xkms.canSeal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -395,7 +395,7 @@ func TestHandler_CanSeal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.canSeal",
+			Method:  "xkms.canSeal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -412,7 +412,7 @@ func TestHandler_CanSeal(t *testing.T) {
 	t.Run("handles empty params object", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.canSeal",
+			Method:  "xkms.canSeal",
 			Params:  json.RawMessage(`{}`),
 			ID:      1,
 		}
@@ -429,7 +429,7 @@ func TestHandler_CanSeal(t *testing.T) {
 	t.Run("fails with invalid params - malformed JSON", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.canSeal",
+			Method:  "xkms.canSeal",
 			Params:  json.RawMessage(`invalid json`),
 			ID:      1,
 		}
@@ -448,7 +448,7 @@ func TestHandler_CanSeal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.canSeal",
+			Method:  "xkms.canSeal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -472,7 +472,7 @@ func TestHandler_CanSeal(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.canSeal",
+			Method:  "xkms.canSeal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -490,7 +490,7 @@ func TestHandler_CanSeal(t *testing.T) {
 // TestHandler_Seal_ParamsValidation tests comprehensive parameter validation for seal
 func TestHandler_Seal_ParamsValidation(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("accepts params with only required data field", func(t *testing.T) {
 		// Minimal valid params - only data is provided
@@ -502,7 +502,7 @@ func TestHandler_Seal_ParamsValidation(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -525,7 +525,7 @@ func TestHandler_Seal_ParamsValidation(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -540,7 +540,7 @@ func TestHandler_Seal_ParamsValidation(t *testing.T) {
 		// JSON with explicit null for data
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  json.RawMessage(`{"backend":"software","data":null}`),
 			ID:      1,
 		}
@@ -554,7 +554,7 @@ func TestHandler_Seal_ParamsValidation(t *testing.T) {
 		// JSON with extra fields that aren't in the params struct
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.seal",
+			Method:  "xkms.seal",
 			Params:  json.RawMessage(`{"backend":"software","data":"dGVzdA==","extra_field":"ignored"}`),
 			ID:      1,
 		}
@@ -569,7 +569,7 @@ func TestHandler_Seal_ParamsValidation(t *testing.T) {
 // TestHandler_Unseal_ParamsValidation tests comprehensive parameter validation for unseal
 func TestHandler_Unseal_ParamsValidation(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("accepts params with only required ciphertext field", func(t *testing.T) {
 		// Minimal valid params - only ciphertext is required
@@ -581,7 +581,7 @@ func TestHandler_Unseal_ParamsValidation(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -606,7 +606,7 @@ func TestHandler_Unseal_ParamsValidation(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -620,7 +620,7 @@ func TestHandler_Unseal_ParamsValidation(t *testing.T) {
 	t.Run("handles null ciphertext field", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unseal",
+			Method:  "xkms.unseal",
 			Params:  json.RawMessage(`{"backend":"software","ciphertext":null}`),
 			ID:      1,
 		}
@@ -634,7 +634,7 @@ func TestHandler_Unseal_ParamsValidation(t *testing.T) {
 // TestHandler_CanSeal_Idempotent tests that canSeal is idempotent
 func TestHandler_CanSeal_Idempotent(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns consistent results on multiple calls", func(t *testing.T) {
 		params := CanSealParams{
@@ -645,7 +645,7 @@ func TestHandler_CanSeal_Idempotent(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.canSeal",
+			Method:  "xkms.canSeal",
 			Params:  paramsJSON,
 			ID:      1,
 		}

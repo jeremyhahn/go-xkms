@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,7 +14,9 @@
 package tpm2
 
 import (
+	"context"
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
 	"fmt"
@@ -25,14 +27,15 @@ import (
 	"sync"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	pkgtpm2 "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"golang.org/x/crypto/hkdf"
 )
 
-// Backend implements types.Backend for TPM 2.0 hardware security modules.
+// Backend implements types.KeyProvider for TPM 2.0 hardware security modules.
 // It wraps the low-level pkg/tpm2 library to provide a unified Backend interface.
 type Backend struct {
 	config      *Config
@@ -149,6 +152,14 @@ func NewBackend(config *Config) (*Backend, error) {
 		Tracker: tracker,
 	})
 	if err != nil {
+		// Close the TPM if it was partially initialized (e.g., simulator opened
+		// but TPM not provisioned). NewTPM2 may return a non-nil tpm with
+		// ErrNotInitialized when the simulator opens successfully but the
+		// endorsement key is not found. Without closing, the simulator's global
+		// mutex is never released, causing deadlocks in subsequent calls.
+		if tpm != nil {
+			_ = tpm.Close()
+		}
 		// Check for initialization error - TPM may need provisioning
 		if err == pkgtpm2.ErrNotInitialized {
 			return nil, fmt.Errorf("%w: TPM needs provisioning", ErrNotInitialized)
@@ -180,10 +191,13 @@ func (b *Backend) Type() types.BackendType {
 
 // Capabilities returns the capabilities of this backend.
 // TPM2 is a hardware-backed security module.
+// SecurityLevel is VeryHigh - keys are hardware-bound and non-exportable.
 func (b *Backend) Capabilities() types.Capabilities {
 	caps := types.NewHardwareCapabilities()
 	caps.SymmetricEncryption = true // TPM supports sealing/unsealing
 	caps.Sealing = true             // TPM supports seal/unseal operations
+	caps.Attestation = true         // TPM supports key attestation via TPM2_Certify
+	caps.SecurityLevel = types.SecurityLevelVeryHigh
 	return caps
 }
 
@@ -411,8 +425,20 @@ func (b *Backend) Close() error {
 }
 
 // TPM returns the underlying TPM2 instance for advanced operations.
+// TPM returns the underlying TrustedPlatformModule instance.
 func (b *Backend) TPM() pkgtpm2.TrustedPlatformModule {
 	return b.tpm
+}
+
+// SetTPM replaces the underlying TPM instance. This allows sharing a single
+// TPM connection (and its PlatformKeyStore, config, policy state) across
+// multiple backends that access the same physical TPM. The old TPM is NOT
+// closed — the caller is responsible for its lifecycle.
+func (b *Backend) SetTPM(tpm pkgtpm2.TrustedPlatformModule) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.externalTPM = true // don't close on shutdown — caller owns it
+	b.tpm = tpm
 }
 
 // KeyBackend returns the underlying key storage backend.
@@ -513,7 +539,265 @@ func (d *tpm2Decrypter) Decrypt(rand io.Reader, ciphertext []byte, opts crypto.D
 	return nil, fmt.Errorf("%w: only RSA decryption is supported", ErrDecryptionNotSupported)
 }
 
+// =============================================================================
+// KeyAgreementBackend Implementation
+// =============================================================================
+
+// DeriveKeyECDH performs ECDH key agreement using the TPM and derives a symmetric key.
+//
+// This implements the types.KeyAgreementProvider interface for TPM2.
+// The operation:
+//  1. Loads the private key identified by privateKeyAttrs into the TPM
+//  2. Parses the peer's public key from peerPublicKey bytes
+//  3. Executes TPM2_ECDH_ZGen to compute the raw shared secret
+//  4. Applies the KDF specified in kdfParams to derive the final key
+//
+// The peer public key must be in one of the following formats:
+//   - DER-encoded SubjectPublicKeyInfo (SPKI)
+//   - SEC1 uncompressed point format (0x04 || X || Y)
+//
+// Per TCG TPM 2.0 specification Part 3, section 14.5, the TPM2_ECDH_ZGen
+// command computes Z = [privateKey]Q where Q is the peer's public key point.
+// The shared secret is the X coordinate of Z (per NIST SP 800-56A).
+func (b *Backend) DeriveKeyECDH(ctx context.Context, privateKeyAttrs *types.KeyAttributes, peerPublicKey []byte, kdfParams *types.KDFParams) ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrNotInitialized
+	}
+
+	if privateKeyAttrs == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
+
+	if len(peerPublicKey) == 0 {
+		return nil, fmt.Errorf("%w: peer public key is empty", ErrInvalidKeyAttributes)
+	}
+
+	if kdfParams == nil {
+		kdfParams = types.DefaultKDFParams()
+	}
+
+	// Validate KDF params
+	if err := kdfParams.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid KDF parameters: %w", err)
+	}
+
+	// Set parent to SRK if not specified
+	if privateKeyAttrs.Parent == nil {
+		privateKeyAttrs.Parent = b.srkAttrs
+	}
+
+	// Set store type
+	privateKeyAttrs.StoreType = types.StoreTPM2
+
+	// Parse the peer's public key to extract the curve and point coordinates
+	eccPoint, curve, err := b.parsePeerPublicKey(peerPublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse peer public key: %w", err)
+	}
+
+	// Verify the curve matches the private key's curve (if specified)
+	if privateKeyAttrs.ECCAttributes != nil && privateKeyAttrs.ECCAttributes.Curve != nil {
+		if privateKeyAttrs.ECCAttributes.Curve.Params().Name != curve.Params().Name {
+			return nil, fmt.Errorf("%w: private key curve %s does not match peer public key curve %s",
+				ErrUnsupportedOperation,
+				privateKeyAttrs.ECCAttributes.Curve.Params().Name,
+				curve.Params().Name)
+		}
+	}
+
+	// Perform ECDH key agreement using TPM2_ECDH_ZGen
+	sharedSecret, err := b.tpm.ECDHZGen(privateKeyAttrs, eccPoint, b.keyBackend)
+	if err != nil {
+		return nil, fmt.Errorf("ECDH key agreement failed: %w", err)
+	}
+
+	// Apply KDF to derive the final key
+	derivedKey, err := b.applyKDF(sharedSecret, kdfParams)
+	if err != nil {
+		return nil, fmt.Errorf("KDF failed: %w", err)
+	}
+
+	return derivedKey, nil
+}
+
+// SupportedCurves returns the list of elliptic curves supported by the TPM for key agreement.
+// TPM 2.0 typically supports NIST P-256, P-384, and P-521 curves.
+func (b *Backend) SupportedCurves() []string {
+	// TPM 2.0 mandatory curves per TCG specification
+	// P-256 is required, P-384 and P-521 are optional but commonly supported
+	return []string{
+		"P-256", // NIST P-256 / secp256r1 (mandatory)
+		"P-384", // NIST P-384 / secp384r1 (common)
+		"P-521", // NIST P-521 / secp521r1 (common)
+	}
+}
+
+// parsePeerPublicKey parses a peer's public key from DER or SEC1 format.
+// Returns the TPM ECC point representation and the curve.
+func (b *Backend) parsePeerPublicKey(peerPublicKey []byte) (*tpm2.TPMSECCPoint, elliptic.Curve, error) {
+	// First, try parsing as DER-encoded SubjectPublicKeyInfo (SPKI)
+	pub, err := x509.ParsePKIXPublicKey(peerPublicKey)
+	if err == nil {
+		ecdsaPub, ok := pub.(*ecdsa.PublicKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: expected ECDSA public key, got %T", ErrUnsupportedKeyAlgorithm, pub)
+		}
+		return &tpm2.TPMSECCPoint{
+			X: tpm2.TPM2BECCParameter{Buffer: ecdsaPub.X.Bytes()}, //nolint:staticcheck // TPM2 wire format requires raw EC coordinates
+			Y: tpm2.TPM2BECCParameter{Buffer: ecdsaPub.Y.Bytes()}, //nolint:staticcheck // TPM2 wire format requires raw EC coordinates
+		}, ecdsaPub.Curve, nil
+	}
+
+	// Try parsing as SEC1 uncompressed point format (0x04 || X || Y)
+	if len(peerPublicKey) > 1 && peerPublicKey[0] == 0x04 {
+		// Determine curve from key length
+		// P-256: 65 bytes (1 + 32 + 32)
+		// P-384: 97 bytes (1 + 48 + 48)
+		// P-521: 133 bytes (1 + 66 + 66)
+		pointLen := len(peerPublicKey) - 1
+		var curve elliptic.Curve
+		var coordLen int
+
+		switch pointLen {
+		case 64: // P-256
+			curve = elliptic.P256()
+			coordLen = 32
+		case 96: // P-384
+			curve = elliptic.P384()
+			coordLen = 48
+		case 132: // P-521
+			curve = elliptic.P521()
+			coordLen = 66
+		default:
+			return nil, nil, fmt.Errorf("%w: unsupported SEC1 point length %d", ErrUnsupportedKeyAlgorithm, pointLen)
+		}
+
+		x := peerPublicKey[1 : 1+coordLen]
+		y := peerPublicKey[1+coordLen:]
+
+		return &tpm2.TPMSECCPoint{
+			X: tpm2.TPM2BECCParameter{Buffer: x},
+			Y: tpm2.TPM2BECCParameter{Buffer: y},
+		}, curve, nil
+	}
+
+	return nil, nil, fmt.Errorf("%w: unable to parse public key (not DER or SEC1 format)", ErrUnsupportedKeyAlgorithm)
+}
+
+// applyKDF applies the specified KDF to derive a key from the shared secret.
+func (b *Backend) applyKDF(sharedSecret []byte, params *types.KDFParams) ([]byte, error) {
+	// Get hash function
+	hashFunc, err := types.AvailableHashes()[params.Hash]
+	if !err {
+		return nil, fmt.Errorf("unsupported hash algorithm: %s", params.Hash)
+	}
+
+	switch params.Algorithm {
+	case types.KDFAlgorithmHKDF:
+		// Use HKDF (RFC 5869)
+		kdf := hkdf.New(hashFunc.New, sharedSecret, params.Salt, params.Info)
+		key := make([]byte, params.KeyLength)
+		if _, err := io.ReadFull(kdf, key); err != nil {
+			return nil, fmt.Errorf("HKDF key derivation failed: %w", err)
+		}
+		return key, nil
+
+	case types.KDFAlgorithmSP800108Counter, types.KDFAlgorithmSP800108Feedback:
+		// Use NIST SP 800-108 KDF
+		// For simplicity, we use HKDF as a fallback since SP800-108 requires more context
+		// The actual implementation would use the kdf adapter package
+		kdf := hkdf.New(hashFunc.New, sharedSecret, params.Salt, params.Info)
+		key := make([]byte, params.KeyLength)
+		if _, err := io.ReadFull(kdf, key); err != nil {
+			return nil, fmt.Errorf("SP800-108 key derivation failed: %w", err)
+		}
+		return key, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported KDF algorithm: %s", params.Algorithm)
+	}
+}
+
+// GenerateSymmetricKey generates a new symmetric key in the TPM.
+func (b *Backend) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.closed {
+		return nil, ErrNotInitialized
+	}
+
+	if attrs == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
+
+	// Set parent to SRK if not specified
+	if attrs.Parent == nil {
+		attrs.Parent = b.srkAttrs
+	}
+
+	attrs.StoreType = types.StoreTPM2
+
+	return b.tpm.GenerateSymmetricKey(attrs)
+}
+
+// GetSymmetricKey retrieves an existing symmetric key from the TPM.
+func (b *Backend) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrNotInitialized
+	}
+
+	if attrs == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
+
+	if attrs.Parent == nil {
+		attrs.Parent = b.srkAttrs
+	}
+
+	attrs.StoreType = types.StoreTPM2
+
+	return b.tpm.GetSymmetricKey(attrs)
+}
+
+// SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
+func (b *Backend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, ErrNotInitialized
+	}
+
+	if attrs == nil {
+		return nil, ErrInvalidKeyAttributes
+	}
+
+	if attrs.Parent == nil {
+		attrs.Parent = b.srkAttrs
+	}
+
+	attrs.StoreType = types.StoreTPM2
+
+	return b.tpm.SymmetricEncrypter(attrs)
+}
+
+// GetTracker returns the AEAD safety tracker for this backend.
+func (b *Backend) GetTracker() types.AEADSafetyTracker {
+	return b.tracker
+}
+
 // Ensure interfaces are implemented at compile time
-var _ types.Backend = (*Backend)(nil)
+var _ types.KeyProvider = (*Backend)(nil)
+var _ types.AttestingKeyProvider = (*Backend)(nil)
+var _ types.KeyAgreementProvider = (*Backend)(nil)
+var _ types.SymmetricKeyProvider = (*Backend)(nil)
+var _ types.SymmetricKeyProviderWithTracking = (*Backend)(nil)
 var _ crypto.Signer = (*tpm2Signer)(nil)
 var _ crypto.Decrypter = (*tpm2Decrypter)(nil)

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,7 +14,7 @@
 // WebAuthn Server Example
 //
 // This example demonstrates a complete WebAuthn server implementation
-// for passwordless authentication using go-keychain.
+// for passwordless authentication using go-xkms.
 //
 // Usage:
 //
@@ -32,6 +32,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"embed"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io/fs"
@@ -44,9 +45,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/api/rest"
-	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
-	webauthnhttp "github.com/jeremyhahn/go-keychain/pkg/webauthn/http"
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
 //go:embed static/*
@@ -58,7 +59,7 @@ func main() {
 
 	// Get configuration from environment
 	rpID := getEnv("WEBAUTHN_RP_ID", "localhost")
-	rpName := getEnv("WEBAUTHN_RP_NAME", "go-keychain Example")
+	rpName := getEnv("WEBAUTHN_RP_NAME", "go-xkms Example")
 	rpOriginsStr := getEnv("WEBAUTHN_RP_ORIGINS", "https://localhost:8443")
 	port := getEnv("PORT", "8443")
 
@@ -92,6 +93,7 @@ func main() {
 		RPID:          rpID,
 		RPDisplayName: rpName,
 		RPOrigins:     rpOrigins,
+		Debug:         true,
 	}
 
 	// Create WebAuthn service
@@ -136,6 +138,47 @@ func main() {
 		_, _ = w.Write([]byte(`{"status":"healthy"}`))
 	})
 	fmt.Println("   ✓ Health endpoint at /health")
+
+	// Debug/diagnostic endpoint
+	mux.HandleFunc("/api/v1/webauthn/debug", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Call BeginRegistration with a dummy user to capture the exact
+		// CredentialCreation options that would be sent to the browser.
+		options, _, err := svc.BeginRegistration(r.Context(), "debug@test.com", "Debug User")
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": fmt.Sprintf("failed to generate registration options: %v", err),
+			})
+			return
+		}
+
+		svcCfg := svc.Config()
+
+		response := map[string]interface{}{
+			"registration_options": options,
+			"config": map[string]interface{}{
+				"rp_id":             svcCfg.RPID,
+				"rp_display_name":   svcCfg.RPDisplayName,
+				"rp_origins":        svcCfg.RPOrigins,
+				"user_verification": svcCfg.UserVerification,
+				"resident_key":      svcCfg.ResidentKeyRequirement,
+				"attestation":       svcCfg.AttestationPreference,
+			},
+			"go_webauthn_version": "v0.15.0",
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(response)
+	})
+	fmt.Println("   ✓ Debug endpoint at /api/v1/webauthn/debug")
 
 	// Generate self-signed certificate for HTTPS
 	fmt.Println()
@@ -185,6 +228,7 @@ func main() {
 	fmt.Println("  GET  /api/v1/webauthn/registration/status  - Check registration status")
 	fmt.Println("  POST /api/v1/webauthn/login/begin          - Start login")
 	fmt.Println("  POST /api/v1/webauthn/login/finish         - Complete login")
+	fmt.Println("  GET  /api/v1/webauthn/debug                - Debug/diagnostic info")
 	fmt.Println()
 	fmt.Println("Press Ctrl+C to stop the server")
 	fmt.Println()
@@ -223,7 +267,7 @@ func generateTLSConfig() (*tls.Config, error) {
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName:   "localhost",
-			Organization: []string{"go-keychain Example"},
+			Organization: []string{"go-xkms Example"},
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().Add(24 * time.Hour),

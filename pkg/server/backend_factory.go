@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,14 +15,15 @@ package server
 
 import (
 	"fmt"
+	"path/filepath"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // BackendConfig contains configuration for a single backend
@@ -39,7 +40,7 @@ type BackendFactoryConfig struct {
 	Backends       []BackendConfig // List of backend configurations
 }
 
-// Initialize creates backends from configuration and initializes the keychain.
+// Initialize creates backends from configuration and initializes the xkms.
 // If config is nil, it will initialize all compiled-in backends with defaults.
 // Returns error if no backends could be initialized.
 func Initialize(config *BackendFactoryConfig) error {
@@ -55,10 +56,11 @@ func Initialize(config *BackendFactoryConfig) error {
 	certDir := "/tmp/keystore/certs"
 	certStorage, err := createCertStorage(certDir)
 	if err != nil {
-		return fmt.Errorf("failed to create certificate storage: %w", err)
+		return &ErrStorageCreate{Resource: "certificate storage", Err: err}
 	}
 
-	keystores := make(map[string]keychain.KeyStore)
+	backends := make(map[string]xkms.Backend)
+	keyProviders := make(map[string]xkms.Backend)
 
 	// Initialize each enabled backend
 	for _, bc := range config.Backends {
@@ -75,7 +77,7 @@ func Initialize(config *BackendFactoryConfig) error {
 		}
 
 		// Wrap backend in KeyStore with shared cert storage
-		ks, err := keychain.New(&keychain.Config{
+		ks, err := xkms.New(&xkms.BackendConfig{
 			Backend:     backend,
 			CertStorage: certStorage,
 		})
@@ -83,31 +85,39 @@ func Initialize(config *BackendFactoryConfig) error {
 			fmt.Printf("Warning: Failed to create keystore for backend '%s': %v\n", bc.Name, err)
 			continue
 		}
-		keystores[bc.Name] = ks
+
+		// Separate full-service backends from partial key providers
+		switch bc.Type {
+		case "pkcs8", "symmetric", "quantum", "frost", "threshold":
+			keyProviders[bc.Name] = ks
+		default:
+			backends[bc.Name] = ks
+		}
 	}
 
 	// Ensure at least one backend is available
-	if len(keystores) == 0 {
-		return fmt.Errorf("no backends available - at least one backend must be initialized")
+	if len(backends) == 0 {
+		return ErrNoBackendsAvailable
 	}
 
 	// Determine default backend
 	defaultBackend := config.DefaultBackend
-	if _, ok := keystores[defaultBackend]; !ok {
+	if _, ok := backends[defaultBackend]; !ok {
 		// Fall back to first available backend
-		for name := range keystores {
+		for name := range backends {
 			defaultBackend = name
 			break
 		}
 	}
 
 	// Initialize the service
-	serviceConfig := &keychain.ServiceConfig{
-		Backends:       keystores,
+	serviceConfig := &xkms.ServiceConfig{
+		Backends:       backends,
+		KeyProviders:   keyProviders,
 		DefaultBackend: defaultBackend,
 	}
 
-	return keychain.Initialize(serviceConfig)
+	return xkms.Initialize(serviceConfig)
 }
 
 // getDefaultBackendConfigs returns default configurations for all compiled-in backends.
@@ -145,20 +155,8 @@ func getDefaultBackendConfigs() []BackendConfig {
 			Enabled: true,
 			Config: map[string]interface{}{
 				"library_path": "/usr/lib/softhsm/libsofthsm2.so",
-				"token_label":  "keychain",
+				"token_label":  "xkms",
 				"pin":          "1234",
-			},
-		},
-		{
-			Name:    "smartcardhsm",
-			Type:    "smartcardhsm",
-			Enabled: true,
-			Config: map[string]interface{}{
-				"library_path":   "/usr/lib/opensc-pkcs11.so",
-				"token_label":    "SmartCard-HSM",
-				"pin":            "648219",
-				"dkek_shares":    5,
-				"dkek_threshold": 3,
 			},
 		},
 		{
@@ -185,7 +183,7 @@ func getDefaultBackendConfigs() []BackendConfig {
 			Config: map[string]interface{}{
 				"project_id":  "my-project",
 				"location_id": "us-east1",
-				"key_ring_id": "keychain",
+				"key_ring_id": "xkms",
 			},
 		},
 		{
@@ -226,7 +224,7 @@ func getDefaultBackendConfigs() []BackendConfig {
 
 // createBackend creates a backend instance from configuration.
 // Returns error if backend type is not compiled in or configuration is invalid.
-func createBackend(config BackendConfig) (types.Backend, error) {
+func createBackend(config BackendConfig) (types.KeyProvider, error) {
 	switch config.Type {
 	case "pkcs8":
 		return createPKCS8Backend(config)
@@ -236,8 +234,6 @@ func createBackend(config BackendConfig) (types.Backend, error) {
 		return createSymmetricBackend(config)
 	case "pkcs11":
 		return createPKCS11Backend(config)
-	case "smartcardhsm":
-		return createSmartCardHSMBackend(config)
 	case "tpm2":
 		return createTPM2Backend(config)
 	case "awskms":
@@ -251,7 +247,7 @@ func createBackend(config BackendConfig) (types.Backend, error) {
 	case "frost":
 		return createFrostBackend(config)
 	default:
-		return nil, fmt.Errorf("unknown backend type: %s", config.Type)
+		return nil, &ErrUnknownBackendType{Type: config.Type}
 	}
 }
 
@@ -259,7 +255,7 @@ func createBackend(config BackendConfig) (types.Backend, error) {
 // These functions create backend instances from configuration.
 // They use build tags appropriately so backends compile conditionally.
 
-func createPKCS8Backend(config BackendConfig) (types.Backend, error) {
+func createPKCS8Backend(config BackendConfig) (types.KeyProvider, error) {
 	keyDir, ok := config.Config["key_dir"].(string)
 	if !ok || keyDir == "" {
 		keyDir = "/tmp/keystore/pkcs8"
@@ -267,7 +263,7 @@ func createPKCS8Backend(config BackendConfig) (types.Backend, error) {
 
 	keyStorage, err := createKeyStorage(keyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create key storage: %w", err)
+		return nil, &ErrStorageCreate{Resource: "key storage", Err: err}
 	}
 
 	pkcs8Config := &pkcs8.Config{
@@ -277,7 +273,7 @@ func createPKCS8Backend(config BackendConfig) (types.Backend, error) {
 	return pkcs8.NewBackend(pkcs8Config)
 }
 
-func createSoftwareBackend(config BackendConfig) (types.Backend, error) {
+func createSoftwareBackend(config BackendConfig) (types.KeyProvider, error) {
 	keyDir, ok := config.Config["key_dir"].(string)
 	if !ok || keyDir == "" {
 		keyDir = "/tmp/keystore/software"
@@ -285,7 +281,7 @@ func createSoftwareBackend(config BackendConfig) (types.Backend, error) {
 
 	keyStorage, err := createKeyStorage(keyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create key storage: %w", err)
+		return nil, &ErrStorageCreate{Resource: "key storage", Err: err}
 	}
 
 	softwareConfig := &software.Config{
@@ -296,7 +292,7 @@ func createSoftwareBackend(config BackendConfig) (types.Backend, error) {
 	return software.NewBackend(softwareConfig)
 }
 
-func createSymmetricBackend(config BackendConfig) (types.Backend, error) {
+func createSymmetricBackend(config BackendConfig) (types.KeyProvider, error) {
 	keyDir, ok := config.Config["key_dir"].(string)
 	if !ok || keyDir == "" {
 		keyDir = "/tmp/keystore/symmetric"
@@ -304,7 +300,7 @@ func createSymmetricBackend(config BackendConfig) (types.Backend, error) {
 
 	keyStorage, err := createKeyStorage(keyDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create key storage: %w", err)
+		return nil, &ErrStorageCreate{Resource: "key storage", Err: err}
 	}
 
 	symmetricConfig := &symmetric.Config{
@@ -329,4 +325,40 @@ func createCertStorage(certDir string) (storage.Backend, error) {
 		return storage.New(), nil
 	}
 	return file.New(certDir)
+}
+
+// createStorage creates a storage backend based on the server's StorageConfig.
+// The subdir is appended to the storage path for persistent engines.
+func (s *Server) createStorage(subdir string) (storage.Backend, error) {
+	cfg := s.config.Storage
+	switch cfg.Backend {
+	case "memory":
+		return storage.NewMemoryBackend()
+	case "pebble":
+		path := filepath.Join(cfg.Path, subdir)
+		return storage.NewPebble(path)
+	case "file", "":
+		path := filepath.Join(cfg.Path, subdir)
+		return file.New(path)
+	default:
+		return nil, &ErrUnsupportedStorageBackend{Backend: cfg.Backend}
+	}
+}
+
+// createStorageAt creates a storage backend using the server's configured
+// storage engine but at the given absolute path. This is used for backend
+// key storage paths that are configured independently of the metadata
+// storage root (e.g., Backends.Software.Path, Backends.PKCS8.Path).
+func (s *Server) createStorageAt(path string) (storage.Backend, error) {
+	cfg := s.config.Storage
+	switch cfg.Backend {
+	case "memory":
+		return storage.NewMemoryBackend()
+	case "pebble":
+		return storage.NewPebble(path)
+	case "file", "":
+		return file.New(path)
+	default:
+		return nil, &ErrUnsupportedStorageBackend{Backend: cfg.Backend}
+	}
 }

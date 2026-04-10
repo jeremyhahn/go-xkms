@@ -1,12 +1,23 @@
 package tpm2
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+)
+
+var (
+	// ErrPlatformPolicySession is returned when the platform policy session
+	// creation fails.
+	ErrPlatformPolicySession = errors.New("tpm2: failed to create platform policy session")
+
+	// ErrPlatformPolicyDigestCompute is returned when the platform policy digest
+	// computation fails.
+	ErrPlatformPolicyDigestCompute = errors.New("tpm2: failed to compute platform policy digest")
 )
 
 // Creates an unsalted, unauthenticated HMAC session with the TPM. If
@@ -103,79 +114,145 @@ func (tpm *TPM2) HMACSaltedSession(
 		[]tpm2.AuthOption{tpm2.Auth(auth)}...)
 }
 
-// Creates a new platform policy session with the platform PCR selected
-// using the Owner child key created during platform provisioning under the
-// SRK. Returns the policy session along with a session closer that needs to
-// be called when finished with the session.
-func (tpm *TPM2) PlatformPolicySession() (tpm2.Session, func() error, error) {
+// PlatformPolicySession creates a PolicyOR session supporting both PCR-based
+// automatic unlock and password-based PIN fallback. The session satisfies
+// the platform policy digest (PolicyOR of PolicyPCR + PolicyAuthValue).
+//
+// When auth is nil, the session executes the PCR branch (PolicyPCR followed
+// by PolicyOR). When auth is non-nil, the session executes the password
+// branch (PolicyAuthValue followed by PolicyOR), binding the auth value to
+// the session so the HMAC computation includes it (per TPM 2.0 Part 1,
+// Section 19.6: HMAC key = sessionKey || authValue).
+//
+// The resulting policy digest is cached in tpm.policyDigest.
+func (tpm *TPM2) PlatformPolicySession(auth []byte) (tpm2.Session, func() error, error) {
 
-	var closer func() error
-	var err error
+	usePCRBranch := auth == nil
 
 	hashAlgID, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
 	}
 
-	// Create PCR selection using "platform-pcr" defined in the platform
-	// configuration file TPM section.
-	sel := tpm2.TPMLPCRSelection{
-		PCRSelections: []tpm2.TPMSPCRSelection{{
-			Hash:      hashAlgID,
-			PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
-		}},
-	}
-
-	digest, err := tpm.PlatformPolicyDigestHash()
+	// Compute branch digests for PolicyOR (needed for both branches)
+	pcrDigest, err := tpm.PlatformPolicyDigestHash()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
 	}
-	tpm.logger.Info("tpm: PlatformPolicySession - PCR digest",
-		slog.Int("pcr", int(tpm.config.PlatformPCR)),
-		slog.String("digest", fmt.Sprintf("%x", digest)))
 
-	// Create the policy session
-	session, closer, err := tpm2.PolicySession(
-		tpm.transport, hashAlgID, 16, []tpm2.AuthOption{}...)
+	// Branch 1 trial digest: PolicyPCR
+	pcrCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
 	if err != nil {
-		tpm.logger.Error("failed to create policy session", slog.String("error", err.Error()))
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
 	}
-
-	// Create the PCR policy
-	_, err = tpm2.PolicyPCR{
-		PolicySession: session.Handle(),
-		Pcrs: tpm2.TPMLPCRSelection{
-			PCRSelections: sel.PCRSelections,
-		},
+	pcrCmd := tpm2.PolicyPCR{
 		PcrDigest: tpm2.TPM2BDigest{
-			Buffer: digest,
+			Buffer: pcrDigest,
+		},
+		Pcrs: tpm2.TPMLPCRSelection{
+			PCRSelections: []tpm2.TPMSPCRSelection{{
+				Hash:      hashAlgID,
+				PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
+			}},
+		},
+	}
+	if err := pcrCmd.Update(pcrCalc); err != nil {
+		return nil, nil, fmt.Errorf("%w: PolicyPCR trial: %v", ErrPlatformPolicySession, err)
+	}
+	branch1Digest := pcrCalc.Hash().Digest
+
+	// Branch 2 trial digest: PolicyAuthValue
+	authCalc, err := tpm2.NewPolicyCalculator(hashAlgID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
+	}
+	authCmd := tpm2.PolicyAuthValue{}
+	if err := authCmd.Update(authCalc); err != nil {
+		return nil, nil, fmt.Errorf("%w: PolicyAuthValue trial: %v", ErrPlatformPolicySession, err)
+	}
+	branch2Digest := authCalc.Hash().Digest
+
+	// Create the real policy session.
+	// When using the password branch (PolicyAuthValue), the auth value must
+	// be bound to the session so that the HMAC computation includes it.
+	// Per TPM 2.0 Part 1, Section 19.6: HMAC key = sessionKey || authValue.
+	var sessionOpts []tpm2.AuthOption
+	if !usePCRBranch && len(auth) > 0 {
+		sessionOpts = append(sessionOpts, tpm2.Auth(auth))
+	}
+	session, closer, err := tpm2.PolicySession(
+		tpm.transport, hashAlgID, 16, sessionOpts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", ErrPlatformPolicySession, err)
+	}
+
+	if usePCRBranch {
+		// Execute PolicyPCR in the live session
+		_, err = tpm2.PolicyPCR{
+			PolicySession: session.Handle(),
+			PcrDigest: tpm2.TPM2BDigest{
+				Buffer: pcrDigest,
+			},
+			Pcrs: tpm2.TPMLPCRSelection{
+				PCRSelections: []tpm2.TPMSPCRSelection{{
+					Hash:      hashAlgID,
+					PCRSelect: tpm2.PCClientCompatible.PCRs(tpm.config.PlatformPCR),
+				}},
+			},
+		}.Execute(tpm.transport)
+		if err != nil {
+			if closeErr := closer(); closeErr != nil {
+				tpm.logger.Error("failed to close session after PolicyPCR error",
+					slog.String("error", closeErr.Error()))
+			}
+			return nil, nil, fmt.Errorf("%w: PolicyPCR execute: %v", ErrPlatformPolicySession, err)
+		}
+		tpm.logger.Debug("tpm: PlatformPolicySession - PCR branch executed")
+	} else {
+		// Execute PolicyAuthValue in the live session
+		_, err = tpm2.PolicyAuthValue{
+			PolicySession: session.Handle(),
+		}.Execute(tpm.transport)
+		if err != nil {
+			if closeErr := closer(); closeErr != nil {
+				tpm.logger.Error("failed to close session after PolicyAuthValue error",
+					slog.String("error", closeErr.Error()))
+			}
+			return nil, nil, fmt.Errorf("%w: PolicyAuthValue execute: %v", ErrPlatformPolicySession, err)
+		}
+		tpm.logger.Debug("tpm: PlatformPolicySession - password branch executed")
+	}
+
+	// Execute PolicyOR with both branch digests to complete the session policy
+	_, err = tpm2.PolicyOr{
+		PolicySession: session.Handle(),
+		PHashList: tpm2.TPMLDigest{
+			Digests: []tpm2.TPM2BDigest{
+				{Buffer: branch1Digest},
+				{Buffer: branch2Digest},
+			},
 		},
 	}.Execute(tpm.transport)
 	if err != nil {
-		tpm.logger.Error("failed to execute PolicyPCR", slog.String("error", err.Error()))
-		// Clean up session before returning error
 		if closeErr := closer(); closeErr != nil {
-			tpm.logger.Error("Failed to close session after PolicyPCR error", slog.String("error", closeErr.Error()))
+			tpm.logger.Error("failed to close session after PolicyOR error",
+				slog.String("error", closeErr.Error()))
 		}
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("%w: PolicyOR execute: %v", ErrPlatformPolicySession, err)
 	}
 
-	pgd, err := tpm2.PolicyGetDigest{
+	// Get the final session policy digest for caching
+	pgd, pgdErr := tpm2.PolicyGetDigest{
 		PolicySession: session.Handle(),
 	}.Execute(tpm.transport)
-	if err != nil {
-		// Clean up session before returning error
-		if closeErr := closer(); closeErr != nil {
-			tpm.logger.Error("Failed to close session after PolicyGetDigest error", slog.String("error", closeErr.Error()))
-		}
-		return nil, nil, err
+	if pgdErr == nil {
+		tpm.policyDigest = pgd.PolicyDigest
+		tpm.logger.Info("tpm: PlatformPolicySession - final session policy digest",
+			slog.Bool("pcr_branch", usePCRBranch),
+			slog.String("session_digest", fmt.Sprintf("%x", pgd.PolicyDigest.Buffer)),
+			slog.String("branch1_pcr", fmt.Sprintf("%x", branch1Digest)),
+			slog.String("branch2_auth", fmt.Sprintf("%x", branch2Digest)))
 	}
-
-	tpm.logger.Info("tpm: PlatformPolicySession - PCR policy digest", slog.String("digest", fmt.Sprintf("%x", digest)))
-	tpm.logger.Info("tpm: PlatformPolicySession - session policy digest", slog.String("digest", fmt.Sprintf("%x", pgd.PolicyDigest.Buffer)))
-
-	tpm.policyDigest = pgd.PolicyDigest
 
 	return session, closer, nil
 }
@@ -216,12 +293,19 @@ func (tpm *TPM2) NonceSession(hierarchyAuth types.Password) (tpm2.Session, func(
 }
 
 // Returns an authorization session for a key based on the provided parent
-// key attributes and platform configuration file. If the parent PlatformPolicy
-// is true, a PCR policy session is returned. If PlatformPolicy is false,
-// a password authorization session is returned. If a password has not been
-// defined, an empty password authorization session is returned. If PlatformPolicy
-// is false and encryption is enabled in the platform configuration file, a salted,
-// encrypted session is created using the EK. This function returns a session
+// key attributes and platform configuration file.
+//
+// Session selection logic for the parent key:
+//   - Password != nil AND PlatformPolicy = true: PlatformPolicySession(password)
+//     (password branch of PolicyOR for auto-unseal-capable keys)
+//   - Password == nil AND PlatformPolicy = true: PlatformPolicySession(nil)
+//     (PCR branch of PolicyOR for automatic unlock)
+//   - Password != nil AND PlatformPolicy = false: PasswordAuth(password)
+//     (default password-only, no auto-unseal)
+//   - Neither: empty password auth
+//
+// When PlatformPolicy is false and encryption is enabled, a salted HMAC
+// session is created using the parent key. This function returns a session
 // closer function that needs to be called to close the session when complete.
 func (tpm *TPM2) CreateSession(
 	keyAttrs *types.KeyAttributes) (tpm2.Session, func() error, error) {
@@ -236,57 +320,58 @@ func (tpm *TPM2) CreateSession(
 		return tpm.CreateKeySession(keyAttrs)
 	}
 
-	// Extract the parent authorization password if the parent doesn't have
-	// a platform PCR policy applied
-	if keyAttrs.Parent.Password != nil && !keyAttrs.Parent.PlatformPolicy {
+	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
+
+	if keyAttrs.Parent.PlatformPolicy {
+
+		// Determine whether the parent has a meaningful (non-empty) auth value.
+		// A nil Password or a Password with zero-length bytes means "no auth" and
+		// should use the PCR branch for automatic unlock. After a restart the
+		// cached SRK attributes carry no password (config file has empty string),
+		// so selecting the password branch with empty auth would produce
+		// TPM_RC_BAD_AUTH because the actual SRK UserAuth is the user PIN set
+		// during initial setup.
+		var parentAuth []byte
+		if keyAttrs.Parent.Password != nil {
+			parentAuth = keyAttrs.Parent.Password.Bytes()
+		}
+
+		if len(parentAuth) > 0 {
+			// Password + PlatformPolicy: use compound policy password branch.
+			// The parent's auth value must be passed so the session HMAC
+			// includes it (TPM 2.0 Part 1, Section 19.6).
+			session, closer, err = tpm.PlatformPolicySession(parentAuth)
+			if err != nil {
+				return session, closer, err
+			}
+			tpm.logger.Debug("tpm: created platform policy session (password branch)",
+				slog.String("cn", keyAttrs.CN))
+			return session, closer, nil
+		}
+
+		// PlatformPolicy without password: use compound policy PCR branch
+		session, closer, err = tpm.PlatformPolicySession(nil)
+		if err != nil {
+			return session, closer, err
+		}
+		tpm.logger.Debug("tpm: created platform policy session (PCR branch)",
+			slog.String("cn", keyAttrs.CN))
+		return session, closer, nil
+	}
+
+	// No PlatformPolicy: extract password for standard auth
+	if keyAttrs.Parent.Password != nil {
 		parentAuth = keyAttrs.Parent.Password.Bytes()
 	}
 
-	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	_, parentPub, err := tpm.ReadHandle(parentHandle)
 	if err != nil {
 		return session, closer, err
 	}
 
-	if keyAttrs.Parent.PlatformPolicy {
-
-		// Create platform PCR policy session
-		session, closer, err = tpm.PlatformPolicySession()
-		if err != nil {
-			return session, closer, err
-		}
-		// dont forget to call closer() when finished
-		// defer closer()
-		tpm.logger.Debug("tpm: created platform policy session", slog.String("cn", keyAttrs.CN))
-
-		if err != nil {
-			return session, closer, err
-		}
-		return session, closer, nil
-	}
-
 	if tpm.config.EncryptSession {
 
-		// var ekAuth []byte
-		// ekAttrs := tpm.EKAttributes()
-		// if ekAttrs.Password != nil && !ekAttrs.PlatformPolicy {
-		// 	ekAuth, err = ekAttrs.Password.Bytes()
-		// 	if err != nil {
-		// 		return session, nil, err
-		// 	}
-		// }
-
-		// // Create salted (encrypted?) session using EK
-		// session, closer, err = tpm.HMACSaltedSession(
-		// 	ekAttrs.TPMAttributes.Handle,
-		// 	ekAttrs.TPMAttributes.Public,
-		// 	ekAuth)
-		// if err != nil {
-		// 	tpm.logger.Error("failed to create salted session", slog.String("error", err.Error()))
-		// 	return session, nil, err
-		// }
-
-		// Create salted (encrypted?) session using parent (EK)
+		// Create salted (encrypted) session using parent key
 		session, closer, err = tpm.HMACSaltedSession(
 			parentHandle,
 			parentPub,
@@ -295,8 +380,6 @@ func (tpm *TPM2) CreateSession(
 			tpm.logger.Error("failed to create salted session", slog.String("error", err.Error()))
 			return session, closer, err
 		}
-		// dont forget to call closer() when finished
-		// defer closer()
 		return session, closer, nil
 	}
 
@@ -305,28 +388,51 @@ func (tpm *TPM2) CreateSession(
 }
 
 // Returns an authorization session for a child key based on the provided
-// key attributes. If the child PlatformPolicy is true, a PCR policy session
-// is returned with a closer function that needs to be called to close the
-// session when complete. If PlatformPolicy is false, a password authorization
-// session is returned instead. If a password has not been defined,
-// an empty password authorization session is returned. This function returns
-// a session closer function that needs to be called to close the session when
-// complete.
+// key attributes.
+//
+// Session selection logic:
+//   - Password != nil AND PlatformPolicy = true: PlatformPolicySession(password)
+//     (password branch of PolicyOR for auto-unseal-capable keys)
+//   - Password == nil AND PlatformPolicy = true: PlatformPolicySession(nil)
+//     (PCR branch of PolicyOR for automatic unlock)
+//   - Password != nil AND PlatformPolicy = false: PasswordAuth(password)
+//     (default password-only, no auto-unseal)
+//   - Neither: empty password auth
+//
+// This function returns a session closer function that needs to be called
+// to close the session when complete.
 func (tpm *TPM2) CreateKeySession(
 	keyAttrs *types.KeyAttributes) (tpm2.Session, func() error, error) {
 
 	var session tpm2.Session
 	var closer func() error
 	var err error
-	var keyAuth []byte
 
-	// if keyAttrs.PlatformPolicy && keyAttrs.Parent.PlatformPolicy {
 	if keyAttrs.PlatformPolicy {
-		session, closer, err = tpm.PlatformPolicySession()
-		if err != nil {
-			return session, closer, err
+
+		// Determine whether the key has a meaningful (non-empty) auth value.
+		// See CreateSession for the full rationale on why empty auth must be
+		// treated as nil to avoid TPM_RC_BAD_AUTH after restart.
+		var keyAuth []byte
+		if keyAttrs.Password != nil {
+			keyAuth = keyAttrs.Password.Bytes()
 		}
-		// defer closer()
+
+		if len(keyAuth) > 0 {
+			// Password + PlatformPolicy: use platform policy password branch.
+			// The key's auth value must be passed so the session HMAC
+			// includes it (TPM 2.0 Part 1, Section 19.6).
+			session, closer, err = tpm.PlatformPolicySession(keyAuth)
+			if err != nil {
+				return session, closer, err
+			}
+		} else {
+			// PlatformPolicy without password: use platform policy PCR branch
+			session, closer, err = tpm.PlatformPolicySession(nil)
+			if err != nil {
+				return session, closer, err
+			}
+		}
 	} else {
 
 		if keyAttrs.Password != nil {
@@ -335,7 +441,7 @@ func (tpm *TPM2) CreateKeySession(
 			if err != nil {
 				return nil, nil, err
 			}
-			keyAuth = keyAttrs.Password.Bytes()
+			keyAuth := keyAttrs.Password.Bytes()
 			session = tpm2.PasswordAuth(keyAuth)
 		} else {
 			session = tpm2.PasswordAuth(nil)
@@ -403,6 +509,22 @@ func (tpm *TPM2) LoadKeyPair(
 	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	parentName := keyAttrs.Parent.TPMAttributes.Name
 
+	// Ensure the parent Name is populated. After an app restart the cached
+	// SRK attributes may only contain the persistent handle without the Name
+	// (built from config, not from TPM2_ReadPublic). TPM2_Load requires a
+	// valid Name for the ParentHandle parameter -- without it the go-tpm
+	// marshaller returns "missing Name for 'ParentHandle' parameter".
+	if len(parentName.Buffer) == 0 {
+		tpm.logger.Debug("tpm: LoadKeyPair - parent Name empty, reading from TPM",
+			slog.String("parent_handle", fmt.Sprintf("0x%x", parentHandle)))
+		resolvedName, _, readErr := tpm.ReadHandle(parentHandle)
+		if readErr != nil {
+			return nil, readErr
+		}
+		parentName = resolvedName
+		keyAttrs.Parent.TPMAttributes.Name = resolvedName
+	}
+
 	tpm.logger.Debug("tpm: loading key pair",
 		slog.String("parent_handle", fmt.Sprintf("0x%x", parentHandle)))
 
@@ -458,6 +580,22 @@ func (tpm *TPM2) LoadKeyPairFromBlobs(
 
 	parentHandle := keyAttrs.Parent.TPMAttributes.Handle
 	parentName := keyAttrs.Parent.TPMAttributes.Name
+
+	// Ensure the parent Name is populated. After an app restart the cached
+	// SRK attributes may only contain the persistent handle without the Name
+	// (built from config, not from TPM2_ReadPublic). TPM2_Load requires a
+	// valid Name for the ParentHandle parameter -- without it the go-tpm
+	// marshaller returns "missing Name for 'ParentHandle' parameter".
+	if len(parentName.Buffer) == 0 {
+		tpm.logger.Debug("tpm: LoadKeyPairFromBlobs - parent Name empty, reading from TPM",
+			slog.String("parent_handle", fmt.Sprintf("0x%x", parentHandle)))
+		resolvedName, _, readErr := tpm.ReadHandle(parentHandle)
+		if readErr != nil {
+			return nil, readErr
+		}
+		parentName = resolvedName
+		keyAttrs.Parent.TPMAttributes.Name = resolvedName
+	}
 
 	tpm.logger.Debug("tpm: loading key pair from blobs",
 		slog.String("parent_handle", fmt.Sprintf("0x%x", parentHandle)))

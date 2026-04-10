@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,7 +15,6 @@ package mcp
 
 import (
 	"bufio"
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -27,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,12 +34,12 @@ import (
 // TestHandler_UnwrapKey tests the unwrap key handler
 func TestHandler_UnwrapKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
+			Method:  "xkms.unwrapKey",
 			Params:  json.RawMessage(`invalid json`),
 			ID:      1,
 		}
@@ -59,7 +58,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
+			Method:  "xkms.unwrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -78,7 +77,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
+			Method:  "xkms.unwrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -97,7 +96,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
+			Method:  "xkms.unwrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -117,7 +116,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
+			Method:  "xkms.unwrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -140,7 +139,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
+			Method:  "xkms.unwrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -172,7 +171,7 @@ func TestHandler_UnwrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
+			Method:  "xkms.unwrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -183,354 +182,10 @@ func TestHandler_UnwrapKey(t *testing.T) {
 	})
 }
 
-// TestHandler_ListKeyVersions tests the list key versions handler
-func TestHandler_ListKeyVersions(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupKeychain()
-
-	t.Run("fails with invalid params", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.listKeyVersions",
-			Params:  json.RawMessage(`invalid`),
-			ID:      1,
-		}
-
-		_, err := server.handleListKeyVersions(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid params")
-	})
-
-	t.Run("fails with missing key_id", func(t *testing.T) {
-		params := ListKeyVersionsParams{
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.listKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleListKeyVersions(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key_id is required")
-	})
-
-	t.Run("returns versioning not supported error", func(t *testing.T) {
-		params := ListKeyVersionsParams{
-			KeyID:   "test-key",
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.listKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleListKeyVersions(req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrVersioningNotSupported)
-	})
-}
-
-// TestHandler_EnableKeyVersion tests the enable key version handler
-func TestHandler_EnableKeyVersion(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupKeychain()
-
-	t.Run("fails with invalid params", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableKeyVersion",
-			Params:  json.RawMessage(`invalid`),
-			ID:      1,
-		}
-
-		_, err := server.handleEnableKeyVersion(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid params")
-	})
-
-	t.Run("fails with missing key_id", func(t *testing.T) {
-		params := EnableKeyVersionParams{
-			Version: 1,
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleEnableKeyVersion(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key_id is required")
-	})
-
-	t.Run("fails with invalid version", func(t *testing.T) {
-		params := EnableKeyVersionParams{
-			KeyID:   "test-key",
-			Version: 0, // Invalid version
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleEnableKeyVersion(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "version must be a positive integer")
-	})
-
-	t.Run("fails with negative version", func(t *testing.T) {
-		params := EnableKeyVersionParams{
-			KeyID:   "test-key",
-			Version: -1, // Negative version
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleEnableKeyVersion(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "version must be a positive integer")
-	})
-
-	t.Run("returns versioning not supported error", func(t *testing.T) {
-		params := EnableKeyVersionParams{
-			KeyID:   "test-key",
-			Version: 1,
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleEnableKeyVersion(req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrVersioningNotSupported)
-	})
-}
-
-// TestHandler_DisableKeyVersion tests the disable key version handler
-func TestHandler_DisableKeyVersion(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupKeychain()
-
-	t.Run("fails with invalid params", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableKeyVersion",
-			Params:  json.RawMessage(`invalid`),
-			ID:      1,
-		}
-
-		_, err := server.handleDisableKeyVersion(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid params")
-	})
-
-	t.Run("fails with missing key_id", func(t *testing.T) {
-		params := DisableKeyVersionParams{
-			Version: 1,
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleDisableKeyVersion(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key_id is required")
-	})
-
-	t.Run("fails with invalid version", func(t *testing.T) {
-		params := DisableKeyVersionParams{
-			KeyID:   "test-key",
-			Version: 0,
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleDisableKeyVersion(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "version must be a positive integer")
-	})
-
-	t.Run("returns versioning not supported error", func(t *testing.T) {
-		params := DisableKeyVersionParams{
-			KeyID:   "test-key",
-			Version: 1,
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleDisableKeyVersion(req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrVersioningNotSupported)
-	})
-}
-
-// TestHandler_EnableAllKeyVersions tests the enable all key versions handler
-func TestHandler_EnableAllKeyVersions(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupKeychain()
-
-	t.Run("fails with invalid params", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableAllKeyVersions",
-			Params:  json.RawMessage(`invalid`),
-			ID:      1,
-		}
-
-		_, err := server.handleEnableAllKeyVersions(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid params")
-	})
-
-	t.Run("fails with missing key_id", func(t *testing.T) {
-		params := EnableAllKeyVersionsParams{
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableAllKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleEnableAllKeyVersions(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key_id is required")
-	})
-
-	t.Run("returns versioning not supported error", func(t *testing.T) {
-		params := EnableAllKeyVersionsParams{
-			KeyID:   "test-key",
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableAllKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleEnableAllKeyVersions(req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrVersioningNotSupported)
-	})
-}
-
-// TestHandler_DisableAllKeyVersions tests the disable all key versions handler
-func TestHandler_DisableAllKeyVersions(t *testing.T) {
-	server := createTestServer(t)
-	defer cleanupKeychain()
-
-	t.Run("fails with invalid params", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableAllKeyVersions",
-			Params:  json.RawMessage(`invalid`),
-			ID:      1,
-		}
-
-		_, err := server.handleDisableAllKeyVersions(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid params")
-	})
-
-	t.Run("fails with missing key_id", func(t *testing.T) {
-		params := DisableAllKeyVersionsParams{
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableAllKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleDisableAllKeyVersions(req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "key_id is required")
-	})
-
-	t.Run("returns versioning not supported error", func(t *testing.T) {
-		params := DisableAllKeyVersionsParams{
-			KeyID:   "test-key",
-			Backend: "software",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableAllKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		_, err := server.handleDisableAllKeyVersions(req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrVersioningNotSupported)
-	})
-}
-
 // TestServer_SendError tests the sendError method
 func TestServer_SendError(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -614,121 +269,10 @@ func TestServer_SendError(t *testing.T) {
 	})
 }
 
-// TestServer_HandleRequest_VersioningMethods tests version method routing
-func TestServer_HandleRequest_VersioningMethods(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
-
-	server, err := NewServer(&Config{Addr: "localhost:0"})
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	t.Run("routes keychain.listKeyVersions", func(t *testing.T) {
-		params := ListKeyVersionsParams{KeyID: "test-key"}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.listKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error) // Should fail with versioning not supported
-	})
-
-	t.Run("routes keychain.enableKeyVersion", func(t *testing.T) {
-		params := EnableKeyVersionParams{KeyID: "test-key", Version: 1}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error)
-	})
-
-	t.Run("routes keychain.disableKeyVersion", func(t *testing.T) {
-		params := DisableKeyVersionParams{KeyID: "test-key", Version: 1}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableKeyVersion",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error)
-	})
-
-	t.Run("routes keychain.enableAllKeyVersions", func(t *testing.T) {
-		params := EnableAllKeyVersionsParams{KeyID: "test-key"}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.enableAllKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error)
-	})
-
-	t.Run("routes keychain.disableAllKeyVersions", func(t *testing.T) {
-		params := DisableAllKeyVersionsParams{KeyID: "test-key"}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.disableAllKeyVersions",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error)
-	})
-
-	t.Run("routes keychain.unwrapKey", func(t *testing.T) {
-		params := UnwrapKeyParams{
-			WrappedKey:        []byte("data"),
-			WrappingPublicKey: "key",
-			Algorithm:         "RSA_OAEP_SHA256",
-		}
-		paramsJSON, _ := json.Marshal(params)
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "keychain.unwrapKey",
-			Params:  paramsJSON,
-			ID:      1,
-		}
-
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		assert.NotNil(t, resp.Error)
-	})
-}
-
 // TestServer_HandleConnection_RateLimit tests connection handling when rate limited
 func TestServer_HandleConnection_RateLimit(t *testing.T) {
-	setupTestKeychain(t)
-	defer cleanupKeychain()
+	setupTestXKMS(t)
+	defer cleanupXKMS()
 
 	// Create a rate limiter that will block all connections
 	limiter := ratelimit.New(&ratelimit.Config{
@@ -779,7 +323,7 @@ func TestServer_HandleConnection_RateLimit(t *testing.T) {
 // TestHandler_GetTLSCertificate_InvalidBackend tests the getTLSCertificate handler with invalid backend
 func TestHandler_GetTLSCertificate_InvalidBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid backend", func(t *testing.T) {
 		params := GetTLSCertificateParams{
@@ -790,7 +334,7 @@ func TestHandler_GetTLSCertificate_InvalidBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -804,7 +348,7 @@ func TestHandler_GetTLSCertificate_InvalidBackend(t *testing.T) {
 // TestHandler_RotateKey_InvalidBackend tests the rotateKey handler with invalid backend
 func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key first
 	genParams := GenerateKeyParams{
@@ -814,7 +358,7 @@ func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -827,7 +371,7 @@ func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -841,7 +385,7 @@ func TestHandler_RotateKey_InvalidBackend(t *testing.T) {
 // TestHandler_AsymmetricEncrypt_InvalidBackend tests the asymmetricEncrypt handler with invalid backend
 func TestHandler_AsymmetricEncrypt_InvalidBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key first
 	genParams := GenerateKeyParams{
@@ -851,7 +395,7 @@ func TestHandler_AsymmetricEncrypt_InvalidBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -865,7 +409,7 @@ func TestHandler_AsymmetricEncrypt_InvalidBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -879,7 +423,7 @@ func TestHandler_AsymmetricEncrypt_InvalidBackend(t *testing.T) {
 // TestHandler_AsymmetricDecrypt_InvalidBackend tests the asymmetricDecrypt handler with invalid backend
 func TestHandler_AsymmetricDecrypt_InvalidBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key first
 	genParams := GenerateKeyParams{
@@ -889,7 +433,7 @@ func TestHandler_AsymmetricDecrypt_InvalidBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -903,7 +447,7 @@ func TestHandler_AsymmetricDecrypt_InvalidBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -917,7 +461,7 @@ func TestHandler_AsymmetricDecrypt_InvalidBackend(t *testing.T) {
 // TestHandler_CopyKey_AdditionalErrors tests additional error paths in copyKey handler
 func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid source backend type", func(t *testing.T) {
 		params := CopyKeyParams{
@@ -931,7 +475,7 @@ func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -953,7 +497,7 @@ func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -967,7 +511,7 @@ func TestHandler_CopyKey_AdditionalErrors(t *testing.T) {
 // TestHandler_SaveCertChain_InvalidPEM tests additional error paths in saveCertChain handler
 func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid PEM at middle index", func(t *testing.T) {
 		// Generate a valid certificate
@@ -997,7 +541,7 @@ func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1022,7 +566,7 @@ func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1036,12 +580,12 @@ func TestHandler_SaveCertChain_InvalidPEM(t *testing.T) {
 // TestHandler_ListCerts_EmptyResult tests the listCerts handler with empty result
 func TestHandler_ListCerts_EmptyResult(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns empty list when no certs exist", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listCerts",
+			Method:  "xkms.listCerts",
 			ID:      1,
 		}
 
@@ -1057,7 +601,7 @@ func TestHandler_ListCerts_EmptyResult(t *testing.T) {
 // TestHandler_DeleteKey_SearchSymmetricBackend tests deleteKey searching symmetric backend
 func TestHandler_DeleteKey_SearchSymmetricBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key
 	genParams := GenerateKeyParams{
@@ -1067,7 +611,7 @@ func TestHandler_DeleteKey_SearchSymmetricBackend(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -1080,7 +624,7 @@ func TestHandler_DeleteKey_SearchSymmetricBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1097,7 +641,7 @@ func TestHandler_DeleteKey_SearchSymmetricBackend(t *testing.T) {
 // TestHandler_Decrypt_SearchSymmetricBackend tests decrypt searching symmetric backend
 func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key and encrypt data
 	genParams := GenerateKeyParams{
@@ -1107,7 +651,7 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -1118,7 +662,7 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 		Plaintext: []byte("secret data"),
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
-	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.encrypt", Params: encryptParamsJSON, ID: 1}
+	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 1}
 	encryptResult, err := server.handleEncrypt(encryptReq)
 	require.NoError(t, err)
 
@@ -1136,7 +680,7 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1153,7 +697,7 @@ func TestHandler_Decrypt_SearchSymmetricBackend(t *testing.T) {
 // TestHandler_Decrypt_NotFoundInAnyBackend tests decrypt when key not found in any backend
 func TestHandler_Decrypt_NotFoundInAnyBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails when key not found in any backend", func(t *testing.T) {
 		params := DecryptParams{
@@ -1166,7 +710,7 @@ func TestHandler_Decrypt_NotFoundInAnyBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}

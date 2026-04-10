@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	pkgwebauthn "github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -71,7 +71,7 @@ func TestWebAuthnUserAdapter_GetByID(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns user by ID", func(t *testing.T) {
-		created, err := store.Create(ctx, "getbyid@example.com", "Test User", RoleUser)
+		created, err := store.Create(ctx, "getbyid@example.com", "Test User", RoleUser, "")
 		require.NoError(t, err)
 
 		user, err := userAdapter.GetByID(ctx, created.ID)
@@ -92,7 +92,7 @@ func TestWebAuthnUserAdapter_GetByEmail(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns user by email", func(t *testing.T) {
-		_, err := store.Create(ctx, "email@example.com", "Test User", RoleUser)
+		_, err := store.Create(ctx, "email@example.com", "Test User", RoleUser, "")
 		require.NoError(t, err)
 
 		user, err := userAdapter.GetByEmail(ctx, "email@example.com")
@@ -135,7 +135,7 @@ func TestWebAuthnUserAdapter_Save(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("saves user successfully", func(t *testing.T) {
-		created, err := store.Create(ctx, "save@example.com", "Original", RoleUser)
+		created, err := store.Create(ctx, "save@example.com", "Original", RoleUser, "")
 		require.NoError(t, err)
 
 		// Wrap in WebAuthnUser and modify
@@ -167,9 +167,9 @@ func TestWebAuthnUserAdapter_Delete(t *testing.T) {
 
 	t.Run("deletes user successfully", func(t *testing.T) {
 		// Create two admins so we can delete one
-		user1, err := store.Create(ctx, "delete1@example.com", "Delete1", RoleAdmin)
+		user1, err := store.Create(ctx, "delete1@example.com", "Delete1", RoleAdmin, "")
 		require.NoError(t, err)
-		_, err = store.Create(ctx, "delete2@example.com", "Delete2", RoleAdmin)
+		_, err = store.Create(ctx, "delete2@example.com", "Delete2", RoleAdmin, "")
 		require.NoError(t, err)
 
 		err = userAdapter.Delete(ctx, user1.ID)
@@ -388,7 +388,7 @@ func TestWebAuthnCredentialAdapter_Save(t *testing.T) {
 
 	ctx := context.Background()
 
-	user, err := store.Create(ctx, "credsave@example.com", "Cred Save", RoleUser)
+	user, err := store.Create(ctx, "credsave@example.com", "Cred Save", RoleUser, "")
 	require.NoError(t, err)
 
 	lastUsed := time.Now().UTC()
@@ -422,7 +422,7 @@ func TestWebAuthnCredentialAdapter_GetByUserID(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns credentials for user", func(t *testing.T) {
-		user, err := store.Create(ctx, "getcreds@example.com", "Get Creds", RoleUser)
+		user, err := store.Create(ctx, "getcreds@example.com", "Get Creds", RoleUser, "")
 		require.NoError(t, err)
 
 		// Add credential to user
@@ -454,7 +454,7 @@ func TestWebAuthnCredentialAdapter_GetByCredentialID(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns credential by ID", func(t *testing.T) {
-		user, err := store.Create(ctx, "getcredid@example.com", "Get Cred ID", RoleUser)
+		user, err := store.Create(ctx, "getcredid@example.com", "Get Cred ID", RoleUser, "")
 		require.NoError(t, err)
 
 		lastUsed := time.Now().UTC()
@@ -485,7 +485,7 @@ func TestWebAuthnCredentialAdapter_Update(t *testing.T) {
 
 	ctx := context.Background()
 
-	user, err := store.Create(ctx, "updatecred@example.com", "Update Cred", RoleUser)
+	user, err := store.Create(ctx, "updatecred@example.com", "Update Cred", RoleUser, "")
 	require.NoError(t, err)
 
 	user.AddCredential(&Credential{
@@ -519,7 +519,7 @@ func TestWebAuthnCredentialAdapter_Delete(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("deletes credential successfully", func(t *testing.T) {
-		user, err := store.Create(ctx, "deletecred@example.com", "Delete Cred", RoleUser)
+		user, err := store.Create(ctx, "deletecred@example.com", "Delete Cred", RoleUser, "")
 		require.NoError(t, err)
 
 		user.AddCredential(&Credential{ID: []byte("delete-me")})
@@ -548,7 +548,7 @@ func TestWebAuthnCredentialAdapter_DeleteByUserID(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("deletes all credentials for user", func(t *testing.T) {
-		user, err := store.Create(ctx, "deleteall@example.com", "Delete All", RoleUser)
+		user, err := store.Create(ctx, "deleteall@example.com", "Delete All", RoleUser, "")
 		require.NoError(t, err)
 
 		user.AddCredential(&Credential{ID: []byte("cred-1")})

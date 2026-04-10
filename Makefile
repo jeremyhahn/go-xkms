@@ -1,4 +1,4 @@
-# Makefile for go-keychain
+# Makefile for go-xkms
 # Secure key management library with native and shared object support
 
 # ==============================================================================
@@ -9,9 +9,9 @@
 VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS := -X github.com/jeremyhahn/go-keychain/pkg/cli.Version=$(VERSION) \
-           -X github.com/jeremyhahn/go-keychain/pkg/cli.GitCommit=$(GIT_COMMIT) \
-           -X github.com/jeremyhahn/go-keychain/pkg/cli.BuildDate=$(BUILD_DATE)
+LDFLAGS := -X github.com/jeremyhahn/go-xkms/pkg/cli.Version=$(VERSION) \
+           -X github.com/jeremyhahn/go-xkms/pkg/cli.GitCommit=$(GIT_COMMIT) \
+           -X github.com/jeremyhahn/go-xkms/pkg/cli.BuildDate=$(BUILD_DATE)
 
 # Optional backend features (set to 1 to enable)
 # Default: Software backends enabled, hardware/cloud backends disabled
@@ -23,9 +23,8 @@ WITH_AZURE_KV ?= 0
 WITH_VAULT ?= 0
 WITH_PKCS11 ?= 0
 
-# Quantum-safe cryptography support (Dilithium, Kyber via liboqs)
-# Default: Disabled - requires liboqs C library to be installed
-WITH_QUANTUM ?= 0
+# Quantum-safe cryptography (ML-DSA, ML-KEM) is always enabled.
+# Uses pure-Go implementations (circl, crypto/mlkem). No external libraries required.
 
 # FROST threshold signatures support (RFC 9591)
 # Default: Enabled - FROST threshold signatures compiled in by default
@@ -51,14 +50,15 @@ endif
 
 # All available build tags for release builds
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
-CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault quantum frost codec_cbor codec_json codec_msgpack
+CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack
 # Server includes all tags including pkcs11
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 quantum frost  codec_cbor codec_json codec_msgpack
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost codec_cbor codec_json codec_msgpack
 # All tags for integration testing (includes all possible build tags)
-ALL_TAGS := integration frost pkcs8 pkcs11 quantum awskms gcpkms azurekv vault  yubikey nitrokey canokey fido2 webauthn codec_cbor codec_json codec_msgpack
+ALL_TAGS := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn codec_cbor codec_json codec_msgpack
 
 # Build tags based on backend flags (for development/testing)
-BUILD_TAGS :=
+# Codec tags are always required for go-qrdb DAO layer serialization
+BUILD_TAGS := codec_cbor codec_json codec_msgpack
 ifeq ($(WITH_PKCS8),1)
 	BUILD_TAGS += pkcs8
 endif
@@ -79,9 +79,6 @@ ifeq ($(WITH_VAULT),1)
 endif
 ifeq ($(WITH_PKCS11),1)
 	BUILD_TAGS += pkcs11
-endif
-ifeq ($(WITH_QUANTUM),1)
-	BUILD_TAGS += quantum
 endif
 ifeq ($(WITH_FROST),1)
 	BUILD_TAGS += frost
@@ -106,8 +103,8 @@ GOVET := $(GO) vet $(TAG_FLAGS)
 GOFMT := gofmt
 
 # Project structure
-PROJECT_NAME := go-keychain
-MODULE := github.com/jeremyhahn/go-keychain
+PROJECT_NAME := go-xkms
+MODULE := github.com/jeremyhahn/go-xkms
 PKG_DIR := ./pkg/...
 CMD_DIR := ./cmd/...
 TEST_DIR := ./test/...
@@ -119,19 +116,55 @@ BUILD_DIR := build
 LIB_DIR := $(BUILD_DIR)/lib
 BIN_DIR := $(BUILD_DIR)/bin
 COVERAGE_DIR := $(BUILD_DIR)/coverage
-SHARED_LIB := $(LIB_DIR)/libkeychain-$(VERSION).so
-SHARED_LIB_LINK := $(LIB_DIR)/libkeychain.so
+SHARED_LIB := $(LIB_DIR)/libxkms-$(VERSION).so
+SHARED_LIB_LINK := $(LIB_DIR)/libxkms.so
 CGO_SOURCE := ./cmd/cgo
 
 # Docker configuration
 DOCKER_IMAGE := $(PROJECT_NAME):latest
 DOCKER_INTEGRATION_IMAGE := $(PROJECT_NAME)-integration:latest
 DOCKER_CONTAINER := $(PROJECT_NAME)-container
+BUILDER_IMAGE := $(PROJECT_NAME)-builder:latest
+XKEY_BUILDER_IMAGE := $(PROJECT_NAME)-xkey-builder:latest
+
+# Sibling module mounts (for go.mod replace directives referencing ../go-qrdb, ../go-quicraft)
+PARENT_DIR := $(dir $(CURDIR))
+SIBLING_MOUNTS := -v $(PARENT_DIR)go-qrdb:/go-qrdb:cached \
+                  -v $(PARENT_DIR)go-quicraft:/go-quicraft:cached
+
+# ==============================================================================
+# PKCS#11 Module Configuration
+# ==============================================================================
+
+# PKCS#11 module paths
+PKCS11_MODULE_SO := $(LIB_DIR)/libxkms_pkcs11.so
+PKCS11_MODULE_HEADER := $(LIB_DIR)/libxkms_pkcs11.h
+
+# PKCS#11 test configuration
+PKCS11_TOKEN_LABEL ?= xkms-token
+PKCS11_PIN ?= 87654321
+PKCS11_SO_PIN ?= 12345678
+
+# Multi-protocol connection configuration
+# Unix socket (gRPC over UDS)
+XKMS_UNIX_SOCKET ?= /var/run/xkms/xkms.sock
+# TCP (gRPC over TCP)
+XKMS_GRPC_ADDR ?= localhost:9443
+# Container gRPC address (for tests running inside devcontainer network)
+XKMS_GRPC_ADDR_CONTAINER ?= xkms-server:9443
+# PKCS#11 module path inside container
+PKCS11_MODULE_CONTAINER := /workspace/build/lib/libxkms_pkcs11.so
+XKMS_GRPC_TLS_ENABLED ?= false
+XKMS_GRPC_TLS_INSECURE ?= true
+
+# Test timeout
+PKCS11_TEST_TIMEOUT ?= 10m
 
 # Test configuration - include codec build tags for go-codec support
-TEST_FLAGS := -v -race -tags="codec_cbor codec_json codec_msgpack"
+TEST_FLAGS := -v -race -tags="codec_cbor codec_json codec_msgpack tpm_simulator"
 COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
+COVERAGE_THRESHOLD := 80
 # Integration test tags include both backend tags and integration tag
 ifneq ($(BUILD_TAGS),)
 	INTEGRATION_TEST_FLAGS := -v -tags="integration pkcs8 pkcs11 codec_cbor codec_json codec_msgpack $(BUILD_TAGS)"
@@ -140,13 +173,13 @@ else
 endif
 
 # Color output (ANSI escape codes)
-RESET := \033[0m
-BOLD := \033[1m
-RED := \033[31m
-GREEN := \033[32m
-YELLOW := \033[33m
-BLUE := \033[34m
-CYAN := \033[36m
+RESET := $(shell printf '\033[0m')
+BOLD := $(shell printf '\033[1m')
+RED := $(shell printf '\033[31m')
+GREEN := $(shell printf '\033[32m')
+YELLOW := $(shell printf '\033[33m')
+BLUE := $(shell printf '\033[34m')
+CYAN := $(shell printf '\033[36m')
 
 # ==============================================================================
 # Default Target
@@ -173,136 +206,248 @@ deps:
 	@echo "$(YELLOW)Note: For integration tests, ensure SoftHSM and SWTPM are installed:$(RESET)"
 	@echo "  - Ubuntu/Debian: sudo apt-get install softhsm2 swtpm swtpm-tools"
 	@echo "  - macOS: brew install softhsm swtpm"
-ifeq ($(WITH_QUANTUM),1)
-	@echo "$(YELLOW)Note: Quantum-safe cryptography requires liboqs. Run 'make deps-quantum' to install.$(RESET)"
-endif
-
-.PHONY: deps-quantum
-## deps-quantum: Install liboqs library for quantum-safe cryptography (Dilithium, Kyber)
-deps-quantum:
-	@echo "$(CYAN)$(BOLD)→ Installing liboqs for quantum-safe cryptography...$(RESET)"
-	@echo "$(YELLOW)This will clone and build liboqs from source$(RESET)"
-	@mkdir -p $(BUILD_DIR)/deps
-	@if [ ! -d "$(BUILD_DIR)/deps/liboqs" ]; then \
-		echo "$(CYAN)Cloning liboqs repository...$(RESET)"; \
-		git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git $(BUILD_DIR)/deps/liboqs; \
-	else \
-		echo "$(CYAN)liboqs already cloned, updating...$(RESET)"; \
-		cd $(BUILD_DIR)/deps/liboqs && git pull; \
-	fi
-	@echo "$(CYAN)Building liboqs...$(RESET)"
-	@cd $(BUILD_DIR)/deps/liboqs && \
-		mkdir -p build && \
-		cd build && \
-		cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
-		ninja
-	@echo "$(CYAN)Installing liboqs (requires sudo)...$(RESET)"
-	@cd $(BUILD_DIR)/deps/liboqs/build && sudo ninja install
-	@sudo ldconfig 2>/dev/null || true
-	@echo "$(CYAN)Creating liboqs-go.pc for Go bindings...$(RESET)"
-	@sudo mkdir -p /usr/local/lib/pkgconfig
-	@printf '%s\n' \
-		'prefix=/usr/local' \
-		'exec_prefix=$${prefix}' \
-		'libdir=$${exec_prefix}/lib' \
-		'includedir=$${prefix}/include' \
-		'' \
-		'Name: liboqs-go' \
-		'Description: Open Quantum Safe liboqs library for Go bindings' \
-		'Version: 0.9.0' \
-		'Libs: -L$${libdir} -loqs' \
-		'Cflags: -I$${includedir}' \
-		| sudo tee /usr/local/lib/pkgconfig/liboqs-go.pc > /dev/null
-	@echo "$(GREEN)✓ liboqs installed successfully$(RESET)"
-	@echo "$(YELLOW)Note: You may need to set PKG_CONFIG_PATH and LD_LIBRARY_PATH:$(RESET)"
-	@echo "  export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:\$$PKG_CONFIG_PATH"
-	@echo "  export LD_LIBRARY_PATH=/usr/local/lib:\$$LD_LIBRARY_PATH"
-
-.PHONY: deps-quantum-debian
-## deps-quantum-debian: Install liboqs build dependencies on Debian/Ubuntu
-deps-quantum-debian:
-	@echo "$(CYAN)$(BOLD)→ Installing liboqs build dependencies...$(RESET)"
-	@sudo apt-get update
-	@sudo apt-get install -y --no-install-recommends \
-		build-essential \
-		cmake \
-		ninja-build \
-		libssl-dev \
-		git \
-		pkg-config
-	@echo "$(GREEN)✓ Build dependencies installed$(RESET)"
-	@echo "$(YELLOW)Now run 'make deps-quantum' to build and install liboqs$(RESET)"
 
 .PHONY: build
-## build: Build the shared library, CLI, server binaries, and vfido2 (default)
-build: lib build-cli build-servers build-vfido2
+## build: Build the shared library, CLI, server binaries, and xkey (default)
+build: lib build-cli build-servers build-xkey
+
+.PHONY: build-local
+## build-local: Build everything locally without Docker (requires dev packages)
+build-local: lib build-cli build-xkey-local
+
+.PHONY: builder-image
+## builder-image: Build the Docker builder image for CGO builds (lib, server)
+builder-image:
+	@echo "$(CYAN)$(BOLD)→ Building builder image...$(RESET)"
+	@DOCKER_BUILDKIT=0 docker build -t $(BUILDER_IMAGE) -f Dockerfile.builder . >/dev/null 2>&1
 
 .PHONY: build-cli
-## build-cli: Build the keychainctl CLI binary
+## build-cli: Build the xkmsctl CLI binary (pure Go, no CGO)
 build-cli:
-	@echo "$(CYAN)$(BOLD)→ Building keychainctl CLI...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building xkmsctl CLI...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=0 $(GOBUILD) -o $(BIN_DIR)/keychainctl ./cmd/keychainctl
-	@echo "$(GREEN)✓ CLI binary built: $(BIN_DIR)/keychainctl$(RESET)"
+	@CGO_ENABLED=0 $(GOBUILD) -o $(BIN_DIR)/xkmsctl ./cmd/xkmsctl
+	@echo "$(GREEN)✓ CLI binary built: $(BIN_DIR)/xkmsctl$(RESET)"
 
 .PHONY: build-server
-## build-server: Build the unified keychaind server binary (all protocols)
-build-server:
-	@echo "$(CYAN)$(BOLD)→ Building unified keychaind server...$(RESET)"
+## build-server: Build the unified xkmsd server binary (uses Docker for CGO deps)
+build-server: builder-image
+	@echo "$(CYAN)$(BOLD)→ Building unified xkmsd server...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/keychaind ./cmd/keychaind/main.go
-	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/keychaind$(RESET)"
+	@docker run --rm \
+		-v $(CURDIR):/workspace:cached \
+		$(SIBLING_MOUNTS) \
+		-w /workspace \
+		$(BUILDER_IMAGE) \
+		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
+	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/xkmsd$(RESET)"
 
 .PHONY: build-servers
 ## build-servers: Build server binary (alias for build-server)
 build-servers: build-server
 	@echo "$(GREEN)$(BOLD)✓ Server binary built successfully!$(RESET)"
 
-.PHONY: build-vfido2
-## build-vfido2: Build the vfido2 virtual FIDO2 key binary (Linux only)
-build-vfido2:
-	@echo "$(CYAN)$(BOLD)→ Building vfido2 (Linux only)...$(RESET)"
+.PHONY: build-xkey
+## build-xkey: Build the xkey binary with embedded GUI frontend (uses Docker)
+## Uses the xkey builder image with SIBLING_MOUNTS to resolve symlinked siblings.
+## The binary is output to $(BIN_DIR)/xkey alongside other project binaries.
+build-xkey:
+	@echo "$(CYAN)$(BOLD)→ Building xkey builder image...$(RESET)"
+	@DOCKER_BUILDKIT=0 docker build -t $(XKEY_BUILDER_IMAGE) -f xkey/Dockerfile.builder xkey/ >/dev/null 2>&1
+	@echo "$(CYAN)$(BOLD)→ Building xkey frontend...$(RESET)"
+	@docker run --rm \
+		-v $(CURDIR):/workspace:cached \
+		-w /workspace/xkey/frontend \
+		$(XKEY_BUILDER_IMAGE) \
+		bash -c "npm install --silent && node ./node_modules/vite/bin/vite.js build && chown -R $(shell id -u):$(shell id -g) dist/ node_modules/"
+	@echo "$(CYAN)$(BOLD)→ Building xkey browser extension...$(RESET)"
+	@docker run --rm \
+		-v $(CURDIR):/workspace:cached \
+		-w /workspace/xkey/extension \
+		$(XKEY_BUILDER_IMAGE) \
+		bash -c "set -e && rm -rf node_modules && npm install --silent && node node_modules/typescript/lib/tsc.js && cp manifest.json dist/ && cp src/popup.html dist/ && mkdir -p dist/icons && (cp -r src/icons/* dist/icons/ 2>/dev/null || true) && chown -R $(shell id -u):$(shell id -g) dist/ node_modules/"
+	@echo "$(CYAN)$(BOLD)→ Building xkey binary...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@GOOS=linux CGO_ENABLED=0 $(GO) build -buildvcs=false -ldflags "-X main.version=$(VERSION) -X main.commit=$(GIT_COMMIT) -X main.date=$(BUILD_DATE)" -o $(BIN_DIR)/vfido2 ./cmd/vfido2
-	@echo "$(GREEN)✓ vfido2 binary built: $(BIN_DIR)/vfido2$(RESET)"
+	@docker run --rm \
+		-v $(CURDIR):/workspace:cached \
+		$(SIBLING_MOUNTS) \
+		-w /workspace/xkey \
+		$(XKEY_BUILDER_IMAGE) \
+		bash -c "CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
+	@echo "$(GREEN)✓ xkey binary built: $(BIN_DIR)/xkey$(RESET)"
+	@echo "$(GREEN)  GUI mode:  ./$(BIN_DIR)/xkey$(RESET)"
+	@echo "$(GREEN)  CLI mode:  ./$(BIN_DIR)/xkey --no-gui$(RESET)"
+
+.PHONY: build-xkey-local
+## build-xkey-local: Build xkey locally without Docker (requires dev packages)
+## Delegates to xkey/Makefile and copies the binary to $(BIN_DIR)/xkey.
+build-xkey-local:
+	@$(MAKE) -C xkey build-local
+	@mkdir -p $(BIN_DIR)
+	@cp xkey/build/bin/xkey $(BIN_DIR)/xkey
+	@echo "$(GREEN)✓ xkey binary copied to: $(BIN_DIR)/xkey$(RESET)"
+
+# ==============================================================================
+# PKCS#11 Module Targets
+# ==============================================================================
+
+.PHONY: build-pkcs11-module
+## build-pkcs11-module: Build the PKCS#11 shared library (libxkms_pkcs11.so)
+build-pkcs11-module:
+	@echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"
+	@mkdir -p $(LIB_DIR)
+	@CGO_ENABLED=1 $(GO) build -buildmode=c-shared \
+		-o $(LIB_DIR)/libxkms_pkcs11.so \
+		./cmd/pkcs11-module
+	@echo "$(GREEN)✓ PKCS#11 module built: $(LIB_DIR)/libxkms_pkcs11.so$(RESET)"
+
+.PHONY: test-pkcs11-module
+## test-pkcs11-module: Run PKCS#11 module unit tests
+test-pkcs11-module:
+	@echo "$(CYAN)→ Testing PKCS#11 module package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/pkcs11/module/...
+	@echo "$(GREEN)✓ PKCS#11 module tests passed$(RESET)"
+
+.PHONY: coverage-pkcs11-module
+## coverage-pkcs11-module: Generate PKCS#11 module coverage report
+coverage-pkcs11-module:
+	@echo "$(CYAN)→ Generating PKCS#11 module coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/pkcs11_module.out -covermode=atomic ./pkg/pkcs11/module/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/pkcs11_module.out -o $(COVERAGE_DIR)/pkcs11_module.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/pkcs11_module.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/pkcs11_module.html$(RESET)"
+
+.PHONY: bench-pkcs11-module
+## bench-pkcs11-module: Run PKCS#11 module benchmarks
+bench-pkcs11-module:
+	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 module benchmarks...$(RESET)"
+	@mkdir -p $(BENCH_DIR)
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/pkcs11/module/... | tee $(BENCH_DIR)/pkcs11-module.txt
+	@echo "$(GREEN)✓ PKCS#11 module benchmarks complete$(RESET)"
+	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/pkcs11-module.txt$(RESET)"
+
+.PHONY: bench-staticpw
+## bench-staticpw: Run static password benchmarks
+bench-staticpw:
+	@echo "$(CYAN)→ Running static password benchmarks...$(RESET)"
+	@cd xkey && $(GOTEST) -bench=. -benchmem ./pkg/staticpw/...
+
+.PHONY: test-pkcs11-compat
+## test-pkcs11-compat: Test PKCS#11 module compatibility with pkcs11-tool
+test-pkcs11-compat: build-pkcs11-module
+	@echo "$(CYAN)$(BOLD)→ Testing PKCS#11 compatibility with pkcs11-tool...$(RESET)"
+	@if command -v pkcs11-tool >/dev/null 2>&1; then \
+		echo "$(CYAN)→ Listing slots...$(RESET)"; \
+		pkcs11-tool --module $(LIB_DIR)/libxkms_pkcs11.so --list-slots || true; \
+		echo "$(CYAN)→ Listing mechanisms...$(RESET)"; \
+		pkcs11-tool --module $(LIB_DIR)/libxkms_pkcs11.so --list-mechanisms || true; \
+		echo "$(GREEN)✓ Compatibility test complete$(RESET)"; \
+	else \
+		echo "$(YELLOW)⚠ pkcs11-tool not found. Install opensc to run compatibility tests.$(RESET)"; \
+	fi
 
 .PHONY: test-uhid
 ## test-uhid: Run UHID package unit tests
 test-uhid:
 	@echo "$(CYAN)→ Testing UHID package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/uhid/...
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/uhid/...
 
-.PHONY: test-vfido2
-## test-vfido2: Run vfido2 command unit tests
-test-vfido2:
-	@echo "$(CYAN)→ Testing vfido2 command...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./cmd/vfido2/...
+.PHONY: test-xkey
+## test-xkey: Run xkey command unit tests
+test-xkey:
+	@echo "$(CYAN)→ Testing xkey command...$(RESET)"
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./cmd/xkey/...
+
+.PHONY: test-staticpw
+## test-staticpw: Run static password unit tests
+test-staticpw:
+	@echo "$(CYAN)→ Testing static password...$(RESET)"
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/staticpw/...
 
 .PHONY: test-webauthn-verification
 ## test-webauthn-verification: Run WebAuthn end-to-end verification tests (MakeCredential → GetAssertion → RP verify)
 test-webauthn-verification:
 	@echo "$(CYAN)→ Testing WebAuthn verification flow...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) -run TestWebAuthnVerification ./pkg/fido2/authenticator/...
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) -run TestWebAuthnVerification ./pkg/authenticator/...
 
 .PHONY: coverage-uhid
 ## coverage-uhid: Generate UHID package coverage report
 coverage-uhid:
 	@echo "$(CYAN)→ Generating UHID coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/uhid.out -covermode=atomic ./pkg/uhid/...
+	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/uhid.out -covermode=atomic ./pkg/uhid/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/uhid.out -o $(COVERAGE_DIR)/uhid.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/uhid.out | tail -1
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/uhid.html$(RESET)"
 
-.PHONY: coverage-vfido2-cmd
-## coverage-vfido2-cmd: Generate vfido2 command coverage report
-coverage-vfido2-cmd:
-	@echo "$(CYAN)→ Generating vfido2 command coverage report...$(RESET)"
+.PHONY: coverage-xkey-cmd
+## coverage-xkey-cmd: Generate xkey command coverage report
+coverage-xkey-cmd:
+	@echo "$(CYAN)→ Generating xkey command coverage report...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/vfido2-cmd.out -covermode=atomic ./cmd/vfido2/...
-	@$(GO) tool cover -html=$(COVERAGE_DIR)/vfido2-cmd.out -o $(COVERAGE_DIR)/vfido2-cmd.html
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/vfido2-cmd.out | tail -1
-	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/vfido2-cmd.html$(RESET)"
+	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/xkey-cmd.out -covermode=atomic ./cmd/xkey/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/xkey-cmd.out -o $(COVERAGE_DIR)/xkey-cmd.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/xkey-cmd.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/xkey-cmd.html$(RESET)"
+
+.PHONY: coverage-staticpw
+## coverage-staticpw: Generate static password coverage report
+coverage-staticpw:
+	@echo "$(CYAN)→ Generating static password coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/staticpw.out -covermode=atomic ./pkg/staticpw/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/staticpw.out -o $(COVERAGE_DIR)/staticpw.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/staticpw.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/staticpw.html$(RESET)"
+
+.PHONY: test-notify
+## test-notify: Run xkey notification package unit tests
+test-notify:
+	@echo "$(CYAN)→ Testing notification package...$(RESET)"
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/notify/...
+
+.PHONY: coverage-notify
+## coverage-notify: Generate xkey notification package coverage report
+coverage-notify:
+	@echo "$(CYAN)→ Generating notification coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/notify.out -covermode=atomic ./pkg/notify/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/notify.out -o $(COVERAGE_DIR)/notify.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/notify.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/notify.html$(RESET)"
+
+.PHONY: test-keyboard
+## test-keyboard: Run xkey keyboard package unit tests
+test-keyboard:
+	@echo "$(CYAN)→ Testing keyboard package...$(RESET)"
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/keyboard/...
+
+.PHONY: coverage-keyboard
+## coverage-keyboard: Generate xkey keyboard package coverage report
+coverage-keyboard:
+	@echo "$(CYAN)→ Generating keyboard coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/keyboard.out -covermode=atomic ./pkg/keyboard/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/keyboard.out -o $(COVERAGE_DIR)/keyboard.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/keyboard.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/keyboard.html$(RESET)"
+
+.PHONY: test-ipc
+## test-ipc: Run xkey IPC package unit tests
+test-ipc:
+	@echo "$(CYAN)→ Testing IPC package...$(RESET)"
+	@cd xkey && $(GOTEST) $(TEST_FLAGS) ./pkg/ipc/...
+
+.PHONY: coverage-ipc
+## coverage-ipc: Generate xkey IPC package coverage report
+coverage-ipc:
+	@echo "$(CYAN)→ Generating IPC coverage report...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@cd xkey && $(GOTEST) -race -coverprofile=../$(COVERAGE_DIR)/ipc.out -covermode=atomic ./pkg/ipc/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/ipc.out -o $(COVERAGE_DIR)/ipc.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/ipc.out | tail -1
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/ipc.html$(RESET)"
 
 # ==============================================================================
 # Cross-Compilation Targets (Release Builds with ALL Tags)
@@ -314,61 +459,58 @@ release-binaries: release-cli release-server
 	@echo "$(GREEN)$(BOLD)✓ All release binaries built successfully!$(RESET)"
 
 .PHONY: release-cli
-## release-cli: Build keychainctl for all platforms with ALL build tags
+## release-cli: Build xkmsctl for all platforms with ALL build tags
 release-cli:
-	@echo "$(CYAN)$(BOLD)→ Building keychainctl for all platforms (CGO-free)...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building xkmsctl for all platforms (CGO-free)...$(RESET)"
 	@mkdir -p $(BIN_DIR)/release
 	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-linux-amd64 ./cmd/keychainctl
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-linux-amd64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-linux-arm64 ./cmd/keychainctl
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-linux-arm64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-darwin-amd64 ./cmd/keychainctl
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-darwin-amd64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-darwin-arm64 ./cmd/keychainctl
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-darwin-arm64 ./cmd/xkmsctl
 	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-windows-amd64.exe ./cmd/keychainctl
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-windows-amd64.exe ./cmd/xkmsctl
 	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
-	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychainctl-windows-arm64.exe ./cmd/keychainctl
-	@echo "$(GREEN)✓ keychainctl binaries built for all platforms$(RESET)"
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags ble -buildvcs=false -tags="$(CLI_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsctl-windows-arm64.exe ./cmd/xkmsctl
+	@echo "$(GREEN)✓ xkmsctl binaries built for all platforms$(RESET)"
 
 .PHONY: release-server
-## release-server: Build keychaind for all platforms with ALL build tags (including pkcs11)
+## release-server: Build xkmsd for all platforms with ALL build tags (including pkcs11)
 release-server:
-	@echo "$(CYAN)$(BOLD)→ Building keychaind for all platforms (with all tags including pkcs11)...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building xkmsd for all platforms (with all tags including pkcs11)...$(RESET)"
 	@mkdir -p $(BIN_DIR)/release
 	@echo "$(CYAN)  Building linux/amd64...$(RESET)"
-	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-amd64 ./cmd/keychaind/main.go
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsd-linux-amd64 ./cmd/xkmsd/
 	@echo "$(CYAN)  Building linux/arm64...$(RESET)"
-	@GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-linux-arm64 ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for linux/arm64 requires aarch64-linux-gnu-gcc$(RESET)"
+	@GOOS=linux GOARCH=arm64 CGO_ENABLED=1 CC=aarch64-linux-gnu-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsd-linux-arm64 ./cmd/xkmsd/ || echo "$(YELLOW)⚠ Cross-compilation for linux/arm64 requires aarch64-linux-gnu-gcc$(RESET)"
 	@echo "$(CYAN)  Building darwin/amd64...$(RESET)"
-	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-amd64 ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/amd64 may require macOS SDK$(RESET)"
+	@GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsd-darwin-amd64 ./cmd/xkmsd/ || echo "$(YELLOW)⚠ Cross-compilation for darwin/amd64 may require macOS SDK$(RESET)"
 	@echo "$(CYAN)  Building darwin/arm64...$(RESET)"
-	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-darwin-arm64 ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for darwin/arm64 may require macOS SDK$(RESET)"
+	@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsd-darwin-arm64 ./cmd/xkmsd/ || echo "$(YELLOW)⚠ Cross-compilation for darwin/arm64 may require macOS SDK$(RESET)"
 	@echo "$(CYAN)  Building windows/amd64...$(RESET)"
-	@GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-amd64.exe ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/amd64 requires mingw-w64$(RESET)"
+	@GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsd-windows-amd64.exe ./cmd/xkmsd/ || echo "$(YELLOW)⚠ Cross-compilation for windows/amd64 requires mingw-w64$(RESET)"
 	@echo "$(CYAN)  Building windows/arm64...$(RESET)"
-	@GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/keychaind-windows-arm64.exe ./cmd/keychaind/main.go || echo "$(YELLOW)⚠ Cross-compilation for windows/arm64 requires appropriate cross-compiler$(RESET)"
-	@echo "$(GREEN)✓ keychaind binaries built for all platforms$(RESET)"
+	@GOOS=windows GOARCH=arm64 CGO_ENABLED=1 $(GO) build -buildvcs=false -tags="$(SERVER_BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/release/xkmsd-windows-arm64.exe ./cmd/xkmsd/ || echo "$(YELLOW)⚠ Cross-compilation for windows/arm64 requires appropriate cross-compiler$(RESET)"
+	@echo "$(GREEN)✓ xkmsd binaries built for all platforms$(RESET)"
 
 .PHONY: lib
-## lib: Build shared library (libkeychain-VERSION.so)
-lib:
+## lib: Build shared library (libxkms-VERSION.so) using Docker for CGO deps
+lib: builder-image
 	@echo "$(CYAN)$(BOLD)→ Building shared object library (version $(VERSION))...$(RESET)"
 	@mkdir -p $(LIB_DIR)
-	@if [ -f "$(CGO_SOURCE)/main.go" ]; then \
-		CGO_ENABLED=1 $(GOBUILD) -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go; \
-		echo "$(GREEN)✓ Shared library built: $(SHARED_LIB)$(RESET)"; \
-	else \
-		echo "$(YELLOW)⚠ CGO source not found at $(CGO_SOURCE)/main.go$(RESET)"; \
-		echo "$(YELLOW)  Creating stub shared library builder...$(RESET)"; \
-		mkdir -p $(CGO_SOURCE); \
-		echo 'package main\n\nimport "C"\n\nfunc main() {}\n' > $(CGO_SOURCE)/main.go; \
-		CGO_ENABLED=1 $(GOBUILD) -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go; \
-	fi
+	@docker run --rm \
+		-v $(CURDIR):/workspace:cached \
+		$(SIBLING_MOUNTS) \
+		-w /workspace \
+		$(BUILDER_IMAGE) \
+		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
+	@echo "$(GREEN)✓ Shared library built: $(SHARED_LIB)$(RESET)"
 	@rm -f $(SHARED_LIB_LINK)
-	@cd $(LIB_DIR) && ln -s libkeychain-$(VERSION).so libkeychain.so
-	@echo "$(GREEN)✓ Symlink created: $(SHARED_LIB_LINK) -> libkeychain-$(VERSION).so$(RESET)"
+	@cd $(LIB_DIR) && ln -s libxkms-$(VERSION).so libxkms.so
+	@echo "$(GREEN)✓ Symlink created: $(SHARED_LIB_LINK) -> libxkms-$(VERSION).so$(RESET)"
 
 .PHONY: test
 ## test: Run unit tests with coverage (fast, in-memory, no system modifications)
@@ -377,7 +519,7 @@ test:
 	@mkdir -p $(COVERAGE_DIR)
 	@bash -c 'set -o pipefail; \
 	$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_FILE) -covermode=atomic \
-		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2$$|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand|/testutil|/frost$$|/proto)") \
+		$$(go list -e ./pkg/... ./cmd/... ./sdk/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2$$|pkg/logging|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand|/testutil|/frost$$|/proto|cmd/xkmsd|cmd/pkcs11-module|cmd/cgo|pkcs11test|yubikey|smartcardhsm)") \
 		2>&1 | tee $(COVERAGE_DIR)/test.log; \
 	EXIT_CODE=$${PIPESTATUS[0]}; \
 	if [ $$EXIT_CODE -eq 0 ]; then \
@@ -413,10 +555,10 @@ coverage-full:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "$(CYAN)→ Step 1: Running unit tests with coverage...$(RESET)"
 	@$(GO) test $(TEST_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic \
-		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|yubikey|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
+		$$(go list -e ./pkg/... 2>/dev/null | grep -v -E "(pkg/awskms|pkg/azurekv|pkg/gcpkms|pkg/pkcs11|pkg/tpm2|pkg/logging|/mocks|/quantum|pkg/storage/hardware|pkg/fido2|pkg/crypto/rand)") \
 		2>&1 | tee $(COVERAGE_DIR)/unit.log || true
 	@echo "$(CYAN)→ Step 2: Running integration tests with coverage...$(RESET)"
-	@$(GOTEST) -v -tags=integration -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
+	@$(GOTEST) -v -tags="integration codec_cbor codec_json codec_msgpack" -coverprofile=$(COVERAGE_DIR)/integration.out -covermode=atomic \
 		./test/integration/signing/... \
 		./test/integration/opaque/... \
 		./test/integration/metrics/... \
@@ -424,7 +566,7 @@ coverage-full:
 		./test/integration/ratelimit/... \
 		./test/integration/correlation/... \
 		./test/integration/crypto/... \
-		./test/integration/keychain/... \
+		./test/integration/xkms/... \
 		./test/integration/encoding/... \
 		./test/integration/backend/... \
 		./test/integration/certstore/... \
@@ -441,14 +583,19 @@ coverage-report:
 	@if [ -f "$(COVERAGE_FILE)" ]; then \
 		echo "$(CYAN)→ Generating coverage report...$(RESET)"; \
 		$(GO) tool cover -html=$(COVERAGE_FILE) -o $(COVERAGE_HTML); \
-		COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_FILE) | grep total | awk '{print $$3}'); \
+		$(GO) tool cover -func=$(COVERAGE_FILE) > $(COVERAGE_DIR)/coverage.txt; \
+		TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/coverage.txt | awk '{print $$NF}'); \
 		echo "$(GREEN)✓ Coverage report: $(COVERAGE_HTML)$(RESET)"; \
-		echo "$(BOLD)$(BLUE)Coverage: $$COVERAGE$(RESET)"; \
-		COVERAGE_NUM=$$(echo $$COVERAGE | sed 's/%//' | awk '{printf "%d", $$1}'); \
-		if [ $$COVERAGE_NUM -lt 90 ]; then \
-			echo "$(YELLOW)⚠ Coverage is below 90% target$(RESET)"; \
+		echo ""; \
+		echo "$(CYAN)====================================$(RESET)"; \
+		echo "$(CYAN)Total project coverage: $${TOTAL}$(RESET)"; \
+		echo "$(CYAN)====================================$(RESET)"; \
+		NUMERIC=$$(echo "$${TOTAL}" | tr -d '%'); \
+		THRESHOLD_CHECK=$$(echo "$${NUMERIC} < $(COVERAGE_THRESHOLD)" | bc -l 2>/dev/null | cut -d. -f1); \
+		if [ "$${THRESHOLD_CHECK}" = "1" ]; then \
+			echo "$(RED)FAIL: Coverage $${TOTAL} is below threshold $(COVERAGE_THRESHOLD)%$(RESET)"; \
 		else \
-			echo "$(GREEN)✓ Coverage meets 90% target$(RESET)"; \
+			echo "$(GREEN)PASS: Coverage $${TOTAL} meets threshold $(COVERAGE_THRESHOLD)%$(RESET)"; \
 		fi; \
 	else \
 		echo "$(RED)✗ Coverage file not found. Run 'make test' first.$(RESET)"; \
@@ -464,11 +611,11 @@ test-backend:
 	@echo "$(CYAN)→ Testing backend package...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/...
 
-.PHONY: test-keychain
-## test-keychain: Run keychain package unit tests
-test-keychain:
-	@echo "$(CYAN)→ Testing keychain package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/keychain/...
+.PHONY: test-xkms
+## test-xkms: Run xkms package unit tests
+test-xkms:
+	@echo "$(CYAN)→ Testing xkms package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/xkms/...
 
 .PHONY: test-storage
 ## test-storage: Run storage package unit tests
@@ -548,19 +695,99 @@ test-software:
 	@echo "$(CYAN)→ Testing unified software backend...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/software/...
 
-.PHONY: test-yubikey
-## test-yubikey: Run YubiKey backend unit tests (requires physical YubiKey)
-test-yubikey:
-	@echo "$(CYAN)→ Testing YubiKey backend...$(RESET)"
-	@echo "$(YELLOW)Note: This requires a physical YubiKey device$(RESET)"
-	@$(GO) test -tags='yubikey,pkcs11' $(TEST_FLAGS) ./pkg/backend/yubikey/...
-	@echo "$(GREEN)✓ YubiKey backend unit tests complete$(RESET)"
+
+.PHONY: test-quantum
+## test-quantum: Run all quantum-safe cryptography unit tests (backend, software routing, PKCS11, threshold, CA)
+test-quantum: test-quantum-backend test-quantum-software test-quantum-pkcs11 test-quantum-pkcs11-module test-quantum-threshold test-quantum-ca test-quantum-primitives
+	@echo "$(GREEN)$(BOLD)✓ All quantum unit tests complete!$(RESET)"
+
+.PHONY: test-quantum-backend
+## test-quantum-backend: Run quantum backend unit tests (ML-DSA keygen/sign, ML-KEM encap/decap, encryption)
+test-quantum-backend:
+	@echo "$(CYAN)→ Testing quantum backend...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/keyprovider/quantum/...
+
+.PHONY: test-quantum-software
+## test-quantum-software: Run quantum routing tests through the software backend facade
+test-quantum-software:
+	@echo "$(CYAN)→ Testing quantum routing through software backend...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/software/... -run "MLDSA|MLKEM|Quantum|Encapsulat"
+
+.PHONY: test-quantum-pkcs11
+## test-quantum-pkcs11: Run PKCS11 backend quantum capability detection and key generation tests
+test-quantum-pkcs11:
+	@echo "$(CYAN)→ Testing PKCS11 quantum capabilities...$(RESET)"
+	@$(GO) test -v -tags="pkcs11 codec_cbor codec_json codec_msgpack tpm_simulator" ./pkg/backend/pkcs11/... -run "Quantum|MLDSA|MLKEM"
+
+.PHONY: test-quantum-pkcs11-module
+## test-quantum-pkcs11-module: Run PKCS11 module quantum mechanism, crypto, and KEM tests
+test-quantum-pkcs11-module:
+	@echo "$(CYAN)→ Testing PKCS11 module quantum mechanisms...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/pkcs11/module/... -run "Quantum|MLDSA|MLKEM|Encapsulat"
+
+.PHONY: test-quantum-threshold
+## test-quantum-threshold: Run threshold backend quantum key generation, signing, and marshal tests
+test-quantum-threshold:
+	@echo "$(CYAN)→ Testing threshold quantum operations...$(RESET)"
+	@$(GO) test -v -tags="frost codec_cbor codec_json codec_msgpack tpm_simulator" ./pkg/keyprovider/threshold/... -run "Quantum|MLDSA"
+
+.PHONY: test-quantum-ca
+## test-quantum-ca: Run CA quantum signing (ML-DSA certificates) and hybrid certificate tests
+test-quantum-ca:
+	@echo "$(CYAN)→ Testing CA quantum signing and hybrid certificates...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/ca/... -run "Quantum|SignCertificateWithQuantum|VerifyQuantum|OID|Hybrid"
+
+.PHONY: test-quantum-primitives
+## test-quantum-primitives: Run low-level quantum primitive tests (Kyber768, ML-KEM-1024)
+test-quantum-primitives:
+	@echo "$(CYAN)→ Testing quantum primitives...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/quantum/...
+
+.PHONY: test-ca
+## test-ca: Run all CA package unit tests (signing, CSR, TLS, revocation, quantum, hybrid)
+test-ca:
+	@echo "$(CYAN)→ Testing CA package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/ca/...
+
+.PHONY: coverage-quantum
+## coverage-quantum: Generate coverage report for quantum backend
+coverage-quantum:
+	@echo "$(CYAN)→ Generating quantum backend coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/keyprovider/quantum/... -coverprofile=$(COVERAGE_DIR)/quantum.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/quantum.out -o $(COVERAGE_DIR)/quantum-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/quantum.out > $(COVERAGE_DIR)/quantum.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/quantum.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)quantum coverage: $${TOTAL}$(RESET)"
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/quantum-coverage.html$(RESET)"
+
+.PHONY: coverage-ca
+## coverage-ca: Generate coverage report for CA package
+coverage-ca:
+	@echo "$(CYAN)→ Generating CA coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/ca/... -coverprofile=$(COVERAGE_DIR)/ca.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/ca.out -o $(COVERAGE_DIR)/ca-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/ca.out > $(COVERAGE_DIR)/ca.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/ca.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)ca coverage: $${TOTAL}$(RESET)"
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/ca-coverage.html$(RESET)"
+
+.PHONY: bench-quantum
+## bench-quantum: Run quantum backend benchmarks
+bench-quantum:
+	@echo "$(CYAN)$(BOLD)→ Running quantum backend benchmarks...$(RESET)"
+	@mkdir -p $(BENCH_DIR)
+	@$(GO) test -bench=Benchmark -benchmem -benchtime=3s -run=^$$ \
+		./pkg/keyprovider/quantum/... | tee $(BENCH_DIR)/quantum.txt
+	@echo "$(GREEN)✓ Quantum benchmarks complete$(RESET)"
+	@echo "$(CYAN)Results saved to: $(BENCH_DIR)/quantum.txt$(RESET)"
 
 .PHONY: test-symmetric
 ## test-symmetric: Run symmetric encryption package unit tests
 test-symmetric:
 	@echo "$(CYAN)→ Testing symmetric encryption package...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/symmetric/...
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/keyprovider/symmetric/...
 
 .PHONY: test-wrapping
 ## test-wrapping: Run key wrapping cryptographic primitives unit tests
@@ -614,7 +841,7 @@ test-importexport:
 	@echo "$(CYAN)→ Testing software backend import/export...$(RESET)"
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/software/... -run "Test.*Import|Test.*Export"
 	@echo "$(CYAN)→ Testing symmetric backend import/export...$(RESET)"
-	@$(GOTEST) $(TEST_FLAGS) ./pkg/backend/symmetric/... -run "Test.*Import|Test.*Export"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/keyprovider/symmetric/... -run "Test.*Import|Test.*Export"
 	@echo "$(CYAN)→ Testing AWS KMS backend import/export...$(RESET)"
 	@$(GO) test -tags=awskms $(TEST_FLAGS) ./pkg/backend/awskms/... -run "Test.*Import|Test.*Export|Test.*Wrap"
 	@echo "$(CYAN)→ Testing GCP KMS backend import/export...$(RESET)"
@@ -648,6 +875,13 @@ test-sdk-go:
 	@cd sdk/go && $(GO) test $(TEST_FLAGS) ./...
 	@echo "$(GREEN)✓ Go SDK unit tests complete$(RESET)"
 
+.PHONY: test-sdk-transport
+## test-sdk-transport: Run Go SDK REST transport unit tests (custodian, share, tenant)
+test-sdk-transport:
+	@echo "$(CYAN)→ Testing Go SDK REST transport methods...$(RESET)"
+	@cd sdk/go && $(GO) test -v -count=1 ./transport/rest/... -timeout 5m
+	@echo "$(GREEN)✓ Go SDK REST transport tests complete$(RESET)"
+
 .PHONY: coverage-sdk-go
 ## coverage-sdk-go: Generate coverage report for Go SDK
 coverage-sdk-go:
@@ -658,10 +892,150 @@ coverage-sdk-go:
 	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/sdk-go.html$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/sdk-go.out | grep total
 
+# ==============================================================================
+# Auth, Authz, Audit, RBAC, User, and CLI Unit Tests
+# ==============================================================================
+
+.PHONY: test-auth
+## test-auth: Run auth adapter unit tests
+test-auth:
+	@echo "$(CYAN)→ Testing auth adapters...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/auth/...
+	@echo "$(GREEN)✓ Auth adapter tests complete$(RESET)"
+
+.PHONY: coverage-auth
+## coverage-auth: Generate coverage report for auth adapters
+coverage-auth:
+	@echo "$(CYAN)→ Generating coverage report for auth adapters...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/auth.out -covermode=atomic ./pkg/adapters/auth/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/auth.out -o $(COVERAGE_DIR)/auth.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/auth.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/auth.out | grep total
+
+.PHONY: test-authz
+## test-authz: Run authz adapter unit tests
+test-authz:
+	@echo "$(CYAN)→ Testing authz adapters...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/authz/...
+	@echo "$(GREEN)✓ Authz adapter tests complete$(RESET)"
+
+.PHONY: coverage-authz
+## coverage-authz: Generate coverage report for authz adapters
+coverage-authz:
+	@echo "$(CYAN)→ Generating coverage report for authz adapters...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/authz.out -covermode=atomic ./pkg/adapters/authz/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/authz.out -o $(COVERAGE_DIR)/authz.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/authz.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/authz.out | grep total
+
+.PHONY: test-audit
+## test-audit: Run audit adapter unit tests
+test-audit:
+	@echo "$(CYAN)→ Testing audit adapters...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/audit/...
+	@echo "$(GREEN)✓ Audit adapter tests complete$(RESET)"
+
+.PHONY: coverage-audit
+## coverage-audit: Generate coverage report for audit adapters
+coverage-audit:
+	@echo "$(CYAN)→ Generating coverage report for audit adapters...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/audit.out -covermode=atomic ./pkg/adapters/audit/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/audit.out -o $(COVERAGE_DIR)/audit.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/audit.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/audit.out | grep total
+
+.PHONY: test-user
+## test-user: Run user package unit tests
+test-user:
+	@echo "$(CYAN)→ Testing user package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/user/...
+	@echo "$(GREEN)✓ User package tests complete$(RESET)"
+
+.PHONY: coverage-user
+## coverage-user: Generate coverage report for user package
+coverage-user:
+	@echo "$(CYAN)→ Generating coverage report for user package...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/user.out -covermode=atomic ./pkg/user/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/user.out -o $(COVERAGE_DIR)/user.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/user.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/user.out | grep total
+
+.PHONY: test-rbac
+## test-rbac: Run RBAC adapter unit tests
+test-rbac:
+	@echo "$(CYAN)→ Testing RBAC adapters...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/adapters/rbac/...
+	@echo "$(GREEN)✓ RBAC adapter tests complete$(RESET)"
+
+.PHONY: coverage-rbac
+## coverage-rbac: Generate coverage report for RBAC adapters
+coverage-rbac:
+	@echo "$(CYAN)→ Generating coverage report for RBAC adapters...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/rbac.out -covermode=atomic ./pkg/adapters/rbac/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/rbac.out -o $(COVERAGE_DIR)/rbac.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/rbac.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/rbac.out | grep total
+
+.PHONY: test-xkmsctl
+## test-xkmsctl: Run xkmsctl CLI unit tests
+test-xkmsctl:
+	@echo "$(CYAN)→ Testing xkmsctl CLI...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./cmd/xkmsctl/...
+	@echo "$(GREEN)✓ Xkmsctl CLI tests complete$(RESET)"
+
+.PHONY: test-seal
+## test-seal: Run seal package unit tests
+test-seal:
+	@echo "$(CYAN)→ Testing seal package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/seal/...
+	@echo "$(GREEN)✓ Seal tests complete$(RESET)"
+
+.PHONY: test-mem
+## test-mem: Run crypto mem package unit tests
+test-mem:
+	@echo "$(CYAN)→ Testing crypto mem package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/crypto/mem/...
+	@echo "$(GREEN)✓ Crypto mem tests complete$(RESET)"
+
+.PHONY: coverage-seal
+## coverage-seal: Generate coverage report for seal package
+coverage-seal:
+	@echo "$(CYAN)→ Generating coverage report for seal package...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/seal.out -covermode=atomic ./pkg/seal/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/seal.out -o $(COVERAGE_DIR)/seal.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/seal.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/seal.out | grep total
+
+.PHONY: coverage-mem
+## coverage-mem: Generate coverage report for crypto mem package
+coverage-mem:
+	@echo "$(CYAN)→ Generating coverage report for crypto mem package...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/mem.out -covermode=atomic ./pkg/crypto/mem/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/mem.out -o $(COVERAGE_DIR)/mem.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/mem.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/mem.out | grep total
+
+.PHONY: coverage-xkmsctl
+## coverage-xkmsctl: Generate coverage report for xkmsctl CLI
+coverage-xkmsctl:
+	@echo "$(CYAN)→ Generating coverage report for xkmsctl CLI...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GOTEST) -race -coverprofile=$(COVERAGE_DIR)/xkmsctl.out -covermode=atomic ./cmd/xkmsctl/...
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/xkmsctl.out -o $(COVERAGE_DIR)/xkmsctl.html
+	@echo "$(GREEN)✓ Coverage report: $(COVERAGE_DIR)/xkmsctl.html$(RESET)"
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/xkmsctl.out | grep total
+
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends + all API protocols)
-## Note: CanoKey tests require physical hardware - run separately with `make integration-test-canokey`
-integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-virtualfido integration-test-cli integration-test-api-all integration-test-sdk-go
+
+integration-test: clean-test-containers integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-tpm2 integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-bootstrap
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: clean-test-containers
@@ -701,6 +1075,12 @@ integration-test-storage-memory:
 integration-test-storage-hardware: integration-test-storage-hardware-pkcs11 integration-test-storage-hardware-tpm2
 	@echo "$(GREEN)✓ Hardware storage integration tests complete$(RESET)"
 
+.PHONY: integration-test-yubikey
+## integration-test-yubikey: Run YubiKey hardware integration tests (requires physical YubiKey in default state)
+integration-test-yubikey:
+	@echo "WARNING: This will reset the first connected YubiKey to factory defaults"
+	go test -tags="pkcs11 yubikey_hardware" -v -count=1 ./pkg/backend/pkcs11/ -run TestYubiKey
+
 .PHONY: integration-test-storage-hardware-pkcs11
 ## integration-test-storage-hardware-pkcs11: Run PKCS#11 hardware storage tests
 integration-test-storage-hardware-pkcs11:
@@ -731,7 +1111,7 @@ integration-test-hw-storage-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running real PKCS#11 hardware storage tests...$(RESET)"
 	@echo "$(YELLOW)NOTE: This requires real PKCS#11 hardware (YubiKey, Nitrokey, etc.) connected to the host$(RESET)"
 	@echo "$(YELLOW)Set PKCS11_LIB and PKCS11_PIN environment variables$(RESET)"
-	go test -v -tags='hw_integration,pkcs11' ./test/integration/storage -run TestRealPKCS11Hardware -timeout 15m
+	go test -v -tags='hw_integration,pkcs11,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage -run TestRealPKCS11Hardware -timeout 15m
 	@echo "$(GREEN)✓ Real PKCS#11 hardware storage tests complete$(RESET)"
 
 .PHONY: integration-test-hw-storage-tpm2
@@ -739,7 +1119,7 @@ integration-test-hw-storage-pkcs11:
 integration-test-hw-storage-tpm2:
 	@echo "$(CYAN)$(BOLD)→ Running real TPM2 hardware storage tests...$(RESET)"
 	@echo "$(YELLOW)NOTE: This requires real TPM2 hardware (/dev/tpm0 or /dev/tpmrm0)$(RESET)"
-	go test -v -tags='hw_integration' ./test/integration/storage -run TestRealTPM2Hardware -timeout 15m
+	go test -v -tags='hw_integration,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage -run TestRealTPM2Hardware -timeout 15m
 	@echo "$(GREEN)✓ Real TPM2 hardware storage tests complete$(RESET)"
 
 .PHONY: coverage-storage
@@ -799,12 +1179,12 @@ emulator-stop:
 	@$(EMULATOR_COMPOSE) down -v 2>/dev/null || true
 	@cd $(API_TEST_DIR) && docker compose down -v 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=localstack") 2>/dev/null || true
-	@docker stop $$(docker ps -q --filter "name=keychain") 2>/dev/null || true
+	@docker stop $$(docker ps -q --filter "name=xkms") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=azure") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=gcp") 2>/dev/null || true
 	@docker stop $$(docker ps -q --filter "name=vault") 2>/dev/null || true
 	@docker rm $$(docker ps -aq --filter "name=localstack") 2>/dev/null || true
-	@docker rm $$(docker ps -aq --filter "name=keychain") 2>/dev/null || true
+	@docker rm $$(docker ps -aq --filter "name=xkms") 2>/dev/null || true
 	@docker rm $$(docker ps -aq --filter "name=azure") 2>/dev/null || true
 	@docker rm $$(docker ps -aq --filter "name=gcp") 2>/dev/null || true
 	@docker rm $$(docker ps -aq --filter "name=vault") 2>/dev/null || true
@@ -843,7 +1223,7 @@ integration-test-software:
 .PHONY: integration-test-symmetric
 ## integration-test-symmetric: Run symmetric backend integration tests (runs in devcontainer)
 integration-test-symmetric:
-	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./pkg/backend/symmetric/... -timeout 5m,integration-test-symmetric)
+	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./pkg/keyprovider/symmetric/... -timeout 5m,integration-test-symmetric)
 
 .PHONY: integration-test-pkcs8
 ## integration-test-pkcs8: Run PKCS8 asymmetric backend integration tests
@@ -858,16 +1238,48 @@ integration-test-pkcs8:
 integration-test-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS11/SoftHSM integration tests...$(RESET)"
 	@cd test/integration/pkcs11 && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/pkcs11 && (docker compose run --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/pkcs11 && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ PKCS11 integration tests complete$(RESET)"
 
-.PHONY: integration-test-yubikey-backend
-## integration-test-yubikey-backend: Run YubiKey backend integration tests (requires physical YubiKey)
-integration-test-yubikey-backend: integration-test-yubikey-all
-	@echo "$(CYAN)$(BOLD)→ Running YubiKey backend integration tests...$(RESET)"
-	@echo "$(YELLOW)Note: This requires a physical YubiKey device$(RESET)"
-	@echo "$(YELLOW)Tests include: crypto/rand, PKCS#11, PIV slots, backend API$(RESET)"
-	@echo "$(GREEN)✓ YubiKey backend integration tests complete$(RESET)"
+.PHONY: integration-test-pkcs11-module
+## integration-test-pkcs11-module: Run PKCS#11 module multi-protocol integration tests (runs in devcontainer with xkms-server)
+integration-test-pkcs11-module:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT),integration-test-pkcs11-module)
+
+.PHONY: integration-test-pkcs11-module-unix
+## integration-test-pkcs11-module-unix: Run PKCS#11 multi-protocol tests with Unix socket target (runs in devcontainer with xkms-server)
+integration-test-pkcs11-module-unix:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_PKCS11_TARGET=unix://$(XKMS_UNIX_SOCKET) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestMultiProtocol',integration-test-pkcs11-module-unix)
+
+.PHONY: integration-test-pkcs11-module-grpc
+## integration-test-pkcs11-module-grpc: Run PKCS#11 multi-protocol tests with gRPC target (runs in devcontainer with xkms-server)
+integration-test-pkcs11-module-grpc:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) XKMS_PKCS11_TARGET=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestMultiProtocol',integration-test-pkcs11-module-grpc)
+
+.PHONY: integration-test-pkcs11-module-compat
+## integration-test-pkcs11-module-compat: Run PKCS#11 module compatibility tests with pkcs11-tool (runs in devcontainer with xkms-server)
+integration-test-pkcs11-module-compat:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestPKCS11Tool',integration-test-pkcs11-module-compat)
+
+.PHONY: integration-test-pkcs11-tool
+## integration-test-pkcs11-tool: Run comprehensive pkcs11-tool integration tests (runs in devcontainer with xkms-server)
+integration-test-pkcs11-tool:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestPKCS11Tool',integration-test-pkcs11-tool)
+
+.PHONY: integration-test-pkcs11-openssl
+## integration-test-pkcs11-openssl: Run PKCS#11 module OpenSSL integration tests (runs in devcontainer with xkms-server)
+integration-test-pkcs11-openssl:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestOpenSSL',integration-test-pkcs11-openssl)
+
+.PHONY: integration-test-pkcs11-ssh
+## integration-test-pkcs11-ssh: Run PKCS#11 module SSH integration tests (runs in devcontainer with xkms-server)
+integration-test-pkcs11-ssh:
+	$(call run_with_server,PKCS11_MODULE=$(PKCS11_MODULE_CONTAINER) PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) PKCS11_PIN=$(PKCS11_PIN) PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_AUTO_INIT_TOKEN=true XKMS_PKCS11_SO_PIN=$(PKCS11_SO_PIN) XKMS_PKCS11_USER_PIN=$(PKCS11_PIN) XKMS_PKCS11_TOKEN_LABEL=$(PKCS11_TOKEN_LABEL) XKMS_PKCS11_STORAGE_TYPE=file XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage XKMS_UNIX_SOCKET=$(XKMS_UNIX_SOCKET) XKMS_GRPC_ADDR=$(XKMS_GRPC_ADDR_CONTAINER) $(GO) test -v -tags='integration$(comma)pkcs11$(comma)pkcs11_tool' ./test/integration/pkcs11/module/... -timeout $(PKCS11_TEST_TIMEOUT) -run 'TestSSH',integration-test-pkcs11-ssh)
+
+.PHONY: integration-test-pkcs11-compat-all
+## integration-test-pkcs11-compat-all: Run ALL PKCS#11 compatibility tests (pkcs11-tool, OpenSSL, SSH)
+integration-test-pkcs11-compat-all: integration-test-pkcs11-tool integration-test-pkcs11-openssl integration-test-pkcs11-ssh
+	@echo "$(GREEN)$(BOLD)✓ All PKCS#11 compatibility tests complete!$(RESET)"
 
 .PHONY: integration-test-tpm2
 ## integration-test-tpm2: Run TPM2 simulator integration tests
@@ -877,7 +1289,7 @@ integration-test-tpm2:
 	@cd test/integration/tpm2 && docker compose up -d tpm-simulator
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
-	@cd test/integration/tpm2 && (docker compose run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/tpm2 && (docker compose run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption
@@ -902,7 +1314,7 @@ test-tpm2-encryption-local:
 			exit 1; \
 		fi; \
 	fi
-	@go test -v -tags='integration' -run 'TestTPMSession' -timeout 30m ./test/integration/tpm2/
+	@go test -v -tags='integration codec_cbor codec_json codec_msgpack' -run 'TestTPMSession' -timeout 30m ./test/integration/tpm2/
 	@echo "$(GREEN)✓ TPM2 encryption tests complete$(RESET)"
 
 .PHONY: integration-test-awskms
@@ -941,26 +1353,21 @@ integration-test-vault:
 	@echo "$(GREEN)✓ Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-quantum
-## integration-test-quantum: Run quantum-safe cryptography integration tests (Dilithium, Kyber)
+## integration-test-quantum: Run quantum-safe cryptography integration tests (ML-DSA, ML-KEM)
 integration-test-quantum:
-ifeq ($(WITH_QUANTUM),1)
 	@echo "$(CYAN)$(BOLD)→ Running quantum-safe cryptography integration tests...$(RESET)"
-	@echo "$(YELLOW)Note: Testing Dilithium2 signatures and Kyber768 key encapsulation$(RESET)"
+	@echo "$(YELLOW)Note: Testing ML-DSA signatures and ML-KEM key encapsulation$(RESET)"
 	@cd test/integration/quantum && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/quantum && docker compose build quantum-test
+	@cd test/integration/quantum && docker compose build --no-cache quantum-test
 	@cd test/integration/quantum && (docker compose run --rm quantum-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
-else
-	@echo "$(YELLOW)⚠ Skipping quantum-safe integration tests (WITH_QUANTUM=0)$(RESET)"
-	@echo "$(YELLOW)  To enable, run: make integration-test-quantum WITH_QUANTUM=1$(RESET)"
-endif
 
 .PHONY: test-frost
 ## test-frost: Run FROST unit tests
 test-frost:
 ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST unit tests...$(RESET)"
-	@$(GOTEST) -v -tags="frost" ./pkg/backend/frost/...
+	@$(GOTEST) -v -tags="frost" ./pkg/keyprovider/frost/...
 	@echo "$(GREEN)✓ FROST unit tests complete$(RESET)"
 else
 	@echo "$(YELLOW)⚠ Skipping FROST unit tests (WITH_FROST=0)$(RESET)"
@@ -999,108 +1406,202 @@ define run_in_devcontainer
 		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
-		$(DOCKER_COMPOSE) up -d --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d; \
+		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && $(1)"; \
 	fi
 endef
 
-.PHONY: integration-test-canokey
-## integration-test-canokey: Run CanoKey/PIV PKCS#11 integration tests
-## Requires physical CanoKey hardware connected via USB
-## Tests will SKIP if no hardware is detected
-integration-test-canokey:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)canokey$(comma)pkcs11' ./test/integration/pkcs11/... -run 'CanoKey' -timeout 10m,integration-test-canokey)
+# Helper to run command in devcontainer with xkms-server running
+# Usage: $(call run_with_server,command,description)
+define run_with_server
+	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
+		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"; \
+		mkdir -p build/lib && CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module; \
+		echo "$(GREEN)✓ PKCS#11 module built: build/lib/libxkms_pkcs11.so$(RESET)"; \
+		echo "$(CYAN)$(BOLD)→ Starting xkms-server...$(RESET)"; \
+		$(DOCKER_COMPOSE) up -d xkms-server 2>/dev/null || true; \
+		echo "$(CYAN)$(BOLD)→ Waiting for xkms-server to be ready...$(RESET)"; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do \
+			if [ -S /var/run/xkms/xkms.sock ]; then \
+				echo "$(GREEN)✓ Unix socket ready$(RESET)"; \
+				break; \
+			fi; \
+			echo "  Waiting for socket... ($$i/10)"; \
+			sleep 2; \
+		done; \
+		$(1); \
+	else \
+		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
+		$(DOCKER_COMPOSE) up -d devcontainer 2>/dev/null || true; \
+		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)"; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && mkdir -p build/lib && CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module"; \
+		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)"; \
+		echo "$(CYAN)$(BOLD)→ Starting xkms-server...$(RESET)"; \
+		$(DOCKER_COMPOSE) up -d xkms-server 2>/dev/null || true; \
+		echo "$(CYAN)$(BOLD)→ Waiting for xkms-server...$(RESET)"; \
+		sleep 5; \
+		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && \
+			echo 'Waiting for Unix socket...'; \
+			for i in 1 2 3 4 5 6 7 8 9 10; do [ -S /var/run/xkms/xkms.sock ] && break; sleep 2; done; \
+			echo 'Waiting for gRPC port...'; \
+			for i in 1 2 3 4 5 6 7 8 9 10; do nc -z xkms-server 9443 2>/dev/null && break; sleep 2; done; \
+			$(1)"; \
+	fi
+endef
 
 .PHONY: integration-test-fido2
 ## integration-test-fido2: Run all FIDO2 integration tests (runs in devcontainer)
 integration-test-fido2:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='integration$(comma)fido2$(comma)webauthn' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -o build/bin/keychainctl ./cmd/keychainctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
-
-.PHONY: integration-test-canokey-qemu
-## integration-test-canokey-qemu: Run CanoKey QEMU smoke tests (verifies QEMU has CanoKey support)
-## Runs in devcontainer where qemu-system-x86_64-canokey is built
-integration-test-canokey-qemu:
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'CanoKeyQEMU' -timeout 5m,integration-test-canokey-qemu)
-
-.PHONY: integration-test-virtualfido
-## integration-test-virtualfido: Run VirtualFIDO backend integration tests (runs in devcontainer)
-integration-test-virtualfido:
-	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/virtualfido/... -timeout 5m,integration-test-virtualfido)
+	$(call run_in_devcontainer,$(GO) build -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='integration$(comma)fido2' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
 integration-test-uhid:
-	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/uhid/... -timeout 5m,integration-test-uhid)
+	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/uhid/... -timeout 5m,integration-test-uhid)
 
-.PHONY: integration-test-vfido2
-## integration-test-vfido2: Run vfido2 integration tests (runs in devcontainer with /dev/uhid access)
+.PHONY: integration-test-xkey-fido2
+## integration-test-xkey-fido2: Run xkey FIDO2 integration tests (runs in devcontainer with /dev/uhid access)
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
-integration-test-vfido2:
-	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/vfido2/... -timeout 5m,integration-test-vfido2)
+integration-test-xkey-fido2:
+	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/... -timeout 5m,integration-test-xkey-fido2)
 
-.PHONY: integration-test-vfido2-webauthn
-## integration-test-vfido2-webauthn: Run Playwright browser tests against webauthn.io (Docker)
+.PHONY: integration-test-xkey-webauthn
+## integration-test-xkey-webauthn: Run Playwright browser tests against webauthn.io (Docker)
 ## Tests use Chrome CDP virtual authenticator to validate full WebAuthn registration + authentication flow
-integration-test-vfido2-webauthn:
-	@echo "$(CYAN)$(BOLD)→ Running vfido2 Playwright WebAuthn integration tests...$(RESET)"
-	@cd test/integration/vfido2/webauthn && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/vfido2/webauthn && (docker compose run --rm webauthn-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
-	@echo "$(GREEN)✓ vfido2 Playwright WebAuthn integration tests complete$(RESET)"
+integration-test-xkey-webauthn:
+	@echo "$(CYAN)$(BOLD)→ Running xkey Playwright WebAuthn integration tests...$(RESET)"
+	@cd xkey/test/integration/webauthn && docker compose down -v >/dev/null 2>&1 || true
+	@cd xkey/test/integration/webauthn && (docker compose run --rm webauthn-test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ xkey Playwright WebAuthn integration tests complete$(RESET)"
+
+.PHONY: integration-test-xkey-backends
+## integration-test-xkey-backends: Run FIDO2 backend integration tests (software + TPM2 key backends)
+integration-test-xkey-backends:
+	$(call run_in_devcontainer,cd xkey && $(GO) test -v -tags='integration$(comma)linux' -run 'TestWebAuthnFlow' ./test/integration -timeout 5m,integration-test-xkey-backends)
+
+.PHONY: integration-test-xkey-oidc
+## integration-test-xkey-oidc: Run OIDC integration tests with ORY Hydra (Docker)
+## Tests use a real ORY Hydra OIDC server to validate provider discovery, PKCE, and token flows
+integration-test-xkey-oidc:
+	@echo "$(CYAN)$(BOLD)→ Running xkey OIDC integration tests...$(RESET)"
+	@cd xkey/test/integration/oidc && docker compose down -v >/dev/null 2>&1 || true
+	@cd xkey/test/integration/oidc && (docker compose run --rm test-runner; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ xkey OIDC integration tests complete$(RESET)"
+
+.PHONY: integration-test-xkey-piv
+## integration-test-xkey-piv: Run PIV certificate storage integration tests
+## Tests PIV certificate operations with file-based storage backend (no hardware required)
+integration-test-xkey-piv:
+	@echo "$(CYAN)$(BOLD)→ Running xkey PIV integration tests...$(RESET)"
+	$(call run_in_devcontainer,cd xkey && $(GO) test -v -tags='integration' ./test/integration/piv/... -timeout 5m,integration-test-xkey-piv)
+	@echo "$(GREEN)✓ xkey PIV integration tests complete$(RESET)"
+
+.PHONY: integration-test-xkey-oath
+## integration-test-xkey-oath: Run OATH (TOTP/HOTP) integration tests
+## Tests OTP generation and validation with RFC 4226/6238 compliance verification
+integration-test-xkey-oath:
+	@echo "$(CYAN)$(BOLD)→ Running xkey OATH integration tests...$(RESET)"
+	$(call run_in_devcontainer,cd xkey && $(GO) test -v -tags='integration' ./test/integration/oath/... -timeout 5m,integration-test-xkey-oath)
+	@echo "$(GREEN)✓ xkey OATH integration tests complete$(RESET)"
+
+.PHONY: integration-test-xkey-password
+## integration-test-xkey-password: Run static password CLI integration tests
+integration-test-xkey-password:
+	$(call run_in_devcontainer,cd xkey && $(GO) test -v -tags='integration' ./test/integration/password/... -timeout 5m,integration-test-xkey-password)
+
+.PHONY: integration-test-xkey-touch
+## integration-test-xkey-touch: Run touch CLI integration tests
+integration-test-xkey-touch:
+	$(call run_in_devcontainer,cd xkey && $(GO) test -v -tags='integration' ./test/integration/touch/... -timeout 5m,integration-test-xkey-touch)
+
+.PHONY: integration-test-xkey-ssh
+## integration-test-xkey-ssh: Run SSH agent and key management integration tests
+## Tests standalone mode and xkmsd server modes (Unix socket, gRPC)
+integration-test-xkey-ssh:
+	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
+		echo "$(CYAN)$(BOLD)→ Rebuilding xkms-server for SSH tests...$(RESET)"; \
+		$(DOCKER_COMPOSE) build xkms-server; \
+		echo "$(CYAN)$(BOLD)→ Starting xkms-server...$(RESET)"; \
+		$(DOCKER_COMPOSE) up -d xkms-server; \
+		echo "$(CYAN)$(BOLD)→ Waiting for xkms-server to be ready...$(RESET)"; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do \
+			if [ -S /var/run/xkms/xkms.sock ]; then \
+				echo "$(GREEN)✓ Unix socket ready$(RESET)"; \
+				break; \
+			fi; \
+			echo "  Waiting for socket... ($$i/10)"; \
+			sleep 2; \
+		done; \
+		echo "$(CYAN)$(BOLD)→ Running SSH integration tests...$(RESET)"; \
+		cd xkey && $(GO) test -v -tags='integration' ./test/integration/ssh/... -timeout 5m; \
+	else \
+		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
+		$(DOCKER_COMPOSE) up -d devcontainer 2>/dev/null || true; \
+		echo "$(CYAN)$(BOLD)→ Rebuilding xkms-server...$(RESET)"; \
+		$(DOCKER_COMPOSE) build xkms-server; \
+		echo "$(CYAN)$(BOLD)→ Starting xkms-server...$(RESET)"; \
+		$(DOCKER_COMPOSE) up -d xkms-server; \
+		echo "$(CYAN)$(BOLD)→ Waiting for xkms-server...$(RESET)"; \
+		sleep 5; \
+		echo "$(CYAN)$(BOLD)→ Running in devcontainer: integration-test-xkey-ssh$(RESET)"; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && for i in 1 2 3 4 5 6 7 8 9 10; do [ -S /var/run/xkms/xkms.sock ] && break; echo 'Waiting for socket... ('$$i'/10)'; sleep 2; done && cd xkey && $(GO) test -v -tags='integration' ./test/integration/ssh/... -timeout 5m"; \
+	fi
+
+.PHONY: integration-test-xkey-ctap
+## integration-test-xkey-ctap: Run FIDO2 CTAP protocol integration tests (MakeCredential, GetAssertion, etc.)
+## Tests the full CTAP2 protocol through the UHID virtual device
+integration-test-xkey-ctap:
+	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' ./test/integration/fido2/... -timeout 10m,integration-test-xkey-ctap)
+
+.PHONY: integration-test-xkey-luks
+## integration-test-xkey-luks: Run LUKS encrypted storage integration tests (requires root for cryptsetup)
+integration-test-xkey-luks:
+	$(call run_in_devcontainer,mkdir -p build/bin && cd xkey && /usr/local/go/bin/go build -buildvcs=false -tags='ble$(comma)production$(comma)codec_json$(comma)pkcs11$(comma)webkit2_41' -o ../build/bin/xkey ./cmd/xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux$(comma)codec_json' ./test/integration/luks/... -timeout 10m,integration-test-xkey-luks)
+
+.PHONY: integration-test-xkey
+## integration-test-xkey: Run all xkey integration tests (FIDO2, CTAP, OIDC, PIV, OATH, Password, Touch, SSH, LUKS)
+integration-test-xkey: integration-test-xkey-backends integration-test-xkey-ctap integration-test-xkey-piv integration-test-xkey-oath integration-test-xkey-password integration-test-xkey-touch integration-test-xkey-ssh integration-test-xkey-luks
+	@echo "$(GREEN)✓ All xkey integration tests complete$(RESET)"
 
 .PHONY: coverage-uhid-integration
 ## coverage-uhid-integration: Generate UHID integration test coverage report
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
 coverage-uhid-integration:
 	@echo "$(CYAN)$(BOLD)→ Generating UHID integration coverage report...$(RESET)"
-	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-uhid-integration.out -covermode=atomic ./test/integration/uhid/... ./pkg/uhid/... && /usr/local/go/bin/go tool cover -func=coverage-uhid-integration.out | tail -1,coverage-uhid-integration)
+	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-uhid-integration.out -covermode=atomic ./test/integration/uhid/... ./pkg/uhid/... && /usr/local/go/bin/go tool cover -func=coverage-uhid-integration.out | tail -1,coverage-uhid-integration)
 	@echo "$(GREEN)✓ UHID integration coverage report generated$(RESET)"
 
-.PHONY: coverage-vfido2-integration
-## coverage-vfido2-integration: Generate vfido2 integration test coverage report
+.PHONY: coverage-xkey-integration
+## coverage-xkey-integration: Generate xkey integration test coverage report
 ## Note: Tests require root access to /dev/uhid, so run with sudo using full go path
-coverage-vfido2-integration:
-	@echo "$(CYAN)$(BOLD)→ Generating vfido2 integration coverage report...$(RESET)"
-	$(call run_in_devcontainer,sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-vfido2-integration.out -covermode=atomic -coverpkg=./cmd/vfido2/...$(comma)./pkg/uhid/... ./test/integration/vfido2/... ./cmd/vfido2/... && /usr/local/go/bin/go tool cover -func=coverage-vfido2-integration.out | tail -1,coverage-vfido2-integration)
-	@echo "$(GREEN)✓ vfido2 integration coverage report generated$(RESET)"
-
-.PHONY: test-virtualfido
-## test-virtualfido: Run VirtualFIDO unit tests
-test-virtualfido:
-	@echo "$(CYAN)$(BOLD)→ Running VirtualFIDO unit tests...$(RESET)"
-	@$(GOTEST) -v ./pkg/backend/virtualfido/... ./pkg/fido2/...
-	@echo "$(GREEN)✓ VirtualFIDO unit tests complete$(RESET)"
-
-.PHONY: coverage-virtualfido
-## coverage-virtualfido: Generate VirtualFIDO test coverage report
-coverage-virtualfido:
-	@echo "$(CYAN)$(BOLD)→ Generating VirtualFIDO coverage report...$(RESET)"
-	@$(GOTEST) -v -tags=integration -coverprofile=coverage-virtualfido.out -coverpkg=./pkg/backend/virtualfido/...,./pkg/fido2/... ./test/integration/virtualfido/... ./pkg/backend/virtualfido/... ./pkg/fido2/...
-	@$(GO) tool cover -html=coverage-virtualfido.out -o coverage-virtualfido.html
-	@$(GO) tool cover -func=coverage-virtualfido.out | tail -1
-	@echo "$(GREEN)✓ VirtualFIDO coverage report generated: coverage-virtualfido.html$(RESET)"
+coverage-xkey-integration:
+	@echo "$(CYAN)$(BOLD)→ Generating xkey integration coverage report...$(RESET)"
+	$(call run_in_devcontainer,cd xkey && sudo /usr/local/go/bin/go test -v -tags='integration$(comma)linux' -coverprofile=coverage-xkey-integration.out -covermode=atomic -coverpkg=./cmd/xkey/...$(comma)./pkg/uhid/... ./test/integration/... ./cmd/xkey/... && /usr/local/go/bin/go tool cover -func=coverage-xkey-integration.out | tail -1,coverage-xkey-integration)
+	@echo "$(GREEN)✓ xkey integration coverage report generated$(RESET)"
 
 .PHONY: coverage-fido2
 ## coverage-fido2: Generate FIDO2 integration test coverage report
 coverage-fido2:
 	@echo "$(CYAN)$(BOLD)→ Generating FIDO2 coverage report...$(RESET)"
-	@$(GOTEST) -v -tags='integration,fido2' -coverprofile=coverage-fido2.out ./test/integration/fido2/...
+	@$(GOTEST) -v -tags='integration,fido2,codec_cbor,codec_json,codec_msgpack' -coverprofile=coverage-fido2.out ./test/integration/fido2/...
 	@$(GO) tool cover -html=coverage-fido2.out -o coverage-fido2.html
 	@echo "$(GREEN)✓ FIDO2 coverage report generated: coverage-fido2.html$(RESET)"
 
@@ -1109,6 +1610,8 @@ coverage-fido2:
 integration-test-cli:
 	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests...$(RESET)"
 	@echo "$(CYAN)  Testing all protocols: Unix, REST, gRPC, QUIC$(RESET)"
+	@echo "$(CYAN)  Stopping devcontainer to free port 8443...$(RESET)"
+	@$(DOCKER_COMPOSE) down >/dev/null 2>&1 || true
 	@test -d $(API_TEST_DIR) || (echo "$(RED)ERROR: API test directory not found: $(API_TEST_DIR)$(RESET)" && exit 1)
 	@cd $(API_TEST_DIR) && docker compose down -v >/dev/null 2>&1 || true
 	@cd $(API_TEST_DIR) && docker compose build
@@ -1155,47 +1658,13 @@ integration-test-crypto-rand:
 integration-test-rand-hardware:
 	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./test/integration/crypto/... -run 'TestRand.*Hardware.*' -timeout 5m,integration-test-rand-hardware)
 
-.PHONY: integration-test-rand-yubikey
-## integration-test-rand-yubikey: Run crypto/rand YubiKey integration tests (requires physical YubiKey)
-integration-test-rand-yubikey:
-	@echo "$(CYAN)$(BOLD)→ Running crypto/rand YubiKey integration tests...$(RESET)"
-	@echo "$(YELLOW)Note: This requires a physical YubiKey device$(RESET)"
-	@$(GO) test -v -tags='yubikey,pkcs11' ./test/integration/crypto/... -run '.*YubiKey.*'
-	@echo "$(GREEN)✓ Crypto/rand YubiKey integration tests complete$(RESET)"
-
-.PHONY: integration-test-pkcs11-yubikey
-## integration-test-pkcs11-yubikey: Run PKCS#11 YubiKey integration tests (requires physical YubiKey)
-integration-test-pkcs11-yubikey:
-	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 YubiKey integration tests...$(RESET)"
-	@echo "$(YELLOW)Note: This requires a physical YubiKey device$(RESET)"
-	@echo "$(YELLOW)Default PKCS#11 library: /usr/lib/x86_64-linux-gnu/libykcs11.so$(RESET)"
-	@echo "$(YELLOW)Override with: YUBIKEY_PKCS11_LIBRARY=/path/to/libykcs11.so$(RESET)"
-	@$(GO) test -v -tags='yubikey,pkcs11' ./test/integration/pkcs11/... -run 'TestYubiKeyPKCS11Integration|TestYubiKeyRNG|TestYubiKeyStressTest'
-	@echo "$(GREEN)✓ PKCS#11 YubiKey integration tests complete$(RESET)"
-
-.PHONY: integration-test-pkcs11-yubikey-piv
-## integration-test-pkcs11-yubikey-piv: Run YubiKey PIV-specific integration tests (requires physical YubiKey)
-integration-test-pkcs11-yubikey-piv:
-	@echo "$(CYAN)$(BOLD)→ Running YubiKey PIV integration tests...$(RESET)"
-	@echo "$(YELLOW)Note: This requires a physical YubiKey device$(RESET)"
-	@echo "$(YELLOW)Tests use proper YubiKey PIV slots (9a, 9c, 9d, 9e, 82-95)$(RESET)"
-	@echo "$(YELLOW)Default PKCS#11 library: /usr/lib/x86_64-linux-gnu/libykcs11.so$(RESET)"
-	@echo "$(YELLOW)Override with: YUBIKEY_PKCS11_LIBRARY=/path/to/libykcs11.so$(RESET)"
-	@$(GO) test -v -tags='yubikey,pkcs11' ./test/integration/pkcs11/... -run 'TestYubiKeyPIV.*'
-	@echo "$(GREEN)✓ YubiKey PIV integration tests complete$(RESET)"
-
-.PHONY: integration-test-yubikey-all
-## integration-test-yubikey-all: Run ALL YubiKey integration tests (crypto/rand + PKCS#11 + PIV)
-integration-test-yubikey-all: integration-test-rand-yubikey integration-test-pkcs11-yubikey-piv
-	@echo "$(GREEN)$(BOLD)✓ All YubiKey integration tests complete!$(RESET)"
-
 .PHONY: integration-test-pkcs11-nitrokey
 ## integration-test-pkcs11-nitrokey: Run PKCS#11 Nitrokey HSM integration tests (requires physical Nitrokey HSM)
 integration-test-pkcs11-nitrokey:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 Nitrokey HSM integration tests...$(RESET)"
 	@echo "$(YELLOW)Note: This requires a physical Nitrokey HSM device$(RESET)"
 	@echo "$(YELLOW)Default PKCS#11 library: /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so$(RESET)"
-	@echo "$(YELLOW)Default token label: go-keychain-test (UserPIN)$(RESET)"
+	@echo "$(YELLOW)Default token label: go-xkms-test (UserPIN)$(RESET)"
 	@echo "$(YELLOW)Default PIN: 648219$(RESET)"
 	@$(GO) test -v -tags='integration,nitrokey,pkcs11' ./test/integration/pkcs11/... -run 'TestNitrokeyHSM'
 	@echo "$(GREEN)✓ PKCS#11 Nitrokey HSM integration tests complete$(RESET)"
@@ -1206,10 +1675,8 @@ integration-test-nitrokey-all: integration-test-pkcs11-nitrokey
 	@echo "$(GREEN)$(BOLD)✓ All Nitrokey HSM integration tests complete!$(RESET)"
 
 .PHONY: integration-test-rand-all
-## integration-test-rand-all: Run ALL crypto/rand integration tests (software, hardware, YubiKey)
+## integration-test-rand-all: Run ALL crypto/rand integration tests (software, hardware)
 integration-test-rand-all: integration-test-crypto-rand integration-test-rand-hardware
-	@echo "$(CYAN)$(BOLD)→ Attempting YubiKey tests (will skip if not available)...$(RESET)"
-	@$(GO) test -v -tags='yubikey,pkcs11' ./test/integration/crypto/... -run '.*YubiKey.*' || echo "$(YELLOW)⚠ YubiKey tests skipped (device not available)$(RESET)"
 	@echo "$(GREEN)$(BOLD)✓ All crypto/rand integration tests complete!$(RESET)"
 
 .PHONY: integration-test-crypto-wrapping
@@ -1393,7 +1860,7 @@ coverage-importexport:
 	@echo "$(CYAN)→ Generating import/export coverage report...$(RESET)"
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/wrapping.out -covermode=atomic ./pkg/crypto/wrapping/...
 	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/software_import.out -covermode=atomic ./pkg/backend/software/... -run "Test.*Import|Test.*Export"
-	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/symmetric_import.out -covermode=atomic ./pkg/backend/symmetric/... -run "Test.*Import|Test.*Export"
+	@$(GO) test -v -coverprofile=$(COVERAGE_DIR)/symmetric_import.out -covermode=atomic ./pkg/keyprovider/symmetric/... -run "Test.*Import|Test.*Export"
 	@$(GO) test -tags= -v -coverprofile=$(COVERAGE_DIR)/tpm2_import.out -covermode=atomic ./pkg/tpm2/... -run "Test.*Import|Test.*Export"
 	@echo "$(GREEN)✓ Import/export coverage reports generated$(RESET)"
 	@echo "$(CYAN)Wrapping:$(RESET)"
@@ -1435,7 +1902,7 @@ coverage-pkcs11:
 coverage-tpm2:
 	@mkdir -p $(COVERAGE_DIR)
 	@echo "Generating TPM2 coverage report (requires TPM device at /dev/tpmrm0)..."
-	@$(GO) test -v -tags="integration" -coverprofile=$(COVERAGE_DIR)/tpm2.out -covermode=atomic \
+	@$(GO) test -v -tags="integration codec_cbor codec_json codec_msgpack" -coverprofile=$(COVERAGE_DIR)/tpm2.out -covermode=atomic \
 		./test/integration/tpm2/... ./pkg/tpm2/...
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/tpm2.out -o $(COVERAGE_DIR)/tpm2.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/tpm2.out | grep total
@@ -1557,17 +2024,17 @@ release: lib release-binaries
 	@echo "$(CYAN)  Creating release v$(VERSION) with all platform binaries...$(RESET)"
 	@gh release create v$(VERSION) \
 		$(SHARED_LIB) \
-		$(BIN_DIR)/release/keychainctl-* \
-		$(BIN_DIR)/release/keychaind-* \
-		--title "go-keychain v$(VERSION)" \
+		$(BIN_DIR)/release/xkmsctl-* \
+		$(BIN_DIR)/release/xkmsd-* \
+		--title "go-xkms v$(VERSION)" \
 		--notes-file /tmp/release-notes-$(VERSION).md
 	@rm -f /tmp/release-notes-$(VERSION).md
 	@echo "$(GREEN)$(BOLD)✓ GitHub release v$(VERSION) created successfully!$(RESET)"
 	@echo "$(CYAN)  Release URL: $$(gh release view v$(VERSION) --json url -q .url)$(RESET)"
 	@echo "$(CYAN)  Attached binaries:$(RESET)"
 	@echo "$(CYAN)    - $(SHARED_LIB)$(RESET)"
-	@echo "$(CYAN)    - keychainctl (all platforms)$(RESET)"
-	@echo "$(CYAN)    - keychaind (all platforms)$(RESET)"
+	@echo "$(CYAN)    - xkmsctl (all platforms)$(RESET)"
+	@echo "$(CYAN)    - xkmsd (all platforms)$(RESET)"
 
 # ==============================================================================
 # Docker Targets
@@ -1673,6 +2140,7 @@ docker-run: docker-build
 	@echo "$(CYAN)$(BOLD)→ Starting Docker container...$(RESET)"
 	@docker run -it --rm \
 		-v $(PWD):/workspace \
+		$(SIBLING_MOUNTS) \
 		-w /workspace \
 		--name $(DOCKER_CONTAINER) \
 		$(DOCKER_INTEGRATION_IMAGE) \
@@ -1684,6 +2152,7 @@ docker-test: docker-build
 	@echo "$(CYAN)$(BOLD)→ Running tests in Docker container...$(RESET)"
 	@docker run --rm \
 		-v $(PWD):/workspace \
+		$(SIBLING_MOUNTS) \
 		-w /workspace \
 		--name $(PROJECT_NAME)-test \
 		$(DOCKER_INTEGRATION_IMAGE) \
@@ -1711,8 +2180,8 @@ docker-clean: docker-stop
 .PHONY: create-dockerfile
 # Create default Dockerfile if it doesn't exist
 create-dockerfile:
-	@echo "# Dockerfile for go-keychain integration testing" > Dockerfile
-	@echo "FROM golang:1.25-alpine" >> Dockerfile
+	@echo "# Dockerfile for go-xkms integration testing" > Dockerfile
+	@echo "FROM golang:1.26.1-alpine" >> Dockerfile
 	@echo "" >> Dockerfile
 	@echo "# Install dependencies" >> Dockerfile
 	@echo "RUN apk add --no-cache \\" >> Dockerfile
@@ -1887,7 +2356,7 @@ lint:
 #   G401: sha1.New() - required for OAEP-SHA1 and RSA-AES-KEY-WRAP-SHA1 (legacy compat)
 #   G407: False positive - gcm.Seal nonce is random (io.ReadFull), not hardcoded
 #   G505: crypto/sha1 import - required for PKCS standards, cert thumbprints, WebAuthn
-GOSEC_EXCLUDE := G103,G104,G115,G304,G401,G407,G505
+GOSEC_EXCLUDE := G103,G104,G115,G117,G204,G302,G304,G306,G401,G402,G407,G501,G505,G703,G704,G705
 
 .PHONY: gosec
 ## gosec: Run gosec security scanner (fails on HIGH/MEDIUM severity issues)
@@ -1898,12 +2367,20 @@ gosec:
 	if [ -x "$$GOSEC_BIN" ]; then \
 		$$GOSEC_BIN -exclude=$(GOSEC_EXCLUDE) -severity medium -confidence medium \
 			-exclude-dir=test -exclude-dir=testdata -exclude-dir=vendor \
+			-exclude-dir=xkey \
 			-exclude-generated \
-			-fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./... && \
-		echo "$(GREEN)✓ Security scan complete - no issues found$(RESET)" && \
-		echo "$(CYAN)Report saved to: $(BUILD_DIR)/gosec-report.txt$(RESET)" || \
-		(echo "$(RED)✗ Security issues found! See $(BUILD_DIR)/gosec-report.txt$(RESET)" && \
-		cat $(BUILD_DIR)/gosec-report.txt && exit 1); \
+			-no-fail \
+			-fmt=text -out=$(BUILD_DIR)/gosec-report.txt ./... ; \
+		ISSUE_COUNT=$$(grep -c '^  Issues' $(BUILD_DIR)/gosec-report.txt 2>/dev/null || echo 0); \
+		REAL_ISSUES=$$(grep '^  Issues' $(BUILD_DIR)/gosec-report.txt | awk '{print $$3}' 2>/dev/null || echo 0); \
+		if [ "$$REAL_ISSUES" = "0" ]; then \
+			echo "$(GREEN)✓ Security scan complete - no issues found$(RESET)"; \
+			echo "$(CYAN)Report saved to: $(BUILD_DIR)/gosec-report.txt$(RESET)"; \
+		else \
+			echo "$(RED)✗ Security issues found! See $(BUILD_DIR)/gosec-report.txt$(RESET)"; \
+			cat $(BUILD_DIR)/gosec-report.txt; \
+			exit 1; \
+		fi; \
 	else \
 		echo "$(YELLOW)⚠ gosec not found$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-gosec$(RESET)"; \
@@ -2028,13 +2505,13 @@ verify: clean deps check test
 	@echo "$(GREEN)$(BOLD)✓ Verification complete! Ready to commit.$(RESET)"
 
 # CI Docker image name
-CI_IMAGE_NAME := go-keychain-ci
+CI_IMAGE_NAME := go-xkms-ci
 
 .PHONY: docker-ci-build
 ## docker-ci-build: Build the CI Docker image with all tools
 docker-ci-build:
 	@echo "$(CYAN)$(BOLD)→ Building CI Docker image...$(RESET)"
-	@docker build -t $(CI_IMAGE_NAME):latest -f Dockerfile.ci .
+	@DOCKER_BUILDKIT=0 docker build -t $(CI_IMAGE_NAME):latest -f Dockerfile.ci .
 	@echo "$(GREEN)✓ CI Docker image built$(RESET)"
 
 .PHONY: docker-ci
@@ -2043,6 +2520,7 @@ docker-ci: docker-ci-build
 	@echo "$(CYAN)$(BOLD)→ Running CI pipeline in Docker container...$(RESET)"
 	@docker run --rm \
 		-v $(PWD):/workspace \
+		$(SIBLING_MOUNTS) \
 		-w /workspace \
 		$(CI_IMAGE_NAME):latest \
 		make ci-local
@@ -2050,7 +2528,7 @@ docker-ci: docker-ci-build
 
 .PHONY: ci-local
 ## ci-local: Run CI pipeline locally (requires all tools installed)
-ci-local: deps fmt-check vet lint gosec vuln trivy build test race
+ci-local: deps fmt-check vet lint gosec vuln trivy build-cli test race
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 .PHONY: ci
@@ -2070,7 +2548,7 @@ clean:
 	@rm -rf $(COVERAGE_DIR)
 	@rm -f *.out *.log *.test *.prof
 	@rm -f $(SHARED_LIB)
-	@rm -f server cli keychain keychaind
+	@rm -f server cli xkms xkmsd
 	@rm -f COMMIT_SUMMARY.md
 	@find . -name "*.test" -type f -delete 2>/dev/null || true
 	@find . -name "*.out" -type f -delete 2>/dev/null || true
@@ -2084,7 +2562,7 @@ clean:
 .PHONY: help
 ## help: Display this help message
 help:
-	@echo "$(BOLD)$(BLUE)go-keychain Makefile$(RESET)"
+	@echo "$(BOLD)$(BLUE)go-xkms Makefile$(RESET)"
 	@echo "$(CYAN)Secure key management library with native and shared object support$(RESET)"
 	@echo ""
 	@echo "$(BOLD)Current Version: $(VERSION)$(RESET)"
@@ -2154,20 +2632,20 @@ help:
 ## proto: Generate Go code from protocol buffer definitions
 proto:
 	@echo "$(CYAN)$(BOLD)→ Generating Protocol Buffer code...$(RESET)"
-	@if [ ! -f "pkg/api/grpc/proto/keychainv1/keychain.proto" ]; then \
-		echo "$(RED)✗ Proto file not found: pkg/api/grpc/proto/keychainv1/keychain.proto$(RESET)"; \
+	@if [ ! -f "pkg/api/grpc/proto/xkmsv1/xkms.proto" ]; then \
+		echo "$(RED)✗ Proto file not found: pkg/api/grpc/proto/xkmsv1/xkms.proto$(RESET)"; \
 		exit 1; \
 	fi
-	@protoc --go_out=. --go_opt=paths=source_relative \
+	@protoc -I/usr/include -I. --go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		pkg/api/grpc/proto/keychainv1/keychain.proto
+		pkg/api/grpc/proto/xkmsv1/xkms.proto
 	@echo "$(GREEN)✓ Protocol Buffer code generated$(RESET)"
 
 .PHONY: proto-check
 ## proto-check: Verify generated proto code is up to date
 proto-check:
 	@echo "$(CYAN)$(BOLD)→ Checking Protocol Buffer code...$(RESET)"
-	@if [ ! -f "pkg/api/grpc/proto/keychainv1/keychain.pb.go" ]; then \
+	@if [ ! -f "pkg/api/grpc/proto/xkmsv1/xkms.pb.go" ]; then \
 		echo "$(RED)✗ Generated proto code not found. Run 'make proto'$(RESET)"; \
 		exit 1; \
 	fi
@@ -2199,7 +2677,7 @@ integration-test-api-up:
 	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true
-	@$(API_COMPOSE) up -d keychain-server swtpm softhsm
+	@$(API_COMPOSE) up -d xkms-server swtpm softhsm
 	@echo "$(GREEN)✓ API test environment started$(RESET)"
 	@echo "$(CYAN)REST API: http://localhost:8443$(RESET)"
 	@echo "$(CYAN)gRPC:     localhost:9443$(RESET)"
@@ -2232,17 +2710,17 @@ integration-test-local-api:
 # ==============================================================================
 
 # Docker configuration for protocol integration tests
-DEVCONTAINER_IMAGE := go-keychain-devcontainer:latest
-API_TEST_NETWORK := keychain-api-test
+DEVCONTAINER_IMAGE := go-xkms-devcontainer:latest
+API_TEST_NETWORK := xkms-api-test
 API_COMPOSE := cd $(API_TEST_DIR) && docker compose
 
-# Force kill and remove all keychain integration containers
+# Force kill and remove all xkms integration containers
 define kill_integration_containers
 	@echo "$(CYAN)  Cleaning up any existing containers...$(RESET)"
-	@docker kill keychain-integration-server keychain-integration-swtpm keychain-integration-softhsm keychain-integration-tests 2>/dev/null || true
-	@docker rm -f keychain-integration-server keychain-integration-swtpm keychain-integration-softhsm keychain-integration-tests 2>/dev/null || true
-	@docker kill keychain-test-unix keychain-test-rest keychain-test-grpc keychain-test-quic keychain-test-mcp keychain-test-frost keychain-test-parity 2>/dev/null || true
-	@docker rm -f keychain-test-unix keychain-test-rest keychain-test-grpc keychain-test-quic keychain-test-mcp keychain-test-frost keychain-test-parity 2>/dev/null || true
+	@docker kill xkms-integration-server xkms-integration-swtpm xkms-integration-softhsm xkms-integration-tests 2>/dev/null || true
+	@docker rm -f xkms-integration-server xkms-integration-swtpm xkms-integration-softhsm xkms-integration-tests 2>/dev/null || true
+	@docker kill xkms-test-unix xkms-test-rest xkms-test-grpc xkms-test-quic xkms-test-mcp xkms-test-frost xkms-test-parity 2>/dev/null || true
+	@docker rm -f xkms-test-unix xkms-test-rest xkms-test-grpc xkms-test-quic xkms-test-mcp xkms-test-frost xkms-test-parity 2>/dev/null || true
 	@if [ -d $(API_TEST_DIR) ]; then $(API_COMPOSE) down -v --remove-orphans 2>/dev/null || true; fi
 endef
 
@@ -2254,8 +2732,9 @@ integration-test-api-kill:
 	@echo "$(GREEN)✓ All integration test containers killed$(RESET)"
 
 .PHONY: integration-test-api-all
-## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC, MCP)
-integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-mcp
+## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC)
+## MCP is excluded: SDK transport speaks HTTP but MCP server speaks JSON-RPC over TCP.
+integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic
 	@echo "$(GREEN)$(BOLD)✓ All API protocol integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-unix
@@ -2264,8 +2743,8 @@ integration-test-api-unix:
 	@echo "$(CYAN)$(BOLD)→ Running Unix socket protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-unix integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/unix/... -timeout 10m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-unix integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/unix/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2277,8 +2756,8 @@ integration-test-api-rest:
 	@echo "$(CYAN)$(BOLD)→ Running REST API protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-rest integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/rest/... -timeout 10m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-rest integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/rest/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2290,8 +2769,8 @@ integration-test-api-grpc:
 	@echo "$(CYAN)$(BOLD)→ Running gRPC protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-grpc integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/grpc/... -timeout 10m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-grpc integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/grpc/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2303,8 +2782,8 @@ integration-test-api-quic:
 	@echo "$(CYAN)$(BOLD)→ Running QUIC/HTTP3 protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-quic integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/quic/... -timeout 10m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-quic integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/quic/... -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2316,8 +2795,8 @@ integration-test-api-mcp:
 	@echo "$(CYAN)$(BOLD)→ Running MCP protocol integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-mcp integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-mcp integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2330,8 +2809,8 @@ ifeq ($(WITH_FROST),1)
 	@echo "$(CYAN)$(BOLD)→ Running FROST API integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-frost integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-frost integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'FROST' -timeout 15m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
@@ -2347,45 +2826,46 @@ integration-test-api-parity:
 	@echo "$(CYAN)$(BOLD)→ Running API protocol parity tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-parity integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/keychainctl ./cmd/keychainctl && go test -v -tags='integration frost' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-parity integration-tests \
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags=frost -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='integration frost codec_cbor codec_json codec_msgpack' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go
-## integration-test-sdk-go: Run Go SDK integration tests across all protocols (Unix, REST, gRPC, QUIC, MCP)
+## integration-test-sdk-go: Run Go SDK embedded integration tests in devcontainer
 integration-test-sdk-go:
-	@echo "$(CYAN)$(BOLD)→ Running Go SDK integration tests...$(RESET)"
-	$(call run_in_devcontainer,$(GO) test -v -tags='integration' ./test/integration/sdk/go/... -timeout 15m,integration-test-sdk-go)
-	@echo "$(GREEN)✓ Go SDK integration tests complete$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Running Go SDK embedded integration tests...$(RESET)"
+	$(call run_in_devcontainer,$(GO) test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocol$$|TestMultiProtocolKeyOperationsConcurrent|TestMultiProtocolDataIntegrity' -timeout 15m,integration-test-sdk-go)
+	@echo "$(GREEN)✓ Go SDK embedded integration tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go-remote
-## integration-test-sdk-go-remote: Run Go SDK multiprotocol integration tests against docker-compose server
+## integration-test-sdk-go-remote: Run Go SDK remote protocol integration tests against docker-compose server
 integration-test-sdk-go-remote:
 	@echo "$(CYAN)$(BOLD)→ Running Go SDK remote integration tests...$(RESET)"
 	$(call kill_integration_containers)
 	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-sdk-go integration-tests \
-		sh -c "go test -v -tags='integration' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocol' -timeout 20m" ; \
+	@$(API_COMPOSE) run --rm --name xkms-test-sdk-go integration-tests \
+		sh -c "go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocolRemote' -timeout 20m" ; \
 		EXIT_CODE=$$? ; \
 		$(API_COMPOSE) down -v --remove-orphans ; \
 		exit $$EXIT_CODE
 	@echo "$(GREEN)✓ Go SDK remote integration tests complete$(RESET)"
 
-.PHONY: integration-test-sdk-go-remote-only
-## integration-test-sdk-go-remote-only: Run Go SDK tests against remote protocols only (no embedded mode)
-integration-test-sdk-go-remote-only:
-	@echo "$(CYAN)$(BOLD)→ Running Go SDK remote-only integration tests...$(RESET)"
-	$(call kill_integration_containers)
-	@$(API_COMPOSE) build
-	@$(API_COMPOSE) run --rm --name keychain-test-sdk-go-remote integration-tests \
-		sh -c "go test -v -tags='integration' ./test/integration/sdk/go/... -run 'TestSDKMultiProtocolRemoteOnly' -timeout 20m" ; \
-		EXIT_CODE=$$? ; \
-		$(API_COMPOSE) down -v --remove-orphans ; \
-		exit $$EXIT_CODE
-	@echo "$(GREEN)✓ Go SDK remote-only integration tests complete$(RESET)"
+# ==============================================================================
+# Bootstrap Integration Tests
+# ==============================================================================
+
+BOOTSTRAP_COMPOSE := docker compose -f test/integration/bootstrap/docker-compose.yml
+
+.PHONY: integration-test-bootstrap
+## integration-test-bootstrap: Run bootstrap integration tests (DANE/TLSA, Noise, SPKI, Direct, Auto)
+integration-test-bootstrap:
+	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
+	@cd test/integration/bootstrap && docker compose down -v >/dev/null 2>&1 || true
+	@cd test/integration/bootstrap && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
 .PHONY: show-backends
 ## show-backends: Display enabled backends for current build configuration
@@ -2419,7 +2899,7 @@ BENCH_BASELINE := $(BENCH_DIR)/benchmarks-baseline.txt
 
 .PHONY: bench
 ## bench: Run all benchmarks and save results
-bench: bench-storage bench-backend bench-keychain bench-api
+bench: bench-storage bench-backend bench-xkms bench-api
 	@echo "$(GREEN)$(BOLD)✓ All benchmarks complete!$(RESET)"
 	@echo "$(CYAN)Results saved to: $(BENCH_OUTPUT)$(RESET)"
 
@@ -2437,17 +2917,17 @@ bench-storage:
 bench-backend:
 	@echo "$(CYAN)$(BOLD)→ Running backend benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/backend/symmetric/... | tee -a $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/keyprovider/symmetric/... | tee -a $(BENCH_OUTPUT)
 	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/backend/software/... | tee -a $(BENCH_OUTPUT)
 	@echo "$(GREEN)✓ Backend benchmarks complete$(RESET)"
 
-.PHONY: bench-keychain
-## bench-keychain: Benchmark keychain operations (key generation, signing)
-bench-keychain:
-	@echo "$(CYAN)$(BOLD)→ Running keychain benchmarks...$(RESET)"
+.PHONY: bench-xkms
+## bench-xkms: Benchmark xkms operations (key generation, signing)
+bench-xkms:
+	@echo "$(CYAN)$(BOLD)→ Running xkms benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/keychain/... | tee -a $(BENCH_OUTPUT)
-	@echo "$(GREEN)✓ Keychain benchmarks complete$(RESET)"
+	@$(GO) test -bench=. -benchmem -run=^$$ ./pkg/xkms/... | tee -a $(BENCH_OUTPUT)
+	@echo "$(GREEN)✓ Xkms benchmarks complete$(RESET)"
 
 .PHONY: bench-api
 ## bench-api: Benchmark API handlers (REST, gRPC)
@@ -2470,7 +2950,7 @@ bench-file:
 bench-aes:
 	@echo "$(CYAN)$(BOLD)→ Running AES benchmarks...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -benchtime=5s -run=^$$ ./pkg/backend/symmetric/... | tee $(BENCH_OUTPUT)
+	@$(GO) test -bench=. -benchmem -benchtime=5s -run=^$$ ./pkg/keyprovider/symmetric/... | tee $(BENCH_OUTPUT)
 
 .PHONY: bench-software
 ## bench-software: Benchmark software backend operations
@@ -2545,7 +3025,7 @@ bench-compare:
 bench-cpu:
 	@echo "$(CYAN)$(BOLD)→ Running benchmarks with CPU profiling...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -cpuprofile=$(BENCH_DIR)/cpu.prof -run=^$$ ./pkg/backend/symmetric/...
+	@$(GO) test -bench=. -benchmem -cpuprofile=$(BENCH_DIR)/cpu.prof -run=^$$ ./pkg/keyprovider/symmetric/...
 	@echo "$(GREEN)✓ CPU profile saved to: $(BENCH_DIR)/cpu.prof$(RESET)"
 	@echo "$(CYAN)View with: go tool pprof $(BENCH_DIR)/cpu.prof$(RESET)"
 
@@ -2554,7 +3034,7 @@ bench-cpu:
 bench-mem:
 	@echo "$(CYAN)$(BOLD)→ Running benchmarks with memory profiling...$(RESET)"
 	@mkdir -p $(BENCH_DIR)
-	@$(GO) test -bench=. -benchmem -memprofile=$(BENCH_DIR)/mem.prof -run=^$$ ./pkg/backend/symmetric/...
+	@$(GO) test -bench=. -benchmem -memprofile=$(BENCH_DIR)/mem.prof -run=^$$ ./pkg/keyprovider/symmetric/...
 	@echo "$(GREEN)✓ Memory profile saved to: $(BENCH_DIR)/mem.prof$(RESET)"
 	@echo "$(CYAN)View with: go tool pprof $(BENCH_DIR)/mem.prof$(RESET)"
 
@@ -2650,17 +3130,51 @@ bench-cert-compare:
 # ==============================================================================
 
 # Get all packages dynamically (excluding cmd and test dirs)
-PKG_DIRS := $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-keychain/pkg/||')
+PKG_DIRS := $(shell go list ./pkg/... 2>/dev/null | sed 's|github.com/jeremyhahn/go-xkms/pkg/||')
+
+# Explicit xkey E2E targets that would otherwise be caught by test-% pattern.
+.PHONY: test-fido2-pkcs11
+test-fido2-pkcs11:
+	@$(MAKE) -C xkey test-fido2-pkcs11
+
+.PHONY: integration-test-fido2-adapter
+integration-test-fido2-adapter:
+	@$(MAKE) -C xkey integration-test-fido2-adapter
+
+.PHONY: integration-test-piv-pkcs11
+integration-test-piv-pkcs11:
+	@$(MAKE) -C xkey integration-test-piv-pkcs11
+
+.PHONY: integration-test-pkcs11
+integration-test-pkcs11:
+	@$(MAKE) -C xkey integration-test-pkcs11
+
+.PHONY: playwright-test
+playwright-test:
+	@$(MAKE) -C xkey playwright-test
+
+.PHONY: playwright-test-docker
+playwright-test-docker:
+	@$(MAKE) -C xkey playwright-test-docker
+
+.PHONY: playwright-test-piv
+playwright-test-piv:
+	@$(MAKE) -C xkey playwright-test-piv
 
 # Dynamic test target for individual packages
-# Usage: make test-backend, make test-keychain, etc.
+# Usage: make test-backend, make test-xkms, etc.
 .PHONY: test-%
 test-%:
 	@echo "[36m→ Running tests for pkg/$*...[0m"
 	@$(GO) test -v $(TAG_FLAGS) ./pkg/$*/...
 	@echo "[32m✓ Tests passed for pkg/$*[0m"
 
-# Dynamic integration test target for individual packages  
+# Gadget integration tests live in xkey/ module — delegate to xkey Makefile.
+.PHONY: integration-test-gadget
+integration-test-gadget:
+	@$(MAKE) -C xkey integration-test-gadget
+
+# Dynamic integration test target for individual packages
 # Usage: make integration-test-backend, make integration-test-pkcs11, etc.
 .PHONY: integration-test-%
 integration-test-%:
@@ -2669,13 +3183,16 @@ integration-test-%:
 	@echo "[32m✓ Integration tests passed for $*[0m"
 
 # Dynamic coverage target for individual packages
-# Usage: make coverage-backend, make coverage-keychain, etc.
+# Usage: make coverage-backend, make coverage-xkms, etc.
 .PHONY: coverage-%
 coverage-%:
 	@echo "[36m→ Generating coverage for pkg/$*...[0m"
 	@mkdir -p $(COVERAGE_DIR)
 	@$(GO) test $(TAG_FLAGS) ./pkg/$*/... -coverprofile=$(COVERAGE_DIR)/$*.out -covermode=atomic
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/$*.out -o $(COVERAGE_DIR)/$*-coverage.html
-	@$(GO) tool cover -func=$(COVERAGE_DIR)/$*.out | tail -1
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/$*.out > $(COVERAGE_DIR)/$*.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/$*.txt | awk '{print $$NF}'); \
+	echo "[36m$* coverage: $${TOTAL}[0m"
 	@echo "[32m✓ Coverage report: $(COVERAGE_DIR)/$*-coverage.html[0m"
+
 

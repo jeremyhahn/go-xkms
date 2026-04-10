@@ -2,7 +2,7 @@
 
 ## Overview
 
-The go-keychain library provides comprehensive symmetric encryption capabilities using AEAD (Authenticated Encryption with Associated Data) algorithms. This guide covers how to generate, store, and use symmetric keys across different backend providers.
+The go-xkms library provides comprehensive symmetric encryption capabilities using AEAD (Authenticated Encryption with Associated Data) algorithms. This guide covers how to generate, store, and use symmetric keys across different backend providers.
 
 **Supported Algorithms:**
 - **AES-GCM** (128, 192, 256-bit) - Hardware-accelerated with AES-NI, FIPS compliant
@@ -17,6 +17,69 @@ The go-keychain library provides comprehensive symmetric encryption capabilities
 - Thread-safe operations
 - Hardware-backed key storage (TPM2, PKCS#11)
 - AEAD safety tracking (nonce reuse prevention, bytes limits)
+
+## Service API
+
+The service layer provides a simplified API for symmetric encryption operations through the xkms singleton. The symmetric backend is always compiled in and available without build tags.
+
+```go
+package main
+
+import (
+    "fmt"
+    "log"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+func main() {
+    // Auto-initialize with defaults (symmetric backend is always available)
+    if err := xkms.AutoInitialize(nil); err != nil {
+        log.Fatal(err)
+    }
+    defer xkms.Close()
+
+    // Generate a symmetric key via service
+    symKey, err := xkms.GenerateSymmetricKey("symmetric", &types.KeyAttributes{
+        CN:           "my-aes-key",
+        KeyType:      types.KEY_TYPE_SECRET,
+        KeyAlgorithm: types.ALG_AES256_GCM,
+        AESAttributes: &types.AESAttributes{
+            KeySize: 256,
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Generated key: %s\n", symKey.Algorithm())
+
+    // Encrypt via service using key ID format: backend:::keyname
+    plaintext := []byte("Sensitive data to encrypt")
+    encrypted, err := xkms.Encrypt("symmetric:::my-aes-key", plaintext, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Encrypted %d bytes\n", len(encrypted.Ciphertext))
+
+    // Decrypt via service
+    decrypted, err := xkms.Decrypt("symmetric:::my-aes-key", encrypted, nil)
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Printf("Decrypted: %s\n", string(decrypted))
+}
+```
+
+For persistent key storage, pass an `AutoConfig` with a data directory:
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DataDir: "/var/lib/xkms",
+})
+```
+
+The service layer delegates to the same backend implementations documented below. Use the service API for application-level integration, and the direct backend API when you need fine-grained control over backend configuration.
 
 ## Supported Backends
 
@@ -47,10 +110,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func main() {
@@ -62,7 +125,7 @@ func main() {
     aesBackend := symmetric.NewBackend(keyStorage)
 
     // Create keystore
-    keystore, err := keychain.New(&keychain.Config{
+    keystore, err := xkms.New(&xkms.Config{
         Backend:     aesBackend,
         CertStorage: certStorage,
     })
@@ -126,10 +189,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func main() {
@@ -145,7 +208,7 @@ func main() {
     certStorage := file.New("/var/lib/certs")
 
     // Create keystore
-    keystore, err := keychain.New(&keychain.Config{
+    keystore, err := xkms.New(&xkms.Config{
         Backend:     kmsBackend,
         CertStorage: certStorage,
     })
@@ -208,10 +271,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func main() {
@@ -227,7 +290,7 @@ func main() {
 
     certStorage := file.New("/var/lib/certs")
 
-    keystore, err := keychain.New(&keychain.Config{
+    keystore, err := xkms.New(&xkms.Config{
         Backend:     gcpBackend,
         CertStorage: certStorage,
     })
@@ -286,10 +349,10 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/azurekv"
-    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 func main() {
@@ -303,7 +366,7 @@ func main() {
 
     certStorage := file.New("/var/lib/certs")
 
-    keystore, err := keychain.New(&keychain.Config{
+    keystore, err := xkms.New(&xkms.Config{
         Backend:     azureBackend,
         CertStorage: certStorage,
     })
@@ -649,7 +712,7 @@ type SymmetricBackend interface {
 
 ### Adding Symmetric Encryption to Existing Applications
 
-If you're already using go-keychain for asymmetric operations, adding symmetric encryption is straightforward:
+If you're already using go-xkms for asymmetric operations, adding symmetric encryption is straightforward:
 
 #### Step 1: Check Backend Support
 
@@ -706,7 +769,7 @@ decrypted, err := encrypter.Decrypt(encrypted, &backend.DecryptOptions{
 
 ```go
 // Use the provided serialization helpers
-import "github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
+import "github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 
 // Serialize for storage/transmission
 serialized, err := symmetric.Marshal(encrypted)
@@ -816,5 +879,5 @@ if err != nil {
 ## Support
 
 For questions, issues, or contributions:
-- GitHub Issues: [github.com/jeremyhahn/go-keychain/issues](https://github.com/jeremyhahn/go-keychain/issues)
+- GitHub Issues: [github.com/jeremyhahn/go-xkms/issues](https://github.com/jeremyhahn/go-xkms/issues)
 - Documentation: [docs/](.)

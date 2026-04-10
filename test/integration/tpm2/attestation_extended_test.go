@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"testing"
 
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // setupAttestationTPM ensures TPM is properly provisioned with IAK for attestation tests

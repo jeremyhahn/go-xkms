@@ -1,6 +1,6 @@
 # Key Agreement (ECDH)
 
-The go-keychain library supports Elliptic Curve Diffie-Hellman (ECDH) key agreement for secure shared secret derivation. This allows two parties to establish a common secret without ever transmitting it.
+The go-xkms library supports Elliptic Curve Diffie-Hellman (ECDH) key agreement for secure shared secret derivation. This allows two parties to establish a common secret without ever transmitting it.
 
 ## Supported Curves
 

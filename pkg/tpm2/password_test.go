@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // mockTPMForPassword implements TrustedPlatformModule for testing password functions
@@ -323,7 +323,7 @@ func TestPlatformPasswordCreate_SealError(t *testing.T) {
 	backend := &mockKeyBackendForPassword{}
 	keyAttrs := &types.KeyAttributes{
 		CN:       "test-key",
-		Password: store.NewClearPassword([]byte("test")),
+		Password: store.NewPassword([]byte("test")),
 	}
 
 	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
@@ -422,7 +422,7 @@ func TestPlatformPasswordCreate_DefaultPassword(t *testing.T) {
 	// Use the default password which should trigger key generation
 	keyAttrs := &types.KeyAttributes{
 		CN:       "test-key",
-		Password: store.NewClearPassword([]byte(store.DEFAULT_PASSWORD)),
+		Password: store.NewPassword([]byte(store.DEFAULT_PASSWORD)),
 	}
 
 	pp := NewPlatformPassword(logger, tpmMock, keyAttrs, backend).(*PlatformPassword)
@@ -449,7 +449,7 @@ func TestPlatformPasswordCreate_WithPlatformPolicy(t *testing.T) {
 
 	keyAttrs := &types.KeyAttributes{
 		CN:             "test-key",
-		Password:       store.NewClearPassword([]byte("test-pass")),
+		Password:       store.NewPassword([]byte("test-pass")),
 		PlatformPolicy: true,
 	}
 
@@ -478,7 +478,7 @@ func TestPlatformPasswordCreate_WithoutPlatformPolicy(t *testing.T) {
 
 	keyAttrs := &types.KeyAttributes{
 		CN:             "test-key",
-		Password:       store.NewClearPassword([]byte("test-pass")),
+		Password:       store.NewPassword([]byte("test-pass")),
 		PlatformPolicy: false,
 	}
 

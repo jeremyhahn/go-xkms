@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
-	pkgwebauthn "github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	pkgwebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
 // WebAuthnUserAdapter adapts the user.Store to the webauthn.UserStore interface.
@@ -78,8 +78,9 @@ func (a *WebAuthnUserAdapter) GetByEmail(ctx context.Context, email string) (pkg
 
 // Create creates a new user with the given email and display name.
 // The role is determined by the defaultRole setting (RoleAdmin by default).
+// Users created via WebAuthn are system-level (empty tenant).
 func (a *WebAuthnUserAdapter) Create(ctx context.Context, email, displayName string) (pkgwebauthn.User, error) {
-	user, err := a.store.Create(ctx, email, displayName, a.defaultRole)
+	user, err := a.store.Create(ctx, email, displayName, a.defaultRole, "")
 	if err != nil {
 		if err == ErrUserAlreadyExists {
 			return nil, pkgwebauthn.ErrUserAlreadyExists

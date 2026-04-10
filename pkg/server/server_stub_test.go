@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,10 +16,11 @@
 package server
 
 import (
+	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/config"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,8 +32,8 @@ import (
 // Test backend stub initialization with enabled configs
 
 func TestServer_InitAWSKMSBackend_Stub(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.AWSKMS = &config.AWSKMSConfig{
@@ -51,8 +52,8 @@ func TestServer_InitAWSKMSBackend_Stub(t *testing.T) {
 }
 
 func TestServer_InitAzureKVBackend_Stub(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.AzureKV = &config.AzureKVConfig{
@@ -70,8 +71,8 @@ func TestServer_InitAzureKVBackend_Stub(t *testing.T) {
 }
 
 func TestServer_InitGCPKMSBackend_Stub(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.GCPKMS = &config.GCPKMSConfig{
@@ -91,8 +92,8 @@ func TestServer_InitGCPKMSBackend_Stub(t *testing.T) {
 }
 
 func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.PKCS11 = &config.PKCS11Config{
@@ -112,8 +113,8 @@ func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
 }
 
 func TestServer_InitVaultBackend_Stub(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.Vault = &config.VaultConfig{
@@ -144,8 +145,9 @@ func TestCreateAWSKMSBackend_Stub(t *testing.T) {
 	}
 
 	backend, err := createAWSKMSBackend(config)
-	// Stub returns nil backend, nil error (gracefully skips)
-	assert.NoError(t, err)
+	// Stub returns ErrBackendNotCompiled
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
 	assert.Nil(t, backend)
 }
 
@@ -162,8 +164,9 @@ func TestCreateGCPKMSBackend_Stub(t *testing.T) {
 	}
 
 	backend, err := createGCPKMSBackend(config)
-	// Stub returns nil backend, nil error (gracefully skips)
-	assert.NoError(t, err)
+	// Stub returns ErrBackendNotCompiled
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
 	assert.Nil(t, backend)
 }
 
@@ -176,8 +179,9 @@ func TestCreateAzureKVBackend_Stub(t *testing.T) {
 	}
 
 	backend, err := createAzureKVBackend(config)
-	// Stub returns nil backend, nil error (gracefully skips)
-	assert.NoError(t, err)
+	// Stub returns ErrBackendNotCompiled
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
 	assert.Nil(t, backend)
 }
 
@@ -192,8 +196,9 @@ func TestCreateVaultBackend_Stub(t *testing.T) {
 	}
 
 	backend, err := createVaultBackend(config)
-	// Stub returns nil backend, nil error (gracefully skips)
-	assert.NoError(t, err)
+	// Stub returns ErrBackendNotCompiled
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
 	assert.Nil(t, backend)
 }
 
@@ -206,22 +211,9 @@ func TestCreateFrostBackend_Stub(t *testing.T) {
 	}
 
 	backend, err := createFrostBackend(config)
-	// Stub returns nil backend, nil error (gracefully skips)
-	assert.NoError(t, err)
-	assert.Nil(t, backend)
-}
-
-func TestCreateSmartCardHSMBackend_Stub(t *testing.T) {
-	config := BackendConfig{
-		Name:    "smartcardhsm",
-		Type:    "smartcardhsm",
-		Enabled: true,
-		Config:  map[string]interface{}{},
-	}
-
-	backend, err := createSmartCardHSMBackend(config)
-	// Stub returns nil backend, nil error (gracefully skips)
-	assert.NoError(t, err)
+	// Stub returns ErrBackendNotCompiled
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
 	assert.Nil(t, backend)
 }
 
@@ -234,7 +226,8 @@ func TestCreatePKCS11Backend_Stub(t *testing.T) {
 	}
 
 	backend, err := createPKCS11Backend(config)
-	// Stub returns nil backend, nil error (gracefully skips)
-	assert.NoError(t, err)
+	// Stub returns ErrBackendNotCompiled
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBackendNotCompiled))
 	assert.Nil(t, backend)
 }

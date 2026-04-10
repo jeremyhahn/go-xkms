@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	keychainjwt "github.com/jeremyhahn/go-keychain/pkg/encoding/jwt"
+	xkmsjwt "github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
 )
 
 // Example_basicSigning demonstrates basic JWT signing and verification
@@ -33,7 +33,7 @@ func Example_basicSigning() {
 	}
 
 	// Create a signer
-	signer := keychainjwt.NewSigner()
+	signer := xkmsjwt.NewSigner()
 
 	// Create claims
 	claims := jwt.MapClaims{
@@ -52,7 +52,7 @@ func Example_basicSigning() {
 	fmt.Println("Token signed successfully")
 
 	// Verify the token
-	verifier := keychainjwt.NewVerifier()
+	verifier := xkmsjwt.NewVerifier()
 	token, err := verifier.Verify(tokenString, &privateKey.PublicKey)
 	if err != nil {
 		log.Fatal(err)
@@ -74,7 +74,7 @@ func Example_withKID() {
 		log.Fatal(err)
 	}
 
-	signer := keychainjwt.NewSigner()
+	signer := xkmsjwt.NewSigner()
 
 	claims := jwt.MapClaims{
 		"sub": "user123",
@@ -88,7 +88,7 @@ func Example_withKID() {
 	}
 
 	// Extract Key ID from token
-	kid, err := keychainjwt.ExtractKID(tokenString)
+	kid, err := xkmsjwt.ExtractKID(tokenString)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func Example_customClaims() {
 		log.Fatal(err)
 	}
 
-	signer := keychainjwt.NewSigner()
+	signer := xkmsjwt.NewSigner()
 
 	now := time.Now()
 	claims := CustomClaims{
@@ -123,7 +123,7 @@ func Example_customClaims() {
 		Roles:        []string{"admin", "user"},
 		Organization: "acme-corp",
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "go-keychain",
+			Issuer:    "go-xkms",
 			Subject:   "admin@example.com",
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -148,11 +148,11 @@ func Example_verifyWithOptions() {
 		log.Fatal(err)
 	}
 
-	signer := keychainjwt.NewSigner()
+	signer := xkmsjwt.NewSigner()
 
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
-		Issuer:    "go-keychain",
+		Issuer:    "go-xkms",
 		Subject:   "user123",
 		Audience:  jwt.ClaimStrings{"my-app"},
 		ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
@@ -165,10 +165,10 @@ func Example_verifyWithOptions() {
 	}
 
 	// Verify with options
-	verifier := keychainjwt.NewVerifier()
-	opts := &keychainjwt.VerifyOptions{
+	verifier := xkmsjwt.NewVerifier()
+	opts := &xkmsjwt.VerifyOptions{
 		ValidateIssuer:   true,
-		ExpectedIssuer:   "go-keychain",
+		ExpectedIssuer:   "go-xkms",
 		ValidateAudience: true,
 		ExpectedAudience: "my-app",
 	}

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build integration && quantum
+//go:build integration
 
 package quantum_test
 
@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/quantum/kyber768"
+	"github.com/jeremyhahn/go-xkms/pkg/quantum/kyber768"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,9 +43,9 @@ func TestKyber768Integration_KeyGeneration(t *testing.T) {
 	assert.Equal(t, k.SecretKeyLength(), len(secretKey), "Secret key size mismatch")
 
 	// ML-KEM-768 specific sizes (from NIST FIPS 203 standard)
-	// Note: Sizes may vary slightly from draft Kyber768 spec
+	// Public key: 1184 bytes, Secret key: 64-byte seed for key reconstruction
 	assert.Greater(t, len(pubKey), 1000, "ML-KEM-768 public key should be >1000 bytes")
-	assert.Greater(t, len(secretKey), 2000, "ML-KEM-768 secret key should be >2000 bytes")
+	assert.Equal(t, 64, len(secretKey), "ML-KEM-768 secret key is a 64-byte seed")
 }
 
 // TestKyber768Integration_EncapsulationWorkflow tests complete encapsulation/decapsulation
@@ -369,7 +369,7 @@ func TestKyber768Integration_Details(t *testing.T) {
 	// ML-KEM-768 is the NIST standard name for Kyber768
 	assert.Equal(t, "ML-KEM-768", details.Name)
 	assert.Greater(t, details.LengthPublicKey, 1000)
-	assert.Greater(t, details.LengthSecretKey, 2000)
+	assert.Equal(t, 64, details.LengthSecretKey) // Seed-based: 64-byte seed for key reconstruction
 	assert.Greater(t, details.LengthCiphertext, 1000)
 	assert.Equal(t, 32, details.LengthSharedSecret) // Always 32 bytes
 

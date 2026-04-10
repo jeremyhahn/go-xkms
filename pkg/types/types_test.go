@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -109,6 +109,7 @@ func TestKeyType_String(t *testing.T) {
 	}{
 		{"Attestation", KeyTypeAttestation, "ATTESTATION"},
 		{"CA", KeyTypeCA, "CA"},
+		{"Encapsulation", KeyTypeEncapsulation, "ENCAPSULATION"},
 		{"Encryption", KeyTypeEncryption, "ENCRYPTION"},
 		{"Endorsement", KeyTypeEndorsement, "ENDORSEMENT"},
 		{"HMAC", KeyTypeHMAC, "HMAC"},
@@ -609,6 +610,7 @@ func TestNewSoftwareCapabilities(t *testing.T) {
 	assert.True(t, caps.Signing)
 	assert.True(t, caps.Decryption)
 	assert.False(t, caps.KeyRotation)
+	assert.Equal(t, SecurityLevelLow, caps.SecurityLevel)
 }
 
 func TestNewHardwareCapabilities(t *testing.T) {
@@ -618,6 +620,7 @@ func TestNewHardwareCapabilities(t *testing.T) {
 	assert.True(t, caps.Signing)
 	assert.True(t, caps.Decryption)
 	assert.False(t, caps.KeyRotation)
+	assert.Equal(t, SecurityLevelHigh, caps.SecurityLevel)
 }
 
 func TestNewUnifiedSoftwareCapabilities(t *testing.T) {
@@ -628,6 +631,7 @@ func TestNewUnifiedSoftwareCapabilities(t *testing.T) {
 	assert.True(t, caps.Decryption)
 	assert.True(t, caps.KeyRotation)
 	assert.True(t, caps.SymmetricEncryption)
+	assert.Equal(t, SecurityLevelLow, caps.SecurityLevel)
 }
 
 func TestPartitions(t *testing.T) {
@@ -1086,6 +1090,7 @@ func TestParseKeyType(t *testing.T) {
 	}{
 		{"Attestation", "ATTESTATION", KeyTypeAttestation},
 		{"CA", "CA", KeyTypeCA},
+		{"Encapsulation", "ENCAPSULATION", KeyTypeEncapsulation},
 		{"Encryption", "ENCRYPTION", KeyTypeEncryption},
 		{"Endorsement", "ENDORSEMENT", KeyTypeEndorsement},
 		{"HMAC", "HMAC", KeyTypeHMAC},
@@ -1096,6 +1101,7 @@ func TestParseKeyType(t *testing.T) {
 		{"Storage", "STORAGE", KeyTypeStorage},
 		{"TLS", "TLS", KeyTypeTLS},
 		{"TPM", "TPM", KeyTypeTPM},
+		{"Lowercase_encapsulation", "encapsulation", KeyTypeEncapsulation},
 		{"Lowercase", "tls", KeyTypeTLS},
 		{"WithWhitespace", "  TLS  ", KeyTypeTLS},
 		{"Unknown", "unknown", KeyType(0)},
@@ -1555,16 +1561,152 @@ func TestSealData_LargeData(t *testing.T) {
 }
 
 func TestClearPassword_BackwardCompatibility(t *testing.T) {
-	// Test that deprecated NewClearPassword still works
+	// Test NewPassword backward compatibility
 	data := []byte("backward-compat-password")
-	password := NewClearPassword(data)
+	password := NewPassword(data)
 	require.NotNil(t, password)
 	assert.Equal(t, data, password.Bytes())
 
 	// Test NewClearPasswordFromString
-	password2 := NewClearPasswordFromString("test-string")
+	password2 := NewPasswordFromString("test-string")
 	require.NotNil(t, password2)
 	str, err := password2.String()
 	assert.NoError(t, err)
 	assert.Equal(t, "test-string", str)
+}
+
+// =============================================================================
+// SecurityLevel Tests
+// =============================================================================
+
+func TestSecurityLevel_Constants(t *testing.T) {
+	// Verify constant values are correct (0-3 ascending order)
+	assert.Equal(t, SecurityLevel(0), SecurityLevelLow)
+	assert.Equal(t, SecurityLevel(1), SecurityLevelMedium)
+	assert.Equal(t, SecurityLevel(2), SecurityLevelHigh)
+	assert.Equal(t, SecurityLevel(3), SecurityLevelVeryHigh)
+}
+
+func TestSecurityLevel_Ordering(t *testing.T) {
+	// Verify security levels are properly ordered (higher is more secure)
+	assert.True(t, SecurityLevelLow < SecurityLevelMedium)
+	assert.True(t, SecurityLevelMedium < SecurityLevelHigh)
+	assert.True(t, SecurityLevelHigh < SecurityLevelVeryHigh)
+}
+
+func TestSecurityLevel_String(t *testing.T) {
+	tests := []struct {
+		name  string
+		level SecurityLevel
+		want  string
+	}{
+		{"Low", SecurityLevelLow, "Low"},
+		{"Medium", SecurityLevelMedium, "Medium"},
+		{"High", SecurityLevelHigh, "High"},
+		{"VeryHigh", SecurityLevelVeryHigh, "VeryHigh"},
+		{"Unknown", SecurityLevel(99), "Unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.level.String())
+		})
+	}
+}
+
+func TestSecurityLevel_Description(t *testing.T) {
+	tests := []struct {
+		name        string
+		level       SecurityLevel
+		wantContain string
+	}{
+		{"Low", SecurityLevelLow, "Software-only"},
+		{"Medium", SecurityLevelMedium, "Cloud"},
+		{"High", SecurityLevelHigh, "Local HSM"},
+		{"VeryHigh", SecurityLevelVeryHigh, "TPM 2.0"},
+		{"Unknown", SecurityLevel(99), "Unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desc := tt.level.Description()
+			assert.Contains(t, desc, tt.wantContain)
+		})
+	}
+}
+
+func TestCapabilities_GetSecurityLevel(t *testing.T) {
+	tests := []struct {
+		name  string
+		caps  Capabilities
+		level SecurityLevel
+	}{
+		{
+			name:  "Default_Zero",
+			caps:  Capabilities{},
+			level: SecurityLevelLow, // Zero value is Low
+		},
+		{
+			name:  "Explicit_Low",
+			caps:  Capabilities{SecurityLevel: SecurityLevelLow},
+			level: SecurityLevelLow,
+		},
+		{
+			name:  "Medium",
+			caps:  Capabilities{SecurityLevel: SecurityLevelMedium},
+			level: SecurityLevelMedium,
+		},
+		{
+			name:  "High",
+			caps:  Capabilities{SecurityLevel: SecurityLevelHigh},
+			level: SecurityLevelHigh,
+		},
+		{
+			name:  "VeryHigh",
+			caps:  Capabilities{SecurityLevel: SecurityLevelVeryHigh},
+			level: SecurityLevelVeryHigh,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.level, tt.caps.GetSecurityLevel())
+		})
+	}
+}
+
+func TestCapabilities_SecurityLevel_Sorting(t *testing.T) {
+	// Test that capabilities can be sorted by security level (descending)
+	caps := []Capabilities{
+		{Keys: true, SecurityLevel: SecurityLevelLow},
+		{Keys: true, SecurityLevel: SecurityLevelVeryHigh},
+		{Keys: true, SecurityLevel: SecurityLevelMedium},
+		{Keys: true, SecurityLevel: SecurityLevelHigh},
+	}
+
+	// Sort by security level descending
+	for i := 0; i < len(caps)-1; i++ {
+		for j := i + 1; j < len(caps); j++ {
+			if caps[i].SecurityLevel < caps[j].SecurityLevel {
+				caps[i], caps[j] = caps[j], caps[i]
+			}
+		}
+	}
+
+	// Verify sorted order (highest to lowest)
+	assert.Equal(t, SecurityLevelVeryHigh, caps[0].SecurityLevel)
+	assert.Equal(t, SecurityLevelHigh, caps[1].SecurityLevel)
+	assert.Equal(t, SecurityLevelMedium, caps[2].SecurityLevel)
+	assert.Equal(t, SecurityLevelLow, caps[3].SecurityLevel)
+}
+
+func TestCapabilities_String_IncludesSecurityLevel(t *testing.T) {
+	caps := Capabilities{
+		Keys:          true,
+		SecurityLevel: SecurityLevelHigh,
+	}
+
+	str := caps.String()
+	assert.Contains(t, str, "SecurityLevel")
+	assert.Contains(t, str, "High")
 }

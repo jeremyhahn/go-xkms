@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package hardware
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -26,7 +27,7 @@ import (
 
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -443,7 +444,7 @@ type mockBackendWithErrors struct {
 	mu      sync.RWMutex
 }
 
-func (m *mockBackendWithErrors) Get(key string) ([]byte, error) {
+func (m *mockBackendWithErrors) Get(_ context.Context, key string) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.data == nil {
@@ -456,7 +457,7 @@ func (m *mockBackendWithErrors) Get(key string) ([]byte, error) {
 	return data, nil
 }
 
-func (m *mockBackendWithErrors) Put(key string, value []byte, opts *storage.Options) error {
+func (m *mockBackendWithErrors) Put(_ context.Context, key string, value []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.data == nil {
@@ -466,7 +467,7 @@ func (m *mockBackendWithErrors) Put(key string, value []byte, opts *storage.Opti
 	return nil
 }
 
-func (m *mockBackendWithErrors) Delete(key string) error {
+func (m *mockBackendWithErrors) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.data == nil {
@@ -476,7 +477,7 @@ func (m *mockBackendWithErrors) Delete(key string) error {
 	return nil
 }
 
-func (m *mockBackendWithErrors) List(prefix string) ([]string, error) {
+func (m *mockBackendWithErrors) List(_ context.Context, prefix string) ([]string, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
@@ -489,7 +490,7 @@ func (m *mockBackendWithErrors) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
-func (m *mockBackendWithErrors) Exists(key string) (bool, error) {
+func (m *mockBackendWithErrors) Exists(_ context.Context, key string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.data == nil {
@@ -499,6 +500,18 @@ func (m *mockBackendWithErrors) Exists(key string) (bool, error) {
 	return ok, nil
 }
 
+func (m *mockBackendWithErrors) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for k, v := range m.data {
+		if len(prefix) == 0 || len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			if err := fn(k, v); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 func (m *mockBackendWithErrors) Close() error {
 	return nil
 }
@@ -622,7 +635,7 @@ func TestHardwareBackendAdapter_PutCertificateChain(t *testing.T) {
 	chainData := append(cert1.Raw, cert2.Raw...)
 
 	// Put as chain
-	err := adapter.Put("certs/test-chain-chain.pem", chainData, nil)
+	err := adapter.Put(context.Background(), "certs/test-chain-chain.pem", chainData)
 	// Due to parseDERChain limitations with concatenated DER, this may fail
 	// The test exercises the code path
 	if err != nil {
@@ -685,19 +698,19 @@ func TestHardwareBackendAdapter_ConcurrentOperations(t *testing.T) {
 				cert := generateCoverageTestCert(t, "test")
 
 				// Put
-				_ = adapter.Put("certs/concurrent.pem", cert.Raw, nil)
+				_ = adapter.Put(context.Background(), "certs/concurrent.pem", cert.Raw)
 
 				// Get
-				_, _ = adapter.Get("certs/concurrent.pem")
+				_, _ = adapter.Get(context.Background(), "certs/concurrent.pem")
 
 				// Exists
-				_, _ = adapter.Exists("certs/concurrent.pem")
+				_, _ = adapter.Exists(context.Background(), "certs/concurrent.pem")
 
 				// List
-				_, _ = adapter.List("")
+				_, _ = adapter.List(context.Background(), "")
 
 				// Delete
-				_ = adapter.Delete("certs/concurrent.pem")
+				_ = adapter.Delete(context.Background(), "certs/concurrent.pem")
 			}
 		}(i)
 	}

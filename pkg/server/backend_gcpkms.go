@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,10 +17,8 @@ package server
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
 )
 
 // initGCPKMSBackend initializes the GCP KMS backend if enabled in configuration
@@ -30,9 +28,9 @@ func (s *Server) initGCPKMSBackend() error {
 	}
 
 	// Create storage for GCP KMS metadata
-	storage, err := file.New(s.config.Storage.Path + "/gcpkms")
+	storage, err := s.createStorage("gcpkms")
 	if err != nil {
-		return fmt.Errorf("failed to create GCP KMS storage: %w", err)
+		return &ErrStorageCreate{Resource: "GCP KMS storage", Err: err}
 	}
 
 	gcpBackend, err := gcpkms.NewBackend(context.Background(), &gcpkms.Config{
@@ -43,10 +41,10 @@ func (s *Server) initGCPKMSBackend() error {
 		KeyStorage:      storage,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create GCP KMS backend: %w", err)
+		return &ErrBackendCreate{Backend: "GCP KMS", Err: err}
 	}
 
-	s.backends["gcpkms"] = gcpBackend
+	s.keyProviders["gcpkms"] = gcpBackend
 	s.logger.Info("GCP KMS backend initialized", "backend", "gcpkms", "project", s.config.Backends.GCPKMS.ProjectID)
 	return nil
 }

@@ -1,17 +1,16 @@
-# go-keychain Development Container
+# go-xkms Development Container
 # This container provides ALL dependencies needed for development and testing
-# Go Version: Latest stable via golang:bookworm (GOTOOLCHAIN=auto)
+# Go Version: Latest stable via golang:1.26.1-bookworm (GOTOOLCHAIN=auto)
 #
 # Includes:
-# - PKCS#11: SoftHSM2, OpenSC (for CanoKey PIV support)
+# - PKCS#11: SoftHSM2, OpenSC
 # - TPM2: SWTPM simulator, libtpms v0.10.1, tpm2-tools
-# - Quantum: liboqs for quantum-safe cryptography (Dilithium, Kyber)
-# - CanoKey: QEMU support for virtual CanoKey testing
+# - Quantum: pure-Go post-quantum cryptography (ML-DSA, ML-KEM) - no external deps
 # - gRPC: protoc, grpcurl for protocol buffer development
 # - Docker: docker-in-docker support for integration tests
 
 # Stage 1: Builder stage - compile dependencies from source
-FROM golang:bookworm AS builder
+FROM golang:1.26.1-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -29,9 +28,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     automake \
     autoconf \
     libtool \
-    # CMake and Ninja for liboqs and CanoKey
-    cmake \
-    ninja-build \
     # SSL/TLS development
     libssl-dev \
     libgnutls28-dev \
@@ -49,39 +45,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtss2-esys-3.0.2-0 \
     libtss2-tcti-device0 \
     libtss2-tcti-swtpm0 \
-    # QEMU and USB for CanoKey
-    qemu-system-x86 \
-    qemu-utils \
     libusb-1.0-0-dev \
-    # QEMU build dependencies for CanoKey support
-    python3 \
-    python3-pip \
-    python3-venv \
-    libglib2.0-dev \
-    libfdt-dev \
-    libpixman-1-dev \
-    zlib1g-dev \
-    libgtk-3-dev \
-    libsdl2-dev \
-    libspice-server-dev \
-    libusbredirparser-dev \
-    libcap-ng-dev \
-    libattr1-dev \
-    libseccomp-dev \
-    libaio-dev \
-    libcurl4-gnutls-dev \
-    libnuma-dev \
-    libepoxy-dev \
-    libgbm-dev \
-    libdrm-dev \
-    libvirglrenderer-dev \
-    libslirp-dev \
     flex \
     bison \
     curl \
     xz-utils \
-    # FIDO2/WebAuthn support
-    libfido2-dev \
+    # FIDO2/WebAuthn build dependencies
+    libcbor-dev \
+    libudev-dev \
+    cmake \
+    zlib1g-dev \
     # Protobuf
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
@@ -89,6 +62,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Go tools for protobuf/gRPC code generation
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
     go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# Build libfido2 v1.17.0 from source for HID_NAME fallback support
+# Ubuntu/Debian ship 1.14.0 which lacks UHID virtual device product name display
+# See: https://github.com/Yubico/libfido2/commit/64e93db
+WORKDIR /build
+RUN git clone --depth 1 --branch main https://github.com/Yubico/libfido2.git && \
+    cd libfido2 && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr .. && \
+    make -j$(nproc) && \
+    make install DESTDIR=/build/libfido2-install
 
 # Build libtpms v0.10.1 from source to fix TPM_RC_RETRY issue
 # See: https://github.com/stefanberger/libtpms/commit/37779b49
@@ -100,63 +84,11 @@ RUN git clone https://github.com/stefanberger/libtpms.git && \
     make -j$(nproc) && \
     make install DESTDIR=/build/libtpms-install
 
-# Build and install liboqs from source for quantum-safe cryptography
-RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git /build/liboqs && \
-    cd /build/liboqs && \
-    mkdir build && cd build && \
-    cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
-    ninja && \
-    DESTDIR=/build/liboqs-install ninja install
-
-# CanoKey QEMU build is disabled by default to save CI disk space (~2GB)
-# Set BUILD_CANOKEY_QEMU=true to enable (requires significant disk space and build time)
-ARG BUILD_CANOKEY_QEMU=false
-ARG QEMU_VERSION=8.2.0
-
-# Build CanoKey QEMU only if explicitly enabled
-RUN mkdir -p /build/qemu-install/usr/local/bin && \
-    if [ "${BUILD_CANOKEY_QEMU}" = "true" ]; then \
-        echo "Building CanoKey QEMU (BUILD_CANOKEY_QEMU=true)..." && \
-        git clone --recursive https://github.com/canokeys/canokey-qemu.git /build/canokey-qemu && \
-        cd /build/canokey-qemu && \
-        mkdir build && cd build && \
-        cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local && \
-        make -j$(nproc) && \
-        make install && \
-        ldconfig && \
-        export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH && \
-        cd /build && \
-        curl -sSL "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" -o qemu.tar.xz && \
-        tar xf qemu.tar.xz && \
-        cd qemu-${QEMU_VERSION} && \
-        ./configure \
-            --prefix=/usr/local \
-            --target-list=x86_64-softmmu \
-            --enable-kvm \
-            --enable-canokey \
-            --enable-slirp \
-            --enable-usb-redir \
-            --enable-libusb \
-            --enable-virtfs \
-            --enable-spice \
-            --enable-gtk \
-            --enable-sdl \
-            --enable-opengl \
-            --enable-virglrenderer \
-            --disable-docs && \
-        make -j$(nproc) && \
-        cp build/qemu-system-x86_64 /build/qemu-install/usr/local/bin/qemu-system-x86_64-canokey && \
-        rm -rf /build/qemu-${QEMU_VERSION} /build/qemu.tar.xz /build/canokey-qemu; \
-    else \
-        echo "Skipping CanoKey QEMU build (BUILD_CANOKEY_QEMU=${BUILD_CANOKEY_QEMU})"; \
-        touch /build/qemu-install/usr/local/bin/.qemu-canokey-not-built; \
-    fi
-
 # Stage 2: Development runtime environment
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
-LABEL maintainer="go-keychain"
-LABEL description="Development environment for go-keychain with ALL build and test dependencies"
+LABEL maintainer="go-xkms"
+LABEL description="Development environment for go-xkms with ALL build and test dependencies"
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -193,14 +125,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtss2-tcti-device0 \
     libtss2-tcti-swtpm0 \
     tpm2-tools \
-    # QEMU for CanoKey virtual device testing
-    qemu-system-x86 \
-    qemu-utils \
-    libusb-1.0-0 \
-    # FIDO2/WebAuthn support
-    libfido2-1 \
-    libfido2-dev \
-    fido2-tools \
+    libusb-1.0-0-dev \
+    # FIDO2/WebAuthn runtime dependencies (library built from source in builder stage)
+    libcbor0.8 \
+    # Wails v2 GUI dependencies (GTK3, WebKit2GTK, libsoup3)
+    libgtk-3-dev \
+    libwebkit2gtk-4.0-dev \
+    # udev for device enumeration
+    udev \
+    libudev-dev \
     # Protobuf
     protobuf-compiler \
     # Networking and testing tools
@@ -244,6 +177,9 @@ RUN DPKG_ARCH=$(dpkg --print-architecture) && \
     esac && \
     rm -f /usr/lib/${ARCH}-linux-gnu/libtpms.so* /lib/${ARCH}-linux-gnu/libtpms.so* 2>/dev/null || true
 
+# Copy built libfido2 v1.17.0 from builder stage (includes library, headers, and tools)
+COPY --from=builder /build/libfido2-install/usr /usr
+
 # Copy built libtpms v0.10.1 from builder stage
 COPY --from=builder /build/libtpms-install/usr /usr
 
@@ -260,30 +196,14 @@ RUN DPKG_ARCH=$(dpkg --print-architecture) && \
     ln -sf /lib/${ARCH}-linux-gnu/libtpms.so.0.10.1 /lib/${ARCH}-linux-gnu/libtpms.so.0 2>/dev/null || true && \
     ln -sf /lib/${ARCH}-linux-gnu/libtpms.so.0.10.1 /lib/${ARCH}-linux-gnu/libtpms.so 2>/dev/null || true
 
-# Copy built liboqs from builder stage
-COPY --from=builder /build/liboqs-install/usr/local /usr/local
-
-# Copy built libcanokey and QEMU binary from builder stage (optional - may not exist if build failed)
-COPY --from=builder /build/qemu-install/usr/local/bin/ /usr/local/bin/
-
-# Create liboqs-go.pc for the Go bindings
-RUN mkdir -p /usr/local/lib/pkgconfig && \
-    printf '%s\n' \
-        'prefix=/usr/local' \
-        'exec_prefix=${prefix}' \
-        'libdir=${exec_prefix}/lib' \
-        'includedir=${prefix}/include' \
-        '' \
-        'Name: liboqs-go' \
-        'Description: Open Quantum Safe liboqs library for Go bindings' \
-        'Version: 0.9.0' \
-        'Libs: -L${libdir} -loqs' \
-        'Cflags: -I${includedir}' \
-    > /usr/local/lib/pkgconfig/liboqs-go.pc
-
 # Copy Go protobuf tools from builder
 COPY --from=builder /go/bin/protoc-gen-go /go/bin/protoc-gen-go
 COPY --from=builder /go/bin/protoc-gen-go-grpc /go/bin/protoc-gen-go-grpc
+
+# Install Node.js 20.x LTS for xKey frontend build (Svelte + Vite + TailwindCSS)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install grpcurl for gRPC testing
 RUN GRPCURL_VERSION="1.8.9" && \
@@ -310,17 +230,6 @@ RUN go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
 # Update library cache
 RUN ldconfig
 
-# Verify CanoKey QEMU installation (optional - may not be available)
-RUN echo "=== CanoKey QEMU Verification ===" && \
-    echo "Standard QEMU: $(qemu-system-x86_64 --version 2>/dev/null | head -1 || echo 'not installed')" && \
-    if [ -x /usr/local/bin/qemu-system-x86_64-canokey ]; then \
-        echo "CanoKey QEMU: $(/usr/local/bin/qemu-system-x86_64-canokey --version | head -1)"; \
-    else \
-        echo "CanoKey QEMU: not available (optional feature)"; \
-    fi && \
-    echo "libcanokey: $(ldconfig -p | grep canokey || echo 'not installed (optional)')" && \
-    echo "================================="
-
 # Create non-root user for VS Code
 ARG USERNAME=vscode
 ARG USER_UID=1000
@@ -339,18 +248,18 @@ RUN mkdir -p /workspace \
     /var/lib/softhsm/tokens \
     /var/lib/swtpm/state \
     /etc/softhsm \
-    /etc/keychain \
+    /etc/xkms \
     /data \
-    /var/run/keychain \
+    /var/run/xkms \
     /go/pkg/mod \
     /home/$USERNAME/.cache/go-build && \
     chown -R $USERNAME:$USERNAME /workspace \
     /var/lib/softhsm \
     /var/lib/swtpm \
     /etc/softhsm \
-    /etc/keychain \
+    /etc/xkms \
     /data \
-    /var/run/keychain \
+    /var/run/xkms \
     /go \
     /home/$USERNAME
 
@@ -367,10 +276,6 @@ RUN OPENSC_LIB=$(find /usr -name "opensc-pkcs11.so" 2>/dev/null | head -1) && \
         echo "WARNING: OpenSC PKCS#11 library not found"; \
     fi
 
-# Create CanoKey directories
-RUN mkdir -p /var/lib/canokey && \
-    chown -R $USERNAME:$USERNAME /var/lib/canokey
-
 # Set environment variables
 ENV GOPATH=/go
 ENV PATH=/go/bin:/usr/local/go/bin:/usr/local/bin:$PATH
@@ -382,31 +287,19 @@ ENV GOFLAGS="-buildvcs=false"
 ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
 ENV PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
 
-# CanoKey PKCS#11 configuration (OpenSC)
-ENV CANOKEY_PKCS11_LIBRARY=/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
-ENV CANOKEY_PIN=123456
-ENV CANOKEY_SOPIN=12345678
-
-# FIDO2/CanoKey QEMU configuration
-ENV CANOKEY_QEMU=/var/lib/canokey/canokey.sock
-ENV FIDO2_DEVICE_PATH=/var/lib/canokey/canokey.sock
+# FIDO2 configuration
 ENV FIDO2_PIN=123456
 
 # TPM2 configuration
 ENV SWTPM_STATE_DIR=/var/lib/swtpm
 ENV TPM2TOOLS_TCTI=swtpm:path=/var/lib/swtpm/swtpm-sock
 
-# Quantum cryptography (liboqs) configuration
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-ENV CGO_LDFLAGS="-L/usr/local/lib"
-ENV CGO_CFLAGS="-I/usr/local/include"
-
 # Switch to non-root user
 USER $USERNAME
 
 # Initialize SoftHSM token for testing
-RUN softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
+# Token: xkms-test, SO PIN: 1234, User PIN: 1234, Slot: 0
+RUN softhsm2-util --init-token --slot 0 --label "xkms-test" --so-pin 1234 --pin 1234
 
 WORKDIR /workspace
 

@@ -1,4 +1,4 @@
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -10,4 +10,4 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
-CMD ["sh", "-c", "echo 'Waiting for LocalStack to be ready...'; while ! curl -sf http://localstack:4566/_localstack/health > /dev/null; do sleep 1; done; echo 'LocalStack is ready, running tests...'; go test -v -tags='integration awskms' ./test/integration/awskms/..."]
+CMD ["sh", "-c", "echo 'Waiting for LocalStack to be ready...'; while ! curl -sf http://localstack:4566/_localstack/health > /dev/null; do sleep 1; done; echo 'LocalStack is ready, running tests...'; go test -v -tags='integration awskms codec_cbor codec_json codec_msgpack' ./test/integration/awskms/..."]

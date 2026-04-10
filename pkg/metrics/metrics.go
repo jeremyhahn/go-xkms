@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package metrics provides Prometheus instrumentation for go-keychain operations.
+// Package metrics provides Prometheus instrumentation for go-xkms operations.
 // It exposes operational metrics, performance histograms, error counters, and resource
-// gauges to enable comprehensive monitoring of keychain server health and performance.
+// gauges to enable comprehensive monitoring of xkms server health and performance.
 package metrics
 
 import (
@@ -24,8 +24,8 @@ import (
 )
 
 const (
-	// Namespace is the Prometheus namespace for all keychain metrics
-	Namespace = "keychain"
+	// Namespace is the Prometheus namespace for all xkms metrics
+	Namespace = "xkms"
 
 	// Label names
 	LabelOperation  = "operation"
@@ -59,24 +59,24 @@ const (
 )
 
 var (
-	// OperationsTotal tracks the total number of keychain operations by type, backend, and status.
+	// OperationsTotal tracks the total number of xkms operations by type, backend, and status.
 	// Use RecordOperation to increment this counter with the appropriate labels.
 	OperationsTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
 			Name:      "operations_total",
-			Help:      "Total number of keychain operations by type, backend, and status",
+			Help:      "Total number of xkms operations by type, backend, and status",
 		},
 		[]string{LabelOperation, LabelBackend, LabelStatus},
 	)
 
-	// OperationDuration tracks the duration of keychain operations in seconds.
+	// OperationDuration tracks the duration of xkms operations in seconds.
 	// Buckets are optimized for typical cryptographic operation latencies.
 	OperationDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
 			Name:      "operation_duration_seconds",
-			Help:      "Duration of keychain operations in seconds",
+			Help:      "Duration of xkms operations in seconds",
 			Buckets:   []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 		},
 		[]string{LabelOperation, LabelBackend},
@@ -149,7 +149,7 @@ var (
 		[]string{LabelMethod},
 	)
 
-	// Goroutines tracks the current number of goroutines in the keychain server.
+	// Goroutines tracks the current number of goroutines in the xkms server.
 	// Updated periodically by the resource collector.
 	Goroutines = promauto.NewGauge(
 		prometheus.GaugeOpts{
@@ -237,7 +237,7 @@ func init() {
 	enabled.Store(true)
 }
 
-// RecordOperation records a keychain operation with its duration and status.
+// RecordOperation records a xkms operation with its duration and status.
 // This is the primary function for tracking operational metrics.
 //
 // Parameters:
@@ -273,7 +273,7 @@ func RecordOperation(operation, backend, status string, duration float64) {
 //
 // Example:
 //
-//	if errors.Is(err, keychain.ErrKeyNotFound) {
+//	if errors.Is(err, xkms.ErrKeyNotFound) {
 //	    RecordError(OpGet, "pkcs8", "key_not_found")
 //	}
 func RecordError(operation, backend, errorType string) {
@@ -300,7 +300,7 @@ func RecordHTTPRequest(method, statusCode string, duration float64) {
 // RecordGRPCRequest records a gRPC request with its duration and status.
 //
 // Parameters:
-//   - method: The full gRPC method name (e.g., "/keychain.v1.KeychainService/Generate")
+//   - method: The full gRPC method name (e.g., "/xkms.v1.XKMSService/Generate")
 //   - statusCode: The gRPC status code as a string
 //   - duration: The request duration in seconds
 func RecordGRPCRequest(method, statusCode string, duration float64) {

@@ -3,6 +3,7 @@ package tpm2
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
@@ -13,78 +14,84 @@ import (
 	"math/big"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Returns the Endorsement Public Key
-func (tpm *TPM2) EK() crypto.PublicKey {
+func (tpm *TPM2) EK() (crypto.PublicKey, error) {
 	if tpm.ekAttrs == nil {
-		panic(ErrNotInitialized)
+		return nil, ErrEKNotInitialized
 	}
 	pub, err := x509.ParsePKIXPublicKey(tpm.ekAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
-		panic(ErrNotInitialized)
+		return nil, fmt.Errorf("%w: %v", ErrEKNotInitialized, err)
 	}
-	return pub
+	return pub, nil
 }
 
-// Returns the Endorsement Key name and public area. Errors
-// are fatal.
-func (tpm *TPM2) EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic) {
+// Returns the Endorsement Key name and public area.
+func (tpm *TPM2) EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
+	if tpm.config.EK == nil {
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, ErrEKConfigNil
+	}
 	ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
 	name, pub, err := tpm.ReadHandle(ekHandle)
 	if err != nil {
 		tpm.logger.Error("failed to read EK public", slog.String("error", err.Error()))
-		panic(err)
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, fmt.Errorf("%w: %v", ErrEKPublicRead, err)
 	}
-	return name, pub
+	return name, pub, nil
 }
 
-// Returns the Endorsement Public RSA Key. Errors
-// are fatal.
-func (tpm *TPM2) EKRSA() *rsa.PublicKey {
+// Returns the Endorsement Public RSA Key.
+func (tpm *TPM2) EKRSA() (*rsa.PublicKey, error) {
 	if tpm.ekRSAPubKey == nil {
-		_, ekPub := tpm.EKPublic()
+		_, ekPub, err := tpm.EKPublic()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
+		}
 		rsaDetail, err := ekPub.Parameters.RSADetail()
 		if err != nil {
 			tpm.logger.Error("failed to get RSA detail", slog.String("error", err.Error()))
-			panic(err)
+			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
 		}
 		rsaUnique, err := ekPub.Unique.RSA()
 		if err != nil {
 			tpm.logger.Error("failed to get RSA unique", slog.String("error", err.Error()))
-			panic(err)
+			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
 		}
 		rsaPub, err := tpm2.RSAPub(rsaDetail, rsaUnique)
 		if err != nil {
 			tpm.logger.Error("failed to create RSA public key", slog.String("error", err.Error()))
-			panic(err)
+			return nil, fmt.Errorf("%w: %v", ErrEKRSAParse, err)
 		}
 		tpm.ekRSAPubKey = rsaPub
 	}
-	return tpm.ekRSAPubKey
+	return tpm.ekRSAPubKey, nil
 }
 
-// Returns the Endorsement Public ECC Key. Errors
-// are fatal.
-func (tpm *TPM2) EKECC() *ecdsa.PublicKey {
+// Returns the Endorsement Public ECC Key.
+func (tpm *TPM2) EKECC() (*ecdsa.PublicKey, error) {
 	if tpm.ekECCPubKey == nil {
-		_, ekPub := tpm.EKPublic()
+		_, ekPub, err := tpm.EKPublic()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
+		}
 		ecDetail, err := ekPub.Parameters.ECCDetail()
 		if err != nil {
 			tpm.logger.Error("failed to get ECC detail", slog.String("error", err.Error()))
-			panic(err)
+			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
 		}
 		curve, err := ecDetail.CurveID.Curve()
 		if err != nil {
 			tpm.logger.Error("failed to get curve", slog.String("error", err.Error()))
-			panic(err)
+			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
 		}
 		eccUnique, err := ekPub.Unique.ECC()
 		if err != nil {
 			tpm.logger.Error("failed to get ECC unique", slog.String("error", err.Error()))
-			panic(err)
+			return nil, fmt.Errorf("%w: %v", ErrEKECCParse, err)
 		}
 		eccPub := &ecdsa.PublicKey{
 			Curve: curve,
@@ -93,24 +100,32 @@ func (tpm *TPM2) EKECC() *ecdsa.PublicKey {
 		}
 		tpm.ekECCPubKey = eccPub
 	}
-	return tpm.ekECCPubKey
+	return tpm.ekECCPubKey, nil
 }
 
 // Returns the Shared Storage Root Key name and public area.
-// Errors are fatal.
-func (tpm *TPM2) SSRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic) {
+func (tpm *TPM2) SSRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	srkHandle := tpm2.TPMHandle(tpm.config.SSRK.Handle)
 	name, pub, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
 		tpm.logger.Error("failed to read SSRK public", slog.String("error", err.Error()))
-		panic(err)
+		return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, fmt.Errorf("%w: %v", ErrSRKPublicRead, err)
 	}
-	return name, pub
+	return name, pub, nil
+}
+
+// SRKPublic returns the Storage Root Key name and public area.
+// This is an alias for SSRKPublic to satisfy the TrustedPlatformModule interface.
+func (tpm *TPM2) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
+	return tpm.SSRKPublic()
 }
 
 // Returns the Initial Attestation Key Attributes
 func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 	if tpm.iakAttrs == nil {
+		if tpm.config.IAK == nil {
+			return nil, ErrIAKConfigNil
+		}
 		iakHandle := tpm2.TPMHandle(tpm.config.IAK.Handle)
 		iakAttrs, err := tpm.KeyAttributes(iakHandle)
 		if err != nil {
@@ -140,22 +155,25 @@ func (tpm *TPM2) IAKAttributes() (*types.KeyAttributes, error) {
 	return tpm.iakAttrs, nil
 }
 
-// Returns the Initial Attestation Key Attributes
-func (tpm *TPM2) IAK() crypto.PublicKey {
+// Returns the Initial Attestation Key public key
+func (tpm *TPM2) IAK() (crypto.PublicKey, error) {
 	if tpm.iakAttrs == nil {
-		panic(ErrNotInitialized)
+		return nil, ErrIAKNotInitialized
 	}
 	pub, err := x509.ParsePKIXPublicKey(tpm.iakAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
 		tpm.logger.Error("failed to parse IAK public key", slog.String("error", err.Error()))
-		panic(err)
+		return nil, fmt.Errorf("%w: %v", ErrIAKPublicParse, err)
 	}
-	return pub
+	return pub, nil
 }
 
 // Returns the Initial Device IDentifier Key Attributes
 func (tpm *TPM2) IDevIDAttributes() (*types.KeyAttributes, error) {
 	if tpm.idevidAttrs == nil {
+		if tpm.config.IDevID == nil {
+			return nil, ErrIDevIDConfigNil
+		}
 		idevidHandle := tpm2.TPMHandle(tpm.config.IDevID.Handle)
 		signatureAlgorithm, err := types.ParseSignatureAlgorithm(tpm.config.IDevID.SignatureAlgorithm)
 		if err != nil {
@@ -172,27 +190,62 @@ func (tpm *TPM2) IDevIDAttributes() (*types.KeyAttributes, error) {
 	return tpm.idevidAttrs, nil
 }
 
-// Returns the Initial Attestation Key Attributes
-func (tpm *TPM2) IDevID() crypto.PublicKey {
+// Returns the Initial Device IDentifier public key
+func (tpm *TPM2) IDevID() (crypto.PublicKey, error) {
 	if tpm.idevidAttrs == nil {
-		tpm.logger.Error("IDevID not initialized", slog.String("error", ErrNotInitialized.Error()))
-		panic(ErrNotInitialized)
+		tpm.logger.Error("IDevID not initialized", slog.String("error", ErrIDevIDNotInitialized.Error()))
+		return nil, ErrIDevIDNotInitialized
 	}
-	pub, err := x509.ParsePKIXPublicKey(tpm.iakAttrs.TPMAttributes.PublicKeyBytes)
+	pub, err := x509.ParsePKIXPublicKey(tpm.idevidAttrs.TPMAttributes.PublicKeyBytes)
 	if err != nil {
 		tpm.logger.Error("failed to parse IDevID public key", slog.String("error", err.Error()))
-		panic(err)
+		return nil, fmt.Errorf("%w: %v", ErrIDevIDPublicParse, err)
 	}
-	return pub
+	return pub, nil
 }
 
 // Returns the Endorsement Key atrributes using the handle defined
 // in the platform configuration file.
+// If the persistent EK doesn't exist but a manufacturer EK certificate
+// exists in NV RAM, returns attributes based on the configuration.
 func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 	if tpm.ekAttrs == nil {
+		if tpm.config.EK == nil {
+			return nil, ErrEKConfigNil
+		}
 		ekHandle := tpm2.TPMHandle(tpm.config.EK.Handle)
 		ekAttrs, err := tpm.KeyAttributes(ekHandle)
 		if err != nil {
+			// Check if this is a "handle not found" error (persistent EK doesn't exist)
+			isPersistentHandleError := err == tpm2.TPMRC(0x184) || // TPM_RC_VALUE
+				err == tpm2.TPMRC(0x18b) // TPM_RC_HANDLE
+
+			if isPersistentHandleError {
+				// Persistent EK doesn't exist - check for manufacturer EK certificate in NV RAM
+				_, nvErr := tpm2.NVReadPublic{
+					NVIndex: tpm2.TPMHandle(tpm.config.EK.CertHandle),
+				}.Execute(tpm.transport)
+
+				if nvErr != nil {
+					// Neither persistent EK nor manufacturer certificate exists
+					return nil, err
+				}
+
+				// Manufacturer EK certificate exists - create attributes from config
+				tpm.logger.Debug("Persistent EK not found, using config-based attributes with manufacturer certificate",
+					slog.String("certHandle", fmt.Sprintf("0x%08X", tpm.config.EK.CertHandle)))
+
+				policyDigest, pdErr := tpm.PlatformPolicyDigest()
+				if pdErr != nil {
+					return nil, pdErr
+				}
+				ekAttrs, err = EKAttributesFromConfig(*tpm.config.EK, &policyDigest, tpm.config.IDevID)
+				if err != nil {
+					return nil, err
+				}
+				tpm.ekAttrs = ekAttrs
+				return tpm.ekAttrs, nil
+			}
 			return nil, err
 		}
 		// If no EK common name is provided, try to use the device model and serial
@@ -215,16 +268,40 @@ func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 		ekAttrs.KeyAlgorithm = algo
 
 		if algo == x509.RSA {
+			var keySize int
+			if tpm.config.EK.RSAConfig != nil {
+				keySize = tpm.config.EK.RSAConfig.KeySize
+			} else {
+				// Derive key size from the TPM public key
+				pubKey, parseErr := x509.ParsePKIXPublicKey(ekAttrs.TPMAttributes.PublicKeyBytes)
+				if parseErr == nil {
+					if rsaPub, ok := pubKey.(*rsa.PublicKey); ok {
+						keySize = rsaPub.N.BitLen()
+					}
+				}
+			}
 			ekAttrs.RSAAttributes = &types.RSAAttributes{
-				KeySize: tpm.config.EK.RSAConfig.KeySize,
+				KeySize: keySize,
 			}
 		} else {
-			curve, err := types.ParseCurve(tpm.config.EK.ECCConfig.Curve)
-			if err != nil {
-				return nil, err
+			var eccCurve elliptic.Curve
+			if tpm.config.EK.ECCConfig != nil {
+				parsed, parseErr := types.ParseCurve(tpm.config.EK.ECCConfig.Curve)
+				if parseErr != nil {
+					return nil, parseErr
+				}
+				eccCurve = parsed
+			} else {
+				// Derive curve from the TPM public key
+				pubKey, parseErr := x509.ParsePKIXPublicKey(ekAttrs.TPMAttributes.PublicKeyBytes)
+				if parseErr == nil {
+					if eccPub, ok := pubKey.(*ecdsa.PublicKey); ok {
+						eccCurve = eccPub.Curve
+					}
+				}
 			}
 			ekAttrs.ECCAttributes = &types.ECCAttributes{
-				Curve: curve,
+				Curve: eccCurve,
 			}
 		}
 		tpm.ekAttrs = ekAttrs
@@ -236,6 +313,9 @@ func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 // using it's persistent handle.
 func (tpm *TPM2) SSRKAttributes() (*types.KeyAttributes, error) {
 	if tpm.ssrkAttrs == nil {
+		if tpm.config.SSRK == nil {
+			return nil, ErrSSRKConfigNil
+		}
 		srkHandle := tpm2.TPMHandle(tpm.config.SSRK.Handle)
 		srkAttrs, err := tpm.KeyAttributes(srkHandle)
 		if err != nil {
@@ -252,6 +332,50 @@ func (tpm *TPM2) SSRKAttributes() (*types.KeyAttributes, error) {
 		tpm.ssrkAttrs = srkAttrs
 	}
 	return tpm.ssrkAttrs, nil
+}
+
+// PlatformSRKAttributes returns the Platform Storage Root Key attributes
+// using its persistent handle (default 0x81000002).
+//
+// When a PlatformKeyStore is attached and its auth is confirmed (IsAuthReady),
+// the SRK auth password from the PlatformKeyStore is included in the returned
+// attributes. This allows seal/unseal operations using the SRK to succeed
+// when the SRK has a non-empty auth policy.
+func (tpm *TPM2) PlatformSRKAttributes() (*types.KeyAttributes, error) {
+	if tpm.platformSRKAttrs == nil {
+		if tpm.config.PlatformSRK == nil {
+			return nil, ErrInvalidPlatformSRKConfiguration
+		}
+		srkHandle := tpm2.TPMHandle(tpm.config.PlatformSRK.SRKHandle)
+		if srkHandle == 0 {
+			srkHandle = tpm2.TPMHandle(tpSRKIndex)
+		}
+		srkAttrs, err := tpm.KeyAttributes(srkHandle)
+		if err != nil {
+			return nil, err
+		}
+		if tpm.config.PlatformSRK.CN == "" {
+			srkAttrs.CN = "platform-srk"
+		}
+		srkAttrs.KeyType = types.KeyTypeStorage
+		srkAttrs.StoreType = types.StoreTPM2
+		tpm.platformSRKAttrs = srkAttrs
+	}
+
+	// Always sync the full SRK attributes from the PlatformKeyStore when
+	// available. The PlatformKeyStore may have evicted and recreated the SRK
+	// (ensureSRKAuth), which changes the key material and auth value.
+	// Without this sync, the cached attrs have stale data and seal operations
+	// fail with TPM_RC_BAD_AUTH.
+	if pks := tpm.platformKeyStore; pks != nil {
+		if concreteKS, ok := pks.(*PlatformKeyStore); ok {
+			if pksAttrs := concreteKS.SRKAttributes(); pksAttrs != nil {
+				tpm.platformSRKAttrs = pksAttrs
+			}
+		}
+	}
+
+	return tpm.platformSRKAttrs, nil
 }
 
 // Reads the public area of the provided persistent TPM handle
@@ -353,7 +477,11 @@ func (tpm *TPM2) CreateEK(
 
 	if ekAttrs.PlatformPolicy {
 		template := ekAttrs.TPMAttributes.Template
-		template.AuthPolicy = tpm.PlatformPolicyDigest()
+		policyDigest, err := tpm.PlatformPolicyDigest()
+		if err != nil {
+			return err
+		}
+		template.AuthPolicy = policyDigest
 		ekAttrs.TPMAttributes.Template = template
 	}
 
@@ -416,7 +544,8 @@ func (tpm *TPM2) CreateEK(
 		return err
 	}
 
-	tpm.logger.Debug("tpm: EK Hierarchy", slog.String("hierarchy", HierarchyName(hierarchy)))
+	hierName, _ := HierarchyName(hierarchy)
+	tpm.logger.Debug("tpm: EK Hierarchy", slog.String("hierarchy", hierName))
 	tpm.logger.Debug("tpm: EK Name", slog.String("name", fmt.Sprintf("0x%x", Encode(primaryKey.Name.Buffer))))
 
 	ekAttrs.KeyType = types.KeyTypeEndorsement
@@ -463,9 +592,34 @@ func (tpm *TPM2) CreateSRK(
 		userAuth = srkAttrs.Password.Bytes()
 	}
 
+	// DIAGNOSTIC: dump exactly what we're about to pass to CreatePrimary.
+	// The TPM_RC_BAD_AUTH observed on lab-node-2 2026-04-08 shows empty owner
+	// auth in tpm2_getcap but Go's CreatePrimary failing. We need to see
+	// the actual bytes the Go library is sending.
+	hierName, _ := HierarchyName(hierarchy)
+	tpm.logger.Info("CreateSRK DIAGNOSTIC",
+		slog.String("hierarchy", hierName),
+		slog.String("hierarchy_handle", fmt.Sprintf("0x%08x", uint32(hierarchy))),
+		slog.Int("hierarchy_auth_len", len(hierarchyAuth)),
+		slog.String("hierarchy_auth_hex", fmt.Sprintf("%x", hierarchyAuth)),
+		slog.Bool("hierarchy_auth_nil_field", srkAttrs.TPMAttributes.HierarchyAuth == nil),
+		slog.Int("user_auth_len", len(userAuth)),
+		slog.String("user_auth_hex", fmt.Sprintf("%x", userAuth)),
+		slog.Bool("user_auth_nil_field", srkAttrs.Password == nil),
+		slog.Bool("platform_policy", srkAttrs.PlatformPolicy),
+		slog.String("persistent_handle", fmt.Sprintf("0x%08x", uint32(srkAttrs.TPMAttributes.Handle))),
+		slog.String("handle_type", fmt.Sprintf("0x%02x", uint8(srkAttrs.TPMAttributes.HandleType))),
+		slog.Bool("encrypt_session", tpm.config.EncryptSession),
+		slog.Bool("has_parent", srkAttrs.Parent != nil),
+	)
+
 	if srkAttrs.PlatformPolicy {
 		template := srkAttrs.TPMAttributes.Template
-		template.AuthPolicy = tpm.PlatformPolicyDigest()
+		policyDigest, err := tpm.PlatformPolicyDigest()
+		if err != nil {
+			return err
+		}
+		template.AuthPolicy = policyDigest
 		srkAttrs.TPMAttributes.Template = template
 	}
 
@@ -552,7 +706,8 @@ func (tpm *TPM2) CreateSRK(
 	srkAttrs.TPMAttributes.Name = primaryKey.Name
 	srkAttrs.TPMAttributes.Public = *pub
 
-	tpm.logger.Debug("tpm: SRK Hierarchy", slog.String("hierarchy", HierarchyName(hierarchy)))
+	srkHierName, _ := HierarchyName(hierarchy)
+	tpm.logger.Debug("tpm: SRK Hierarchy", slog.String("hierarchy", srkHierName))
 	tpm.logger.Debug("tpm: SRK Name", slog.String("name", fmt.Sprintf("0x%s", Encode(primaryKey.Name.Buffer))))
 
 	publicKey, err := tpm.ParsePublicKey(primaryKey.OutPublic.Bytes())
@@ -603,14 +758,17 @@ func (tpm *TPM2) CreateIAK(
 	}
 
 	// Create IAK key attributes from platform configuration file
-	policyDigest := tpm.PlatformPolicyDigest()
+	policyDigest, err := tpm.PlatformPolicyDigest()
+	if err != nil {
+		return nil, err
+	}
 	iakAttrs, err := IAKAttributesFromConfig(
 		ekAttrs.TPMAttributes.HierarchyAuth,
 		tpm.config.IAK,
 		&policyDigest)
 	if err != nil {
 		tpm.logger.Error("failed to create IAK attributes from config", slog.String("error", err.Error()))
-		panic(err)
+		return nil, fmt.Errorf("%w: %v", ErrIAKConfigFailed, err)
 	}
 	iakAttrs.Parent = ekAttrs
 
@@ -1023,7 +1181,10 @@ func (tpm *TPM2) CreateIDevID(
 	if tpm.config.IDevID == nil {
 		return nil, nil, ErrNotConfigured
 	}
-	policyDigest := tpm.PlatformPolicyDigest()
+	policyDigest, err := tpm.PlatformPolicyDigest()
+	if err != nil {
+		return nil, nil, err
+	}
 	idevidAttrs, err := IDevIDAttributesFromConfig(
 		*tpm.config.IDevID, &policyDigest)
 	if err != nil {

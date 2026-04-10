@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,11 +19,10 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"testing"
-	"time"
 
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"google.golang.org/grpc/codes"
@@ -33,7 +32,7 @@ import (
 // MockImportExportBackend is a mock implementation of backend.ImportExportBackend for testing
 type MockImportExportBackend struct {
 	mock.Mock
-	types.Backend
+	types.KeyProvider
 }
 
 func (m *MockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
@@ -75,21 +74,13 @@ func (m *MockImportExportBackend) ExportKey(attrs *types.KeyAttributes, algorith
 
 // TestGetImportParameters tests the GetImportParameters RPC method
 func TestGetImportParameters(t *testing.T) {
-	// Generate a test RSA wrapping key
-	wrappingKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	assert.NoError(t, err)
-
-	expiresAt := time.Now().Add(24 * time.Hour)
-
 	tests := []struct {
 		name          string
 		request       *pb.GetImportParametersRequest
-		mockSetup     func(*MockImportExportBackend)
 		expectedError codes.Code
-		validateResp  func(*testing.T, *pb.GetImportParametersResponse)
 	}{
 		{
-			name: "Successful RSA key import parameters",
+			name: "Valid request without registered backend returns NotFound",
 			request: &pb.GetImportParametersRequest{
 				KeyId:             "test-key",
 				Backend:           "test-backend",
@@ -97,25 +88,7 @@ func TestGetImportParameters(t *testing.T) {
 				KeyType:           "rsa",
 				KeySize:           2048,
 			},
-			mockSetup: func(m *MockImportExportBackend) {
-				m.On("GetImportParameters", mock.Anything, backend.WrappingAlgorithmRSAES_OAEP_SHA_256).Return(
-					&backend.ImportParameters{
-						WrappingPublicKey: &wrappingKey.PublicKey,
-						ImportToken:       []byte("test-token"),
-						Algorithm:         backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
-						ExpiresAt:         &expiresAt,
-						KeySpec:           "RSA_2048",
-					}, nil)
-			},
-			expectedError: codes.OK,
-			validateResp: func(t *testing.T, resp *pb.GetImportParametersResponse) {
-				assert.NotNil(t, resp)
-				assert.NotEmpty(t, resp.WrappingPublicKey)
-				assert.Equal(t, []byte("test-token"), resp.ImportToken)
-				assert.Equal(t, "RSAES_OAEP_SHA_256", resp.Algorithm)
-				assert.Equal(t, "RSA_2048", resp.KeySpec)
-				assert.NotNil(t, resp.ExpiresAt)
-			},
+			expectedError: codes.NotFound,
 		},
 		{
 			name: "Missing key_id",
@@ -124,7 +97,6 @@ func TestGetImportParameters(t *testing.T) {
 				WrappingAlgorithm: "RSAES_OAEP_SHA_256",
 				KeyType:           "rsa",
 			},
-			mockSetup:     func(m *MockImportExportBackend) {},
 			expectedError: codes.InvalidArgument,
 		},
 		{
@@ -134,7 +106,6 @@ func TestGetImportParameters(t *testing.T) {
 				WrappingAlgorithm: "RSAES_OAEP_SHA_256",
 				KeyType:           "rsa",
 			},
-			mockSetup:     func(m *MockImportExportBackend) {},
 			expectedError: codes.InvalidArgument,
 		},
 		{
@@ -144,7 +115,6 @@ func TestGetImportParameters(t *testing.T) {
 				Backend: "test-backend",
 				KeyType: "rsa",
 			},
-			mockSetup:     func(m *MockImportExportBackend) {},
 			expectedError: codes.InvalidArgument,
 		},
 		{
@@ -154,7 +124,6 @@ func TestGetImportParameters(t *testing.T) {
 				Backend:           "test-backend",
 				WrappingAlgorithm: "RSAES_OAEP_SHA_256",
 			},
-			mockSetup:     func(m *MockImportExportBackend) {},
 			expectedError: codes.InvalidArgument,
 		},
 		{
@@ -165,8 +134,7 @@ func TestGetImportParameters(t *testing.T) {
 				WrappingAlgorithm: "RSAES_OAEP_SHA_256",
 				KeyType:           "symmetric",
 			},
-			mockSetup:     func(m *MockImportExportBackend) {},
-			expectedError: codes.NotFound, // Backend not found before validation
+			expectedError: codes.NotFound,
 		},
 		{
 			name: "Unsupported key type",
@@ -176,33 +144,21 @@ func TestGetImportParameters(t *testing.T) {
 				WrappingAlgorithm: "RSAES_OAEP_SHA_256",
 				KeyType:           "unsupported",
 			},
-			mockSetup:     func(m *MockImportExportBackend) {},
-			expectedError: codes.NotFound, // Backend not found before validation
+			expectedError: codes.NotFound,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Note: This test validates the RPC handler logic
-			// Full integration tests would require a real backend manager
-			// For now, we test the validation logic and error handling
-
-			// Create service using the global keychain service
-			service := NewService()
+			service := NewService(nil, nil)
 
 			resp, err := service.GetImportParameters(context.Background(), tt.request)
 
-			if tt.expectedError != codes.OK {
-				assert.Error(t, err)
-				st, ok := status.FromError(err)
-				assert.True(t, ok)
-				assert.Equal(t, tt.expectedError, st.Code())
-				assert.Nil(t, resp)
-			} else if tt.validateResp != nil {
-				// For successful cases, we'd need a real backend
-				// Skip validation for now as it requires integration testing
-				t.Skip("Full validation requires integration testing with real backend")
-			}
+			assert.Error(t, err)
+			st, ok := status.FromError(err)
+			assert.True(t, ok)
+			assert.Equal(t, tt.expectedError, st.Code())
+			assert.Nil(t, resp)
 		})
 	}
 }
@@ -269,7 +225,7 @@ func TestWrapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService()
+			service := NewService(nil, nil)
 
 			resp, err := service.WrapKey(context.Background(), tt.request)
 
@@ -345,7 +301,7 @@ func TestUnwrapKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService()
+			service := NewService(nil, nil)
 
 			resp, err := service.UnwrapKey(context.Background(), tt.request)
 
@@ -489,7 +445,7 @@ func TestImportKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService()
+			service := NewService(nil, nil)
 
 			resp, err := service.ImportKey(context.Background(), tt.request)
 
@@ -546,7 +502,7 @@ func TestExportKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := NewService()
+			service := NewService(nil, nil)
 
 			resp, err := service.ExportKey(context.Background(), tt.request)
 

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -224,8 +224,12 @@ func TestUser_CanManageUsers(t *testing.T) {
 	}{
 		{"enabled admin", RoleAdmin, true, true},
 		{"disabled admin", RoleAdmin, false, false},
+		{"enabled SO", RoleSO, true, true},
+		{"disabled SO", RoleSO, false, false},
 		{"enabled operator", RoleOperator, true, false},
 		{"enabled user", RoleUser, true, false},
+		{"enabled custodian", RoleCustodian, true, false},
+		{"enabled auditor", RoleAuditor, true, false},
 	}
 
 	for _, tt := range tests {
@@ -310,7 +314,7 @@ func TestUser_CanListKeys(t *testing.T) {
 		expected bool
 	}{
 		{"enabled admin", RoleAdmin, true, true},
-		{"enabled guest", RoleGuest, true, true},
+		{"enabled user", RoleUser, true, true},
 		{"disabled admin", RoleAdmin, false, false},
 	}
 
@@ -354,8 +358,10 @@ func TestIsValidRole(t *testing.T) {
 		{RoleOperator, true},
 		{RoleAuditor, true},
 		{RoleUser, true},
-		{RoleReadOnly, true},
-		{RoleGuest, true},
+		{RoleCustodian, true},
+		{RoleSO, true},
+		{Role("readonly"), false},
+		{Role("guest"), false},
 		{Role("invalid"), false},
 		{Role(""), false},
 	}
@@ -365,4 +371,356 @@ func TestIsValidRole(t *testing.T) {
 			assert.Equal(t, tt.expected, IsValidRole(tt.role))
 		})
 	}
+}
+
+func TestRoleSO_IsValid(t *testing.T) {
+	assert.True(t, IsValidRole(RoleSO), "RoleSO should be a valid role")
+	assert.Equal(t, Role("so"), RoleSO, "RoleSO should have value 'so'")
+}
+
+func TestUser_AddCertBinding(t *testing.T) {
+	u := &User{CertBindings: []CertBinding{}}
+
+	binding := &CertBinding{
+		Fingerprint: "abc123",
+		Subject:     "CN=test",
+		Issuer:      "CN=ca",
+		Serial:      "1",
+		NotAfter:    time.Now().Add(365 * 24 * time.Hour),
+		Name:        "Test Cert",
+		CreatedAt:   time.Now().UTC(),
+	}
+
+	u.AddCertBinding(binding)
+	require.Len(t, u.CertBindings, 1)
+	assert.Equal(t, "abc123", u.CertBindings[0].Fingerprint)
+	assert.Equal(t, "Test Cert", u.CertBindings[0].Name)
+}
+
+func TestUser_RemoveCertBinding(t *testing.T) {
+	t.Run("removes existing binding", func(t *testing.T) {
+		u := &User{CertBindings: []CertBinding{
+			{Fingerprint: "aaa"},
+			{Fingerprint: "bbb"},
+			{Fingerprint: "ccc"},
+		}}
+
+		removed := u.RemoveCertBinding("bbb")
+		assert.True(t, removed)
+		require.Len(t, u.CertBindings, 2)
+		assert.Equal(t, "aaa", u.CertBindings[0].Fingerprint)
+		assert.Equal(t, "ccc", u.CertBindings[1].Fingerprint)
+	})
+
+	t.Run("returns false for nonexistent binding", func(t *testing.T) {
+		u := &User{CertBindings: []CertBinding{{Fingerprint: "aaa"}}}
+		removed := u.RemoveCertBinding("nonexistent")
+		assert.False(t, removed)
+		require.Len(t, u.CertBindings, 1)
+	})
+}
+
+func TestUser_GetCertBinding(t *testing.T) {
+	t.Run("returns existing binding", func(t *testing.T) {
+		u := &User{CertBindings: []CertBinding{
+			{Fingerprint: "aaa", Name: "First"},
+			{Fingerprint: "bbb", Name: "Second"},
+		}}
+
+		binding := u.GetCertBinding("bbb")
+		require.NotNil(t, binding)
+		assert.Equal(t, "Second", binding.Name)
+	})
+
+	t.Run("returns nil for nonexistent binding", func(t *testing.T) {
+		u := &User{CertBindings: []CertBinding{{Fingerprint: "aaa"}}}
+		binding := u.GetCertBinding("nonexistent")
+		assert.Nil(t, binding)
+	})
+}
+
+func TestUser_HasCertBinding(t *testing.T) {
+	u := &User{CertBindings: []CertBinding{{Fingerprint: "aaa"}}}
+	assert.True(t, u.HasCertBinding("aaa"))
+	assert.False(t, u.HasCertBinding("bbb"))
+}
+
+func TestUser_HasAnyRole(t *testing.T) {
+	t.Run("matches primary role", func(t *testing.T) {
+		u := &User{Role: RoleAdmin}
+		assert.True(t, u.HasAnyRole(RoleAdmin))
+		assert.True(t, u.HasAnyRole(RoleOperator, RoleAdmin))
+		assert.False(t, u.HasAnyRole(RoleOperator, RoleUser))
+	})
+
+	t.Run("matches role in Roles slice", func(t *testing.T) {
+		u := &User{
+			Role:  RoleOperator,
+			Roles: []Role{RoleCustodian, RoleAuditor},
+		}
+		assert.True(t, u.HasAnyRole(RoleCustodian))
+		assert.True(t, u.HasAnyRole(RoleAuditor))
+		assert.True(t, u.HasAnyRole(RoleOperator))
+		assert.False(t, u.HasAnyRole(RoleAdmin))
+	})
+
+	t.Run("returns false with no roles", func(t *testing.T) {
+		u := &User{}
+		assert.False(t, u.HasAnyRole(RoleAdmin))
+	})
+
+	t.Run("returns false with empty arguments", func(t *testing.T) {
+		u := &User{Role: RoleAdmin}
+		assert.False(t, u.HasAnyRole())
+	})
+
+	t.Run("checks both primary and additional roles", func(t *testing.T) {
+		u := &User{
+			Role:  RoleUser,
+			Roles: []Role{RoleCustodian},
+		}
+		assert.True(t, u.HasAnyRole(RoleUser))
+		assert.True(t, u.HasAnyRole(RoleCustodian))
+		assert.False(t, u.HasAnyRole(RoleAdmin, RoleOperator))
+	})
+}
+
+func TestUser_CanParticipateCeremony(t *testing.T) {
+	t.Run("enabled custodian with primary role", func(t *testing.T) {
+		u := &User{Role: RoleCustodian, Enabled: true}
+		assert.True(t, u.CanParticipateCeremony())
+	})
+
+	t.Run("enabled custodian with role in Roles slice", func(t *testing.T) {
+		u := &User{
+			Role:    RoleOperator,
+			Roles:   []Role{RoleCustodian},
+			Enabled: true,
+		}
+		assert.True(t, u.CanParticipateCeremony())
+	})
+
+	t.Run("disabled custodian cannot participate", func(t *testing.T) {
+		u := &User{Role: RoleCustodian, Enabled: false}
+		assert.False(t, u.CanParticipateCeremony())
+	})
+
+	t.Run("non-custodian cannot participate", func(t *testing.T) {
+		u := &User{Role: RoleAdmin, Enabled: true}
+		assert.False(t, u.CanParticipateCeremony())
+	})
+
+	t.Run("non-custodian with roles cannot participate", func(t *testing.T) {
+		u := &User{
+			Role:    RoleAdmin,
+			Roles:   []Role{RoleOperator, RoleAuditor},
+			Enabled: true,
+		}
+		assert.False(t, u.CanParticipateCeremony())
+	})
+
+	t.Run("disabled user with custodian in Roles cannot participate", func(t *testing.T) {
+		u := &User{
+			Role:    RoleUser,
+			Roles:   []Role{RoleCustodian},
+			Enabled: false,
+		}
+		assert.False(t, u.CanParticipateCeremony())
+	})
+}
+
+func TestUser_TenantID(t *testing.T) {
+	t.Run("system-level user has empty tenant ID", func(t *testing.T) {
+		u := &User{Username: "system-user"}
+		assert.Equal(t, "", u.TenantID)
+	})
+
+	t.Run("tenant-scoped user has tenant ID", func(t *testing.T) {
+		u := &User{Username: "tenant-user", TenantID: "tenant-123"}
+		assert.Equal(t, "tenant-123", u.TenantID)
+	})
+}
+
+func TestUser_CanInitializeModule(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role
+		enabled  bool
+		expected bool
+	}{
+		{"enabled SO", RoleSO, true, true},
+		{"disabled SO", RoleSO, false, false},
+		{"enabled admin", RoleAdmin, true, false},
+		{"enabled operator", RoleOperator, true, false},
+		{"enabled user", RoleUser, true, false},
+		{"enabled custodian", RoleCustodian, true, false},
+		{"enabled auditor", RoleAuditor, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &User{Role: tt.role, Enabled: tt.enabled}
+			assert.Equal(t, tt.expected, u.CanInitializeModule())
+		})
+	}
+}
+
+func TestUser_CanSignCSR(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role
+		enabled  bool
+		expected bool
+	}{
+		{"enabled SO", RoleSO, true, true},
+		{"disabled SO", RoleSO, false, false},
+		{"enabled admin", RoleAdmin, true, false},
+		{"enabled operator", RoleOperator, true, false},
+		{"enabled user", RoleUser, true, false},
+		{"enabled custodian", RoleCustodian, true, false},
+		{"enabled auditor", RoleAuditor, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &User{Role: tt.role, Enabled: tt.enabled}
+			assert.Equal(t, tt.expected, u.CanSignCSR())
+		})
+	}
+}
+
+func TestUser_CanManageSecurityPolicy(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role
+		enabled  bool
+		expected bool
+	}{
+		{"enabled SO", RoleSO, true, true},
+		{"disabled SO", RoleSO, false, false},
+		{"enabled admin", RoleAdmin, true, false},
+		{"enabled operator", RoleOperator, true, false},
+		{"enabled user", RoleUser, true, false},
+		{"enabled custodian", RoleCustodian, true, false},
+		{"enabled auditor", RoleAuditor, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &User{Role: tt.role, Enabled: tt.enabled}
+			assert.Equal(t, tt.expected, u.CanManageSecurityPolicy())
+		})
+	}
+}
+
+func TestUser_CanZeroize(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role
+		enabled  bool
+		expected bool
+	}{
+		{"enabled SO", RoleSO, true, true},
+		{"disabled SO", RoleSO, false, false},
+		{"enabled admin", RoleAdmin, true, false},
+		{"enabled operator", RoleOperator, true, false},
+		{"enabled user", RoleUser, true, false},
+		{"enabled custodian", RoleCustodian, true, false},
+		{"enabled auditor", RoleAuditor, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &User{Role: tt.role, Enabled: tt.enabled}
+			assert.Equal(t, tt.expected, u.CanZeroize())
+		})
+	}
+}
+
+func TestUser_CanResetPIN(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role
+		enabled  bool
+		expected bool
+	}{
+		{"enabled SO", RoleSO, true, true},
+		{"disabled SO", RoleSO, false, false},
+		{"enabled admin", RoleAdmin, true, false},
+		{"enabled operator", RoleOperator, true, false},
+		{"enabled user", RoleUser, true, false},
+		{"enabled custodian", RoleCustodian, true, false},
+		{"enabled auditor", RoleAuditor, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &User{Role: tt.role, Enabled: tt.enabled}
+			assert.Equal(t, tt.expected, u.CanResetPIN())
+		})
+	}
+}
+
+func TestUser_CanManageTenants(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role
+		enabled  bool
+		expected bool
+	}{
+		{"enabled SO", RoleSO, true, true},
+		{"disabled SO", RoleSO, false, false},
+		{"enabled admin", RoleAdmin, true, true},
+		{"disabled admin", RoleAdmin, false, false},
+		{"enabled operator", RoleOperator, true, false},
+		{"enabled user", RoleUser, true, false},
+		{"enabled custodian", RoleCustodian, true, false},
+		{"enabled auditor", RoleAuditor, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := &User{Role: tt.role, Enabled: tt.enabled}
+			assert.Equal(t, tt.expected, u.CanManageTenants())
+		})
+	}
+}
+
+func TestUser_CanManageUsers_IncludesSO(t *testing.T) {
+	t.Run("SO can manage users", func(t *testing.T) {
+		u := &User{Role: RoleSO, Enabled: true}
+		assert.True(t, u.CanManageUsers())
+	})
+
+	t.Run("admin can manage users", func(t *testing.T) {
+		u := &User{Role: RoleAdmin, Enabled: true}
+		assert.True(t, u.CanManageUsers())
+	})
+
+	t.Run("operator cannot manage users", func(t *testing.T) {
+		u := &User{Role: RoleOperator, Enabled: true}
+		assert.False(t, u.CanManageUsers())
+	})
+
+	t.Run("disabled SO cannot manage users", func(t *testing.T) {
+		u := &User{Role: RoleSO, Enabled: false}
+		assert.False(t, u.CanManageUsers())
+	})
+}
+
+func TestSOCannotUseKeys(t *testing.T) {
+	t.Run("SO cannot use keys for crypto operations", func(t *testing.T) {
+		u := &User{Role: RoleSO, Enabled: true}
+		assert.False(t, u.CanUseKeys(), "SO should NOT be able to use keys for cryptographic operations")
+	})
+
+	t.Run("SO cannot manage keys", func(t *testing.T) {
+		u := &User{Role: RoleSO, Enabled: true}
+		assert.False(t, u.CanManageKeys(), "SO should NOT be able to manage keys")
+	})
+
+	t.Run("SO can list keys", func(t *testing.T) {
+		u := &User{Role: RoleSO, Enabled: true}
+		assert.True(t, u.CanListKeys(), "SO should be able to list keys")
+	})
 }

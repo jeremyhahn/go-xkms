@@ -16,6 +16,70 @@ Nitrokey HSM is a USB hardware security module that provides secure key storage 
 - **Secure Storage**: Keys never leave the hardware
 - **PIN Protection**: User and SO PIN protection
 
+## Service Integration
+
+### Build Tag
+
+Uses the `pkcs11` build tag since the Nitrokey HSM operates through the PKCS#11 interface via OpenSC:
+
+```bash
+go build -tags pkcs11 ./...
+```
+
+When compiled with this tag, the PKCS#11 backend auto-registers with the xkms service registry. The Nitrokey HSM is accessed as a PKCS#11 device using `xkms.BackendPKCS11`.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+// Nitrokey HSM uses the PKCS#11 backend
+if xkms.IsBackendSupported(xkms.BackendPKCS11) {
+    fmt.Println("PKCS#11 backend is available (supports Nitrokey HSM)")
+}
+```
+
+### Using via Service API
+
+```go
+import (
+    "crypto/elliptic"
+    "crypto/x509"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a key on the Nitrokey HSM via PKCS#11
+key, err := xkms.GenerateKeyWithBackend("pkcs11", &types.KeyAttributes{
+    CN:           "nitrokey-signing-key",
+    KeyAlgorithm: x509.ECDSA,
+    ECCAttributes: &types.ECCAttributes{
+        Curve: elliptic.P256(),
+    },
+})
+
+// Sign using the key ID with PKCS#11 backend
+sig, err := xkms.Sign("pkcs11:::nitrokey-signing-key", data, nil)
+```
+
+### Auto-Initialize
+
+Configure the PKCS#11 backend with the Nitrokey-specific OpenSC library path:
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendPKCS11: {
+            "library_path": "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so",
+            "token_label":  "SmartCard-HSM (UserPIN)",
+            "pin":          os.Getenv("NITROKEY_PIN"),
+        },
+    },
+})
+defer xkms.Close()
+```
+
 ## Supported Algorithms
 
 The Nitrokey HSM supports the following cryptographic algorithms:
@@ -38,8 +102,8 @@ The Nitrokey HSM supports the following cryptographic algorithms:
 
 ```go
 import (
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/memory"
 )
 
 // Create storage backends
@@ -96,10 +160,10 @@ The Nitrokey HSM must be initialized before first use. This sets up the device w
 sc-hsm-tool --initialize \
   --so-pin 3537363231383830 \
   --pin 648219 \
-  --label "go-keychain-hsm"
+  --label "go-xkms-hsm"
 ```
 
-After initialization, the token label will be `"go-keychain-hsm (UserPIN)"`.
+After initialization, the token label will be `"go-xkms-hsm (UserPIN)"`.
 
 ## Usage Examples
 
@@ -427,7 +491,6 @@ If migrating from YubiKey PIV to Nitrokey HSM:
 
 ## See Also
 
-- [PKCS#11 Backend](pkcs11.md) - Generic HSM support
-- [YubiKey Backend](yubikey.md) - YubiKey PIV support
+- [PKCS#11 Backend](pkcs11.md) - Generic HSM support (including YubiKey via libykcs11)
 - [TPM2 Backend](tpm2.md) - Trusted Platform Module support
 - [Getting Started](../usage/getting-started.md) - General usage guide

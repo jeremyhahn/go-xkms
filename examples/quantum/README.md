@@ -5,29 +5,25 @@ Examples demonstrating post-quantum cryptographic operations using the quantum b
 ## Prerequisites
 
 Quantum support requires:
-- Go 1.21+
-- liboqs library installed (see [integration test README](../../test/integration/quantum/README.md))
-- Build with `quantum` tag
+- Go 1.24+ (for `crypto/mlkem` standard library support)
+
+No external C libraries, CGO, or special build tags are required. Quantum cryptography is always compiled in.
 
 ## Quick Start
 
 ### Docker (Recommended)
 
 ```bash
-# Run quantum integration tests (includes liboqs)
+# Run quantum integration tests
 make integration-test-quantum
 ```
 
 ### Local Build
 
 ```bash
-# Install liboqs dependencies
-make deps-quantum-debian
-make deps-quantum
-
-# Build example
+# Build example (no special flags needed)
 cd examples/quantum/basic-usage
-go build -tags="quantum" -o quantum-demo main.go
+go build -o quantum-demo main.go
 
 # Run
 ./quantum-demo
@@ -42,12 +38,12 @@ Comprehensive demonstration of:
 - ML-KEM key encapsulation (NIST FIPS 203)
 - crypto.Signer interface usage
 - Key persistence
-- Seamless keychain integration
+- Seamless xkms integration
 
 **Run:**
 ```bash
 cd basic-usage
-go run -tags="quantum" main.go
+go run main.go
 ```
 
 **Expected Output:**
@@ -96,9 +92,10 @@ go run -tags="quantum" main.go
 
 | Algorithm | Public Key | Ciphertext | Shared Secret | Security Level |
 |-----------|-----------|------------|---------------|----------------|
-| ML-KEM-512 | 800 bytes | 768 bytes | 32 bytes | NIST Level 1 (AES-128) |
 | ML-KEM-768 | 1184 bytes | 1088 bytes | 32 bytes | NIST Level 3 (AES-192) ⭐ |
 | ML-KEM-1024 | 1568 bytes | 1568 bytes | 32 bytes | NIST Level 5 (AES-256) |
+
+ML-KEM is implemented via Go's standard library `crypto/mlkem` package. ML-KEM-512 is not supported.
 
 ⭐ Recommended for general use
 
@@ -194,5 +191,6 @@ ML-KEM-768:
 - [NIST Post-Quantum Cryptography](https://csrc.nist.gov/projects/post-quantum-cryptography)
 - [FIPS 203 (ML-KEM)](https://csrc.nist.gov/pubs/fips/203/final)
 - [FIPS 204 (ML-DSA)](https://csrc.nist.gov/pubs/fips/204/final)
-- [liboqs Documentation](https://github.com/open-quantum-safe/liboqs)
-- [Quantum Usage Guide](../../docs/QUANTUM_USAGE.md)
+- [Cloudflare circl (ML-DSA)](https://github.com/cloudflare/circl)
+- [Go crypto/mlkem (ML-KEM)](https://pkg.go.dev/crypto/mlkem)
+- [Quantum Backend Documentation](../../docs/backends/quantum.md)

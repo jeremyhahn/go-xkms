@@ -33,7 +33,7 @@ This infrastructure provides production-ready containerized testing environments
 │         │                 │                     │              │
 │  ┌──────▼─────────────────▼─────────────────────▼───────────┐  │
 │  │              Docker Bridge Network                       │  │
-│  │              (keychain-test)                             │  │
+│  │              (xkms-test)                             │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                │
 │  ┌──────────────┐  ┌──────────────┐                            │
@@ -341,8 +341,8 @@ docker system info
 docker system df
 
 # Inspect containers
-docker inspect go-keychain-swtpm
-docker inspect go-keychain-softhsm
+docker inspect go-xkms-swtpm
+docker inspect go-xkms-softhsm
 
 # View detailed logs
 docker compose logs --tail=100 swtpm
@@ -353,8 +353,8 @@ docker compose exec swtpm /bin/sh
 docker compose exec softhsm /bin/sh
 
 # Check volumes
-docker volume inspect go-keychain_swtpm-data
-docker volume inspect go-keychain_softhsm-tokens
+docker volume inspect go-xkms_swtpm-data
+docker volume inspect go-xkms_softhsm-tokens
 ```
 
 ## Best Practices
@@ -383,7 +383,7 @@ To update to newer versions:
 
 ```bash
 # Monitor resource usage
-docker stats go-keychain-swtpm go-keychain-softhsm
+docker stats go-xkms-swtpm go-xkms-softhsm
 
 # View service health
 watch -n 1 'docker compose ps'

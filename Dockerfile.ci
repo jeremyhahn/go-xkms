@@ -1,11 +1,11 @@
-# CI Dockerfile for go-keychain
+# CI Dockerfile for go-xkms
 # Contains all tools needed to run the full CI pipeline locally
 # Matches the GitHub CI workflow environment
 
-FROM golang:bookworm
+FROM golang:1.26.1-bookworm
 
-LABEL maintainer="go-keychain"
-LABEL description="CI environment for go-keychain with all linters, security scanners, and test dependencies"
+LABEL maintainer="go-xkms"
+LABEL description="CI environment for go-xkms with all linters, security scanners, and test dependencies"
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -31,14 +31,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls28-dev \
     libtasn1-6-dev \
     libssl-dev \
-    cmake \
-    ninja-build \
+    libusb-1.0-0-dev \
     curl \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install golangci-lint (same version as GitHub CI)
-RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.6.2
+# Install golangci-lint from source (must be built with Go 1.26.1+ to support go 1.26.1 projects)
+RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest && \
+    mv /go/bin/golangci-lint /usr/local/bin/
 
 # Install gosec
 RUN go install github.com/securego/gosec/v2/cmd/gosec@latest && \
@@ -50,38 +50,6 @@ RUN go install golang.org/x/vuln/cmd/govulncheck@latest && \
 
 # Install Trivy
 RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
-# Build liboqs for quantum-safe cryptography
-WORKDIR /build
-RUN git clone --depth 1 https://github.com/open-quantum-safe/liboqs.git && \
-    cd liboqs && \
-    mkdir build && cd build && \
-    cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON .. && \
-    ninja && \
-    ninja install && \
-    ldconfig
-
-# Create liboqs-go.pc for the Go bindings
-RUN mkdir -p /usr/local/lib/pkgconfig && \
-    echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'exec_prefix=${prefix}' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'libdir=${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'includedir=${prefix}/include' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo '' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Name: liboqs-go' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Description: Open Quantum Safe liboqs library for Go bindings' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Version: 0.9.0' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Libs: -L${libdir} -loqs' >> /usr/local/lib/pkgconfig/liboqs-go.pc && \
-    echo 'Cflags: -I${includedir}' >> /usr/local/lib/pkgconfig/liboqs-go.pc
-
-# Cleanup build directory
-RUN rm -rf /build
-
-# Set library paths for CGO
-ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-ENV CGO_LDFLAGS="-L/usr/local/lib"
-ENV CGO_CFLAGS="-I/usr/local/include"
 
 # Create required directories
 RUN mkdir -p /workspace \

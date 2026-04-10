@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,12 +14,13 @@
 package hardware
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // HardwareBackendAdapter wraps a HardwareCertStorage to implement storage.Backend.
@@ -47,7 +48,7 @@ func NewHardwareBackendAdapter(hardware HardwareCertStorage) storage.Backend {
 
 // Get retrieves certificate data by key.
 // Supports keys: "certs/{id}.pem" and "certs/{id}-chain.pem"
-func (a *HardwareBackendAdapter) Get(key string) ([]byte, error) {
+func (a *HardwareBackendAdapter) Get(_ context.Context, key string) ([]byte, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -91,7 +92,7 @@ func (a *HardwareBackendAdapter) Get(key string) ([]byte, error) {
 
 // Put stores certificate data by key.
 // Supports keys: "certs/{id}.pem" and "certs/{id}-chain.pem"
-func (a *HardwareBackendAdapter) Put(key string, value []byte, opts *storage.Options) error {
+func (a *HardwareBackendAdapter) Put(_ context.Context, key string, value []byte) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -131,7 +132,7 @@ func (a *HardwareBackendAdapter) Put(key string, value []byte, opts *storage.Opt
 }
 
 // Delete removes a certificate by key.
-func (a *HardwareBackendAdapter) Delete(key string) error {
+func (a *HardwareBackendAdapter) Delete(_ context.Context, key string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -148,7 +149,7 @@ func (a *HardwareBackendAdapter) Delete(key string) error {
 }
 
 // List returns all certificate keys with the given prefix.
-func (a *HardwareBackendAdapter) List(prefix string) ([]string, error) {
+func (a *HardwareBackendAdapter) List(_ context.Context, prefix string) ([]string, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -170,8 +171,38 @@ func (a *HardwareBackendAdapter) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
+// Scan iterates over all certificate key-value pairs matching the given prefix.
+// It lists all certificates, then retrieves each one and calls fn.
+func (a *HardwareBackendAdapter) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	ids, err := a.hardware.ListCerts()
+	if err != nil {
+		return err
+	}
+
+	for _, id := range ids {
+		key := "certs/" + id + ".pem"
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
+		cert, err := a.hardware.GetCert(id)
+		if err != nil {
+			return fmt.Errorf("failed to get certificate %q: %w", id, err)
+		}
+
+		if err := fn(key, cert.Raw); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 // Exists checks if a certificate exists by key.
-func (a *HardwareBackendAdapter) Exists(key string) (bool, error) {
+func (a *HardwareBackendAdapter) Exists(_ context.Context, key string) (bool, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 

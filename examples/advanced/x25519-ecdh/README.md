@@ -1,6 +1,6 @@
 # X25519 ECDH Key Agreement Example
 
-This example demonstrates how to perform ECDH (Elliptic Curve Diffie-Hellman) key agreement using X25519 with the go-keychain Software backend.
+This example demonstrates how to perform ECDH (Elliptic Curve Diffie-Hellman) key agreement using X25519 with the go-xkms Software backend.
 
 ## What is X25519?
 
@@ -130,4 +130,4 @@ X25519 is compatible with:
 - [RFC 7748](https://tools.ietf.org/html/rfc7748) - X25519 Specification
 - [RFC 5869](https://tools.ietf.org/html/rfc5869) - HKDF
 - [Curve25519](https://cr.yp.to/ecdh.html) - Original design
-- [go-keychain Documentation](../../docs/key-agreement.md)
+- [go-xkms Documentation](../../docs/key-agreement.md)

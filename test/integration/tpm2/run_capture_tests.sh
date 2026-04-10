@@ -23,7 +23,7 @@ echo ""
 
 # Run just the capture tests
 go test -v \
-    -tags='integration,tpm2' \
+    -tags='integration,tpm2,codec_cbor,codec_json,codec_msgpack' \
     -timeout 30m \
     -run 'TestTPMSession' \
     ./test/integration/tpm2/

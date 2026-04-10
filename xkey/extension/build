@@ -1,0 +1,30 @@
+#!/bin/bash
+# Build xKey browser extension
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "Building xKey extension..."
+
+# Install deps if needed
+if [ ! -d node_modules ]; then
+  npm install
+fi
+
+# Clean
+rm -rf dist
+
+# Compile TypeScript
+node node_modules/typescript/lib/tsc.js
+
+# Copy static files
+cp manifest.json dist/
+cp src/popup.html dist/
+mkdir -p dist/icons
+if ls src/icons/* 1>/dev/null 2>&1; then
+  cp -r src/icons/* dist/icons/
+fi
+
+echo "Build complete. Extension files in dist/"
+echo "Load as unpacked extension from dist/ directory"

@@ -4,6 +4,62 @@
 
 The TPM 2.0 backend provides hardware-backed cryptographic key storage and operations using Trusted Platform Module 2.0. This implementation ensures that private keys never leave the TPM in plaintext form, providing the highest level of security for cryptographic operations.
 
+## Service Integration
+
+### Build Tag
+
+No build tag required. The TPM 2.0 backend is always compiled into the binary and auto-registers with the xkms service registry at init time.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendTPM2) {
+    fmt.Println("TPM 2.0 backend is available")
+}
+```
+
+### Using via Service API
+
+```go
+import (
+    "crypto/elliptic"
+    "crypto/x509"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a key on the TPM 2.0 backend
+key, err := xkms.GenerateKeyWithBackend("tpm2", &types.KeyAttributes{
+    CN:           "tpm-signing-key",
+    KeyAlgorithm: x509.ECDSA,
+    ECCAttributes: &types.ECCAttributes{
+        Curve: elliptic.P256(),
+    },
+})
+
+// Sign using the key ID with explicit backend
+sig, err := xkms.Sign("tpm2:::tpm-signing-key", data, nil)
+```
+
+### Auto-Initialize
+
+Auto-initialization will skip the TPM 2.0 backend if no TPM hardware (or simulator) is available. Backends that fail to initialize are logged and skipped without affecting other backends.
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DataDir: "/var/lib/xkms",
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendTPM2: {
+            "device": "/dev/tpmrm0",
+        },
+    },
+})
+defer xkms.Close()
+```
+
 ## Architecture
 
 ### Hierarchical Key Structure
@@ -46,7 +102,7 @@ Endorsement Key (EK)
 
 ```go
 config := &tpm2.Config{
-    CN:             "my-keychain",
+    CN:             "my-xkms",
     DevicePath:     "/dev/tpmrm0",  // or /dev/tpm0
     SRKHandle:      0x81000001,
     Hierarchy:      "owner",
@@ -58,7 +114,7 @@ config := &tpm2.Config{
 
 ```go
 config := &tpm2.Config{
-    CN:            "my-keychain",
+    CN:            "my-xkms",
     UseSimulator:  true,
     SimulatorHost: "localhost",
     SimulatorPort: 2321,
@@ -72,7 +128,7 @@ Session encryption protects sensitive data in transit between the CPU and TPM:
 
 ```go
 config := &tpm2.Config{
-    CN:             "my-keychain",
+    CN:             "my-xkms",
     DevicePath:     "/dev/tpmrm0",
     SRKHandle:      0x81000001,
     EncryptSession: true,  // RECOMMENDED: Enable encryption (default)
@@ -119,10 +175,10 @@ config.PCRSelection = []int{0, 1, 2, 3, 7}  // Secure boot PCRs
 
 ```go
 // Create storage for TPM blob storage
-keyStorage, _ := file.New("/var/lib/keychain/keys")
-certStorage, _ := file.New("/var/lib/keychain/certs")
+keyStorage, _ := file.New("/var/lib/xkms/keys")
+certStorage, _ := file.New("/var/lib/xkms/certs")
 
-// Create TPM keychain with secure defaults
+// Create TPM xkms with secure defaults
 config := tpm2.DefaultConfig()
 config.CN = "application-srk"
 // EncryptSession is true by default for security
@@ -139,11 +195,11 @@ if err != nil {
 defer ks.Close()
 
 // Initialize SRK (first time only)
-soPIN := keychain.NewClearPassword([]byte("security-officer"))
-userPIN := keychain.NewClearPassword([]byte("user-password"))
+soPIN := xkms.NewClearPassword([]byte("security-officer"))
+userPIN := xkms.NewClearPassword([]byte("user-password"))
 
 err = ks.Initialize(soPIN, userPIN)
-if err != nil && !errors.Is(err, keychain.ErrAlreadyInitialized) {
+if err != nil && !errors.Is(err, xkms.ErrAlreadyInitialized) {
     log.Fatal(err)
 }
 ```
@@ -155,7 +211,7 @@ if err != nil && !errors.Is(err, keychain.ErrAlreadyInitialized) {
 ```go
 // Secure configuration for production use
 config := &tpm2.Config{
-    CN:             "production-keychain",
+    CN:             "production-xkms",
     DevicePath:     "/dev/tpmrm0",
     SRKHandle:      0x81000001,
     Hierarchy:      "owner",
@@ -178,7 +234,7 @@ defer ks.Close()
 ```go
 // ONLY for local development/debugging - NOT for production
 config := &tpm2.Config{
-    CN:             "dev-keychain",
+    CN:             "dev-xkms",
     DevicePath:     "/dev/tpmrm0",
     SRKHandle:      0x81000001,
     Hierarchy:      "owner",
@@ -210,12 +266,12 @@ log.Printf("  Platform Policy: %v", config.PlatformPolicy)
 ### Generate RSA Key
 
 ```go
-attrs := &keychain.KeyAttributes{
+attrs := &xkms.KeyAttributes{
     CN:           "signing-key-2048",
     KeyAlgorithm: x509.RSA,
-    KeyType:      keychain.KeyTypeSigning,
-    StoreType:    keychain.StoreTPM2,
-    RSAAttributes: &keychain.RSAAttributes{
+    KeyType:      xkms.KeyTypeSigning,
+    StoreType:    xkms.StoreTPM2,
+    RSAAttributes: &xkms.RSAAttributes{
         KeySize: 2048,
     },
 }
@@ -229,12 +285,12 @@ if err != nil {
 ### Generate ECDSA Key
 
 ```go
-attrs := &keychain.KeyAttributes{
+attrs := &xkms.KeyAttributes{
     CN:           "ecdsa-p256",
     KeyAlgorithm: x509.ECDSA,
-    KeyType:      keychain.KeyTypeSigning,
-    StoreType:    keychain.StoreTPM2,
-    ECCAttributes: &keychain.ECCAttributes{
+    KeyType:      xkms.KeyTypeSigning,
+    StoreType:    xkms.StoreTPM2,
+    ECCAttributes: &xkms.ECCAttributes{
         Curve: elliptic.P256(),
     },
 }
@@ -266,7 +322,7 @@ if err != nil {
 
 ```go
 verifier := ks.Verifier(attrs)
-valid, err := verifier.Verify(publicKey, hash[:], signature, &keychain.VerifyOpts{
+valid, err := verifier.Verify(publicKey, hash[:], signature, &xkms.VerifyOpts{
     Hash: crypto.SHA256,
 })
 if err != nil {
@@ -379,7 +435,7 @@ CPU → [TPM Command + AES-128 Encrypted Parameters] → TPM
 ```go
 config := tpm2.DefaultConfig()
 // EncryptSession is already true by default
-config.CN = "production-keychain"
+config.CN = "production-xkms"
 config.DevicePath = "/dev/tpmrm0"
 
 // Verify encryption is enabled
