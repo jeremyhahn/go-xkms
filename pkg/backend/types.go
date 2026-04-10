@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,7 +14,7 @@
 package backend
 
 import (
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // This file provides convenience re-exports of types from pkg/types to the backend package.
@@ -84,7 +84,6 @@ const (
 	BackendTypeSymmetric    = types.BackendTypeSymmetric
 	BackendTypeSoftware     = types.BackendTypeSoftware
 	BackendTypePKCS11       = types.BackendTypePKCS11
-	BackendTypeSmartCardHSM = types.BackendTypeSmartCardHSM
 	BackendTypeTPM2         = types.BackendTypeTPM2
 	BackendTypeAWSKMS       = types.BackendTypeAWSKMS
 	BackendTypeGCPKMS       = types.BackendTypeGCPKMS
@@ -93,6 +92,10 @@ const (
 	BackendTypeQuantum      = types.BackendTypeQuantum
 	BackendTypeThreshold    = types.BackendTypeThreshold
 	BackendTypeFrost        = types.BackendTypeFrost
+	BackendTypePhone        = types.BackendTypePhone
+	BackendTypeSmartCardHSM = types.BackendTypeSmartCardHSM
+	BackendTypeYubiKey      = types.BackendTypeYubiKey
+	BackendTypeSoftHSM      = types.BackendTypeSoftHSM
 )
 
 // FSExtension constant re-exports
@@ -195,48 +198,6 @@ const (
 	AESKeySize192 = types.AESKeySize192
 	AESKeySize256 = types.AESKeySize256
 )
-
-// KeyAlgorithm is a string-based algorithm type for simplified algorithm handling.
-// Deprecated: Use KeyAlgorithmString or AEADAlgorithm for type-safe algorithm handling.
-type KeyAlgorithm string
-
-// KeyAlgorithm constants
-// Deprecated: Use the typed constants from types.AlgorithmRSA, types.AEADAES256GCM, etc.
-const (
-	ALG_RSA                KeyAlgorithm = "rsa"
-	ALG_ECDSA              KeyAlgorithm = "ecdsa"
-	ALG_ED25519            KeyAlgorithm = "ed25519"
-	ALG_AES128_GCM         KeyAlgorithm = "aes128-gcm"
-	ALG_AES192_GCM         KeyAlgorithm = "aes192-gcm"
-	ALG_AES256_GCM         KeyAlgorithm = "aes256-gcm"
-	ALG_CHACHA20_POLY1305  KeyAlgorithm = "chacha20-poly1305"
-	ALG_XCHACHA20_POLY1305 KeyAlgorithm = "xchacha20-poly1305"
-)
-
-// IsSymmetric returns true if the algorithm is a symmetric algorithm.
-func (ka KeyAlgorithm) IsSymmetric() bool {
-	switch ka {
-	case ALG_AES128_GCM, ALG_AES192_GCM, ALG_AES256_GCM, ALG_CHACHA20_POLY1305, ALG_XCHACHA20_POLY1305:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsAsymmetric returns true if the algorithm is an asymmetric algorithm.
-func (ka KeyAlgorithm) IsAsymmetric() bool {
-	switch ka {
-	case ALG_RSA, ALG_ECDSA, ALG_ED25519:
-		return true
-	default:
-		return false
-	}
-}
-
-// String returns the string representation of the KeyAlgorithm.
-func (ka KeyAlgorithm) String() string {
-	return string(ka)
-}
 
 // StaticPassword is a simple password implementation for tests.
 type StaticPassword string

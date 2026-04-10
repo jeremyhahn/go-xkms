@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,10 +27,10 @@ import (
 	"io"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	pkcs11backend "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // mockCrypto11Context implements a minimal crypto11.Context interface for testing.
@@ -158,7 +158,7 @@ func TestBackendMethodReturnsWrapper(t *testing.T) {
 	mockBackend := createMockBackend()
 	ks := &KeyStore{backend: mockBackend}
 
-	wrapper := ks.Backend()
+	wrapper := ks.KeyProvider()
 	if wrapper == nil {
 		t.Fatal("Expected non-nil backend")
 	}
@@ -406,7 +406,7 @@ func TestGenerateKeyInvalidAlgorithmMock(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for invalid algorithm")
 	}
-	if !errors.Is(err, keychain.ErrInvalidKeyAlgorithm) {
+	if !errors.Is(err, xkms.ErrInvalidKeyAlgorithm) {
 		t.Errorf("Expected ErrInvalidKeyAlgorithm, got %v", err)
 	}
 }
@@ -501,7 +501,7 @@ func TestOpaqueBackendGetCallsBackend(t *testing.T) {
 	mockBackend := createMockBackend()
 	ks := &KeyStore{backend: mockBackend}
 
-	wrapper := ks.Backend()
+	wrapper := ks.KeyProvider()
 
 	attrs := &types.KeyAttributes{CN: "test"}
 	_, err := wrapper.GetKey(attrs)
@@ -516,7 +516,7 @@ func TestOpaqueBackendSignerCallsBackend(t *testing.T) {
 	mockBackend := createMockBackend()
 	ks := &KeyStore{backend: mockBackend}
 
-	wrapper := ks.Backend()
+	wrapper := ks.KeyProvider()
 
 	attrs := &types.KeyAttributes{CN: "test"}
 	_, err := wrapper.Signer(attrs)
@@ -531,7 +531,7 @@ func TestOpaqueBackendDeleteCallsBackend(t *testing.T) {
 	mockBackend := createMockBackend()
 	ks := &KeyStore{backend: mockBackend}
 
-	wrapper := ks.Backend()
+	wrapper := ks.KeyProvider()
 
 	attrs := &types.KeyAttributes{CN: "test"}
 	err := wrapper.DeleteKey(attrs)
@@ -546,7 +546,7 @@ func TestOpaqueBackendCloseIsNoOp(t *testing.T) {
 	mockBackend := createMockBackend()
 	ks := &KeyStore{backend: mockBackend}
 
-	wrapper := ks.Backend()
+	wrapper := ks.KeyProvider()
 
 	err := wrapper.Close()
 	if err != nil {

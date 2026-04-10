@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,8 +19,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -103,7 +102,7 @@ func TestEncrypt(t *testing.T) {
 		assert.Len(t, encrypted.Nonce, 12)
 		assert.Len(t, encrypted.Tag, 16)
 		assert.Len(t, encrypted.Ciphertext, len(plaintext))
-		assert.Equal(t, string(backend.ALG_CHACHA20_POLY1305), encrypted.Algorithm)
+		assert.Equal(t, "chacha20-poly1305", encrypted.Algorithm)
 
 		// Ciphertext should be different from plaintext
 		assert.NotEqual(t, plaintext, encrypted.Ciphertext)
@@ -299,7 +298,7 @@ func TestDecrypt(t *testing.T) {
 			Ciphertext: []byte("ciphertext"),
 			Nonce:      make([]byte, 8), // Wrong size
 			Tag:        make([]byte, 16),
-			Algorithm:  string(backend.ALG_CHACHA20_POLY1305),
+			Algorithm:  "chacha20-poly1305",
 		}
 
 		_, err := cipher.Decrypt(encrypted, nil)
@@ -312,7 +311,7 @@ func TestDecrypt(t *testing.T) {
 			Ciphertext: []byte("ciphertext"),
 			Nonce:      make([]byte, 12),
 			Tag:        make([]byte, 8), // Wrong size
-			Algorithm:  string(backend.ALG_CHACHA20_POLY1305),
+			Algorithm:  "chacha20-poly1305",
 		}
 
 		_, err := cipher.Decrypt(encrypted, nil)

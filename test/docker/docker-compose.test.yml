@@ -46,8 +46,8 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: go-keychain-test:latest
-    container_name: go-keychain-test-runner
+    image: go-xkms-test:latest
+    container_name: go-xkms-test-runner
     depends_on:
       swtpm:
         condition: service_healthy
@@ -81,7 +81,7 @@ services:
     command: ["make", "test"]
     restart: "no"
     networks:
-      - keychain-test
+      - xkms-test
 
 volumes:
   # Additional volumes for test caching

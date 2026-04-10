@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // provisionTPMIfNeeded ensures TPM is provisioned with SRK
@@ -70,7 +70,7 @@ func TestIntegration_RSAEncryptDecrypt(t *testing.T) {
 				KeyAlgorithm: x509.RSA,
 				KeyType:      types.KeyTypeEncryption,
 				Parent:       srkAttrs,
-				Password:     types.NewClearPassword(nil),
+				Password:     types.NewPassword(nil),
 				StoreType:    types.StoreTPM2,
 				TPMAttributes: &types.TPMAttributes{
 					Hierarchy: tpm2.TPMRHOwner,
@@ -225,7 +225,7 @@ func TestIntegration_CreateRSA(t *testing.T) {
 				KeyAlgorithm:       x509.RSA,
 				KeyType:            types.KeyTypeCA,
 				Parent:             srkAttrs,
-				Password:           types.NewClearPassword(nil),
+				Password:           types.NewPassword(nil),
 				StoreType:          types.StoreTPM2,
 				SignatureAlgorithm: tc.sigAlg,
 				PlatformPolicy:     tc.platformPolicy,
@@ -289,7 +289,7 @@ func TestIntegration_CreateRSA_ErrorCases(t *testing.T) {
 				KeyAlgorithm: x509.RSA,
 				KeyType:      types.KeyTypeCA,
 				Parent:       nil,
-				Password:     types.NewClearPassword(nil),
+				Password:     types.NewPassword(nil),
 				StoreType:    types.StoreTPM2,
 			},
 			expectErr: true,
@@ -350,7 +350,7 @@ func TestIntegration_CreateECDSA(t *testing.T) {
 				KeyAlgorithm:   x509.ECDSA,
 				KeyType:        types.KeyTypeCA,
 				Parent:         srkAttrs,
-				Password:       types.NewClearPassword(nil),
+				Password:       types.NewPassword(nil),
 				StoreType:      types.StoreTPM2,
 				PlatformPolicy: tc.platformPolicy,
 				ECCAttributes: &types.ECCAttributes{
@@ -447,7 +447,7 @@ func TestIntegration_CreateECDSA_ErrorCases(t *testing.T) {
 				KeyAlgorithm: x509.ECDSA,
 				KeyType:      types.KeyTypeCA,
 				Parent:       nil,
-				Password:     types.NewClearPassword(nil),
+				Password:     types.NewPassword(nil),
 				StoreType:    types.StoreTPM2,
 			},
 			expectErr: true,
@@ -498,7 +498,7 @@ func TestIntegration_CreateSecretKey(t *testing.T) {
 				KeyAlgorithm:   0, // Use 0 instead of UnknownSignatureAlgorithm
 				KeyType:        types.KeyTypeHMAC,
 				Parent:         srkAttrs,
-				Password:       types.NewClearPassword(nil),
+				Password:       types.NewPassword(nil),
 				StoreType:      types.StoreTPM2,
 				PlatformPolicy: tc.platformPolicy,
 				TPMAttributes: &types.TPMAttributes{
@@ -556,7 +556,7 @@ func TestIntegration_CreateSecretKey_ErrorCases(t *testing.T) {
 				KeyAlgorithm: 0,
 				KeyType:      types.KeyTypeHMAC,
 				Parent:       nil,
-				Password:     types.NewClearPassword(nil),
+				Password:     types.NewPassword(nil),
 				StoreType:    types.StoreTPM2,
 			},
 			expectErr: true,
@@ -589,7 +589,7 @@ func TestIntegration_RSAEncryptDecrypt_LargeData(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeEncryption,
 		Parent:       srkAttrs,
-		Password:     types.NewClearPassword(nil),
+		Password:     types.NewPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,

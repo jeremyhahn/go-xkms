@@ -54,6 +54,74 @@ Vault's Transit engine acts as "encryption as a service," performing cryptograph
 - Integrated storage backends
 - Prometheus metrics export
 
+## Service Integration
+
+### Build Tag
+
+The HashiCorp Vault backend requires the `vault` build tag:
+
+```bash
+go build -tags vault ./...
+```
+
+When compiled with this tag, the backend auto-registers with the xkms service registry via an `init()` function in `pkg/xkms/register_vault.go`.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendVault) {
+    fmt.Println("HashiCorp Vault backend is available")
+}
+
+// List all compiled-in backends
+for _, b := range xkms.SupportedBackends() {
+    fmt.Println("Available:", b)
+}
+```
+
+### Using via Service API
+
+Once initialized, use the xkms service API to work with Vault keys without managing backend instances directly:
+
+```go
+import (
+    "crypto/x509"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a key in Vault Transit
+key, err := xkms.GenerateKeyWithBackend("vault", &types.KeyAttributes{
+    CN:           "my-vault-key",
+    KeyAlgorithm: x509.ECDSA,
+    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+})
+
+// Sign using key ID format: backend:type:algo:keyname
+sig, err := xkms.Sign("vault:::my-vault-key", data, nil)
+
+// Seal data with Vault Transit encryption
+sealed, err := xkms.SealWithBackend(ctx, "vault", secretData, opts)
+```
+
+### Auto-Initialize with Config
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DefaultBackend: "vault",
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendVault: {
+            "address": os.Getenv("VAULT_ADDR"),
+            "token":   os.Getenv("VAULT_TOKEN"),
+        },
+    },
+})
+defer xkms.Close()
+```
+
 ## Authentication Methods
 
 ### Token Authentication (Development)
@@ -88,7 +156,7 @@ Setup AppRole:
 vault auth enable approle
 
 # Create policy
-vault policy write keychain-policy - <<EOF
+vault policy write xkms-policy - <<EOF
 path "transit/sign/*" {
   capabilities = ["create", "update"]
 }
@@ -98,14 +166,14 @@ path "transit/keys/*" {
 EOF
 
 # Create role
-vault write auth/approle/role/keychain-app \
-    token_policies="keychain-policy" \
+vault write auth/approle/role/xkms-app \
+    token_policies="xkms-policy" \
     token_ttl=1h \
     token_max_ttl=4h
 
 # Get credentials
-vault read auth/approle/role/keychain-app/role-id
-vault write -f auth/approle/role/keychain-app/secret-id
+vault read auth/approle/role/xkms-app/role-id
+vault write -f auth/approle/role/xkms-app/secret-id
 ```
 
 ### Kubernetes Authentication (Recommended for K8s)
@@ -130,10 +198,10 @@ vault write auth/kubernetes/config \
     kubernetes_host="https://kubernetes.default.svc:443"
 
 # Create role
-vault write auth/kubernetes/role/keychain-app \
-    bound_service_account_names=keychain-sa \
+vault write auth/kubernetes/role/xkms-app \
+    bound_service_account_names=xkms-sa \
     bound_service_account_namespaces=default \
-    policies=keychain-policy \
+    policies=xkms-policy \
     ttl=1h
 ```
 
@@ -268,9 +336,9 @@ import (
     "log"
     "os"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/vault"
-    "github.com/jeremyhahn/go-keychain/pkg/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/vault"
+    "github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 func main() {
@@ -1030,7 +1098,7 @@ version: '3.8'
 services:
   vault:
     image: hashicorp/vault:latest
-    container_name: go-keychain-vault
+    container_name: go-xkms-vault
     ports:
       - "8200:8200"
     environment:
@@ -1095,16 +1163,16 @@ make integration-test-vault
 
 ## Migration Guide
 
-### From PKCS#8 to Vault
+### From Software to Vault
 
 ```go
 func migrateToVault() error {
-    // Old PKCS#8 backend
-    pkcs8Config := &pkcs8.Config{
+    // Old software backend
+    softwareConfig := &software.Config{
         StoragePath: "./keys",
         Password:    os.Getenv("KEYSTORE_PASSWORD"),
     }
-    oldBackend, err := pkcs8.NewBackend(pkcs8Config)
+    oldBackend, err := software.NewBackend(softwareConfig)
     if err != nil {
         return err
     }
@@ -1143,7 +1211,7 @@ func migrateToVault() error {
 
     // Update application to use Vault
     // Re-sign data with new keys
-    // Retire old PKCS#8 keys after transition
+    // Retire old software keys after transition
 
     return nil
 }
@@ -1170,4 +1238,4 @@ The HashiCorp Vault backend has the following limitations:
 - Enterprise features require Vault Enterprise license
 - Key deletion requires explicit `deletion_allowed` flag
 
-For offline key storage, consider the PKCS#8 backend. For hardware-backed keys without network dependency, consider TPM2 or PKCS#11 backends.
+For offline key storage, consider the software backend. For hardware-backed keys without network dependency, consider TPM2 or PKCS#11 backends.

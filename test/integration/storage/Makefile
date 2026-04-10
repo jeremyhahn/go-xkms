@@ -5,7 +5,7 @@ test-coverage-hardware:
 	@echo "$(CYAN)$(BOLD)→ Running hardware storage tests with coverage...$(RESET)"
 	@mkdir -p coverage
 	@# Run unit tests with pkcs11 tag
-	@go test -tags=pkcs11 -coverprofile=coverage/hardware-unit.out ./pkg/storage/hardware
+	@go test -tags='pkcs11,codec_cbor,codec_json,codec_msgpack' -coverprofile=coverage/hardware-unit.out ./pkg/storage/hardware
 	@# Display coverage
 	@go tool cover -func=coverage/hardware-unit.out | tail -1
 	@echo ""

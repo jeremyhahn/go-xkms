@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,8 +18,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
+	"crypto/x509"
 	"fmt"
 	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // extractPublicKey extracts the public key from a private key
@@ -36,6 +39,31 @@ func extractPublicKey(privKey interface{}) (crypto.PublicKey, error) {
 	default:
 		return nil, fmt.Errorf("unsupported key type: %T", privKey)
 	}
+}
+
+// getPublicKey returns the public key from a private key using the
+// standard crypto.Signer interface. Returns nil if the key does not
+// implement Public().
+func getPublicKey(privKey crypto.PrivateKey) crypto.PublicKey {
+	switch k := privKey.(type) {
+	case interface{ Public() crypto.PublicKey }:
+		return k.Public()
+	default:
+		return nil
+	}
+}
+
+// getAlgorithmString returns the algorithm name as a string, handling both
+// symmetric and asymmetric key types. This matches the REST API's
+// getAlgorithmString implementation for consistent cross-protocol responses.
+func getAlgorithmString(attrs *types.KeyAttributes) string {
+	if attrs.SymmetricAlgorithm != "" {
+		return string(attrs.SymmetricAlgorithm)
+	}
+	if attrs.KeyAlgorithm != x509.UnknownPublicKeyAlgorithm {
+		return attrs.KeyAlgorithm.String()
+	}
+	return ""
 }
 
 // parseHashAlgorithm parses a hash algorithm string

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,10 +16,7 @@
 package server
 
 import (
-	"fmt"
-
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
 )
 
 // initPKCS11Backend initializes the PKCS#11 backend if enabled in configuration
@@ -29,28 +26,30 @@ func (s *Server) initPKCS11Backend() error {
 	}
 
 	// Create key storage for PKCS#11 metadata
-	keyStorage, err := file.New(s.config.Storage.Path + "/pkcs11")
+	keyStorage, err := s.createStorage("pkcs11/keys")
 	if err != nil {
-		return fmt.Errorf("failed to create PKCS#11 key storage: %w", err)
+		return &ErrStorageCreate{Resource: "PKCS#11 key storage", Err: err}
 	}
 
-	var slot *int
-	// PKCS#11 Config uses Token field, but we'll use slot 0 as default
-	slotVal := 0
-	slot = &slotVal
+	// Create cert storage for PKCS#11 certificates
+	certStorage, err := s.createStorage("pkcs11/certs")
+	if err != nil {
+		return &ErrStorageCreate{Resource: "PKCS#11 cert storage", Err: err}
+	}
 
 	pkcs11Backend, err := pkcs11.NewBackend(&pkcs11.Config{
-		CN:         "pkcs11-backend",
-		Library:    s.config.Backends.PKCS11.Library,
-		Slot:       slot,
-		PIN:        s.config.Backends.PKCS11.Pin,
-		KeyStorage: keyStorage,
+		CN:          "pkcs11-backend",
+		Library:     s.config.Backends.PKCS11.Library,
+		TokenLabel:  s.config.Backends.PKCS11.Token,
+		PIN:         s.config.Backends.PKCS11.Pin,
+		KeyStorage:  keyStorage,
+		CertStorage: certStorage,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create PKCS#11 backend: %w", err)
+		return &ErrBackendCreate{Backend: "PKCS#11", Err: err}
 	}
 
-	s.backends["pkcs11"] = pkcs11Backend
-	s.logger.Info("PKCS#11 backend initialized", "backend", "pkcs11", "library", s.config.Backends.PKCS11.Library)
+	s.keyProviders["pkcs11"] = pkcs11Backend
+	s.logger.Info("PKCS#11 backend initialized", "backend", "pkcs11", "library", s.config.Backends.PKCS11.Library, "token", s.config.Backends.PKCS11.Token)
 	return nil
 }

@@ -29,10 +29,10 @@ Access control:
 # Configure allowed UIDs/GIDs
 unix:
   allowed_uids: [1000, 1001]
-  allowed_gids: [1000, "keychain-users"]
+  allowed_gids: [1000, "xkms-users"]
   # Or use file permissions
   socket_mode: 0660
-  socket_group: keychain-users
+  socket_group: xkms-users
 ```
 
 ### Remote Modes (REST, gRPC, QUIC)
@@ -41,10 +41,10 @@ Remote backends require TLS with mutual authentication:
 
 ```yaml
 rest:
-  base_url: https://keychain.example.com:8443
-  tls_ca_file: /etc/gokeychain/ca.crt
-  tls_cert_file: /etc/gokeychain/client.crt
-  tls_key_file: /etc/gokeychain/client.key
+  base_url: https://xkms.example.com:8443
+  tls_ca_file: /etc/goxkms/ca.crt
+  tls_cert_file: /etc/goxkms/client.crt
+  tls_key_file: /etc/goxkms/client.key
 ```
 
 Requirements:
@@ -65,10 +65,32 @@ PKCS#11 PINs are used for user and SO authentication:
 
 ```bash
 # Use environment variable (cleared after read)
-export KEYCHAIN_PIN="..."
+export XKMS_PIN="..."
 pkcs11-tool --module $P11_MODULE --login --list-objects
-unset KEYCHAIN_PIN
+unset XKMS_PIN
 ```
+
+#### Unified PIN Coordination
+
+When running alongside the xkey FIDO2 daemon in unified PIN mode (the default),
+the PKCS#11 token User PIN is automatically synchronized with FIDO2 PIN changes.
+PIN updates originating from Chrome WebAuthn prompts or the CLI propagate to the
+PKCS#11 token without manual intervention.
+
+How it works:
+
+- The `PKCS11PINSubscriber` registers with the `PINCoordinator` and listens for
+  PIN change notifications.
+- On receiving a raw PIN notification the subscriber calls
+  `token.SetUserPin(rawPIN)`, which stores `SHA-256(rawPIN)` as the token's
+  User PIN.
+- Hash-only notifications (e.g., from an SO PIN reset where the raw PIN is
+  unavailable) are skipped gracefully because the PKCS#11 token requires the
+  raw PIN string to compute its own hash.
+- Disable this behavior by starting the daemon with `--unified-pin=false`.
+
+See [Unified PIN Architecture](../../architecture/pin-architecture.md) for
+details.
 
 ## Thread Safety
 
@@ -101,7 +123,7 @@ The module protects sensitive data in memory:
 
 ```c
 // Clear sensitive data after use
-void keychain_secure_zero(void* ptr, size_t len) {
+void xkms_secure_zero(void* ptr, size_t len) {
     volatile unsigned char* p = ptr;
     while (len--) *p++ = 0;
 }
@@ -109,7 +131,7 @@ void keychain_secure_zero(void* ptr, size_t len) {
 // Example: Clear PIN after use
 char pin[64];
 // ... use pin ...
-keychain_secure_zero(pin, sizeof(pin));
+xkms_secure_zero(pin, sizeof(pin));
 ```
 
 ### Memory Allocation
@@ -145,7 +167,7 @@ Enable audit logging for security monitoring:
 ```yaml
 logging:
   audit: true
-  audit_file: /var/log/gokeychain/audit.log
+  audit_file: /var/log/goxkms/audit.log
   # Log successful operations
   log_success: true
   # Log failed operations
@@ -202,9 +224,9 @@ iptables -A INPUT -p tcp --dport 8443 \
 
 ```bash
 # Secure socket directory
-sudo mkdir -p /var/run/keychain
-sudo chown root:keychain-users /var/run/keychain
-sudo chmod 750 /var/run/keychain
+sudo mkdir -p /var/run/xkms
+sudo chown root:xkms-users /var/run/xkms
+sudo chmod 750 /var/run/xkms
 
 # Socket created with restricted permissions
 # socket_mode: 0660 in config
@@ -214,24 +236,24 @@ sudo chmod 750 /var/run/keychain
 
 ```bash
 # Protect configuration files
-sudo chown root:keychain /etc/gokeychain/pkcs11.yaml
-sudo chmod 640 /etc/gokeychain/pkcs11.yaml
+sudo chown root:xkms /etc/goxkms/pkcs11.yaml
+sudo chmod 640 /etc/goxkms/pkcs11.yaml
 
 # Protect TLS keys
-sudo chmod 600 /etc/gokeychain/*.key
+sudo chmod 600 /etc/goxkms/*.key
 ```
 
 ## Library Loading Security
 
 ### Embedded Mode
 
-The module uses `dlopen()` to load libkeychain.so:
+The module uses `dlopen()` to load libxkms.so:
 
 ```c
 // Only load from secure paths
 const char* allowed_paths[] = {
-    "/usr/lib/libkeychain.so",
-    "/usr/local/lib/libkeychain.so",
+    "/usr/lib/libxkms.so",
+    "/usr/local/lib/libxkms.so",
     NULL
 };
 ```

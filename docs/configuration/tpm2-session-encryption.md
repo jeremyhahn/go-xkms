@@ -421,5 +421,5 @@ func getSensitivePatterns() [][]byte {
 
 
 **Last Updated**: 2025-11-09
-**Maintainer**: go-keychain project
+**Maintainer**: go-xkms project
 **Test Coverage**: Session encryption verification

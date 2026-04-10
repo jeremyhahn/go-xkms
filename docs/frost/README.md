@@ -1,4 +1,4 @@
-# FROST Threshold Signatures for go-keychain
+# FROST Threshold Signatures for go-xkms
 
 FROST (Flexible Round-Optimized Schnorr Threshold) signatures enable M-of-N threshold signing where the private key is **never reconstructed**. This implementation is fully compliant with [RFC 9591](https://datatracker.ietf.org/doc/rfc9591/).
 
@@ -27,7 +27,7 @@ go build -tags frost ./...
 
 ```bash
 # Generate 3-of-5 FROST keys using Ed25519
-keychain frost keygen \
+xkms frost keygen \
   --algorithm FROST-Ed25519-SHA512 \
   --threshold 3 \
   --total 5 \
@@ -39,23 +39,23 @@ keychain frost keygen \
 
 ```bash
 # Participant 1: Generate nonces
-keychain frost round1 --key-id my-frost-key --output round1-alice.json
+xkms frost round1 --key-id my-frost-key --output round1-alice.json
 
 # Participant 2: Generate nonces
-keychain frost round1 --key-id my-frost-key --output round1-bob.json
+xkms frost round1 --key-id my-frost-key --output round1-bob.json
 
 # Participant 3: Generate nonces
-keychain frost round1 --key-id my-frost-key --output round1-charlie.json
+xkms frost round1 --key-id my-frost-key --output round1-charlie.json
 
 # Each participant: Generate signature share
-keychain frost round2 \
+xkms frost round2 \
   --key-id my-frost-key \
   --message "Hello, FROST!" \
   --commitments round1-alice.json,round1-bob.json,round1-charlie.json \
   --output share-alice.json
 
 # Aggregate signature shares
-keychain frost aggregate \
+xkms frost aggregate \
   --key-id my-frost-key \
   --message "Hello, FROST!" \
   --shares share-alice.json,share-bob.json,share-charlie.json \
@@ -65,7 +65,7 @@ keychain frost aggregate \
 ### Verify Signature
 
 ```bash
-keychain frost verify \
+xkms frost verify \
   --key-id my-frost-key \
   --message "Hello, FROST!" \
   --signature signature.bin
@@ -88,15 +88,15 @@ package main
 
 import (
     "fmt"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
-    "github.com/jeremyhahn/go-keychain/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
     // Create storage backends
-    publicStorage := file.NewBackend("/path/to/frost/public")
-    secretBackend := file.NewBackend("/path/to/frost/secret")
+    publicStorage := file.New("/path/to/frost/public")
+    secretBackend := file.New("/path/to/frost/secret")
 
     // Create FROST backend
     backend, err := frost.NewBackend(&frost.Config{
@@ -134,6 +134,41 @@ func main() {
 }
 ```
 
+## Service Integration
+
+FROST is conditionally compiled with the `frost` build tag. When included, it registers itself with the xkms backend registry and can be discovered at runtime:
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+// Check if FROST was compiled in
+if xkms.IsBackendSupported(xkms.BackendFROST) {
+    fmt.Println("FROST backend available")
+}
+
+// List all compiled-in backends
+for _, b := range xkms.SupportedBackends() {
+    fmt.Println(b)
+}
+```
+
+When using `xkms.AutoInitialize`, the FROST backend is initialized automatically if the `frost` build tag is present:
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendFROST: {
+            "threshold":      3,
+            "total":          5,
+            "participant_id": 1,
+        },
+    },
+})
+defer xkms.Close()
+```
+
+FROST is a specialized multi-party protocol. The service layer provides basic backend lifecycle management (initialization, discovery, shutdown), but FROST-specific operations -- distributed key generation (DKG), multi-round commitment/signing, and share aggregation -- require the direct FROST API documented below and in the [API Reference](api.md).
+
 ## Documentation
 
 - [Architecture](architecture.md) - System design and component overview
@@ -147,9 +182,9 @@ func main() {
 ## Requirements
 
 - Go 1.25.5 or higher
-- go-keychain v0.2.0+
+- go-xkms v0.2.0+
 - go-frost library
 
 ## License
 
-This module is part of go-keychain and is dual-licensed under AGPL-3.0 and Commercial licenses.
+This module is part of go-xkms and is dual-licensed under AGPL-3.0 and Commercial licenses.

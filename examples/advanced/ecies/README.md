@@ -59,9 +59,9 @@ Decryption successful: true
 
 ### 2. Backend-Managed Keys (`with-backend/main.go`)
 
-Demonstrates ECIES with go-keychain's backend system:
+Demonstrates ECIES with go-xkms's backend system:
 - Storing keys securely in PKCS#8 backend
-- Key management with keychain
+- Key management with xkms
 - Multi-party encrypted communication
 - Additional Authenticated Data (AAD) usage
 

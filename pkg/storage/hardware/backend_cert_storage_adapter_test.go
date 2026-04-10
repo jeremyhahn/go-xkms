@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package hardware
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -22,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,7 +77,7 @@ func TestBackendCertStorageAdapter_SaveCert(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify stored in backend
-		data, err := backend.Get("certs/test-cert.pem")
+		data, err := backend.Get(context.Background(), "certs/test-cert.pem")
 		require.NoError(t, err)
 		assert.Equal(t, cert.Raw, data)
 	})
@@ -166,7 +167,7 @@ func TestBackendCertStorageAdapter_GetCert(t *testing.T) {
 		adapter := NewBackendCertStorageAdapter(backend)
 
 		// Store invalid data directly
-		err := backend.Put("certs/test-cert.pem", []byte("invalid cert data"), nil)
+		err := backend.Put(context.Background(), "certs/test-cert.pem", []byte("invalid cert data"))
 		require.NoError(t, err)
 
 		_, err = adapter.GetCert("test-cert")
@@ -339,7 +340,7 @@ func TestBackendCertStorageAdapter_GetCertChain(t *testing.T) {
 		adapter := NewBackendCertStorageAdapter(backend)
 
 		// Store invalid data directly
-		err := backend.Put("certs/test-chain-chain.pem", []byte("invalid chain data"), nil)
+		err := backend.Put(context.Background(), "certs/test-chain-chain.pem", []byte("invalid chain data"))
 		require.NoError(t, err)
 
 		_, err = adapter.GetCertChain("test-chain")
@@ -353,7 +354,7 @@ func TestBackendCertStorageAdapter_GetCertChain(t *testing.T) {
 		adapter := NewBackendCertStorageAdapter(backend)
 
 		// Store empty data directly
-		err := backend.Put("certs/test-chain-chain.pem", []byte{}, nil)
+		err := backend.Put(context.Background(), "certs/test-chain-chain.pem", []byte{})
 		require.NoError(t, err)
 
 		_, err = adapter.GetCertChain("test-chain")
@@ -413,9 +414,9 @@ func TestBackendCertStorageAdapter_ListCerts(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add non-cert data
-		err = backend.Put("keys/some-key.key", []byte("key data"), nil)
+		err = backend.Put(context.Background(), "keys/some-key.key", []byte("key data"))
 		require.NoError(t, err)
-		err = backend.Put("certs/invalid-no-suffix", []byte("data"), nil)
+		err = backend.Put(context.Background(), "certs/invalid-no-suffix", []byte("data"))
 		require.NoError(t, err)
 
 		ids, err := adapter.ListCerts()

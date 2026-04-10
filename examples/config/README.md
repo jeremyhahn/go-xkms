@@ -1,6 +1,6 @@
 # Configuration Examples
 
-This directory contains example configuration files for different go-keychain server deployments.
+This directory contains example configuration files for different go-xkms server deployments.
 
 ## Available Configurations
 
@@ -26,9 +26,9 @@ This directory contains example configuration files for different go-keychain se
 3. Run the container:
    ```bash
    docker run -d \
-     -v $(PWD)/configs:/etc/keychain:ro \
+     -v $(PWD)/configs:/etc/xkms:ro \
      -p 8443:8443 \
-     go-keychain/server:latest
+     go-xkms/server:latest
    ```
 
 ### With Docker Compose
@@ -79,8 +79,8 @@ Configure TLS/mTLS settings:
 ```yaml
 tls:
   enabled: true
-  cert_file: /etc/keychain/server.crt
-  key_file: /etc/keychain/server.key
+  cert_file: /etc/xkms/server.crt
+  key_file: /etc/xkms/server.key
   client_auth: require_and_verify  # Enforce mTLS
   min_version: TLS1.2
 ```
@@ -105,7 +105,7 @@ auth:
   # type: jwt
   # jwt:
   #   secret: your-secret
-  #   issuer: keychain
+  #   issuer: xkms
 ```
 
 ### Backends
@@ -118,7 +118,7 @@ default_backend: pkcs8  # Default backend for operations
 backends:
   pkcs8:
     enabled: true
-    path: /var/lib/keychain/keys
+    path: /var/lib/xkms/keys
 
   tpm2:
     enabled: true
@@ -127,7 +127,7 @@ backends:
   pkcs11:
     enabled: true
     library: /usr/lib/softhsm/libsofthsm2.so
-    token_label: keychain-token
+    token_label: xkms-token
     pin: "1234"
 
   awskms:
@@ -166,7 +166,7 @@ Then set in Docker:
 docker run -d \
   -e AWS_ACCESS_KEY_ID=xxx \
   -e AWS_SECRET_ACCESS_KEY=yyy \
-  go-keychain/server:latest
+  go-xkms/server:latest
 ```
 
 ## Security Recommendations
@@ -199,7 +199,7 @@ docker run -d \
 
 5. **Mount configs as read-only**:
    ```bash
-   -v $(PWD)/configs:/etc/keychain:ro
+   -v $(PWD)/configs:/etc/xkms:ro
    ```
 
 ## Troubleshooting
@@ -209,9 +209,9 @@ docker run -d \
 Check config syntax:
 ```bash
 docker run --rm \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  go-keychain/server:latest \
-  --config /etc/keychain/config.yaml --validate
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms/server:latest \
+  --config /etc/xkms/config.yaml --validate
 ```
 
 ### Permission errors

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package attestation
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -103,6 +104,21 @@ func TestAttestationStatementValidate(t *testing.T) {
 			errMsg:  "signature is required",
 		},
 		{
+			name: "empty signature",
+			stmt: &AttestationStatement{
+				Format:                "tpm2",
+				AttestingKeyAlgorithm: x509.RSA,
+				AttestingKeyPublic:    &publicKey,
+				Signature:             []byte{},
+				CertificateChain:      []*x509.Certificate{testCert},
+				AttestedKeyPublic:     &publicKey,
+				AttestationData:       []byte("test-data"),
+				SignatureAlgorithm:    x509.SHA256WithRSA,
+			},
+			wantErr: true,
+			errMsg:  "signature is required",
+		},
+		{
 			name: "missing attested key public",
 			stmt: &AttestationStatement{
 				Format:                "tpm2",
@@ -131,6 +147,36 @@ func TestAttestationStatementValidate(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "certificate chain is required",
+		},
+		{
+			name: "nil certificate chain",
+			stmt: &AttestationStatement{
+				Format:                "tpm2",
+				AttestingKeyAlgorithm: x509.RSA,
+				AttestingKeyPublic:    &publicKey,
+				Signature:             []byte("test-signature"),
+				CertificateChain:      nil,
+				AttestedKeyPublic:     &publicKey,
+				AttestationData:       []byte("test-data"),
+				SignatureAlgorithm:    x509.SHA256WithRSA,
+			},
+			wantErr: true,
+			errMsg:  "certificate chain is required",
+		},
+		{
+			name: "unknown signature algorithm",
+			stmt: &AttestationStatement{
+				Format:                "tpm2",
+				AttestingKeyAlgorithm: x509.RSA,
+				AttestingKeyPublic:    &publicKey,
+				Signature:             []byte("test-signature"),
+				SignatureAlgorithm:    x509.UnknownSignatureAlgorithm,
+				CertificateChain:      []*x509.Certificate{testCert},
+				AttestedKeyPublic:     &publicKey,
+				AttestationData:       []byte("test-data"),
+			},
+			wantErr: true,
+			errMsg:  "signature algorithm is required",
 		},
 	}
 
@@ -195,6 +241,40 @@ func TestVerifyOptionsValidate(t *testing.T) {
 	}
 }
 
+// TestVerifyOptionsValidateDefaultFreshnessWindow verifies that zero freshness window gets default
+func TestVerifyOptionsValidateDefaultFreshnessWindow(t *testing.T) {
+	opts := &VerifyOptions{
+		CheckFreshness:  true,
+		FreshnessWindow: 0,
+	}
+
+	err := opts.Validate()
+	if err != nil {
+		t.Errorf("Validate() should succeed and set default: %v", err)
+	}
+
+	if opts.FreshnessWindow != 300 {
+		t.Errorf("Validate() should set default freshness window to 300, got %d", opts.FreshnessWindow)
+	}
+}
+
+// TestVerifyOptionsValidateNoFreshnessCheck verifies window is not modified when check is disabled
+func TestVerifyOptionsValidateNoFreshnessCheck(t *testing.T) {
+	opts := &VerifyOptions{
+		CheckFreshness:  false,
+		FreshnessWindow: 0,
+	}
+
+	err := opts.Validate()
+	if err != nil {
+		t.Errorf("Validate() should succeed: %v", err)
+	}
+
+	if opts.FreshnessWindow != 0 {
+		t.Errorf("Validate() should not modify freshness window when CheckFreshness is false, got %d", opts.FreshnessWindow)
+	}
+}
+
 // TestAttestationStatementString tests string representation
 func TestAttestationStatementString(t *testing.T) {
 	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
@@ -235,6 +315,44 @@ func TestAttestationStatementString(t *testing.T) {
 	}
 }
 
+// TestAttestationStatementStringNilCertChain tests String() with nil certificate chain
+func TestAttestationStatementStringNilCertChain(t *testing.T) {
+	stmt := &AttestationStatement{
+		Format:             "tpm2",
+		SignatureAlgorithm: x509.SHA256WithRSA,
+		CertificateChain:   nil,
+		Backend:            "tpm2",
+	}
+
+	str := stmt.String()
+	if str == "" {
+		t.Errorf("String() returned empty string")
+	}
+
+	if !contains(str, "Certs: 0") {
+		t.Errorf("String() should show 0 certs for nil chain, got: %s", str)
+	}
+}
+
+// TestAttestationStatementStringEmptyCertChain tests String() with empty certificate chain
+func TestAttestationStatementStringEmptyCertChain(t *testing.T) {
+	stmt := &AttestationStatement{
+		Format:             "pkcs11",
+		SignatureAlgorithm: x509.SHA384WithRSA,
+		CertificateChain:   []*x509.Certificate{},
+		Backend:            "pkcs11",
+	}
+
+	str := stmt.String()
+	if str == "" {
+		t.Errorf("String() returned empty string")
+	}
+
+	if !contains(str, "Certs: 0") {
+		t.Errorf("String() should show 0 certs for empty chain, got: %s", str)
+	}
+}
+
 // TestDefaultVerifyOptions tests default verification options
 func TestDefaultVerifyOptions(t *testing.T) {
 	opts := DefaultVerifyOptions()
@@ -250,6 +368,14 @@ func TestDefaultVerifyOptions(t *testing.T) {
 	if opts.AllowSelfSigned {
 		t.Errorf("DefaultVerifyOptions() should not allow self-signed by default")
 	}
+
+	if opts.TrustedRoots != nil {
+		t.Errorf("DefaultVerifyOptions() TrustedRoots should be nil")
+	}
+
+	if opts.ExpectedNonce != nil {
+		t.Errorf("DefaultVerifyOptions() ExpectedNonce should be nil")
+	}
 }
 
 // TestInsecureVerifyOptions tests insecure verification options
@@ -262,6 +388,10 @@ func TestInsecureVerifyOptions(t *testing.T) {
 
 	if !opts.AllowSelfSigned {
 		t.Errorf("InsecureVerifyOptions() should allow self-signed")
+	}
+
+	if opts.FreshnessWindow != 0 {
+		t.Errorf("InsecureVerifyOptions() FreshnessWindow = %d, want 0", opts.FreshnessWindow)
 	}
 }
 
@@ -285,6 +415,116 @@ func TestResultString(t *testing.T) {
 
 	if !contains(str, "tpm2") {
 		t.Errorf("String() should contain format, got: %s", str)
+	}
+}
+
+// TestResultStringInvalid tests Result.String with invalid result
+func TestResultStringInvalid(t *testing.T) {
+	result := &Result{
+		Valid:             false,
+		AttestationFormat: "pkcs11",
+		ChainValid:        false,
+		SignatureValid:    false,
+	}
+
+	str := result.String()
+	if str == "" {
+		t.Errorf("String() returned empty string")
+	}
+
+	if !contains(str, "INVALID") {
+		t.Errorf("String() should indicate invalid, got: %s", str)
+	}
+
+	if !contains(str, "pkcs11") {
+		t.Errorf("String() should contain format, got: %s", str)
+	}
+}
+
+// TestResultStringPartiallyValid tests Result.String with mixed validity
+func TestResultStringPartiallyValid(t *testing.T) {
+	result := &Result{
+		Valid:             false,
+		AttestationFormat: "awskms",
+		ChainValid:        true,
+		SignatureValid:    false,
+	}
+
+	str := result.String()
+	if str == "" {
+		t.Errorf("String() returned empty string")
+	}
+
+	if !contains(str, "INVALID") {
+		t.Errorf("String() should indicate overall invalid, got: %s", str)
+	}
+
+	if !contains(str, "Chain: true") {
+		t.Errorf("String() should show chain validity, got: %s", str)
+	}
+
+	if !contains(str, "Signature: false") {
+		t.Errorf("String() should show signature validity, got: %s", str)
+	}
+}
+
+// TestAttestationStatementHashConsistency tests that Hash produces consistent results
+func TestAttestationStatementHashConsistency(t *testing.T) {
+	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	publicKey := &privKey.PublicKey
+
+	stmt := &AttestationStatement{
+		AttestedKeyPublic: publicKey,
+	}
+
+	hash1, err := stmt.Hash()
+	if err != nil {
+		t.Fatalf("Hash() failed: %v", err)
+	}
+
+	hash2, err := stmt.Hash()
+	if err != nil {
+		t.Fatalf("Hash() failed on second call: %v", err)
+	}
+
+	if !bytes.Equal(hash1, hash2) {
+		t.Errorf("Hash() should produce consistent results")
+	}
+
+	// Hash should be SHA256 (32 bytes)
+	if len(hash1) != 32 {
+		t.Errorf("Hash() returned %d bytes, want 32", len(hash1))
+	}
+}
+
+// TestAttestationStatementHashDifferentKeys tests that different keys produce different hashes
+func TestAttestationStatementHashDifferentKeys(t *testing.T) {
+	privKey1, _ := rsa.GenerateKey(rand.Reader, 2048)
+	publicKey1 := &privKey1.PublicKey
+
+	privKey2, _ := rsa.GenerateKey(rand.Reader, 2048)
+	publicKey2 := &privKey2.PublicKey
+
+	stmt1 := &AttestationStatement{
+		AttestedKeyPublic: publicKey1,
+	}
+
+	stmt2 := &AttestationStatement{
+		AttestedKeyPublic: publicKey2,
+	}
+
+	hash1, err := stmt1.Hash()
+	if err != nil {
+		t.Fatalf("Hash() failed for key1: %v", err)
+	}
+
+	hash2, err := stmt2.Hash()
+	if err != nil {
+		t.Fatalf("Hash() failed for key2: %v", err)
+	}
+
+	if bytes.Equal(hash1, hash2) {
+		t.Errorf("Hash() should produce different hashes for different keys")
 	}
 }
 
@@ -326,5 +566,20 @@ func BenchmarkAttestationStatementValidate(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = stmt.Validate()
+	}
+}
+
+// BenchmarkAttestationStatementHash benchmarks hash computation
+func BenchmarkAttestationStatementHash(b *testing.B) {
+	privKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	publicKey := &privKey.PublicKey
+
+	stmt := &AttestationStatement{
+		AttestedKeyPublic: publicKey,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = stmt.Hash()
 	}
 }

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,7 +20,9 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/user"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/user"
 )
 
 // UserHandlers provides HTTP handlers for user management.
@@ -76,8 +78,9 @@ func (h *UserHandlers) BootstrapStatusHandler(w http.ResponseWriter, r *http.Req
 
 // UserListResponse is the response for listing users.
 type UserListResponse struct {
-	Users []UserInfo `json:"users"`
-	Total int        `json:"total"`
+	Users      []UserInfo             `json:"users"`
+	Total      int                    `json:"total"`
+	Pagination transport.PageResponse `json:"pagination"`
 }
 
 // UserInfo is a summary of a user.
@@ -93,11 +96,21 @@ type UserInfo struct {
 }
 
 // ListUsersHandler returns a list of all users.
-// This endpoint requires authentication.
+// This endpoint requires authentication. Tenant-scoped identities see
+// only users within their own tenant; system-level identities (SO) see all.
 func (h *UserHandlers) ListUsersHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	users, err := h.userStore.List(ctx)
+	identity := auth.GetIdentity(ctx)
+
+	var users []*user.User
+	var err error
+
+	if identity != nil && !identity.IsCrossTenant() {
+		users, err = h.userStore.ListByTenant(ctx, identity.TenantID)
+	} else {
+		users, err = h.userStore.List(ctx)
+	}
 	if err != nil {
 		userWriteJSONError(w, "Failed to list users", http.StatusInternalServerError)
 		return
@@ -119,9 +132,13 @@ func (h *UserHandlers) ListUsersHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	pageReq := parsePageRequest(r)
+	paged, pageResp := applyPagination(userInfos, pageReq)
+
 	resp := UserListResponse{
-		Users: userInfos,
-		Total: len(userInfos),
+		Users:      paged,
+		Total:      pageResp.Total,
+		Pagination: pageResp,
 	}
 
 	writeJSON(w, resp, http.StatusOK)
@@ -148,7 +165,9 @@ type CredentialInfo struct {
 }
 
 // GetUserHandler returns details for a specific user.
-// This endpoint requires authentication.
+// This endpoint requires authentication. Tenant-scoped identities can
+// only access users within their own tenant; cross-tenant access returns 404
+// to prevent tenant enumeration.
 func (h *UserHandlers) GetUserHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -174,6 +193,13 @@ func (h *UserHandlers) GetUserHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		userWriteJSONError(w, "Failed to get user", http.StatusInternalServerError)
+		return
+	}
+
+	// Tenant access check: return 404 to prevent enumeration
+	identity := auth.GetIdentity(ctx)
+	if isCrossTenantAccess(identity, u.TenantID) {
+		userWriteJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -224,7 +250,9 @@ type UpdateUserResponse struct {
 }
 
 // UpdateUserHandler updates a user's details.
-// This endpoint requires authentication and admin role.
+// This endpoint requires authentication and admin role. Tenant-scoped
+// identities can only update users within their own tenant; cross-tenant
+// access returns 404 to prevent tenant enumeration.
 func (h *UserHandlers) UpdateUserHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -257,6 +285,13 @@ func (h *UserHandlers) UpdateUserHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		userWriteJSONError(w, "Failed to get user", http.StatusInternalServerError)
+		return
+	}
+
+	// Tenant access check: return 404 to prevent enumeration
+	identity := auth.GetIdentity(ctx)
+	if isCrossTenantAccess(identity, u.TenantID) {
+		userWriteJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -300,7 +335,9 @@ type DeleteUserResponse struct {
 }
 
 // DeleteUserHandler deletes a user.
-// This endpoint requires authentication and admin role.
+// This endpoint requires authentication and admin role. Tenant-scoped
+// identities can only delete users within their own tenant; cross-tenant
+// access returns 404 to prevent tenant enumeration.
 // Prevents deletion of the last admin to avoid lockout.
 func (h *UserHandlers) DeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -327,6 +364,13 @@ func (h *UserHandlers) DeleteUserHandler(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		userWriteJSONError(w, "Failed to get user", http.StatusInternalServerError)
+		return
+	}
+
+	// Tenant access check: return 404 to prevent enumeration
+	identity := auth.GetIdentity(ctx)
+	if isCrossTenantAccess(identity, u.TenantID) {
+		userWriteJSONError(w, "User not found", http.StatusNotFound)
 		return
 	}
 
@@ -362,6 +406,20 @@ func (h *UserHandlers) DeleteUserHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, resp, http.StatusOK)
+}
+
+// isCrossTenantAccess returns true if the identity is tenant-scoped and
+// the target tenant doesn't match the identity's tenant. This is used
+// to enforce tenant isolation without revealing that a resource exists
+// in another tenant (return 404, not 403).
+func isCrossTenantAccess(identity *auth.Identity, targetTenantID string) bool {
+	if identity == nil || identity.IsCrossTenant() {
+		return false // system-level or no auth -- allow
+	}
+	if targetTenantID == "" {
+		return false // target has no tenant -- allow (system-level resource)
+	}
+	return identity.TenantID != targetTenantID
 }
 
 // Helper functions

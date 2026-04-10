@@ -1,0 +1,8 @@
+# systemd-sysusers configuration for go-xkms
+# Install to: /usr/lib/sysusers.d/xkms.conf
+#
+# This creates the xkms user and group used by the service.
+# Run: systemd-sysusers --create /usr/lib/sysusers.d/xkms.conf
+
+# Type  Name      ID    GECOS                      Home             Shell
+u       xkms      -     "Go xKMS Service"          /var/lib/xkms    /usr/sbin/nologin

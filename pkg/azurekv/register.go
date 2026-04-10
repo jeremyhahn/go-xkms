@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,4 +16,4 @@
 package azurekv
 
 // Backend registration is no longer used.
-// Backends are now instantiated directly via NewBackend() and passed to NewKeyStore().
+// Backends are now instantiated directly via NewBackend() and passed to NewBackend.

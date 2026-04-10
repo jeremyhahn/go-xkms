@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,11 +22,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // KeyStorer defines the minimal interface required for opaque key operations.
-// This avoids circular dependencies with the keychain package.
+// This avoids circular dependencies with the xkms package.
 type KeyStorer interface {
 	// GetKey retrieves an existing private key by its attributes.
 	GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
@@ -70,7 +70,7 @@ type Opaque struct {
 	pub      crypto.PublicKey
 }
 
-// NewOpaqueKey creates a new opaque private key backed by the provided keychain.
+// NewOpaqueKey creates a new opaque private key backed by the provided xkms.
 //
 // Parameters:
 //   - keyStore: The keystore backend that manages the actual key material
@@ -233,9 +233,7 @@ func publicKeysEqual(a, b crypto.PublicKey) bool {
 		if !ok {
 			return false
 		}
-		return aPub.Curve == bPub.Curve &&
-			aPub.X.Cmp(bPub.X) == 0 &&
-			aPub.Y.Cmp(bPub.Y) == 0
+		return aPub.Equal(bPub)
 
 	case ed25519.PublicKey:
 		bPub, ok := b.(ed25519.PublicKey)

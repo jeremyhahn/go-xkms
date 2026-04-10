@@ -1,27 +1,27 @@
 services:
   # Unified server (all protocols)
-  keychain-server:
+  xkms-server:
     build:
       context: .
       dockerfile: Dockerfile.server
       args:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-unknown}
-    image: go-keychain/server:${VERSION:-latest}
-    container_name: keychain-server
+    image: go-xkms/server:${VERSION:-latest}
+    container_name: xkms-server
     ports:
       - "8443:8443"   # REST
       - "9443:9443"   # gRPC
       - "8444:8444/udp" # QUIC
       - "9444:9444"   # MCP
     volumes:
-      - keychain-data:/var/lib/keychain
-      - ./configs:/etc/keychain:ro
+      - xkms-data:/var/lib/xkms
+      - ./configs:/etc/xkms:ro
     environment:
-      - KEYSTORE_CONFIG=/etc/keychain/config.yaml
+      - KEYSTORE_CONFIG=/etc/xkms/config.yaml
     restart: unless-stopped
     networks:
-      - keychain-net
+      - xkms-net
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8443/health"]
       interval: 30s
@@ -30,25 +30,25 @@ services:
       start_period: 10s
 
   # REST-only server
-  keychain-rest:
+  xkms-rest:
     build:
       context: .
       dockerfile: Dockerfile.rest
       args:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-unknown}
-    image: go-keychain/rest:${VERSION:-latest}
-    container_name: keychain-rest
+    image: go-xkms/rest:${VERSION:-latest}
+    container_name: xkms-rest
     ports:
       - "8445:8443"
     volumes:
-      - keychain-rest-data:/var/lib/keychain
-      - ./configs:/etc/keychain:ro
+      - xkms-rest-data:/var/lib/xkms
+      - ./configs:/etc/xkms:ro
     environment:
-      - KEYSTORE_CONFIG=/etc/keychain/config-rest.yaml
+      - KEYSTORE_CONFIG=/etc/xkms/config-rest.yaml
     restart: unless-stopped
     networks:
-      - keychain-net
+      - xkms-net
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "https://localhost:8443/health"]
       interval: 30s
@@ -59,25 +59,25 @@ services:
       - rest-only
 
   # gRPC-only server
-  keychain-grpc:
+  xkms-grpc:
     build:
       context: .
       dockerfile: Dockerfile.grpc
       args:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-unknown}
-    image: go-keychain/grpc:${VERSION:-latest}
-    container_name: keychain-grpc
+    image: go-xkms/grpc:${VERSION:-latest}
+    container_name: xkms-grpc
     ports:
       - "9445:9443"
     volumes:
-      - keychain-grpc-data:/var/lib/keychain
-      - ./configs:/etc/keychain:ro
+      - xkms-grpc-data:/var/lib/xkms
+      - ./configs:/etc/xkms:ro
     environment:
-      - KEYSTORE_CONFIG=/etc/keychain/config-grpc.yaml
+      - KEYSTORE_CONFIG=/etc/xkms/config-grpc.yaml
     restart: unless-stopped
     networks:
-      - keychain-net
+      - xkms-net
     healthcheck:
       test: ["CMD", "sh", "-c", "netstat -an | grep 9443 || exit 1"]
       interval: 30s
@@ -88,25 +88,25 @@ services:
       - grpc-only
 
   # QUIC-only server
-  keychain-quic:
+  xkms-quic:
     build:
       context: .
       dockerfile: Dockerfile.quic
       args:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-unknown}
-    image: go-keychain/quic:${VERSION:-latest}
-    container_name: keychain-quic
+    image: go-xkms/quic:${VERSION:-latest}
+    container_name: xkms-quic
     ports:
       - "8446:8444/udp"
     volumes:
-      - keychain-quic-data:/var/lib/keychain
-      - ./configs:/etc/keychain:ro
+      - xkms-quic-data:/var/lib/xkms
+      - ./configs:/etc/xkms:ro
     environment:
-      - KEYSTORE_CONFIG=/etc/keychain/config-quic.yaml
+      - KEYSTORE_CONFIG=/etc/xkms/config-quic.yaml
     restart: unless-stopped
     networks:
-      - keychain-net
+      - xkms-net
     healthcheck:
       test: ["CMD", "sh", "-c", "netstat -anu | grep 8444 || exit 1"]
       interval: 30s
@@ -117,25 +117,25 @@ services:
       - quic-only
 
   # MCP-only server
-  keychain-mcp:
+  xkms-mcp:
     build:
       context: .
       dockerfile: Dockerfile.mcp
       args:
         VERSION: ${VERSION:-dev}
         COMMIT: ${COMMIT:-unknown}
-    image: go-keychain/mcp:${VERSION:-latest}
-    container_name: keychain-mcp
+    image: go-xkms/mcp:${VERSION:-latest}
+    container_name: xkms-mcp
     ports:
       - "9446:9444"
     volumes:
-      - keychain-mcp-data:/var/lib/keychain
-      - ./configs:/etc/keychain:ro
+      - xkms-mcp-data:/var/lib/xkms
+      - ./configs:/etc/xkms:ro
     environment:
-      - KEYSTORE_CONFIG=/etc/keychain/config-mcp.yaml
+      - KEYSTORE_CONFIG=/etc/xkms/config-mcp.yaml
     restart: unless-stopped
     networks:
-      - keychain-net
+      - xkms-net
     healthcheck:
       test: ["CMD", "sh", "-c", "netstat -an | grep 9444 || exit 1"]
       interval: 30s
@@ -146,17 +146,17 @@ services:
       - mcp-only
 
 networks:
-  keychain-net:
+  xkms-net:
     driver: bridge
 
 volumes:
-  keychain-data:
+  xkms-data:
     driver: local
-  keychain-rest-data:
+  xkms-rest-data:
     driver: local
-  keychain-grpc-data:
+  xkms-grpc-data:
     driver: local
-  keychain-quic-data:
+  xkms-quic-data:
     driver: local
-  keychain-mcp-data:
+  xkms-mcp-data:
     driver: local

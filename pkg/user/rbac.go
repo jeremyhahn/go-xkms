@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,7 +16,7 @@ package user
 import (
 	"context"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/rbac"
+	"github.com/jeremyhahn/go-xkms/pkg/rbac"
 )
 
 // UserRBACAdapter bridges the User store with the RBAC system.
@@ -90,8 +90,9 @@ func (a *UserRBACAdapter) AssignRole(ctx context.Context, subject string, roleNa
 	return a.store.Update(ctx, user)
 }
 
-// RevokeRole removes a role from a user (sets to guest role).
-// Since each user has exactly one role, this sets them to the lowest privilege role.
+// RevokeRole denies role revocation because FIPS 140-2 mandates exactly four
+// roles (admin, operator, user, auditor) with no lower-privilege fallback.
+// Use AssignRole to change a user's role instead.
 func (a *UserRBACAdapter) RevokeRole(ctx context.Context, subject string, roleName string) error {
 	// Look up user
 	user, err := a.store.GetByUsername(ctx, subject)
@@ -104,9 +105,8 @@ func (a *UserRBACAdapter) RevokeRole(ctx context.Context, subject string, roleNa
 		return ErrInvalidRole
 	}
 
-	// Set to guest role (lowest privilege)
-	user.Role = RoleGuest
-	return a.store.Update(ctx, user)
+	// FIPS 140-2: no lower privilege role available, deny revocation
+	return ErrRoleRevocationDenied
 }
 
 // GetUserRoles retrieves all roles assigned to a subject.
@@ -192,6 +192,7 @@ func (a *UserRBACAdapter) RevokePermission(ctx context.Context, roleName string,
 var _ rbac.RBACAdapter = (*UserRBACAdapter)(nil)
 
 // RoleToRBAC maps a user.Role to the corresponding RBAC role name.
+// Returns an empty string for unknown roles (deny by default).
 func RoleToRBAC(role Role) string {
 	switch role {
 	case RoleAdmin:
@@ -202,16 +203,17 @@ func RoleToRBAC(role Role) string {
 		return rbac.RoleAuditor
 	case RoleUser:
 		return rbac.RoleUser
-	case RoleReadOnly:
-		return rbac.RoleReadOnly
-	case RoleGuest:
-		return rbac.RoleGuest
+	case RoleSO:
+		return rbac.RoleSO
+	case RoleCustodian:
+		return rbac.RoleCustodian
 	default:
-		return rbac.RoleGuest // Default to lowest privilege
+		return "" // Deny by default for unknown roles
 	}
 }
 
 // RBACToRole maps an RBAC role name to the corresponding user.Role.
+// Returns an empty Role for unknown role names (deny by default).
 func RBACToRole(roleName string) Role {
 	switch roleName {
 	case rbac.RoleAdmin:
@@ -222,11 +224,11 @@ func RBACToRole(roleName string) Role {
 		return RoleAuditor
 	case rbac.RoleUser:
 		return RoleUser
-	case rbac.RoleReadOnly:
-		return RoleReadOnly
-	case rbac.RoleGuest:
-		return RoleGuest
+	case rbac.RoleSO:
+		return RoleSO
+	case rbac.RoleCustodian:
+		return RoleCustodian
 	default:
-		return RoleGuest
+		return Role("") // Deny by default for unknown roles
 	}
 }

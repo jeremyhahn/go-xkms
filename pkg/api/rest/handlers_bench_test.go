@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,9 +23,9 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // createBenchmarkHandler creates a handler context for benchmarking
@@ -42,22 +42,22 @@ func createBenchmarkHandler(b *testing.B) *HandlerContext {
 		b.Fatalf("Failed to create backend: %v", err)
 	}
 
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend: backend,
 	})
 	if err != nil {
 		b.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	// Initialize the global keychain service
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	// Initialize the global xkms service
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": ks,
 		},
 		DefaultBackend: "software",
 	})
 	if err != nil {
-		b.Fatalf("Failed to initialize keychain: %v", err)
+		b.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
 	return NewHandlerContext("v1.0.0")

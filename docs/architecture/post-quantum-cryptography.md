@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the architecture and implementation of post-quantum cryptographic algorithms in go-keychain. The implementation provides quantum-resistant alternatives to classical cryptography using NIST-standardized lattice-based algorithms.
+This document describes the architecture and implementation of post-quantum cryptographic algorithms in go-xkms. The implementation provides quantum-resistant alternatives to classical cryptography using NIST-standardized lattice-based algorithms.
 
 ## Threat Model
 
@@ -53,7 +53,7 @@ The National Institute of Standards and Technology (NIST) completed a multi-year
 - Published: August 2024
 - Purpose: Stateless hash-based signatures
 - Based on: Hash functions
-- Note: Not yet implemented in go-keychain
+- Note: Not yet implemented in go-xkms
 
 ### Security Levels
 
@@ -67,7 +67,7 @@ NIST defines five security levels corresponding to classical cryptographic stren
 | 4 | SHA-384 collision | 192 bits | High security |
 | 5 | AES-256 | 256 bits | Maximum security |
 
-Go-keychain implements ML-DSA and ML-KEM at levels 2, 3, and 5.
+Go-xkms implements ML-DSA at levels 2, 3, and 5, and ML-KEM at levels 3 and 5 (ML-KEM-512 has been dropped as it is not available in Go's standard library).
 
 ## Architecture Design
 
@@ -76,13 +76,13 @@ Go-keychain implements ML-DSA and ML-KEM at levels 2, 3, and 5.
 ```
 ┌─────────────────────────────────────────┐
 │         Backend Interface               │
-│  (PKCS8, TPM2, PKCS11, Quantum, ...)    │
+│  (Software, TPM2, PKCS11, Quantum, ...)  │
 └─────────────────────────────────────────┘
                   │
       ┌───────────┼───────────┐
       │           │           │
 ┌─────▼────┐ ┌────▼────┐ ┌───▼──────┐
-│ PKCS8    │ │  TPM2   │ │ Quantum  │
+│ Software │ │  TPM2   │ │ Quantum  │
 │ Backend  │ │ Backend │ │ Backend  │
 └──────────┘ └─────────┘ └──────────┘
                               │
@@ -90,19 +90,17 @@ Go-keychain implements ML-DSA and ML-KEM at levels 2, 3, and 5.
               │                              │
       ┌───────▼────────┐          ┌─────────▼─────────┐
       │   ML-DSA       │          │     ML-KEM        │
-      │  (Dilithium)   │          │    (Kyber)        │
+      │  (FIPS 204)    │          │    (FIPS 203)     │
       │                │          │                   │
       │ - Sign         │          │ - Encapsulate     │
       │ - Verify       │          │ - Decapsulate     │
       └────────────────┘          └───────────────────┘
               │                            │
-              └────────────┬───────────────┘
-                           │
-                  ┌────────▼─────────┐
-                  │   liboqs         │
-                  │  (Open Quantum   │
-                  │   Safe Library)  │
-                  └──────────────────┘
+      ┌───────▼────────┐          ┌────────▼──────────┐
+      │  circl/sign/   │          │  crypto/mlkem     │
+      │  mldsa         │          │  (Go stdlib)      │
+      │  (Cloudflare)  │          │                   │
+      └────────────────┘          └───────────────────┘
 ```
 
 ### Key Types and Operations
@@ -112,7 +110,7 @@ Go-keychain implements ML-DSA and ML-KEM at levels 2, 3, and 5.
 type MLDSAPrivateKey struct {
     Algorithm string              // ML-DSA-44, ML-DSA-65, ML-DSA-87
     PublicKey *MLDSAPublicKey
-    signer    *oqs.Signature      // liboqs signature instance
+    seed      [32]byte            // 32-byte seed for deterministic key recovery
 }
 
 // Implements crypto.Signer interface
@@ -123,9 +121,9 @@ func (k *MLDSAPrivateKey) Verify(message, signature []byte) (bool, error)
 **ML-KEM Private Key:**
 ```go
 type MLKEMPrivateKey struct {
-    Algorithm string              // ML-KEM-512, ML-KEM-768, ML-KEM-1024
+    Algorithm string              // ML-KEM-768, ML-KEM-1024
     PublicKey *MLKEMPublicKey
-    kem       *oqs.KeyEncapsulation // liboqs KEM instance
+    seed      [64]byte            // 64-byte seed for deterministic key recovery
     tracker   types.AEADSafetyTracker
     keyID     string
 }
@@ -141,19 +139,26 @@ func (k *MLKEMPrivateKey) Decrypt(kemCiphertext, encryptedData []byte) (plaintex
 
 ### Storage Format
 
-Keys are stored as JSON metadata containing algorithm type and key material:
+Keys use seed-based storage for compact representation. ML-DSA stores a 32-byte seed, and ML-KEM stores a 64-byte seed. The full key material is deterministically derived from the seed at load time.
 
 ```json
 {
   "algorithm": "ML-DSA-65",
-  "public_key": "base64-encoded-public-key",
-  "secret_key": "base64-encoded-secret-key"
+  "seed": "base64-encoded-32-byte-seed"
+}
+```
+
+```json
+{
+  "algorithm": "ML-KEM-768",
+  "seed": "base64-encoded-64-byte-seed"
 }
 ```
 
 This format allows:
+- Compact storage (32 or 64 bytes instead of full key material)
+- Deterministic key recovery from seed
 - Algorithm identification on retrieval
-- Re-initialization of liboqs instances
 - Storage backend flexibility (file, database, etc.)
 
 ## ML-KEM + AES-GCM Hybrid Encryption
@@ -207,7 +212,7 @@ Sender                                              Recipient
 
 ## AEAD Safety Tracking Integration
 
-AES-GCM requires strict nonce management and usage limits per NIST SP 800-38D. The quantum backend integrates with go-keychain's AEAD safety tracking.
+AES-GCM requires strict nonce management and usage limits per NIST SP 800-38D. The quantum backend integrates with go-xkms's AEAD safety tracking.
 
 ### Architecture
 
@@ -289,11 +294,11 @@ Typical performance on Intel x86_64 (3.0 GHz):
 | Sign | 121 μs | 180 μs | 280 μs |
 | Verify | 27 μs | 45 μs | 75 μs |
 
-| Operation | ML-KEM-512 | ML-KEM-768 | ML-KEM-1024 |
-|-----------|------------|------------|-------------|
-| Key gen | 25 μs | 33 μs | 48 μs |
-| Encapsulate | 12 μs | 18 μs | 28 μs |
-| Decapsulate | 10 μs | 16 μs | 25 μs |
+| Operation | ML-KEM-768 | ML-KEM-1024 |
+|-----------|------------|-------------|
+| Key gen | 33 μs | 48 μs |
+| Encapsulate | 18 μs | 28 μs |
+| Decapsulate | 16 μs | 25 μs |
 
 **Encryption overhead:**
 - ML-KEM + AES-GCM: ~20 μs
@@ -317,35 +322,33 @@ Typical performance on Intel x86_64 (3.0 GHz):
 
 ## Implementation Details
 
-### Dependency: liboqs
+### Pure Go Dependencies
 
-The implementation uses Open Quantum Safe's liboqs library via liboqs-go bindings.
+The implementation uses pure Go libraries with no CGO or external C dependencies:
+
+- **ML-DSA (FIPS 204)**: Cloudflare's `circl` library (`github.com/cloudflare/circl/sign/mldsa/{mldsa44,mldsa65,mldsa87}`)
+- **ML-KEM (FIPS 203)**: Go standard library `crypto/mlkem` (ML-KEM-768, ML-KEM-1024)
 
 **Advantages:**
-- NIST-standard implementations
-- Optimized assembly for x86_64 and ARM
-- Regular security updates
-- Well-tested and audited
+- No CGO required -- pure Go compilation
+- Cross-platform support (all Go-supported platforms)
+- No external C library installation needed
+- Simplified build process with no special build tags
+- Go standard library ML-KEM benefits from Go team maintenance and security updates
+- Cloudflare circl is well-tested and widely deployed
 
-**Build Requirements:**
-- CGO enabled
-- liboqs shared library installed
-- pkg-config for library detection
+### Always-On Compilation
 
-### Build Tags
-
-Quantum support is conditional via build tag:
+Quantum support is always compiled in -- no build tags are required:
 
 ```go
-//go:build quantum
-
 package quantum
 ```
 
-This allows:
-- Optional quantum support
-- No impact on builds without quantum tag
-- Clean separation of dependencies
+This provides:
+- Quantum support available in every build
+- No conditional compilation complexity
+- Simplified CI/CD pipelines
 
 ### Thread Safety
 
@@ -356,14 +359,14 @@ This allows:
 
 **MLDSAPrivateKey / MLKEMPrivateKey:**
 - Thread-safe operations
-- liboqs handles internal synchronization
+- Pure Go implementations are inherently safe for concurrent reads
 - AEAD tracker uses atomic operations and mutexes
 
 ### Memory Management
 
 **Key Material:**
-- Secret keys stored in liboqs-managed memory
-- Automatic cleanup via `Clean()` method
+- Secret keys stored as Go-managed byte slices and seed arrays
+- Explicit zeroing of key material on cleanup
 - Deferred cleanup in backend methods
 
 **Shared Secrets (ML-KEM):**
@@ -452,7 +455,8 @@ This provides:
 **Algorithm Selection:**
 - Use ML-DSA-65 and ML-KEM-768 for general purpose (Level 3)
 - Use ML-DSA-87 and ML-KEM-1024 for high security (Level 5)
-- Avoid ML-DSA-44 and ML-KEM-512 unless size is critical
+- ML-DSA-44 is available for constrained environments
+- ML-KEM-512 is not supported (not available in Go standard library)
 
 ## Future Considerations
 
@@ -496,10 +500,9 @@ This provides:
 - SP 800-38D: Recommendation for Block Cipher Modes of Operation: Galois/Counter Mode (GCM) and GMAC
 
 **Implementation:**
-- Open Quantum Safe: https://openquantumsafe.org/
-- liboqs: https://github.com/open-quantum-safe/liboqs
-- liboqs-go: https://github.com/open-quantum-safe/liboqs-go
+- Cloudflare circl (ML-DSA): https://github.com/cloudflare/circl
+- Go crypto/mlkem (ML-KEM): https://pkg.go.dev/crypto/mlkem
 
 **Research:**
-- CRYSTALS-Dilithium: https://pq-crystals.org/dilithium/
-- CRYSTALS-Kyber: https://pq-crystals.org/kyber/
+- CRYSTALS-Dilithium (ML-DSA): https://pq-crystals.org/dilithium/
+- CRYSTALS-Kyber (ML-KEM): https://pq-crystals.org/kyber/

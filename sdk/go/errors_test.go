@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package keychain
+package xkms
 
 import (
 	"errors"
@@ -50,15 +50,15 @@ func TestErrorCode_String(t *testing.T) {
 	}
 }
 
-func TestKeychainError_Error(t *testing.T) {
+func TestXKMSError_Error(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      *KeychainError
+		err      *XKMSError
 		expected string
 	}{
 		{
 			name: "SimpleMessage",
-			err: &KeychainError{
+			err: &XKMSError{
 				Code:    ErrCodeNotFound,
 				Message: "key not found",
 			},
@@ -66,7 +66,7 @@ func TestKeychainError_Error(t *testing.T) {
 		},
 		{
 			name: "WithOperation",
-			err: &KeychainError{
+			err: &XKMSError{
 				Code:      ErrCodeNotFound,
 				Message:   "key not found",
 				Operation: "GetKey",
@@ -75,7 +75,7 @@ func TestKeychainError_Error(t *testing.T) {
 		},
 		{
 			name: "WithUnderlying",
-			err: &KeychainError{
+			err: &XKMSError{
 				Code:       ErrCodeConnection,
 				Message:    "connection failed",
 				Underlying: errors.New("network error"),
@@ -84,7 +84,7 @@ func TestKeychainError_Error(t *testing.T) {
 		},
 		{
 			name: "WithOperationAndUnderlying",
-			err: &KeychainError{
+			err: &XKMSError{
 				Code:       ErrCodeConnection,
 				Message:    "connection failed",
 				Operation:  "Connect",
@@ -98,16 +98,16 @@ func TestKeychainError_Error(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := tt.err.Error()
 			if result != tt.expected {
-				t.Errorf("KeychainError.Error() = %q, want %q", result, tt.expected)
+				t.Errorf("XKMSError.Error() = %q, want %q", result, tt.expected)
 			}
 		})
 	}
 }
 
-func TestKeychainError_Unwrap(t *testing.T) {
+func TestXKMSError_Unwrap(t *testing.T) {
 	t.Run("WithUnderlying", func(t *testing.T) {
 		underlying := errors.New("underlying error")
-		err := &KeychainError{
+		err := &XKMSError{
 			Code:       ErrCodeConnection,
 			Message:    "connection failed",
 			Underlying: underlying,
@@ -120,7 +120,7 @@ func TestKeychainError_Unwrap(t *testing.T) {
 	})
 
 	t.Run("WithoutUnderlying", func(t *testing.T) {
-		err := &KeychainError{
+		err := &XKMSError{
 			Code:    ErrCodeNotFound,
 			Message: "not found",
 		}
@@ -132,88 +132,88 @@ func TestKeychainError_Unwrap(t *testing.T) {
 	})
 }
 
-func TestKeychainError_Is(t *testing.T) {
+func TestXKMSError_Is(t *testing.T) {
 	tests := []struct {
 		name     string
-		err      *KeychainError
+		err      *XKMSError
 		target   error
 		expected bool
 	}{
 		{
 			name:     "MatchSameCode",
-			err:      &KeychainError{Code: ErrCodeNotFound, Message: "test"},
-			target:   &KeychainError{Code: ErrCodeNotFound, Message: "different"},
+			err:      &XKMSError{Code: ErrCodeNotFound, Message: "test"},
+			target:   &XKMSError{Code: ErrCodeNotFound, Message: "different"},
 			expected: true,
 		},
 		{
 			name:     "NoMatchDifferentCode",
-			err:      &KeychainError{Code: ErrCodeNotFound, Message: "test"},
-			target:   &KeychainError{Code: ErrCodeConnection, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeNotFound, Message: "test"},
+			target:   &XKMSError{Code: ErrCodeConnection, Message: "test"},
 			expected: false,
 		},
 		{
 			name:     "MatchErrUnsupportedProtocol",
-			err:      &KeychainError{Code: ErrCodeProtocolUnsupported, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeProtocolUnsupported, Message: "test"},
 			target:   ErrUnsupportedProtocol,
 			expected: true,
 		},
 		{
 			name:     "MatchErrConnectionFailed",
-			err:      &KeychainError{Code: ErrCodeConnection, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeConnection, Message: "test"},
 			target:   ErrConnectionFailed,
 			expected: true,
 		},
 		{
 			name:     "MatchErrNotConnected",
-			err:      &KeychainError{Code: ErrCodeNotConnected, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeNotConnected, Message: "test"},
 			target:   ErrNotConnected,
 			expected: true,
 		},
 		{
 			name:     "MatchErrNotSupported",
-			err:      &KeychainError{Code: ErrCodeOperationUnsupported, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeOperationUnsupported, Message: "test"},
 			target:   ErrNotSupported,
 			expected: true,
 		},
 		{
 			name:     "MatchErrNilService",
-			err:      &KeychainError{Code: ErrCodeNilService, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeNilService, Message: "test"},
 			target:   ErrNilService,
 			expected: true,
 		},
 		{
 			name:     "MatchErrKeyNotFound",
-			err:      &KeychainError{Code: ErrCodeNotFound, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeNotFound, Message: "test"},
 			target:   ErrKeyNotFound,
 			expected: true,
 		},
 		{
 			name:     "MatchErrCertificateNotFound",
-			err:      &KeychainError{Code: ErrCodeNotFound, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeNotFound, Message: "test"},
 			target:   ErrCertificateNotFound,
 			expected: true,
 		},
 		{
 			name:     "MatchErrBackendNotFound",
-			err:      &KeychainError{Code: ErrCodeNotFound, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeNotFound, Message: "test"},
 			target:   ErrBackendNotFound,
 			expected: true,
 		},
 		{
 			name:     "MatchErrInvalidRequest",
-			err:      &KeychainError{Code: ErrCodeInvalidRequest, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeInvalidRequest, Message: "test"},
 			target:   ErrInvalidRequest,
 			expected: true,
 		},
 		{
 			name:     "NoMatchUnrelatedError",
-			err:      &KeychainError{Code: ErrCodeNotFound, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeNotFound, Message: "test"},
 			target:   errors.New("random error"),
 			expected: false,
 		},
 		{
 			name:     "NoMatchUnknownCode",
-			err:      &KeychainError{Code: ErrCodeUnknown, Message: "test"},
+			err:      &XKMSError{Code: ErrCodeUnknown, Message: "test"},
 			target:   ErrKeyNotFound,
 			expected: false,
 		},
@@ -237,21 +237,21 @@ func TestErrorsIs_Integration(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "DirectKeychainErrorMatchesSentinel",
-			err:      &KeychainError{Code: ErrCodeNotFound, Message: "key not found"},
+			name:     "DirectXKMSErrorMatchesSentinel",
+			err:      &XKMSError{Code: ErrCodeNotFound, Message: "key not found"},
 			target:   ErrKeyNotFound,
 			expected: true,
 		},
 		{
-			name:     "WrappedKeychainErrorMatchesSentinel",
-			err:      fmt.Errorf("operation failed: %w", &KeychainError{Code: ErrCodeNotFound, Message: "key not found"}),
+			name:     "WrappedXKMSErrorMatchesSentinel",
+			err:      fmt.Errorf("operation failed: %w", &XKMSError{Code: ErrCodeNotFound, Message: "key not found"}),
 			target:   ErrKeyNotFound,
 			expected: true,
 		},
 		{
-			name:     "WrappedKeychainErrorMatchesKeychainError",
-			err:      fmt.Errorf("operation failed: %w", &KeychainError{Code: ErrCodeNotFound, Message: "key not found"}),
-			target:   &KeychainError{Code: ErrCodeNotFound},
+			name:     "WrappedXKMSErrorMatchesXKMSError",
+			err:      fmt.Errorf("operation failed: %w", &XKMSError{Code: ErrCodeNotFound, Message: "key not found"}),
+			target:   &XKMSError{Code: ErrCodeNotFound},
 			expected: true,
 		},
 	}
@@ -267,14 +267,14 @@ func TestErrorsIs_Integration(t *testing.T) {
 }
 
 func TestErrorsAs_Integration(t *testing.T) {
-	t.Run("DirectKeychainError", func(t *testing.T) {
-		err := &KeychainError{
+	t.Run("DirectXKMSError", func(t *testing.T) {
+		err := &XKMSError{
 			Code:      ErrCodeNotFound,
 			Message:   "key not found",
 			Operation: "GetKey",
 		}
 
-		var ke *KeychainError
+		var ke *XKMSError
 		if !errors.As(err, &ke) {
 			t.Fatal("errors.As() returned false, expected true")
 		}
@@ -287,15 +287,15 @@ func TestErrorsAs_Integration(t *testing.T) {
 		}
 	})
 
-	t.Run("WrappedKeychainError", func(t *testing.T) {
-		innerErr := &KeychainError{
+	t.Run("WrappedXKMSError", func(t *testing.T) {
+		innerErr := &XKMSError{
 			Code:      ErrCodeConnection,
 			Message:   "connection failed",
 			Operation: "Connect",
 		}
 		err := fmt.Errorf("outer error: %w", innerErr)
 
-		var ke *KeychainError
+		var ke *XKMSError
 		if !errors.As(err, &ke) {
 			t.Fatal("errors.As() returned false, expected true")
 		}
@@ -305,10 +305,10 @@ func TestErrorsAs_Integration(t *testing.T) {
 		}
 	})
 
-	t.Run("NonKeychainError", func(t *testing.T) {
+	t.Run("NonXKMSError", func(t *testing.T) {
 		err := errors.New("plain error")
 
-		var ke *KeychainError
+		var ke *XKMSError
 		if errors.As(err, &ke) {
 			t.Error("errors.As() returned true, expected false")
 		}
@@ -396,11 +396,11 @@ func TestIsNotFound(t *testing.T) {
 		{"ErrKeyNotFound", ErrKeyNotFound, true},
 		{"ErrCertificateNotFound", ErrCertificateNotFound, true},
 		{"ErrBackendNotFound", ErrBackendNotFound, true},
-		{"KeychainErrorNotFound", &KeychainError{Code: ErrCodeNotFound, Message: "test"}, true},
-		{"KeychainErrorConnection", &KeychainError{Code: ErrCodeConnection, Message: "test"}, false},
+		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, true},
+		{"XKMSErrorConnection", &XKMSError{Code: ErrCodeConnection, Message: "test"}, false},
 		{"PlainError", errors.New("not found"), false},
 		{"WrappedKeyNotFound", fmt.Errorf("wrapped: %w", ErrKeyNotFound), true},
-		{"WrappedKeychainErrorNotFound", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeNotFound}), true},
+		{"WrappedXKMSErrorNotFound", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeNotFound}), true},
 	}
 
 	for _, tt := range tests {
@@ -421,14 +421,14 @@ func TestIsRetryable(t *testing.T) {
 	}{
 		{"NilError", nil, false},
 		{"ErrConnectionFailed", ErrConnectionFailed, true},
-		{"KeychainErrorConnection", &KeychainError{Code: ErrCodeConnection, Message: "test"}, true},
-		{"KeychainErrorTimeout", &KeychainError{Code: ErrCodeTimeout, Message: "test"}, true},
-		{"KeychainErrorBackendUnavailable", &KeychainError{Code: ErrCodeBackendUnavailable, Message: "test"}, true},
-		{"KeychainErrorNotFound", &KeychainError{Code: ErrCodeNotFound, Message: "test"}, false},
-		{"KeychainErrorAuthentication", &KeychainError{Code: ErrCodeAuthentication, Message: "test"}, false},
+		{"XKMSErrorConnection", &XKMSError{Code: ErrCodeConnection, Message: "test"}, true},
+		{"XKMSErrorTimeout", &XKMSError{Code: ErrCodeTimeout, Message: "test"}, true},
+		{"XKMSErrorBackendUnavailable", &XKMSError{Code: ErrCodeBackendUnavailable, Message: "test"}, true},
+		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, false},
+		{"XKMSErrorAuthentication", &XKMSError{Code: ErrCodeAuthentication, Message: "test"}, false},
 		{"PlainError", errors.New("some error"), false},
 		{"WrappedConnectionFailed", fmt.Errorf("wrapped: %w", ErrConnectionFailed), true},
-		{"WrappedKeychainErrorTimeout", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeTimeout}), true},
+		{"WrappedXKMSErrorTimeout", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeTimeout}), true},
 	}
 
 	for _, tt := range tests {
@@ -450,13 +450,13 @@ func TestIsConnectionError(t *testing.T) {
 		{"NilError", nil, false},
 		{"ErrConnectionFailed", ErrConnectionFailed, true},
 		{"ErrNotConnected", ErrNotConnected, true},
-		{"KeychainErrorConnection", &KeychainError{Code: ErrCodeConnection, Message: "test"}, true},
-		{"KeychainErrorNotConnected", &KeychainError{Code: ErrCodeNotConnected, Message: "test"}, true},
-		{"KeychainErrorTimeout", &KeychainError{Code: ErrCodeTimeout, Message: "test"}, false},
+		{"XKMSErrorConnection", &XKMSError{Code: ErrCodeConnection, Message: "test"}, true},
+		{"XKMSErrorNotConnected", &XKMSError{Code: ErrCodeNotConnected, Message: "test"}, true},
+		{"XKMSErrorTimeout", &XKMSError{Code: ErrCodeTimeout, Message: "test"}, false},
 		{"PlainError", errors.New("connection error"), false},
 		{"WrappedNotConnected", fmt.Errorf("wrapped: %w", ErrNotConnected), true},
-		{"WrappedKeychainErrorConnection", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeConnection}), true},
-		{"WrappedKeychainErrorNotConnected", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeNotConnected}), true},
+		{"WrappedXKMSErrorConnection", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeConnection}), true},
+		{"WrappedXKMSErrorNotConnected", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeNotConnected}), true},
 	}
 
 	for _, tt := range tests {
@@ -476,10 +476,10 @@ func TestIsAuthenticationError(t *testing.T) {
 		expected bool
 	}{
 		{"NilError", nil, false},
-		{"KeychainErrorAuthentication", &KeychainError{Code: ErrCodeAuthentication, Message: "test"}, true},
-		{"KeychainErrorPermission", &KeychainError{Code: ErrCodePermission, Message: "test"}, false},
+		{"XKMSErrorAuthentication", &XKMSError{Code: ErrCodeAuthentication, Message: "test"}, true},
+		{"XKMSErrorPermission", &XKMSError{Code: ErrCodePermission, Message: "test"}, false},
 		{"PlainError", errors.New("auth error"), false},
-		{"WrappedKeychainErrorAuth", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeAuthentication}), true},
+		{"WrappedXKMSErrorAuth", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeAuthentication}), true},
 	}
 
 	for _, tt := range tests {
@@ -499,10 +499,10 @@ func TestIsPermissionError(t *testing.T) {
 		expected bool
 	}{
 		{"NilError", nil, false},
-		{"KeychainErrorPermission", &KeychainError{Code: ErrCodePermission, Message: "test"}, true},
-		{"KeychainErrorAuthentication", &KeychainError{Code: ErrCodeAuthentication, Message: "test"}, false},
+		{"XKMSErrorPermission", &XKMSError{Code: ErrCodePermission, Message: "test"}, true},
+		{"XKMSErrorAuthentication", &XKMSError{Code: ErrCodeAuthentication, Message: "test"}, false},
 		{"PlainError", errors.New("permission denied"), false},
-		{"WrappedKeychainErrorPermission", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodePermission}), true},
+		{"WrappedXKMSErrorPermission", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodePermission}), true},
 	}
 
 	for _, tt := range tests {
@@ -523,11 +523,11 @@ func TestIsInvalidRequest(t *testing.T) {
 	}{
 		{"NilError", nil, false},
 		{"ErrInvalidRequest", ErrInvalidRequest, true},
-		{"KeychainErrorInvalidRequest", &KeychainError{Code: ErrCodeInvalidRequest, Message: "test"}, true},
-		{"KeychainErrorNotFound", &KeychainError{Code: ErrCodeNotFound, Message: "test"}, false},
+		{"XKMSErrorInvalidRequest", &XKMSError{Code: ErrCodeInvalidRequest, Message: "test"}, true},
+		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, false},
 		{"PlainError", errors.New("invalid"), false},
 		{"WrappedInvalidRequest", fmt.Errorf("wrapped: %w", ErrInvalidRequest), true},
-		{"WrappedKeychainErrorInvalid", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeInvalidRequest}), true},
+		{"WrappedXKMSErrorInvalid", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeInvalidRequest}), true},
 	}
 
 	for _, tt := range tests {
@@ -547,10 +547,10 @@ func TestIsTimeout(t *testing.T) {
 		expected bool
 	}{
 		{"NilError", nil, false},
-		{"KeychainErrorTimeout", &KeychainError{Code: ErrCodeTimeout, Message: "test"}, true},
-		{"KeychainErrorConnection", &KeychainError{Code: ErrCodeConnection, Message: "test"}, false},
+		{"XKMSErrorTimeout", &XKMSError{Code: ErrCodeTimeout, Message: "test"}, true},
+		{"XKMSErrorConnection", &XKMSError{Code: ErrCodeConnection, Message: "test"}, false},
 		{"PlainError", errors.New("timeout"), false},
-		{"WrappedKeychainErrorTimeout", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeTimeout}), true},
+		{"WrappedXKMSErrorTimeout", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeTimeout}), true},
 	}
 
 	for _, tt := range tests {
@@ -570,10 +570,10 @@ func TestGetErrorCode(t *testing.T) {
 		expected ErrorCode
 	}{
 		{"NilError", nil, ErrCodeUnknown},
-		{"KeychainErrorNotFound", &KeychainError{Code: ErrCodeNotFound, Message: "test"}, ErrCodeNotFound},
-		{"KeychainErrorTimeout", &KeychainError{Code: ErrCodeTimeout, Message: "test"}, ErrCodeTimeout},
+		{"XKMSErrorNotFound", &XKMSError{Code: ErrCodeNotFound, Message: "test"}, ErrCodeNotFound},
+		{"XKMSErrorTimeout", &XKMSError{Code: ErrCodeTimeout, Message: "test"}, ErrCodeTimeout},
 		{"PlainError", errors.New("error"), ErrCodeUnknown},
-		{"WrappedKeychainError", fmt.Errorf("wrapped: %w", &KeychainError{Code: ErrCodeConnection}), ErrCodeConnection},
+		{"WrappedXKMSError", fmt.Errorf("wrapped: %w", &XKMSError{Code: ErrCodeConnection}), ErrCodeConnection},
 	}
 
 	for _, tt := range tests {
@@ -626,8 +626,8 @@ func TestConvertSentinelError(t *testing.T) {
 		})
 	}
 
-	t.Run("AlreadyKeychainError", func(t *testing.T) {
-		original := &KeychainError{
+	t.Run("AlreadyXKMSError", func(t *testing.T) {
+		original := &XKMSError{
 			Code:      ErrCodeTimeout,
 			Message:   "operation timed out",
 			Operation: "Sign",
@@ -636,7 +636,7 @@ func TestConvertSentinelError(t *testing.T) {
 		result := ConvertSentinelError(original)
 
 		if result != original {
-			t.Error("ConvertSentinelError() did not return same KeychainError instance")
+			t.Error("ConvertSentinelError() did not return same XKMSError instance")
 		}
 	})
 
@@ -687,44 +687,44 @@ func TestBackwardCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("KeychainErrorMatchesSentinels", func(t *testing.T) {
-		// Verify KeychainError with appropriate codes match sentinel errors
+	t.Run("XKMSErrorMatchesSentinels", func(t *testing.T) {
+		// Verify XKMSError with appropriate codes match sentinel errors
 		testCases := []struct {
-			err      *KeychainError
+			err      *XKMSError
 			sentinel error
 		}{
-			{&KeychainError{Code: ErrCodeProtocolUnsupported}, ErrUnsupportedProtocol},
-			{&KeychainError{Code: ErrCodeConnection}, ErrConnectionFailed},
-			{&KeychainError{Code: ErrCodeNotConnected}, ErrNotConnected},
-			{&KeychainError{Code: ErrCodeOperationUnsupported}, ErrNotSupported},
-			{&KeychainError{Code: ErrCodeNilService}, ErrNilService},
-			{&KeychainError{Code: ErrCodeNotFound}, ErrKeyNotFound},
-			{&KeychainError{Code: ErrCodeInvalidRequest}, ErrInvalidRequest},
+			{&XKMSError{Code: ErrCodeProtocolUnsupported}, ErrUnsupportedProtocol},
+			{&XKMSError{Code: ErrCodeConnection}, ErrConnectionFailed},
+			{&XKMSError{Code: ErrCodeNotConnected}, ErrNotConnected},
+			{&XKMSError{Code: ErrCodeOperationUnsupported}, ErrNotSupported},
+			{&XKMSError{Code: ErrCodeNilService}, ErrNilService},
+			{&XKMSError{Code: ErrCodeNotFound}, ErrKeyNotFound},
+			{&XKMSError{Code: ErrCodeInvalidRequest}, ErrInvalidRequest},
 		}
 
 		for _, tc := range testCases {
 			if !errors.Is(tc.err, tc.sentinel) {
-				t.Errorf("KeychainError{Code: %v} should match sentinel %v", tc.err.Code, tc.sentinel)
+				t.Errorf("XKMSError{Code: %v} should match sentinel %v", tc.err.Code, tc.sentinel)
 			}
 		}
 	})
 
 	t.Run("WrappedErrorsWork", func(t *testing.T) {
-		// Simulate a function returning wrapped KeychainError
-		err := fmt.Errorf("GetKey operation: %w", &KeychainError{
+		// Simulate a function returning wrapped XKMSError
+		err := fmt.Errorf("GetKey operation: %w", &XKMSError{
 			Code:    ErrCodeNotFound,
 			Message: "key 'test-key' not found",
 		})
 
 		// Legacy code should still be able to check for ErrKeyNotFound
 		if !errors.Is(err, ErrKeyNotFound) {
-			t.Error("Wrapped KeychainError should match ErrKeyNotFound sentinel")
+			t.Error("Wrapped XKMSError should match ErrKeyNotFound sentinel")
 		}
 
 		// New code can extract rich error information
-		var ke *KeychainError
+		var ke *XKMSError
 		if !errors.As(err, &ke) {
-			t.Fatal("Should be able to extract KeychainError")
+			t.Fatal("Should be able to extract XKMSError")
 		}
 
 		if ke.Code != ErrCodeNotFound {
@@ -746,10 +746,10 @@ func TestErrorChaining(t *testing.T) {
 			t.Error("Should find root error through chain")
 		}
 
-		// Should be able to find KeychainError
-		var ke *KeychainError
+		// Should be able to find XKMSError
+		var ke *XKMSError
 		if !errors.As(level3, &ke) {
-			t.Fatal("Should find KeychainError in chain")
+			t.Fatal("Should find XKMSError in chain")
 		}
 
 		if ke.Code != ErrCodeConnection {

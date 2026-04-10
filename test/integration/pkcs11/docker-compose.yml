@@ -9,6 +9,9 @@ services:
       - PKCS11_PIN=1234
     volumes:
       - ../../..:/app
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
       - softhsm-data:/var/lib/softhsm
     working_dir: /app
 
@@ -17,4 +20,4 @@ volumes:
 
 networks:
   default:
-    name: keychain-pkcs11-test
+    name: xkms-pkcs11-test

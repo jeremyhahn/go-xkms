@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -33,10 +33,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
@@ -77,7 +77,7 @@ func main() {
 }
 
 // basicChaCha20Example demonstrates basic ChaCha20-Poly1305 encryption and decryption
-func basicChaCha20Example(symBackend types.SymmetricBackend) {
+func basicChaCha20Example(symBackend types.SymmetricKeyProvider) {
 	// Create key attributes for ChaCha20-Poly1305
 	attrs := &types.KeyAttributes{
 		CN:                 "my-chacha20-key",
@@ -127,7 +127,7 @@ func basicChaCha20Example(symBackend types.SymmetricBackend) {
 
 // xChaCha20Example demonstrates XChaCha20-Poly1305 encryption
 // XChaCha20 uses a 24-byte nonce, making it safer for random nonce generation
-func xChaCha20Example(symBackend types.SymmetricBackend) {
+func xChaCha20Example(symBackend types.SymmetricKeyProvider) {
 	// Create key attributes for XChaCha20-Poly1305
 	attrs := &types.KeyAttributes{
 		CN:                 "my-xchacha20-key",
@@ -176,7 +176,7 @@ func xChaCha20Example(symBackend types.SymmetricBackend) {
 
 // chacha20WithAADExample demonstrates ChaCha20-Poly1305 with Additional Authenticated Data
 // AAD is authenticated but not encrypted, useful for metadata, headers, or protocol information
-func chacha20WithAADExample(symBackend types.SymmetricBackend) {
+func chacha20WithAADExample(symBackend types.SymmetricKeyProvider) {
 	attrs := &types.KeyAttributes{
 		CN:                 "my-aad-key",
 		KeyType:            backend.KEY_TYPE_SECRET,
@@ -240,7 +240,7 @@ func chacha20WithAADExample(symBackend types.SymmetricBackend) {
 }
 
 // chacha20TamperingExample demonstrates that ChaCha20-Poly1305 detects tampering
-func chacha20TamperingExample(symBackend types.SymmetricBackend) {
+func chacha20TamperingExample(symBackend types.SymmetricKeyProvider) {
 	attrs := &types.KeyAttributes{
 		CN:                 "my-tamper-test-key",
 		KeyType:            backend.KEY_TYPE_SECRET,

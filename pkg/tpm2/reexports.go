@@ -1,6 +1,6 @@
-// Package tpm2 provides TPM 2.0 functionality through go-keychain.
+// Package tpm2 provides TPM 2.0 functionality through go-xkms.
 // This file re-exports commonly needed types from google/go-tpm/tpm2
-// to allow consumers to use go-keychain without directly importing google's library.
+// to allow consumers to use go-xkms without directly importing google's library.
 package tpm2
 
 import (
@@ -8,7 +8,7 @@ import (
 )
 
 // Type re-exports from google/go-tpm/tpm2
-// These allow consumers to use go-keychain without importing google's library directly
+// These allow consumers to use go-xkms without importing google's library directly
 
 // TPMHandle represents a TPM handle
 type TPMHandle = tpm2.TPMHandle

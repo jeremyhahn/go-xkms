@@ -2,7 +2,7 @@
 
 ## Overview
 
-go-keychain uses a unified Key ID format (`backend:type:algo:keyname`) that enables seamless integration across all backends and provides bidirectional integration with JSON Web Keys (JWK).
+go-xkms uses a unified Key ID format (`backend:type:algo:keyname`) that enables seamless integration across all backends and provides bidirectional integration with JSON Web Keys (JWK).
 
 ## Quick Reference
 
@@ -58,11 +58,11 @@ signer, err := keystore.GetSignerByID("tpm2:attestation:rsa:attestation-key")
 decrypter, err := keystore.GetDecrypterByID("awskms:encryption:rsa:encryption-key")
 ```
 
-#### 2. Create JWK from Keychain
+#### 2. Create JWK from xKMS
 
 ```go
 // Create JWK with public key only
-jwk, err := jwk.FromKeychain("pkcs11:prod-signing-key", keystore)
+jwk, err := jwk.FromxKMS("pkcs11:prod-signing-key", keystore)
 
 // Serialize to JSON
 jwkJSON, _ := jwk.MarshalIndent("", "  ")
@@ -74,10 +74,10 @@ jwkJSON, _ := jwk.MarshalIndent("", "  ")
 // Parse JWK
 jwk, err := jwk.Unmarshal(jwkData)
 
-// Load private key from keychain
-if jwk.IsKeychainBacked() {
-    key, err := jwk.LoadKeyFromKeychain(keystore)
-    signer, err := jwk.ToKeychainSigner(keystore)
+// Load private key from xkms
+if jwk.IsxKMSBacked() {
+    key, err := jwk.LoadKeyFromxKMS(keystore)
+    signer, err := jwk.ToxKMSSigner(keystore)
 }
 ```
 
@@ -103,7 +103,7 @@ GetKeyByID(keyID string) (crypto.PrivateKey, error)
 GetSignerByID(keyID string) (crypto.Signer, error)
 GetDecrypterByID(keyID string) (crypto.Decrypter, error)
 
-// Parsing functions (in keychain package)
+// Parsing functions (in xkms package)
 ParseKeyID(keyID string) (backend, keyType, algo, keyname string, err error)
 ParseKeyIDToAttributes(keyID string) (*types.KeyAttributes, error)
 ValidateKeyID(keyID string) error
@@ -112,17 +112,17 @@ ValidateKeyID(keyID string) error
 **JWK Package:**
 ```go
 // New functions
-FromKeychain(keyID string, kc keychain.KeyStore) (*JWK, error)
-(jwk *JWK) LoadKeyFromKeychain(kc keychain.KeyStore) (crypto.PrivateKey, error)
-(jwk *JWK) IsKeychainBacked() bool
-(jwk *JWK) ToKeychainSigner(kc keychain.KeyStore) (crypto.Signer, error)
+FromxKMS(keyID string, kc xkms.KeyStore) (*JWK, error)
+(jwk *JWK) LoadKeyFromxKMS(kc xkms.KeyStore) (crypto.PrivateKey, error)
+(jwk *JWK) IsxKMSBacked() bool
+(jwk *JWK) ToxKMSSigner(kc xkms.KeyStore) (crypto.Signer, error)
 ```
 
 ### Security Notes
 
 1. **Key IDs must use alphanumeric, hyphens, underscores only**
 2. **No path traversal characters (/, .., \\)**
-3. **Keychain-backed JWKs contain NO private key material**
+3. **xKMS-backed JWKs contain NO private key material**
 4. **Always validate Key ID format before use**
 5. **Backend type must match KeyStore backend**
 
@@ -130,7 +130,7 @@ FromKeychain(keyID string, kc keychain.KeyStore) (*JWK, error)
 
 **Format:** `backend:type:algo:keyname`
 
-- **backend**: Backend type (case-insensitive) - e.g., `pkcs8`, `pkcs11`, `tpm2`
+- **backend**: Backend type (case-insensitive) - e.g., `software`, `pkcs11`, `tpm2`
 - **type**: Key purpose/type - e.g., `signing`, `encryption`, `attestation`
 - **algo**: Algorithm - e.g., `rsa`, `ecdsa-p256`, `ed25519`
 - **keyname**: The key's Common Name (CN) within that backend
@@ -230,7 +230,7 @@ my-key                          # Shorthand for above
 6. Maximum total length: 512 characters
 7. No path traversal characters (`..`, `/`, `\`)
 
-## Keychain API
+## xKMS API
 
 ### Key Retrieval Methods
 
@@ -250,15 +250,15 @@ decrypter, err := keystore.GetDecrypterByID("awskms:encryption:rsa:encryption-ke
 plaintext, _ := decrypter.Decrypt(rand.Reader, ciphertext, opts)
 
 // Parse Key ID into components
-backend, keyType, algo, keyname, err := keychain.ParseKeyID("pkcs11:signing:ecdsa-p256:server-key")
+backend, keyType, algo, keyname, err := xkms.ParseKeyID("pkcs11:signing:ecdsa-p256:server-key")
 // backend = "pkcs11", keyType = "signing", algo = "ecdsa-p256", keyname = "server-key"
 
 // Parse with shorthand
-backend, keyType, algo, keyname, err := keychain.ParseKeyID("my-key")
+backend, keyType, algo, keyname, err := xkms.ParseKeyID("my-key")
 // backend = "", keyType = "", algo = "", keyname = "my-key"
 
 // Validate Key ID format
-err := keychain.ValidateKeyID("pkcs8:signing:rsa:valid-key")
+err := xkms.ValidateKeyID("software:signing:rsa:valid-key")
 ```
 
 ### Error Types
@@ -274,11 +274,11 @@ var (
 
 ## JWK Integration
 
-### Creating JWKs from Keychain Keys
+### Creating JWKs from xKMS Keys
 
 ```go
-// Create JWK from keychain key (public key only, for distribution)
-jwk, err := jwk.FromKeychain("pkcs11:prod-signing-key", keystore)
+// Create JWK from xkms key (public key only, for distribution)
+jwk, err := jwk.FromxKMS("pkcs11:prod-signing-key", keystore)
 
 // Result contains public key material with Key ID as kid:
 // {
@@ -294,30 +294,30 @@ jwk, err := jwk.FromKeychain("pkcs11:prod-signing-key", keystore)
 ### Loading Keys from JWKs
 
 ```go
-// Check if JWK references a keychain key
-if jwk.IsKeychainBacked() {
-    // Load private key from keychain using kid
-    key, err := jwk.LoadKeyFromKeychain(keystore)
+// Check if JWK references a xkms key
+if jwk.IsxKMSBacked() {
+    // Load private key from xkms using kid
+    key, err := jwk.LoadKeyFromxKMS(keystore)
 
     // Or get a signer directly
-    signer, err := jwk.ToKeychainSigner(keystore)
+    signer, err := jwk.ToxKMSSigner(keystore)
 }
 ```
 
 ### JWK API Reference
 
 ```go
-// FromKeychain creates a JWK with public key material and kid set to the Key ID
-func FromKeychain(keyID string, kc keychain.KeyStore) (*JWK, error)
+// FromxKMS creates a JWK with public key material and kid set to the Key ID
+func FromxKMS(keyID string, kc xkms.KeyStore) (*JWK, error)
 
-// LoadKeyFromKeychain loads private key using the JWK's kid field
-func (jwk *JWK) LoadKeyFromKeychain(kc keychain.KeyStore) (crypto.PrivateKey, error)
+// LoadKeyFromxKMS loads private key using the JWK's kid field
+func (jwk *JWK) LoadKeyFromxKMS(kc xkms.KeyStore) (crypto.PrivateKey, error)
 
-// IsKeychainBacked returns true if kid matches the Key ID format
-func (jwk *JWK) IsKeychainBacked() bool
+// IsxKMSBacked returns true if kid matches the Key ID format
+func (jwk *JWK) IsxKMSBacked() bool
 
-// ToKeychainSigner returns a crypto.Signer backed by the keychain
-func (jwk *JWK) ToKeychainSigner(kc keychain.KeyStore) (crypto.Signer, error)
+// ToxKMSSigner returns a crypto.Signer backed by the xkms
+func (jwk *JWK) ToxKMSSigner(kc xkms.KeyStore) (crypto.Signer, error)
 ```
 
 ## JWT Integration
@@ -325,7 +325,7 @@ func (jwk *JWK) ToKeychainSigner(kc keychain.KeyStore) (crypto.Signer, error)
 ### Signing JWTs
 
 ```go
-func SignJWT(claims jwt.Claims, keyID string, kc keychain.KeyStore) (string, error) {
+func SignJWT(claims jwt.Claims, keyID string, kc xkms.KeyStore) (string, error) {
     signer, err := kc.GetSignerByID(keyID)
     if err != nil {
         return "", err
@@ -341,7 +341,7 @@ func SignJWT(claims jwt.Claims, keyID string, kc keychain.KeyStore) (string, err
 ### Verifying JWTs
 
 ```go
-func VerifyJWT(tokenString string, kc keychain.KeyStore) (*jwt.Token, error) {
+func VerifyJWT(tokenString string, kc xkms.KeyStore) (*jwt.Token, error) {
     return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
         kid, ok := token.Header["kid"].(string)
         if !ok {
@@ -390,7 +390,7 @@ jwt:
 
 | Backend | keyname maps to |
 |---------|-----------------|
-| PKCS#8 | Filename without extension |
+| Software | Filename without extension (PKCS#8 encoded) |
 | PKCS#11 | CKA_LABEL attribute |
 | TPM2 | Persistent handle name |
 | AWS KMS | Key alias |
@@ -398,7 +398,6 @@ jwt:
 | Azure KV | Key name in vault |
 | Vault | Key name in transit engine |
 | YubiKey | PIV slot identifier |
-| CanoKey | PIV slot identifier |
 
 Backend-specific parameters (slot, PIN, region, credentials, etc.) are handled by backend configuration, not the Key ID.
 
@@ -415,7 +414,7 @@ All Key IDs are validated to prevent injection attacks:
 
 ### JWK Security
 
-- Keychain-backed JWKs contain **public key material only**
+- xKMS-backed JWKs contain **public key material only**
 - Private key operations are performed by the backend
 - Always validate `kid` format before loading keys
 - Verify public key matches when processing external JWKs

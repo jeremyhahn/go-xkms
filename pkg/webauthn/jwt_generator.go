@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	keychainjwt "github.com/jeremyhahn/go-keychain/pkg/encoding/jwt"
+	xkmsjwt "github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
 )
 
 // DefaultJWTGenerator generates JWT tokens for authenticated WebAuthn users.
@@ -39,7 +39,7 @@ type DefaultJWTGenerator struct {
 	// keyID is the key identifier for the kid header
 	keyID string
 	// signer is the JWT signer
-	signer *keychainjwt.Signer
+	signer *xkmsjwt.Signer
 }
 
 // JWTGeneratorConfig contains configuration for the JWT generator.
@@ -48,9 +48,9 @@ type JWTGeneratorConfig struct {
 	PrivateKey crypto.PrivateKey
 	// PublicKey is the key used to verify tokens (optional, derived from PrivateKey if not set)
 	PublicKey crypto.PublicKey
-	// Issuer is the JWT issuer claim (default: "go-keychain")
+	// Issuer is the JWT issuer claim (default: "go-xkms")
 	Issuer string
-	// Audience is the JWT audience claim (default: ["go-keychain"])
+	// Audience is the JWT audience claim (default: ["go-xkms"])
 	Audience []string
 	// ExpiresIn is how long tokens are valid (default: 1 hour)
 	ExpiresIn time.Duration
@@ -70,12 +70,12 @@ func NewDefaultJWTGenerator(config *JWTGeneratorConfig) (*DefaultJWTGenerator, e
 	// Set defaults
 	issuer := config.Issuer
 	if issuer == "" {
-		issuer = "go-keychain"
+		issuer = "go-xkms"
 	}
 
 	audience := config.Audience
 	if len(audience) == 0 {
-		audience = []string{"go-keychain"}
+		audience = []string{"go-xkms"}
 	}
 
 	expiresIn := config.ExpiresIn
@@ -101,7 +101,7 @@ func NewDefaultJWTGenerator(config *JWTGeneratorConfig) (*DefaultJWTGenerator, e
 		audience:   audience,
 		expiresIn:  expiresIn,
 		keyID:      config.KeyID,
-		signer:     keychainjwt.NewSigner(),
+		signer:     xkmsjwt.NewSigner(),
 	}, nil
 }
 
@@ -139,8 +139,8 @@ func (g *DefaultJWTGenerator) VerifyToken(tokenString string) (jwt.MapClaims, er
 		return nil, fmt.Errorf("public key not available for verification")
 	}
 
-	verifier := keychainjwt.NewVerifier()
-	opts := &keychainjwt.VerifyOptions{
+	verifier := xkmsjwt.NewVerifier()
+	opts := &xkmsjwt.VerifyOptions{
 		ValidateIssuer:   true,
 		ExpectedIssuer:   g.issuer,
 		ValidateAudience: len(g.audience) > 0,

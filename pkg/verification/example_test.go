@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jeremyhahn/go-keychain/pkg/verification"
+	"github.com/jeremyhahn/go-xkms/pkg/verification"
 )
 
 // Example_rsaPKCS1v15 demonstrates RSA PKCS1v15 signature verification

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -30,16 +30,16 @@ import (
 	"sync"
 
 	vault "github.com/hashicorp/vault/api"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 const (
 	BackendTypeVault types.BackendType = "vault"
 )
 
-// Backend implements the types.Backend interface for HashiCorp Vault Transit engine.
+// Backend implements the types.KeyProvider interface for HashiCorp Vault Transit engine.
 type Backend struct {
 	config  *Config
 	client  VaultClient
@@ -134,6 +134,8 @@ func (b *Backend) Type() types.BackendType {
 }
 
 // Capabilities returns the features this backend supports.
+// SecurityLevel is Medium - keys are protected by Vault's Transit engine.
+// Note: While Vault is software-based by default, it can use HSM for master keys.
 func (b *Backend) Capabilities() types.Capabilities {
 	return types.Capabilities{
 		Keys:                true,
@@ -144,6 +146,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 		SymmetricEncryption: true,  // Vault Transit engine supports symmetric encryption
 		Import:              false, // Key import not implemented in current version
 		Export:              false, // Key export not implemented in current version
+		SecurityLevel:       types.SecurityLevelMedium,
 	}
 }
 
@@ -199,7 +202,7 @@ func (b *Backend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, er
 		return nil, fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	if err := storage.SaveKey(b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
+	if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.CN, metadataBytes); err != nil {
 		return nil, fmt.Errorf("failed to store metadata: %w", err)
 	}
 
@@ -214,7 +217,7 @@ func (b *Backend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) 
 	}
 
 	// Load metadata to verify key exists
-	_, err := storage.GetKey(b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
@@ -290,7 +293,7 @@ func (b *Backend) DeleteKey(attrs *types.KeyAttributes) error {
 	}
 
 	// Delete metadata
-	if err := storage.DeleteKey(b.config.KeyStorage, attrs.CN); err != nil {
+	if err := storage.DeleteKey(context.Background(), b.config.KeyStorage, attrs.CN); err != nil {
 		return fmt.Errorf("failed to delete metadata: %w", err)
 	}
 
@@ -333,7 +336,7 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 		cn := b.desanitizeKeyName(keyName)
 
 		// Load metadata
-		metadataBytes, err := storage.GetKey(b.config.KeyStorage, cn)
+		metadataBytes, err := storage.GetKey(context.Background(), b.config.KeyStorage, cn)
 		if err != nil {
 			// If metadata doesn't exist, create basic attributes
 			attrs := &types.KeyAttributes{
@@ -375,7 +378,7 @@ func (b *Backend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	}
 
 	// Verify key exists
-	_, err := storage.GetKey(b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
@@ -402,7 +405,7 @@ func (b *Backend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error
 	}
 
 	// Verify key exists
-	_, err := storage.GetKey(b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}
@@ -435,7 +438,7 @@ func (b *Backend) Encrypt(attrs *types.KeyAttributes, plaintext []byte) ([]byte,
 	}
 
 	// Verify key exists
-	_, err := storage.GetKey(b.config.KeyStorage, attrs.CN)
+	_, err := storage.GetKey(context.Background(), b.config.KeyStorage, attrs.CN)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
 	}

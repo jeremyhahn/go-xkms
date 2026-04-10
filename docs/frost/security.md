@@ -103,7 +103,6 @@ share2 := backend.SignRound(keyID, message2, nonces, commitments)  // CATASTROPH
 | Production (cloud) | Cloud KMS (AWS/GCP/Azure) |
 | Multi-cloud | HashiCorp Vault |
 | Development | Software (with encryption) |
-| Air-gapped | SmartCard-HSM |
 
 ### Memory Handling
 
@@ -251,7 +250,7 @@ For high-security deployments, conduct key generation as a ceremony:
 2. **Generation**
    ```bash
    # On air-gapped machine
-   keychain frost keygen \
+   xkms frost keygen \
      --algorithm FROST-P256-SHA256 \
      --threshold 3 \
      --total 5 \

@@ -61,6 +61,6 @@ test-results/
 playwright-report/
 
 # Binary outputs (root only, not cmd/ directories)
-/keychaind
-/keychainctl
-/vfido2
+/xkmsd
+/xkmsctl
+/truststrap

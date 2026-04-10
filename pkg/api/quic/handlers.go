@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,9 +26,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // ErrorResponse represents an API error response
@@ -53,7 +54,8 @@ type BackendInfo struct {
 
 // ListBackendsResponse represents the backends list response
 type ListBackendsResponse struct {
-	Backends []BackendInfo `json:"backends"`
+	Backends   []BackendInfo           `json:"backends"`
+	Pagination *transport.PageResponse `json:"pagination,omitempty"`
 }
 
 // GenerateKeyRequest represents a key generation request
@@ -85,7 +87,8 @@ type RotateKeyResponse struct {
 
 // ListKeysResponse represents the keys list response
 type ListKeysResponse struct {
-	Keys []KeyInfo `json:"keys"`
+	Keys       []KeyInfo               `json:"keys"`
+	Pagination *transport.PageResponse `json:"pagination,omitempty"`
 }
 
 // KeyInfo represents basic key information
@@ -165,7 +168,8 @@ type CertResponse struct {
 
 // ListCertsResponse represents the certificates list response
 type ListCertsResponse struct {
-	KeyIDs []string `json:"key_ids"`
+	KeyIDs     []string                `json:"key_ids"`
+	Pagination *transport.PageResponse `json:"pagination,omitempty"`
 }
 
 // CertChainRequest represents a certificate chain save request
@@ -283,43 +287,6 @@ type CopyKeyResponse struct {
 	Message string `json:"message"`
 }
 
-// KeyVersionInfo represents information about a key version
-type KeyVersionInfo struct {
-	Version   int    `json:"version"`
-	State     string `json:"state"` // "enabled", "disabled", "scheduled_for_destruction"
-	CreatedAt string `json:"created_at,omitempty"`
-}
-
-// ListKeyVersionsResponse represents the response for listing key versions
-type ListKeyVersionsResponse struct {
-	KeyID    string           `json:"key_id"`
-	Versions []KeyVersionInfo `json:"versions"`
-}
-
-// EnableKeyVersionRequest represents a request to enable a key version
-type EnableKeyVersionRequest struct {
-	Version int `json:"version"`
-}
-
-// DisableKeyVersionRequest represents a request to disable a key version
-type DisableKeyVersionRequest struct {
-	Version int `json:"version"`
-}
-
-// KeyVersionResponse represents a response for key version operations
-type KeyVersionResponse struct {
-	KeyID   string `json:"key_id"`
-	Version int    `json:"version"`
-	State   string `json:"state"`
-}
-
-// KeyVersionsAllResponse represents a response for bulk version operations
-type KeyVersionsAllResponse struct {
-	KeyID         string `json:"key_id"`
-	VersionsCount int    `json:"versions_count"`
-	State         string `json:"state"`
-}
-
 // handleHealth handles health check requests
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -337,16 +304,20 @@ func (s *Server) handleListBackends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backendNames := keychain.Backends()
+	if !s.authorize(w, r, "backends", "read") {
+		return
+	}
+
+	backendNames := xkms.Backends()
 
 	backends := make([]BackendInfo, 0, len(backendNames))
 	for _, name := range backendNames {
-		ks, err := keychain.Backend(name)
+		ks, err := xkms.GetBackend(name)
 		if err != nil {
 			continue // Skip backends that can't be retrieved
 		}
 
-		backendImpl := ks.Backend()
+		backendImpl := ks.KeyProvider()
 		caps := backendImpl.Capabilities()
 
 		backends = append(backends, BackendInfo{
@@ -357,7 +328,13 @@ func (s *Server) handleListBackends(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	s.sendJSON(w, http.StatusOK, ListBackendsResponse{Backends: backends})
+	pr := transport.PageRequestFromQuery(r)
+	paginatedBackends, pageResp := transport.ApplyPagination(backends, pr)
+
+	s.sendJSON(w, http.StatusOK, ListBackendsResponse{
+		Backends:   paginatedBackends,
+		Pagination: &pageResp,
+	})
 }
 
 // handleBackendOperations handles operations on specific backends
@@ -376,14 +353,18 @@ func (s *Server) handleBackendOperations(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if !s.authorize(w, r, "backends", "read") {
+		return
+	}
+
 	// Get the backend
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendID))
 		return
 	}
 
-	backendImpl := ks.Backend()
+	backendImpl := ks.KeyProvider()
 	caps := backendImpl.Capabilities()
 
 	info := BackendInfo{
@@ -410,6 +391,10 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleListKeys handles listing keys
 func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r, "keys", "read") {
+		return
+	}
+
 	backendParam := r.URL.Query().Get("backend")
 
 	// Get the keystore for the specified backend
@@ -439,11 +424,21 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	s.sendJSON(w, http.StatusOK, ListKeysResponse{Keys: keys})
+	pr := transport.PageRequestFromQuery(r)
+	paginatedKeys, pageResp := transport.ApplyPagination(keys, pr)
+
+	s.sendJSON(w, http.StatusOK, ListKeysResponse{
+		Keys:       paginatedKeys,
+		Pagination: &pageResp,
+	})
 }
 
 // handleGenerateKey handles key generation
 func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r, "keys", "write") {
+		return
+	}
+
 	var req GenerateKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -461,7 +456,7 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the keystore for the specified backend
-	ks, err := keychain.Backend(req.Backend)
+	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", req.Backend))
 		return
@@ -527,7 +522,7 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 
 	case types.AlgorithmSymmetric.Equals(algorithm):
 		// For AES keys, check if backend supports symmetric operations
-		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
 			s.sendError(w, http.StatusBadRequest, "backend does not support symmetric encryption")
 			return
@@ -642,16 +637,6 @@ func (s *Server) handleKeyOperations(w http.ResponseWriter, r *http.Request) {
 		s.handleImportKey(w, r, keyID, backendParam)
 	case "export":
 		s.handleExportKey(w, r, keyID, backendParam)
-	case "versions":
-		s.handleListKeyVersions(w, r, keyID, backendParam)
-	case "versions/enable":
-		s.handleEnableKeyVersion(w, r, keyID, backendParam)
-	case "versions/disable":
-		s.handleDisableKeyVersion(w, r, keyID, backendParam)
-	case "versions/enable-all":
-		s.handleEnableAllKeyVersions(w, r, keyID, backendParam)
-	case "versions/disable-all":
-		s.handleDisableAllKeyVersions(w, r, keyID, backendParam)
 	case "":
 		// No operation - handle key get/delete
 		switch r.Method {
@@ -668,16 +653,16 @@ func (s *Server) handleKeyOperations(w http.ResponseWriter, r *http.Request) {
 }
 
 // getKeystoreForBackend returns the keystore for the specified backend, or the default keystore if empty
-func (s *Server) getKeystoreForBackend(backendParam string) (keychain.KeyStore, error) {
+func (s *Server) getKeystoreForBackend(backendParam string) (xkms.Backend, error) {
 	if backendParam != "" {
-		return keychain.Backend(backendParam)
+		return xkms.GetBackend(backendParam)
 	}
 	return s.keystore, nil
 }
 
 // findKeyByID finds a key's attributes by its ID (CN) in the keystore
 // Returns the full key attributes needed for operations like GetKey, Sign, etc.
-func (s *Server) findKeyByID(ks keychain.KeyStore, keyID string) (*types.KeyAttributes, error) {
+func (s *Server) findKeyByID(ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
 	keys, err := ks.ListKeys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
@@ -694,6 +679,10 @@ func (s *Server) findKeyByID(ks keychain.KeyStore, keyID string) (*types.KeyAttr
 
 // handleGetKey handles retrieving a key
 func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
+	if !s.authorize(w, r, "keys", "read") {
+		return
+	}
+
 	ks, err := s.getKeystoreForBackend(backendParam)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
@@ -736,6 +725,10 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request, keyID, bac
 
 // handleDeleteKey handles deleting a key
 func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
+	if !s.authorize(w, r, "keys", "delete") {
+		return
+	}
+
 	ks, err := s.getKeystoreForBackend(backendParam)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
@@ -761,6 +754,10 @@ func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request, keyID, 
 func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
 	if r.Method != http.MethodPost {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "keys", "use") {
 		return
 	}
 
@@ -826,6 +823,10 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backe
 func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
 	if r.Method != http.MethodPost {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "keys", "use") {
 		return
 	}
 
@@ -926,6 +927,10 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "write") {
+		return
+	}
+
 	ks, err := s.getKeystoreForBackend(backendParam)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("backend not found: %s", backendParam))
@@ -977,6 +982,10 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "use") {
+		return
+	}
+
 	// Default to symmetric backend for encryption operations
 	if backendParam == "" {
 		backendParam = "symmetric"
@@ -1002,7 +1011,7 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	}
 
 	// Check if backend supports symmetric operations
-	symBackend, ok := ks.Backend().(types.SymmetricBackend)
+	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support symmetric encryption")
 		return
@@ -1042,6 +1051,10 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "use") {
+		return
+	}
+
 	var req DecryptRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1049,7 +1062,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	}
 
 	// Find the key - search in specified backend or both if not specified
-	var ks keychain.KeyStore
+	var ks xkms.Backend
 	var attrs *types.KeyAttributes
 	var err error
 
@@ -1087,7 +1100,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	// Check if this is a symmetric key based on key attributes
 	if attrs.IsSymmetric() {
 		// Symmetric decryption
-		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
 			s.sendError(w, http.StatusBadRequest, "backend does not support symmetric decryption")
 			return
@@ -1141,68 +1154,6 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	}
 }
 
-// handleListKeyVersions handles listing key versions (stub - not yet implemented)
-func (s *Server) handleListKeyVersions(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	if r.Method != http.MethodGet {
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	s.sendError(w, http.StatusNotImplemented, "key versioning is not yet supported - requires VersioningAdapter integration")
-}
-
-// handleEnableKeyVersion handles enabling a specific key version (stub - not yet implemented)
-func (s *Server) handleEnableKeyVersion(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	s.sendJSON(w, http.StatusNotImplemented, ErrorResponse{
-		Error:   "Not Implemented",
-		Message: "key versioning is not yet supported - requires VersioningAdapter integration",
-	})
-}
-
-// handleDisableKeyVersion handles disabling a specific key version (stub - not yet implemented)
-func (s *Server) handleDisableKeyVersion(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	s.sendJSON(w, http.StatusNotImplemented, ErrorResponse{
-		Error:   "Not Implemented",
-		Message: "key versioning is not yet supported - requires VersioningAdapter integration",
-	})
-}
-
-// handleEnableAllKeyVersions handles enabling all key versions (stub - not yet implemented)
-func (s *Server) handleEnableAllKeyVersions(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	s.sendJSON(w, http.StatusNotImplemented, ErrorResponse{
-		Error:   "Not Implemented",
-		Message: "key versioning is not yet supported - requires VersioningAdapter integration",
-	})
-}
-
-// handleDisableAllKeyVersions handles disabling all key versions (stub - not yet implemented)
-func (s *Server) handleDisableAllKeyVersions(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	s.sendJSON(w, http.StatusNotImplemented, ErrorResponse{
-		Error:   "Not Implemented",
-		Message: "key versioning is not yet supported - requires VersioningAdapter integration",
-	})
-}
-
 // handleCerts handles certificate listing and creation
 func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -1217,17 +1168,31 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 
 // handleListCerts handles listing certificates
 func (s *Server) handleListCerts(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r, "certs", "read") {
+		return
+	}
+
 	keyIDs, err := s.keystore.ListCerts()
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list certificates: %v", err))
 		return
 	}
 
-	s.sendJSON(w, http.StatusOK, ListCertsResponse{KeyIDs: keyIDs})
+	pr := transport.PageRequestFromQuery(r)
+	paginatedIDs, pageResp := transport.ApplyPagination(keyIDs, pr)
+
+	s.sendJSON(w, http.StatusOK, ListCertsResponse{
+		KeyIDs:     paginatedIDs,
+		Pagination: &pageResp,
+	})
 }
 
 // handleSaveCert handles saving a certificate
 func (s *Server) handleSaveCert(w http.ResponseWriter, r *http.Request) {
+	if !s.authorize(w, r, "certs", "write") {
+		return
+	}
+
 	var req CertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1318,6 +1283,10 @@ func (s *Server) handleCertOperations(w http.ResponseWriter, r *http.Request) {
 
 // handleGetCert handles retrieving a certificate
 func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request, certID string) {
+	if !s.authorize(w, r, "certs", "read") {
+		return
+	}
+
 	cert, err := s.keystore.GetCert(certID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("certificate not found: %v", err))
@@ -1339,6 +1308,10 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request, certID st
 
 // handleDeleteCert handles deleting a certificate
 func (s *Server) handleDeleteCert(w http.ResponseWriter, r *http.Request, certID string) {
+	if !s.authorize(w, r, "certs", "delete") {
+		return
+	}
+
 	if err := s.keystore.DeleteCert(certID); err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("failed to delete certificate: %v", err))
 		return
@@ -1349,6 +1322,10 @@ func (s *Server) handleDeleteCert(w http.ResponseWriter, r *http.Request, certID
 
 // handleCertExists handles checking if a certificate exists
 func (s *Server) handleCertExists(w http.ResponseWriter, r *http.Request, certID string) {
+	if !s.authorize(w, r, "certs", "read") {
+		return
+	}
+
 	exists, err := s.keystore.CertExists(certID)
 	if err != nil {
 		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to check certificate: %v", err))
@@ -1376,6 +1353,10 @@ func (s *Server) handleCertChainOperations(w http.ResponseWriter, r *http.Reques
 
 // handleSaveCertChain handles saving a certificate chain
 func (s *Server) handleSaveCertChain(w http.ResponseWriter, r *http.Request, certID string) {
+	if !s.authorize(w, r, "certs", "write") {
+		return
+	}
+
 	var req CertChainRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1415,6 +1396,10 @@ func (s *Server) handleSaveCertChain(w http.ResponseWriter, r *http.Request, cer
 
 // handleGetCertChain handles retrieving a certificate chain
 func (s *Server) handleGetCertChain(w http.ResponseWriter, r *http.Request, certID string) {
+	if !s.authorize(w, r, "certs", "read") {
+		return
+	}
+
 	chain, err := s.keystore.GetCertChain(certID)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("certificate chain not found: %v", err))
@@ -1441,6 +1426,10 @@ func (s *Server) handleGetCertChain(w http.ResponseWriter, r *http.Request, cert
 func (s *Server) handleTLSCertificate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "certs", "read") {
 		return
 	}
 
@@ -1534,6 +1523,10 @@ func (s *Server) handleGetImportParameters(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "read") {
+		return
+	}
+
 	var req GetImportParametersRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1561,7 +1554,7 @@ func (s *Server) handleGetImportParameters(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1614,6 +1607,10 @@ func (s *Server) handleGetImportParams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "read") {
+		return
+	}
+
 	var req GetImportParametersRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1646,7 +1643,7 @@ func (s *Server) handleGetImportParams(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1762,6 +1759,10 @@ func (s *Server) handleWrapKey(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "use") {
+		return
+	}
+
 	var req WrapKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1776,7 +1777,7 @@ func (s *Server) handleWrapKey(w http.ResponseWriter, r *http.Request, keyID, ba
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1824,6 +1825,10 @@ func (s *Server) handleUnwrapKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "use") {
+		return
+	}
+
 	var req UnwrapKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1851,7 +1856,7 @@ func (s *Server) handleUnwrapKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1904,6 +1909,10 @@ func (s *Server) handleImportKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "write") {
+		return
+	}
+
 	var req ImportKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -1931,7 +1940,7 @@ func (s *Server) handleImportKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -1958,6 +1967,10 @@ func (s *Server) handleImportKey(w http.ResponseWriter, r *http.Request, keyID, 
 func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
 	if r.Method != http.MethodPost {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "keys", "read") {
 		return
 	}
 
@@ -1991,7 +2004,7 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "backend does not support import/export operations")
 		return
@@ -2019,6 +2032,10 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 func (s *Server) handleAsymmetricEncrypt(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
 	if r.Method != http.MethodPost {
 		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if !s.authorize(w, r, "keys", "use") {
 		return
 	}
 
@@ -2084,6 +2101,10 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.authorize(w, r, "keys", "write") {
+		return
+	}
+
 	var req CopyKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
@@ -2113,23 +2134,23 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get source and destination backends
-	sourceKS, err := keychain.Backend(req.SourceBackend)
+	sourceKS, err := xkms.GetBackend(req.SourceBackend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("source backend not found: %v", err))
 		return
 	}
-	sourceBackend, ok := sourceKS.Backend().(backend.ImportExportBackend)
+	sourceBackend, ok := sourceKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "source backend does not support import/export operations")
 		return
 	}
 
-	destKS, err := keychain.Backend(req.DestBackend)
+	destKS, err := xkms.GetBackend(req.DestBackend)
 	if err != nil {
 		s.sendError(w, http.StatusNotFound, fmt.Sprintf("destination backend not found: %v", err))
 		return
 	}
-	destBackend, ok := destKS.Backend().(backend.ImportExportBackend)
+	destBackend, ok := destKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		s.sendError(w, http.StatusBadRequest, "destination backend does not support import/export operations")
 		return

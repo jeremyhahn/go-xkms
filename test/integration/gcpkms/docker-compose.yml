@@ -7,8 +7,11 @@ services:
       - GOOGLE_CLOUD_PROJECT=test-project
     volumes:
       - ../../..:/app
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
     working_dir: /app
 
 networks:
   default:
-    name: keychain-gcpkms-test
+    name: xkms-gcpkms-test

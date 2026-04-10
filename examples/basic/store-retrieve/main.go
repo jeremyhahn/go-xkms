@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package main demonstrates storing and retrieving keys from the keychain.
+// Package main demonstrates storing and retrieving keys from the xkms.
 package main
 
 import (
@@ -22,15 +22,15 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func main() {
-	// Create a temporary directory for the keychain
+	// Create a temporary directory for the xkms
 	tmpDir := filepath.Join(os.TempDir(), "keystore-store-retrieve")
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
@@ -50,7 +50,7 @@ func main() {
 	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     pkcs8Backend,
 		CertStorage: storage,
 	})

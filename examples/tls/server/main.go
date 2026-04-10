@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package main demonstrates creating a TLS server using the keychain.
+// Package main demonstrates creating a TLS server using the xkms.
 package main
 
 import (
@@ -28,11 +28,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func main() {
@@ -56,7 +56,7 @@ func main() {
 	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     pkcs8Backend,
 		CertStorage: storage,
 	})
@@ -78,7 +78,7 @@ func main() {
 	fmt.Printf("   ✓ Server certificate created\n\n")
 
 	// Step 3: Get TLS certificate from keystore
-	fmt.Println("3. Loading TLS certificate from keychain...")
+	fmt.Println("3. Loading TLS certificate from xkms...")
 	tlsCert, err := ks.GetTLSCertificate("localhost", &types.KeyAttributes{
 		CN:           "localhost",
 		KeyType:      backend.KEY_TYPE_TLS,
@@ -170,7 +170,7 @@ func main() {
 }
 
 // createCA creates a Certificate Authority
-func createCA(ks keychain.KeyStore) (*x509.Certificate, interface{}) {
+func createCA(ks xkms.Backend) (*x509.Certificate, interface{}) {
 	keyAttrs := &types.KeyAttributes{
 		CN:           "Example Root CA",
 		KeyType:      backend.KEY_TYPE_TLS,
@@ -222,7 +222,7 @@ func createCA(ks keychain.KeyStore) (*x509.Certificate, interface{}) {
 }
 
 // createServerCertificate creates a server certificate
-func createServerCertificate(ks keychain.KeyStore, caCert *x509.Certificate, caPrivKey interface{}) *x509.Certificate {
+func createServerCertificate(ks xkms.Backend, caCert *x509.Certificate, caPrivKey interface{}) *x509.Certificate {
 	serverKeyAttrs := &types.KeyAttributes{
 		CN:           "localhost",
 		KeyType:      backend.KEY_TYPE_TLS,

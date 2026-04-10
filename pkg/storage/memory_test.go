@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,6 +50,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestMemoryBackend_PutAndGet(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
@@ -56,79 +58,81 @@ func TestMemoryBackend_PutAndGet(t *testing.T) {
 	value := []byte("test-value")
 
 	// Put the value
-	err := backend.Put(key, value, nil)
+	err := backend.Put(ctx, key, value)
 	require.NoError(t, err)
 
 	// Get the value back
-	result, err := backend.Get(key)
+	result, err := backend.Get(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, value, result)
 }
 
 func TestMemoryBackend_Get_NotFound(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
-	_, err := backend.Get("nonexistent-key")
+	_, err := backend.Get(ctx, "nonexistent-key")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestMemoryBackend_Put_WithOptions(t *testing.T) {
+func TestMemoryBackend_Put_Simple(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
-	opts := DefaultOptions()
-	opts.Metadata["custom"] = "value"
-
-	err := backend.Put("test-key", []byte("test-value"), opts)
+	err := backend.Put(ctx, "test-key", []byte("test-value"))
 	require.NoError(t, err)
 
-	result, err := backend.Get("test-key")
+	result, err := backend.Get(ctx, "test-key")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("test-value"), result)
 }
 
 func TestMemoryBackend_Get_ReturnsCopy(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
 	key := "test-key"
 	value := []byte("original")
 
-	err := backend.Put(key, value, nil)
+	err := backend.Put(ctx, key, value)
 	require.NoError(t, err)
 
 	// Get the value and modify it
-	result, err := backend.Get(key)
+	result, err := backend.Get(ctx, key)
 	require.NoError(t, err)
 	result[0] = 'X'
 
 	// Verify the original is unchanged
-	result2, err := backend.Get(key)
+	result2, err := backend.Get(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("original"), result2, "modifying returned value should not affect stored value")
 }
 
 func TestMemoryBackend_Put_StoresCopy(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
 	key := "test-key"
 	value := []byte("original")
 
-	err := backend.Put(key, value, nil)
+	err := backend.Put(ctx, key, value)
 	require.NoError(t, err)
 
 	// Modify the original slice
 	value[0] = 'X'
 
 	// Verify the stored value is unchanged
-	result, err := backend.Get(key)
+	result, err := backend.Get(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("original"), result, "modifying original value should not affect stored value")
 }
 
 func TestMemoryBackend_Delete(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
@@ -136,101 +140,106 @@ func TestMemoryBackend_Delete(t *testing.T) {
 	value := []byte("test-value")
 
 	// Put and verify
-	err := backend.Put(key, value, nil)
+	err := backend.Put(ctx, key, value)
 	require.NoError(t, err)
 
 	// Delete
-	err = backend.Delete(key)
+	err = backend.Delete(ctx, key)
 	require.NoError(t, err)
 
 	// Verify it's gone
-	_, err = backend.Get(key)
+	_, err = backend.Get(ctx, key)
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestMemoryBackend_Delete_NotFound(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
-	err := backend.Delete("nonexistent-key")
+	err := backend.Delete(ctx, "nonexistent-key")
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestMemoryBackend_List(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
 	// Put multiple values with different prefixes
-	_ = backend.Put("prefix1/key1", []byte("v1"), nil)
-	_ = backend.Put("prefix1/key2", []byte("v2"), nil)
-	_ = backend.Put("prefix2/key1", []byte("v3"), nil)
-	_ = backend.Put("other/key1", []byte("v4"), nil)
+	_ = backend.Put(ctx, "prefix1/key1", []byte("v1"))
+	_ = backend.Put(ctx, "prefix1/key2", []byte("v2"))
+	_ = backend.Put(ctx, "prefix2/key1", []byte("v3"))
+	_ = backend.Put(ctx, "other/key1", []byte("v4"))
 
 	// List with prefix
-	keys, err := backend.List("prefix1/")
+	keys, err := backend.List(ctx, "prefix1/")
 	require.NoError(t, err)
 	assert.Len(t, keys, 2)
 	assert.Contains(t, keys, "prefix1/key1")
 	assert.Contains(t, keys, "prefix1/key2")
 
 	// List with different prefix
-	keys, err = backend.List("prefix2/")
+	keys, err = backend.List(ctx, "prefix2/")
 	require.NoError(t, err)
 	assert.Len(t, keys, 1)
 	assert.Contains(t, keys, "prefix2/key1")
 }
 
 func TestMemoryBackend_List_EmptyPrefix(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
-	_ = backend.Put("key1", []byte("v1"), nil)
-	_ = backend.Put("key2", []byte("v2"), nil)
-	_ = backend.Put("prefix/key3", []byte("v3"), nil)
+	_ = backend.Put(ctx, "key1", []byte("v1"))
+	_ = backend.Put(ctx, "key2", []byte("v2"))
+	_ = backend.Put(ctx, "prefix/key3", []byte("v3"))
 
 	// List with empty prefix returns all keys
-	keys, err := backend.List("")
+	keys, err := backend.List(ctx, "")
 	require.NoError(t, err)
 	assert.Len(t, keys, 3)
 }
 
 func TestMemoryBackend_List_NoMatches(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
-	_ = backend.Put("key1", []byte("v1"), nil)
+	_ = backend.Put(ctx, "key1", []byte("v1"))
 
-	keys, err := backend.List("nonexistent/")
+	keys, err := backend.List(ctx, "nonexistent/")
 	require.NoError(t, err)
 	assert.Empty(t, keys)
 }
 
 func TestMemoryBackend_Exists(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
 	key := "test-key"
 
 	// Key doesn't exist initially
-	exists, err := backend.Exists(key)
+	exists, err := backend.Exists(ctx, key)
 	require.NoError(t, err)
 	assert.False(t, exists)
 
 	// Put the key
-	err = backend.Put(key, []byte("value"), nil)
+	err = backend.Put(ctx, key, []byte("value"))
 	require.NoError(t, err)
 
 	// Now it exists
-	exists, err = backend.Exists(key)
+	exists, err = backend.Exists(ctx, key)
 	require.NoError(t, err)
 	assert.True(t, exists)
 
 	// Delete the key
-	err = backend.Delete(key)
+	err = backend.Delete(ctx, key)
 	require.NoError(t, err)
 
 	// Now it doesn't exist again
-	exists, err = backend.Exists(key)
+	exists, err = backend.Exists(ctx, key)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
@@ -248,10 +257,11 @@ func TestMemoryBackend_Close(t *testing.T) {
 }
 
 func TestMemoryBackend_OperationsAfterClose(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 
 	// Put a value before closing
-	err := backend.Put("key1", []byte("value"), nil)
+	err := backend.Put(ctx, "key1", []byte("value"))
 	require.NoError(t, err)
 
 	// Close the backend
@@ -259,60 +269,63 @@ func TestMemoryBackend_OperationsAfterClose(t *testing.T) {
 	require.NoError(t, err)
 
 	// All operations should return ErrClosed after close
-	_, err = backend.Get("key1")
+	_, err = backend.Get(ctx, "key1")
 	assert.ErrorIs(t, err, ErrClosed, "Get after close should return ErrClosed")
 
-	err = backend.Put("key2", []byte("value"), nil)
+	err = backend.Put(ctx, "key2", []byte("value"))
 	assert.ErrorIs(t, err, ErrClosed, "Put after close should return ErrClosed")
 
-	err = backend.Delete("key1")
+	err = backend.Delete(ctx, "key1")
 	assert.ErrorIs(t, err, ErrClosed, "Delete after close should return ErrClosed")
 
-	_, err = backend.List("")
+	_, err = backend.List(ctx, "")
 	assert.ErrorIs(t, err, ErrClosed, "List after close should return ErrClosed")
 
-	_, err = backend.Exists("key1")
+	_, err = backend.Exists(ctx, "key1")
 	assert.ErrorIs(t, err, ErrClosed, "Exists after close should return ErrClosed")
 }
 
 func TestMemoryBackend_Overwrite(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
 	key := "test-key"
 
 	// Put initial value
-	err := backend.Put(key, []byte("original"), nil)
+	err := backend.Put(ctx, key, []byte("original"))
 	require.NoError(t, err)
 
 	// Overwrite with new value
-	err = backend.Put(key, []byte("updated"), nil)
+	err = backend.Put(ctx, key, []byte("updated"))
 	require.NoError(t, err)
 
 	// Verify it was overwritten
-	result, err := backend.Get(key)
+	result, err := backend.Get(ctx, key)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("updated"), result)
 }
 
 func TestMemoryBackend_EmptyValue(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
 	key := "test-key"
 
 	// Put empty value
-	err := backend.Put(key, []byte{}, nil)
+	err := backend.Put(ctx, key, []byte{})
 	require.NoError(t, err)
 
 	// Get should return empty slice, not nil
-	result, err := backend.Get(key)
+	result, err := backend.Get(ctx, key)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Empty(t, result)
 }
 
 func TestMemoryBackend_Concurrent(t *testing.T) {
+	ctx := context.Background()
 	backend := NewMemory()
 	defer func() { _ = backend.Close() }()
 
@@ -324,10 +337,10 @@ func TestMemoryBackend_Concurrent(t *testing.T) {
 		go func(n int) {
 			key := "key"
 			value := []byte("value")
-			_ = backend.Put(key, value, nil)
-			_, _ = backend.Get(key)
-			_, _ = backend.Exists(key)
-			_, _ = backend.List("")
+			_ = backend.Put(ctx, key, value)
+			_, _ = backend.Get(ctx, key)
+			_, _ = backend.Exists(ctx, key)
+			_, _ = backend.List(ctx, "")
 			done <- true
 		}(i)
 	}

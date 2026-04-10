@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,12 +22,12 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/correlation"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/correlation"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -41,12 +41,12 @@ func discardLogger() *slog.Logger {
 	}))
 }
 
-// setupKeychainForTest initializes the global keychain service for tests
-func setupKeychainForTest(t *testing.T) {
+// setupXKMSForTest initializes the global xkms service for tests
+func setupXKMSForTest(t *testing.T) {
 	t.Helper()
 
 	// Reset any previous state
-	keychain.Reset()
+	xkms.Reset()
 
 	// Create in-memory storage
 	keyStorage := storage.New()
@@ -61,7 +61,7 @@ func setupKeychainForTest(t *testing.T) {
 	}
 
 	// Create keystore
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -69,22 +69,22 @@ func setupKeychainForTest(t *testing.T) {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	// Initialize global keychain service
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	// Initialize global xkms service
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		DefaultBackend: "test",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 }
 
 func TestNewServer(t *testing.T) {
 	t.Run("creates server with default config", func(t *testing.T) {
-		setupKeychainForTest(t)
-		defer keychain.Reset()
+		setupXKMSForTest(t)
+		defer xkms.Reset()
 
 		cfg := &ServerConfig{
 			Port:   0,
@@ -114,8 +114,8 @@ func TestNewServer(t *testing.T) {
 	})
 
 	t.Run("creates server with custom authenticator", func(t *testing.T) {
-		setupKeychainForTest(t)
-		defer keychain.Reset()
+		setupXKMSForTest(t)
+		defer xkms.Reset()
 
 		authenticator := auth.NewNoOpAuthenticator()
 
@@ -136,8 +136,8 @@ func TestNewServer(t *testing.T) {
 	})
 
 	t.Run("creates server with logging enabled", func(t *testing.T) {
-		setupKeychainForTest(t)
-		defer keychain.Reset()
+		setupXKMSForTest(t)
+		defer xkms.Reset()
 
 		cfg := &ServerConfig{
 			Port:          0,
@@ -156,8 +156,8 @@ func TestNewServer(t *testing.T) {
 	})
 
 	t.Run("creates server with recovery enabled", func(t *testing.T) {
-		setupKeychainForTest(t)
-		defer keychain.Reset()
+		setupXKMSForTest(t)
+		defer xkms.Reset()
 
 		cfg := &ServerConfig{
 			Port:           0,
@@ -177,8 +177,8 @@ func TestNewServer(t *testing.T) {
 }
 
 func TestServerPort(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	cfg := &ServerConfig{
 		Port:   9876,
@@ -209,8 +209,8 @@ func (a *mockFailingAuthenticator) AuthenticateGRPC(ctx context.Context, md meta
 }
 
 func TestAuthenticationUnaryInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("passes with no-op authenticator", func(t *testing.T) {
 		cfg := &ServerConfig{
@@ -341,8 +341,8 @@ func (m *mockServerStream) SetHeader(md metadata.MD) error {
 }
 
 func TestAuthenticationStreamInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("passes with no-op authenticator", func(t *testing.T) {
 		cfg := &ServerConfig{
@@ -425,8 +425,8 @@ func TestAuthenticationStreamInterceptor(t *testing.T) {
 }
 
 func TestLoggingUnaryInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("logs successful request", func(t *testing.T) {
 		cfg := &ServerConfig{
@@ -523,8 +523,8 @@ func TestLoggingUnaryInterceptor(t *testing.T) {
 }
 
 func TestLoggingStreamInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("logs successful stream", func(t *testing.T) {
 		cfg := &ServerConfig{
@@ -617,8 +617,8 @@ func TestLoggingStreamInterceptor(t *testing.T) {
 }
 
 func TestRecoveryUnaryInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("passes through normal request", func(t *testing.T) {
 		cfg := &ServerConfig{
@@ -689,8 +689,8 @@ func TestRecoveryUnaryInterceptor(t *testing.T) {
 }
 
 func TestRecoveryStreamInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("passes through normal stream", func(t *testing.T) {
 		cfg := &ServerConfig{
@@ -760,8 +760,8 @@ func TestRecoveryStreamInterceptor(t *testing.T) {
 }
 
 func TestCorrelationUnaryInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("uses provided correlation ID", func(t *testing.T) {
 		cfg := &ServerConfig{
@@ -900,8 +900,8 @@ func TestCorrelationUnaryInterceptor(t *testing.T) {
 }
 
 func TestCorrelationStreamInterceptor(t *testing.T) {
-	setupKeychainForTest(t)
-	defer keychain.Reset()
+	setupXKMSForTest(t)
+	defer xkms.Reset()
 
 	t.Run("uses provided correlation ID", func(t *testing.T) {
 		cfg := &ServerConfig{

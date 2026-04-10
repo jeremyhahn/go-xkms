@@ -4,7 +4,7 @@ This directory contains comprehensive examples demonstrating hardware-backed cer
 
 ## Overview
 
-go-keychain supports three certificate storage modes:
+go-xkms supports three certificate storage modes:
 
 1. **External Storage** - Certificates in files/memory (traditional, default)
 2. **Hardware Storage** - Certificates in HSM or TPM2 NV RAM
@@ -196,7 +196,7 @@ if hwStorage, ok := certStorage.(hardware.HardwareCertStorage); ok {
 ### Error Handling
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
+import "github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 
 err := certStorage.SaveCert("cert", cert)
 if err != nil {

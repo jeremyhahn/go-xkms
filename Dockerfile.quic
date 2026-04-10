@@ -1,8 +1,8 @@
-# Multi-stage Dockerfile for go-keychain QUIC-only server
+# Multi-stage Dockerfile for go-xkms QUIC-only server
 # Production-ready with security best practices
 
 # Stage 1: Builder
-FROM golang:bookworm AS builder
+FROM golang:1.26.1-bookworm AS builder
 
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
@@ -39,20 +39,20 @@ RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
     -buildvcs=false \
     -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,vault,pkcs11" \
     -ldflags="-w -s -X main.version=${VERSION:-dev} -X main.commit=${COMMIT:-unknown} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -o /build/keychaind \
-    ./cmd/keychaind/main.go
+    -o /build/xkmsd \
+    ./cmd/xkmsd/
 
 # Verify binary was built
-RUN test -f /build/keychaind || (echo "ERROR: Server binary not built" && exit 1)
+RUN test -f /build/xkmsd || (echo "ERROR: Server binary not built" && exit 1)
 
 # Stage 2: Runtime
 FROM alpine:latest
 
-LABEL maintainer="go-keychain"
-LABEL description="Production keychain server with QUIC support"
-LABEL org.opencontainers.image.source="https://github.com/jeremyhahn/go-keychain"
-LABEL org.opencontainers.image.description="QUIC-only keychain server"
-LABEL org.opencontainers.image.vendor="go-keychain"
+LABEL maintainer="go-xkms"
+LABEL description="Production xkms server with QUIC support"
+LABEL org.opencontainers.image.source="https://github.com/jeremyhahn/go-xkms"
+LABEL org.opencontainers.image.description="QUIC-only xkms server"
+LABEL org.opencontainers.image.vendor="go-xkms"
 
 # Install runtime dependencies
 RUN apk add --no-cache \
@@ -68,11 +68,11 @@ RUN addgroup -g 1000 appuser && \
     adduser -D -u 1000 -G appuser appuser
 
 # Create required directories
-RUN mkdir -p /app /etc/keychain /var/lib/keychain /data && \
-    chown -R appuser:appuser /app /etc/keychain /var/lib/keychain /data
+RUN mkdir -p /app /etc/xkms /var/lib/xkms /data && \
+    chown -R appuser:appuser /app /etc/xkms /var/lib/xkms /data
 
 # Copy binary from builder
-COPY --from=builder --chown=appuser:appuser /build/keychaind /app/keychaind
+COPY --from=builder --chown=appuser:appuser /build/xkmsd /app/xkmsd
 
 # Switch to non-root user
 USER appuser
@@ -88,13 +88,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD netstat -anu | grep 8444 || exit 1
 
 # Volume for persistent data
-VOLUME ["/var/lib/keychain", "/etc/keychain"]
+VOLUME ["/var/lib/xkms", "/etc/xkms"]
 
 # Environment variables
-ENV KEYSTORE_CONFIG=/etc/keychain/config.yaml
+ENV KEYSTORE_CONFIG=/etc/xkms/config.yaml
 
 # Set entrypoint
-ENTRYPOINT ["/app/keychaind"]
+ENTRYPOINT ["/app/xkmsd"]
 
 # Default command (can be overridden)
-CMD ["--config", "/etc/keychain/config.yaml"]
+CMD ["--config", "/etc/xkms/config.yaml"]

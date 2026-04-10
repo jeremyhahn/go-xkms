@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package keychain provides a unified Go SDK for interacting with the go-keychain
+// Package xkms provides a unified Go SDK for interacting with the go-xkms
 // Key Management System. It supports multiple communication protocols and provides
-// 100% coverage of the KeychainService API.
+// 100% coverage of the XKMSService API.
 //
 // # Supported Protocols
 //
@@ -30,7 +30,7 @@
 //
 // Create a client using the default Unix socket protocol:
 //
-//	client, err := keychain.New(nil)
+//	client, err := xkms.New(nil)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -41,7 +41,7 @@
 //	}
 //
 //	// Generate a key
-//	resp, err := client.GenerateKey(ctx, &keychain.GenerateKeyRequest{
+//	resp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 //	    KeyID:   "my-key",
 //	    Backend: "software",
 //	    KeyType: "EC",
@@ -53,26 +53,26 @@
 // To use a specific protocol:
 //
 //	// REST API
-//	client, _ := keychain.New(&keychain.Config{
-//	    Protocol: keychain.ProtocolREST,
+//	client, _ := xkms.New(&xkms.BackendConfig{
+//	    Protocol: xkms.ProtocolREST,
 //	    Address:  "https://localhost:8443",
 //	})
 //
 //	// gRPC
-//	client, _ := keychain.New(&keychain.Config{
-//	    Protocol: keychain.ProtocolGRPC,
+//	client, _ := xkms.New(&xkms.BackendConfig{
+//	    Protocol: xkms.ProtocolGRPC,
 //	    Address:  "localhost:9443",
 //	})
 //
 //	// QUIC
-//	client, _ := keychain.New(&keychain.Config{
-//	    Protocol: keychain.ProtocolQUIC,
+//	client, _ := xkms.New(&xkms.BackendConfig{
+//	    Protocol: xkms.ProtocolQUIC,
 //	    Address:  "localhost:8444",
 //	})
 //
 //	// MCP (JSON-RPC)
-//	client, _ := keychain.New(&keychain.Config{
-//	    Protocol: keychain.ProtocolMCP,
+//	client, _ := xkms.New(&xkms.BackendConfig{
+//	    Protocol: xkms.ProtocolMCP,
 //	    Address:  "localhost:9444",
 //	})
 //
@@ -80,22 +80,22 @@
 //
 // You can also create clients from URLs:
 //
-//	client, _ := keychain.NewFromURL("https://localhost:8443")  // REST
-//	client, _ := keychain.NewFromURL("grpc://localhost:9443")   // gRPC
-//	client, _ := keychain.NewFromURL("quic://localhost:8444")   // QUIC
-//	client, _ := keychain.NewFromURL("mcp://localhost:9444")    // MCP (JSON-RPC)
-//	client, _ := keychain.NewFromURL("unix:///path/to/socket")  // Unix socket
+//	client, _ := xkms.NewFromURL("https://localhost:8443")  // REST
+//	client, _ := xkms.NewFromURL("grpc://localhost:9443")   // gRPC
+//	client, _ := xkms.NewFromURL("quic://localhost:8444")   // QUIC
+//	client, _ := xkms.NewFromURL("mcp://localhost:9444")    // MCP (JSON-RPC)
+//	client, _ := xkms.NewFromURL("unix:///path/to/socket")  // Unix socket
 //
 // # Embedded Mode
 //
 // For in-process usage without network overhead:
 //
-//	service := keychain.NewKeychainService(...)
-//	client, _ := keychain.NewEmbedded(service)
+//	service := xkms.NewXKMSService(...)
+//	client, _ := xkms.NewEmbedded(service)
 //
 // # Supported Backends
 //
-// The SDK supports all go-keychain backends:
+// The SDK supports all go-xkms backends:
 //
 //   - software: PKCS#8 file-based keys
 //   - pkcs11: HSM/Smart card via PKCS#11
@@ -112,8 +112,8 @@
 //
 // For secure connections with TLS:
 //
-//	client, _ := keychain.New(&keychain.Config{
-//	    Protocol:              keychain.ProtocolREST,
+//	client, _ := xkms.New(&xkms.BackendConfig{
+//	    Protocol:              xkms.ProtocolREST,
 //	    Address:               "https://localhost:8443",
 //	    TLSEnabled:            true,
 //	    TLSCAFile:             "/path/to/ca.pem",
@@ -132,4 +132,4 @@
 //   - ErrKeyNotFound: Requested key does not exist
 //   - ErrCertificateNotFound: Requested certificate does not exist
 //   - ErrBackendNotFound: Requested backend does not exist
-package keychain
+package xkms

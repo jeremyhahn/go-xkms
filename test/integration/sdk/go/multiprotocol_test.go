@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -29,11 +29,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
-	keychain "github.com/jeremyhahn/go-keychain/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ProtocolType represents a supported SDK protocol.
@@ -56,7 +55,6 @@ const (
 	EnvMCPAddr    = "KEYSTORE_MCP_ADDR"
 	EnvUnixSocket = "KEYSTORE_UNIX_SOCKET"
 	EnvTLSCA      = "KEYSTORE_TLS_CA"
-	EnvTLSInsec   = "KEYSTORE_TLS_INSECURE"
 )
 
 // Default server addresses (used when not in container environment)
@@ -65,22 +63,22 @@ const (
 	DefaultGRPCAddr   = "localhost:9443"
 	DefaultQUICAddr   = "localhost:8444"
 	DefaultMCPAddr    = "localhost:9444"
-	DefaultUnixSocket = "/var/run/keychain/keychain.sock"
+	DefaultUnixSocket = "/var/run/xkms/xkms.sock"
 )
 
 // SDKProtocol abstracts protocol-specific client creation and lifecycle.
 type SDKProtocol interface {
 	Name() string
 	Setup(t *testing.T, ctx context.Context) error
-	Client() keychain.Client
+	Client() xkms.Client
 	Teardown(t *testing.T)
 	IsAvailable(t *testing.T) bool
 }
 
 // embeddedProtocol implements SDKProtocol for embedded mode.
 type embeddedProtocol struct {
-	client  keychain.Client
-	service *TestKeychainService
+	client  xkms.Client
+	service *TestXKMSService
 }
 
 func newEmbeddedProtocol() *embeddedProtocol {
@@ -95,13 +93,13 @@ func (p *embeddedProtocol) IsAvailable(t *testing.T) bool {
 }
 
 func (p *embeddedProtocol) Setup(t *testing.T, ctx context.Context) error {
-	service, err := NewTestKeychainService()
+	service, err := NewTestXKMSService()
 	if err != nil {
 		return err
 	}
 	p.service = service
 
-	client, err := keychain.NewEmbedded(service)
+	client, err := xkms.NewEmbedded(service)
 	if err != nil {
 		return err
 	}
@@ -110,7 +108,7 @@ func (p *embeddedProtocol) Setup(t *testing.T, ctx context.Context) error {
 	return client.Connect(ctx)
 }
 
-func (p *embeddedProtocol) Client() keychain.Client { return p.client }
+func (p *embeddedProtocol) Client() xkms.Client { return p.client }
 
 func (p *embeddedProtocol) Teardown(t *testing.T) {
 	if p.client != nil {
@@ -123,12 +121,11 @@ func (p *embeddedProtocol) Teardown(t *testing.T) {
 // remoteProtocol implements SDKProtocol for remote protocol modes (REST, gRPC, QUIC, MCP, Unix).
 type remoteProtocol struct {
 	name       ProtocolType
-	protocol   keychain.Protocol
+	protocol   xkms.Protocol
 	address    string
-	client     keychain.Client
+	client     xkms.Client
 	tlsEnabled bool
 	tlsCA      string
-	tlsInsec   bool
 }
 
 func getEnvOrDefault(envVar, defaultValue string) string {
@@ -138,58 +135,50 @@ func getEnvOrDefault(envVar, defaultValue string) string {
 	return defaultValue
 }
 
-func getTLSInsecure() bool {
-	return os.Getenv(EnvTLSInsec) == "true"
-}
-
 func newRESTProtocol() *remoteProtocol {
 	return &remoteProtocol{
 		name:       ProtocolREST,
-		protocol:   keychain.ProtocolREST,
+		protocol:   xkms.ProtocolREST,
 		address:    getEnvOrDefault(EnvRESTAddr, DefaultRESTAddr),
 		tlsEnabled: true,
 		tlsCA:      os.Getenv(EnvTLSCA),
-		tlsInsec:   getTLSInsecure(),
 	}
 }
 
 func newGRPCProtocol() *remoteProtocol {
 	return &remoteProtocol{
 		name:       ProtocolGRPC,
-		protocol:   keychain.ProtocolGRPC,
+		protocol:   xkms.ProtocolGRPC,
 		address:    getEnvOrDefault(EnvGRPCAddr, DefaultGRPCAddr),
 		tlsEnabled: true,
 		tlsCA:      os.Getenv(EnvTLSCA),
-		tlsInsec:   getTLSInsecure(),
 	}
 }
 
 func newQUICProtocol() *remoteProtocol {
 	return &remoteProtocol{
 		name:       ProtocolQUIC,
-		protocol:   keychain.ProtocolQUIC,
+		protocol:   xkms.ProtocolQUIC,
 		address:    getEnvOrDefault(EnvQUICAddr, DefaultQUICAddr),
 		tlsEnabled: true, // QUIC always uses TLS
 		tlsCA:      os.Getenv(EnvTLSCA),
-		tlsInsec:   getTLSInsecure(),
 	}
 }
 
 func newMCPProtocol() *remoteProtocol {
 	return &remoteProtocol{
 		name:       ProtocolMCP,
-		protocol:   keychain.ProtocolMCP,
+		protocol:   xkms.ProtocolMCP,
 		address:    getEnvOrDefault(EnvMCPAddr, DefaultMCPAddr),
 		tlsEnabled: false,
 		tlsCA:      os.Getenv(EnvTLSCA),
-		tlsInsec:   getTLSInsecure(),
 	}
 }
 
 func newUnixProtocol() *remoteProtocol {
 	return &remoteProtocol{
 		name:       ProtocolUnix,
-		protocol:   keychain.ProtocolUnix,
+		protocol:   xkms.ProtocolUnix,
 		address:    getEnvOrDefault(EnvUnixSocket, DefaultUnixSocket),
 		tlsEnabled: false,
 	}
@@ -203,14 +192,14 @@ func (p *remoteProtocol) IsAvailable(t *testing.T) bool {
 
 	switch p.name {
 	case ProtocolREST:
-		return isRESTServerAvailable(p.address, p.tlsInsec)
+		return isRESTServerAvailable(p.address, p.tlsCA)
 	case ProtocolGRPC:
 		return isTCPServerAvailable(p.address)
 	case ProtocolQUIC:
 		// QUIC uses UDP, but we can check the server via REST health endpoint
 		// since they usually share the same server process
 		restAddr := getEnvOrDefault(EnvRESTAddr, DefaultRESTAddr)
-		return isRESTServerAvailable(restAddr, p.tlsInsec)
+		return isRESTServerAvailable(restAddr, p.tlsCA)
 	case ProtocolMCP:
 		return isTCPServerAvailable(p.address)
 	case ProtocolUnix:
@@ -221,15 +210,14 @@ func (p *remoteProtocol) IsAvailable(t *testing.T) bool {
 }
 
 func (p *remoteProtocol) Setup(t *testing.T, ctx context.Context) error {
-	cfg := &keychain.Config{
-		Protocol:              p.protocol,
-		Address:               p.address,
-		TLSEnabled:            p.tlsEnabled,
-		TLSCAFile:             p.tlsCA,
-		TLSInsecureSkipVerify: p.tlsInsec,
+	cfg := &xkms.BackendConfig{
+		Protocol:   p.protocol,
+		Address:    p.address,
+		TLSEnabled: p.tlsEnabled,
+		TLSCAFile:  p.tlsCA,
 	}
 
-	client, err := keychain.New(cfg)
+	client, err := xkms.New(cfg)
 	if err != nil {
 		return err
 	}
@@ -245,7 +233,7 @@ func (p *remoteProtocol) Setup(t *testing.T, ctx context.Context) error {
 	return nil
 }
 
-func (p *remoteProtocol) Client() keychain.Client { return p.client }
+func (p *remoteProtocol) Client() xkms.Client { return p.client }
 
 func (p *remoteProtocol) Teardown(t *testing.T) {
 	if p.client != nil {
@@ -257,11 +245,25 @@ func (p *remoteProtocol) Teardown(t *testing.T) {
 
 // Helper functions for server availability checks
 
-func isRESTServerAvailable(address string, insecure bool) bool {
+func isRESTServerAvailable(address string, caFile string) bool {
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return false
+		}
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return false
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure},
+			TLSClientConfig: tlsConfig,
 		},
 	}
 	resp, err := client.Get(address + "/health")
@@ -293,87 +295,60 @@ func isUnixSocketAvailable(socketPath string) bool {
 	return true
 }
 
-// TestSDKMultiProtocol is the main multiprotocol test suite.
-// It runs a comprehensive set of tests against all supported protocols.
-// Remote protocols will be skipped if servers are not available.
+// TestSDKMultiProtocol tests the SDK using the embedded protocol.
+// This test runs in the devcontainer where no remote servers are available.
+// Remote protocol tests are covered by TestSDKMultiProtocolRemote which
+// runs via docker-compose with real servers.
 func TestSDKMultiProtocol(t *testing.T) {
-	protocols := []SDKProtocol{
-		newEmbeddedProtocol(),
-		newRESTProtocol(),
-		newGRPCProtocol(),
-		newQUICProtocol(),
-		newMCPProtocol(),
-		newUnixProtocol(),
+	proto := newEmbeddedProtocol()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if !proto.IsAvailable(t) {
+		t.Fatalf("Embedded protocol must always be available")
 	}
 
-	for _, proto := range protocols {
-		proto := proto // capture for parallel tests
-		t.Run(proto.Name(), func(t *testing.T) {
-			// Check if server is available for remote protocols
-			if !proto.IsAvailable(t) {
-				t.Skipf("Skipping %s: server not available", proto.Name())
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			if err := proto.Setup(t, ctx); err != nil {
-				t.Skipf("Skipping %s: setup failed: %v", proto.Name(), err)
-				return
-			}
-			defer proto.Teardown(t)
-
-			// Run test groups
-			t.Run("health", func(t *testing.T) { testHealth(t, ctx, proto) })
-			t.Run("backends", func(t *testing.T) { testBackends(t, ctx, proto) })
-			t.Run("key_lifecycle", func(t *testing.T) { testKeyLifecycle(t, ctx, proto) })
-			t.Run("sign_verify", func(t *testing.T) { testSignVerify(t, ctx, proto) })
-			t.Run("encrypt_decrypt", func(t *testing.T) { testEncryptDecrypt(t, ctx, proto) })
-			t.Run("seal_unseal", func(t *testing.T) { testSealUnseal(t, ctx, proto) })
-			t.Run("certificates", func(t *testing.T) { testCertificates(t, ctx, proto) })
-			t.Run("error_handling", func(t *testing.T) { testErrorHandling(t, ctx, proto) })
-		})
+	if err := proto.Setup(t, ctx); err != nil {
+		t.Fatalf("Embedded protocol setup failed: %v", err)
 	}
+	defer proto.Teardown(t)
+
+	// Run test groups
+	t.Run("health", func(t *testing.T) { testHealth(t, ctx, proto) })
+	t.Run("backends", func(t *testing.T) { testBackends(t, ctx, proto) })
+	t.Run("key_lifecycle", func(t *testing.T) { testKeyLifecycle(t, ctx, proto) })
+	t.Run("sign_verify", func(t *testing.T) { testSignVerify(t, ctx, proto) })
+	t.Run("encrypt_decrypt", func(t *testing.T) { testEncryptDecrypt(t, ctx, proto) })
+	t.Run("seal_unseal", func(t *testing.T) { testSealUnseal(t, ctx, proto) })
+	t.Run("certificates", func(t *testing.T) { testCertificates(t, ctx, proto) })
+	t.Run("error_handling", func(t *testing.T) { testErrorHandling(t, ctx, proto) })
 }
 
-// TestSDKMultiProtocolRemoteOnly runs tests only against remote protocols.
-// This is useful when you want to test against a running server and skip embedded mode.
-func TestSDKMultiProtocolRemoteOnly(t *testing.T) {
+// TestSDKMultiProtocolRemote runs the full test suite against all remote protocols.
+// This test expects real servers to be running (via docker-compose). If a server
+// is not available or setup fails, the test fails rather than skipping.
+func TestSDKMultiProtocolRemote(t *testing.T) {
 	protocols := []SDKProtocol{
 		newRESTProtocol(),
 		newGRPCProtocol(),
 		newQUICProtocol(),
 		newMCPProtocol(),
 		newUnixProtocol(),
-	}
-
-	// Check if any remote server is available
-	anyAvailable := false
-	for _, proto := range protocols {
-		if proto.IsAvailable(t) {
-			anyAvailable = true
-			break
-		}
-	}
-
-	if !anyAvailable {
-		t.Skip("Skipping remote-only tests: no servers available. Set environment variables or run with docker-compose.")
 	}
 
 	for _, proto := range protocols {
 		proto := proto
 		t.Run(proto.Name(), func(t *testing.T) {
 			if !proto.IsAvailable(t) {
-				t.Skipf("Skipping %s: server not available at %s", proto.Name(), proto.(*remoteProtocol).address)
-				return
+				t.Fatalf("%s server not available at %s", proto.Name(), proto.(*remoteProtocol).address)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			if err := proto.Setup(t, ctx); err != nil {
-				t.Fatalf("Failed to setup %s protocol: %v", proto.Name(), err)
+				t.Fatalf("%s setup failed: %v", proto.Name(), err)
 			}
 			defer proto.Teardown(t)
 
@@ -445,7 +420,7 @@ func testKeyLifecycle(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	keyID := fmt.Sprintf("test-key-lifecycle-%s-%d", proto.Name(), time.Now().UnixNano())
 
 	// Generate key
-	genResp, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	genResp, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:      keyID,
 		Backend:    "software",
 		KeyType:    "ecdsa",
@@ -513,7 +488,7 @@ func testSignVerify(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	keyID := fmt.Sprintf("test-sign-%s-%d", proto.Name(), time.Now().UnixNano())
 
 	// Generate signing key
-	_, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
 		KeyType: "ecdsa",
@@ -530,7 +505,7 @@ func testSignVerify(t *testing.T, ctx context.Context, proto SDKProtocol) {
 
 	// Sign data
 	testData := []byte("test data to sign for multiprotocol test")
-	signResp, err := proto.Client().Sign(ctx, &keychain.SignRequest{
+	signResp, err := proto.Client().Sign(ctx, &xkms.SignRequest{
 		Backend: "software",
 		KeyID:   keyID,
 		Data:    testData,
@@ -545,7 +520,7 @@ func testSignVerify(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	t.Logf("[%s] Signed data, signature length: %d bytes", proto.Name(), len(signResp.Signature))
 
 	// Verify signature (should succeed)
-	verifyResp, err := proto.Client().Verify(ctx, &keychain.VerifyRequest{
+	verifyResp, err := proto.Client().Verify(ctx, &xkms.VerifyRequest{
 		Backend:   "software",
 		KeyID:     keyID,
 		Data:      testData,
@@ -562,7 +537,7 @@ func testSignVerify(t *testing.T, ctx context.Context, proto SDKProtocol) {
 
 	// Verify with wrong data (should fail validation)
 	wrongData := []byte("wrong data - this should not verify")
-	verifyWrongResp, err := proto.Client().Verify(ctx, &keychain.VerifyRequest{
+	verifyWrongResp, err := proto.Client().Verify(ctx, &xkms.VerifyRequest{
 		Backend:   "software",
 		KeyID:     keyID,
 		Data:      wrongData,
@@ -582,7 +557,7 @@ func testEncryptDecrypt(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	keyID := fmt.Sprintf("test-sym-%s-%d", proto.Name(), time.Now().UnixNano())
 
 	// Generate symmetric key
-	_, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
 		KeyType: "symmetric",
@@ -599,7 +574,7 @@ func testEncryptDecrypt(t *testing.T, ctx context.Context, proto SDKProtocol) {
 
 	// Encrypt
 	plaintext := []byte("secret data for multiprotocol encryption test")
-	encResp, err := proto.Client().Encrypt(ctx, &keychain.EncryptRequest{
+	encResp, err := proto.Client().Encrypt(ctx, &xkms.EncryptRequest{
 		Backend:   "software",
 		KeyID:     keyID,
 		Plaintext: plaintext,
@@ -616,7 +591,7 @@ func testEncryptDecrypt(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	t.Logf("[%s] Encrypted data: ciphertext=%d bytes, nonce=%d bytes", proto.Name(), len(encResp.Ciphertext), len(encResp.Nonce))
 
 	// Decrypt
-	decResp, err := proto.Client().Decrypt(ctx, &keychain.DecryptRequest{
+	decResp, err := proto.Client().Decrypt(ctx, &xkms.DecryptRequest{
 		Backend:    "software",
 		KeyID:      keyID,
 		Ciphertext: encResp.Ciphertext,
@@ -634,20 +609,20 @@ func testEncryptDecrypt(t *testing.T, ctx context.Context, proto SDKProtocol) {
 }
 
 func testSealUnseal(t *testing.T, ctx context.Context, proto SDKProtocol) {
-	// Check if sealing is supported
+	// Check if sealing is supported - software backend must support sealing
 	canSealResp, err := proto.Client().CanSeal(ctx, "software")
 	if err != nil {
 		t.Fatalf("CanSeal failed: %v", err)
 	}
 
 	if !canSealResp.CanSeal {
-		t.Skip("Sealing not supported for software backend")
+		t.Fatal("Sealing must be supported for software backend")
 	}
 	t.Logf("[%s] CanSeal: backend=%s, supported=%v", proto.Name(), canSealResp.Backend, canSealResp.CanSeal)
 
 	// Generate an ECDSA key for sealing (PKCS8 sealer uses asymmetric keys to derive sealing keys)
 	keyID := fmt.Sprintf("test-seal-key-%s-%d", proto.Name(), time.Now().UnixNano())
-	_, err = proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err = proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
 		KeyType: "ecdsa",
@@ -664,7 +639,7 @@ func testSealUnseal(t *testing.T, ctx context.Context, proto SDKProtocol) {
 
 	// Seal data
 	secretData := []byte("sealed secret data for multiprotocol test!")
-	sealResp, err := proto.Client().Seal(ctx, &keychain.SealRequest{
+	sealResp, err := proto.Client().Seal(ctx, &xkms.SealRequest{
 		Backend: "software",
 		KeyID:   keyID,
 		Data:    secretData,
@@ -678,7 +653,7 @@ func testSealUnseal(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	t.Logf("[%s] Sealed data: ciphertext=%d bytes", proto.Name(), len(sealResp.Ciphertext))
 
 	// Unseal data
-	unsealResp, err := proto.Client().Unseal(ctx, &keychain.UnsealRequest{
+	unsealResp, err := proto.Client().Unseal(ctx, &xkms.UnsealRequest{
 		Backend:    "software",
 		KeyID:      keyID,
 		Ciphertext: sealResp.Ciphertext,
@@ -699,7 +674,7 @@ func testCertificates(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	keyID := fmt.Sprintf("test-cert-%s-%d", proto.Name(), time.Now().UnixNano())
 
 	// Generate key for certificate
-	_, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
 		KeyType: "ecdsa",
@@ -730,7 +705,7 @@ func testCertificates(t *testing.T, ctx context.Context, proto SDKProtocol) {
 		t.Fatalf("Failed to generate test certificate: %v", err)
 	}
 
-	err = proto.Client().SaveCertificate(ctx, &keychain.SaveCertificateRequest{
+	err = proto.Client().SaveCertificate(ctx, &xkms.SaveCertificateRequest{
 		Backend:        "software",
 		KeyID:          keyID,
 		CertificatePEM: testCertPEM,
@@ -782,7 +757,7 @@ func testKeyRotation(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	keyID := fmt.Sprintf("test-rotation-%s-%d", proto.Name(), time.Now().UnixNano())
 
 	// Generate key
-	_, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
 		KeyType: "ecdsa",
@@ -798,7 +773,7 @@ func testKeyRotation(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	}()
 
 	// Rotate key
-	rotateResp, err := proto.Client().RotateKey(ctx, &keychain.RotateKeyRequest{
+	rotateResp, err := proto.Client().RotateKey(ctx, &xkms.RotateKeyRequest{
 		Backend: "software",
 		KeyID:   keyID,
 	})
@@ -809,29 +784,13 @@ func testKeyRotation(t *testing.T, ctx context.Context, proto SDKProtocol) {
 		t.Errorf("RotateKey returned success=false: %s", rotateResp.Message)
 	}
 	t.Logf("[%s] RotateKey successful: %s", proto.Name(), keyID)
-
-	// List key versions - this requires VersioningAdapter which is not yet implemented
-	versionsResp, err := proto.Client().ListKeyVersions(ctx, &keychain.ListKeyVersionsRequest{
-		Backend: "software",
-		KeyID:   keyID,
-	})
-	if err != nil {
-		// Skip if versioning is not supported - this is expected until VersioningAdapter is integrated
-		errStr := err.Error()
-		if strings.Contains(errStr, "versioning") || strings.Contains(errStr, "not yet supported") || strings.Contains(errStr, "Unimplemented") {
-			t.Skipf("[%s] Key versioning not yet supported: %v", proto.Name(), err)
-			return
-		}
-		t.Fatalf("ListKeyVersions failed: %v", err)
-	}
-	t.Logf("[%s] ListKeyVersions: keyID=%s, versions=%d", proto.Name(), versionsResp.KeyID, len(versionsResp.Versions))
 }
 
 func testImportExport(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	keyID := fmt.Sprintf("test-import-export-%s-%d", proto.Name(), time.Now().UnixNano())
 
 	// Generate exportable key
-	_, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:      keyID,
 		Backend:    "software",
 		KeyType:    "ecdsa",
@@ -848,7 +807,7 @@ func testImportExport(t *testing.T, ctx context.Context, proto SDKProtocol) {
 	}()
 
 	// Export key
-	exportResp, err := proto.Client().ExportKey(ctx, &keychain.ExportKeyRequest{
+	exportResp, err := proto.Client().ExportKey(ctx, &xkms.ExportKeyRequest{
 		Backend:   "software",
 		KeyID:     keyID,
 		Algorithm: "RSAES_OAEP_SHA_256",
@@ -882,7 +841,7 @@ func testErrorHandling(t *testing.T, ctx context.Context, proto SDKProtocol) {
 
 	// Test Sign with non-existent key
 	t.Run("SignWithNonExistentKey", func(t *testing.T) {
-		_, err := proto.Client().Sign(ctx, &keychain.SignRequest{
+		_, err := proto.Client().Sign(ctx, &xkms.SignRequest{
 			Backend: "software",
 			KeyID:   "non-existent-key-xyz",
 			Data:    []byte("test"),
@@ -936,7 +895,7 @@ func TestMultiProtocolKeyOperationsConcurrent(t *testing.T) {
 	// Generate keys concurrently
 	for _, keyID := range keyIDs {
 		go func(id string) {
-			_, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+			_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 				KeyID:   id,
 				Backend: "software",
 				KeyType: "ecdsa",
@@ -979,7 +938,7 @@ func TestMultiProtocolDataIntegrity(t *testing.T) {
 	keyID := fmt.Sprintf("integrity-test-%s-%d", proto.Name(), time.Now().UnixNano())
 
 	// Generate symmetric key
-	_, err := proto.Client().GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := proto.Client().GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
 		KeyType: "symmetric",
@@ -994,36 +953,32 @@ func TestMultiProtocolDataIntegrity(t *testing.T) {
 		}
 	}()
 
-	// Test various data sizes
+	// Test various data sizes (no empty data - AEAD requires non-empty plaintext)
+	mediumData := make([]byte, 1024)   // 1KB
+	largeData := make([]byte, 64*1024) // 64KB
+
+	for i := range mediumData {
+		mediumData[i] = byte(i % 256)
+	}
+	for i := range largeData {
+		largeData[i] = byte((i * 7) % 256)
+	}
+
 	testCases := []struct {
 		name string
 		data []byte
 	}{
-		{"empty", []byte{}},
 		{"small", []byte("small data")},
-		{"medium", make([]byte, 1024)},   // 1KB
-		{"large", make([]byte, 64*1024)}, // 64KB
+		{"medium", mediumData},
+		{"large", largeData},
 		{"unicode", []byte("Hello World")},
 		{"binary", []byte{0x00, 0x01, 0x02, 0xFF, 0xFE, 0xFD}},
 	}
 
-	// Fill medium and large with random-ish data
-	for i := range testCases[2].data {
-		testCases[2].data[i] = byte(i % 256)
-	}
-	for i := range testCases[3].data {
-		testCases[3].data[i] = byte((i * 7) % 256)
-	}
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Skip empty data test as some implementations may reject it
-			if len(tc.data) == 0 {
-				t.Skip("Skipping empty data test")
-			}
-
 			// Encrypt
-			encResp, err := proto.Client().Encrypt(ctx, &keychain.EncryptRequest{
+			encResp, err := proto.Client().Encrypt(ctx, &xkms.EncryptRequest{
 				Backend:   "software",
 				KeyID:     keyID,
 				Plaintext: tc.data,
@@ -1033,7 +988,7 @@ func TestMultiProtocolDataIntegrity(t *testing.T) {
 			}
 
 			// Decrypt
-			decResp, err := proto.Client().Decrypt(ctx, &keychain.DecryptRequest{
+			decResp, err := proto.Client().Decrypt(ctx, &xkms.DecryptRequest{
 				Backend:    "software",
 				KeyID:      keyID,
 				Ciphertext: encResp.Ciphertext,

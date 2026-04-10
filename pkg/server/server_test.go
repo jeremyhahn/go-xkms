@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -30,8 +30,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/config"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,7 +58,7 @@ func createMinimalConfig(t *testing.T) *config.Config {
 		},
 		Unix: config.UnixConfig{
 			Enabled:    true,
-			SocketPath: filepath.Join(tempDir, "keychain.sock"),
+			SocketPath: filepath.Join(tempDir, "xkms.sock"),
 			Protocol:   "grpc",
 		},
 		Logging: config.LoggingConfig{
@@ -440,8 +440,8 @@ func TestPemBlock(t *testing.T) {
 // Test Server creation and lifecycle
 
 func TestNew_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -453,7 +453,7 @@ func TestNew_Success(t *testing.T) {
 	assert.NotNil(t, server.config)
 	assert.NotNil(t, server.logger)
 	assert.NotEmpty(t, server.backends)
-	assert.NotEmpty(t, server.keystores)
+	assert.NotEmpty(t, server.backends)
 	assert.NotNil(t, server.healthChecker)
 	assert.NotNil(t, server.userStore)
 	assert.NotNil(t, server.authenticator)
@@ -466,8 +466,8 @@ func TestNew_Success(t *testing.T) {
 }
 
 func TestNew_NoBackends(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.Software = nil
@@ -478,8 +478,8 @@ func TestNew_NoBackends(t *testing.T) {
 }
 
 func TestServer_Accessors(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -499,8 +499,8 @@ func TestServer_Accessors(t *testing.T) {
 }
 
 func TestServer_StartAndShutdown(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	// Disable all protocols to make test fast
@@ -525,8 +525,8 @@ func TestServer_StartAndShutdown(t *testing.T) {
 }
 
 func TestServer_ShutdownWithMetrics(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -557,8 +557,8 @@ func TestServer_ShutdownWithMetrics(t *testing.T) {
 // Test TLS configuration
 
 func TestServer_BuildTLSConfig_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, caFile := createTestTLSFiles(t)
 
@@ -588,8 +588,8 @@ func TestServer_BuildTLSConfig_Success(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_TLSDisabled(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.TLS.Enabled = false
@@ -605,8 +605,8 @@ func TestServer_BuildTLSConfig_TLSDisabled(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_InvalidCert(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.TLS.Enabled = true
@@ -624,8 +624,8 @@ func TestServer_BuildTLSConfig_InvalidCert(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_InvalidCA(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -661,8 +661,8 @@ func TestServer_BuildTLSConfig_ClientAuthModes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			keychain.Reset()
-			defer keychain.Reset()
+			xkms.Reset()
+			defer xkms.Reset()
 
 			certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -686,8 +686,8 @@ func TestServer_BuildTLSConfig_ClientAuthModes(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_WithCipherSuites(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -711,8 +711,8 @@ func TestServer_BuildTLSConfig_WithCipherSuites(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_WithClientCAs(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, caFile := createTestTLSFiles(t)
 
@@ -733,8 +733,8 @@ func TestServer_BuildTLSConfig_WithClientCAs(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_InvalidClientCA(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -757,8 +757,8 @@ func TestServer_BuildTLSConfig_InvalidClientCA(t *testing.T) {
 // Test authentication configuration
 
 func TestServer_InitializeAuthentication_Disabled(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = false
@@ -773,8 +773,8 @@ func TestServer_InitializeAuthentication_Disabled(t *testing.T) {
 }
 
 func TestServer_InitializeAuthentication_Unknown(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -790,8 +790,8 @@ func TestServer_InitializeAuthentication_Unknown(t *testing.T) {
 }
 
 func TestServer_InitializeAuthentication_MTLS_NoTLS(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -804,8 +804,8 @@ func TestServer_InitializeAuthentication_MTLS_NoTLS(t *testing.T) {
 }
 
 func TestServer_InitializeAuthentication_JWT_NoPublicKey(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -818,8 +818,8 @@ func TestServer_InitializeAuthentication_JWT_NoPublicKey(t *testing.T) {
 }
 
 func TestServer_InitializeAuthentication_JWT_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	// Create a test public key file
 	tempDir := t.TempDir()
@@ -855,8 +855,8 @@ func TestServer_InitializeAuthentication_JWT_Success(t *testing.T) {
 }
 
 func TestServer_InitializeAuthentication_Adaptive(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -877,8 +877,8 @@ func TestServer_InitializeAuthentication_Adaptive(t *testing.T) {
 // Test WebAuthn configuration
 
 func TestServer_InitializeAuthentication_WithWebAuthn(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = false
@@ -901,8 +901,8 @@ func TestServer_InitializeAuthentication_WithWebAuthn(t *testing.T) {
 // Test Reload functionality
 
 func TestServer_Reload_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -925,8 +925,8 @@ func TestServer_Reload_Success(t *testing.T) {
 }
 
 func TestServer_Reload_NoChange(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -958,8 +958,8 @@ func TestSetupSignalHandler(t *testing.T) {
 // Test WaitForShutdown
 
 func TestServer_WaitForShutdown(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -994,8 +994,8 @@ func TestServer_WaitForShutdown(t *testing.T) {
 // Test health checker initialization
 
 func TestServer_InitializeHealth(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -1045,8 +1045,8 @@ func TestParsePublicKey_WithCertificate(t *testing.T) {
 // Test closeBackends
 
 func TestServer_CloseBackends(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -1109,8 +1109,8 @@ func TestPemDecode_EdgeCases(t *testing.T) {
 // Test initialize metrics
 
 func TestServer_InitializeMetrics_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Metrics.Enabled = true
@@ -1131,8 +1131,8 @@ func TestServer_InitializeMetrics_Success(t *testing.T) {
 // Test createJWTAuthenticator errors
 
 func TestServer_CreateJWTAuthenticator_NilConfig(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -1150,8 +1150,8 @@ func TestServer_CreateJWTAuthenticator_NilConfig(t *testing.T) {
 }
 
 func TestServer_CreateJWTAuthenticator_FileNotFound(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.JWT = &config.JWTConfig{
@@ -1169,8 +1169,8 @@ func TestServer_CreateJWTAuthenticator_FileNotFound(t *testing.T) {
 }
 
 func TestServer_CreateJWTAuthenticator_InvalidKey(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 	pubKeyFile := filepath.Join(tempDir, "invalid.pem")
@@ -1195,8 +1195,8 @@ func TestServer_CreateJWTAuthenticator_InvalidKey(t *testing.T) {
 // Test buildTLSConfig with invalid CA content
 
 func TestServer_BuildTLSConfig_InvalidCAContent(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 	tempDir := t.TempDir()
@@ -1223,8 +1223,8 @@ func TestServer_BuildTLSConfig_InvalidCAContent(t *testing.T) {
 }
 
 func TestServer_BuildTLSConfig_InvalidClientCAContent(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 	tempDir := t.TempDir()
@@ -1253,8 +1253,8 @@ func TestServer_BuildTLSConfig_InvalidClientCAContent(t *testing.T) {
 // Test MTLS authenticator initialization
 
 func TestServer_InitializeAuthentication_MTLS_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -1273,8 +1273,8 @@ func TestServer_InitializeAuthentication_MTLS_Success(t *testing.T) {
 // Test adaptive auth with JWT config
 
 func TestServer_InitializeAuthentication_AdaptiveWithJWT(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	// Create a test public key file
 	tempDir := t.TempDir()
@@ -1316,8 +1316,8 @@ func TestServer_InitializeAuthentication_AdaptiveWithJWT(t *testing.T) {
 // Test adaptive auth without JWT config falls back correctly
 
 func TestServer_InitializeAuthentication_AdaptiveWithoutJWT(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -1339,8 +1339,8 @@ func TestServer_InitializeAuthentication_AdaptiveWithoutJWT(t *testing.T) {
 // Test adaptive auth with WebAuthn but no JWT file
 
 func TestServer_InitializeAuthentication_AdaptiveWebAuthnNoJWTFile(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -1370,8 +1370,8 @@ func TestServer_InitializeAuthentication_AdaptiveWebAuthnNoJWTFile(t *testing.T)
 // Test adaptive auth with invalid JWT public key (falls back to NoOp)
 
 func TestServer_InitializeAuthentication_AdaptiveInvalidJWTKey(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 	pubKeyFile := filepath.Join(tempDir, "invalid.pem")
@@ -1406,8 +1406,8 @@ func TestServer_InitializeAuthentication_AdaptiveInvalidJWTKey(t *testing.T) {
 // Test JWT auth that uses required auth directly (not adaptive mode)
 
 func TestServer_InitializeAuthentication_JWTNotAdaptive(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	// Create a test public key file
 	tempDir := t.TempDir()
@@ -1443,8 +1443,8 @@ func TestServer_InitializeAuthentication_JWTNotAdaptive(t *testing.T) {
 // Test PKCS8 backend initialization
 
 func TestServer_InitializeBackends_PKCS8(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	tempDir := t.TempDir()
@@ -1467,8 +1467,8 @@ func TestServer_InitializeBackends_PKCS8(t *testing.T) {
 // Test default backend config
 
 func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 	cfg := &config.Config{
@@ -1518,8 +1518,8 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 // Test invalid storage path for initializeKeyStore
 
 func TestServer_InitializeKeyStore_InvalidCertPath(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	// Use an invalid path character
@@ -1533,8 +1533,8 @@ func TestServer_InitializeKeyStore_InvalidCertPath(t *testing.T) {
 // Test shutdown with timeout scenario using mock context
 
 func TestServer_Shutdown_ContextCancellation(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -1555,8 +1555,8 @@ func TestServer_Shutdown_ContextCancellation(t *testing.T) {
 // Test health initialization with multiple backends
 
 func TestServer_InitializeHealth_MultipleBackends(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 	cfg := createMinimalConfig(t)
@@ -1578,8 +1578,8 @@ func TestServer_InitializeHealth_MultipleBackends(t *testing.T) {
 // Test metrics initialization when already initialized
 
 func TestServer_InitializeMetrics_AlreadyInitialized(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Metrics.Enabled = true
@@ -1619,8 +1619,8 @@ func TestParsePublicKey_ECDSAKey(t *testing.T) {
 // Test Start with metrics initialization error handling
 
 func TestServer_Start_MetricsInitialization(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -1656,8 +1656,8 @@ func TestParseCipherSuites_TLS13(t *testing.T) {
 // Test reload with different auth configuration
 
 func TestServer_Reload_AuthChange(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = false
@@ -1680,8 +1680,8 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 // Test BuildTLSConfig with TLS 1.3 only
 
 func TestServer_BuildTLSConfig_TLS13Only(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -1707,8 +1707,8 @@ func TestServer_BuildTLSConfig_TLS13Only(t *testing.T) {
 // Test context accessor
 
 func TestServer_Context(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -1732,8 +1732,8 @@ func TestServer_Context(t *testing.T) {
 // Test keystore accessor
 
 func TestServer_Keystores(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -1742,15 +1742,15 @@ func TestServer_Keystores(t *testing.T) {
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.NotEmpty(t, server.keystores)
-	assert.Contains(t, server.keystores, "software")
+	assert.NotEmpty(t, server.backends)
+	assert.Contains(t, server.backends, "software")
 }
 
 // Test authenticator accessor
 
 func TestServer_Authenticator(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -1765,8 +1765,8 @@ func TestServer_Authenticator(t *testing.T) {
 // Test WebAuthn configuration with RPOrigins
 
 func TestServer_InitializeAuthentication_WebAuthnWithOrigins(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.WebAuthn = &config.WebAuthnConfig{
@@ -1794,8 +1794,8 @@ func TestServer_InitializeAuthentication_WebAuthnWithOrigins(t *testing.T) {
 // Test backend stub initialization with nil configs (should skip gracefully)
 
 func TestServer_InitBackendStubs_NilConfigs(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	// Ensure all cloud/hardware backends are nil
@@ -1818,8 +1818,8 @@ func TestServer_InitBackendStubs_NilConfigs(t *testing.T) {
 // Test backend stub initialization with disabled configs
 
 func TestServer_InitBackendStubs_DisabledConfigs(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.AWSKMS = &config.AWSKMSConfig{Enabled: false}
@@ -1845,7 +1845,9 @@ func TestCreateTPM2Backend_DefaultValues(t *testing.T) {
 		Name:    "tpm2",
 		Type:    "tpm2",
 		Enabled: true,
-		Config:  map[string]interface{}{},
+		Config: map[string]interface{}{
+			"use_simulator": true,
+		},
 	}
 
 	// This will fail because there's no TPM available, but we're testing the config parsing
@@ -2007,8 +2009,8 @@ some extra content after`
 // Test health check timeout scenario
 
 func TestServer_HealthCheck_Timeout(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -2033,8 +2035,8 @@ func TestServer_HealthCheck_Timeout(t *testing.T) {
 // Test Reload with logging level and format changes
 
 func TestServer_Reload_LoggingChanges(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Logging.Level = "info"
@@ -2065,8 +2067,8 @@ func TestServer_Reload_LoggingChanges(t *testing.T) {
 // Test server initialization with both CA file and client CAs
 
 func TestServer_BuildTLSConfig_BothCAAndClientCAs(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, caFile := createTestTLSFiles(t)
 
@@ -2090,8 +2092,8 @@ func TestServer_BuildTLSConfig_BothCAAndClientCAs(t *testing.T) {
 // Test server with multiple client CAs
 
 func TestServer_BuildTLSConfig_MultipleClientCAs(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, caFile := createTestTLSFiles(t)
 	_, _, caFile2 := createTestTLSFiles(t)
@@ -2115,8 +2117,8 @@ func TestServer_BuildTLSConfig_MultipleClientCAs(t *testing.T) {
 // Test WebAuthn with all configuration options
 
 func TestServer_InitializeAuthentication_WebAuthnFullConfig(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.WebAuthn = &config.WebAuthnConfig{
@@ -2147,8 +2149,8 @@ func TestServer_InitializeAuthentication_WebAuthnFullConfig(t *testing.T) {
 // Test adaptive authentication with mTLS as required auth
 
 func TestServer_InitializeAuthentication_AdaptiveWithMTLS(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true
@@ -2183,8 +2185,8 @@ func TestGetBuildVersion_Consistency(t *testing.T) {
 // Test server shutdown order with various server states
 
 func TestServer_Shutdown_WithAllServers(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2216,8 +2218,8 @@ func TestServer_Shutdown_WithAllServers(t *testing.T) {
 // Test Initialize function from backend_factory.go
 
 func TestInitialize_EmptyConfig(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	config := &BackendFactoryConfig{
 		DefaultBackend: "pkcs8",
@@ -2287,14 +2289,16 @@ func TestCreateBackend_AllTypes(t *testing.T) {
 			expectError: true, // Will fail due to missing library
 		},
 		{
-			name: "tpm2 - no device",
+			name: "tpm2 - simulator",
 			config: BackendConfig{
 				Name:    "tpm2",
 				Type:    "tpm2",
 				Enabled: true,
-				Config:  map[string]interface{}{},
+				Config: map[string]interface{}{
+					"use_simulator": true,
+				},
 			},
-			expectError: true, // Will fail due to missing TPM
+			expectError: true, // Will fail due to unprovisioned simulator
 		},
 		{
 			name: "unknown type",
@@ -2313,11 +2317,8 @@ func TestCreateBackend_AllTypes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			backend, err := createBackend(tt.config)
 			if tt.expectError {
-				// If stub returns nil, nil (backend not compiled in), skip error check
-				if backend == nil && err == nil {
-					t.Skipf("Backend %s not compiled in (stub used)", tt.config.Type)
-				}
 				assert.Error(t, err)
+				assert.Nil(t, backend)
 				if tt.errorMsg != "" {
 					assert.Contains(t, err.Error(), tt.errorMsg)
 				}
@@ -2332,8 +2333,8 @@ func TestCreateBackend_AllTypes(t *testing.T) {
 // Test health check with successful backend
 
 func TestServer_HealthCheck_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -2356,8 +2357,8 @@ func TestServer_HealthCheck_Success(t *testing.T) {
 // Test server start with health checker marking
 
 func TestServer_Start_MarksHealthStarted(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2383,8 +2384,8 @@ func TestServer_Start_MarksHealthStarted(t *testing.T) {
 // Test reloadLogging with identical config (no change path)
 
 func TestServer_ReloadLogging_NoChange(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Logging.Level = "info"
@@ -2405,8 +2406,8 @@ func TestServer_ReloadLogging_NoChange(t *testing.T) {
 // Test user store initialization failure
 
 func TestServer_InitializeUserStore_InvalidPath(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Storage.Path = "/dev/null/nonexistent/path"
@@ -2418,8 +2419,8 @@ func TestServer_InitializeUserStore_InvalidPath(t *testing.T) {
 // Test default keystore fallback when specified default doesn't exist
 
 func TestServer_InitializeKeyStore_DefaultFallback(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Default = config.DefaultConfig("nonexistent-backend")
@@ -2430,7 +2431,7 @@ func TestServer_InitializeKeyStore_DefaultFallback(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	// Should fall back to first available backend
-	assert.NotEmpty(t, server.keystores)
+	assert.NotEmpty(t, server.backends)
 }
 
 // Test pemDecode with no dash after BEGIN
@@ -2446,8 +2447,8 @@ func TestPemDecode_NoTypeTerminator(t *testing.T) {
 // Test software backend initialization failure
 
 func TestServer_InitializeSoftwareBackend_InvalidPath(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.Software.Path = "/dev/null/invalid"
@@ -2459,8 +2460,8 @@ func TestServer_InitializeSoftwareBackend_InvalidPath(t *testing.T) {
 // Test PKCS8 backend initialization failure
 
 func TestServer_InitializePKCS8Backend_InvalidPath(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.Software = nil
@@ -2480,8 +2481,8 @@ func TestServer_InitializePKCS8Backend_InvalidPath(t *testing.T) {
 // Test Unix IPC server startup with default socket path
 
 func TestServer_StartUnix_IPCProtocol(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = true
@@ -2514,8 +2515,8 @@ func TestServer_StartUnix_IPCProtocol(t *testing.T) {
 // Test Unix HTTP server startup
 
 func TestServer_StartUnix_HTTPProtocol(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = true
@@ -2548,8 +2549,8 @@ func TestServer_StartUnix_HTTPProtocol(t *testing.T) {
 // Test Unix gRPC server startup
 
 func TestServer_StartUnix_GRPCProtocol(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = true
@@ -2582,8 +2583,8 @@ func TestServer_StartUnix_GRPCProtocol(t *testing.T) {
 // Test Unix server with unknown protocol
 
 func TestServer_StartUnix_UnknownProtocol(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = true
@@ -2618,8 +2619,8 @@ func TestServer_StartUnix_UnknownProtocol(t *testing.T) {
 // Test Unix server with empty socket path (uses default)
 
 func TestServer_StartUnix_DefaultSocketPath(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = true
@@ -2648,8 +2649,8 @@ func TestServer_StartUnix_DefaultSocketPath(t *testing.T) {
 // Test gRPC server startup
 
 func TestServer_StartGRPC(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2682,8 +2683,8 @@ func TestServer_StartGRPC(t *testing.T) {
 // Test initTPM2Backend with nil config
 
 func TestServer_InitTPM2Backend_NilConfig(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.TPM2 = nil
@@ -2701,8 +2702,8 @@ func TestServer_InitTPM2Backend_NilConfig(t *testing.T) {
 // Test initTPM2Backend with disabled config
 
 func TestServer_InitTPM2Backend_DisabledConfig(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.TPM2 = &config.TPM2Config{
@@ -2722,13 +2723,13 @@ func TestServer_InitTPM2Backend_DisabledConfig(t *testing.T) {
 // Test initTPM2Backend with default device path
 
 func TestServer_InitTPM2Backend_DefaultDevicePath(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Backends.TPM2 = &config.TPM2Config{
 		Enabled:    true,
-		DevicePath: "", // Empty - should use default
+		DevicePath: "/dev/tpm-nonexistent",
 	}
 
 	// Will fail because no TPM available, but tests the code path
@@ -2740,8 +2741,8 @@ func TestServer_InitTPM2Backend_DefaultDevicePath(t *testing.T) {
 // Test Shutdown with gRPC server
 
 func TestServer_Shutdown_WithGRPCServer(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2771,8 +2772,8 @@ func TestServer_Shutdown_WithGRPCServer(t *testing.T) {
 // Test Shutdown with keystores
 
 func TestServer_Shutdown_ClosesKeystores(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2784,7 +2785,7 @@ func TestServer_Shutdown_ClosesKeystores(t *testing.T) {
 	require.NotNil(t, server)
 
 	// Verify keystores exist before shutdown
-	assert.NotEmpty(t, server.keystores)
+	assert.NotEmpty(t, server.backends)
 
 	// Start server
 	err = server.Start()
@@ -2798,8 +2799,8 @@ func TestServer_Shutdown_ClosesKeystores(t *testing.T) {
 // Test Start with all protocols enabled (except those requiring TLS)
 
 func TestServer_Start_AllProtocols(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = true
@@ -2836,8 +2837,8 @@ func TestServer_Start_AllProtocols(t *testing.T) {
 // Test health check running the backend check closure
 
 func TestServer_HealthCheck_BackendCheck(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -2865,8 +2866,8 @@ func TestServer_HealthCheck_BackendCheck(t *testing.T) {
 // Note: This is hard to test without mocking, so we test the happy path more thoroughly
 
 func TestServer_Start_MetricsEnabledMultipleTimes(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2897,8 +2898,8 @@ func TestServer_Start_MetricsEnabledMultipleTimes(t *testing.T) {
 // Test server with nil health checker during Start
 
 func TestServer_Start_NilHealthChecker(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2930,8 +2931,8 @@ func TestServer_Start_NilHealthChecker(t *testing.T) {
 
 // Test REST server startup without TLS
 func TestServer_StartREST_NoTLS(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -2964,8 +2965,8 @@ func TestServer_StartREST_NoTLS(t *testing.T) {
 
 // Test REST server startup with WebAuthn config
 func TestServer_StartREST_WithWebAuthn(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3007,8 +3008,8 @@ func TestServer_StartREST_WithWebAuthn(t *testing.T) {
 
 // Test REST server startup with TLS enabled
 func TestServer_StartREST_WithTLS(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -3045,8 +3046,8 @@ func TestServer_StartREST_WithTLS(t *testing.T) {
 
 // Test REST server startup with TLS config failure
 func TestServer_StartREST_TLSConfigFailure(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3081,8 +3082,8 @@ func TestServer_StartREST_TLSConfigFailure(t *testing.T) {
 
 // Test REST server with nil health checker
 func TestServer_StartREST_NilHealthChecker(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3118,8 +3119,8 @@ func TestServer_StartREST_NilHealthChecker(t *testing.T) {
 
 // Test MCP server startup
 func TestServer_StartMCP(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3151,8 +3152,8 @@ func TestServer_StartMCP(t *testing.T) {
 
 // Test MCP server with default backend specified
 func TestServer_StartMCP_WithDefaultBackend(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3185,8 +3186,8 @@ func TestServer_StartMCP_WithDefaultBackend(t *testing.T) {
 
 // Test MCP server with nonexistent default backend (falls back to first available)
 func TestServer_StartMCP_NonexistentDefault(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3219,8 +3220,8 @@ func TestServer_StartMCP_NonexistentDefault(t *testing.T) {
 
 // Test QUIC server startup with TLS
 func TestServer_StartQUIC_WithTLS(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -3257,8 +3258,8 @@ func TestServer_StartQUIC_WithTLS(t *testing.T) {
 
 // Test QUIC server without TLS (should fail gracefully)
 func TestServer_StartQUIC_NoTLS(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3291,8 +3292,8 @@ func TestServer_StartQUIC_NoTLS(t *testing.T) {
 
 // Test QUIC server with invalid TLS config
 func TestServer_StartQUIC_TLSConfigFailure(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3327,8 +3328,8 @@ func TestServer_StartQUIC_TLSConfigFailure(t *testing.T) {
 
 // Test QUIC server with default backend specified
 func TestServer_StartQUIC_WithDefaultBackend(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -3366,8 +3367,8 @@ func TestServer_StartQUIC_WithDefaultBackend(t *testing.T) {
 
 // Test QUIC server with nonexistent default backend (falls back)
 func TestServer_StartQUIC_NonexistentDefault(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -3405,8 +3406,8 @@ func TestServer_StartQUIC_NonexistentDefault(t *testing.T) {
 
 // Test Shutdown with REST server
 func TestServer_Shutdown_WithRESTServer(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3435,8 +3436,8 @@ func TestServer_Shutdown_WithRESTServer(t *testing.T) {
 
 // Test Shutdown with MCP server
 func TestServer_Shutdown_WithMCPServer(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3465,8 +3466,8 @@ func TestServer_Shutdown_WithMCPServer(t *testing.T) {
 
 // Test Shutdown with QUIC server
 func TestServer_Shutdown_WithQUICServer(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -3500,8 +3501,8 @@ func TestServer_Shutdown_WithQUICServer(t *testing.T) {
 
 // Test Start with all protocols enabled (comprehensive)
 func TestServer_Start_AllProtocolsComprehensive(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -3557,8 +3558,8 @@ func TestGetBuildVersion_ModuleVersion(t *testing.T) {
 
 // Test gRPC server listen failure
 func TestServer_StartGRPC_ListenFailure(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3592,8 +3593,8 @@ func TestServer_StartGRPC_ListenFailure(t *testing.T) {
 
 // Test REST server with RBAC enabled
 func TestServer_StartREST_WithRBAC(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3626,8 +3627,8 @@ func TestServer_StartREST_WithRBAC(t *testing.T) {
 
 // Test closeBackends with valid backends
 func TestServer_CloseBackends_ValidBackends(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -3646,10 +3647,10 @@ func TestServer_CloseBackends_ValidBackends(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// Test Shutdown calls keychain.Shutdown
-func TestServer_Shutdown_CallsKeychainShutdown(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+// Test Shutdown calls xkms.Shutdown
+func TestServer_Shutdown_CallsXKMSShutdown(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3664,7 +3665,7 @@ func TestServer_Shutdown_CallsKeychainShutdown(t *testing.T) {
 	err = server.Start()
 	assert.NoError(t, err)
 
-	// Shutdown should call keychain.Shutdown
+	// Shutdown should call xkms.Shutdown
 	err = server.Shutdown()
 	assert.NoError(t, err)
 }
@@ -3675,8 +3676,8 @@ func TestServer_Shutdown_CallsKeychainShutdown(t *testing.T) {
 
 // Test MCP server with no keystores (should fail gracefully)
 func TestServer_StartMCP_NoKeystores(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3692,7 +3693,7 @@ func TestServer_StartMCP_NoKeystores(t *testing.T) {
 	require.NotNil(t, server)
 
 	// Clear keystores to test no keystore scenario
-	server.keystores = make(map[string]keychain.KeyStore)
+	server.backends = make(map[string]xkms.Backend)
 
 	// Start server - should log error but not crash
 	err = server.Start()
@@ -3711,8 +3712,8 @@ func TestServer_StartMCP_NoKeystores(t *testing.T) {
 
 // Test QUIC server with no keystores (should fail gracefully)
 func TestServer_StartQUIC_NoKeystores(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -3733,7 +3734,7 @@ func TestServer_StartQUIC_NoKeystores(t *testing.T) {
 	require.NotNil(t, server)
 
 	// Clear keystores to test no keystore scenario
-	server.keystores = make(map[string]keychain.KeyStore)
+	server.backends = make(map[string]xkms.Backend)
 
 	// Start server - should log error but not crash
 	err = server.Start()
@@ -3752,8 +3753,8 @@ func TestServer_StartQUIC_NoKeystores(t *testing.T) {
 
 // Test Initialize function with valid backends
 func TestInitialize_WithValidBackends(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 
@@ -3777,8 +3778,8 @@ func TestInitialize_WithValidBackends(t *testing.T) {
 
 // Test Initialize function with multiple backends
 func TestInitialize_MultipleBackends(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 
@@ -3864,8 +3865,8 @@ func TestCreateSymmetricBackend_CustomKeyDir(t *testing.T) {
 
 // Test metrics server startup
 func TestServer_StartMetrics_Success(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = false
@@ -3898,8 +3899,8 @@ func TestServer_StartMetrics_Success(t *testing.T) {
 
 // Test initializeBackends with PKCS8 only
 func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 	cfg := &config.Config{
@@ -3951,8 +3952,8 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 
 // Test Reload updates config correctly
 func TestServer_Reload_UpdatesConfig(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Logging.Level = "info"
@@ -3982,8 +3983,8 @@ func TestServer_Reload_UpdatesConfig(t *testing.T) {
 
 // Test Initialize with disabled backend
 func TestInitialize_WithDisabledBackend(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 
@@ -4021,9 +4022,10 @@ func TestCreateTPM2Backend_StringHandles(t *testing.T) {
 		Type:    "tpm2",
 		Enabled: true,
 		Config: map[string]interface{}{
-			"srk_handle":   "0x81000003",
-			"ek_handle":    "0x81010003",
-			"platform_pcr": "8",
+			"use_simulator": true,
+			"srk_handle":    "0x81000003",
+			"ek_handle":     "0x81010003",
+			"platform_pcr":  "8",
 		},
 	}
 
@@ -4034,8 +4036,8 @@ func TestCreateTPM2Backend_StringHandles(t *testing.T) {
 
 // Test Shutdown with Unix servers
 func TestServer_Shutdown_WithUnixServers(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Protocols.Unix = true
@@ -4067,8 +4069,8 @@ func TestServer_Shutdown_WithUnixServers(t *testing.T) {
 
 // Test server with empty default (uses first available)
 func TestServer_EmptyDefault(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Default = "" // Empty default
@@ -4079,7 +4081,7 @@ func TestServer_EmptyDefault(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	// Should have keystores
-	assert.NotEmpty(t, server.keystores)
+	assert.NotEmpty(t, server.backends)
 }
 
 // ============================================================================
@@ -4088,8 +4090,8 @@ func TestServer_EmptyDefault(t *testing.T) {
 
 // Test New with keystore initialization failure
 func TestNew_KeyStoreInitFailure(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	// Set storage path to an invalid location that will fail during keystore init
@@ -4154,8 +4156,8 @@ func TestCreateBackend_AllTypesWithKeyDir(t *testing.T) {
 
 // Test Initialize with backend creation failure
 func TestInitialize_BackendCreationFailure(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	config := &BackendFactoryConfig{
 		DefaultBackend: "tpm2",
@@ -4164,7 +4166,9 @@ func TestInitialize_BackendCreationFailure(t *testing.T) {
 				Name:    "tpm2",
 				Type:    "tpm2",
 				Enabled: true,
-				Config:  map[string]interface{}{},
+				Config: map[string]interface{}{
+					"use_simulator": true,
+				},
 			},
 		},
 	}
@@ -4180,8 +4184,8 @@ func TestServer_StartUnix_AllModes(t *testing.T) {
 
 	for _, proto := range protocols {
 		t.Run(proto, func(t *testing.T) {
-			keychain.Reset()
-			defer keychain.Reset()
+			xkms.Reset()
+			defer xkms.Reset()
 
 			cfg := createMinimalConfig(t)
 			cfg.Protocols.Unix = true
@@ -4209,8 +4213,8 @@ func TestServer_StartUnix_AllModes(t *testing.T) {
 
 // Test Shutdown with all servers running
 func TestServer_Shutdown_AllServersRunning(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	certFile, keyFile, _ := createTestTLSFiles(t)
 
@@ -4253,8 +4257,8 @@ func TestServer_Shutdown_AllServersRunning(t *testing.T) {
 
 // Test Initialize with nonexistent default backend
 func TestInitialize_NonexistentDefault(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	tempDir := t.TempDir()
 
@@ -4279,8 +4283,8 @@ func TestInitialize_NonexistentDefault(t *testing.T) {
 
 // Test closeBackends is idempotent
 func TestServer_CloseBackends_Idempotent(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 
@@ -4345,8 +4349,8 @@ func TestCreateSymmetricBackend_InvalidKeyDir(t *testing.T) {
 
 // Test Initialize error path when createBackend fails
 func TestInitialize_CreateBackendError(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	config := &BackendFactoryConfig{
 		DefaultBackend: "software",
@@ -4368,8 +4372,8 @@ func TestInitialize_CreateBackendError(t *testing.T) {
 
 // Test server with authentication initialization error
 func TestServer_InitAuth_Error(t *testing.T) {
-	keychain.Reset()
-	defer keychain.Reset()
+	xkms.Reset()
+	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
 	cfg.Auth.Enabled = true

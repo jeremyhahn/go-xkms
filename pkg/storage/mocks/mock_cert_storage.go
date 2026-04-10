@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,12 +14,13 @@
 package mocks
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // MockCertStorage is a mock implementation of certificate storage for testing.
@@ -67,7 +68,7 @@ func NewMockCertStorage() *MockCertStorage {
 }
 
 // SaveCert stores a certificate.
-func (m *MockCertStorage) SaveCert(id string, cert *x509.Certificate) error {
+func (m *MockCertStorage) SaveCert(_ context.Context, id string, cert *x509.Certificate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -86,7 +87,7 @@ func (m *MockCertStorage) SaveCert(id string, cert *x509.Certificate) error {
 }
 
 // GetCert retrieves a certificate.
-func (m *MockCertStorage) GetCert(id string) (*x509.Certificate, error) {
+func (m *MockCertStorage) GetCert(_ context.Context, id string) (*x509.Certificate, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -108,7 +109,7 @@ func (m *MockCertStorage) GetCert(id string) (*x509.Certificate, error) {
 }
 
 // DeleteCert removes a certificate.
-func (m *MockCertStorage) DeleteCert(id string) error {
+func (m *MockCertStorage) DeleteCert(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -130,7 +131,7 @@ func (m *MockCertStorage) DeleteCert(id string) error {
 }
 
 // SaveCertChain stores a certificate chain.
-func (m *MockCertStorage) SaveCertChain(id string, chain []*x509.Certificate) error {
+func (m *MockCertStorage) SaveCertChain(_ context.Context, id string, chain []*x509.Certificate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -149,7 +150,7 @@ func (m *MockCertStorage) SaveCertChain(id string, chain []*x509.Certificate) er
 }
 
 // GetCertChain retrieves a certificate chain.
-func (m *MockCertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
+func (m *MockCertStorage) GetCertChain(_ context.Context, id string) ([]*x509.Certificate, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -171,7 +172,7 @@ func (m *MockCertStorage) GetCertChain(id string) ([]*x509.Certificate, error) {
 }
 
 // ListCerts returns all certificate IDs.
-func (m *MockCertStorage) ListCerts() ([]string, error) {
+func (m *MockCertStorage) ListCerts(_ context.Context) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -193,7 +194,7 @@ func (m *MockCertStorage) ListCerts() ([]string, error) {
 }
 
 // CertExists checks if a certificate exists.
-func (m *MockCertStorage) CertExists(id string) (bool, error) {
+func (m *MockCertStorage) CertExists(_ context.Context, id string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -250,7 +251,7 @@ func (m *MockCertStorage) Reset() {
 // ========================================================================
 
 // Get retrieves the value for the given key (implements storage.Backend).
-func (m *MockCertStorage) Get(key string) ([]byte, error) {
+func (m *MockCertStorage) Get(_ context.Context, key string) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -332,7 +333,7 @@ func (m *MockCertStorage) Get(key string) ([]byte, error) {
 }
 
 // Put stores the value for the given key (implements storage.Backend).
-func (m *MockCertStorage) Put(key string, value []byte, opts *storage.Options) error {
+func (m *MockCertStorage) Put(_ context.Context, key string, value []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -373,7 +374,7 @@ func (m *MockCertStorage) Put(key string, value []byte, opts *storage.Options) e
 }
 
 // Delete removes the key and its value from storage (implements storage.Backend).
-func (m *MockCertStorage) Delete(key string) error {
+func (m *MockCertStorage) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -400,7 +401,7 @@ func (m *MockCertStorage) Delete(key string) error {
 }
 
 // List returns all keys with the given prefix (implements storage.Backend).
-func (m *MockCertStorage) List(prefix string) ([]string, error) {
+func (m *MockCertStorage) List(_ context.Context, prefix string) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -426,8 +427,31 @@ func (m *MockCertStorage) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
+// Scan iterates over all key-value pairs matching the given prefix (implements storage.Backend).
+func (m *MockCertStorage) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return fmt.Errorf("storage is closed")
+	}
+
+	for key, value := range m.data {
+		if prefix == "" || strings.HasPrefix(key, prefix) {
+			// Pass defensive copies
+			valueCopy := make([]byte, len(value))
+			copy(valueCopy, value)
+			if err := fn(key, valueCopy); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 // Exists checks if a key exists in storage (implements storage.Backend).
-func (m *MockCertStorage) Exists(key string) (bool, error) {
+func (m *MockCertStorage) Exists(_ context.Context, key string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

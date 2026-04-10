@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,6 +16,7 @@ package mcp
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -30,11 +31,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// createTestServer creates a server with initialized keychain for handler tests
+// createTestServer creates a server with initialized xkms for handler tests
 func createTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	setupTestKeychain(t)
+	setupTestXKMS(t)
 
 	server, err := NewServer(&Config{Addr: "localhost:0"})
 	require.NoError(t, err)
@@ -45,7 +46,7 @@ func createTestServer(t *testing.T) *Server {
 // TestHandler_Health tests the health check handler
 func TestHandler_Health(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns healthy status", func(t *testing.T) {
 		req := &JSONRPCRequest{
@@ -66,12 +67,12 @@ func TestHandler_Health(t *testing.T) {
 // TestHandler_ListBackends tests the list backends handler
 func TestHandler_ListBackends(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns available backends", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listBackends",
+			Method:  "xkms.listBackends",
 			ID:      1,
 		}
 
@@ -81,14 +82,22 @@ func TestHandler_ListBackends(t *testing.T) {
 		backendResult, ok := result.(ListBackendsResult)
 		require.True(t, ok)
 		assert.NotEmpty(t, backendResult.Backends)
-		assert.Contains(t, backendResult.Backends, "software")
+
+		var foundSoftware bool
+		for _, b := range backendResult.Backends {
+			if b.ID == "software" {
+				foundSoftware = true
+				break
+			}
+		}
+		assert.True(t, foundSoftware, "Should contain software backend")
 	})
 }
 
 // TestHandler_GenerateKey tests the key generation handler
 func TestHandler_GenerateKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("generates RSA key", func(t *testing.T) {
 		params := GenerateKeyParams{
@@ -101,7 +110,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -127,7 +136,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -151,7 +160,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -174,7 +183,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -187,7 +196,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  json.RawMessage(`invalid json`),
 			ID:      1,
 		}
@@ -207,7 +216,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -227,7 +236,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -247,7 +256,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -270,7 +279,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -294,7 +303,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -308,7 +317,7 @@ func TestHandler_GenerateKey(t *testing.T) {
 // TestHandler_GetKey tests the get key handler
 func TestHandler_GetKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// First generate a key
 	genParams := GenerateKeyParams{
@@ -318,7 +327,7 @@ func TestHandler_GetKey(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -331,7 +340,7 @@ func TestHandler_GetKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getKey",
+			Method:  "xkms.getKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -351,7 +360,7 @@ func TestHandler_GetKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getKey",
+			Method:  "xkms.getKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -364,7 +373,7 @@ func TestHandler_GetKey(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getKey",
+			Method:  "xkms.getKey",
 			Params:  json.RawMessage(`not json`),
 			ID:      1,
 		}
@@ -383,7 +392,7 @@ func TestHandler_GetKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getKey",
+			Method:  "xkms.getKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -397,7 +406,7 @@ func TestHandler_GetKey(t *testing.T) {
 // TestHandler_DeleteKey tests the delete key handler
 func TestHandler_DeleteKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// First generate a key
 	genParams := GenerateKeyParams{
@@ -407,7 +416,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -420,7 +429,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -439,7 +448,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -452,7 +461,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  json.RawMessage(`not json`),
 			ID:      1,
 		}
@@ -471,7 +480,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 			KeySize: 2048,
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
-		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 		_, err := server.handleGenerateKey(genReq)
 		require.NoError(t, err)
 
@@ -483,7 +492,7 @@ func TestHandler_DeleteKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -500,13 +509,13 @@ func TestHandler_DeleteKey(t *testing.T) {
 // TestHandler_ListKeys tests the list keys handler
 func TestHandler_ListKeys(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate some keys first
 	for _, keyID := range []string{"list-key-1", "list-key-2"} {
 		genParams := GenerateKeyParams{KeyID: keyID, Backend: "software", KeyType: "rsa", KeySize: 2048}
 		genParamsJSON, _ := json.Marshal(genParams)
-		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 		_, err := server.handleGenerateKey(genReq)
 		require.NoError(t, err)
 	}
@@ -514,7 +523,7 @@ func TestHandler_ListKeys(t *testing.T) {
 	t.Run("lists all keys", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listKeys",
+			Method:  "xkms.listKeys",
 			ID:      1,
 		}
 
@@ -530,7 +539,7 @@ func TestHandler_ListKeys(t *testing.T) {
 // TestHandler_Sign tests the sign handler
 func TestHandler_Sign(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key for signing
 	genParams := GenerateKeyParams{
@@ -540,7 +549,7 @@ func TestHandler_Sign(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -555,7 +564,7 @@ func TestHandler_Sign(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -578,7 +587,7 @@ func TestHandler_Sign(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -591,7 +600,7 @@ func TestHandler_Sign(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -612,7 +621,7 @@ func TestHandler_Sign(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -626,7 +635,7 @@ func TestHandler_Sign(t *testing.T) {
 // TestHandler_Verify tests the verify handler
 func TestHandler_Verify(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key and sign some data
 	genParams := GenerateKeyParams{
@@ -636,7 +645,7 @@ func TestHandler_Verify(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -648,7 +657,7 @@ func TestHandler_Verify(t *testing.T) {
 		Hash:    "SHA256",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -666,7 +675,7 @@ func TestHandler_Verify(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -690,7 +699,7 @@ func TestHandler_Verify(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -703,7 +712,7 @@ func TestHandler_Verify(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -732,7 +741,7 @@ func TestHandler_Verify(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -757,7 +766,7 @@ func TestHandler_Verify(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -771,7 +780,7 @@ func TestHandler_Verify(t *testing.T) {
 // TestHandler_RotateKey tests the rotate key handler
 func TestHandler_RotateKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate initial key
 	genParams := GenerateKeyParams{
@@ -781,7 +790,7 @@ func TestHandler_RotateKey(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	initialResult, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 	initialPEM := initialResult.(GenerateKeyResult).PublicKeyPEM
@@ -795,7 +804,7 @@ func TestHandler_RotateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -817,7 +826,7 @@ func TestHandler_RotateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -830,7 +839,7 @@ func TestHandler_RotateKey(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -849,7 +858,7 @@ func TestHandler_RotateKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -863,7 +872,7 @@ func TestHandler_RotateKey(t *testing.T) {
 // TestHandler_Subscribe tests the subscribe handler
 func TestHandler_Subscribe(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Create a mock connection
 	clientConn, serverConn := net.Pipe()
@@ -878,7 +887,7 @@ func TestHandler_Subscribe(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.subscribe",
+			Method:  "xkms.subscribe",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -895,7 +904,7 @@ func TestHandler_Subscribe(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.subscribe",
+			Method:  "xkms.subscribe",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -913,7 +922,7 @@ func TestHandler_Subscribe(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.subscribe",
+			Method:  "xkms.subscribe",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -931,7 +940,7 @@ func TestHandler_Subscribe(t *testing.T) {
 // TestHandler_Certificates tests the certificate handlers
 func TestHandler_Certificates(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key first
 	genParams := GenerateKeyParams{
@@ -941,7 +950,7 @@ func TestHandler_Certificates(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -975,7 +984,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -994,7 +1003,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1010,7 +1019,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1029,7 +1038,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1042,7 +1051,7 @@ func TestHandler_Certificates(t *testing.T) {
 	t.Run("fails saveCert with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1058,7 +1067,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCert",
+			Method:  "xkms.getCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1078,7 +1087,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCert",
+			Method:  "xkms.getCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1091,7 +1100,7 @@ func TestHandler_Certificates(t *testing.T) {
 	t.Run("getCert fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCert",
+			Method:  "xkms.getCert",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1107,7 +1116,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.certExists",
+			Method:  "xkms.certExists",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1126,7 +1135,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.certExists",
+			Method:  "xkms.certExists",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1139,7 +1148,7 @@ func TestHandler_Certificates(t *testing.T) {
 	t.Run("certExists fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.certExists",
+			Method:  "xkms.certExists",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1152,7 +1161,7 @@ func TestHandler_Certificates(t *testing.T) {
 	t.Run("lists certificates", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listCerts",
+			Method:  "xkms.listCerts",
 			ID:      1,
 		}
 
@@ -1170,7 +1179,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteCert",
+			Method:  "xkms.deleteCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1189,7 +1198,7 @@ func TestHandler_Certificates(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteCert",
+			Method:  "xkms.deleteCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1202,7 +1211,7 @@ func TestHandler_Certificates(t *testing.T) {
 	t.Run("deleteCert fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteCert",
+			Method:  "xkms.deleteCert",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1216,7 +1225,7 @@ func TestHandler_Certificates(t *testing.T) {
 // TestHandler_CertificateChain tests the certificate chain handlers
 func TestHandler_CertificateChain(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Create certificate chain for testing
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -1247,7 +1256,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1266,7 +1275,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1285,7 +1294,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1304,7 +1313,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1317,7 +1326,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 	t.Run("saveCertChain fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1333,7 +1342,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCertChain",
+			Method:  "xkms.getCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1353,7 +1362,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCertChain",
+			Method:  "xkms.getCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1366,7 +1375,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 	t.Run("getCertChain fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCertChain",
+			Method:  "xkms.getCertChain",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1380,7 +1389,7 @@ func TestHandler_CertificateChain(t *testing.T) {
 // TestHandler_GetTLSCertificate tests the get TLS certificate handler
 func TestHandler_GetTLSCertificate(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with missing key_id", func(t *testing.T) {
 		params := GetTLSCertificateParams{Backend: "software"}
@@ -1388,7 +1397,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1401,7 +1410,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1420,7 +1429,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1439,7 +1448,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1453,7 +1462,7 @@ func TestHandler_GetTLSCertificate(t *testing.T) {
 // TestHandler_AsymmetricEncrypt tests the asymmetric encrypt handler
 func TestHandler_AsymmetricEncrypt(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key for encryption
 	genParams := GenerateKeyParams{
@@ -1463,7 +1472,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -1477,7 +1486,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1499,7 +1508,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1512,7 +1521,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1532,7 +1541,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1551,7 +1560,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 			Curve:   "P-256",
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
-		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 		_, err := server.handleGenerateKey(genReq)
 		require.NoError(t, err)
 
@@ -1564,7 +1573,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1578,7 +1587,7 @@ func TestHandler_AsymmetricEncrypt(t *testing.T) {
 // TestHandler_AsymmetricDecrypt tests the asymmetric decrypt handler
 func TestHandler_AsymmetricDecrypt(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -1588,7 +1597,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -1602,9 +1611,9 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 	rsaPubKey, ok := signer.Public().(*rsa.PublicKey)
 	require.True(t, ok, "expected RSA public key")
 
-	// Encrypt with PKCS1v15 to match the handler's decrypt behavior (nil opts = PKCS1v15)
+	// Encrypt with OAEP SHA-256
 	plaintext := []byte("secret data")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPubKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
 	require.NoError(t, err)
 
 	t.Run("decrypts data", func(t *testing.T) {
@@ -1617,7 +1626,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1639,7 +1648,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1652,7 +1661,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1672,7 +1681,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1686,7 +1695,7 @@ func TestHandler_AsymmetricDecrypt(t *testing.T) {
 // TestHandler_CopyKey tests the copy key handler
 func TestHandler_CopyKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with missing source_backend", func(t *testing.T) {
 		params := CopyKeyParams{
@@ -1699,7 +1708,7 @@ func TestHandler_CopyKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1720,7 +1729,7 @@ func TestHandler_CopyKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1741,7 +1750,7 @@ func TestHandler_CopyKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1762,7 +1771,7 @@ func TestHandler_CopyKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1783,7 +1792,7 @@ func TestHandler_CopyKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1796,7 +1805,7 @@ func TestHandler_CopyKey(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1810,7 +1819,7 @@ func TestHandler_CopyKey(t *testing.T) {
 // TestHandler_GetImportParameters tests the get import parameters handler
 func TestHandler_GetImportParameters(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with missing key_id", func(t *testing.T) {
 		params := GetImportParametersParams{
@@ -1821,7 +1830,7 @@ func TestHandler_GetImportParameters(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getImportParameters",
+			Method:  "xkms.getImportParameters",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1834,7 +1843,7 @@ func TestHandler_GetImportParameters(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getImportParameters",
+			Method:  "xkms.getImportParameters",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1854,7 +1863,7 @@ func TestHandler_GetImportParameters(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getImportParameters",
+			Method:  "xkms.getImportParameters",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1868,12 +1877,12 @@ func TestHandler_GetImportParameters(t *testing.T) {
 // TestHandler_WrapKey tests the wrap key handler
 func TestHandler_WrapKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.wrapKey",
+			Method:  "xkms.wrapKey",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1893,7 +1902,7 @@ func TestHandler_WrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.wrapKey",
+			Method:  "xkms.wrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1916,7 +1925,7 @@ func TestHandler_WrapKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.wrapKey",
+			Method:  "xkms.wrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1930,7 +1939,7 @@ func TestHandler_WrapKey(t *testing.T) {
 // TestHandler_ImportKeyMaterial tests the import key material handler
 func TestHandler_ImportKeyMaterial(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with missing key_id", func(t *testing.T) {
 		params := ImportKeyParams{
@@ -1942,7 +1951,7 @@ func TestHandler_ImportKeyMaterial(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.importKey",
+			Method:  "xkms.importKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1955,7 +1964,7 @@ func TestHandler_ImportKeyMaterial(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.importKey",
+			Method:  "xkms.importKey",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -1976,7 +1985,7 @@ func TestHandler_ImportKeyMaterial(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.importKey",
+			Method:  "xkms.importKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -1990,7 +1999,7 @@ func TestHandler_ImportKeyMaterial(t *testing.T) {
 // TestHandler_ExportKeyMaterial tests the export key material handler
 func TestHandler_ExportKeyMaterial(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with missing key_id", func(t *testing.T) {
 		params := ExportKeyParams{
@@ -2001,7 +2010,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.exportKey",
+			Method:  "xkms.exportKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2014,7 +2023,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.exportKey",
+			Method:  "xkms.exportKey",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -2034,7 +2043,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.exportKey",
+			Method:  "xkms.exportKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2048,7 +2057,7 @@ func TestHandler_ExportKeyMaterial(t *testing.T) {
 // TestHandler_SymmetricEncrypt tests the symmetric encrypt handler
 func TestHandler_SymmetricEncrypt(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key using the software backend
 	genParams := GenerateKeyParams{
@@ -2058,7 +2067,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2072,7 +2081,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2097,7 +2106,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2119,7 +2128,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2139,7 +2148,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2152,7 +2161,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -2166,7 +2175,7 @@ func TestHandler_SymmetricEncrypt(t *testing.T) {
 // TestHandler_SymmetricDecrypt tests the symmetric decrypt handler
 func TestHandler_SymmetricDecrypt(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key using the software backend
 	genParams := GenerateKeyParams{
@@ -2176,7 +2185,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2187,7 +2196,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 		Plaintext: []byte("secret data"),
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
-	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.encrypt", Params: encryptParamsJSON, ID: 1}
+	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 1}
 	encryptResult, err := server.handleEncrypt(encryptReq)
 	require.NoError(t, err)
 
@@ -2205,7 +2214,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2227,7 +2236,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 			AdditionalData: []byte("aad"),
 		}
 		encryptParamsAADJSON, _ := json.Marshal(encryptParamsAAD)
-		encryptReqAAD := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.encrypt", Params: encryptParamsAADJSON, ID: 1}
+		encryptReqAAD := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsAADJSON, ID: 1}
 		encryptResultAAD, err := server.handleEncrypt(encryptReqAAD)
 		require.NoError(t, err)
 
@@ -2245,7 +2254,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2267,7 +2276,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2280,7 +2289,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 	t.Run("fails with invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -2301,7 +2310,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2318,7 +2327,7 @@ func TestHandler_SymmetricDecrypt(t *testing.T) {
 // TestHandler_FindKeyByCN tests the findKeyByCN helper function
 func TestHandler_FindKeyByCN(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key first
 	genParams := GenerateKeyParams{
@@ -2328,7 +2337,7 @@ func TestHandler_FindKeyByCN(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2348,7 +2357,7 @@ func TestHandler_FindKeyByCN(t *testing.T) {
 // TestHandler_FindKeyInBackend tests the findKeyInBackend helper function
 func TestHandler_FindKeyInBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key first
 	genParams := GenerateKeyParams{
@@ -2358,7 +2367,7 @@ func TestHandler_FindKeyInBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2383,7 +2392,7 @@ func TestHandler_FindKeyInBackend(t *testing.T) {
 // TestHandler_DeleteKey_NonExistent tests deleting a non-existent key
 func TestHandler_DeleteKey_NonExistent(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails when deleting non-existent key", func(t *testing.T) {
 		params := DeleteKeyParams{
@@ -2394,7 +2403,7 @@ func TestHandler_DeleteKey_NonExistent(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2408,7 +2417,7 @@ func TestHandler_DeleteKey_NonExistent(t *testing.T) {
 // TestHandler_ListKeys_WithParams tests list keys with optional params
 func TestHandler_ListKeys_WithParams(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("handles params in list keys request", func(t *testing.T) {
 		params := map[string]string{"backend": "software"}
@@ -2416,7 +2425,7 @@ func TestHandler_ListKeys_WithParams(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listKeys",
+			Method:  "xkms.listKeys",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2433,12 +2442,12 @@ func TestHandler_ListKeys_WithParams(t *testing.T) {
 // TestHandler_ListCerts_Empty tests listing certificates when none exist
 func TestHandler_ListCerts_Empty(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns empty list when no certs", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listCerts",
+			Method:  "xkms.listCerts",
 			ID:      1,
 		}
 
@@ -2454,7 +2463,7 @@ func TestHandler_ListCerts_Empty(t *testing.T) {
 // TestHandler_CertExists_NotFound tests checking for non-existent cert
 func TestHandler_CertExists_NotFound(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns false for non-existent cert", func(t *testing.T) {
 		params := CertExistsParams{KeyID: "non-existent-cert"}
@@ -2462,7 +2471,7 @@ func TestHandler_CertExists_NotFound(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.certExists",
+			Method:  "xkms.certExists",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2479,7 +2488,7 @@ func TestHandler_CertExists_NotFound(t *testing.T) {
 // TestHandler_GetCert_NotFound tests getting a non-existent cert
 func TestHandler_GetCert_NotFound(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails for non-existent cert", func(t *testing.T) {
 		params := GetCertParams{KeyID: "non-existent-cert"}
@@ -2487,7 +2496,7 @@ func TestHandler_GetCert_NotFound(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCert",
+			Method:  "xkms.getCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2501,7 +2510,7 @@ func TestHandler_GetCert_NotFound(t *testing.T) {
 // TestHandler_GetCertChain_NotFound tests getting a non-existent cert chain
 func TestHandler_GetCertChain_NotFound(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails for non-existent cert chain", func(t *testing.T) {
 		params := GetCertChainParams{KeyID: "non-existent-chain"}
@@ -2509,7 +2518,7 @@ func TestHandler_GetCertChain_NotFound(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getCertChain",
+			Method:  "xkms.getCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2523,7 +2532,7 @@ func TestHandler_GetCertChain_NotFound(t *testing.T) {
 // TestHandler_DeleteCert_NotFound tests deleting a non-existent cert
 func TestHandler_DeleteCert_NotFound(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails for non-existent cert", func(t *testing.T) {
 		params := DeleteCertParams{KeyID: "non-existent-cert"}
@@ -2531,7 +2540,7 @@ func TestHandler_DeleteCert_NotFound(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteCert",
+			Method:  "xkms.deleteCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2545,7 +2554,7 @@ func TestHandler_DeleteCert_NotFound(t *testing.T) {
 // TestHandler_Sign_NonExistentKey tests signing with non-existent key
 func TestHandler_Sign_NonExistentKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with non-existent key", func(t *testing.T) {
 		params := SignParams{
@@ -2558,7 +2567,7 @@ func TestHandler_Sign_NonExistentKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2572,7 +2581,7 @@ func TestHandler_Sign_NonExistentKey(t *testing.T) {
 // TestHandler_Verify_NonExistentKey tests verifying with non-existent key
 func TestHandler_Verify_NonExistentKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with non-existent key", func(t *testing.T) {
 		params := VerifyParams{
@@ -2586,7 +2595,7 @@ func TestHandler_Verify_NonExistentKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2600,7 +2609,7 @@ func TestHandler_Verify_NonExistentKey(t *testing.T) {
 // TestHandler_RotateKey_NonExistent tests rotating a non-existent key
 func TestHandler_RotateKey_NonExistent(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails for non-existent key", func(t *testing.T) {
 		params := RotateKeyParams{
@@ -2611,7 +2620,7 @@ func TestHandler_RotateKey_NonExistent(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2625,7 +2634,7 @@ func TestHandler_RotateKey_NonExistent(t *testing.T) {
 // TestHandler_Encrypt_NonExistentKey tests encrypting with non-existent key
 func TestHandler_Encrypt_NonExistentKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with non-existent key", func(t *testing.T) {
 		params := EncryptParams{
@@ -2637,7 +2646,7 @@ func TestHandler_Encrypt_NonExistentKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2651,7 +2660,7 @@ func TestHandler_Encrypt_NonExistentKey(t *testing.T) {
 // TestHandler_Decrypt_NonExistentKey tests decrypting with non-existent key
 func TestHandler_Decrypt_NonExistentKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with non-existent key", func(t *testing.T) {
 		params := DecryptParams{
@@ -2663,7 +2672,7 @@ func TestHandler_Decrypt_NonExistentKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2677,7 +2686,7 @@ func TestHandler_Decrypt_NonExistentKey(t *testing.T) {
 // TestHandler_AsymmetricEncrypt_NonExistentKey tests asymmetric encrypt with non-existent key
 func TestHandler_AsymmetricEncrypt_NonExistentKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with non-existent key", func(t *testing.T) {
 		params := AsymmetricEncryptParams{
@@ -2689,7 +2698,7 @@ func TestHandler_AsymmetricEncrypt_NonExistentKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2703,7 +2712,7 @@ func TestHandler_AsymmetricEncrypt_NonExistentKey(t *testing.T) {
 // TestHandler_AsymmetricDecrypt_NonExistentKey tests asymmetric decrypt with non-existent key
 func TestHandler_AsymmetricDecrypt_NonExistentKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with non-existent key", func(t *testing.T) {
 		params := AsymmetricDecryptParams{
@@ -2715,7 +2724,7 @@ func TestHandler_AsymmetricDecrypt_NonExistentKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2729,7 +2738,7 @@ func TestHandler_AsymmetricDecrypt_NonExistentKey(t *testing.T) {
 // TestHandler_GetKey_NonExistentBackend tests get key with non-existent backend
 func TestHandler_GetKey_NonExistentBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with non-existent backend", func(t *testing.T) {
 		params := GetKeyParams{
@@ -2740,7 +2749,7 @@ func TestHandler_GetKey_NonExistentBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getKey",
+			Method:  "xkms.getKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2754,7 +2763,7 @@ func TestHandler_GetKey_NonExistentBackend(t *testing.T) {
 // TestHandler_Verify_InvalidSignature tests verify with invalid signature
 func TestHandler_Verify_InvalidSignature(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -2764,7 +2773,7 @@ func TestHandler_Verify_InvalidSignature(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2780,7 +2789,7 @@ func TestHandler_Verify_InvalidSignature(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2797,7 +2806,7 @@ func TestHandler_Verify_InvalidSignature(t *testing.T) {
 // TestHandler_GenerateKey_Symmetric tests symmetric key generation
 func TestHandler_GenerateKey_Symmetric(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("generates AES key", func(t *testing.T) {
 		params := GenerateKeyParams{
@@ -2810,7 +2819,7 @@ func TestHandler_GenerateKey_Symmetric(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2833,7 +2842,7 @@ func TestHandler_GenerateKey_Symmetric(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2850,7 +2859,7 @@ func TestHandler_GenerateKey_Symmetric(t *testing.T) {
 // TestHandler_Sign_WithECDSA tests signing with ECDSA key
 func TestHandler_Sign_WithECDSA(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an ECDSA key
 	genParams := GenerateKeyParams{
@@ -2860,7 +2869,7 @@ func TestHandler_Sign_WithECDSA(t *testing.T) {
 		Curve:   "P-256",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2875,7 +2884,7 @@ func TestHandler_Sign_WithECDSA(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2892,7 +2901,7 @@ func TestHandler_Sign_WithECDSA(t *testing.T) {
 // TestHandler_Sign_WithEd25519 tests signing with Ed25519 key
 func TestHandler_Sign_WithEd25519(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an Ed25519 key
 	genParams := GenerateKeyParams{
@@ -2901,7 +2910,7 @@ func TestHandler_Sign_WithEd25519(t *testing.T) {
 		KeyType: "ed25519",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2916,7 +2925,7 @@ func TestHandler_Sign_WithEd25519(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2933,7 +2942,7 @@ func TestHandler_Sign_WithEd25519(t *testing.T) {
 // TestHandler_Verify_WithECDSA tests verifying with ECDSA key
 func TestHandler_Verify_WithECDSA(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an ECDSA key
 	genParams := GenerateKeyParams{
@@ -2943,7 +2952,7 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 		Curve:   "P-256",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -2955,7 +2964,7 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 		Hash:    "SHA256",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -2973,7 +2982,7 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -2990,7 +2999,7 @@ func TestHandler_Verify_WithECDSA(t *testing.T) {
 // TestHandler_Verify_WithEd25519 tests verifying with Ed25519 key
 func TestHandler_Verify_WithEd25519(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an Ed25519 key
 	genParams := GenerateKeyParams{
@@ -2999,7 +3008,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 		KeyType: "ed25519",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3011,7 +3020,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 		Hash:    "",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -3029,7 +3038,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3046,7 +3055,7 @@ func TestHandler_Verify_WithEd25519(t *testing.T) {
 // TestHandler_Sign_WithDifferentHashes tests signing with different hash algorithms
 func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -3056,7 +3065,7 @@ func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3074,7 +3083,7 @@ func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 
 			req := &JSONRPCRequest{
 				JSONRPC: "2.0",
-				Method:  "keychain.sign",
+				Method:  "xkms.sign",
 				Params:  paramsJSON,
 				ID:      1,
 			}
@@ -3092,7 +3101,7 @@ func TestHandler_Sign_WithDifferentHashes(t *testing.T) {
 // TestHandler_Verify_SignatureAsArray tests verify with signature as JSON array of numbers
 func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -3102,7 +3111,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3114,7 +3123,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 		Hash:    "SHA256",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -3138,7 +3147,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3164,7 +3173,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3181,7 +3190,7 @@ func TestHandler_Verify_SignatureAsArray(t *testing.T) {
 // TestHandler_GetTLSCertificate_Success tests getting TLS certificate successfully
 func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key first
 	genParams := GenerateKeyParams{
@@ -3191,7 +3200,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3222,7 +3231,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 		CertPEM: string(certPEM),
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
-	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.saveCert", Params: saveCertParamsJSON, ID: 1}
+	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
 	_, err = server.handleSaveCert(saveCertReq)
 	require.NoError(t, err)
 
@@ -3235,7 +3244,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3256,7 +3265,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3273,7 +3282,7 @@ func TestHandler_GetTLSCertificate_Success(t *testing.T) {
 // TestHandler_DecryptAsymmetric tests asymmetric decryption path
 func TestHandler_DecryptAsymmetric(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key for asymmetric encryption/decryption
 	genParams := GenerateKeyParams{
@@ -3283,7 +3292,7 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3297,9 +3306,9 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 	rsaPubKey, ok := signer.Public().(*rsa.PublicKey)
 	require.True(t, ok, "expected RSA public key")
 
-	// Encrypt with PKCS1v15
+	// Encrypt with OAEP SHA-256
 	plaintext := []byte("asymmetric secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPubKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
 	require.NoError(t, err)
 
 	t.Run("decrypts asymmetrically without specifying backend", func(t *testing.T) {
@@ -3312,7 +3321,7 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3335,7 +3344,7 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3352,7 +3361,7 @@ func TestHandler_DecryptAsymmetric(t *testing.T) {
 // TestHandler_CopyKey_InvalidSourceBackend tests copy key with invalid source backend
 func TestHandler_CopyKey_InvalidSourceBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid source backend type", func(t *testing.T) {
 		params := CopyKeyParams{
@@ -3366,7 +3375,7 @@ func TestHandler_CopyKey_InvalidSourceBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3387,7 +3396,7 @@ func TestHandler_CopyKey_InvalidSourceBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3400,7 +3409,7 @@ func TestHandler_CopyKey_InvalidSourceBackend(t *testing.T) {
 // TestHandler_SaveCertChain_InvalidCertInMiddle tests saving cert chain with bad cert in middle
 func TestHandler_SaveCertChain_InvalidCertInMiddle(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Create a valid certificate
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -3437,7 +3446,7 @@ func TestHandler_SaveCertChain_InvalidCertInMiddle(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCertChain",
+			Method:  "xkms.saveCertChain",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3451,7 +3460,7 @@ func TestHandler_SaveCertChain_InvalidCertInMiddle(t *testing.T) {
 // TestHandler_SaveCert_CorruptCertificate tests saving a corrupt certificate
 func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with corrupt certificate data", func(t *testing.T) {
 		// Create a PEM block with invalid DER data
@@ -3468,7 +3477,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3493,7 +3502,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.saveCert",
+			Method:  "xkms.saveCert",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3507,7 +3516,7 @@ func TestHandler_SaveCert_CorruptCertificate(t *testing.T) {
 // TestHandler_SymmetricEncrypt_WithNonSymmetricBackend tests encrypt error handling
 func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key (not symmetric)
 	genParams := GenerateKeyParams{
@@ -3517,7 +3526,7 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3531,7 +3540,7 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3544,7 +3553,7 @@ func TestHandler_SymmetricEncrypt_WithNonSymmetricBackend(t *testing.T) {
 // TestHandler_Decrypt_InvalidBackend tests decrypt with invalid backend
 func TestHandler_Decrypt_InvalidBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid backend", func(t *testing.T) {
 		params := DecryptParams{
@@ -3556,7 +3565,7 @@ func TestHandler_Decrypt_InvalidBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3570,7 +3579,7 @@ func TestHandler_Decrypt_InvalidBackend(t *testing.T) {
 // TestHandler_DeleteKey_SymmetricBackendSearch tests delete key fallback to symmetric
 func TestHandler_DeleteKey_SymmetricBackendSearch(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key
 	genParams := GenerateKeyParams{
@@ -3580,7 +3589,7 @@ func TestHandler_DeleteKey_SymmetricBackendSearch(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3593,7 +3602,7 @@ func TestHandler_DeleteKey_SymmetricBackendSearch(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3610,7 +3619,7 @@ func TestHandler_DeleteKey_SymmetricBackendSearch(t *testing.T) {
 // TestHandler_GenerateKey_SymmetricBadBackend tests symmetric key with bad backend
 func TestHandler_GenerateKey_SymmetricBadBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid backend for symmetric key", func(t *testing.T) {
 		params := GenerateKeyParams{
@@ -3623,7 +3632,7 @@ func TestHandler_GenerateKey_SymmetricBadBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3636,7 +3645,7 @@ func TestHandler_GenerateKey_SymmetricBadBackend(t *testing.T) {
 // TestHandler_Verify_SHA1Hash tests verify with SHA1 hash
 func TestHandler_Verify_SHA1Hash(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -3646,7 +3655,7 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3658,7 +3667,7 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 		Hash:    "SHA1",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -3676,7 +3685,7 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3693,7 +3702,7 @@ func TestHandler_Verify_SHA1Hash(t *testing.T) {
 // TestHandler_Verify_SHA384Hash tests verify with SHA384 hash
 func TestHandler_Verify_SHA384Hash(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -3703,7 +3712,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3715,7 +3724,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 		Hash:    "SHA384",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -3733,7 +3742,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3750,7 +3759,7 @@ func TestHandler_Verify_SHA384Hash(t *testing.T) {
 // TestHandler_Verify_SHA512Hash tests verify with SHA512 hash
 func TestHandler_Verify_SHA512Hash(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -3760,7 +3769,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3772,7 +3781,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 		Hash:    "SHA512",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -3790,7 +3799,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3807,7 +3816,7 @@ func TestHandler_Verify_SHA512Hash(t *testing.T) {
 // TestHandler_GetTLSCertificate_WithChain tests TLS cert with chain
 func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -3817,7 +3826,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3873,7 +3882,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 		CertPEM: string(leafCertPEM),
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
-	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.saveCert", Params: saveCertParamsJSON, ID: 1}
+	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
 	_, err = server.handleSaveCert(saveCertReq)
 	require.NoError(t, err)
 
@@ -3883,7 +3892,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 		ChainPEMs: []string{string(leafCertPEM), string(caCertPEM)},
 	}
 	saveChainParamsJSON, _ := json.Marshal(saveChainParams)
-	saveChainReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.saveCertChain", Params: saveChainParamsJSON, ID: 1}
+	saveChainReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCertChain", Params: saveChainParamsJSON, ID: 1}
 	_, err = server.handleSaveCertChain(saveChainReq)
 	require.NoError(t, err)
 
@@ -3896,7 +3905,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getTLSCertificate",
+			Method:  "xkms.getTLSCertificate",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3913,7 +3922,7 @@ func TestHandler_GetTLSCertificate_WithChain(t *testing.T) {
 // TestHandler_Encrypt_DefaultBackend tests encrypt with default backend
 func TestHandler_Encrypt_DefaultBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key using default backend name
 	genParams := GenerateKeyParams{
@@ -3923,7 +3932,7 @@ func TestHandler_Encrypt_DefaultBackend(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -3937,7 +3946,7 @@ func TestHandler_Encrypt_DefaultBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3954,7 +3963,7 @@ func TestHandler_Encrypt_DefaultBackend(t *testing.T) {
 // TestHandler_GetImportParameters_Success tests successful import parameters retrieval
 func TestHandler_GetImportParameters_Success(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("gets import parameters successfully", func(t *testing.T) {
 		params := GetImportParametersParams{
@@ -3966,7 +3975,7 @@ func TestHandler_GetImportParameters_Success(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getImportParameters",
+			Method:  "xkms.getImportParameters",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -3984,7 +3993,7 @@ func TestHandler_GetImportParameters_Success(t *testing.T) {
 // TestHandler_WrapKey_Success tests successful key wrapping
 func TestHandler_WrapKey_Success(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// First get import parameters to get a valid wrapping key
 	importParamsReq := GetImportParametersParams{
@@ -3993,7 +4002,7 @@ func TestHandler_WrapKey_Success(t *testing.T) {
 		Algorithm: "RSAES_OAEP_SHA_256",
 	}
 	importParamsJSON, _ := json.Marshal(importParamsReq)
-	importReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.getImportParameters", Params: importParamsJSON, ID: 1}
+	importReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getImportParameters", Params: importParamsJSON, ID: 1}
 	importResult, err := server.handleGetImportParameters(importReq)
 	require.NoError(t, err)
 
@@ -4015,7 +4024,7 @@ func TestHandler_WrapKey_Success(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.wrapKey",
+			Method:  "xkms.wrapKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4032,7 +4041,7 @@ func TestHandler_WrapKey_Success(t *testing.T) {
 // TestHandler_ImportExportKeyFlow tests export key flow error handling
 func TestHandler_ImportExportKeyFlow(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an exportable key
 	genParams := GenerateKeyParams{
@@ -4043,7 +4052,7 @@ func TestHandler_ImportExportKeyFlow(t *testing.T) {
 		Exportable: true,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4058,7 +4067,7 @@ func TestHandler_ImportExportKeyFlow(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.exportKey",
+			Method:  "xkms.exportKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4072,7 +4081,7 @@ func TestHandler_ImportExportKeyFlow(t *testing.T) {
 // TestHandler_ImportKey_ErrorPath tests key import error handling
 func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Get import parameters
 	importParamsReq := GetImportParametersParams{
@@ -4081,7 +4090,7 @@ func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 		Algorithm: "RSAES_OAEP_SHA_256",
 	}
 	importParamsJSON, _ := json.Marshal(importParamsReq)
-	importReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.getImportParameters", Params: importParamsJSON, ID: 1}
+	importReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getImportParameters", Params: importParamsJSON, ID: 1}
 	importResult, err := server.handleGetImportParameters(importReq)
 	require.NoError(t, err)
 
@@ -4099,7 +4108,7 @@ func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 		ImportToken:          importParams.ImportToken,
 	}
 	wrapParamsJSON, _ := json.Marshal(wrapParamsReq)
-	wrapReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.wrapKey", Params: wrapParamsJSON, ID: 1}
+	wrapReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.wrapKey", Params: wrapParamsJSON, ID: 1}
 	wrapResult, err := server.handleWrapKey(wrapReq)
 	require.NoError(t, err)
 
@@ -4119,7 +4128,7 @@ func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.importKey",
+			Method:  "xkms.importKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4132,12 +4141,12 @@ func TestHandler_ImportKey_ErrorPath(t *testing.T) {
 // TestHandler_ListKeys_Empty tests listing keys when empty
 func TestHandler_ListKeys_Empty(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns empty list when no keys exist", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listKeys",
+			Method:  "xkms.listKeys",
 			ID:      1,
 		}
 
@@ -4153,7 +4162,7 @@ func TestHandler_ListKeys_Empty(t *testing.T) {
 // TestHandler_CopyKey_ErrorFlow tests copy key error handling
 func TestHandler_CopyKey_ErrorFlow(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key (non-exportable by default)
 	genParams := GenerateKeyParams{
@@ -4164,7 +4173,7 @@ func TestHandler_CopyKey_ErrorFlow(t *testing.T) {
 		Exportable: false,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4180,7 +4189,7 @@ func TestHandler_CopyKey_ErrorFlow(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4194,7 +4203,7 @@ func TestHandler_CopyKey_ErrorFlow(t *testing.T) {
 // TestHandler_ExportKey_NonExportableKey tests export error for non-exportable key
 func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a non-exportable key
 	genParams := GenerateKeyParams{
@@ -4205,7 +4214,7 @@ func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 		Exportable: false,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4218,7 +4227,7 @@ func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.exportKey",
+			Method:  "xkms.exportKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4232,7 +4241,7 @@ func TestHandler_ExportKey_NonExportableKey(t *testing.T) {
 // TestHandler_Decrypt_SymmetricWithInvalidCiphertext tests decrypt with invalid ciphertext
 func TestHandler_Decrypt_SymmetricWithInvalidCiphertext(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key
 	genParams := GenerateKeyParams{
@@ -4242,7 +4251,7 @@ func TestHandler_Decrypt_SymmetricWithInvalidCiphertext(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4257,7 +4266,7 @@ func TestHandler_Decrypt_SymmetricWithInvalidCiphertext(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4270,7 +4279,7 @@ func TestHandler_Decrypt_SymmetricWithInvalidCiphertext(t *testing.T) {
 // TestHandler_ListCerts_WithCerts tests listing certs when some exist
 func TestHandler_ListCerts_WithCerts(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Create and save a certificate
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -4296,14 +4305,14 @@ func TestHandler_ListCerts_WithCerts(t *testing.T) {
 		CertPEM: string(certPEM),
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
-	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.saveCert", Params: saveCertParamsJSON, ID: 1}
+	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
 	_, err = server.handleSaveCert(saveCertReq)
 	require.NoError(t, err)
 
 	t.Run("lists certs with existing certs", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listCerts",
+			Method:  "xkms.listCerts",
 			ID:      1,
 		}
 
@@ -4319,7 +4328,7 @@ func TestHandler_ListCerts_WithCerts(t *testing.T) {
 // TestHandler_DeleteKey_SearchFallback tests delete key search fallback
 func TestHandler_DeleteKey_SearchFallback(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4329,7 +4338,7 @@ func TestHandler_DeleteKey_SearchFallback(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4342,7 +4351,7 @@ func TestHandler_DeleteKey_SearchFallback(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4359,7 +4368,7 @@ func TestHandler_DeleteKey_SearchFallback(t *testing.T) {
 // TestHandler_ListKeys_MultipleKeys tests listing multiple keys
 func TestHandler_ListKeys_MultipleKeys(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate multiple keys
 	keyIDs := []string{"list-key-1", "list-key-2", "list-key-3"}
@@ -4371,7 +4380,7 @@ func TestHandler_ListKeys_MultipleKeys(t *testing.T) {
 			KeySize: 2048,
 		}
 		genParamsJSON, _ := json.Marshal(genParams)
-		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+		genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 		_, err := server.handleGenerateKey(genReq)
 		require.NoError(t, err)
 	}
@@ -4379,7 +4388,7 @@ func TestHandler_ListKeys_MultipleKeys(t *testing.T) {
 	t.Run("lists all keys", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listKeys",
+			Method:  "xkms.listKeys",
 			ID:      1,
 		}
 
@@ -4395,7 +4404,7 @@ func TestHandler_ListKeys_MultipleKeys(t *testing.T) {
 // TestHandler_Sign_InvalidHashAlgorithm tests sign with invalid hash
 func TestHandler_Sign_InvalidHashAlgorithm(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4405,7 +4414,7 @@ func TestHandler_Sign_InvalidHashAlgorithm(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4420,7 +4429,7 @@ func TestHandler_Sign_InvalidHashAlgorithm(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4434,7 +4443,7 @@ func TestHandler_Sign_InvalidHashAlgorithm(t *testing.T) {
 // TestHandler_Verify_InvalidHashAlgorithm tests verify with invalid hash
 func TestHandler_Verify_InvalidHashAlgorithm(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4444,7 +4453,7 @@ func TestHandler_Verify_InvalidHashAlgorithm(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4460,7 +4469,7 @@ func TestHandler_Verify_InvalidHashAlgorithm(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4474,7 +4483,7 @@ func TestHandler_Verify_InvalidHashAlgorithm(t *testing.T) {
 // TestHandler_GetKey_WithDefaultBackend tests getting key without backend
 func TestHandler_GetKey_WithDefaultBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4484,7 +4493,7 @@ func TestHandler_GetKey_WithDefaultBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4497,7 +4506,7 @@ func TestHandler_GetKey_WithDefaultBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.getKey",
+			Method:  "xkms.getKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4514,7 +4523,7 @@ func TestHandler_GetKey_WithDefaultBackend(t *testing.T) {
 // TestHandler_DeleteKey_WithBackend tests deleting key with backend specified
 func TestHandler_DeleteKey_WithBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4524,7 +4533,7 @@ func TestHandler_DeleteKey_WithBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4537,7 +4546,7 @@ func TestHandler_DeleteKey_WithBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4554,7 +4563,7 @@ func TestHandler_DeleteKey_WithBackend(t *testing.T) {
 // TestHandler_Decrypt_WithEmptyCiphertext tests decrypt with empty ciphertext
 func TestHandler_Decrypt_WithEmptyCiphertext(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with empty ciphertext", func(t *testing.T) {
 		params := DecryptParams{
@@ -4566,7 +4575,7 @@ func TestHandler_Decrypt_WithEmptyCiphertext(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4580,7 +4589,7 @@ func TestHandler_Decrypt_WithEmptyCiphertext(t *testing.T) {
 // TestHandler_Encrypt_InvalidBackend tests encrypt with invalid backend
 func TestHandler_Encrypt_InvalidBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("fails with invalid backend", func(t *testing.T) {
 		params := EncryptParams{
@@ -4592,7 +4601,7 @@ func TestHandler_Encrypt_InvalidBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.encrypt",
+			Method:  "xkms.encrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4605,7 +4614,7 @@ func TestHandler_Encrypt_InvalidBackend(t *testing.T) {
 // TestHandler_GenerateKey_Ed25519 tests generating an Ed25519 key
 func TestHandler_GenerateKey_Ed25519(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("generates Ed25519 key", func(t *testing.T) {
 		params := GenerateKeyParams{
@@ -4617,7 +4626,7 @@ func TestHandler_GenerateKey_Ed25519(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4634,7 +4643,7 @@ func TestHandler_GenerateKey_Ed25519(t *testing.T) {
 // TestHandler_Sign_DefaultHash tests signing with default hash (SHA256)
 func TestHandler_Sign_DefaultHash(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4644,7 +4653,7 @@ func TestHandler_Sign_DefaultHash(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4659,7 +4668,7 @@ func TestHandler_Sign_DefaultHash(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4676,7 +4685,7 @@ func TestHandler_Sign_DefaultHash(t *testing.T) {
 // TestHandler_RotateKey_WithBackend tests rotating key with backend
 func TestHandler_RotateKey_WithBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4686,7 +4695,7 @@ func TestHandler_RotateKey_WithBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4699,7 +4708,7 @@ func TestHandler_RotateKey_WithBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.rotateKey",
+			Method:  "xkms.rotateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4716,7 +4725,7 @@ func TestHandler_RotateKey_WithBackend(t *testing.T) {
 // TestHandler_Sign_WithoutBackend tests signing without specifying backend
 func TestHandler_Sign_WithoutBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4726,7 +4735,7 @@ func TestHandler_Sign_WithoutBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4741,7 +4750,7 @@ func TestHandler_Sign_WithoutBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4758,7 +4767,7 @@ func TestHandler_Sign_WithoutBackend(t *testing.T) {
 // TestHandler_Verify_WithoutBackend tests verifying without specifying backend
 func TestHandler_Verify_WithoutBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4768,7 +4777,7 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4780,7 +4789,7 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 		Hash:    "SHA256",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -4798,7 +4807,7 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4815,12 +4824,12 @@ func TestHandler_Verify_WithoutBackend(t *testing.T) {
 // TestHandler_ListKeys_InvalidParams tests list keys with invalid params
 func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("handles invalid JSON params gracefully", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listKeys",
+			Method:  "xkms.listKeys",
 			Params:  json.RawMessage(`invalid`),
 			ID:      1,
 		}
@@ -4838,7 +4847,7 @@ func TestHandler_ListKeys_InvalidParams(t *testing.T) {
 // TestHandler_AsymmetricEncrypt_DefaultBackend tests asymmetric encrypt without backend
 func TestHandler_AsymmetricEncrypt_DefaultBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4848,7 +4857,7 @@ func TestHandler_AsymmetricEncrypt_DefaultBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4862,7 +4871,7 @@ func TestHandler_AsymmetricEncrypt_DefaultBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricEncrypt",
+			Method:  "xkms.asymmetricEncrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4879,7 +4888,7 @@ func TestHandler_AsymmetricEncrypt_DefaultBackend(t *testing.T) {
 // TestHandler_AsymmetricDecrypt_DefaultBackend tests asymmetric decrypt without backend
 func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4889,7 +4898,7 @@ func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4904,7 +4913,7 @@ func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 
 	// Encrypt
 	plaintext := []byte("secret")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPubKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
 	require.NoError(t, err)
 
 	t.Run("decrypts without specifying backend", func(t *testing.T) {
@@ -4917,7 +4926,7 @@ func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.asymmetricDecrypt",
+			Method:  "xkms.asymmetricDecrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4934,7 +4943,7 @@ func TestHandler_AsymmetricDecrypt_DefaultBackend(t *testing.T) {
 // TestHandler_DeleteKey_SearchSymmetric tests delete key falling back to symmetric backend
 func TestHandler_DeleteKey_SearchSymmetric(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key
 	genParams := GenerateKeyParams{
@@ -4944,7 +4953,7 @@ func TestHandler_DeleteKey_SearchSymmetric(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4957,7 +4966,7 @@ func TestHandler_DeleteKey_SearchSymmetric(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -4974,7 +4983,7 @@ func TestHandler_DeleteKey_SearchSymmetric(t *testing.T) {
 // TestHandler_ListKeys_WithBackend tests listing keys with specific backend
 func TestHandler_ListKeys_WithBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a key
 	genParams := GenerateKeyParams{
@@ -4984,7 +4993,7 @@ func TestHandler_ListKeys_WithBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -4996,7 +5005,7 @@ func TestHandler_ListKeys_WithBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listKeys",
+			Method:  "xkms.listKeys",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5013,7 +5022,7 @@ func TestHandler_ListKeys_WithBackend(t *testing.T) {
 // TestHandler_Decrypt_Asymmetric tests asymmetric decryption through handleDecrypt
 func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -5023,7 +5032,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -5033,7 +5042,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 		Backend: "software",
 	}
 	getParamsJSON, _ := json.Marshal(getParams)
-	getReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.getKey", Params: getParamsJSON, ID: 2}
+	getReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getKey", Params: getParamsJSON, ID: 2}
 	result, err := server.handleGetKey(getReq)
 	require.NoError(t, err)
 	getResult := result.(GetKeyResult)
@@ -5047,7 +5056,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 
 	// Encrypt some data with RSA PKCS1v15
 	plaintext := []byte("secret message for asymmetric decrypt test")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPubKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
 	require.NoError(t, err)
 
 	t.Run("decrypts asymmetric data", func(t *testing.T) {
@@ -5060,7 +5069,7 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5077,12 +5086,12 @@ func TestHandler_Decrypt_Asymmetric(t *testing.T) {
 // TestHandler_DeleteKey_ErrorPaths tests various error paths in deleteKey
 func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  json.RawMessage(`{invalid`),
 			ID:      1,
 		}
@@ -5100,7 +5109,7 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5119,7 +5128,7 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.deleteKey",
+			Method:  "xkms.deleteKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5133,12 +5142,12 @@ func TestHandler_DeleteKey_ErrorPaths(t *testing.T) {
 // TestHandler_Verify_ErrorPaths tests error paths in handleVerify
 func TestHandler_Verify_ErrorPaths(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  json.RawMessage(`{invalid`),
 			ID:      1,
 		}
@@ -5157,7 +5166,7 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5177,7 +5186,7 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5191,12 +5200,12 @@ func TestHandler_Verify_ErrorPaths(t *testing.T) {
 // TestHandler_Sign_ErrorPaths tests error paths in handleSign
 func TestHandler_Sign_ErrorPaths(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("invalid params", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  json.RawMessage(`{invalid`),
 			ID:      1,
 		}
@@ -5214,7 +5223,7 @@ func TestHandler_Sign_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.sign",
+			Method:  "xkms.sign",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5228,7 +5237,7 @@ func TestHandler_Sign_ErrorPaths(t *testing.T) {
 // TestHandler_HandleGenerateKey_MoreErrorPaths tests additional error paths
 func TestHandler_HandleGenerateKey_MoreErrorPaths(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("unsupported key type", func(t *testing.T) {
 		params := GenerateKeyParams{
@@ -5240,7 +5249,7 @@ func TestHandler_HandleGenerateKey_MoreErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.generateKey",
+			Method:  "xkms.generateKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5254,7 +5263,7 @@ func TestHandler_HandleGenerateKey_MoreErrorPaths(t *testing.T) {
 // TestHandler_CopyKey_ErrorPaths tests error paths in handleCopyKey
 func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("missing dest_backend", func(t *testing.T) {
 		params := CopyKeyParams{
@@ -5267,7 +5276,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5288,7 +5297,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5309,7 +5318,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5331,7 +5340,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5353,7 +5362,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.copyKey",
+			Method:  "xkms.copyKey",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5367,7 +5376,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 // TestHandler_Decrypt_WithBackendSearch tests decrypt with backend search
 func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate a symmetric key
 	genParams := GenerateKeyParams{
@@ -5377,7 +5386,7 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 		Algorithm: "aes256-gcm",
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -5388,7 +5397,7 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 		Plaintext: []byte("search test data"),
 	}
 	encryptParamsJSON, _ := json.Marshal(encryptParams)
-	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.encrypt", Params: encryptParamsJSON, ID: 2}
+	encryptReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.encrypt", Params: encryptParamsJSON, ID: 2}
 	encResult, err := server.handleEncrypt(encryptReq)
 	require.NoError(t, err)
 	encryptResult := encResult.(EncryptResult)
@@ -5405,7 +5414,7 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5423,7 +5432,7 @@ func TestHandler_Decrypt_WithBackendSearch(t *testing.T) {
 // when key is not found in symmetric backend
 func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key in software backend (not symmetric)
 	genParams := GenerateKeyParams{
@@ -5433,7 +5442,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -5443,7 +5452,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 		Backend: "software",
 	}
 	getParamsJSON, _ := json.Marshal(getParams)
-	getReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.getKey", Params: getParamsJSON, ID: 2}
+	getReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.getKey", Params: getParamsJSON, ID: 2}
 	result, err := server.handleGetKey(getReq)
 	require.NoError(t, err)
 	getResult := result.(GetKeyResult)
@@ -5457,7 +5466,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 
 	// Encrypt some data
 	plaintext := []byte("test search in software backend")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, rsaPubKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
 	require.NoError(t, err)
 
 	t.Run("finds key in software backend after symmetric lookup fails", func(t *testing.T) {
@@ -5470,7 +5479,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5487,7 +5496,7 @@ func TestHandler_Decrypt_SearchInSoftwareBackend(t *testing.T) {
 // TestHandler_Decrypt_KeyNotFoundAnywhere tests decrypt when key is not found in any backend
 func TestHandler_Decrypt_KeyNotFoundAnywhere(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	t.Run("returns error when key not found in any backend", func(t *testing.T) {
 		params := DecryptParams{
@@ -5499,7 +5508,7 @@ func TestHandler_Decrypt_KeyNotFoundAnywhere(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.decrypt",
+			Method:  "xkms.decrypt",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5514,7 +5523,7 @@ func TestHandler_Decrypt_KeyNotFoundAnywhere(t *testing.T) {
 // This covers the default case in signature conversion (lines 459-463)
 func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -5524,7 +5533,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -5543,7 +5552,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5569,7 +5578,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5586,7 +5595,7 @@ func TestHandler_Verify_SignatureAsStruct(t *testing.T) {
 // TestHandler_Verify_WithByteSliceSignature tests verify with signature passed as []byte directly
 func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Generate an RSA key
 	genParams := GenerateKeyParams{
@@ -5596,7 +5605,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 		KeySize: 2048,
 	}
 	genParamsJSON, _ := json.Marshal(genParams)
-	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.generateKey", Params: genParamsJSON, ID: 1}
+	genReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.generateKey", Params: genParamsJSON, ID: 1}
 	_, err := server.handleGenerateKey(genReq)
 	require.NoError(t, err)
 
@@ -5608,7 +5617,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 		Hash:    "SHA256",
 	}
 	signParamsJSON, _ := json.Marshal(signParams)
-	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.sign", Params: signParamsJSON, ID: 1}
+	signReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.sign", Params: signParamsJSON, ID: 1}
 	signResult, err := server.handleSign(signReq)
 	require.NoError(t, err)
 
@@ -5626,7 +5635,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.verify",
+			Method:  "xkms.verify",
 			Params:  paramsJSON,
 			ID:      1,
 		}
@@ -5643,7 +5652,7 @@ func TestHandler_Verify_WithByteSliceSignature(t *testing.T) {
 // TestHandler_ListCerts_Success tests successful certificate listing
 func TestHandler_ListCerts_Success(t *testing.T) {
 	server := createTestServer(t)
-	defer cleanupKeychain()
+	defer cleanupXKMS()
 
 	// Create a certificate to add to list
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -5670,14 +5679,14 @@ func TestHandler_ListCerts_Success(t *testing.T) {
 		CertPEM: string(certPEM),
 	}
 	saveCertParamsJSON, _ := json.Marshal(saveCertParams)
-	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "keychain.saveCert", Params: saveCertParamsJSON, ID: 1}
+	saveCertReq := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.saveCert", Params: saveCertParamsJSON, ID: 1}
 	_, err = server.handleSaveCert(saveCertReq)
 	require.NoError(t, err)
 
 	t.Run("lists certificates with at least one cert", func(t *testing.T) {
 		req := &JSONRPCRequest{
 			JSONRPC: "2.0",
-			Method:  "keychain.listCerts",
+			Method:  "xkms.listCerts",
 			ID:      1,
 		}
 

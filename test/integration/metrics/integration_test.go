@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
@@ -51,7 +51,7 @@ func TestMetricsOperationRecordingIntegration(t *testing.T) {
 	// Verify operations_total counter
 	var foundOperationsTotal bool
 	for _, mf := range metricFamilies {
-		if mf.GetName() == "keychain_operations_total" {
+		if mf.GetName() == "xkms_operations_total" {
 			foundOperationsTotal = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have recorded operations")
 		}
@@ -61,7 +61,7 @@ func TestMetricsOperationRecordingIntegration(t *testing.T) {
 	// Verify operation_duration_seconds histogram
 	var foundOperationDuration bool
 	for _, mf := range metricFamilies {
-		if mf.GetName() == "keychain_operation_duration_seconds" {
+		if mf.GetName() == "xkms_operation_duration_seconds" {
 			foundOperationDuration = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have recorded durations")
 		}
@@ -88,7 +88,7 @@ func TestMetricsErrorRecordingIntegration(t *testing.T) {
 	// Verify errors_total counter
 	var foundErrorsTotal bool
 	for _, mf := range metricFamilies {
-		if mf.GetName() == "keychain_errors_total" {
+		if mf.GetName() == "xkms_errors_total" {
 			foundErrorsTotal = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have recorded errors")
 
@@ -130,10 +130,10 @@ func TestMetricsHTTPRequestRecordingIntegration(t *testing.T) {
 
 	for _, mf := range metricFamilies {
 		switch mf.GetName() {
-		case "keychain_http_requests_total":
+		case "xkms_http_requests_total":
 			foundHTTPRequests = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have recorded HTTP requests")
-		case "keychain_http_request_duration_seconds":
+		case "xkms_http_request_duration_seconds":
 			foundHTTPDuration = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have recorded HTTP durations")
 		}
@@ -150,9 +150,9 @@ func TestMetricsGRPCRequestRecordingIntegration(t *testing.T) {
 	defer metrics.Disable()
 
 	// Record some gRPC requests
-	metrics.RecordGRPCRequest("/keychain.v1.KeychainService/Generate", "0", 0.150)
-	metrics.RecordGRPCRequest("/keychain.v1.KeychainService/Sign", "0", 0.250)
-	metrics.RecordGRPCRequest("/keychain.v1.KeychainService/Get", "5", 0.100)
+	metrics.RecordGRPCRequest("/xkms.v1.XKMSService/Generate", "0", 0.150)
+	metrics.RecordGRPCRequest("/xkms.v1.XKMSService/Sign", "0", 0.250)
+	metrics.RecordGRPCRequest("/xkms.v1.XKMSService/Get", "5", 0.100)
 
 	// Scrape metrics
 	registry := prometheus.DefaultGatherer
@@ -165,10 +165,10 @@ func TestMetricsGRPCRequestRecordingIntegration(t *testing.T) {
 
 	for _, mf := range metricFamilies {
 		switch mf.GetName() {
-		case "keychain_grpc_requests_total":
+		case "xkms_grpc_requests_total":
 			foundGRPCRequests = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have recorded gRPC requests")
-		case "keychain_grpc_request_duration_seconds":
+		case "xkms_grpc_request_duration_seconds":
 			foundGRPCDuration = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have recorded gRPC durations")
 		}
@@ -196,7 +196,7 @@ func TestMetricsActiveConnectionsIntegration(t *testing.T) {
 
 	var foundActiveConnections bool
 	for _, mf := range metricFamilies {
-		if mf.GetName() == "keychain_active_connections" {
+		if mf.GetName() == "xkms_active_connections" {
 			foundActiveConnections = true
 			assert.Greater(t, len(mf.GetMetric()), 0, "Should have active connections")
 		}
@@ -228,7 +228,7 @@ func TestMetricsBackendHealthIntegration(t *testing.T) {
 	// Verify backend_healthy gauge
 	var foundBackendHealthy bool
 	for _, mf := range metricFamilies {
-		if mf.GetName() == "keychain_backend_healthy" {
+		if mf.GetName() == "xkms_backend_healthy" {
 			foundBackendHealthy = true
 			assert.Equal(t, 3, len(mf.GetMetric()), "Should have 3 backend health metrics")
 
@@ -283,10 +283,10 @@ func TestMetricsKeyAndCertCountsIntegration(t *testing.T) {
 
 	for _, mf := range metricFamilies {
 		switch mf.GetName() {
-		case "keychain_keys_total":
+		case "xkms_keys_total":
 			foundKeysTotal = true
 			assert.Equal(t, 3, len(mf.GetMetric()), "Should have 3 key count metrics")
-		case "keychain_certs_total":
+		case "xkms_certs_total":
 			foundCertsTotal = true
 			assert.Equal(t, 3, len(mf.GetMetric()), "Should have 3 cert count metrics")
 		}
@@ -351,9 +351,9 @@ func TestMetricsPrometheusEndpointIntegration(t *testing.T) {
 	bodyStr := string(body)
 
 	// Verify metrics are present in Prometheus format
-	assert.Contains(t, bodyStr, "keychain_operations_total", "Should contain operations metric")
-	assert.Contains(t, bodyStr, "keychain_errors_total", "Should contain errors metric")
-	assert.Contains(t, bodyStr, "keychain_backend_healthy", "Should contain health metric")
+	assert.Contains(t, bodyStr, "xkms_operations_total", "Should contain operations metric")
+	assert.Contains(t, bodyStr, "xkms_errors_total", "Should contain errors metric")
+	assert.Contains(t, bodyStr, "xkms_backend_healthy", "Should contain health metric")
 }
 
 // TestMetricsConcurrentRecordingIntegration tests concurrent metric recording
@@ -428,7 +428,7 @@ func TestMetricsHistogramBucketsIntegration(t *testing.T) {
 
 	// Find histogram metric
 	for _, mf := range metricFamilies {
-		if mf.GetName() == "keychain_operation_duration_seconds" {
+		if mf.GetName() == "xkms_operation_duration_seconds" {
 			for _, m := range mf.GetMetric() {
 				histogram := m.GetHistogram()
 				if histogram != nil {
@@ -463,7 +463,7 @@ func TestMetricsLabelConsistencyIntegration(t *testing.T) {
 
 	// Verify label consistency
 	for _, mf := range metricFamilies {
-		if mf.GetName() == "keychain_operations_total" {
+		if mf.GetName() == "xkms_operations_total" {
 			for _, m := range mf.GetMetric() {
 				// Verify all expected labels are present
 				labels := make(map[string]string)
@@ -499,14 +499,14 @@ func TestMetricsNamespaceIntegration(t *testing.T) {
 	metricFamilies, err := registry.Gather()
 	require.NoError(t, err, "Failed to gather metrics")
 
-	// Verify all keychain metrics have the correct namespace
+	// Verify all xkms metrics have the correct namespace
 	for _, mf := range metricFamilies {
 		name := mf.GetName()
-		if strings.HasPrefix(name, "keychain") {
-			assert.True(t, strings.HasPrefix(name, "keychain_") ||
-				strings.HasPrefix(name, "keychain_http_") ||
-				strings.HasPrefix(name, "keychain_grpc_"),
-				"Metric %s should use keychain namespace", name)
+		if strings.HasPrefix(name, "xkms") {
+			assert.True(t, strings.HasPrefix(name, "xkms_") ||
+				strings.HasPrefix(name, "xkms_http_") ||
+				strings.HasPrefix(name, "xkms_grpc_"),
+				"Metric %s should use xkms namespace", name)
 		}
 	}
 }
@@ -514,7 +514,7 @@ func TestMetricsNamespaceIntegration(t *testing.T) {
 // TestMetricsConstantsIntegration tests that metrics constants are correct
 func TestMetricsConstantsIntegration(t *testing.T) {
 	// Verify namespace
-	assert.Equal(t, "keychain", metrics.Namespace)
+	assert.Equal(t, "xkms", metrics.Namespace)
 
 	// Verify label names
 	assert.Equal(t, "operation", metrics.LabelOperation)
@@ -553,7 +553,7 @@ func TestMetricsRealWorldScenarioIntegration(t *testing.T) {
 	metrics.Enable()
 	defer metrics.Disable()
 
-	// Simulate a keychain service lifecycle
+	// Simulate a xkms service lifecycle
 	start := time.Now()
 
 	// 1. Generate keys
@@ -577,8 +577,8 @@ func TestMetricsRealWorldScenarioIntegration(t *testing.T) {
 
 	// 4. Handle gRPC requests
 	metrics.IncrementActiveConnections("grpc")
-	metrics.RecordGRPCRequest("/keychain.v1.KeychainService/Generate", "0", 0.200)
-	metrics.RecordGRPCRequest("/keychain.v1.KeychainService/Sign", "0", 0.080)
+	metrics.RecordGRPCRequest("/xkms.v1.XKMSService/Generate", "0", 0.200)
+	metrics.RecordGRPCRequest("/xkms.v1.XKMSService/Sign", "0", 0.080)
 	metrics.DecrementActiveConnections("grpc")
 
 	// 5. Update backend health
@@ -598,16 +598,16 @@ func TestMetricsRealWorldScenarioIntegration(t *testing.T) {
 
 	// Check for expected metrics
 	expectedMetrics := []string{
-		"keychain_operations_total",
-		"keychain_operation_duration_seconds",
-		"keychain_errors_total",
-		"keychain_active_connections",
-		"keychain_http_requests_total",
-		"keychain_http_request_duration_seconds",
-		"keychain_grpc_requests_total",
-		"keychain_grpc_request_duration_seconds",
-		"keychain_keys_total",
-		"keychain_backend_healthy",
+		"xkms_operations_total",
+		"xkms_operation_duration_seconds",
+		"xkms_errors_total",
+		"xkms_active_connections",
+		"xkms_http_requests_total",
+		"xkms_http_request_duration_seconds",
+		"xkms_grpc_requests_total",
+		"xkms_grpc_request_duration_seconds",
+		"xkms_keys_total",
+		"xkms_backend_healthy",
 	}
 
 	for _, expected := range expectedMetrics {

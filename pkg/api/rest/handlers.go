@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,12 +27,14 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/encoding"
-	"github.com/jeremyhahn/go-keychain/pkg/health"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
-	"github.com/jeremyhahn/go-keychain/pkg/verification"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding"
+	"github.com/jeremyhahn/go-xkms/pkg/health"
+	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/verification"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // HandlerContext holds dependencies for REST handlers.
@@ -41,6 +43,10 @@ type HandlerContext struct {
 	Version string
 	// HealthChecker manages health check probes
 	HealthChecker HealthChecker
+	// Barrier is the optional barrier for seal/unseal lifecycle management
+	Barrier *seal.Barrier
+	// PINManager is the optional PIN manager for SO/User PIN operations
+	PINManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
 }
 
 // HealthChecker defines the interface for health checking.
@@ -51,7 +57,7 @@ type HealthChecker interface {
 }
 
 // NewHandlerContext creates a new handler context.
-// The handlers use the global keychain service for backend management.
+// The handlers use the global xkms service for backend management.
 func NewHandlerContext(version string) *HandlerContext {
 	return &HandlerContext{
 		Version: version,
@@ -61,6 +67,16 @@ func NewHandlerContext(version string) *HandlerContext {
 // SetHealthChecker sets the health checker for the handler context.
 func (h *HandlerContext) SetHealthChecker(checker HealthChecker) {
 	h.HealthChecker = checker
+}
+
+// SetBarrier sets the barrier for the handler context.
+func (h *HandlerContext) SetBarrier(barrier *seal.Barrier) {
+	h.Barrier = barrier
+}
+
+// SetPINManager sets the PIN manager for the handler context.
+func (h *HandlerContext) SetPINManager(manager pin.PINManager) { //nolint:staticcheck // TODO: migrate to PINBackend
+	h.PINManager = manager
 }
 
 // HealthHandler handles GET /health requests.
@@ -74,16 +90,16 @@ func (h *HandlerContext) HealthHandler(w http.ResponseWriter, r *http.Request) {
 
 // ListBackendsHandler handles GET /api/v1/backends requests.
 func (h *HandlerContext) ListBackendsHandler(w http.ResponseWriter, r *http.Request) {
-	backendNames := keychain.Backends()
+	backendNames := xkms.Backends()
 
 	backends := make([]BackendInfo, 0, len(backendNames))
 	for _, name := range backendNames {
-		ks, err := keychain.Backend(name)
+		ks, err := xkms.GetBackend(name)
 		if err != nil {
 			continue // Skip backends that can't be retrieved
 		}
 
-		backend := ks.Backend()
+		backend := ks.KeyProvider()
 		caps := backend.Capabilities()
 
 		backends = append(backends, BackendInfo{
@@ -94,8 +110,12 @@ func (h *HandlerContext) ListBackendsHandler(w http.ResponseWriter, r *http.Requ
 		})
 	}
 
+	pageReq := parsePageRequest(r)
+	paged, pageResp := applyPagination(backends, pageReq)
+
 	resp := ListBackendsResponse{
-		Backends: backends,
+		Backends:   paged,
+		Pagination: pageResp,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -108,13 +128,13 @@ func (h *HandlerContext) GetBackendHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
-	backend := ks.Backend()
+	backend := ks.KeyProvider()
 	caps := backend.Capabilities()
 
 	info := BackendInfo{
@@ -164,7 +184,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Get the backend (this also validates it exists)
-	ks, err := keychain.Backend(req.Backend)
+	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -236,7 +256,7 @@ func (h *HandlerContext) GenerateKeyHandler(w http.ResponseWriter, r *http.Reque
 		attrs.KeyType = types.KeyTypeSecret // Symmetric keys use KeyTypeSecret
 
 		// Check if backend supports symmetric operations
-		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
 			writeError(w, fmt.Errorf("backend does not support symmetric key generation"), http.StatusBadRequest)
 			return
@@ -313,7 +333,7 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -352,8 +372,12 @@ func (h *HandlerContext) ListKeysHandler(w http.ResponseWriter, r *http.Request)
 		keys = append(keys, keyInfo)
 	}
 
+	pageReq := parsePageRequest(r)
+	paged, pageResp := applyPagination(keys, pageReq)
+
 	resp := ListKeysResponse{
-		Keys: keys,
+		Keys:       paged,
+		Pagination: pageResp,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -372,7 +396,7 @@ func (h *HandlerContext) GetKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -450,7 +474,7 @@ func (h *HandlerContext) SignHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -547,7 +571,7 @@ func (h *HandlerContext) VerifyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -640,7 +664,7 @@ func (h *HandlerContext) DeleteKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -695,7 +719,7 @@ func (h *HandlerContext) RotateKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -770,7 +794,7 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -798,7 +822,7 @@ func (h *HandlerContext) EncryptHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get the backend and check if it supports symmetric encryption
-	symBackend, ok := ks.Backend().(types.SymmetricBackend)
+	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 	if !ok {
 		writeError(w, fmt.Errorf("backend does not support symmetric encryption"), http.StatusBadRequest)
 		return
@@ -852,7 +876,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -883,7 +907,7 @@ func (h *HandlerContext) DecryptHandler(w http.ResponseWriter, r *http.Request) 
 	var plaintext []byte
 	if targetAttr.IsSymmetric() {
 		// Symmetric decryption path
-		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
 			writeError(w, fmt.Errorf("backend does not support symmetric decryption"), http.StatusBadRequest)
 			return
@@ -966,7 +990,7 @@ func (h *HandlerContext) EncryptAsymHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1077,7 +1101,7 @@ func (h *HandlerContext) SaveCertHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1119,7 +1143,7 @@ func (h *HandlerContext) GetCertHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1162,7 +1186,7 @@ func (h *HandlerContext) DeleteCertHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1190,7 +1214,7 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1212,8 +1236,12 @@ func (h *HandlerContext) ListCertsHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	pageReq := parsePageRequest(r)
+	paged, pageResp := applyPagination(certs, pageReq)
+
 	resp := ListCertsResponse{
-		Certificates: certs,
+		Certificates: paged,
+		Pagination:   pageResp,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -1232,7 +1260,7 @@ func (h *HandlerContext) CertExistsHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1273,7 +1301,7 @@ func (h *HandlerContext) SaveCertChainHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1319,7 +1347,7 @@ func (h *HandlerContext) GetCertChainHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1366,7 +1394,7 @@ func (h *HandlerContext) GetTLSCertificateHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -1480,14 +1508,14 @@ func (h *HandlerContext) GetImportParametersHandler(w http.ResponseWriter, r *ht
 	}
 
 	// Get the backend
-	ks, err := keychain.Backend(req.Backend)
+	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		writeError(w, fmt.Errorf("backend does not support import/export operations"), http.StatusBadRequest)
 		return
@@ -1575,12 +1603,12 @@ func (h *HandlerContext) WrapKeyHandler(w http.ResponseWriter, r *http.Request) 
 	// Note: WrapKey is typically a utility function that can be called on any backend
 	// For now, we'll get a backend that supports import/export and use it
 	var importExportBackend backend.ImportExportBackend
-	for _, backendName := range keychain.Backends() {
-		ks, err := keychain.Backend(backendName)
+	for _, backendName := range xkms.Backends() {
+		ks, err := xkms.GetBackend(backendName)
 		if err != nil {
 			continue
 		}
-		if ieb, ok := ks.Backend().(backend.ImportExportBackend); ok {
+		if ieb, ok := ks.KeyProvider().(backend.ImportExportBackend); ok {
 			importExportBackend = ieb
 			break
 		}
@@ -1654,12 +1682,12 @@ func (h *HandlerContext) UnwrapKeyHandler(w http.ResponseWriter, r *http.Request
 
 	// Unwrap the key material
 	var importExportBackend backend.ImportExportBackend
-	for _, backendName := range keychain.Backends() {
-		ks, err := keychain.Backend(backendName)
+	for _, backendName := range xkms.Backends() {
+		ks, err := xkms.GetBackend(backendName)
 		if err != nil {
 			continue
 		}
-		if ieb, ok := ks.Backend().(backend.ImportExportBackend); ok {
+		if ieb, ok := ks.KeyProvider().(backend.ImportExportBackend); ok {
 			importExportBackend = ieb
 			break
 		}
@@ -1730,14 +1758,14 @@ func (h *HandlerContext) ImportKeyHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Get the backend
-	ks, err := keychain.Backend(req.Backend)
+	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		writeError(w, fmt.Errorf("backend does not support import/export operations"), http.StatusBadRequest)
 		return
@@ -1810,14 +1838,14 @@ func (h *HandlerContext) ExportKeyHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	ks, err := keychain.Backend(backendID)
+	ks, err := xkms.GetBackend(backendID)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		writeError(w, fmt.Errorf("backend does not support import/export operations"), http.StatusBadRequest)
 		return
@@ -1905,28 +1933,28 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get source backend
-	sourceKS, err := keychain.Backend(req.SourceBackend)
+	sourceKS, err := xkms.GetBackend(req.SourceBackend)
 	if err != nil {
 		writeError(w, fmt.Errorf("source backend not found: %w", err), http.StatusNotFound)
 		return
 	}
 
 	// Check if source backend supports import/export
-	sourceBackend, ok := sourceKS.Backend().(backend.ImportExportBackend)
+	sourceBackend, ok := sourceKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		writeError(w, fmt.Errorf("source backend does not support export operations"), http.StatusBadRequest)
 		return
 	}
 
 	// Get destination backend
-	destKS, err := keychain.Backend(req.DestBackend)
+	destKS, err := xkms.GetBackend(req.DestBackend)
 	if err != nil {
 		writeError(w, fmt.Errorf("destination backend not found: %w", err), http.StatusNotFound)
 		return
 	}
 
 	// Check if destination backend supports import/export
-	destBackend, ok := destKS.Backend().(backend.ImportExportBackend)
+	destBackend, ok := destKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		writeError(w, fmt.Errorf("destination backend does not support import operations"), http.StatusBadRequest)
 		return
@@ -1984,41 +2012,6 @@ func (h *HandlerContext) CopyKeyHandler(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// ListKeyVersionsHandler handles GET /api/v1/keys/{id}/versions requests.
-// This endpoint lists all versions of a key.
-// Currently returns HTTP 501 as key versioning requires VersioningAdapter integration.
-func (h *HandlerContext) ListKeyVersionsHandler(w http.ResponseWriter, r *http.Request) {
-	writeError(w, ErrVersioningNotSupported, http.StatusNotImplemented)
-}
-
-// EnableKeyVersionHandler handles POST /api/v1/keys/{id}/versions/{version}/enable requests.
-// This endpoint enables a specific version of a key.
-// Currently returns HTTP 501 as key versioning requires VersioningAdapter integration.
-func (h *HandlerContext) EnableKeyVersionHandler(w http.ResponseWriter, r *http.Request) {
-	writeError(w, ErrVersioningNotSupported, http.StatusNotImplemented)
-}
-
-// DisableKeyVersionHandler handles POST /api/v1/keys/{id}/versions/{version}/disable requests.
-// This endpoint disables a specific version of a key.
-// Currently returns HTTP 501 as key versioning requires VersioningAdapter integration.
-func (h *HandlerContext) DisableKeyVersionHandler(w http.ResponseWriter, r *http.Request) {
-	writeError(w, ErrVersioningNotSupported, http.StatusNotImplemented)
-}
-
-// EnableAllKeyVersionsHandler handles POST /api/v1/keys/{id}/versions/enable-all requests.
-// This endpoint enables all versions of a key.
-// Currently returns HTTP 501 as key versioning requires VersioningAdapter integration.
-func (h *HandlerContext) EnableAllKeyVersionsHandler(w http.ResponseWriter, r *http.Request) {
-	writeError(w, ErrVersioningNotSupported, http.StatusNotImplemented)
-}
-
-// DisableAllKeyVersionsHandler handles POST /api/v1/keys/{id}/versions/disable-all requests.
-// This endpoint disables all versions of a key.
-// Currently returns HTTP 501 as key versioning requires VersioningAdapter integration.
-func (h *HandlerContext) DisableAllKeyVersionsHandler(w http.ResponseWriter, r *http.Request) {
-	writeError(w, ErrVersioningNotSupported, http.StatusNotImplemented)
-}
-
 // SealHandler handles POST /api/v1/seal requests.
 // This endpoint seals (encrypts) data using a backend's sealing mechanism.
 // Sealing may include hardware-backed protection (TPM, HSM) or policy-based access control.
@@ -2062,7 +2055,7 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 	// If key ID is provided, look up the key to get its actual attributes
 	if req.KeyID != "" {
 		// Get the backend to look up the key
-		ks, err := keychain.Backend(req.Backend)
+		ks, err := xkms.GetBackend(req.Backend)
 		if err != nil {
 			writeError(w, ErrBackendNotFound, http.StatusNotFound)
 			return
@@ -2092,8 +2085,8 @@ func (h *HandlerContext) SealHandler(w http.ResponseWriter, r *http.Request) {
 		opts.KeyAttributes = targetAttr
 	}
 
-	// Seal the data using the keychain service
-	sealed, err := keychain.SealWithBackend(r.Context(), req.Backend, req.Data, opts)
+	// Seal the data using the xkms service
+	sealed, err := xkms.SealWithBackend(r.Context(), req.Backend, req.Data, opts)
 	if err != nil {
 		log.Printf("Failed to seal data: %v", err)
 		handleError(w, err)
@@ -2148,7 +2141,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get backend to determine backend type
-	ks, err := keychain.Backend(req.Backend)
+	ks, err := xkms.GetBackend(req.Backend)
 	if err != nil {
 		writeError(w, ErrBackendNotFound, http.StatusNotFound)
 		return
@@ -2156,7 +2149,7 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Build sealed data structure
 	sealed := &types.SealedData{
-		Backend:    ks.Backend().Type(),
+		Backend:    ks.KeyProvider().Type(),
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
@@ -2195,8 +2188,8 @@ func (h *HandlerContext) UnsealHandler(w http.ResponseWriter, r *http.Request) {
 		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
 	}
 
-	// Unseal the data using the keychain service
-	plaintext, err := keychain.UnsealWithBackend(r.Context(), req.Backend, sealed, opts)
+	// Unseal the data using the xkms service
+	plaintext, err := xkms.UnsealWithBackend(r.Context(), req.Backend, sealed, opts)
 	if err != nil {
 		log.Printf("Failed to unseal data: %v", err)
 		handleError(w, err)
@@ -2218,7 +2211,7 @@ func (h *HandlerContext) CanSealHandler(w http.ResponseWriter, r *http.Request) 
 
 	// If no backend specified, check default backend
 	if backendName == "" {
-		canSeal := keychain.CanSeal()
+		canSeal := xkms.CanSeal()
 		resp := CanSealResponse{
 			CanSeal: canSeal,
 		}
@@ -2233,7 +2226,7 @@ func (h *HandlerContext) CanSealHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Check if the specified backend supports sealing
-	canSeal := keychain.CanSeal(backendName)
+	canSeal := xkms.CanSeal(backendName)
 
 	resp := CanSealResponse{
 		CanSeal: canSeal,

@@ -1,0 +1,9 @@
+# Configuration file for go-xkms OpenRC service
+# Install to: /etc/conf.d/xkms
+
+# Path to the xkms configuration file
+XKMS_CONFIG="/etc/xkms/config.yaml"
+
+# Additional environment variables can be set here
+# KEYSTORE_CONFIG is also supported as an alternative
+# KEYSTORE_CONFIG="/etc/xkms/config.yaml"

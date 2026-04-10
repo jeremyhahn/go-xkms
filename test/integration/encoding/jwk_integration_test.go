@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,39 +26,39 @@ import (
 	"crypto/rsa"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/encoding/jwk"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestJWKIntegration_KeychainIntegration tests JWK integration with keychain backend
-func TestJWKIntegration_KeychainIntegration(t *testing.T) {
+// TestJWKIntegration_XKMSIntegration tests JWK integration with xkms backend
+func TestJWKIntegration_XKMSIntegration(t *testing.T) {
 	setup := createTestBackend(t)
 	defer setup.Close()
 
-	t.Run("RSA_KeychainBackedJWK", func(t *testing.T) {
+	t.Run("RSA_XKMSBackedJWK", func(t *testing.T) {
 		// Generate RSA key in backend
-		// Use proper keychain Key ID format: "backend:keyname"
+		// Use proper xkms Key ID format: "backend:keyname"
 		keyID := "pkcs8:rsa-test-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// Create JWK from keychain key
-		keychainJWK, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		// Create JWK from xkms key
+		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
-		assert.NotNil(t, keychainJWK)
-		assert.Equal(t, keyID, keychainJWK.Kid)
-		assert.Equal(t, "sig", keychainJWK.Use)
-		assert.Equal(t, string(jwk.KeyTypeRSA), keychainJWK.Kty)
-		assert.NotEmpty(t, keychainJWK.N)
-		assert.NotEmpty(t, keychainJWK.E)
-		assert.Empty(t, keychainJWK.D) // Should not expose private key
+		assert.NotNil(t, xkmsJWK)
+		assert.Equal(t, keyID, xkmsJWK.Kid)
+		assert.Equal(t, "sig", xkmsJWK.Use)
+		assert.Equal(t, string(jwk.KeyTypeRSA), xkmsJWK.Kty)
+		assert.NotEmpty(t, xkmsJWK.N)
+		assert.NotEmpty(t, xkmsJWK.E)
+		assert.Empty(t, xkmsJWK.D) // Should not expose private key
 
-		// Verify IsKeychainBacked
-		assert.True(t, keychainJWK.IsKeychainBacked())
+		// Verify IsXKMSBacked
+		assert.True(t, xkmsJWK.IsXKMSBacked())
 
-		// Load key from keychain using JWK kid
-		loadedKey, err := keychainJWK.LoadKeyFromKeychain(setup.GetKeyByID)
+		// Load key from xkms using JWK kid
+		loadedKey, err := xkmsJWK.LoadKeyFromXKMS(setup.GetKeyByID)
 		require.NoError(t, err)
 		assert.NotNil(t, loadedKey)
 
@@ -70,65 +70,65 @@ func TestJWKIntegration_KeychainIntegration(t *testing.T) {
 		// Verify public key matches JWK
 		pubJWK, err := jwk.FromPublicKey(&rsaKey.PublicKey)
 		require.NoError(t, err)
-		assert.Equal(t, keychainJWK.N, pubJWK.N)
-		assert.Equal(t, keychainJWK.E, pubJWK.E)
+		assert.Equal(t, xkmsJWK.N, pubJWK.N)
+		assert.Equal(t, xkmsJWK.E, pubJWK.E)
 	})
 
-	t.Run("ECDSA_P256_KeychainBackedJWK", func(t *testing.T) {
-		// Use proper keychain Key ID format: "backend:keyname"
+	t.Run("ECDSA_P256_XKMSBackedJWK", func(t *testing.T) {
+		// Use proper xkms Key ID format: "backend:keyname"
 		keyID := "pkcs8:ecdsa-p256-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P256())
 		require.NoError(t, err)
 
-		keychainJWK, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
-		assert.Equal(t, string(jwk.KeyTypeEC), keychainJWK.Kty)
-		assert.Equal(t, string(jwk.CurveP256), keychainJWK.Crv)
-		assert.NotEmpty(t, keychainJWK.X)
-		assert.NotEmpty(t, keychainJWK.Y)
-		assert.Empty(t, keychainJWK.D)
-		assert.True(t, keychainJWK.IsKeychainBacked())
+		assert.Equal(t, string(jwk.KeyTypeEC), xkmsJWK.Kty)
+		assert.Equal(t, string(jwk.CurveP256), xkmsJWK.Crv)
+		assert.NotEmpty(t, xkmsJWK.X)
+		assert.NotEmpty(t, xkmsJWK.Y)
+		assert.Empty(t, xkmsJWK.D)
+		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 
-	t.Run("ECDSA_P384_KeychainBackedJWK", func(t *testing.T) {
-		// Use proper keychain Key ID format: "backend:keyname"
+	t.Run("ECDSA_P384_XKMSBackedJWK", func(t *testing.T) {
+		// Use proper xkms Key ID format: "backend:keyname"
 		keyID := "pkcs8:ecdsa-p384-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P384())
 		require.NoError(t, err)
 
-		keychainJWK, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
-		assert.Equal(t, string(jwk.KeyTypeEC), keychainJWK.Kty)
-		assert.Equal(t, string(jwk.CurveP384), keychainJWK.Crv)
-		assert.True(t, keychainJWK.IsKeychainBacked())
+		assert.Equal(t, string(jwk.KeyTypeEC), xkmsJWK.Kty)
+		assert.Equal(t, string(jwk.CurveP384), xkmsJWK.Crv)
+		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 
-	t.Run("ECDSA_P521_KeychainBackedJWK", func(t *testing.T) {
-		// Use proper keychain Key ID format: "backend:keyname"
+	t.Run("ECDSA_P521_XKMSBackedJWK", func(t *testing.T) {
+		// Use proper xkms Key ID format: "backend:keyname"
 		keyID := "pkcs8:ecdsa-p521-key"
 		err := setup.GenerateECDSAKey(keyID, elliptic.P521())
 		require.NoError(t, err)
 
-		keychainJWK, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
-		assert.Equal(t, string(jwk.KeyTypeEC), keychainJWK.Kty)
-		assert.Equal(t, string(jwk.CurveP521), keychainJWK.Crv)
-		assert.True(t, keychainJWK.IsKeychainBacked())
+		assert.Equal(t, string(jwk.KeyTypeEC), xkmsJWK.Kty)
+		assert.Equal(t, string(jwk.CurveP521), xkmsJWK.Crv)
+		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 
-	t.Run("Ed25519_KeychainBackedJWK", func(t *testing.T) {
-		// Use proper keychain Key ID format: "backend:keyname"
+	t.Run("Ed25519_XKMSBackedJWK", func(t *testing.T) {
+		// Use proper xkms Key ID format: "backend:keyname"
 		keyID := "pkcs8:ed25519-key"
 		err := setup.GenerateEd25519Key(keyID)
 		require.NoError(t, err)
 
-		keychainJWK, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		xkmsJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
-		assert.Equal(t, string(jwk.KeyTypeOKP), keychainJWK.Kty)
-		assert.Equal(t, string(jwk.CurveEd25519), keychainJWK.Crv)
-		assert.NotEmpty(t, keychainJWK.X)
-		assert.Empty(t, keychainJWK.D)
-		assert.True(t, keychainJWK.IsKeychainBacked())
+		assert.Equal(t, string(jwk.KeyTypeOKP), xkmsJWK.Kty)
+		assert.Equal(t, string(jwk.CurveEd25519), xkmsJWK.Crv)
+		assert.NotEmpty(t, xkmsJWK.X)
+		assert.Empty(t, xkmsJWK.D)
+		assert.True(t, xkmsJWK.IsXKMSBacked())
 	})
 }
 
@@ -347,7 +347,7 @@ func TestJWKIntegration_AllKeyTypes(t *testing.T) {
 // TestJWKIntegration_ErrorHandling tests error handling scenarios
 func TestJWKIntegration_ErrorHandling(t *testing.T) {
 	t.Run("InvalidKeyID", func(t *testing.T) {
-		_, err := jwk.FromKeychain("", func(keyID string) (crypto.PrivateKey, error) {
+		_, err := jwk.FromXKMS("", func(keyID string) (crypto.PrivateKey, error) {
 			return nil, nil
 		})
 		assert.Error(t, err)
@@ -355,27 +355,27 @@ func TestJWKIntegration_ErrorHandling(t *testing.T) {
 	})
 
 	t.Run("KeyNotFound", func(t *testing.T) {
-		_, err := jwk.FromKeychain("nonexistent-key", func(keyID string) (crypto.PrivateKey, error) {
+		_, err := jwk.FromXKMS("nonexistent-key", func(keyID string) (crypto.PrivateKey, error) {
 			return nil, assert.AnError
 		})
 		assert.Error(t, err)
 	})
 
-	t.Run("EmptyKID_LoadFromKeychain", func(t *testing.T) {
+	t.Run("EmptyKID_LoadFromXKMS", func(t *testing.T) {
 		testJWK := &jwk.JWK{
 			Kty: string(jwk.KeyTypeRSA),
 			N:   "test",
 			E:   "AQAB",
 		}
 
-		_, err := testJWK.LoadKeyFromKeychain(func(keyID string) (crypto.PrivateKey, error) {
+		_, err := testJWK.LoadKeyFromXKMS(func(keyID string) (crypto.PrivateKey, error) {
 			return nil, nil
 		})
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "no kid field")
 	})
 
-	t.Run("InvalidKeyID_LoadFromKeychain", func(t *testing.T) {
+	t.Run("InvalidKeyID_LoadFromXKMS", func(t *testing.T) {
 		testJWK := &jwk.JWK{
 			Kty: string(jwk.KeyTypeRSA),
 			Kid: "invalid-format",
@@ -383,14 +383,14 @@ func TestJWKIntegration_ErrorHandling(t *testing.T) {
 			E:   "AQAB",
 		}
 
-		_, err := testJWK.LoadKeyFromKeychain(func(keyID string) (crypto.PrivateKey, error) {
+		_, err := testJWK.LoadKeyFromXKMS(func(keyID string) (crypto.PrivateKey, error) {
 			return nil, nil
 		})
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "not a valid keychain Key ID")
+		assert.Contains(t, err.Error(), "not a valid xkms Key ID")
 	})
 
-	t.Run("IsKeychainBacked_ValidBackends", func(t *testing.T) {
+	t.Run("IsXKMSBacked_ValidBackends", func(t *testing.T) {
 		backends := []string{
 			"pkcs8", "symmetric", "software", "pkcs11", "tpm2",
 			"awskms", "gcpkms", "azurekv", "vault",
@@ -400,11 +400,11 @@ func TestJWKIntegration_ErrorHandling(t *testing.T) {
 			testJWK := &jwk.JWK{
 				Kid: backend + ":test-key",
 			}
-			assert.True(t, testJWK.IsKeychainBacked(), "Backend %s should be recognized", backend)
+			assert.True(t, testJWK.IsXKMSBacked(), "Backend %s should be recognized", backend)
 		}
 	})
 
-	t.Run("IsKeychainBacked_InvalidBackends", func(t *testing.T) {
+	t.Run("IsXKMSBacked_InvalidBackends", func(t *testing.T) {
 		testCases := []string{
 			"invalid:key",
 			"nocolon",
@@ -417,9 +417,9 @@ func TestJWKIntegration_ErrorHandling(t *testing.T) {
 				Kid: tc,
 			}
 			if tc == "invalid:key" {
-				assert.False(t, testJWK.IsKeychainBacked(), "Invalid backend should not be recognized")
+				assert.False(t, testJWK.IsXKMSBacked(), "Invalid backend should not be recognized")
 			} else {
-				assert.False(t, testJWK.IsKeychainBacked(), "Invalid format should not be recognized: %s", tc)
+				assert.False(t, testJWK.IsXKMSBacked(), "Invalid format should not be recognized: %s", tc)
 			}
 		}
 	})
@@ -462,12 +462,12 @@ func TestJWKIntegration_MarshalIndent(t *testing.T) {
 
 // TestJWKIntegration_ComplexScenarios tests complex real-world scenarios
 func TestJWKIntegration_ComplexScenarios(t *testing.T) {
-	t.Run("MultipleKeysInKeychain", func(t *testing.T) {
+	t.Run("MultipleKeysInXKMS", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
 		// Generate multiple keys with different types
-		// Use proper keychain Key ID format: "backend:keyname"
+		// Use proper xkms Key ID format: "backend:keyname"
 		testKeys := []struct {
 			cn      string
 			keyType string
@@ -495,15 +495,15 @@ func TestJWKIntegration_ComplexScenarios(t *testing.T) {
 		jwks := make([]*jwk.JWK, len(testKeys))
 		for i, tk := range testKeys {
 			var err error
-			jwks[i], err = jwk.FromKeychain(tk.cn, setup.GetKeyByID)
+			jwks[i], err = jwk.FromXKMS(tk.cn, setup.GetKeyByID)
 			require.NoError(t, err)
 			assert.Equal(t, tk.cn, jwks[i].Kid)
-			assert.True(t, jwks[i].IsKeychainBacked())
+			assert.True(t, jwks[i].IsXKMSBacked())
 		}
 
 		// Verify each JWK can load its corresponding key
 		for i, testJWK := range jwks {
-			key, err := testJWK.LoadKeyFromKeychain(setup.GetKeyByID)
+			key, err := testJWK.LoadKeyFromXKMS(setup.GetKeyByID)
 			require.NoError(t, err)
 			assert.NotNil(t, key)
 

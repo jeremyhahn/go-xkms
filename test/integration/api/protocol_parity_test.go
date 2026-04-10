@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -13,20 +13,25 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package integration provides integration tests for go-keychain API protocols.
+// Package integration provides integration tests for go-xkms API protocols.
 // These tests verify that all CLI commands work consistently across all supported
 // protocols: REST, gRPC, QUIC, MCP, and Unix socket.
 package integration
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/jeremyhahn/go-keychain/test/integration/api/commands"
+	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
 // enabledBuildTags returns the build tags enabled for the current test run
@@ -407,7 +412,7 @@ func isProtocolAvailable(t *testing.T, runner *commands.TestRunner, protocol com
 	case commands.ProtocolGRPC:
 		return checkTCPEndpoint(runner.GRPCAddr)
 	case commands.ProtocolQUIC:
-		return checkHTTPEndpoint(runner.QUICBaseURL + "/health")
+		return checkQUICEndpoint(runner.QUICBaseURL)
 	case commands.ProtocolMCP:
 		return checkTCPEndpoint(runner.MCPAddr)
 	default:
@@ -423,12 +428,53 @@ func checkUnixSocketExists(socketPath string) bool {
 }
 
 func checkHTTPEndpoint(url string) bool {
-	// Quick check - just try to connect
-	// In real tests, you'd use http.Client with timeout
-	return true // Assume available if configured
+	caFile := os.Getenv("KEYSTORE_TLS_CA")
+	if caFile == "" {
+		caFile = "/etc/xkms/certs/ca.crt"
+	}
+	pool := x509.NewCertPool()
+	if caPEM, err := os.ReadFile(caFile); err == nil {
+		pool.AppendCertsFromPEM(caPEM)
+	}
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs: pool,
+			},
+		},
+	}
+	resp, err := client.Get(url) //nolint:noctx // simple health check
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode < 500
+}
+
+func checkQUICEndpoint(baseURL string) bool {
+	// QUIC uses HTTP/3 over UDP — standard HTTP/TCP clients can't reach it.
+	// Probe the server via the CLI with a lightweight backends list command that
+	// requires an actual server round-trip.
+	runner := commands.NewTestRunner()
+	binPath := runner.CLIBinPath
+	if _, err := os.Stat(binPath); os.IsNotExist(err) {
+		return false
+	}
+	caFile := os.Getenv("KEYSTORE_TLS_CA")
+	if caFile == "" {
+		caFile = "/etc/xkms/certs/ca.crt"
+	}
+	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
+	cmd := exec.Command(binPath, "--server", "quic://"+host, "--tls-ca", caFile, "backends", "list")
+	return cmd.Run() == nil
 }
 
 func checkTCPEndpoint(addr string) bool {
-	// Quick check
-	return true // Assume available if configured
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
 }

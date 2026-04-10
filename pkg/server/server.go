@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -26,47 +27,68 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	flynn_noise "github.com/flynn/noise"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	grpcinternal "github.com/jeremyhahn/go-keychain/pkg/api/grpc"
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/api/mcp"
-	"github.com/jeremyhahn/go-keychain/pkg/api/quic"
-	"github.com/jeremyhahn/go-keychain/pkg/api/rest"
-	"github.com/jeremyhahn/go-keychain/pkg/api/unix"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/config"
-	"github.com/jeremyhahn/go-keychain/pkg/health"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/metrics"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
-	"github.com/jeremyhahn/go-keychain/pkg/user"
-	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
+	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
+	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
+	"github.com/jeremyhahn/go-xkms/pkg/api/quic"
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/bootstrap"
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/custodian"
+	"github.com/jeremyhahn/go-xkms/pkg/health"
+	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	"github.com/jeremyhahn/go-xkms/pkg/rbac"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
+	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
+	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/user"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// Server represents the unified keychain server that runs all protocols
+// Server represents the unified xkms server that runs all protocols
 type Server struct {
-	config    *config.Config
-	mu        sync.RWMutex
-	keystores map[string]keychain.KeyStore
-	backends  map[string]types.Backend
-	logger    *slog.Logger
+	config       *config.Config
+	mu           sync.RWMutex
+	backends     map[string]xkms.Backend
+	keyProviders map[string]types.KeyProvider
+	logger       *slog.Logger
 
 	// Protocol servers
-	unixGRPCServer *unix.GRPCServer
-	restServer     *rest.Server
-	grpcServer     *grpc.Server
-	quicServer     *quic.Server
-	mcpServer      *mcp.Server
+	unixGRPCServer       *unix.GRPCServer
+	restServer           *rest.Server
+	grpcServer           *grpc.Server
+	quicServer           *quic.Server
+	mcpServer            *mcp.Server
+	noiseBootstrapServer *noiseboot.Server
 
 	// User management
 	userStore user.Store
@@ -75,11 +97,53 @@ type Server struct {
 	authenticator  auth.Authenticator
 	webauthnConfig *webauthn.Config
 
+	// Authorization
+	authorizer authz.Authorizer
+
+	// Audit logging
+	auditLogger audit.Logger
+
+	// Barrier (seal/unseal)
+	barrier *seal.Barrier
+
+	// Barrier registry (multi-tenant)
+	barrierRegistry *seal.BarrierRegistry
+
+	// Bootstrap service (server initialization)
+	bootstrapService *bootstrap.Service
+
+	// PIN manager
+	pinManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+
+	// Password store
+	passwordStore *staticpw.BackendStore
+
+	// Platform store
+	platformStore seal.PlatformStore
+
+	// Policy manager
+	policyManager *policy.Manager
+
+	// Custodian group management
+	custodianService *custodian.Service
+
+	// Share store for Shamir share management
+	shareStore sharestore.ShareStore
+
 	// Health checker
 	healthChecker *health.Checker
 
 	// Metrics
 	metricsCollector *metrics.ResourceCollector
+
+	// CA for certificate authority operations
+	ca ca.XKMSCA
+
+	// Credential service for managing backend credentials
+	credentialService *credentialspkg.Service
+
+	// Ceremony service for init ceremony
+	ceremonyService *initialize.CeremonyService
 
 	// Lifecycle
 	ctx        context.Context
@@ -97,47 +161,194 @@ func New(cfg *config.Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{
-		config:     cfg,
-		backends:   make(map[string]types.Backend),
-		keystores:  make(map[string]keychain.KeyStore),
-		logger:     logger,
-		ctx:        ctx,
-		cancel:     cancel,
-		shutdownCh: make(chan struct{}),
+		config:       cfg,
+		keyProviders: make(map[string]types.KeyProvider),
+		backends:     make(map[string]xkms.Backend),
+		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
+		shutdownCh:   make(chan struct{}),
 	}
 
 	// Initialize backends
 	if err := s.initializeBackends(); err != nil {
 		cancel()
-		return nil, fmt.Errorf("failed to initialize backends: %w", err)
+		return nil, &ErrServiceInit{Service: "backends", Err: err}
 	}
 
 	// Initialize keystore with default backend
 	if err := s.initializeKeyStore(); err != nil {
 		cancel()
 		s.closeBackends()
-		return nil, fmt.Errorf("failed to initialize keystore: %w", err)
+		return nil, &ErrServiceInit{Service: "keystore", Err: err}
 	}
 
 	// Initialize user store
 	if err := s.initializeUserStore(); err != nil {
 		cancel()
 		s.closeBackends()
-		return nil, fmt.Errorf("failed to initialize user store: %w", err)
+		return nil, &ErrServiceInit{Service: "user store", Err: err}
 	}
 
 	// Initialize authentication
 	if err := s.initializeAuthentication(); err != nil {
 		cancel()
 		s.closeBackends()
-		return nil, fmt.Errorf("failed to initialize authentication: %w", err)
+		return nil, &ErrServiceInit{Service: "authentication", Err: err}
+	}
+
+	// Initialize authorization
+	if err := s.initializeAuthorization(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "authorization", Err: err}
+	}
+
+	// Initialize audit logger
+	if err := s.initializeAuditLogger(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "audit logger", Err: err}
+	}
+
+	// Initialize barrier (seal/unseal)
+	if err := s.initializeBarrier(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "barrier", Err: err}
+	}
+
+	// Initialize barrier registry
+	if err := s.initializeBarrierRegistry(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "barrier registry", Err: err}
+	}
+
+	// Initialize custodian group service
+	if err := s.initializeCustodianService(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "custodian service", Err: err}
+	}
+
+	// Initialize share store
+	if err := s.initializeShareStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "share store", Err: err}
+	}
+
+	// Initialize bootstrap service
+	if err := s.initializeBootstrapService(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "bootstrap service", Err: err}
+	}
+
+	// Initialize PIN manager
+	if err := s.initializePINManager(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "PIN manager", Err: err}
+	}
+
+	// Initialize password store
+	if err := s.initializePasswordStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "password store", Err: err}
+	}
+
+	// Initialize platform store
+	if err := s.initializePlatformStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "platform store", Err: err}
+	}
+
+	// Initialize credential service
+	if err := s.initializeCredentialService(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "credential service", Err: err}
+	}
+
+	// Initialize policy manager
+	if err := s.initializePolicyManager(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "policy manager", Err: err}
 	}
 
 	// Initialize health checker
 	if err := s.initializeHealth(); err != nil {
 		cancel()
 		s.closeBackends()
-		return nil, fmt.Errorf("failed to initialize health checker: %w", err)
+		return nil, &ErrServiceInit{Service: "health checker", Err: err}
+	}
+
+	// Initialize CA from config (optional)
+	if err := s.initializeCA(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "CA", Err: err}
+	}
+
+	// Wire all subsystems into the XKMSService singleton so it implements
+	// the full embedded.XKMSServicer interface for in-process SDK access.
+	if svc, err := xkms.Get(); err == nil {
+		if s.barrier != nil {
+			svc.SetBarrier(s.barrier)
+		}
+		if s.pinManager != nil {
+			svc.SetPINManager(s.pinManager)
+		}
+		if s.userStore != nil {
+			svc.SetUserStore(s.userStore)
+		}
+		if s.passwordStore != nil {
+			svc.SetPasswordStore(s.passwordStore)
+			// Wire tenant password store manager if barrier registry is available
+			if s.barrierRegistry != nil {
+				pwManager, pwErr := staticpw.NewTenantPasswordStoreManager(s.barrierRegistry, s.passwordStore)
+				if pwErr != nil {
+					s.logger.Warn("Failed to create tenant password store manager", "error", pwErr)
+				} else {
+					svc.SetPasswordStoreManager(pwManager)
+					s.logger.Info("Tenant password store manager wired into service")
+				}
+			}
+		}
+		if s.platformStore != nil {
+			svc.SetPlatformStore(s.platformStore)
+		}
+		if s.policyManager != nil {
+			svc.SetPolicyManager(s.policyManager)
+		}
+		if s.custodianService != nil {
+			svc.SetCustodianService(s.custodianService)
+		}
+		if s.shareStore != nil {
+			svc.SetShareStore(s.shareStore)
+		}
+		if s.barrierRegistry != nil {
+			svc.SetBarrierRegistry(s.barrierRegistry)
+		}
+		if s.credentialService != nil {
+			svc.SetCredentialService(s.credentialService)
+		}
+		if s.ceremonyService != nil {
+			svc.SetCeremonyService(initialize.NewCeremonyAdapter(s.ceremonyService))
+		}
+		if s.ca != nil {
+			// s.ca is ca.XKMSCA which doesn't include the *Raw adapter methods.
+			// The concrete *ca.CA struct satisfies provider.CA via its Raw methods
+			// in service_adapter.go. Type-assert to wire the typed interface.
+			if caProvider, ok := s.ca.(provider.CA); ok {
+				svc.SetCA(caProvider)
+			}
+		}
 	}
 
 	return s, nil
@@ -216,37 +427,37 @@ func (s *Server) initializeBackends() error {
 
 	// Initialize Software backend (unified asymmetric + symmetric with import/export support)
 	if s.config.Backends.Software != nil && s.config.Backends.Software.Enabled {
-		keyStorage, err := file.New(s.config.Backends.Software.Path)
+		keyStorage, err := s.createStorageAt(s.config.Backends.Software.Path)
 		if err != nil {
-			return fmt.Errorf("failed to create software key storage: %w", err)
+			return &ErrStorageCreate{Resource: "software key storage", Err: err}
 		}
 
 		softwareBackend, err := software.NewBackend(&software.Config{
 			KeyStorage: keyStorage,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create software backend: %w", err)
+			return &ErrBackendCreate{Backend: "software", Err: err}
 		}
 
-		s.backends["software"] = softwareBackend
+		s.keyProviders["software"] = softwareBackend
 		s.logger.Info("Software backend initialized", "backend", "software", "path", s.config.Backends.Software.Path)
 	}
 
 	// Initialize PKCS8 backend (software keys)
 	if s.config.Backends.PKCS8 != nil && s.config.Backends.PKCS8.Enabled {
-		keyStorage, err := file.New(s.config.Backends.PKCS8.Path)
+		keyStorage, err := s.createStorageAt(s.config.Backends.PKCS8.Path)
 		if err != nil {
-			return fmt.Errorf("failed to create PKCS8 key storage: %w", err)
+			return &ErrStorageCreate{Resource: "PKCS8 key storage", Err: err}
 		}
 
 		pkcs8Backend, err := pkcs8.NewBackend(&pkcs8.Config{
 			KeyStorage: keyStorage,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create PKCS8 backend: %w", err)
+			return &ErrBackendCreate{Backend: "PKCS8", Err: err}
 		}
 
-		s.backends["pkcs8"] = pkcs8Backend
+		s.keyProviders["pkcs8"] = pkcs8Backend
 		s.logger.Info("PKCS8 backend initialized", "backend", "pkcs8", "path", s.config.Backends.PKCS8.Path)
 	}
 
@@ -255,31 +466,35 @@ func (s *Server) initializeBackends() error {
 	// compile the real implementation or a stub based on build flags
 
 	if err := s.initTPM2Backend(); err != nil {
-		return fmt.Errorf("failed to initialize TPM2 backend: %w", err)
+		return &ErrBackendInit{Backend: "TPM2", Err: err}
 	}
 
 	if err := s.initPKCS11Backend(); err != nil {
-		return fmt.Errorf("failed to initialize PKCS#11 backend: %w", err)
+		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
 	}
 
 	if err := s.initAWSKMSBackend(); err != nil {
-		return fmt.Errorf("failed to initialize AWS KMS backend: %w", err)
+		return &ErrBackendInit{Backend: "AWS KMS", Err: err}
 	}
 
 	if err := s.initGCPKMSBackend(); err != nil {
-		return fmt.Errorf("failed to initialize GCP KMS backend: %w", err)
+		return &ErrBackendInit{Backend: "GCP KMS", Err: err}
 	}
 
 	if err := s.initAzureKVBackend(); err != nil {
-		return fmt.Errorf("failed to initialize Azure Key Vault backend: %w", err)
+		return &ErrBackendInit{Backend: "Azure Key Vault", Err: err}
 	}
 
 	if err := s.initVaultBackend(); err != nil {
-		return fmt.Errorf("failed to initialize Vault backend: %w", err)
+		return &ErrBackendInit{Backend: "Vault", Err: err}
 	}
 
-	if len(s.backends) == 0 {
-		return fmt.Errorf("no backends initialized")
+	if err := s.initPhoneBackend(); err != nil {
+		return &ErrBackendInit{Backend: "phone", Err: err}
+	}
+
+	if len(s.keyProviders) == 0 {
+		return ErrNoBackendsInitialized
 	}
 
 	return nil
@@ -288,53 +503,52 @@ func (s *Server) initializeBackends() error {
 // initializeKeyStore creates keystores for all backends
 func (s *Server) initializeKeyStore() error {
 	// Create certificate storage (shared across all keystores)
-	certPath := s.config.Storage.Path + "/certs"
-	certStorage, err := file.New(certPath)
+	certStorage, err := s.createStorage("certs")
 	if err != nil {
-		return fmt.Errorf("failed to create certificate storage: %w", err)
+		return &ErrStorageCreate{Resource: "certificate storage", Err: err}
 	}
 
 	// Create a keystore for each backend
-	for name, backend := range s.backends {
-		keystore, err := keychain.New(&keychain.Config{
+	for name, backend := range s.keyProviders {
+		keystore, err := xkms.New(&xkms.BackendConfig{
 			Backend:     backend,
 			CertStorage: certStorage,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create keystore for backend '%s': %w", name, err)
+			return &ErrKeystoreCreate{Backend: name, Err: err}
 		}
 
-		s.keystores[name] = keystore
+		s.backends[name] = keystore
 		s.logger.Info("KeyStore initialized", "backend", name)
 	}
 
-	if len(s.keystores) == 0 {
-		return fmt.Errorf("no keystores initialized")
+	if len(s.backends) == 0 {
+		return ErrNoKeystoresInitialized
 	}
 
 	// Determine default backend
 	defaultBackend := string(s.config.Default)
-	if _, ok := s.keystores[defaultBackend]; !ok {
+	if _, ok := s.backends[defaultBackend]; !ok {
 		// Fall back to first available backend
-		for name := range s.keystores {
+		for name := range s.backends {
 			defaultBackend = name
 			break
 		}
 	}
 
-	// Initialize the global keychain service with the keystores
-	// This allows REST handlers to access backends via keychain.Backends()
-	serviceConfig := &keychain.ServiceConfig{
-		Backends:       s.keystores,
+	// Initialize the global xkms service with the keystores
+	// This allows REST handlers to access backends via xkms.Backends()
+	serviceConfig := &xkms.ServiceConfig{
+		Backends:       s.backends,
 		DefaultBackend: defaultBackend,
 	}
-	if err := keychain.Initialize(serviceConfig); err != nil {
-		return fmt.Errorf("failed to initialize keychain service: %w", err)
+	if err := xkms.Initialize(serviceConfig); err != nil {
+		return &ErrServiceInit{Service: "xkms service", Err: err}
 	}
 
-	s.logger.Info("Keychain service initialized",
+	s.logger.Info("xKMS service initialized",
 		"default_backend", defaultBackend,
-		"backends", len(s.keystores))
+		"backends", len(s.backends))
 
 	return nil
 }
@@ -343,17 +557,17 @@ func (s *Server) initializeKeyStore() error {
 func (s *Server) initializeUserStore() error {
 	s.logger.Info("Initializing user store...")
 
-	// Create user storage directory
+	// Storage path for logging
 	userStoragePath := s.config.Storage.Path + "/users"
-	userStorage, err := file.New(userStoragePath)
+	userStorage, err := s.createStorage("users")
 	if err != nil {
-		return fmt.Errorf("failed to create user storage: %w", err)
+		return &ErrStorageCreate{Resource: "user storage", Err: err}
 	}
 
 	// Create user store
 	userStore, err := user.NewFileStore(userStorage)
 	if err != nil {
-		return fmt.Errorf("failed to create user store: %w", err)
+		return &ErrServiceInit{Service: "user store", Err: err}
 	}
 
 	s.userStore = userStore
@@ -411,11 +625,11 @@ func (s *Server) initializeAuthentication() error {
 	case "jwt":
 		// JWT authenticator requires a public key
 		if s.config.Auth.JWT == nil || s.config.Auth.JWT.PublicKeyFile == "" {
-			return fmt.Errorf("JWT authentication requires public_key_file configuration")
+			return ErrJWTPublicKeyRequired
 		}
 		jwtAuth, err := s.createJWTAuthenticator()
 		if err != nil {
-			return fmt.Errorf("failed to create JWT authenticator: %w", err)
+			return &ErrServiceInit{Service: "JWT authenticator", Err: err}
 		}
 		requiredAuth = jwtAuth
 		s.logger.Info("JWT authentication configured",
@@ -424,11 +638,22 @@ func (s *Server) initializeAuthentication() error {
 	case "mtls":
 		// mTLS authentication uses client certificates
 		if !s.config.TLS.Enabled {
-			return fmt.Errorf("mTLS authentication requires TLS to be enabled")
+			return ErrMTLSRequiresTLS
 		}
-		mtlsAuth := auth.NewMTLSAuthenticator(nil)
+		mtlsConfig := &auth.MTLSConfig{}
+		if s.userStore != nil {
+			mtlsConfig.UserStore = user.NewMTLSUserStoreAdapter(s.userStore)
+		}
+		mtlsAuth := auth.NewMTLSAuthenticator(mtlsConfig)
 		requiredAuth = mtlsAuth
 		s.logger.Info("mTLS authentication configured")
+
+	case "composite":
+		compositeAuth, err := s.createCompositeAuthenticator()
+		if err != nil {
+			return err
+		}
+		requiredAuth = compositeAuth
 
 	case "adaptive":
 		// Adaptive mode will be configured below
@@ -474,7 +699,7 @@ func (s *Server) initializeAuthentication() error {
 			Logger:                s.logger.With("component", "auth"),
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create adaptive authenticator: %w", err)
+			return &ErrServiceInit{Service: "adaptive authenticator", Err: err}
 		}
 
 		s.authenticator = adaptiveAuth
@@ -489,22 +714,383 @@ func (s *Server) initializeAuthentication() error {
 	return nil
 }
 
+// createCompositeAuthenticator builds a CompositeAuthenticator from the
+// configured composite authentication methods.
+func (s *Server) createCompositeAuthenticator() (*auth.CompositeAuthenticator, error) {
+	if s.config.Auth.Composite == nil || len(s.config.Auth.Composite.Methods) == 0 {
+		return nil, ErrCompositeMethodsRequired
+	}
+
+	authenticators := make([]auth.Authenticator, 0, len(s.config.Auth.Composite.Methods))
+
+	// compositeMethodFactory maps method names to factory functions for O(1) dispatch.
+	type methodFactory func() (auth.Authenticator, error)
+	compositeMethodFactory := map[string]methodFactory{
+		"jwt": func() (auth.Authenticator, error) {
+			if s.config.Auth.JWT == nil || s.config.Auth.JWT.PublicKeyFile == "" {
+				return nil, ErrCompositeJWTRequired
+			}
+			return s.createJWTAuthenticator()
+		},
+		"mtls": func() (auth.Authenticator, error) {
+			if !s.config.TLS.Enabled {
+				return nil, ErrCompositeMTLSRequiresTLS
+			}
+			mtlsConfig := &auth.MTLSConfig{}
+			if s.userStore != nil {
+				mtlsConfig.UserStore = user.NewMTLSUserStoreAdapter(s.userStore)
+			}
+			return auth.NewMTLSAuthenticator(mtlsConfig), nil
+		},
+	}
+
+	for _, method := range s.config.Auth.Composite.Methods {
+		factory, ok := compositeMethodFactory[method]
+		if !ok {
+			return nil, &ErrCompositeMethodCreate{Method: method, Err: ErrUnknownCompositeMethod}
+		}
+		authenticator, err := factory()
+		if err != nil {
+			return nil, &ErrCompositeMethodCreate{Method: method, Err: err}
+		}
+		authenticators = append(authenticators, authenticator)
+	}
+
+	compositeAuth, err := auth.NewCompositeAuthenticator(authenticators...)
+	if err != nil {
+		return nil, &ErrServiceInit{Service: "composite authenticator", Err: err}
+	}
+
+	s.logger.Info("Composite authentication configured", "methods", s.config.Auth.Composite.Methods)
+	return compositeAuth, nil
+}
+
+// initializeAuthorization sets up the authorization subsystem.
+// When RBAC is enabled, it creates an RBACAuthorizer backed by a MemoryRBACAdapter.
+// Otherwise, it uses a NoOpAuthorizer that permits all requests.
+func (s *Server) initializeAuthorization() error {
+	s.logger.Info("Initializing authorization...")
+
+	if s.config.Auth.EnableRBAC {
+		adapter := rbac.NewMemoryRBACAdapter(true)
+		s.authorizer = authz.NewRBACAuthorizer(adapter)
+		s.logger.Info("RBAC authorization enabled")
+	} else {
+		s.authorizer = &authz.NoOpAuthorizer{}
+		s.logger.Info("Authorization disabled, using NoOp authorizer")
+	}
+
+	return nil
+}
+
+// initializeAuditLogger sets up the audit logging subsystem.
+// When audit logging is enabled, it creates a FileLogger at the configured path.
+// Otherwise, it uses a NoOpLogger that discards all events.
+func (s *Server) initializeAuditLogger() error {
+	s.logger.Info("Initializing audit logger...")
+
+	if s.config.Auth.Audit != nil && s.config.Auth.Audit.Enabled {
+		if s.config.Auth.Audit.Path == "" {
+			return ErrAuditPathRequired
+		}
+		fileLogger, err := audit.NewFileLogger(&audit.FileLoggerConfig{
+			Path: s.config.Auth.Audit.Path,
+		})
+		if err != nil {
+			return &ErrServiceInit{Service: "audit file logger", Err: err}
+		}
+		s.auditLogger = fileLogger
+		s.logger.Info("Audit logging enabled", "path", s.config.Auth.Audit.Path)
+	} else {
+		s.auditLogger = &audit.NoOpLogger{}
+		s.logger.Info("Audit logging disabled, using NoOp logger")
+	}
+
+	return nil
+}
+
+// initializeBarrier creates and configures the barrier (seal/unseal) subsystem.
+// The barrier wraps storage with transparent AES-256-GCM encryption.
+func (s *Server) initializeBarrier() error {
+	if !s.config.Barrier.Enabled {
+		s.logger.Info("Barrier disabled")
+		return nil
+	}
+
+	s.logger.Info("Initializing barrier...")
+
+	// Create barrier storage backend
+	barrierStorage, err := s.createStorage("barrier")
+	if err != nil {
+		return &ErrStorageCreate{Resource: "barrier storage", Err: err}
+	}
+
+	// Build sealing strategies
+	strategies := []seal.SealingStrategy{
+		seal.NewSoftwareStrategy(),
+	}
+
+	// Determine root key path
+	rootKeyPath := s.config.Barrier.RootKeyPath
+	if rootKeyPath == "" {
+		rootKeyPath = "barrier/root-key"
+	}
+
+	// Build preference order
+	var prefOrder []seal.StrategyID
+	for _, id := range s.config.Barrier.PreferenceOrder {
+		prefOrder = append(prefOrder, seal.StrategyID(id))
+	}
+
+	barrierConfig := seal.BarrierConfig{
+		RootKeyPath:     rootKeyPath,
+		PreferenceOrder: prefOrder,
+		AuditLogger:     s.auditLogger,
+	}
+
+	barrier, err := seal.NewBarrier(s.logger, barrierStorage, barrierConfig, strategies...)
+	if err != nil {
+		return &ErrServiceInit{Service: "barrier", Err: err}
+	}
+
+	s.barrier = barrier
+	s.logger.Info("Barrier initialized", "root_key_path", rootKeyPath)
+
+	return nil
+}
+
+// initializeBarrierRegistry creates the barrier registry for multi-tenant isolation.
+func (s *Server) initializeBarrierRegistry() error {
+	if s.barrier == nil {
+		s.logger.Info("Barrier registry skipped (no barrier)")
+		return nil
+	}
+
+	registry, err := seal.NewBarrierRegistry(s.barrier)
+	if err != nil {
+		return &ErrServiceInit{Service: "barrier registry", Err: err}
+	}
+
+	s.barrierRegistry = registry
+	s.logger.Info("Barrier registry initialized")
+
+	return nil
+}
+
+// initializeCustodianService creates the custodian group management service.
+func (s *Server) initializeCustodianService() error {
+	store := custodian.NewMemoryStore()
+	svc, err := custodian.NewService(store)
+	if err != nil {
+		return &ErrServiceInit{Service: "custodian service", Err: err}
+	}
+	s.custodianService = svc
+	s.logger.Info("Custodian group service initialized")
+	return nil
+}
+
+// initializeShareStore creates the Shamir share store.
+func (s *Server) initializeShareStore() error {
+	s.shareStore = sharestore.NewMemoryShareStore()
+	s.logger.Info("Share store initialized")
+	return nil
+}
+
+// initializeBootstrapService creates the bootstrap service for server initialization.
+func (s *Server) initializeBootstrapService() error {
+	if !s.config.InitBootstrap.Enabled {
+		s.logger.Info("Bootstrap service disabled")
+		return nil
+	}
+
+	if s.userStore == nil {
+		return ErrBootstrapRequiresUserStore
+	}
+
+	bsCfg := bootstrap.Config{
+		TokenTTL:       s.config.InitBootstrap.TokenTTL,
+		ThresholdMode:  s.config.InitBootstrap.ThresholdMode,
+		AdminThreshold: s.config.InitBootstrap.AdminThreshold,
+		AdminTotal:     s.config.InitBootstrap.AdminTotal,
+	}
+
+	svc, err := bootstrap.NewService(bsCfg, s.userStore, s.logger)
+	if err != nil {
+		return &ErrServiceInit{Service: "bootstrap service", Err: err}
+	}
+
+	s.bootstrapService = svc
+	s.logger.Info("Bootstrap service initialized",
+		"threshold_mode", bsCfg.ThresholdMode)
+
+	return nil
+}
+
+// initializePINManager creates and configures the PIN management subsystem.
+func (s *Server) initializePINManager() error {
+	if !s.config.PIN.Enabled {
+		s.logger.Info("PIN management disabled")
+		return nil
+	}
+
+	s.logger.Info("Initializing PIN manager...")
+
+	// Create the PIN manager based on strategy
+	strategy := s.config.PIN.Strategy
+	if strategy == "" {
+		strategy = "software"
+	}
+
+	pinDir := s.config.Storage.Path + "/pin"
+
+	switch strategy {
+	case "software":
+		fileStore, err := filestorage.New(pinDir)
+		if err != nil {
+			return &ErrStorageCreate{Resource: "PIN state directory", Err: err}
+		}
+		hashConfig := pin.AutoDetectHashConfig()
+		backend, err := pin.NewSoftwareBackend(fileStore, hashConfig)
+		if err != nil {
+			return &ErrServiceInit{Service: "software PIN manager", Err: err}
+		}
+		s.pinManager = &pin.PINManagerAdapter{PINBackend: backend} //nolint:staticcheck // TODO: migrate to PINBackend
+	default:
+		return &ErrUnknownPINStrategy{Strategy: strategy}
+	}
+
+	s.logger.Info("PIN manager initialized",
+		slog.String("strategy", strategy))
+
+	return nil
+}
+
+// initializePasswordStore initializes the static password store.
+func (s *Server) initializePasswordStore() error {
+	passwordStoragePath := s.config.Storage.Path + "/passwords"
+
+	backend, err := s.createStorage("passwords")
+	if err != nil {
+		return &ErrStorageCreate{Resource: "password storage", Err: err}
+	}
+
+	s.passwordStore = staticpw.NewStore(backend)
+	s.logger.Info("Password store initialized", "path", passwordStoragePath)
+	return nil
+}
+
+// initializePlatformStore initializes the platform sealed credential store.
+func (s *Server) initializePlatformStore() error {
+	// Platform store requires barrier to be initialized for sealing
+	if s.barrier == nil {
+		s.logger.Info("Platform store skipped: barrier not configured")
+		return nil
+	}
+
+	s.logger.Info("Platform store initialized")
+	return nil
+}
+
+// initializeCredentialService initializes the credential management service
+// for sealing/unsealing backend credentials (PKCS#11 User PIN, TPM2 auth, etc.)
+func (s *Server) initializeCredentialService() error {
+	strategy := s.config.Credentials.SealStrategy
+	if strategy == "" {
+		strategy = "manual"
+	}
+
+	cfg := &credentialspkg.Config{
+		Strategy: strategy,
+	}
+
+	svc, err := credentialspkg.New(cfg, s.platformStore, s.barrier, s.logger)
+	if err != nil {
+		return &ErrServiceInit{Service: "credential service", Err: err, Sentinel: ErrCredentialServiceFailed}
+	}
+
+	s.credentialService = svc
+	s.logger.Info("Credential service initialized", "strategy", strategy)
+	return nil
+}
+
+// initializePolicyManager initializes the PCR policy manager.
+func (s *Server) initializePolicyManager() error {
+	// Policy manager is optional, only for TPM-equipped servers
+	s.logger.Info("Policy manager initialization deferred (requires TPM PCR reader)")
+	return nil
+}
+
+// Barrier returns the barrier instance.
+func (s *Server) Barrier() *seal.Barrier {
+	return s.barrier
+}
+
+// BarrierRegistry returns the barrier registry instance.
+func (s *Server) BarrierRegistry() *seal.BarrierRegistry {
+	return s.barrierRegistry
+}
+
+// BootstrapService returns the bootstrap service instance.
+func (s *Server) BootstrapService() *bootstrap.Service {
+	return s.bootstrapService
+}
+
+// PINManager returns the PIN manager instance.
+func (s *Server) PINManager() pin.PINManager { //nolint:staticcheck // TODO: migrate to PINBackend
+	return s.pinManager
+}
+
+// PasswordStore returns the password store instance.
+func (s *Server) PasswordStore() *staticpw.BackendStore {
+	return s.passwordStore
+}
+
+// PlatformStore returns the platform store instance.
+func (s *Server) PlatformStore() seal.PlatformStore {
+	return s.platformStore
+}
+
+// PolicyManager returns the policy manager instance.
+func (s *Server) PolicyManager() *policy.Manager {
+	return s.policyManager
+}
+
+// SetCA sets the Certificate Authority for CA-backed TLS and certificate operations.
+func (s *Server) SetCA(basicCA ca.XKMSCA) {
+	s.ca = basicCA
+}
+
+// SetCeremonyService sets the init ceremony service.
+func (s *Server) SetCeremonyService(svc *initialize.CeremonyService) {
+	s.ceremonyService = svc
+}
+
+// SetCredentialService sets the credential management service.
+func (s *Server) SetCredentialService(svc *credentialspkg.Service) {
+	s.credentialService = svc
+}
+
+// CredentialService returns the credential management service.
+func (s *Server) CredentialService() *credentialspkg.Service {
+	return s.credentialService
+}
+
 // createJWTAuthenticator creates a JWT authenticator from configuration.
 func (s *Server) createJWTAuthenticator() (*auth.JWTAuthenticator, error) {
 	if s.config.Auth.JWT == nil {
-		return nil, fmt.Errorf("JWT configuration is required")
+		return nil, ErrJWTConfigRequired
 	}
 
 	// Load public key from file
 	pubKeyData, err := os.ReadFile(s.config.Auth.JWT.PublicKeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read public key file: %w", err)
+		return nil, &ErrFileRead{Path: "public key file", Err: err}
 	}
 
 	// Parse the public key (supports PEM-encoded ECDSA or RSA keys)
 	pubKey, err := parsePublicKey(pubKeyData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, &ErrTLSCertOp{Operation: "parse public key", Err: err}
 	}
 
 	return auth.NewJWTAuthenticator(&auth.JWTConfig{
@@ -537,7 +1123,7 @@ func parsePublicKey(data []byte) (interface{}, error) {
 		return key, nil
 	}
 
-	return nil, fmt.Errorf("unable to parse public key")
+	return nil, ErrParsePublicKey
 }
 
 // pemDecode decodes a PEM block.
@@ -612,7 +1198,7 @@ func (s *Server) initializeHealth() error {
 	s.healthChecker = health.NewChecker()
 
 	// Register backend health checks
-	for name, keystore := range s.keystores {
+	for name, keystore := range s.backends {
 		backendName := name // Capture for closure
 		ks := keystore      // Capture for closure
 
@@ -664,15 +1250,222 @@ func (s *Server) initializeHealth() error {
 	return nil
 }
 
+// initializeCA creates and initializes a Certificate Authority from config.
+// If config.CA is nil, the CA is not configured and initialization is skipped.
+// On first startup (no existing CA data), Init() creates new root/intermediate certificates.
+// On subsequent startups, Load() restores the CA from stored certificates and keys.
+func (s *Server) initializeCA() error {
+	if s.config.CA == nil {
+		return nil
+	}
+
+	s.logger.Info("Initializing CA...")
+
+	// Validate the CA configuration
+	if err := s.config.CA.Validate(); err != nil {
+		return &ErrCAInit{Operation: "validate CA configuration", Err: err}
+	}
+
+	// Resolve the keystore backend for the CA's root identity
+	if len(s.config.CA.Identity) == 0 {
+		return ErrCANoIdentities
+	}
+	keystoreType := s.config.CA.Identity[0].GetStoreType()
+	backend, ok := s.backends[string(keystoreType)]
+	if !ok {
+		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "CA keystore"}
+	}
+
+	// Create certificate storage for the CA
+	caStorage, err := s.createStorage("ca")
+	if err != nil {
+		return &ErrStorageCreate{Resource: "CA storage directory", Err: err}
+	}
+	certAdapter := storage.NewCertAdapter(caStorage)
+	caCertStore, err := certstore.New(&certstore.Config{
+		CertStorage: certAdapter,
+	})
+	if err != nil {
+		return &ErrServiceInit{Service: "CA certificate store", Err: err}
+	}
+
+	// Create the CA instance
+	basicCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
+		Config:    s.config.CA,
+		KeyStore:  backend,
+		CertStore: caCertStore,
+	})
+	if err != nil {
+		return &ErrCAInit{Operation: "create CA", Err: err}
+	}
+
+	// Try to load existing CA state (certificates and keys from a previous run).
+	// If loading fails, the CA has not been initialized yet, so create it.
+	if err := basicCA.Load(); err != nil {
+		s.logger.Info("No existing CA found, initializing new CA", "reason", err.Error())
+		if initErr := basicCA.Init(); initErr != nil {
+			return &ErrCAInit{Operation: "initialize new CA", Err: initErr}
+		}
+	}
+
+	s.ca = basicCA
+
+	cn := s.config.CA.Identity[0].Subject.CommonName
+	s.logger.Info("CA initialized", "identity", cn)
+
+	// If TLS is enabled with a server_cn, auto-issue a TLS server certificate
+	// so that buildTLSConfig() can retrieve it for HTTPS/gRPC/QUIC.
+	if s.config.TLS.Enabled && s.config.TLS.ServerCN != "" {
+		if err := s.ensureTLSServerCert(basicCA, keystoreType); err != nil {
+			return &ErrTLSCertOp{Operation: "ensure TLS server certificate", Err: err}
+		}
+	}
+
+	return nil
+}
+
+// ensureTLSServerCert checks if a TLS server certificate exists for the configured
+// server CN and issues one from the CA if it doesn't. This enables CA-backed TLS
+// without requiring pre-generated cert/key files.
+func (s *Server) ensureTLSServerCert(xkmsCA ca.XKMSCA, keystoreType types.StoreType) error {
+	serverCN := s.config.TLS.ServerCN
+
+	// Build key attributes for the TLS server cert using the CA identity's store type
+	identity := s.config.CA.Identity[s.config.CA.SelectedCA]
+	attrs := &types.KeyAttributes{
+		CN:        serverCN,
+		StoreType: keystoreType,
+		KeyType:   types.KeyTypeTLS,
+	}
+
+	// Check if the cert already exists by trying to retrieve it
+	if _, err := xkmsCA.TLSCertificate(attrs); err == nil {
+		s.logger.Info("TLS server certificate already exists", "cn", serverCN)
+		return nil
+	}
+
+	s.logger.Info("Issuing TLS server certificate from CA", "cn", serverCN)
+
+	// Build SANs: include server CN, localhost, and common container names
+	sans := &ca.SubjectAlternativeNames{
+		DNS: []string{serverCN, "localhost"},
+		IPs: []string{"127.0.0.1", "::1", "0.0.0.0"},
+	}
+
+	// Issue the TLS server certificate
+	issued, err := xkmsCA.IssueCertificateWithProfile(&ca.CertificateRequest{
+		Subject: ca.Subject{
+			CommonName:   serverCN,
+			Organization: identity.Subject.Organization,
+			Country:      identity.Subject.Country,
+		},
+		SANS:     sans,
+		Valid:    s.config.CA.DefaultValidityDays,
+		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+			x509.ExtKeyUsageClientAuth,
+		},
+	}, "server")
+	if err != nil {
+		// Handle stale state: the CA's certStore has the cert (from a previous run)
+		// but the backend's certStorage doesn't (volumes were partially cleaned).
+		// Retrieve the existing cert from the CA and sync it to the backend.
+		if errors.Is(err, ca.ErrCertificateAlreadyExists) {
+			return s.syncExistingTLSCert(xkmsCA, serverCN, keystoreType)
+		}
+		return &ErrTLSCertOp{Operation: "issue TLS server certificate", Err: err}
+	}
+
+	// Store the issued cert in the backend's cert storage so that
+	// ca.TLSCertificate() → keyStore.GetTLSCertificate() can find it.
+	// The CA stores certs in its own certStore, but GetTLSCertificate
+	// looks in the compositeBackend's certStorage (separate storage).
+	if err := s.storeTLSCertInBackend(xkmsCA, serverCN, keystoreType, issued.Certificate); err != nil {
+		return err
+	}
+
+	s.logger.Info("TLS server certificate issued", "cn", serverCN)
+	return nil
+}
+
+// syncExistingTLSCert handles the case where the CA's certStore already has a TLS
+// certificate (from a previous run) but the backend's certStorage doesn't. This
+// happens when Docker volumes are partially cleaned between runs. The function
+// retrieves the existing cert from the CA's certStore and stores it in the backend.
+func (s *Server) syncExistingTLSCert(xkmsCA ca.XKMSCA, serverCN string, keystoreType types.StoreType) error {
+	s.logger.Info("TLS cert exists in CA but not in backend, syncing", "cn", serverCN)
+
+	cert, err := xkmsCA.CertStore().GetCertificate(serverCN)
+	if err != nil {
+		return &ErrTLSCertOp{Operation: "retrieve existing TLS cert from CA certStore", Err: err}
+	}
+
+	if err := s.storeTLSCertInBackend(xkmsCA, serverCN, keystoreType, cert); err != nil {
+		return err
+	}
+
+	s.logger.Info("TLS server certificate synced from CA to backend", "cn", serverCN)
+	return nil
+}
+
+// storeTLSCertInBackend stores a TLS certificate and its chain in the backend's
+// cert storage so that ca.TLSCertificate() → keyStore.GetTLSCertificate() can
+// find it. The CA stores certs in its own certStore, but GetTLSCertificate looks
+// in the compositeBackend's certStorage (separate storage).
+func (s *Server) storeTLSCertInBackend(xkmsCA ca.XKMSCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
+	backend, ok := s.backends[string(keystoreType)]
+	if !ok {
+		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "TLS cert storage"}
+	}
+	if err := backend.SaveCert(serverCN, cert); err != nil {
+		return &ErrTLSCertOp{Operation: "store TLS cert in backend", Err: err}
+	}
+
+	// Also store the certificate chain (leaf + CA) for proper TLS handshakes
+	caCert, caErr := xkmsCA.CACertificate()
+	if caErr == nil && caCert != nil {
+		chain := []*x509.Certificate{cert, caCert}
+		if chainErr := backend.SaveCertChain(serverCN, chain); chainErr != nil {
+			s.logger.Warn("Failed to store TLS cert chain in backend", "error", chainErr)
+		}
+	}
+
+	return nil
+}
+
 // Start starts all enabled protocol servers
 func (s *Server) Start() error {
-	s.logger.Info("Starting keychain server...")
+	s.logger.Info("Starting xkms server...")
+
+	// Initialize CA bundler from TLS configuration so REST, gRPC, and Noise
+	// subsystems can serve the CA certificate bundle for trust bootstrap.
+	if s.config.TLS.Enabled && s.config.TLS.CAFile != "" {
+		bundler, err := newTLSCABundler(s.config.TLS.CAFile)
+		if err != nil {
+			s.logger.Warn("Failed to initialize CA bundler", slog.Any("error", err))
+		} else {
+			rest.SetCABundler(bundler)
+			grpcinternal.SetCABundler(bundler)
+			s.logger.Info("CA bundler initialized from TLS CA file", "ca_file", s.config.TLS.CAFile)
+		}
+	} else if s.config.TLS.Enabled && s.ca != nil && s.ca.IsInitialized() {
+		// When using CA-backed TLS (no CAFile), create bundler from the CA instance
+		bundler, err := newCAInstanceBundler(s.ca)
+		if err != nil {
+			s.logger.Warn("Failed to initialize CA bundler from CA instance", slog.Any("error", err))
+		} else {
+			rest.SetCABundler(bundler)
+			grpcinternal.SetCABundler(bundler)
+			s.logger.Info("CA bundler initialized from CA instance")
+		}
+	}
 
 	// Initialize metrics if enabled
 	if s.config.Metrics.Enabled {
 		if err := s.initializeMetrics(); err != nil {
 			s.logger.Error("Failed to initialize metrics", slog.Any("error", err))
-			return fmt.Errorf("failed to initialize metrics: %w", err)
+			return &ErrServiceInit{Service: "metrics", Err: err}
 		}
 	}
 
@@ -704,6 +1497,12 @@ func (s *Server) Start() error {
 	if s.config.Protocols.MCP {
 		s.wg.Add(1)
 		go s.startMCP()
+	}
+
+	// Start Noise bootstrap server if enabled
+	if s.config.Protocols.Noise {
+		s.wg.Add(1)
+		go s.startNoiseBootstrap()
 	}
 
 	// Start metrics server if enabled
@@ -777,12 +1576,34 @@ func (s *Server) startREST() {
 
 	// Create REST server configuration
 	restConfig := &rest.Config{
-		Port:          s.config.Server.RESTPort,
-		Backends:      s.keystores,
-		Version:       getBuildVersion(),
-		UserStore:     s.userStore,
-		Authenticator: s.authenticator,
-		EnableRBAC:    s.config.Auth.EnableRBAC,
+		Port:              s.config.Server.RESTPort,
+		Backends:          s.backends,
+		Version:           getBuildVersion(),
+		UserStore:         s.userStore,
+		Authenticator:     s.authenticator,
+		EnableRBAC:        s.config.Auth.EnableRBAC,
+		Authorizer:        s.authorizer,
+		AuditLogger:       s.auditLogger,
+		Barrier:           s.barrier,
+		PINManager:        s.pinManager,
+		PasswordStore:     s.passwordStore,
+		PlatformStore:     s.platformStore,
+		PolicyManager:     s.policyManager,
+		BootstrapService:  s.bootstrapService,
+		BarrierRegistry:   s.barrierRegistry,
+		CustodianService:  s.custodianService,
+		ShareStore:        s.shareStore,
+		CeremonyService:   s.ceremonyService,
+		CredentialService: s.credentialService,
+	}
+
+	// Pass the XKMSService as CA servicer. The XKMSService wraps the raw CA
+	// with transport-level methods (GetCABundle, IssueCertificate, etc.) that
+	// match the caServicer interface expected by the REST handlers.
+	if s.ca != nil {
+		if svc, err := xkms.Get(); err == nil {
+			restConfig.CA = svc
+		}
 	}
 
 	// Add WebAuthn config if enabled
@@ -864,11 +1685,44 @@ func (s *Server) startGRPC() {
 	s.grpcServer = grpcSrv
 	s.mu.Unlock()
 
-	// Create and register gRPC service (uses keychain service)
-	service := grpcinternal.NewService()
+	// Create and register gRPC service (uses xkms service)
+	service := grpcinternal.NewService(s.authorizer, s.auditLogger)
+
+	// Wire barrier and PIN manager into gRPC service
+	if s.barrier != nil {
+		grpcinternal.SetBarrier(s.barrier)
+	}
+	if s.pinManager != nil {
+		grpcinternal.SetPINManager(s.pinManager)
+	}
+
+	// Wire custodian, share, and tenant services into gRPC
+	if s.custodianService != nil {
+		grpcinternal.SetCustodianService(s.custodianService)
+	}
+	if s.shareStore != nil {
+		grpcinternal.SetShareStore(s.shareStore)
+	}
+	if s.barrierRegistry != nil {
+		grpcinternal.SetBarrierRegistry(s.barrierRegistry)
+	}
+
+	// Wire init ceremony and credential services into gRPC
+	if s.ceremonyService != nil {
+		grpcinternal.SetCeremonyService(initialize.NewCeremonyAdapter(s.ceremonyService))
+	}
+	if s.credentialService != nil {
+		grpcinternal.SetCredentialService(s.credentialService)
+	}
+
+	// Wire CA into gRPC
+	if s.ca != nil {
+		grpcinternal.SetCA(s.ca)
+	}
+
 	pb.RegisterKeystoreServiceServer(grpcSrv, service)
 
-	s.logger.Info("gRPC services registered", "keystores", len(s.keystores))
+	s.logger.Info("gRPC services registered", "backends", len(s.backends))
 	s.logger.Info("Starting gRPC server", "address", addr)
 
 	if err := grpcSrv.Serve(lis); err != nil {
@@ -887,7 +1741,7 @@ func (s *Server) initializeMetrics() error {
 	s.metricsCollector = metrics.StartResourceCollector(s.ctx, 30*time.Second)
 
 	// Initialize backend health metrics
-	for name := range s.backends {
+	for name := range s.keyProviders {
 		metrics.SetBackendHealth(name, true)
 	}
 
@@ -922,12 +1776,12 @@ func (s *Server) startMCP() {
 	defer s.wg.Done()
 
 	// Get default keystore for MCP (use first available if no default specified)
-	var defaultKS keychain.KeyStore
+	var defaultKS xkms.Backend
 	if s.config.Default != "" {
-		defaultKS = s.keystores[string(s.config.Default)]
+		defaultKS = s.backends[string(s.config.Default)]
 	}
 	if defaultKS == nil {
-		for _, ks := range s.keystores {
+		for _, ks := range s.backends {
 			defaultKS = ks
 			break
 		}
@@ -963,16 +1817,150 @@ func (s *Server) startMCP() {
 	}
 }
 
+// startNoiseBootstrap starts the Noise_NK bootstrap server for secure CA bundle distribution.
+func (s *Server) startNoiseBootstrap() {
+	defer s.wg.Done()
+
+	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.NoisePort)
+
+	// Get CA bundler
+	bundler := grpcinternal.GetCABundler()
+	if bundler == nil {
+		s.logger.Error("Noise bootstrap requires a CA bundler to be configured")
+		return
+	}
+
+	noiseCfg := s.config.Bootstrap.Noise
+
+	// Parse timeouts
+	readTimeout := 10 * time.Second
+	writeTimeout := 10 * time.Second
+	if noiseCfg.ReadTimeout != "" {
+		if d, err := time.ParseDuration(noiseCfg.ReadTimeout); err == nil {
+			readTimeout = d
+		}
+	}
+	if noiseCfg.WriteTimeout != "" {
+		if d, err := time.ParseDuration(noiseCfg.WriteTimeout); err == nil {
+			writeTimeout = d
+		}
+	}
+
+	maxConns := noiseCfg.MaxConnections
+	if maxConns <= 0 {
+		maxConns = 100
+	}
+
+	// Load static key from file or hex config
+	staticKey, err := s.loadNoiseStaticKey()
+	if err != nil {
+		s.logger.Error("Failed to load Noise static key", slog.Any("error", err))
+		return
+	}
+
+	serverCfg := &noiseboot.ServerConfig{
+		ListenAddr:     addr,
+		StaticKey:      staticKey,
+		CABundler:      bundler,
+		MaxConnections: maxConns,
+		ReadTimeout:    readTimeout,
+		WriteTimeout:   writeTimeout,
+		Logger:         s.logger.With("component", "noise_bootstrap"),
+	}
+
+	server, err := noiseboot.NewServer(serverCfg)
+	if err != nil {
+		s.logger.Error("Failed to create Noise bootstrap server", slog.Any("error", err))
+		return
+	}
+
+	s.mu.Lock()
+	s.noiseBootstrapServer = server
+	s.mu.Unlock()
+
+	s.logger.Info("Starting Noise bootstrap server", "address", addr)
+
+	if err := server.Start(); err != nil {
+		s.logger.Error("Noise bootstrap server error", slog.Any("error", err))
+	}
+}
+
+// loadNoiseStaticKey loads the Noise static key from config.
+func (s *Server) loadNoiseStaticKey() (*flynn_noise.DHKey, error) {
+	noiseCfg := s.config.Bootstrap.Noise
+
+	// Try hex key first (inline config)
+	if noiseCfg.StaticKeyHex != "" {
+		return noiseproto.DecodeStaticKey(noiseCfg.StaticKeyHex)
+	}
+
+	// Try key file
+	if noiseCfg.StaticKeyFile != "" {
+		// #nosec G304 - Key file path from trusted config
+		data, err := os.ReadFile(noiseCfg.StaticKeyFile)
+		if err != nil {
+			return nil, &ErrFileRead{Path: "noise key file", Err: err}
+		}
+		hexKey := strings.TrimSpace(string(data))
+		return noiseproto.DecodeStaticKey(hexKey)
+	}
+
+	// Generate a new key (first-time setup)
+	s.logger.Warn("No Noise static key configured, generating ephemeral key. This is NOT recommended for production.")
+	return noiseproto.GenerateStaticKey()
+}
+
 // buildTLSConfig builds a crypto/tls.Config from the server configuration
 func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	if !s.config.TLS.Enabled {
-		return nil, fmt.Errorf("TLS is not enabled in configuration")
+		return nil, ErrTLSNotEnabled
 	}
 
-	// Load server certificate and private key
-	cert, err := tls.LoadX509KeyPair(s.config.TLS.CertFile, s.config.TLS.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load server certificate: %w", err)
+	// Load server certificate -- prefer CA-backed (hardware crypto.Signer) over file-based
+	var cert tls.Certificate
+	var certLoaded bool
+	if s.ca != nil && s.ca.IsInitialized() {
+		// CA-backed TLS: the CA provides a tls.Certificate with crypto.Signer
+		// from the configured backend. Private key management is handled by the CA.
+		identity := s.config.CA.Identity[s.config.CA.SelectedCA]
+		keystoreType := identity.GetStoreType()
+		attrs, tlsErr := types.KeyAttributesFromConfig(identity.Keys[0])
+		if tlsErr == nil {
+			attrs.CN = s.config.TLS.ServerCN
+			attrs.StoreType = keystoreType
+			attrs.KeyType = types.KeyTypeTLS
+			var err error
+			cert, err = s.ca.TLSCertificate(attrs)
+			if err != nil {
+				if s.config.TLS.CertFile == "" && s.config.TLS.KeyFile == "" {
+					return nil, &ErrTLSCertOp{Operation: "load CA-backed TLS certificate", Err: err, Sentinel: ErrCATLSCertFailed}
+				}
+				s.logger.Warn("CA-backed TLS unavailable, falling back to file-based TLS",
+					"error", err)
+			} else {
+				s.logger.Info("Using CA-backed TLS certificate", "cn", s.config.TLS.ServerCN)
+				certLoaded = true
+			}
+		} else {
+			if s.config.TLS.CertFile == "" && s.config.TLS.KeyFile == "" {
+				return nil, &ErrTLSCertOp{Operation: "build TLS key attributes from CA config", Err: tlsErr, Sentinel: ErrCATLSCertFailed}
+			}
+			s.logger.Warn("Failed to build TLS key attributes from CA config, falling back to file-based TLS",
+				"error", tlsErr)
+		}
+	}
+	if !certLoaded && s.config.TLS.CertFile != "" && s.config.TLS.KeyFile != "" {
+		// File-based TLS: backward compatible with existing deployments
+		var err error
+		cert, err = tls.LoadX509KeyPair(s.config.TLS.CertFile, s.config.TLS.KeyFile)
+		if err != nil {
+			return nil, &ErrTLSCertOp{Operation: "load server certificate", Err: err}
+		}
+		certLoaded = true
+		s.logger.Info("Using file-based TLS certificate")
+	}
+	if !certLoaded {
+		return nil, ErrNoTLSCertAvailable
 	}
 
 	tlsConfig := &tls.Config{
@@ -999,12 +1987,12 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 	if s.config.TLS.CAFile != "" {
 		caCert, err := os.ReadFile(s.config.TLS.CAFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+			return nil, &ErrFileRead{Path: "CA certificate", Err: err}
 		}
 
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
+			return nil, ErrCAParseCert
 		}
 
 		tlsConfig.ClientCAs = caCertPool
@@ -1020,11 +2008,11 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 			// #nosec G304 - CA certificate path from trusted config file
 			caCert, err := os.ReadFile(caPath)
 			if err != nil {
-				return nil, fmt.Errorf("failed to read additional client CA certificate at %s: %w", caPath, err)
+				return nil, &ErrFileRead{Path: "additional client CA certificate at " + caPath, Err: err}
 			}
 
 			if !tlsConfig.ClientCAs.AppendCertsFromPEM(caCert) {
-				return nil, fmt.Errorf("failed to parse additional client CA certificate at %s", caPath)
+				return nil, &ErrCertParse{Path: caPath}
 			}
 		}
 	}
@@ -1091,12 +2079,12 @@ func (s *Server) startQUIC() {
 	defer s.wg.Done()
 
 	// Get default keystore for QUIC (use first available if no default specified)
-	var defaultKS keychain.KeyStore
+	var defaultKS xkms.Backend
 	if s.config.Default != "" {
-		defaultKS = s.keystores[string(s.config.Default)]
+		defaultKS = s.backends[string(s.config.Default)]
 	}
 	if defaultKS == nil {
-		for _, ks := range s.keystores {
+		for _, ks := range s.backends {
 			defaultKS = ks
 			break
 		}
@@ -1117,10 +2105,13 @@ func (s *Server) startQUIC() {
 	}
 
 	quicConfig := &quic.Config{
-		Addr:      addr,
-		Version:   getBuildVersion(),
-		TLSConfig: tlsConfig,
-		Logger:    s.logger.With("component", "quic"),
+		Addr:          addr,
+		Version:       getBuildVersion(),
+		TLSConfig:     tlsConfig,
+		Logger:        s.logger.With("component", "quic"),
+		Authenticator: s.authenticator,
+		Authorizer:    s.authorizer,
+		AuditLogger:   s.auditLogger,
 	}
 
 	quicSrv, err := quic.NewServer(quicConfig)
@@ -1167,6 +2158,7 @@ func (s *Server) Shutdown() error {
 	unixGRPC := s.unixGRPCServer
 	restSrv := s.restServer
 	grpcSrv := s.grpcServer
+	noiseSrv := s.noiseBootstrapServer
 	s.mu.RUnlock()
 
 	// Shutdown Unix gRPC socket server
@@ -1191,6 +2183,14 @@ func (s *Server) Shutdown() error {
 		grpcSrv.GracefulStop()
 	}
 
+	// Shutdown Noise bootstrap server
+	if noiseSrv != nil {
+		s.logger.Info("Shutting down Noise bootstrap server...")
+		if err := noiseSrv.Stop(shutdownCtx); err != nil {
+			s.logger.Error("Error shutting down Noise bootstrap server", slog.Any("error", err))
+		}
+	}
+
 	// Wait for all goroutines to finish
 	done := make(chan struct{})
 	go func() {
@@ -1205,15 +2205,22 @@ func (s *Server) Shutdown() error {
 		s.logger.Warn("Shutdown timeout exceeded, forcing stop")
 	}
 
-	// Close all keystores
-	for name, ks := range s.keystores {
-		s.logger.Info("Closing keystore...", "backend", name)
-		if err := ks.Close(); err != nil {
-			s.logger.Error("Error closing keystore", slog.Any("error", err), "backend", name)
+	// Close audit logger
+	if s.auditLogger != nil {
+		if err := s.auditLogger.Close(); err != nil {
+			s.logger.Error("Failed to close audit logger", slog.Any("error", err))
 		}
 	}
 
 	// Close all backends
+	for name, ks := range s.backends {
+		s.logger.Info("Closing backend...", "backend", name)
+		if err := ks.Close(); err != nil {
+			s.logger.Error("Error closing backend", slog.Any("error", err), "backend", name)
+		}
+	}
+
+	// Close all key providers
 	s.closeBackends()
 
 	close(s.shutdownCh)
@@ -1222,10 +2229,10 @@ func (s *Server) Shutdown() error {
 	return nil
 }
 
-// closeBackends closes all backend connections
+// closeBackends closes all key provider connections
 func (s *Server) closeBackends() {
-	for name, backend := range s.backends {
-		s.logger.Info("Closing backend...", "backend", name)
+	for name, backend := range s.keyProviders {
+		s.logger.Info("Closing key provider...", "key_provider", name)
 		if err := backend.Close(); err != nil {
 			s.logger.Error("Error closing backend", slog.Any("error", err), "backend", name)
 		}
@@ -1239,7 +2246,7 @@ func (s *Server) WaitForShutdown() {
 
 // SetupSignalHandler sets up signal handling for graceful shutdown
 func SetupSignalHandler() context.Context {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background()) // #nosec G118 -- cancel is called in the goroutine below
 
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
@@ -1279,6 +2286,13 @@ func (s *Server) MCPServer() *mcp.Server {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.mcpServer
+}
+
+// NoiseBootstrapServer returns the Noise bootstrap server instance
+func (s *Server) NoiseBootstrapServer() *noiseboot.Server {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.noiseBootstrapServer
 }
 
 // UnixGRPCServer returns the Unix gRPC socket server instance

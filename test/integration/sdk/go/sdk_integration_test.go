@@ -3,9 +3,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -13,7 +13,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package integration provides SDK integration tests for go-keychain.
+// Package integration provides SDK integration tests for go-xkms.
 // These tests verify that the SDK client works correctly using the embedded protocol
 // which allows testing without external server dependencies.
 package integration
@@ -23,19 +23,19 @@ import (
 	"testing"
 	"time"
 
-	keychain "github.com/jeremyhahn/go-keychain/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // createTestClient creates an embedded SDK client with the test service.
-func createTestClient(t *testing.T) (keychain.Client, func()) {
+func createTestClient(t *testing.T) (xkms.Client, func()) {
 	t.Helper()
 
-	service, err := NewTestKeychainService()
+	service, err := NewTestXKMSService()
 	if err != nil {
 		t.Fatalf("Failed to create test service: %v", err)
 	}
 
-	client, err := keychain.NewEmbedded(service)
+	client, err := xkms.NewEmbedded(service)
 	if err != nil {
 		t.Fatalf("Failed to create embedded client: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSDK_Embedded_KeyLifecycle(t *testing.T) {
 	keyID := "test-lifecycle-key"
 
 	// Generate key
-	genResp, err := client.GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	genResp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:      keyID,
 		Backend:    "software",
 		KeyType:    "ecdsa",
@@ -193,7 +193,7 @@ func TestSDK_Embedded_SignVerify(t *testing.T) {
 	keyID := "test-sign-key"
 
 	// Generate signing key
-	_, err := client.GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   keyID,
 		Backend: "software",
 		KeyType: "ecdsa",
@@ -206,7 +206,7 @@ func TestSDK_Embedded_SignVerify(t *testing.T) {
 
 	// Sign data
 	testData := []byte("Hello, SDK integration test!")
-	signResp, err := client.Sign(ctx, &keychain.SignRequest{
+	signResp, err := client.Sign(ctx, &xkms.SignRequest{
 		Backend: "software",
 		KeyID:   keyID,
 		Data:    testData,
@@ -223,7 +223,7 @@ func TestSDK_Embedded_SignVerify(t *testing.T) {
 	t.Logf("Signed data, signature length: %d bytes", len(signResp.Signature))
 
 	// Verify signature
-	verifyResp, err := client.Verify(ctx, &keychain.VerifyRequest{
+	verifyResp, err := client.Verify(ctx, &xkms.VerifyRequest{
 		Backend:   "software",
 		KeyID:     keyID,
 		Data:      testData,
@@ -242,7 +242,7 @@ func TestSDK_Embedded_SignVerify(t *testing.T) {
 
 	// Test verification with wrong data (should fail)
 	wrongData := []byte("Wrong data!")
-	verifyWrongResp, err := client.Verify(ctx, &keychain.VerifyRequest{
+	verifyWrongResp, err := client.Verify(ctx, &xkms.VerifyRequest{
 		Backend:   "software",
 		KeyID:     keyID,
 		Data:      wrongData,
@@ -271,7 +271,7 @@ func TestSDK_Embedded_EncryptDecrypt(t *testing.T) {
 	keyID := "test-aes-key"
 
 	// Generate symmetric key
-	_, err := client.GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	_, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:     keyID,
 		Backend:   "software",
 		KeyType:   "symmetric",
@@ -284,7 +284,7 @@ func TestSDK_Embedded_EncryptDecrypt(t *testing.T) {
 
 	// Encrypt data
 	plaintext := []byte("Secret message for encryption test!")
-	encResp, err := client.Encrypt(ctx, &keychain.EncryptRequest{
+	encResp, err := client.Encrypt(ctx, &xkms.EncryptRequest{
 		Backend:   "software",
 		KeyID:     keyID,
 		Plaintext: plaintext,
@@ -304,7 +304,7 @@ func TestSDK_Embedded_EncryptDecrypt(t *testing.T) {
 	t.Logf("Encrypted data: ciphertext=%d bytes, nonce=%d bytes", len(encResp.Ciphertext), len(encResp.Nonce))
 
 	// Decrypt data
-	decResp, err := client.Decrypt(ctx, &keychain.DecryptRequest{
+	decResp, err := client.Decrypt(ctx, &xkms.DecryptRequest{
 		Backend:    "software",
 		KeyID:      keyID,
 		Ciphertext: encResp.Ciphertext,
@@ -337,14 +337,14 @@ func TestSDK_Embedded_SealUnseal(t *testing.T) {
 	}
 
 	if !canSealResp.CanSeal {
-		t.Skip("Sealing not supported for software backend")
+		t.Fatal("Sealing must be supported for software backend")
 	}
 
 	t.Logf("CanSeal: backend=%s, supported=%v", canSealResp.Backend, canSealResp.CanSeal)
 
 	// Seal data
 	secretData := []byte("Sealed secret data for integration test!")
-	sealResp, err := client.Seal(ctx, &keychain.SealRequest{
+	sealResp, err := client.Seal(ctx, &xkms.SealRequest{
 		Backend: "software",
 		Data:    secretData,
 	})
@@ -359,7 +359,7 @@ func TestSDK_Embedded_SealUnseal(t *testing.T) {
 	t.Logf("Sealed data: ciphertext=%d bytes", len(sealResp.Ciphertext))
 
 	// Unseal data
-	unsealResp, err := client.Unseal(ctx, &keychain.UnsealRequest{
+	unsealResp, err := client.Unseal(ctx, &xkms.UnsealRequest{
 		Backend:    "software",
 		Ciphertext: sealResp.Ciphertext,
 		Nonce:      sealResp.Nonce,
@@ -380,21 +380,21 @@ func TestSDK_Embedded_SealUnseal(t *testing.T) {
 func TestSDK_URLParsing(t *testing.T) {
 	testCases := []struct {
 		URL      string
-		Expected keychain.Protocol
+		Expected xkms.Protocol
 	}{
-		{"http://localhost:8443", keychain.ProtocolREST},
-		{"https://localhost:8443", keychain.ProtocolREST},
-		{"grpc://localhost:9443", keychain.ProtocolGRPC},
-		{"grpcs://localhost:9443", keychain.ProtocolGRPC},
-		{"quic://localhost:8444", keychain.ProtocolQUIC},
-		{"mcp://localhost:9444", keychain.ProtocolMCP},
-		{"mcps://localhost:9444", keychain.ProtocolMCP},
-		{"unix:///path/to/socket", keychain.ProtocolUnix},
+		{"http://localhost:8443", xkms.ProtocolREST},
+		{"https://localhost:8443", xkms.ProtocolREST},
+		{"grpc://localhost:9443", xkms.ProtocolGRPC},
+		{"grpcs://localhost:9443", xkms.ProtocolGRPC},
+		{"quic://localhost:8444", xkms.ProtocolQUIC},
+		{"mcp://localhost:9444", xkms.ProtocolMCP},
+		{"mcps://localhost:9444", xkms.ProtocolMCP},
+		{"unix:///path/to/socket", xkms.ProtocolUnix},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.URL, func(t *testing.T) {
-			client, err := keychain.NewFromURL(tc.URL)
+			client, err := xkms.NewFromURL(tc.URL)
 			if err != nil {
 				t.Fatalf("NewFromURL failed for %s: %v", tc.URL, err)
 			}
@@ -415,7 +415,7 @@ func TestSDK_Embedded_MultipleKeys(t *testing.T) {
 	// Generate multiple keys
 	keyIDs := []string{"multi-key-1", "multi-key-2", "multi-key-3"}
 	for _, keyID := range keyIDs {
-		_, err := client.GenerateKey(ctx, &keychain.GenerateKeyRequest{
+		_, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 			KeyID:   keyID,
 			Backend: "software",
 			KeyType: "ecdsa",
@@ -442,7 +442,7 @@ func TestSDK_Embedded_MultipleKeys(t *testing.T) {
 	// Sign with each key and verify
 	testData := []byte("Multi-key test data")
 	for _, keyID := range keyIDs {
-		signResp, err := client.Sign(ctx, &keychain.SignRequest{
+		signResp, err := client.Sign(ctx, &xkms.SignRequest{
 			Backend: "software",
 			KeyID:   keyID,
 			Data:    testData,
@@ -452,7 +452,7 @@ func TestSDK_Embedded_MultipleKeys(t *testing.T) {
 			t.Fatalf("Sign failed for %s: %v", keyID, err)
 		}
 
-		verifyResp, err := client.Verify(ctx, &keychain.VerifyRequest{
+		verifyResp, err := client.Verify(ctx, &xkms.VerifyRequest{
 			Backend:   "software",
 			KeyID:     keyID,
 			Data:      testData,
@@ -509,7 +509,7 @@ func TestSDK_Embedded_ErrorHandling(t *testing.T) {
 
 	// Sign with non-existent key
 	t.Run("SignWithNonExistentKey", func(t *testing.T) {
-		_, err := client.Sign(ctx, &keychain.SignRequest{
+		_, err := client.Sign(ctx, &xkms.SignRequest{
 			Backend: "software",
 			KeyID:   "non-existent-key",
 			Data:    []byte("test"),

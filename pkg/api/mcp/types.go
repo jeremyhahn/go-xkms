@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,6 +15,9 @@ package mcp
 
 import (
 	"encoding/json"
+
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // JSONRPCRequest represents a JSON-RPC 2.0 request
@@ -63,9 +66,18 @@ type HealthResult struct {
 	Status string `json:"status"`
 }
 
+// BackendInfo represents information about a backend
+type BackendInfo struct {
+	ID             string             `json:"id"`
+	Type           string             `json:"type"`
+	HardwareBacked bool               `json:"hardware_backed"`
+	Capabilities   types.Capabilities `json:"capabilities"`
+}
+
 // ListBackendsResult represents the result of listing backends
 type ListBackendsResult struct {
-	Backends []string `json:"backends"`
+	Backends   []BackendInfo           `json:"backends"`
+	Pagination *transport.PageResponse `json:"pagination,omitempty"`
 }
 
 // GenerateKeyParams represents parameters for key generation
@@ -209,7 +221,8 @@ type DeleteCertParams struct {
 
 // ListCertsResult represents the result of listing certificates
 type ListCertsResult struct {
-	KeyIDs []string `json:"key_ids"`
+	KeyIDs     []string                `json:"key_ids"`
+	Pagination *transport.PageResponse `json:"pagination,omitempty"`
 }
 
 // CertExistsParams represents parameters for checking certificate existence
@@ -222,14 +235,30 @@ type CertExistsResult struct {
 	Exists bool `json:"exists"`
 }
 
-// ListKeysResult represents the result of listing keys
-type ListKeysResult struct {
-	Keys []KeyInfo `json:"keys"`
+// ListKeysParams represents optional parameters for listing keys.
+// When Backend is empty, keys from all backends are returned.
+// Pagination fields are optional; when Page is 0 all results are returned.
+type ListKeysParams struct {
+	Backend   string `json:"backend,omitempty"`
+	Page      int    `json:"page,omitempty"`
+	PageSize  int    `json:"page_size,omitempty"`
+	SortField string `json:"sort_field,omitempty"`
+	SortOrder int    `json:"sort_order,omitempty"`
 }
 
-// KeyInfo represents basic information about a key
+// ListKeysResult represents the result of listing keys
+type ListKeysResult struct {
+	Keys       []KeyInfo               `json:"keys"`
+	Pagination *transport.PageResponse `json:"pagination,omitempty"`
+}
+
+// KeyInfo represents information about a key, matching the REST API format.
 type KeyInfo struct {
-	CN string `json:"cn"`
+	KeyID        string `json:"key_id"`
+	KeyType      string `json:"key_type"`
+	Algorithm    string `json:"algorithm,omitempty"`
+	Backend      string `json:"backend"`
+	PublicKeyPEM string `json:"public_key_pem,omitempty"`
 }
 
 // SaveCertChainParams represents parameters for saving a certificate chain
@@ -375,38 +404,6 @@ type CopyKeyParams struct {
 type CopyKeyResult struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
-}
-
-// ListKeyVersionsParams represents parameters for listing key versions
-type ListKeyVersionsParams struct {
-	KeyID   string `json:"key_id"`
-	Backend string `json:"backend,omitempty"`
-}
-
-// EnableKeyVersionParams represents parameters for enabling a specific key version
-type EnableKeyVersionParams struct {
-	KeyID   string `json:"key_id"`
-	Version int    `json:"version"`
-	Backend string `json:"backend,omitempty"`
-}
-
-// DisableKeyVersionParams represents parameters for disabling a specific key version
-type DisableKeyVersionParams struct {
-	KeyID   string `json:"key_id"`
-	Version int    `json:"version"`
-	Backend string `json:"backend,omitempty"`
-}
-
-// EnableAllKeyVersionsParams represents parameters for enabling all versions of a key
-type EnableAllKeyVersionsParams struct {
-	KeyID   string `json:"key_id"`
-	Backend string `json:"backend,omitempty"`
-}
-
-// DisableAllKeyVersionsParams represents parameters for disabling all versions of a key
-type DisableAllKeyVersionsParams struct {
-	KeyID   string `json:"key_id"`
-	Backend string `json:"backend,omitempty"`
 }
 
 // SealParams represents parameters for sealing data

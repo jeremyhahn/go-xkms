@@ -6,6 +6,10 @@ AEAD bytes tracking enforces usage limits on symmetric encryption keys to preven
 
 **Important:** AEAD tracking is **enabled by default** for all backends with symmetric encryption support. This provides automatic protection against nonce reuse and excessive data encryption with a single key.
 
+## Service API Note
+
+When using `xkms.AutoInitialize`, AEAD tracking is enabled automatically for all backends that support symmetric encryption. No additional configuration is required -- the service layer initializes each backend with default AEAD safety tracking (nonce reuse prevention and 350GB byte limits per NIST SP 800-38D). The `xkms.Encrypt` and `xkms.Decrypt` functions work through backends that already have tracking active.
+
 ## Quick Start
 
 ### Default Behavior (Recommended)
@@ -34,7 +38,7 @@ key, err := backend.GenerateSymmetricKey(attrs)
 Configure custom limits per backend using the `Tracker` field:
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/backend"
+import "github.com/jeremyhahn/go-xkms/pkg/backend"
 
 // Create custom tracker with 100GB limit
 tracker := backend.NewMemoryAEADTracker()
@@ -110,14 +114,14 @@ opts := &types.AEADOptions{
 
 ### Supported Backends
 
-AEAD tracking is available on all backends with symmetric encryption:
+All symmetric-capable backends implement `SymmetricKeyProviderWithTracking` and expose `GetTracker()` for AEAD safety tracking:
 
 | Backend | Tracking Type | Default Enabled |
 |---------|---------------|-----------------|
-| AES | Full (nonce + bytes) | ✅ Yes |
+| Symmetric | Full (nonce + bytes) | ✅ Yes |
 | Software | Full (nonce + bytes) | ✅ Yes |
-| PKCS11 | Full (nonce + bytes) | ✅ Yes |
-| SmartCard-HSM | Full (nonce + bytes) | ✅ Yes (via PKCS11) |
+| PKCS#11 | Full (nonce + bytes) | ✅ Yes |
+
 | TPM2 | Full (nonce + bytes) | ✅ Yes |
 | Azure Key Vault | Full (nonce + bytes) | ✅ Yes |
 | AWS KMS | Bytes only* | ✅ Yes |
@@ -175,8 +179,8 @@ The default AEAD options enable bytes tracking with a 350GB limit:
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 )
 
 // Create backend with default AEAD safety tracking
@@ -271,7 +275,7 @@ For custom integrations, you can use the standalone `BytesTracker`:
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+    "github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 )
 
 // Create tracker with 350GB limit (default)

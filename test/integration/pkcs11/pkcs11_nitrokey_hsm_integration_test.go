@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,6 +17,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -30,10 +31,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,10 +64,10 @@ func TestNitrokeyHSM(t *testing.T) {
 
 	// Create PKCS11 backend configuration for Nitrokey HSM
 	// The Nitrokey HSM uses the "SmartCard-HSM" token label by default
-	// We initialized it with label "go-keychain-test (UserPIN)"
+	// We initialized it with label "go-xkms-test (UserPIN)"
 	config := &pkcs11.Config{
 		Library:     libPath,
-		TokenLabel:  "go-keychain-test (UserPIN)",
+		TokenLabel:  "go-xkms-test (UserPIN)",
 		PIN:         "648219",
 		KeyStorage:  keyStorage,
 		CertStorage: certStorageBackend,
@@ -341,6 +342,7 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 	require.NoError(t, err, "Failed to create hardware certificate storage")
 	defer certStorageBackend.Close()
 	certStorage := storage.NewCertAdapter(certStorageBackend)
+	ctx := context.Background()
 
 	t.Log("✓ Created hardware-backed certificate storage on Nitrokey HSM (stores certs ON the HSM)")
 
@@ -367,11 +369,11 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 
 		// Save certificate
 		certID := "nitrokey-test-cert-1"
-		err = certStorage.SaveCert(certID, cert)
+		err = certStorage.SaveCert(ctx, certID, cert)
 		require.NoError(t, err, "Failed to save certificate")
 
 		// Retrieve certificate
-		retrievedCert, err := certStorage.GetCert(certID)
+		retrievedCert, err := certStorage.GetCert(ctx, certID)
 		require.NoError(t, err, "Failed to retrieve certificate")
 		require.NotNil(t, retrievedCert, "Retrieved certificate is nil")
 
@@ -383,7 +385,7 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		t.Log("✓ Certificate saved and retrieved successfully")
 
 		// Clean up
-		err = certStorage.DeleteCert(certID)
+		err = certStorage.DeleteCert(ctx, certID)
 		require.NoError(t, err, "Failed to delete certificate")
 	})
 
@@ -411,27 +413,27 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		certID := "nitrokey-exists-test"
 
 		// Should not exist initially
-		exists, err := certStorage.CertExists(certID)
+		exists, err := certStorage.CertExists(ctx, certID)
 		require.NoError(t, err, "Failed to check certificate existence")
 		assert.False(t, exists, "Certificate should not exist initially")
 
 		// Save certificate
-		err = certStorage.SaveCert(certID, cert)
+		err = certStorage.SaveCert(ctx, certID, cert)
 		require.NoError(t, err, "Failed to save certificate")
 
 		// Should exist now
-		exists, err = certStorage.CertExists(certID)
+		exists, err = certStorage.CertExists(ctx, certID)
 		require.NoError(t, err, "Failed to check certificate existence")
 		assert.True(t, exists, "Certificate should exist after saving")
 
 		t.Log("✓ Certificate existence check successful")
 
 		// Clean up
-		err = certStorage.DeleteCert(certID)
+		err = certStorage.DeleteCert(ctx, certID)
 		require.NoError(t, err, "Failed to delete certificate")
 
 		// Should not exist after deletion
-		exists, err = certStorage.CertExists(certID)
+		exists, err = certStorage.CertExists(ctx, certID)
 		require.NoError(t, err, "Failed to check certificate existence")
 		assert.False(t, exists, "Certificate should not exist after deletion")
 	})
@@ -460,25 +462,25 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		certID := "nitrokey-delete-test"
 
 		// Save certificate
-		err = certStorage.SaveCert(certID, cert)
+		err = certStorage.SaveCert(ctx, certID, cert)
 		require.NoError(t, err, "Failed to save certificate")
 
 		// Verify it exists
-		exists, err := certStorage.CertExists(certID)
+		exists, err := certStorage.CertExists(ctx, certID)
 		require.NoError(t, err, "Failed to check certificate existence")
 		assert.True(t, exists, "Certificate should exist after saving")
 
 		// Delete certificate
-		err = certStorage.DeleteCert(certID)
+		err = certStorage.DeleteCert(ctx, certID)
 		require.NoError(t, err, "Failed to delete certificate")
 
 		// Verify it's gone
-		exists, err = certStorage.CertExists(certID)
+		exists, err = certStorage.CertExists(ctx, certID)
 		require.NoError(t, err, "Failed to check certificate existence")
 		assert.False(t, exists, "Certificate should not exist after deletion")
 
 		// Try to retrieve it (should fail)
-		_, err = certStorage.GetCert(certID)
+		_, err = certStorage.GetCert(ctx, certID)
 		assert.Error(t, err, "Getting deleted certificate should return error")
 
 		t.Log("✓ Certificate deletion successful")
@@ -522,15 +524,15 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		certID := "nitrokey-overwrite-test"
 
 		// Save first certificate
-		err = certStorage.SaveCert(certID, cert1)
+		err = certStorage.SaveCert(ctx, certID, cert1)
 		require.NoError(t, err, "Failed to save first certificate")
 
 		// Save second certificate with same ID (overwrite)
-		err = certStorage.SaveCert(certID, cert2)
+		err = certStorage.SaveCert(ctx, certID, cert2)
 		require.NoError(t, err, "Failed to overwrite certificate")
 
 		// Retrieve certificate
-		retrievedCert, err := certStorage.GetCert(certID)
+		retrievedCert, err := certStorage.GetCert(ctx, certID)
 		require.NoError(t, err, "Failed to retrieve certificate")
 
 		// Verify it's the second certificate
@@ -540,7 +542,7 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		t.Log("✓ Certificate overwrite successful")
 
 		// Clean up
-		err = certStorage.DeleteCert(certID)
+		err = certStorage.DeleteCert(ctx, certID)
 		require.NoError(t, err, "Failed to delete certificate")
 	})
 
@@ -571,12 +573,12 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 
 		for i, certID := range certIDs {
 			cert := createNitrokeyTestCertificate(t, key, "Nitrokey List Cert "+string(rune('A'+i)))
-			err = certStorage.SaveCert(certID, cert)
+			err = certStorage.SaveCert(ctx, certID, cert)
 			require.NoError(t, err, "Failed to save certificate %s", certID)
 		}
 
 		// List certificates
-		certList, err := certStorage.ListCerts()
+		certList, err := certStorage.ListCerts(ctx)
 		require.NoError(t, err, "Failed to list certificates")
 
 		// Verify our certificates are in the list
@@ -595,7 +597,7 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 
 		// Clean up
 		for _, certID := range certIDs {
-			err = certStorage.DeleteCert(certID)
+			err = certStorage.DeleteCert(ctx, certID)
 			require.NoError(t, err, "Failed to delete certificate %s", certID)
 		}
 	})
@@ -653,14 +655,14 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		chainID := "nitrokey-test-chain"
 
 		// Try to save certificate chain
-		err = certStorage.SaveCertChain(chainID, chain)
+		err = certStorage.SaveCertChain(ctx, chainID, chain)
 		if err != nil {
 			t.Logf("⚠ Certificate chain storage not supported: %v, skipping chain tests", err)
 			return
 		}
 
 		// Retrieve certificate chain
-		retrievedChain, err := certStorage.GetCertChain(chainID)
+		retrievedChain, err := certStorage.GetCertChain(ctx, chainID)
 		require.NoError(t, err, "Failed to retrieve certificate chain")
 		require.Len(t, retrievedChain, 3, "Certificate chain should have 3 certificates")
 
@@ -672,7 +674,7 @@ func testNitrokeyCertificateStorageHardware(t *testing.T, backend *pkcs11.Backen
 		t.Log("✓ Certificate chain saved and retrieved successfully")
 
 		// Clean up
-		err = certStorage.DeleteCert(chainID)
+		err = certStorage.DeleteCert(ctx, chainID)
 		require.NoError(t, err, "Failed to delete certificate chain")
 	})
 }

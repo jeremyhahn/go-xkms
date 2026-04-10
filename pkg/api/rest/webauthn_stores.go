@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
 // WebAuthnStores provides the WebAuthn storage implementations for the REST server.
@@ -82,7 +82,7 @@ func (s *WebAuthnStores) CleanupSessions() int {
 // StartCleanupRoutine starts a background goroutine that periodically cleans up
 // expired sessions. Call the returned cancel function to stop the routine.
 func (s *WebAuthnStores) StartCleanupRoutine(ctx context.Context, interval time.Duration) context.CancelFunc {
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(ctx) // #nosec G118 -- cancel is returned to the caller
 
 	go func() {
 		ticker := time.NewTicker(interval)

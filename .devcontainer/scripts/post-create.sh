@@ -1,22 +1,23 @@
 #!/bin/bash
-# Post-create script for go-keychain devcontainer
+# Post-create script for go-xkms devcontainer
 # This script runs once after the container is created
 
 set -e
 
-echo "=== go-keychain Development Container Setup ==="
+echo "=== go-xkms Development Container Setup ==="
 
 # All build tags for full integration testing
-ALL_BUILD_TAGS="integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,yubikey,nitrokey,canokey,fido2,webauthn"
+ALL_BUILD_TAGS="integration,frost,pkcs8,pkcs11,quantum,awskms,gcpkms,azurekv,vault,nitrokey,fido2,webauthn"
 
 # Initialize SoftHSM token if not already initialized
+# Token: xkms-test, SO PIN: 1234, User PIN: 1234, Slot: 0
 if [ ! -f /var/lib/softhsm/tokens/.initialized ]; then
     echo "Initializing SoftHSM token..."
     sudo mkdir -p /var/lib/softhsm/tokens
     sudo chown -R $(whoami):$(whoami) /var/lib/softhsm
-    softhsm2-util --init-token --slot 0 --label "DevToken" --pin 1234 --so-pin 12345678 || true
+    softhsm2-util --init-token --slot 0 --label "xkms-test" --pin 1234 --so-pin 1234 || true
     touch /var/lib/softhsm/tokens/.initialized
-    echo "SoftHSM token initialized"
+    echo "SoftHSM token initialized: xkms-test"
 fi
 
 # Setup UHID device permissions for virtual FIDO2 testing
@@ -37,28 +38,21 @@ go mod download
 echo "Installing Go tools..."
 go install github.com/vektra/mockery/v2@latest 2>/dev/null || true
 
-# Build CLI binary with ALL build tags
-echo "Building CLI binary with ALL build tags..."
-if [ -f Makefile ] && grep -q "build-cli" Makefile; then
-    make build-cli WITH_PKCS8=1 WITH_PKCS11=1 WITH_FROST=1 WITH_QUANTUM=1 WITH_AWS_KMS=1 WITH_GCP_KMS=1 WITH_AZURE_KV=1 WITH_VAULT=1 2>/dev/null || \
-    CGO_ENABLED=1 go build -tags "${ALL_BUILD_TAGS}" -o build/bin/keychain ./cmd/cli/main.go
-else
-    CGO_ENABLED=1 go build -tags "${ALL_BUILD_TAGS}" -o build/bin/keychain ./cmd/cli/main.go
-fi
+# Build CLI binary (xkmsctl - pure Go, no CGO required)
+echo "Building xkmsctl CLI binary..."
+mkdir -p build/bin
+CGO_ENABLED=0 go build -buildvcs=false -o build/bin/xkmsctl ./cmd/xkmsctl
+echo "CLI binary built: build/bin/xkmsctl"
 
-# Build server binary with ALL build tags
-echo "Building server binary with ALL build tags..."
-if [ -f Makefile ] && grep -q "build-server" Makefile; then
-    make build-server WITH_PKCS8=1 WITH_PKCS11=1 WITH_FROST=1 WITH_QUANTUM=1 WITH_AWS_KMS=1 WITH_GCP_KMS=1 WITH_AZURE_KV=1 WITH_VAULT=1 2>/dev/null || \
-    CGO_ENABLED=1 go build -tags "${ALL_BUILD_TAGS}" -o build/bin/keychaind ./cmd/server/main.go
-else
-    CGO_ENABLED=1 go build -tags "${ALL_BUILD_TAGS}" -o build/bin/keychaind ./cmd/server/main.go
-fi
+# Build server binary with ALL build tags (requires CGO for PKCS#11, TPM2)
+echo "Building xkmsd server binary with ALL build tags..."
+CGO_ENABLED=1 go build -buildvcs=false -tags "${ALL_BUILD_TAGS}" -o build/bin/xkmsd ./cmd/xkmsd/
+echo "Server binary built: build/bin/xkmsd"
 
 # Generate protobuf files if proto compiler is available
 if command -v protoc &> /dev/null; then
     echo "Checking protobuf files..."
-    if [ -f "pkg/api/grpc/proto/keychainv1/keychain.proto" ]; then
+    if [ -f "pkg/api/grpc/proto/xkmsv1/xkms.proto" ]; then
         make proto 2>/dev/null || true
     fi
 fi

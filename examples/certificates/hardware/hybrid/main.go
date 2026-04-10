@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,6 +16,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -26,10 +27,10 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 )
 
 // Example demonstrating hybrid certificate storage with automatic failover.
@@ -195,7 +196,7 @@ func main() {
 		})
 
 		// Use storage.SaveCert helper function
-		err = storage.SaveCert(externalStorage, certID, pemData)
+		err = storage.SaveCert(context.Background(), externalStorage, certID, pemData)
 		if err != nil {
 			log.Fatalf("Failed to save legacy cert: %v", err)
 		}

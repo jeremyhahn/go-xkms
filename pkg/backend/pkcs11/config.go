@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,8 +20,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Config contains configuration for PKCS#11 backend operations.
@@ -81,6 +81,12 @@ type Config struct {
 	// If nil, a default memory-based tracker will be created.
 	// For production systems, provide a persistent tracker.
 	Tracker types.AEADSafetyTracker `yaml:"-" json:"-" mapstructure:"-"`
+
+	// SessionPoolSize is the number of PKCS#11 sessions to pre-open in the pool.
+	// Each session can handle one operation at a time. Higher values allow more
+	// concurrent operations but consume more HSM resources.
+	// Default: 8
+	SessionPoolSize int `yaml:"session-pool-size,omitempty" json:"session_pool_size,omitempty" mapstructure:"session-pool-size"`
 }
 
 // Validate checks if the configuration is valid and returns an error if not.

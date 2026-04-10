@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,12 +27,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/testutil"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -41,12 +41,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// setupTestKeychain initializes the global keychain service for tests
-func setupTestKeychain(t *testing.T) {
+// setupTestXKMS initializes the global xkms service for tests
+func setupTestXKMS(t *testing.T) {
 	t.Helper()
 
 	// Reset any previous state
-	keychain.Reset()
+	xkms.Reset()
 
 	// Create in-memory storage
 	keyStorage := storage.New()
@@ -61,7 +61,7 @@ func setupTestKeychain(t *testing.T) {
 	}
 
 	// Create keystore
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -69,15 +69,15 @@ func setupTestKeychain(t *testing.T) {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	// Initialize global keychain service
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	// Initialize global xkms service
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		DefaultBackend: "test",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 }
 
@@ -104,9 +104,9 @@ func newDiscardLogger() *slog.Logger {
 }
 
 func TestGRPCServer_NoOpAuthenticator_NoTLS(t *testing.T) {
-	// Setup test keychain
-	setupTestKeychain(t)
-	defer keychain.Reset()
+	// Setup test xkms
+	setupTestXKMS(t)
+	defer xkms.Reset()
 
 	// Create NoOp authenticator
 	authenticator := auth.NewNoOpAuthenticator()
@@ -242,9 +242,9 @@ func (a *testBearerAuthenticator) AuthenticateGRPC(ctx context.Context, md metad
 }
 
 func TestGRPCServer_BearerTokenAuthenticator_Metadata(t *testing.T) {
-	// Setup test keychain
-	setupTestKeychain(t)
-	defer keychain.Reset()
+	// Setup test xkms
+	setupTestXKMS(t)
+	defer xkms.Reset()
 
 	// Create Bearer token authenticator
 	validToken := "test-token-12345"
@@ -367,9 +367,9 @@ func TestGRPCServer_TLS_NoClientCert(t *testing.T) {
 		t.Fatalf("Failed to generate server certificate: %v", err)
 	}
 
-	// Setup test keychain
-	setupTestKeychain(t)
-	defer keychain.Reset()
+	// Setup test xkms
+	setupTestXKMS(t)
+	defer xkms.Reset()
 
 	// Create TLS config (no client cert required)
 	tlsConfig := &tls.Config{
@@ -478,9 +478,9 @@ func TestGRPCServer_mTLS_ClientCertRequired(t *testing.T) {
 		t.Fatalf("Failed to generate client certificate: %v", err)
 	}
 
-	// Setup test keychain
-	setupTestKeychain(t)
-	defer keychain.Reset()
+	// Setup test xkms
+	setupTestXKMS(t)
+	defer xkms.Reset()
 
 	// Create CA cert pool for client verification
 	caCertPool := x509.NewCertPool()
@@ -638,9 +638,9 @@ func TestGRPCServer_AuthenticationFailureScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup test keychain
-			setupTestKeychain(t)
-			defer keychain.Reset()
+			// Setup test xkms
+			setupTestXKMS(t)
+			defer xkms.Reset()
 
 			// Create server with the specified authenticator
 			cfg := &ServerConfig{

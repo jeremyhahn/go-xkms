@@ -1,14 +1,14 @@
-# Authentication and Logging Adapter Framework
+# Authentication Adapter Framework
 
 ## Overview
 
-The go-keychain library provides pluggable authentication and logging adapters, allowing applications to integrate their own authentication and logging systems seamlessly.
+go-xkms provides a pluggable authentication adapter framework that enforces cryptographic authentication for all requests. The system supports JWT Bearer tokens, mutual TLS (mTLS), OpenID Connect (OIDC), and PKCS#11-backed TLS. There are no API keys or passwords — all authentication is based on cryptographic proof.
 
 ## Authentication Adapters
 
 ### Interface
 
-Located in `pkg/adapters/auth/auth.go`, the `Authenticator` interface allows applications to implement custom authentication:
+Located in `pkg/auth/auth.go`, the `Authenticator` interface allows applications to implement custom authentication:
 
 ```go
 type Authenticator interface {
@@ -31,7 +31,7 @@ The `Identity` struct represents an authenticated user or service:
 type Identity struct {
     Subject    string                 // Unique identifier
     Claims     map[string]interface{} // Roles, permissions, etc.
-    Attributes map[string]string      // Metadata
+    Attributes map[string]string      // Metadata (auth_method, remote_addr, etc.)
 }
 ```
 
@@ -41,55 +41,39 @@ Helper methods:
 
 ### Built-in Authenticators
 
-#### 1. NoOpAuthenticator (`pkg/adapters/auth/noop.go`)
+#### 1. JWTAuthenticator (`pkg/auth/jwt.go`)
 
-Allows all requests with an anonymous identity. Useful for:
-- Development/testing
-- When authentication is handled externally (reverse proxy, API gateway)
+Authenticates requests using signed JWT Bearer tokens. Tokens are verified against a configured public key.
 
 ```go
-auth := auth.NewNoOpAuthenticator()
-```
-
-#### 2. APIKeyAuthenticator (`pkg/adapters/auth/apikey.go`)
-
-Authenticates using API keys via:
-- HTTP header (default: `X-API-Key`)
-- Query parameter (default: `api_key`)
-- Authorization header with Bearer scheme
-
-```go
-config := &auth.APIKeyConfig{
-    Keys: map[string]*auth.Identity{
-        "secret-key-123": {
-            Subject: "service-a",
-            Claims: map[string]interface{}{
-                "roles": []string{"admin"},
-            },
-        },
-    },
-    HeaderName: "X-API-Key",  // Optional, defaults to X-API-Key
-    QueryParam: "api_key",     // Optional, defaults to api_key
+config := &auth.JWTConfig{
+    PublicKey:  publicKey,         // crypto.PublicKey (required)
+    Issuer:    "my-issuer",       // Expected issuer claim (optional)
+    Audience:  []string{"xkms"}, // Expected audience claim (optional)
+    HeaderName: "Authorization",  // HTTP header (default: "Authorization")
 }
 
-authenticator := auth.NewAPIKeyAuthenticator(config)
-
-// Add keys dynamically
-authenticator.AddKey("another-key", identity)
-authenticator.RemoveKey("old-key")
+authenticator, err := auth.NewJWTAuthenticator(config)
 ```
 
-#### 3. MTLSAuthenticator (`pkg/adapters/auth/mtls.go`)
+Features:
+- Bearer token extraction from `Authorization` header
+- Public key signature verification (RSA, ECDSA, Ed25519)
+- Issuer and audience claim validation
+- Subject, role, and username extraction from token claims
+- Works across HTTP and gRPC
 
-Authenticates using mutual TLS (client certificates):
+#### 2. MTLSAuthenticator (`pkg/auth/mtls.go`)
+
+Authenticates using mutual TLS client certificates:
 
 ```go
 config := &auth.MTLSConfig{
-    // Optional: Custom claim extraction
+    // Optional: Custom claim extraction from client certificate
     ExtractClaims: func(cert *x509.Certificate) map[string]interface{} {
         return map[string]interface{}{
             "organization": cert.Subject.Organization,
-            "roles": extractRolesFromCert(cert),
+            "roles":        extractRolesFromCert(cert),
         }
     },
 
@@ -97,14 +81,109 @@ config := &auth.MTLSConfig{
     ExtractSubject: func(cert *x509.Certificate) string {
         return cert.Subject.CommonName
     },
+
+    // Optional: Map certificate fingerprints to users
+    UserStore: myUserStore,
 }
 
 authenticator := auth.NewMTLSAuthenticator(config)
 ```
 
 Default behavior:
-- Subject: Certificate Common Name
-- Claims: Organization, OU, DNS names, email addresses, extended key usage
+- Subject: Certificate Common Name (fallback to DNS name, then serial number)
+- Claims: Organization, OU, Country, Province, Locality, DNS names, email addresses, extended key usage
+- When a `UserStore` is configured, the authenticator looks up users by the SHA-256 fingerprint of the client certificate and enriches the identity with user role information
+
+#### 3. OIDCAuthenticator (`pkg/auth/oidc.go`)
+
+Authenticates using OpenID Connect with automatic provider discovery:
+
+```go
+config := &auth.OIDCConfig{
+    Issuer:       "https://auth.example.com", // OIDC provider URL (required)
+    ClientID:     "my-client-id",             // OAuth2 client ID (required)
+    Audience:     []string{"xkms"},          // Expected audience (optional)
+    JWKSCacheTTL: time.Hour,                 // JWKS cache TTL (default: 1h)
+    HTTPClient:   customHTTPClient,           // Custom HTTP client (optional)
+}
+
+authenticator, err := auth.NewOIDCAuthenticator(ctx, config)
+```
+
+Features:
+- Automatic OIDC discovery via `.well-known/openid-configuration`
+- JWKS key fetching with configurable cache TTL
+- ID token validation with signature verification
+- Access token validation via userinfo endpoint fallback
+- Role extraction from standard claims (`roles`, `groups`, Keycloak `realm_access`)
+
+#### 4. AdaptiveAuthenticator (`pkg/auth/adaptive.go`)
+
+Automatically switches between open access (bootstrap mode) and required authentication based on whether users exist in the system:
+
+```go
+config := &auth.AdaptiveConfig{
+    UserChecker:           myUserStore,       // Checks for existing users (required)
+    RequiredAuthenticator: jwtAuthenticator,  // Used when users exist (required)
+    CacheExpiry:           30 * time.Second,  // User check cache TTL (default: 30s)
+    Logger:                slogLogger,        // Optional logger
+}
+
+authenticator, err := auth.NewAdaptiveAuthenticator(config)
+```
+
+Behavior:
+- **Bootstrap mode** (no users): All requests allowed with anonymous identity
+- **Secured mode** (users exist): Delegates to the configured required authenticator
+- Caches user existence check with configurable TTL
+- Logs mode transitions
+
+#### 5. CompositeAuthenticator (`pkg/auth/composite.go`)
+
+Chains multiple authenticators and returns the first successful result:
+
+```go
+authenticator, err := auth.NewCompositeAuthenticator(
+    mtlsAuthenticator,
+    jwtAuthenticator,
+    oidcAuthenticator,
+)
+```
+
+Tries each authenticator in order. Returns the identity from the first one that succeeds. If all fail, returns the error from the last authenticator.
+
+#### 6. NoOpAuthenticator (`pkg/auth/noop.go`)
+
+Allows all requests with an anonymous identity. Intended for:
+- Development and testing
+- Bootstrap mode (via AdaptiveAuthenticator)
+- When authentication is handled externally (reverse proxy, service mesh)
+
+```go
+auth := auth.NewNoOpAuthenticator()
+```
+
+#### 7. PKCS11TLSConfig (`pkg/auth/pkcs11_tls.go`)
+
+Creates a `tls.Config` backed by a PKCS#11 hardware token for client certificate authentication:
+
+```go
+config := &auth.PKCS11TLSConfig{
+    ModulePath: "/usr/lib/libxkey11.so", // PKCS#11 shared object
+    SlotID:     0,                        // Token slot
+    PIN:        tokenPIN,                 // Token PIN
+    CertLabel:  "my-cert",               // Certificate label filter (optional)
+    CACerts:    caCertPool,              // CA certs for server verification (optional)
+}
+
+tlsConfig, cleanup, err := auth.NewPKCS11TLSConfig(config)
+defer cleanup()
+```
+
+Features:
+- Private key operations stay within the hardware token boundary
+- Supports RSA (PKCS#1 v1.5, PSS), ECDSA, and Ed25519 signing
+- Automatic certificate and matching key discovery via CKA_ID
 
 ### Custom Authenticator Example
 
@@ -114,7 +193,6 @@ type MyAuthenticator struct {
 }
 
 func (a *MyAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
-    // Extract token from request
     token := r.Header.Get("Authorization")
 
     // Validate with your auth system
@@ -126,8 +204,10 @@ func (a *MyAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, err
     return &auth.Identity{
         Subject: user.ID,
         Claims: map[string]interface{}{
-            "email": user.Email,
             "roles": user.Roles,
+        },
+        Attributes: map[string]string{
+            "auth_method": "custom",
         },
     }, nil
 }
@@ -141,154 +221,10 @@ func (a *MyAuthenticator) Name() string {
 }
 ```
 
-## Logging Adapters
-
-### Interface
-
-Located in `pkg/adapters/logger/logger.go`, the `Logger` interface allows applications to integrate their logging system:
-
-```go
-type Logger interface {
-    Debug(msg string, fields ...Field)
-    Info(msg string, fields ...Field)
-    Warn(msg string, fields ...Field)
-    Error(msg string, fields ...Field)
-    Fatal(msg string, fields ...Field)
-
-    With(fields ...Field) Logger
-    WithError(err error) Logger
-}
-```
-
-### Structured Logging
-
-The framework uses structured logging with typed fields:
-
-```go
-logger.Info("User authenticated",
-    logger.String("user_id", "123"),
-    logger.Int("session_duration", 3600),
-    logger.Bool("mfa_enabled", true),
-)
-```
-
-Available field types:
-- `String(key, value string)`
-- `Int(key string, value int)`
-- `Int64(key string, value int64)`
-- `Float64(key string, value float64)`
-- `Bool(key string, value bool)`
-- `Error(err error)`
-- `Any(key string, value interface{})`
-- `Strings(key string, values []string)`
-- `Ints(key string, values []int)`
-
-### Built-in Adapters
-
-#### 1. Standard Library Logger (`pkg/adapters/logger/stdlib.go`)
-
-Wraps Go's standard `log` package:
-
-```go
-config := &logger.SlogAdapterConfig{
-    Level: logger.LevelInfo,
-    Prefix: "[keychain]",
-}
-
-log := logger.NewSlogAdapter(config)
-```
-
-#### 2. Slog Adapter (`pkg/adapters/logger/slog.go`)
-
-Wraps the slog logger (used internally by go-keychain):
-
-```go
-slogLogger := slog.New(os.Stdout).With().Timestamp().Logger()
-log := logger.NewSlogAdapter(slogLogger)
-```
-
-### Custom Logger Example
-
-```go
-type MyLogger struct {
-    // your logging system
-}
-
-func (l *MyLogger) Info(msg string, fields ...logger.Field) {
-    // Convert fields to your format
-    myFields := make(map[string]interface{})
-    for _, f := range fields {
-        myFields[f.Key] = f.Value
-    }
-
-    // Log using your system
-    l.logger.Info(msg, myFields)
-}
-
-// Implement other methods...
-```
-
-## Usage with Servers
-
-### Configuring Authentication
-
-```go
-// Create authenticator
-authenticator := auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-    Keys: loadAPIKeys(),
-})
-
-// Configure server (example for REST)
-restConfig := &rest.Config{
-    Addr:          ":8443",
-    Authenticator: authenticator, // Plug in your authenticator
-}
-
-server := rest.NewServer(restConfig)
-```
-
-### Configuring Logging
-
-```go
-// Create logger
-log := logger.NewSlogAdapter(mySlogLogger)
-
-// Configure server
-serverConfig := &server.Config{
-    Logger: log, // Plug in your logger
-}
-```
-
-### Accessing Identity in Handlers
-
-```go
-func myHandler(w http.ResponseWriter, r *http.Request) {
-    // Get authenticated identity from context
-    identity := auth.GetIdentity(r.Context())
-
-    if identity == nil {
-        http.Error(w, "Unauthorized", http.StatusUnauthorized)
-        return
-    }
-
-    // Check permissions
-    if !identity.HasRole("admin") {
-        http.Error(w, "Forbidden", http.StatusForbidden)
-        return
-    }
-
-    // Process request...
-}
-```
-
 ## TLS/mTLS Configuration
 
-### Status
+TLS/mTLS support is available across all server interfaces:
 
-Complete - TLS/mTLS support is available across all server interfaces:
-
-- Authentication adapter framework complete
-- mTLS authenticator ready
 - REST server TLS/mTLS configuration
 - gRPC server TLS/mTLS configuration
 - QUIC server TLS/mTLS configuration (requires TLS 1.3)
@@ -296,19 +232,19 @@ Complete - TLS/mTLS support is available across all server interfaces:
 
 ### Features
 
-1. **TLS Configuration** (`internal/config/tls.go`)
+1. **TLS Configuration** (`pkg/config/tls.go`)
    - Certificate and key loading from files
-   - TLS version control (TLS 1.0 - TLS 1.3)
+   - TLS version control (TLS 1.2 - TLS 1.3)
    - Cipher suite configuration
    - Client certificate verification modes (none, request, require, verify, require_and_verify)
    - Multiple CA certificate support
    - Server cipher preference control
 
 2. **Server Support**
-   - **REST**: HTTPS with optional client cert verification via `rest.Config.TLSConfig`
-   - **gRPC**: TLS with optional mTLS via `grpc.ServerConfig.TLSConfig`
-   - **QUIC**: HTTP/3 with TLS 1.3 (required) via `quic.Config.TLSConfig`
-   - **MCP**: TCP with TLS/mTLS via `mcp.Config.TLSConfig`
+   - **REST**: HTTPS with optional client cert verification
+   - **gRPC**: TLS with optional mTLS
+   - **QUIC**: HTTP/3 with TLS 1.3 (required)
+   - **MCP**: TCP with TLS/mTLS
 
 3. **Integration**
    - Unified TLS configuration structure across all servers
@@ -316,104 +252,42 @@ Complete - TLS/mTLS support is available across all server interfaces:
    - Identity extraction from client certificates
    - Context propagation of authenticated identity
 
-## Examples
+## Configuration
 
-### TLS/mTLS Configuration Examples
+Authentication is configured via YAML:
 
-#### 1. REST Server with TLS and API Key Authentication
+```yaml
+auth:
+  enabled: true
+  type: adaptive    # noop, mtls, jwt, adaptive, composite
 
-```go
-package main
+  # JWT configuration
+  jwt:
+    issuer: "my-issuer"
+    audience: ["xkms"]
 
-import (
-    "crypto/tls"
+  # mTLS uses client certificates from TLS config
+  mtls: true
 
-    "github.com/jeremyhahn/go-keychain/internal/config"
-    "github.com/jeremyhahn/go-keychain/internal/rest"
-    "github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-    "github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
-)
+  # Adaptive: auto-switch between noop (bootstrap) and required auth
+  adaptive: true
 
-func main() {
-    // Setup logging
-    log := logger.NewSlogAdapter(&logger.SlogAdapterConfig{
-        Level: logger.LevelInfo,
-    })
+  # Composite: chain multiple auth methods
+  composite:
+    methods: ["jwt", "mtls"]
 
-    // Load TLS configuration
-    tlsCfg := &config.TLSConfig{
-        Enabled:  true,
-        CertFile: "/path/to/server-cert.pem",
-        KeyFile:  "/path/to/server-key.pem",
-        MinVersion: "TLS1.2",
-        CipherSuites: []string{
-            "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-        },
-    }
-
-    tlsConfig, err := tlsCfg.LoadTLSConfig()
-    if err != nil {
-        log.Fatal("Failed to load TLS config", logger.Error(err))
-    }
-
-    // Setup API key authentication
-    authenticator := auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-        Keys: map[string]*auth.Identity{
-            "prod-key-1": {
-                Subject: "production-service",
-                Claims: map[string]interface{}{
-                    "roles": []string{"admin"},
-                },
-            },
-        },
-    })
-
-    // Create HTTPS server
-    server, err := rest.NewServer(&rest.Config{
-        Port:          8443,
-        Backends:      backends, // your keystore backends
-        TLSConfig:     tlsConfig,
-        Authenticator: authenticator,
-        Logger:        log,
-    })
-
-    if err != nil {
-        log.Fatal("Failed to create server", logger.Error(err))
-    }
-
-    log.Info("Starting HTTPS server", logger.Int("port", 8443))
-    server.Start()
-}
+  # RBAC
+  rbac: true
 ```
 
-#### 2. REST Server with mTLS (Client Certificate Authentication)
+## Examples
+
+### REST Server with JWT Authentication
 
 ```go
-// Configure mTLS with client certificate verification
-tlsCfg := &config.TLSConfig{
-    Enabled:    true,
-    CertFile:   "/path/to/server-cert.pem",
-    KeyFile:    "/path/to/server-key.pem",
-    CAFile:     "/path/to/ca-cert.pem",
-    ClientAuth: "require_and_verify", // Require and verify client certificates
-    MinVersion: "TLS1.2",
-}
-
-tlsConfig, err := tlsCfg.LoadTLSConfig()
-if err != nil {
-    log.Fatal("Failed to load TLS config", logger.Error(err))
-}
-
-// Use mTLS authenticator to extract identity from client certificates
-authenticator := auth.NewMTLSAuthenticator(&auth.MTLSConfig{
-    // Custom claim extraction (optional)
-    ExtractClaims: func(cert *x509.Certificate) map[string]interface{} {
-        return map[string]interface{}{
-            "organization": cert.Subject.Organization,
-            "ou":          cert.Subject.OrganizationalUnit,
-        }
-    },
+authenticator, err := auth.NewJWTAuthenticator(&auth.JWTConfig{
+    PublicKey: publicKey,
+    Issuer:   "my-issuer",
 })
 
 server, err := rest.NewServer(&rest.Config{
@@ -421,82 +295,13 @@ server, err := rest.NewServer(&rest.Config{
     Backends:      backends,
     TLSConfig:     tlsConfig,
     Authenticator: authenticator,
-    Logger:        log,
 })
 ```
 
-#### 3. gRPC Server with TLS
+### REST Server with mTLS
 
 ```go
-import (
-    grpcServer "github.com/jeremyhahn/go-keychain/internal/grpc"
-)
-
-// Load TLS configuration
-tlsCfg := &config.TLSConfig{
-    Enabled:  true,
-    CertFile: "/path/to/server-cert.pem",
-    KeyFile:  "/path/to/server-key.pem",
-    MinVersion: "TLS1.2",
-}
-
-tlsConfig, err := tlsCfg.LoadTLSConfig()
-if err != nil {
-    log.Fatal("Failed to load TLS config", logger.Error(err))
-}
-
-// Create gRPC server with TLS
-server, err := grpcServer.NewServer(&grpcServer.ServerConfig{
-    Port:           9090,
-    Manager:        backendManager,
-    TLSConfig:      tlsConfig,
-    Authenticator:  authenticator,
-    Logger:         log,
-    EnableLogging:  true,
-    EnableRecovery: true,
-})
-```
-
-#### 4. QUIC Server with TLS 1.3 (Required)
-
-```go
-import (
-    "github.com/jeremyhahn/go-keychain/internal/quic"
-)
-
-// QUIC requires TLS 1.3
-tlsCfg := &config.TLSConfig{
-    Enabled:    true,
-    CertFile:   "/path/to/server-cert.pem",
-    KeyFile:    "/path/to/server-key.pem",
-    MinVersion: "TLS1.3",
-}
-
-tlsConfig, err := tlsCfg.LoadTLSConfig()
-if err != nil {
-    log.Fatal("Failed to load TLS config", logger.Error(err))
-}
-
-// Ensure NextProtos includes "h3" for HTTP/3
-tlsConfig.NextProtos = []string{"h3"}
-
-server, err := quic.NewServer(&quic.Config{
-    Addr:          "localhost:8444",
-    KeyStore:      keystore,
-    TLSConfig:     tlsConfig,
-    Authenticator: authenticator,
-    Logger:        log,
-})
-```
-
-#### 5. MCP Server with mTLS
-
-```go
-import (
-    "github.com/jeremyhahn/go-keychain/internal/mcp"
-)
-
-// Configure mTLS
+// Configure mTLS with client certificate verification
 tlsCfg := &config.TLSConfig{
     Enabled:    true,
     CertFile:   "/path/to/server-cert.pem",
@@ -507,127 +312,92 @@ tlsCfg := &config.TLSConfig{
 }
 
 tlsConfig, err := tlsCfg.LoadTLSConfig()
-if err != nil {
-    log.Fatal("Failed to load TLS config", logger.Error(err))
-}
 
-// MCP server automatically extracts identity from client certificates when mTLS is enabled
-server, err := mcp.NewServer(&mcp.Config{
-    Addr:          ":9000",
-    KeyStore:      keystore,
+authenticator := auth.NewMTLSAuthenticator(&auth.MTLSConfig{
+    UserStore: myUserStore, // Maps cert fingerprints to users
+})
+
+server, err := rest.NewServer(&rest.Config{
+    Port:          8443,
+    Backends:      backends,
     TLSConfig:     tlsConfig,
-    Authenticator: authenticator, // Can be NoOp when using mTLS for authentication
-    Logger:        log,
+    Authenticator: authenticator,
 })
 ```
 
-### Complete Authentication Setup (Without TLS)
+### Composite Authentication (JWT + mTLS)
 
 ```go
-package main
+jwtAuth, _ := auth.NewJWTAuthenticator(&auth.JWTConfig{
+    PublicKey: publicKey,
+})
 
-import (
-    "github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-    "github.com/jeremyhahn/go-keychain/pkg/adapters/logger"
-    "github.com/jeremyhahn/go-keychain/internal/rest"
-)
+mtlsAuth := auth.NewMTLSAuthenticator(&auth.MTLSConfig{
+    UserStore: myUserStore,
+})
 
-func main() {
-    // Setup logging
-    log := logger.NewSlogAdapter(&logger.SlogAdapterConfig{
-        Level: logger.LevelInfo,
-    })
+composite, _ := auth.NewCompositeAuthenticator(mtlsAuth, jwtAuth)
 
-    // Setup authentication
-    authenticator := auth.NewAPIKeyAuthenticator(&auth.APIKeyConfig{
-        Keys: map[string]*auth.Identity{
-            "prod-key-1": {
-                Subject: "production-service",
-                Claims: map[string]interface{}{
-                    "roles": []string{"read", "write"},
-                },
-            },
-        },
-    })
+server, err := rest.NewServer(&rest.Config{
+    Port:          8443,
+    Backends:      backends,
+    TLSConfig:     tlsConfig,
+    Authenticator: composite,
+})
+```
 
-    // Create server (plain HTTP)
-    server, err := rest.NewServer(&rest.Config{
-        Port:          8080,
-        Backends:      backends,
-        Authenticator: authenticator,
-        Logger:        log,
-    })
+### Adaptive Authentication (Bootstrap to Secured)
 
-    if err != nil {
-        log.Fatal("Failed to create server", logger.Error(err))
+```go
+jwtAuth, _ := auth.NewJWTAuthenticator(&auth.JWTConfig{
+    PublicKey: publicKey,
+})
+
+adaptive, _ := auth.NewAdaptiveAuthenticator(&auth.AdaptiveConfig{
+    UserChecker:           userStore,
+    RequiredAuthenticator: jwtAuth,
+})
+
+server, err := rest.NewServer(&rest.Config{
+    Port:          8443,
+    Backends:      backends,
+    TLSConfig:     tlsConfig,
+    Authenticator: adaptive,
+})
+```
+
+### Accessing Identity in Handlers
+
+```go
+func myHandler(w http.ResponseWriter, r *http.Request) {
+    identity := auth.GetIdentity(r.Context())
+
+    if identity == nil {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
     }
 
-    log.Info("Starting HTTP server", logger.Int("port", 8080))
-    server.Start()
+    if !identity.HasRole("admin") {
+        http.Error(w, "Forbidden", http.StatusForbidden)
+        return
+    }
+
+    // Process request...
 }
 ```
 
 ## Best Practices
 
 1. **Authentication**
-   - Always validate identities before processing requests
-   - Use role-based or permission-based access control
-   - Log authentication failures for security monitoring
-   - Rotate API keys regularly
    - Use mTLS for service-to-service communication
+   - Use JWT or OIDC for user-facing authentication
+   - Use AdaptiveAuthenticator for smooth bootstrap-to-secured transitions
+   - Use CompositeAuthenticator to support multiple auth methods simultaneously
+   - Use PKCS#11-backed TLS for hardware-protected client credentials
 
-2. **Logging**
-   - Use structured logging with fields instead of string formatting
-   - Include request IDs for tracing
-   - Log authentication events (success/failure)
-   - Avoid logging sensitive data (credentials, PII)
-   - Use appropriate log levels
-
-3. **Security**
+2. **Security**
    - Always use TLS in production
    - Require mTLS for privileged operations
-   - Implement rate limiting on authentication endpoints
-   - Monitor for suspicious authentication patterns
-   - Use short-lived credentials when possible
-
-## Migration Guide
-
-### From Direct Slog Usage
-
-Before:
-```go
-logger.Info().Str("key", "value").Msg("message")
-```
-
-After:
-```go
-logger.Info("message", logger.String("key", "value"))
-```
-
-### Adding Authentication to Existing Code
-
-1. Create authenticator
-2. Add to server configuration
-3. Update handlers to check identity
-4. Test with authenticated and unauthenticated requests
-
-### Testing
-
-Mock authenticators and loggers for testing:
-
-```go
-type MockAuthenticator struct{}
-
-func (a *MockAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Identity, error) {
-    return &auth.Identity{Subject: "test-user"}, nil
-}
-
-func (a *MockAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*auth.Identity, error) {
-    return &auth.Identity{Subject: "test-user"}, nil
-}
-
-func (a *MockAuthenticator) Name() string {
-    return "mock"
-}
-```
-
+   - Use short-lived JWT tokens with appropriate audience and issuer claims
+   - Monitor authentication failures via audit logging
+   - Use hardware tokens (PKCS#11, TPM) for private key protection

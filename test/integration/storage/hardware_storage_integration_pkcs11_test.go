@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,10 +20,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
+	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/miekg/pkcs11"
 )
-
 // tryInitSoftHSM attempts to initialize PKCS#11 storage via SoftHSM.
 // Returns nil if SoftHSM is not available in the test environment.
 func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {
@@ -68,29 +68,19 @@ func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {
 		return nil
 	}
 
-	// Open session on first available slot
-	session, err := ctx.OpenSession(slots[0], pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
+	// Create a session pool for concurrent access
+	pool, err := pkcs11backend.NewSessionPool(ctx, slots[0], "1234", 8)
 	if err != nil {
-		t.Logf("Failed to open PKCS#11 session: %v", err)
+		t.Logf("Failed to create session pool: %v", err)
 		ctx.Finalize()
 		return nil
 	}
 
-	// Login to token (use default SoftHSM test PIN)
-	err = ctx.Login(session, pkcs11.CKU_USER, "1234")
-	if err != nil {
-		t.Logf("Failed to login to PKCS#11 token: %v", err)
-		ctx.CloseSession(session)
-		ctx.Finalize()
-		return nil
-	}
-
-	// Create hardware storage
-	hwStorage, err := hardware.NewPKCS11CertStorage(ctx, session, "test-token", slots[0])
+	// Create hardware storage using the pool
+	hwStorage, err := hardware.NewPKCS11CertStorage(pool, "test-token")
 	if err != nil {
 		t.Logf("Failed to create PKCS#11 cert storage: %v", err)
-		ctx.Logout(session)
-		ctx.CloseSession(session)
+		pool.Close()
 		ctx.Finalize()
 		return nil
 	}
@@ -98,16 +88,16 @@ func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {
 	// Wrap storage with cleanup information
 	return &pkcs11StorageWrapper{
 		storage: hwStorage,
+		pool:    pool,
 		ctx:     ctx,
-		session: session,
 	}
 }
 
 // pkcs11StorageWrapper wraps PKCS#11 storage with cleanup logic
 type pkcs11StorageWrapper struct {
 	storage hardware.HardwareCertStorage
+	pool    *pkcs11backend.SessionPool
 	ctx     *pkcs11.Ctx
-	session pkcs11.SessionHandle
 }
 
 func (w *pkcs11StorageWrapper) SaveCert(id string, cert *x509.Certificate) error {
@@ -155,13 +145,12 @@ func (w *pkcs11StorageWrapper) Compact() error {
 }
 
 func (w *pkcs11StorageWrapper) Close() error {
-	// Close the storage
 	_ = w.storage.Close()
-
-	// Cleanup PKCS#11 resources
-	_ = w.ctx.Logout(w.session)
-	_ = w.ctx.CloseSession(w.session)
-	_ = w.ctx.Finalize()
-
+	if w.pool != nil {
+		w.pool.Close()
+	}
+	if w.ctx != nil {
+		w.ctx.Finalize()
+	}
 	return nil
 }

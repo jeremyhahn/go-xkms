@@ -1,7 +1,7 @@
-# Default configuration for keychaind
+# Default configuration for xkmsd
 #
 # This is the minimal configuration that enables only Unix socket
-# for local IPC. Use this when the keychain CLI is the only client.
+# for local IPC. Use this when the xkms CLI is the only client.
 #
 # For remote access, copy this file and enable the desired protocols
 # (rest, grpc, quic, mcp) in the protocols section.
@@ -24,7 +24,7 @@ protocols:
 
 # Unix socket configuration
 unix:
-  socket_path: /var/run/keychain/keychain.sock
+  socket_path: /var/run/xkms/xkms.sock
   socket_mode: "0660"
 
 logging:
@@ -55,7 +55,7 @@ health:
 
 storage:
   backend: file
-  path: /var/lib/keychain/metadata
+  path: /var/lib/xkms/metadata
 
 # Default backend for key operations
 default_backend: pkcs8
@@ -63,4 +63,4 @@ default_backend: pkcs8
 backends:
   pkcs8:
     enabled: true
-    path: /var/lib/keychain/keys
+    path: /var/lib/xkms/keys

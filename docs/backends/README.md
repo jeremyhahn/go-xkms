@@ -1,16 +1,19 @@
 # Backend Documentation
 
-This directory contains documentation for all supported storage backends in go-keychain.
+This directory contains documentation for all supported storage backends in go-xkms.
 
 ## Available Backends
 
+### Software
+
+- **[Software](software.md)** - Full-featured software backend (asymmetric + symmetric encryption)
+
 ### Hardware Security Modules
 
-- **[PKCS#11](pkcs11.md)** - Generic Hardware Security Module support
-- **[SmartCard-HSM](smartcardhsm.md)** - CardContact SmartCard-HSM with DKEK support
-- **[Nitrokey HSM](nitrokey-hsm.md)** - Nitrokey HSM device (uses SmartCard-HSM)
-- **[TPM2](tpm2.md)** - Trusted Platform Module 2.0
-- **[YubiKey](yubikey.md)** - YubiKey PIV smart card
+- **[TPM 2.0](tpm2.md)** - Trusted Platform Module 2.0
+- **[PKCS#11](pkcs11.md)** - Generic Hardware Security Module support (also supports YubiKey PIV via `libykcs11`)
+- **[Nitrokey HSM](nitrokey-hsm.md)** - Nitrokey HSM device (via PKCS#11 backend)
+- **[Phone](phone/)** - Android phone as HSM via BLE/USB (TEE/StrongBox)
 
 ### Cloud Key Management Services
 
@@ -19,30 +22,24 @@ This directory contains documentation for all supported storage backends in go-k
 - **[Azure Key Vault](azurekv.md)** - Microsoft Azure Key Vault
 - **[HashiCorp Vault](vault.md)** - HashiCorp Vault Transit Engine
 
-### Software Backends
-
-- **[PKCS#8](pkcs8.md)** - File-based PKCS#8 key storage
-- **[AES](../architecture/symmetric-encryption.md)** - File-based AES symmetric key storage
-
 ## Backend Selection Guide
 
-Each backend provides different features and security characteristics:
+Each backend implements the `types.KeyProvider` interface, providing a consistent API for key operations. The `xkms.Backend` wrapper adds certificate storage, TLS helpers, and unified key ID support on top of any KeyProvider.
 
-| Backend | Asymmetric Keys | Symmetric Keys | Hardware-backed | Cloud-based | Requires HSM | DKEK Backup |
-|---------|----------------|----------------|-----------------|-------------|--------------|-------------|
-| PKCS#8  | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| AES     | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ |
-| PKCS#11 | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
-| SmartCard-HSM | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
-| TPM2    | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
-| YubiKey | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+| Backend | Asymmetric | Symmetric | Hardware | Cloud | Sealing | Attestation |
+|---------|-----------|-----------|----------|-------|---------|-------------|
+| Software | ✓ | ✓ | ✗ | ✗ | ✓ | ✗ |
+| TPM 2.0 | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| PKCS#11 | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |
 | AWS KMS | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
 | GCP KMS | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Azure KV | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ |
-| Vault   | ✓ | ✓ | Optional | Optional | ✗ | ✗ |
+| Vault | ✓ | ✓ | Optional | Optional | ✗ | ✗ |
+| Phone | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ |
 
 ## See Also
 
 - [Backend Architecture](../architecture/backend-registry.md)
+- [Quick Start](../usage/quickstart.md)
 - [Getting Started](../usage/getting-started.md)
 - [Configuration Guide](../configuration/)

@@ -1,6 +1,6 @@
 # Build System
 
-go-keychain uses a modular build system that allows you to include only the backends you need, reducing binary size, compilation time, and dependencies.
+go-xkms uses a modular build system that allows you to include only the backends you need, reducing binary size, compilation time, and dependencies.
 
 ## Quick Start
 
@@ -102,13 +102,13 @@ You can also use Go build tags directly:
 
 ```bash
 # Minimal build
-go build -tags="pkcs8" -o keychain ./cmd/cli
+go build -tags="software" -o xkms ./cmd/cli
 
 # Custom combination
-go build -tags="pkcs8,pkcs11,awskms" -o keychain ./cmd/cli
+go build -tags="software,pkcs11,awskms" -o xkms ./cmd/cli
 
 # Server with specific backends and features
-go build -tags="pkcs8,awskms,rest,grpc" -o server ./cmd/server
+go build -tags="software,awskms,rest,grpc" -o server ./cmd/server
 ```
 
 ## Build Targets
@@ -139,7 +139,7 @@ make cli                  # Build CLI with current config
 ```bash
 make test                    # Run unit tests
 make integration-test        # Run all integration tests
-make integration-test-pkcs8  # Run PKCS#8 integration tests
+make integration-test-software # Run software backend integration tests
 make integration-test-pkcs11 # Run PKCS#11/SoftHSM integration tests
 make integration-test-tpm2   # Run TPM2 simulator integration tests
 make integration-test-awskms # Run AWS KMS/LocalStack integration tests
@@ -156,11 +156,11 @@ make coverage                # Generate coverage report
 Each backend is protected by Go build tags:
 
 ```go
-//go:build pkcs11
+//go:build software
 
-package pkcs11
+package software
 
-// This file only compiles when pkcs11 tag is specified
+// This file only compiles when software tag is specified
 ```
 
 ### Backend Registry
@@ -203,7 +203,7 @@ Output:
 Current Backend Configuration:
 
   Software Backends:
-    ✓ PKCS8 (Software key storage)
+    ✓ Software (Software key storage)
 
   Hardware Backends:
     ✗ PKCS11
@@ -214,7 +214,7 @@ Current Backend Configuration:
     ✗ GCP KMS
     ✗ Azure Key Vault
 
-  Build Tags: pkcs8
+  Build Tags: software
 ```
 
 ### Backend Help
@@ -295,7 +295,7 @@ strategy:
       - name: minimal
         backends: "WITH_PKCS11=0 WITH_TPM2=0 WITH_AWSKMS=0 WITH_GCPKMS=0 WITH_AZUREKV=0"
       - name: full
-        backends: "WITH_PKCS8=1 WITH_PKCS11=1 WITH_TPM2=1 WITH_AWSKMS=1 WITH_GCPKMS=1 WITH_AZUREKV=1"
+        backends: "WITH_SOFTWARE=1 WITH_PKCS11=1 WITH_TPM2=1 WITH_AWSKMS=1 WITH_GCPKMS=1 WITH_AZUREKV=1"
 
 steps:
   - name: Build
@@ -309,7 +309,7 @@ steps:
 If you get "backend not available" errors:
 
 1. Check which backends are compiled: `make show-backends`
-2. Verify build tags were used: `go version -m ./build/lib/libkeychain.so | grep build`
+2. Verify build tags were used: `go version -m ./build/lib/libxkms.so | grep build`
 3. Rebuild with required backend: `make lib WITH_<BACKEND>=1`
 
 ### Linker Errors

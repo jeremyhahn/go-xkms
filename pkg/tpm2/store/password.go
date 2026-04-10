@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,7 +14,7 @@
 package store
 
 import (
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 const (
@@ -32,12 +32,6 @@ type ClearPassword struct {
 // Use this for UserAuth values passed to TPM operations.
 func NewPassword(password []byte) types.Password {
 	return &ClearPassword{password: password}
-}
-
-// NewClearPassword is an alias for NewPassword for backward compatibility.
-// Deprecated: Use NewPassword instead.
-func NewClearPassword(password []byte) types.Password {
-	return NewPassword(password)
 }
 
 // Bytes returns the password as bytes

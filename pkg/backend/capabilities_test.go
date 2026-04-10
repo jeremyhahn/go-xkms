@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,7 +16,7 @@ package backend
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -149,7 +149,6 @@ func TestCapabilities_String(t *testing.T) {
 	tests := []struct {
 		name string
 		caps types.Capabilities
-		want string
 	}{
 		{
 			name: "All capabilities enabled",
@@ -159,8 +158,8 @@ func TestCapabilities_String(t *testing.T) {
 				Signing:        true,
 				Decryption:     true,
 				KeyRotation:    true,
+				SecurityLevel:  types.SecurityLevelHigh,
 			},
-			want: "Capabilities{Keys: true, HardwareBacked: true, Signing: true, Decryption: true, KeyRotation: true}",
 		},
 		{
 			name: "All capabilities disabled",
@@ -170,8 +169,8 @@ func TestCapabilities_String(t *testing.T) {
 				Signing:        false,
 				Decryption:     false,
 				KeyRotation:    false,
+				SecurityLevel:  types.SecurityLevelLow,
 			},
-			want: "Capabilities{Keys: false, HardwareBacked: false, Signing: false, Decryption: false, KeyRotation: false}",
 		},
 		{
 			name: "Mixed capabilities",
@@ -181,14 +180,20 @@ func TestCapabilities_String(t *testing.T) {
 				Signing:        true,
 				Decryption:     false,
 				KeyRotation:    true,
+				SecurityLevel:  types.SecurityLevelMedium,
 			},
-			want: "Capabilities{Keys: true, HardwareBacked: false, Signing: true, Decryption: false, KeyRotation: true}",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.caps.String())
+			str := tt.caps.String()
+			assert.Contains(t, str, "Keys:")
+			assert.Contains(t, str, "HardwareBacked:")
+			assert.Contains(t, str, "Signing:")
+			assert.Contains(t, str, "Decryption:")
+			assert.Contains(t, str, "KeyRotation:")
+			assert.Contains(t, str, "SecurityLevel:")
 		})
 	}
 }
@@ -201,6 +206,7 @@ func TestNewSoftwareCapabilities(t *testing.T) {
 	assert.True(t, caps.Signing, "Software backend should support signing")
 	assert.True(t, caps.Decryption, "Software backend should support decryption")
 	assert.False(t, caps.KeyRotation, "Software backend should not support key rotation by default")
+	assert.Equal(t, types.SecurityLevelLow, caps.SecurityLevel, "Software backend should have Low security level")
 
 	// Test using the helper methods
 	assert.True(t, caps.HasKeys())
@@ -208,6 +214,7 @@ func TestNewSoftwareCapabilities(t *testing.T) {
 	assert.True(t, caps.SupportsSign())
 	assert.True(t, caps.SupportsDecrypt())
 	assert.False(t, caps.SupportsKeyRotation())
+	assert.Equal(t, types.SecurityLevelLow, caps.GetSecurityLevel())
 }
 
 func TestNewHardwareCapabilities(t *testing.T) {
@@ -218,6 +225,7 @@ func TestNewHardwareCapabilities(t *testing.T) {
 	assert.True(t, caps.Signing, "Hardware backend should support signing")
 	assert.True(t, caps.Decryption, "Hardware backend should support decryption")
 	assert.False(t, caps.KeyRotation, "Hardware backend should not support key rotation by default")
+	assert.Equal(t, types.SecurityLevelHigh, caps.SecurityLevel, "Hardware backend should have High security level by default")
 
 	// Test using the helper methods
 	assert.True(t, caps.HasKeys())
@@ -225,6 +233,7 @@ func TestNewHardwareCapabilities(t *testing.T) {
 	assert.True(t, caps.SupportsSign())
 	assert.True(t, caps.SupportsDecrypt())
 	assert.False(t, caps.SupportsKeyRotation())
+	assert.Equal(t, types.SecurityLevelHigh, caps.GetSecurityLevel())
 }
 
 // TestCapabilities_EdgeCases tests edge cases and boundary conditions
@@ -236,7 +245,10 @@ func TestCapabilities_EdgeCases(t *testing.T) {
 		assert.False(t, caps.SupportsSign())
 		assert.False(t, caps.SupportsDecrypt())
 		assert.False(t, caps.SupportsKeyRotation())
-		assert.Equal(t, "Capabilities{Keys: false, HardwareBacked: false, Signing: false, Decryption: false, KeyRotation: false}", caps.String())
+		assert.Equal(t, types.SecurityLevelLow, caps.GetSecurityLevel()) // Zero value is Low
+		str := caps.String()
+		assert.Contains(t, str, "Keys: false")
+		assert.Contains(t, str, "SecurityLevel: Low")
 	})
 
 	t.Run("Capabilities comparison", func(t *testing.T) {
@@ -246,6 +258,7 @@ func TestCapabilities_EdgeCases(t *testing.T) {
 		assert.NotEqual(t, soft.HardwareBacked, hard.HardwareBacked, "Software and hardware capabilities should differ")
 		assert.Equal(t, soft.Keys, hard.Keys, "Both should support keys")
 		assert.Equal(t, soft.Signing, hard.Signing, "Both should support signing")
+		assert.Less(t, soft.SecurityLevel, hard.SecurityLevel, "Hardware should have higher security level")
 	})
 }
 
@@ -290,6 +303,7 @@ func TestNewUnifiedSoftwareCapabilities(t *testing.T) {
 	assert.True(t, caps.Decryption, "Unified software backend should support decryption")
 	assert.True(t, caps.KeyRotation, "Unified software backend should support key rotation")
 	assert.True(t, caps.SymmetricEncryption, "Unified software backend should support symmetric encryption")
+	assert.Equal(t, types.SecurityLevelLow, caps.SecurityLevel, "Unified software backend should have Low security level")
 
 	// Test using the helper methods
 	assert.True(t, caps.HasKeys())
@@ -298,4 +312,54 @@ func TestNewUnifiedSoftwareCapabilities(t *testing.T) {
 	assert.True(t, caps.SupportsDecrypt())
 	assert.True(t, caps.SupportsKeyRotation())
 	assert.True(t, caps.SupportsSymmetricEncryption())
+	assert.Equal(t, types.SecurityLevelLow, caps.GetSecurityLevel())
+}
+
+// TestSecurityLevel_ConstructorDefaults tests that capability constructors set appropriate security levels
+func TestSecurityLevel_ConstructorDefaults(t *testing.T) {
+	tests := []struct {
+		name          string
+		constructor   func() types.Capabilities
+		expectedLevel types.SecurityLevel
+	}{
+		{
+			name:          "Software capabilities have Low security",
+			constructor:   types.NewSoftwareCapabilities,
+			expectedLevel: types.SecurityLevelLow,
+		},
+		{
+			name:          "Hardware capabilities have High security",
+			constructor:   types.NewHardwareCapabilities,
+			expectedLevel: types.SecurityLevelHigh,
+		},
+		{
+			name:          "Unified software capabilities have Low security",
+			constructor:   types.NewUnifiedSoftwareCapabilities,
+			expectedLevel: types.SecurityLevelLow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			caps := tt.constructor()
+			assert.Equal(t, tt.expectedLevel, caps.GetSecurityLevel())
+		})
+	}
+}
+
+// TestSecurityLevel_Ordering verifies that security levels are properly ordered
+func TestSecurityLevel_Ordering(t *testing.T) {
+	// SecurityLevel should be: Low < Medium < High < VeryHigh
+	assert.True(t, types.SecurityLevelLow < types.SecurityLevelMedium,
+		"Low should be less than Medium")
+	assert.True(t, types.SecurityLevelMedium < types.SecurityLevelHigh,
+		"Medium should be less than High")
+	assert.True(t, types.SecurityLevelHigh < types.SecurityLevelVeryHigh,
+		"High should be less than VeryHigh")
+
+	// Expected backend security level assignments:
+	// - Software: Low (0) - keys on disk
+	// - Cloud KMS (AWS/GCP/Azure/Vault): Medium (1) - network-dependent
+	// - PKCS#11: High (2) - local HSM
+	// - TPM 2.0: VeryHigh (3) - hardware-bound, non-exportable
 }

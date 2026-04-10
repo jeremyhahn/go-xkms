@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,7 +20,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -29,7 +28,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/simulator"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/hardware"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 )
 
 // TestTPM2CertStorage performs comprehensive integration tests for TPM2 NV RAM certificate storage
@@ -627,7 +626,7 @@ func openTPMSimulator(t *testing.T) transport.TPMCloser {
 
 	if simHost != "" && simPort != "" {
 		// Use TCP simulator (SWTPM)
-		addr := fmt.Sprintf("%s:%s", simHost, simPort)
+		addr := net.JoinHostPort(simHost, simPort)
 		t.Logf("Connecting to TPM simulator at %s", addr)
 
 		conn, err := net.Dial("tcp", addr)

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,14 +16,15 @@
 package vault
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"os"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +87,7 @@ func TestVaultBackend_GenerateSymmetricKey(t *testing.T) {
 	assert.Equal(t, 256, symmetricKey.KeySize())
 
 	// Verify metadata was stored
-	exists, err := config.KeyStorage.Exists(attrs.CN)
+	exists, err := config.KeyStorage.Exists(context.Background(), attrs.CN)
 	require.NoError(t, err)
 	assert.True(t, exists)
 
@@ -551,4 +552,61 @@ func containsSubstr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestGetTracker_ReturnsTracker verifies that GetTracker returns the configured tracker.
+func TestGetTracker_ReturnsTracker(t *testing.T) {
+	config := &Config{
+		Address:     "http://127.0.0.1:8200",
+		Token:       "test-token",
+		TransitPath: "transit",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	// Use NewBackendWithClient with nil client since we only test tracker access
+	b, err := NewBackendWithClient(config, nil)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+
+	tracker := b.GetTracker()
+	if tracker == nil {
+		t.Fatal("GetTracker() returned nil, expected non-nil default tracker")
+	}
+
+	// Verify it is the same instance as the backend's tracker field
+	if tracker != b.tracker {
+		t.Error("GetTracker() returned a different tracker instance than the backend's tracker field")
+	}
+}
+
+// TestGetTracker_DefaultTracker verifies that a backend created without an explicit
+// tracker gets a non-nil default tracker from NewBackendWithClient.
+func TestGetTracker_DefaultTracker(t *testing.T) {
+	config := &Config{
+		Address:     "http://127.0.0.1:8200",
+		Token:       "test-token",
+		TransitPath: "transit",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	// Config has no explicit Tracker, so the constructor should create a default
+	b, err := NewBackendWithClient(config, nil)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+
+	tracker := b.GetTracker()
+	if tracker == nil {
+		t.Fatal("GetTracker() returned nil, expected a default tracker to be initialized")
+	}
+
+	// Verify the tracker is functional by performing a basic operation
+	keyID := "test-default-tracker-key"
+	opts := types.DefaultAEADOptions()
+	if err := tracker.SetAEADOptions(keyID, opts); err != nil {
+		t.Errorf("Default tracker SetAEADOptions() failed: %v", err)
+	}
 }

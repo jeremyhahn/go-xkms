@@ -1,6 +1,6 @@
 # Crypto Package Integration Tests
 
-Comprehensive integration tests for the go-keychain crypto packages.
+Comprehensive integration tests for the go-xkms crypto packages.
 
 ## Overview
 

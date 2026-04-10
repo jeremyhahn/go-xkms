@@ -1,6 +1,6 @@
 # FROST Backend Architecture
 
-This document describes the system design and component architecture of the FROST backend integration in go-keychain.
+This document describes the system design and component architecture of the FROST backend integration in go-xkms.
 
 ## High-Level Architecture
 
@@ -10,11 +10,11 @@ This document describes the system design and component architecture of the FROS
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  CLI Commands                          │  Go API                            │
 │  ┌─────────────────────────────────┐   │  ┌─────────────────────────────┐   │
-│  │ keychain frost keygen           │   │  │ backend.GenerateKey()       │   │
-│  │ keychain frost sign             │   │  │ backend.Signer()            │   │
-│  │ keychain frost round1/round2    │   │  │ backend.GenerateNonces()    │   │
-│  │ keychain frost aggregate        │   │  │ backend.SignRound()         │   │
-│  │ keychain frost verify           │   │  │ backend.Aggregate()         │   │
+│  │ xkms frost keygen           │   │  │ backend.GenerateKey()       │   │
+│  │ xkms frost sign             │   │  │ backend.Signer()            │   │
+│  │ xkms frost round1/round2    │   │  │ backend.GenerateNonces()    │   │
+│  │ xkms frost aggregate        │   │  │ backend.SignRound()         │   │
+│  │ xkms frost verify           │   │  │ backend.Aggregate()         │   │
 │  └─────────────────────────────────┘   │  └─────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -65,7 +65,7 @@ type FrostBackend struct {
 ```
 
 **Responsibilities:**
-- Implements `types.Backend` interface for go-keychain integration
+- Implements `types.Backend` interface for go-xkms integration
 - Manages key generation via `KeyGenerator` interface
 - Coordinates signing operations (both modes)
 - Handles nonce tracking for security
@@ -355,11 +355,11 @@ Simple O(1) storage-based nonce tracking to prevent catastrophic nonce reuse:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Integration with go-keychain
+## Integration with go-xkms
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    go-keychain Integration                       │
+│                    go-xkms Integration                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  types.Backend Interface                                        │

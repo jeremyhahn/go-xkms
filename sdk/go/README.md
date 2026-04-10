@@ -1,11 +1,11 @@
-# go-keychain SDK
+# go-xkms SDK
 
-Go SDK for the go-keychain Key Management System.
+Go SDK for the go-xkms Key Management System.
 
 ## Installation
 
 ```bash
-go get github.com/jeremyhahn/go-keychain/sdk/go
+go get github.com/jeremyhahn/go-xkms/sdk/go
 ```
 
 ## Quick Start
@@ -18,12 +18,12 @@ import (
     "fmt"
     "log"
 
-    keychain "github.com/jeremyhahn/go-keychain/sdk/go"
+    xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func main() {
     // Create a client using default Unix socket
-    client, err := keychain.New(nil)
+    client, err := xkms.New(nil)
     if err != nil {
         log.Fatal(err)
     }
@@ -44,7 +44,7 @@ func main() {
     fmt.Printf("Server status: %s (version: %s)\n", health.Status, health.Version)
 
     // Generate a key
-    resp, err := client.GenerateKey(ctx, &keychain.GenerateKeyRequest{
+    resp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
         KeyID:   "my-signing-key",
         Backend: "software",
         KeyType: "EC",
@@ -56,7 +56,7 @@ func main() {
     fmt.Printf("Generated key: %s\n", resp.KeyID)
 
     // Sign data
-    signResp, err := client.Sign(ctx, &keychain.SignRequest{
+    signResp, err := client.Sign(ctx, &xkms.SignRequest{
         Backend: "software",
         KeyID:   "my-signing-key",
         Data:    []byte("Hello, World!"),
@@ -84,68 +84,93 @@ func main() {
 ### Unix Socket (Default)
 
 ```go
-client, _ := keychain.New(nil)
+client, _ := xkms.New(nil)
 // or
-client, _ := keychain.New(&keychain.Config{
-    Protocol: keychain.ProtocolUnix,
-    Address:  "/path/to/keychain.sock",
+client, _ := xkms.New(&xkms.BackendConfig{
+    Protocol: xkms.ProtocolUnix,
+    Address:  "/path/to/xkms.sock",
 })
 ```
 
 ### REST API
 
 ```go
-client, _ := keychain.New(&keychain.Config{
-    Protocol:   keychain.ProtocolREST,
+client, _ := xkms.New(&xkms.BackendConfig{
+    Protocol:   xkms.ProtocolREST,
     Address:    "https://localhost:8443",
     TLSEnabled: true,
 })
 // or
-client, _ := keychain.NewFromURL("https://localhost:8443")
+client, _ := xkms.NewFromURL("https://localhost:8443")
 ```
 
 ### gRPC
 
 ```go
-client, _ := keychain.New(&keychain.Config{
-    Protocol: keychain.ProtocolGRPC,
+client, _ := xkms.New(&xkms.BackendConfig{
+    Protocol: xkms.ProtocolGRPC,
     Address:  "localhost:9443",
 })
 // or
-client, _ := keychain.NewFromURL("grpc://localhost:9443")
+client, _ := xkms.NewFromURL("grpc://localhost:9443")
 ```
 
 ### QUIC
 
 ```go
-client, _ := keychain.New(&keychain.Config{
-    Protocol: keychain.ProtocolQUIC,
+client, _ := xkms.New(&xkms.BackendConfig{
+    Protocol: xkms.ProtocolQUIC,
     Address:  "localhost:8444",
 })
 // or
-client, _ := keychain.NewFromURL("quic://localhost:8444")
+client, _ := xkms.NewFromURL("quic://localhost:8444")
 ```
 
 ### Embedded (In-Process)
 
 ```go
-service := myKeychainService // implements KeychainServicer
-client, _ := keychain.NewEmbedded(service)
+service := myXKMSService // implements XKMSServicer
+client, _ := xkms.NewEmbedded(service)
 ```
 
 ## TLS Configuration
 
+### Recommended: SPKI Pin (Trust-on-First-Use)
+
 ```go
-client, _ := keychain.New(&keychain.Config{
-    Protocol:              keychain.ProtocolREST,
-    Address:               "https://localhost:8443",
-    TLSEnabled:            true,
-    TLSCAFile:             "/path/to/ca.pem",
-    TLSCertFile:           "/path/to/client.pem",  // for mTLS
-    TLSKeyFile:            "/path/to/client-key.pem",
-    TLSInsecureSkipVerify: false,
+// Use WithSPKIPin for trust-on-first-use without requiring a CA certificate.
+// Obtain the pin via: xkmsctl spki-pin --server <address>
+client, _ := xkms.NewWithOptions(
+    xkms.WithProtocol(xkms.ProtocolREST),
+    xkms.WithAddress("https://localhost:8443"),
+    xkms.WithSPKIPin("abc123def456..."),
+)
+```
+
+### Recommended: CA Certificate
+
+```go
+client, _ := xkms.New(&xkms.BackendConfig{
+    Protocol:   xkms.ProtocolREST,
+    Address:    "https://localhost:8443",
+    TLSEnabled: true,
+    TLSCAFile:  "/path/to/ca.pem",
 })
 ```
+
+### mTLS (Mutual TLS)
+
+```go
+client, _ := xkms.New(&xkms.BackendConfig{
+    Protocol:   xkms.ProtocolREST,
+    Address:    "https://localhost:8443",
+    TLSEnabled: true,
+    TLSCAFile:  "/path/to/ca.pem",
+    TLSCertFile: "/path/to/client.pem",
+    TLSKeyFile:  "/path/to/client-key.pem",
+})
+```
+
 
 ## Supported Backends
 
@@ -164,7 +189,7 @@ client, _ := keychain.New(&keychain.Config{
 
 ## API Coverage
 
-The SDK provides 100% coverage of the KeychainService API:
+The SDK provides 100% coverage of the XKMSService API:
 
 ### Lifecycle
 - `Connect()` - Establish connection
@@ -219,15 +244,109 @@ The SDK provides 100% coverage of the KeychainService API:
 - `Unseal()` - Unseal data
 - `CanSeal()` - Check sealing capability
 
+### PIV (Personal Identity Verification)
+- `ListPIVSlots()` - List all PIV slots and their status
+- `GetPIVCertificate()` - Get certificate from a PIV slot
+- `StorePIVCertificate()` - Store a certificate in a PIV slot
+- `DeletePIVCertificate()` - Delete certificate from a PIV slot
+- `GeneratePIVKey()` - Generate a key pair in a PIV slot
+- `ImportPIVCertificate()` - Import a certificate into a PIV slot
+- `ExportPIVCertificate()` - Export certificate from a PIV slot
+- `GeneratePIVCSR()` - Generate a CSR for a PIV slot key
+
+### Barrier
+- `BarrierInitialize()` - Initialize and seal the root encryption key
+- `BarrierUnseal()` - Unseal the barrier for storage operations
+- `BarrierSeal()` - Seal the barrier and zero the DEK
+- `BarrierStatus()` - Get current barrier state
+
+### PIN Management
+- `SetSOPIN()` - Set the Security Officer PIN
+- `SetUserPIN()` - Set the user PIN (requires SO PIN)
+- `ChangeSOPIN()` - Change the Security Officer PIN
+- `ChangeUserPIN()` - Change the user PIN
+- `VerifySOPIN()` - Verify the Security Officer PIN
+- `VerifyUserPIN()` - Verify the user PIN
+- `GetLockoutStatus()` - Get PIN lockout status
+- `ResetLockout()` - Reset lockout counter (requires SO PIN)
+
+## Usage Examples
+
+### PIV Operations
+
+```go
+// Generate a PIV key and get a CSR
+resp, err := client.GeneratePIVKey(ctx, &xkms.GeneratePIVKeyRequest{
+    Backend:   "pkcs11",
+    Slot:      "9a",
+    Algorithm: "ecdsap256",
+    Subject:   "CN=My PIV Key",
+})
+
+// Generate a CSR for CA signing
+csrResp, err := client.GeneratePIVCSR(ctx, &xkms.GeneratePIVCSRRequest{
+    Backend: "pkcs11",
+    Slot:    "9a",
+    Subject: "CN=My PIV Key,O=My Org",
+})
+
+// List all PIV slots
+slots, err := client.ListPIVSlots(ctx, &xkms.ListPIVSlotsRequest{
+    Backend: "pkcs11",
+})
+```
+
+### Barrier Operations
+
+```go
+// Initialize the barrier (first-time setup)
+err := client.BarrierInitialize(ctx, &xkms.BarrierInitializeRequest{
+    Secret: "my-secure-passphrase",
+})
+
+// Check barrier status
+status, err := client.BarrierStatus(ctx)
+fmt.Printf("Sealed: %v, Strategy: %s\n", status.Sealed, status.Strategy)
+
+// Unseal on restart
+err = client.BarrierUnseal(ctx, &xkms.BarrierUnsealRequest{
+    Secret: "my-secure-passphrase",
+})
+```
+
+### PIN Management
+
+```go
+// Set SO PIN (first-time setup, no current SO PIN)
+err := client.SetSOPIN(ctx, &xkms.SetSOPINRequest{
+    NewSoPin: "123456",
+})
+
+// Set user PIN (requires SO PIN)
+err = client.SetUserPIN(ctx, &xkms.SetUserPINRequest{
+    SoPin:      "123456",
+    NewUserPin: "654321",
+})
+
+// Verify user PIN
+err = client.VerifyUserPIN(ctx, &xkms.VerifyUserPINRequest{
+    UserPin: "654321",
+})
+
+// Check lockout status
+lockout, err := client.GetLockoutStatus(ctx)
+fmt.Printf("Locked: %v, Attempts: %d/%d\n", lockout.IsLocked, lockout.FailedAttempts, lockout.MaxAttempts)
+```
+
 ## Error Handling
 
 ```go
 resp, err := client.GetKey(ctx, "software", "my-key")
 if err != nil {
-    if errors.Is(err, keychain.ErrNotConnected) {
+    if errors.Is(err, xkms.ErrNotConnected) {
         // Handle not connected
     }
-    if errors.Is(err, keychain.ErrKeyNotFound) {
+    if errors.Is(err, xkms.ErrKeyNotFound) {
         // Handle key not found
     }
     // Handle other errors

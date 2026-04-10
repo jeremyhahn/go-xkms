@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,7 +14,8 @@
 package rest
 
 import (
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // HealthResponse represents the health check response.
@@ -33,7 +34,8 @@ type BackendInfo struct {
 
 // ListBackendsResponse represents the response for listing backends.
 type ListBackendsResponse struct {
-	Backends []BackendInfo `json:"backends"`
+	Backends   []BackendInfo          `json:"backends"`
+	Pagination transport.PageResponse `json:"pagination"`
 }
 
 // GenerateKeyRequest represents a key generation request.
@@ -67,7 +69,8 @@ type KeyInfo struct {
 
 // ListKeysResponse represents the response for listing keys.
 type ListKeysResponse struct {
-	Keys []KeyInfo `json:"keys"`
+	Keys       []KeyInfo              `json:"keys"`
+	Pagination transport.PageResponse `json:"pagination"`
 }
 
 // GetKeyResponse represents the response for getting a key.
@@ -195,7 +198,8 @@ type CertificateInfo struct {
 
 // ListCertsResponse represents the response for listing certificates.
 type ListCertsResponse struct {
-	Certificates []CertificateInfo `json:"certificates"`
+	Certificates []CertificateInfo      `json:"certificates"`
+	Pagination   transport.PageResponse `json:"pagination"`
 }
 
 // CertExistsResponse represents the response for checking certificate existence.
@@ -326,57 +330,6 @@ type ExportKeyResponse struct {
 	WrappedKey  []byte `json:"wrapped_key"`
 	Algorithm   string `json:"algorithm"`
 	ImportToken []byte `json:"import_token,omitempty"`
-}
-
-// KeyVersionInfo represents information about a specific version of a key.
-// Used for key versioning operations.
-type KeyVersionInfo struct {
-	Version     int    `json:"version"`
-	State       string `json:"state"`                  // "enabled", "disabled", "destroyed"
-	CreatedAt   string `json:"created_at"`             // RFC3339 format
-	RotatedAt   string `json:"rotated_at,omitempty"`   // RFC3339 format
-	DestroyedAt string `json:"destroyed_at,omitempty"` // RFC3339 format
-}
-
-// ListKeyVersionsResponse represents the response for listing key versions.
-// This type is prepared for future implementation of key versioning.
-type ListKeyVersionsResponse struct {
-	KeyID    string           `json:"key_id"`
-	Versions []KeyVersionInfo `json:"versions"`
-}
-
-// EnableKeyVersionResponse represents the response for enabling a key version.
-// This type is prepared for future implementation of key versioning.
-type EnableKeyVersionResponse struct {
-	KeyID   string `json:"key_id"`
-	Version int    `json:"version"`
-	State   string `json:"state"`
-	Message string `json:"message"`
-}
-
-// DisableKeyVersionResponse represents the response for disabling a key version.
-// This type is prepared for future implementation of key versioning.
-type DisableKeyVersionResponse struct {
-	KeyID   string `json:"key_id"`
-	Version int    `json:"version"`
-	State   string `json:"state"`
-	Message string `json:"message"`
-}
-
-// EnableAllKeyVersionsResponse represents the response for enabling all key versions.
-// This type is prepared for future implementation of key versioning.
-type EnableAllKeyVersionsResponse struct {
-	KeyID           string `json:"key_id"`
-	VersionsEnabled int    `json:"versions_enabled"`
-	Message         string `json:"message"`
-}
-
-// DisableAllKeyVersionsResponse represents the response for disabling all key versions.
-// This type is prepared for future implementation of key versioning.
-type DisableAllKeyVersionsResponse struct {
-	KeyID            string `json:"key_id"`
-	VersionsDisabled int    `json:"versions_disabled"`
-	Message          string `json:"message"`
 }
 
 // SealRequest represents a request to seal data.

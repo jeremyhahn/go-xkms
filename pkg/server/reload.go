@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,10 +14,9 @@
 package server
 
 import (
-	"fmt"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-keychain/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
 // Reload attempts to reload the server configuration without restarting
@@ -31,7 +30,7 @@ func (s *Server) Reload(cfg *config.Config) error {
 
 	// Reload logging configuration
 	if err := s.reloadLogging(cfg); err != nil {
-		return fmt.Errorf("failed to reload logging configuration: %w", err)
+		return &ErrConfigReload{Component: "logging", Err: err}
 	}
 
 	// Store new configuration

@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Clears the TPM as described in TCG Part 3: Commands - Section 24.6 - TPM2_Clear
@@ -29,6 +31,254 @@ func (tpm *TPM2) Clear(lockoutAuth []byte) error {
 	return nil
 }
 
+// ForceClear schedules a TPM clear via the UEFI Physical Presence Interface (PPI).
+// This bypasses Dictionary Attack lockout because the clear is performed by the
+// firmware during POST with physical presence assertion. The system must be
+// rebooted for the clear to take effect.
+// PPI request code 5 = "Clear" per TCG Physical Presence Interface Specification.
+func (tpm *TPM2) ForceClear() error {
+	deviceName := filepath.Base(tpm.config.Device)
+	// Map tpmrm0 -> tpm0 for sysfs PPI access
+	if deviceName == "tpmrm0" {
+		deviceName = "tpm0"
+	}
+	ppiPath := fmt.Sprintf("/sys/class/tpm/%s/ppi/request", deviceName)
+
+	if err := os.WriteFile(ppiPath, []byte("5"), 0644); err != nil {
+		return fmt.Errorf("%w: %v", ErrForceClear, err)
+	}
+
+	tpm.logger.Info("TPM clear scheduled via UEFI Physical Presence Interface",
+		slog.String("ppi_path", ppiPath),
+		slog.String("request_code", "5"))
+
+	return nil
+}
+
+// FactoryReset returns the TPM to a manufacturer-like state by evicting all
+// provisioned persistent handles (SRK, IAK, IDevID) and undefining their
+// associated NV indexes (certificates, policy indices). The manufacturer
+// Endorsement Key (EK) at handle 0x81010001 is preserved. This operation
+// requires Owner hierarchy authorization.
+//
+// FactoryReset DOES NOT call TPM2_Clear. TPM2_Clear is destructive (it
+// resets owner/endorsement/lockout auths AND wipes all persistent objects
+// in those hierarchies) and must be an explicit operator opt-in, not a
+// silent side effect of a method named "FactoryReset". For the destructive
+// pre-pass-then-evict workflow needed when the previous run set an
+// unknown owner auth, use FactoryResetWithClear which is gated behind a
+// caller-supplied opt-in.
+//
+// The reset is best-effort: each handle and NV index is processed
+// independently, and the first error encountered is returned after all
+// operations complete.
+func (tpm *TPM2) FactoryReset(ownerAuth []byte) error {
+	return tpm.factoryResetInternal(ownerAuth, false)
+}
+
+// FactoryResetWithClear is FactoryReset preceded by a TPM2_Clear via the
+// LOCKOUT hierarchy with EMPTY auth. This is the destructive recovery
+// path for the case where a previous failed provisioning run set the
+// OWNER hierarchy auth to a value that the current process doesn't know.
+//
+// TPM2_Clear is authorized via the LOCKOUT or PLATFORM hierarchy. On most
+// fresh TPMs and TPMs after platform reset, LOCKOUT auth is still empty
+// even when OWNER auth has been set by previous code. TPM2_Clear with
+// empty lockout resets ALL three hierarchy auths (Owner, Endorsement,
+// Lockout) to empty AND wipes all persistent objects in those hierarchies
+// in one shot. Manufacturer EK certificates in the Platform hierarchy are
+// preserved.
+//
+// **Callers MUST treat this as a destructive operation.** Do NOT call
+// FactoryResetWithClear unconditionally — it must be gated behind an
+// explicit operator opt-in (a config flag, an interactive confirmation,
+// or both). The trusted-platform reference templates default this to true
+// during initial install, but the Go library default is OFF and the
+// firstboot strategy reads the flag from the operator-supplied installer
+// config before invoking it.
+//
+// If the lockout auth is also set, the Clear pre-pass fails and we fall
+// through to the regular EvictControl pass, which then succeeds or fails
+// per the supplied ownerAuth — exactly as plain FactoryReset would.
+func (tpm *TPM2) FactoryResetWithClear(ownerAuth []byte) error {
+	return tpm.factoryResetInternal(ownerAuth, true)
+}
+
+// factoryResetInternal is the shared implementation. attemptClear gates
+// the destructive TPM2_Clear pre-pass.
+func (tpm *TPM2) factoryResetInternal(ownerAuth []byte, attemptClear bool) error {
+
+	tpm.logger.Info("Factory resetting TPM to manufacturer state",
+		slog.Bool("attempt_clear", attemptClear))
+	tpm.logger.Info("Preserving all EK keys and certificates per TCG specifications")
+
+	if attemptClear {
+		// PRE-PASS: TPM2_Clear via empty lockout. Best-effort. Caller
+		// has explicitly opted into the destructive recovery path.
+		tpm.logger.Info("FactoryResetWithClear: attempting TPM2_Clear via empty lockout hierarchy (DESTRUCTIVE — caller opted in)")
+		if clearErr := tpm.Clear(nil); clearErr != nil {
+			tpm.logger.Warn("TPM2_Clear via empty lockout failed (continuing with EvictControl pass)",
+				slog.String("error", clearErr.Error()))
+		} else {
+			tpm.logger.Info("TPM2_Clear via empty lockout succeeded — owner/endorsement/lockout auths reset")
+			// After a successful Clear, ownerAuth is empty. Override the
+			// caller-supplied ownerAuth so the eviction loop below doesn't
+			// keep trying a stale value.
+			ownerAuth = nil
+		}
+	}
+
+	var firstErr error
+
+	// TCG-standard EK persistent key handles that MUST be preserved.
+	// These are defined by the Trusted Computing Group and contain
+	// manufacturer-provisioned Endorsement Keys and their certificates.
+	// Reference: TCG TPM 2.0 Provisioning Guidance, Section 7.8, Table 2
+	preserveHandles := map[tpm2.TPMHandle]bool{
+		0x81010001: true, // EK RSA 2048 (TCG default)
+		0x81010002: true, // EK ECC P-256 (TCG default)
+	}
+
+	// TCG-standard EK certificate NV indices that MUST be preserved.
+	// These contain the manufacturer's EK certificates and are critical
+	// for device identity and attestation.
+	preserveNVIndices := map[tpm2.TPMHandle]bool{
+		0x01C00002: true, // EK RSA 2048 certificate
+		0x01C0000A: true, // EK ECC P-256 certificate
+		0x01C00016: true, // EK ECC P-384 certificate
+		0x01C00018: true, // EK ECC P-521 certificate
+		0x01C00001: true, // Endorsement hierarchy certificate (platform manufacturer)
+	}
+
+	// 1. Enumerate ALL persistent handles and evict everything except EKs
+	handles, err := persistentHandles(tpm.transport)
+	if err != nil {
+		tpm.logger.Warn("Failed to enumerate persistent handles", slog.String("error", err.Error()))
+	} else {
+		for _, handle := range handles {
+			if preserveHandles[handle] {
+				tpm.logger.Info("Preserving EK handle",
+					slog.String("handle", fmt.Sprintf("0x%08X", handle)))
+				continue
+			}
+
+			name, _, err := tpm.ReadHandle(handle)
+			if err != nil {
+				tpm.logger.Debug("Cannot read handle, skipping",
+					slog.String("handle", fmt.Sprintf("0x%08X", handle)))
+				continue
+			}
+
+			_, err = tpm2.EvictControl{
+				Auth: tpm2.AuthHandle{
+					Handle: tpm2.TPMRHOwner,
+					Auth:   tpm2.PasswordAuth(ownerAuth),
+				},
+				ObjectHandle: &tpm2.NamedHandle{
+					Handle: handle,
+					Name:   name,
+				},
+				PersistentHandle: handle,
+			}.Execute(tpm.transport)
+			if err != nil {
+				tpm.logger.Error("Failed to evict handle",
+					slog.String("handle", fmt.Sprintf("0x%08X", handle)),
+					slog.String("error", err.Error()))
+				if firstErr == nil {
+					firstErr = fmt.Errorf("%w: evict handle 0x%08X: %v", ErrFactoryReset, handle, err)
+				}
+			} else {
+				tpm.logger.Info("Evicted persistent handle",
+					slog.String("handle", fmt.Sprintf("0x%08X", handle)))
+			}
+		}
+	}
+
+	// 2. Undefine platform-provisioned NV indexes, preserving all EK certificates.
+	// Only undefine NV indices that were created by the platform (IDevID, IAK),
+	// NEVER touch manufacturer EK certificate indices.
+	platformNVIndices := []tpm2.TPMHandle{
+		tpm2.TPMHandle(iakCert),       // 0x01C90001
+		tpm2.TPMHandle(idevIDCert),    // 0x01C90000
+		tpm2.TPMHandle(idevIDNVIndex), // 0x01C90020
+		tpm2.TPMHandle(iakNVIndex),    // 0x01C90021
+	}
+
+	for _, nvIndex := range platformNVIndices {
+		if preserveNVIndices[nvIndex] {
+			tpm.logger.Info("Preserving EK certificate NV index",
+				slog.String("index", fmt.Sprintf("0x%08X", nvIndex)))
+			continue
+		}
+
+		readPubRsp, err := tpm2.NVReadPublic{
+			NVIndex: nvIndex,
+		}.Execute(tpm.transport)
+		if err != nil {
+			continue // NV index doesn't exist, skip
+		}
+
+		_, err = tpm2.NVUndefineSpace{
+			AuthHandle: tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(ownerAuth),
+			},
+			NVIndex: tpm2.NamedHandle{
+				Handle: nvIndex,
+				Name:   readPubRsp.NVName,
+			},
+		}.Execute(tpm.transport)
+		if err != nil {
+			tpm.logger.Error("Failed to undefine NV index",
+				slog.String("index", fmt.Sprintf("0x%08X", nvIndex)),
+				slog.String("error", err.Error()))
+			if firstErr == nil {
+				firstErr = fmt.Errorf("%w: undefine NV 0x%08X: %v", ErrFactoryReset, nvIndex, err)
+			}
+		} else {
+			tpm.logger.Info("Undefined NV index",
+				slog.String("index", fmt.Sprintf("0x%08X", nvIndex)))
+		}
+	}
+
+	// 4. Clear cached attributes
+	tpm.iakAttrs = nil
+	tpm.idevidAttrs = nil
+	tpm.ssrkAttrs = nil
+
+	return firstErr
+}
+
+// InstallOptions controls which provisioning steps Install() performs.
+// When nil is passed to Install(), DefaultInstallOptions() is used.
+type InstallOptions struct {
+	EK             bool // Ensure EK exists at configured handle
+	SSRK           bool // Ensure SSRK exists at configured handle
+	PlatformPolicy bool // Extend PCR 23 with golden measurements
+	IAK            bool // Ensure IAK exists
+	IDevID         bool // Ensure IDevID exists
+}
+
+// DefaultInstallOptions returns options that provision everything.
+func DefaultInstallOptions() *InstallOptions {
+	return &InstallOptions{
+		EK:             true,
+		SSRK:           true,
+		PlatformPolicy: true,
+		IAK:            true,
+		IDevID:         true,
+	}
+}
+
+// MinimalInstallOptions returns options for TCG minimum provisioning (EK + SSRK only).
+// Use this for early boot (firstboot/LUKS sealing) when PCR values aren't stable yet.
+func MinimalInstallOptions() *InstallOptions {
+	return &InstallOptions{
+		EK:   true,
+		SSRK: true,
+	}
+}
+
 // Install performs a safe, modified version of the TCG recommended provisioning
 // guidance intended for platforms that have already been minimally provisioned
 // by the TPM Manufacturer or Owner. Instead of clearing the hierarchies,
@@ -39,83 +289,153 @@ func (tpm *TPM2) Clear(lockoutAuth []byte) error {
 // If the config's EK.HierarchyAuth is set, it is used as the current authorization;
 // otherwise, empty auth is assumed for fresh TPMs. This allows Install to work
 // on both fresh TPMs and already-provisioned TPMs.
-func (tpm *TPM2) Install(soPIN types.Password) error {
+// When opts is nil, DefaultInstallOptions() is used, provisioning everything.
+func (tpm *TPM2) Install(soPIN types.Password, opts *InstallOptions) error {
+
+	if opts == nil {
+		opts = DefaultInstallOptions()
+	}
 
 	tpm.logger.Info("Installing Platform")
 
-	// Use the config's HierarchyAuth as the current auth if set,
-	// otherwise assume empty auth for fresh TPMs.
-	// This allows Install to work on both fresh TPMs and already-provisioned TPMs.
-	var currentAuth types.Password
-	if tpm.config.EK != nil && tpm.config.EK.HierarchyAuth != "" {
-		currentAuth = store.NewClearPassword([]byte(tpm.config.EK.HierarchyAuth))
-	}
+	// Only change hierarchy authorizations when an SO PIN is provided.
+	// When soPIN is nil, skip auth changes and just provision keys using
+	// the existing (possibly empty) hierarchy auth.
+	if soPIN != nil {
+		// Backup existing EK certificates before hierarchy auth changes
+		tpm.BackupEKCertificates()
 
-	// Set new hierarchy authorizations
-	if err := tpm.SetHierarchyAuth(currentAuth, soPIN, nil); err != nil {
-		return err
+		// Use the config's HierarchyAuth as the current auth if set,
+		// otherwise assume empty auth for fresh TPMs.
+		var currentAuth types.Password
+		if tpm.config.EK != nil && tpm.config.EK.HierarchyAuth != "" {
+			currentAuth = store.NewPassword([]byte(tpm.config.EK.HierarchyAuth))
+		}
+
+		if err := tpm.SetHierarchyAuth(currentAuth, soPIN, nil); err != nil {
+			return err
+		}
 	}
 
 	// Create EK if it doesnt exist
-	ekAttrs, err := tpm.EKAttributes()
-	if err != nil {
-		if err == tpm2.TPMRC(0x18b) {
-			// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
-			tpm.logger.Info("Creating Endorsement Key")
-			policyDigest := tpm.PlatformPolicyDigest()
-			ekAttrs, err = EKAttributesFromConfig(*tpm.config.EK, &policyDigest, tpm.config.IDevID)
-			if err != nil {
-				return err
-			}
-			ekAttrs.TPMAttributes.HierarchyAuth = soPIN
-			if err := tpm.CreateEK(ekAttrs); err != nil {
+	if opts.EK {
+		ekAttrs, err := tpm.EKAttributes()
+		if err != nil {
+			if err == tpm2.TPMRC(0x18b) {
+				// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
+				tpm.logger.Info("Creating Endorsement Key")
+				policyDigest, pdErr := tpm.PlatformPolicyDigest()
+				if pdErr != nil {
+					return pdErr
+				}
+				ekAttrs, err = EKAttributesFromConfig(*tpm.config.EK, &policyDigest, tpm.config.IDevID)
+				if err != nil {
+					return err
+				}
+				ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+				if err := tpm.CreateEK(ekAttrs); err != nil {
+					return err
+				}
+			} else {
 				return err
 			}
 		} else {
-			return err
+			ekAttrs.TPMAttributes.HierarchyAuth = soPIN
 		}
-	} else {
-		ekAttrs.TPMAttributes.HierarchyAuth = soPIN
 	}
 
 	// Create SSRK if it doesnt exist
-	var ssrkAttrs *types.KeyAttributes
-	_, err = tpm.SSRKAttributes()
-	if err != nil {
-		if err == tpm2.TPMRC(0x18b) {
-			tpm.logger.Info("Creating Shared SRK")
-			policyDigest := tpm.PlatformPolicyDigest()
-			ssrkAttrs, err = SRKAttributesFromConfig(*tpm.config.SSRK, &policyDigest)
-			if err != nil {
+	if opts.SSRK {
+		var ssrkAttrs *types.KeyAttributes
+		ekAttrs, ekErr := tpm.EKAttributes()
+		if ekErr != nil {
+			return ekErr
+		}
+		ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+		_, err := tpm.SSRKAttributes()
+		if err != nil {
+			if err == tpm2.TPMRC(0x18b) {
+				tpm.logger.Info("Creating Shared SRK")
+				policyDigest, pdErr := tpm.PlatformPolicyDigest()
+				if pdErr != nil {
+					return pdErr
+				}
+				ssrkAttrs, err = SRKAttributesFromConfig(*tpm.config.SSRK, &policyDigest)
+				if err != nil {
+					return err
+				}
+				ssrkAttrs.Parent = ekAttrs
+				ssrkAttrs.Password = store.NewPassword(nil)
+				ssrkAttrs.TPMAttributes.HierarchyAuth = soPIN
+				if err := tpm.CreateSRK(ssrkAttrs); err != nil {
+					return err
+				}
+			} else {
 				return err
 			}
-			ssrkAttrs.Parent = ekAttrs
-			ssrkAttrs.Password = store.NewClearPassword(nil)
-			ssrkAttrs.TPMAttributes.HierarchyAuth = soPIN
-			if err := tpm.CreateSRK(ssrkAttrs); err != nil {
-				return err
-			}
-		} else {
-			return err
 		}
 	}
 
 	// Capture platform measurements and create the policy digest
-	if err := tpm.CreatePlatformPolicy(); err != nil {
-		return err
-	}
-
-	// Create IAK if it doesnt exist
-	if _, err = tpm.IAKAttributes(); err == ErrNotInitialized {
-		tpm.logger.Info("Creating Initial Attesation Key")
-		if _, err := tpm.CreateIAK(ekAttrs, nil); err != nil {
+	if opts.PlatformPolicy {
+		if err := tpm.CreatePlatformPolicy(); err != nil {
 			return err
 		}
 	}
 
-	// Retrieve the EK certificate or return an error
-	if _, err := tpm.EKCertificate(); err != nil {
-		return err
+	// Create IAK if it doesnt exist
+	if opts.IAK {
+		ekAttrs, ekErr := tpm.EKAttributes()
+		if ekErr != nil {
+			return ekErr
+		}
+		ekAttrs.TPMAttributes.HierarchyAuth = soPIN
+		var iakAttrs *types.KeyAttributes
+		iakAttrs, err := tpm.IAKAttributes()
+		if err != nil {
+			if err == tpm2.TPMRC(0x18b) {
+				// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
+				// This means the IAK doesn't exist yet - create it
+				tpm.logger.Info("Creating Initial Attestation Key")
+				iakAttrs, err = tpm.CreateIAK(ekAttrs, nil)
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		}
+		_ = iakAttrs
+	}
+
+	// Create IDevID if it doesnt exist and is configured
+	if opts.IDevID {
+		if tpm.config.IDevID != nil {
+			iakAttrs, iakErr := tpm.IAKAttributes()
+			if iakErr != nil {
+				return iakErr
+			}
+			if _, err := tpm.IDevIDAttributes(); err != nil {
+				if err == tpm2.TPMRC(0x18b) {
+					// TPM_RC_HANDLE (handle 1): the handle is not correct for the use
+					// This means the IDevID doesn't exist yet - create it
+					tpm.logger.Info("Creating Initial Device Identity Key")
+					// Get EK certificate for IDevID CSR (optional, may not exist)
+					ekCert, _ := tpm.EKCertificate()
+					if _, _, err := tpm.CreateIDevID(iakAttrs, ekCert, nil); err != nil {
+						return err
+					}
+				}
+				// Ignore other errors - IDevID creation is optional
+			}
+		}
+	}
+
+	// Retrieve the EK certificate or log warning if not available
+	if opts.EK {
+		if _, err := tpm.EKCertificate(); err != nil {
+			tpm.logger.Warn("EK certificate not available", slog.String("error", err.Error()))
+		}
 	}
 
 	// Platform is provisioned
@@ -370,13 +690,13 @@ func (tpm *TPM2) ParseEKCertificate(ekCert []byte) (*x509.Certificate, error) {
 //
 // TCG-TPM-v2.0-Provisioning-Guidance-Published-v1r1.pdf
 // https://trustedcomputinggroup.org/wp-content/uploads/TCG-TPM-v2.0-Provisioning-Guidance-Published-v1r1.pdf
-func (tpm *TPM2) GoldenMeasurements() []byte {
+func (tpm *TPM2) GoldenMeasurements() ([]byte, error) {
 	tpm.logger.Info("Calculating Platform Golden Measurement")
 	var gold, extend []byte
 	hash, err := ParsePCRBankCryptoHash(tpm.config.PlatformPCRBank)
 	if err != nil {
 		tpm.logger.Error("failed to parse PCR bank crypto hash", slog.String("error", err.Error()))
-		panic(err)
+		return nil, fmt.Errorf("%w: %v", ErrGoldenMeasurements, err)
 	}
 	digest := hash.New()
 	digest.Reset()
@@ -384,7 +704,7 @@ func (tpm *TPM2) GoldenMeasurements() []byte {
 	banks, err := tpm.ReadPCRs(tpm.config.GoldenPCRs)
 	if err != nil {
 		tpm.logger.Error("failed to read PCRs", slog.String("error", err.Error()))
-		panic(err)
+		return nil, fmt.Errorf("%w: %v", ErrGoldenMeasurements, err)
 	}
 
 	// Create golden PCR that stores the final sum of
@@ -406,7 +726,7 @@ func (tpm *TPM2) GoldenMeasurements() []byte {
 		slog.String("pcrs", fmt.Sprintf("%v", tpm.config.GoldenPCRs)),
 		slog.String("measurement", fmt.Sprintf("%x", gold)))
 
-	return gold
+	return gold, nil
 }
 
 // Reads the current PCR value and returns it's digest buffer
@@ -456,7 +776,10 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 	// Capture platform measurements and extend the Golden
 	// Integrity Measurement into the platform selected PCR
 	// specified in the platform configuration file
-	measurement := tpm.GoldenMeasurements()
+	measurement, err := tpm.GoldenMeasurements()
+	if err != nil {
+		return err
+	}
 
 	// If no golden PCRs are configured, skip PCR extension
 	if len(measurement) == 0 {
@@ -556,4 +879,45 @@ func (tpm *TPM2) CreatePlatformPolicy() error {
 	tpm.policyDigest = pgd.PolicyDigest
 
 	return nil
+}
+
+// BackupEKCertificates reads EK certificates from standard NV indices
+// (RSA 0x01C00002, ECC 0x01C0000A) and saves them to the cert store as
+// PEM-encoded backups. Best-effort: errors are logged as warnings and
+// do not block provisioning.
+func (tpm *TPM2) BackupEKCertificates() {
+	indices := []struct {
+		handle tpm2.TPMHandle
+		label  string
+	}{
+		{tpm2.TPMHandle(ekCertIndexRSA2048), "ek-cert-rsa-backup"},
+		{tpm2.TPMHandle(ekCertIndexECCP256), "ek-cert-ecc-backup"},
+	}
+	for _, idx := range indices {
+		cert, err := tpm.readEKCertFromNV(idx.handle)
+		if err != nil {
+			continue
+		}
+		if tpm.certStore == nil {
+			tpm.logger.Warn("no cert store available for EK backup")
+			return
+		}
+		backupAttrs := &types.KeyAttributes{
+			CN:        idx.label,
+			StoreType: types.StoreTPM2,
+		}
+		certPEM := pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: cert.Raw,
+		})
+		if _, err := tpm.certStore.ImportCertificate(backupAttrs, certPEM); err != nil {
+			tpm.logger.Warn("failed to backup EK certificate",
+				slog.String("label", idx.label),
+				slog.String("error", err.Error()))
+		} else {
+			tpm.logger.Info("backed up EK certificate",
+				slog.String("label", idx.label),
+				slog.String("subject", cert.Subject.String()))
+		}
+	}
 }

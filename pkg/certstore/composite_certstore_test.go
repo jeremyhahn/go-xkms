@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package certstore
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -39,11 +40,11 @@ type mockFailingCertStorage struct {
 	failClose bool
 }
 
-func (m *mockFailingCertStorage) SaveCert(id string, cert *x509.Certificate) error {
+func (m *mockFailingCertStorage) SaveCert(ctx context.Context, id string, cert *x509.Certificate) error {
 	if m.failSave {
 		return errors.New("simulated save failure")
 	}
-	return m.mockCertStorage.SaveCert(id, cert)
+	return m.mockCertStorage.SaveCert(ctx, id, cert)
 }
 
 func (m *mockFailingCertStorage) Close() error {

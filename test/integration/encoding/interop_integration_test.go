@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,9 +22,9 @@ import (
 	"time"
 
 	jwtgo "github.com/golang-jwt/jwt/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/encoding/jwe"
-	"github.com/jeremyhahn/go-keychain/pkg/encoding/jwk"
-	"github.com/jeremyhahn/go-keychain/pkg/encoding/jwt"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwe"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,19 +35,19 @@ func TestEncodingInterop_JWK_JWT(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		// 1. Generate key in keychain
+		// 1. Generate key in xkms
 		keyID := "pkcs8:interop-rsa-jwt-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// 2. Create JWK from keychain key
-		jwkKey, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		// 2. Create JWK from xkms key
+		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
 		assert.Equal(t, keyID, jwkKey.Kid)
-		assert.True(t, jwkKey.IsKeychainBacked())
+		assert.True(t, jwkKey.IsXKMSBacked())
 
-		// 3. Use keychain to sign JWT (using JWK's kid)
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		// 3. Use xkms to sign JWT (using JWK's kid)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{
 			"sub": "user123",
 			"iat": time.Now().Unix(),
@@ -62,8 +62,8 @@ func TestEncodingInterop_JWK_JWT(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, jwkKey.Kid, extractedKid)
 
-		// 5. Verify JWT using keychain verifier
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		// 5. Verify JWT using xkms verifier
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithAutoKeyID(tokenString)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
@@ -87,18 +87,18 @@ func TestEncodingInterop_JWK_JWT(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create JWK
-		jwkKey, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
 
 		// Sign JWT
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{"sub": "user456"}
 
 		tokenString, err := signer.SignWithKeyID(jwkKey.Kid, claims)
 		require.NoError(t, err)
 
 		// Verify using JWK
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithJWK(tokenString, jwkKey)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
@@ -113,15 +113,15 @@ func TestEncodingInterop_JWK_JWE(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		// 1. Generate key in keychain
+		// 1. Generate key in xkms
 		keyID := "pkcs8:interop-rsa-jwe-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// 2. Create JWK from keychain key
-		jwkKey, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		// 2. Create JWK from xkms key
+		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
-		assert.True(t, jwkKey.IsKeychainBacked())
+		assert.True(t, jwkKey.IsXKMSBacked())
 
 		// 3. Extract public key from JWK for encryption
 		publicKey, err := jwkKey.ToPublicKey()
@@ -141,8 +141,8 @@ func TestEncodingInterop_JWK_JWE(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, jwkKey.Kid, kid)
 
-		// 6. Decrypt using keychain decrypter
-		decrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		// 6. Decrypt using xkms decrypter
+		decrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		decrypted, err := decrypter.DecryptWithAutoKeyID(jweString)
 		require.NoError(t, err)
 		assert.Equal(t, plaintext, decrypted)
@@ -157,7 +157,7 @@ func TestEncodingInterop_JWK_JWE(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create JWK
-		jwkKey, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		jwkKey, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
 
 		// Use JWK for ECDH-based encryption
@@ -172,7 +172,7 @@ func TestEncodingInterop_JWK_JWE(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		// Decrypt using the private key from keychain
+		// Decrypt using the private key from xkms
 		privateKey, err := setup.GetKeyByID(keyID)
 		require.NoError(t, err)
 
@@ -200,7 +200,7 @@ func TestEncodingInterop_JWT_JWE(t *testing.T) {
 		require.NoError(t, err)
 
 		// 1. Create and sign JWT
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{
 			"sub":   "user789",
 			"email": "user@example.com",
@@ -228,13 +228,13 @@ func TestEncodingInterop_JWT_JWE(t *testing.T) {
 		require.NoError(t, err)
 
 		// 3. Decrypt the JWE to get JWT back
-		decrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		decrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		decryptedJWT, err := decrypter.DecryptWithAutoKeyID(encryptedJWT)
 		require.NoError(t, err)
 		assert.Equal(t, jwtString, string(decryptedJWT))
 
 		// 4. Verify the JWT signature
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithKeyID(string(decryptedJWT), signingKeyID)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
@@ -261,7 +261,7 @@ func TestEncodingInterop_JWT_JWE(t *testing.T) {
 		require.NoError(t, err)
 
 		// Sign with ECDSA
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{
 			"sub": "nested-user",
 			"exp": time.Now().Add(30 * time.Minute).Unix(),
@@ -283,11 +283,11 @@ func TestEncodingInterop_JWT_JWE(t *testing.T) {
 		require.NoError(t, err)
 
 		// Decrypt and verify
-		decrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		decrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		decrypted, err := decrypter.DecryptWithKeyID(encryptedJWT, encryptionKeyID)
 		require.NoError(t, err)
 
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithKeyID(string(decrypted), signingKeyID)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
@@ -306,15 +306,15 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		require.NoError(t, err)
 
 		// === Phase 2: Export as JWK ===
-		serverJWK, err := jwk.FromKeychain(keyID, setup.GetKeyByID)
+		serverJWK, err := jwk.FromXKMS(keyID, setup.GetKeyByID)
 		require.NoError(t, err)
 		assert.Equal(t, keyID, serverJWK.Kid)
 
-		// Verify JWK is keychain-backed
-		assert.True(t, serverJWK.IsKeychainBacked())
+		// Verify JWK is xkms-backed
+		assert.True(t, serverJWK.IsXKMSBacked())
 
 		// === Phase 3: Sign JWT with authentication claims ===
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		authClaims := jwtgo.MapClaims{
 			"iss":         "auth-server",
 			"sub":         "user12345",
@@ -354,13 +354,13 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		require.NoError(t, err)
 
 		// === Phase 6: Decrypt JWT ===
-		jweDecrypter := jwe.NewKeychainDecrypter(setup.GetDecrypterByID)
+		jweDecrypter := jwe.NewXKMSDecrypter(setup.GetDecrypterByID)
 		decryptedToken, err := jweDecrypter.DecryptWithAutoKeyID(encryptedToken)
 		require.NoError(t, err)
 		assert.Equal(t, authToken, string(decryptedToken))
 
 		// === Phase 7: Verify JWT signature ===
-		jwtVerifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		jwtVerifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		verifiedToken, err := jwtVerifier.VerifyWithAutoKeyID(string(decryptedToken))
 		require.NoError(t, err)
 		assert.True(t, verifiedToken.Valid)
@@ -405,14 +405,14 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		require.NoError(t, err)
 
 		// Create JWKs for both keys
-		oldJWK, err := jwk.FromKeychain(oldKeyID, setup.GetKeyByID)
+		oldJWK, err := jwk.FromXKMS(oldKeyID, setup.GetKeyByID)
 		require.NoError(t, err)
 
-		newJWK, err := jwk.FromKeychain(newKeyID, setup.GetKeyByID)
+		newJWK, err := jwk.FromXKMS(newKeyID, setup.GetKeyByID)
 		require.NoError(t, err)
 
 		// Sign token with old key
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{
 			"sub": "rotating-user",
 			"exp": time.Now().Add(time.Hour).Unix(),
@@ -426,7 +426,7 @@ func TestEncodingInterop_FullWorkflow(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify both tokens work
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 
 		oldVerified, err := verifier.VerifyWithKeyID(oldToken, oldKeyID)
 		require.NoError(t, err)

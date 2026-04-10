@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -141,19 +142,19 @@ func newMockBackend() *mockBackend {
 	}
 }
 
-func (m *mockBackend) Get(key string) ([]byte, error) {
+func (m *mockBackend) Get(_ context.Context, key string) ([]byte, error) {
 	if val, ok := m.data[key]; ok {
 		return val, nil
 	}
 	return nil, ErrNotFound
 }
 
-func (m *mockBackend) Put(key string, value []byte, opts *Options) error {
+func (m *mockBackend) Put(_ context.Context, key string, value []byte) error {
 	m.data[key] = value
 	return nil
 }
 
-func (m *mockBackend) Delete(key string) error {
+func (m *mockBackend) Delete(_ context.Context, key string) error {
 	if _, exists := m.data[key]; !exists {
 		return ErrNotFound
 	}
@@ -161,7 +162,7 @@ func (m *mockBackend) Delete(key string) error {
 	return nil
 }
 
-func (m *mockBackend) List(prefix string) ([]string, error) {
+func (m *mockBackend) List(_ context.Context, prefix string) ([]string, error) {
 	var keys []string
 	for k := range m.data {
 		if prefix == "" || (len(k) >= len(prefix) && k[:len(prefix)] == prefix) {
@@ -171,7 +172,18 @@ func (m *mockBackend) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
-func (m *mockBackend) Exists(key string) (bool, error) {
+func (m *mockBackend) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
+	for k, v := range m.data {
+		if prefix == "" || (len(k) >= len(prefix) && k[:len(prefix)] == prefix) {
+			if err := fn(k, v); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *mockBackend) Exists(_ context.Context, key string) (bool, error) {
 	_, ok := m.data[key]
 	return ok, nil
 }
@@ -182,6 +194,8 @@ func (m *mockBackend) Close() error {
 
 // TestListKeys tests the ListKeys function.
 func TestListKeys(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		setupFunc func() Backend
@@ -198,7 +212,7 @@ func TestListKeys(t *testing.T) {
 			name: "single key",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
+				_ = b.Put(ctx, KeyPath("key1"), []byte("data"))
 				return b
 			},
 			expect: []string{"key1"},
@@ -207,9 +221,9 @@ func TestListKeys(t *testing.T) {
 			name: "multiple keys",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("key1"), []byte("data1"), nil)
-				_ = b.Put(KeyPath("key2"), []byte("data2"), nil)
-				_ = b.Put(KeyPath("key3"), []byte("data3"), nil)
+				_ = b.Put(ctx, KeyPath("key1"), []byte("data1"))
+				_ = b.Put(ctx, KeyPath("key2"), []byte("data2"))
+				_ = b.Put(ctx, KeyPath("key3"), []byte("data3"))
 				return b
 			},
 			expect: []string{"key1", "key2", "key3"},
@@ -218,8 +232,8 @@ func TestListKeys(t *testing.T) {
 			name: "keys with special characters",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
-				_ = b.Put(KeyPath("test_key_123"), []byte("data"), nil)
+				_ = b.Put(ctx, KeyPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"))
+				_ = b.Put(ctx, KeyPath("test_key_123"), []byte("data"))
 				return b
 			},
 			expect: []string{"550e8400-e29b-41d4-a716-446655440000", "test_key_123"},
@@ -228,9 +242,9 @@ func TestListKeys(t *testing.T) {
 			name: "ignores non-key entries",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
-				_ = b.Put("other/entry", []byte("data"), nil)
-				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
+				_ = b.Put(ctx, KeyPath("key1"), []byte("data"))
+				_ = b.Put(ctx, "other/entry", []byte("data"))
+				_ = b.Put(ctx, CertPath("cert1"), []byte("data"))
 				return b
 			},
 			expect: []string{"key1"},
@@ -239,9 +253,9 @@ func TestListKeys(t *testing.T) {
 			name: "ignores malformed keys",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
-				_ = b.Put("keys/", []byte("data"), nil)     // Missing suffix
-				_ = b.Put("keys/.key", []byte("data"), nil) // Empty ID
+				_ = b.Put(ctx, KeyPath("key1"), []byte("data"))
+				_ = b.Put(ctx, "keys/", []byte("data"))     // Missing suffix
+				_ = b.Put(ctx, "keys/.key", []byte("data")) // Empty ID
 				return b
 			},
 			expect: []string{"key1"},
@@ -251,7 +265,7 @@ func TestListKeys(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			result, err := ListKeys(backend)
+			result, err := ListKeys(ctx, backend)
 			assert.NoError(t, err)
 			assert.ElementsMatch(t, tt.expect, result)
 		})
@@ -260,6 +274,8 @@ func TestListKeys(t *testing.T) {
 
 // TestListCerts tests the ListCerts function.
 func TestListCerts(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		setupFunc func() Backend
@@ -276,7 +292,7 @@ func TestListCerts(t *testing.T) {
 			name: "single cert",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
+				_ = b.Put(ctx, CertPath("cert1"), []byte("data"))
 				return b
 			},
 			expect: []string{"cert1"},
@@ -285,9 +301,9 @@ func TestListCerts(t *testing.T) {
 			name: "multiple certs",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("cert1"), []byte("data1"), nil)
-				_ = b.Put(CertPath("cert2"), []byte("data2"), nil)
-				_ = b.Put(CertPath("cert3"), []byte("data3"), nil)
+				_ = b.Put(ctx, CertPath("cert1"), []byte("data1"))
+				_ = b.Put(ctx, CertPath("cert2"), []byte("data2"))
+				_ = b.Put(ctx, CertPath("cert3"), []byte("data3"))
 				return b
 			},
 			expect: []string{"cert1", "cert2", "cert3"},
@@ -296,8 +312,8 @@ func TestListCerts(t *testing.T) {
 			name: "ignores cert chains",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
-				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
+				_ = b.Put(ctx, CertPath("cert1"), []byte("data"))
+				_ = b.Put(ctx, CertChainPath("chain1"), []byte("data"))
 				return b
 			},
 			expect: []string{"cert1"},
@@ -306,9 +322,9 @@ func TestListCerts(t *testing.T) {
 			name: "ignores non-cert entries",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
-				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
-				_ = b.Put("other/entry", []byte("data"), nil)
+				_ = b.Put(ctx, CertPath("cert1"), []byte("data"))
+				_ = b.Put(ctx, KeyPath("key1"), []byte("data"))
+				_ = b.Put(ctx, "other/entry", []byte("data"))
 				return b
 			},
 			expect: []string{"cert1"},
@@ -317,8 +333,8 @@ func TestListCerts(t *testing.T) {
 			name: "handles certs with special characters",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("example.com"), []byte("data"), nil)
-				_ = b.Put(CertPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
+				_ = b.Put(ctx, CertPath("example.com"), []byte("data"))
+				_ = b.Put(ctx, CertPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"))
 				return b
 			},
 			expect: []string{"example.com", "550e8400-e29b-41d4-a716-446655440000"},
@@ -328,7 +344,7 @@ func TestListCerts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			result, err := ListCerts(backend)
+			result, err := ListCerts(ctx, backend)
 			assert.NoError(t, err)
 			assert.ElementsMatch(t, tt.expect, result)
 		})
@@ -337,6 +353,8 @@ func TestListCerts(t *testing.T) {
 
 // TestListCertChains tests the ListCertChains function.
 func TestListCertChains(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name      string
 		setupFunc func() Backend
@@ -353,7 +371,7 @@ func TestListCertChains(t *testing.T) {
 			name: "single chain",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
+				_ = b.Put(ctx, CertChainPath("chain1"), []byte("data"))
 				return b
 			},
 			expect: []string{"chain1"},
@@ -362,9 +380,9 @@ func TestListCertChains(t *testing.T) {
 			name: "multiple chains",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("chain1"), []byte("data1"), nil)
-				_ = b.Put(CertChainPath("chain2"), []byte("data2"), nil)
-				_ = b.Put(CertChainPath("chain3"), []byte("data3"), nil)
+				_ = b.Put(ctx, CertChainPath("chain1"), []byte("data1"))
+				_ = b.Put(ctx, CertChainPath("chain2"), []byte("data2"))
+				_ = b.Put(ctx, CertChainPath("chain3"), []byte("data3"))
 				return b
 			},
 			expect: []string{"chain1", "chain2", "chain3"},
@@ -373,8 +391,8 @@ func TestListCertChains(t *testing.T) {
 			name: "ignores individual certs",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertPath("cert1"), []byte("data"), nil)
-				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
+				_ = b.Put(ctx, CertPath("cert1"), []byte("data"))
+				_ = b.Put(ctx, CertChainPath("chain1"), []byte("data"))
 				return b
 			},
 			expect: []string{"chain1"},
@@ -383,9 +401,9 @@ func TestListCertChains(t *testing.T) {
 			name: "ignores non-cert entries",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("chain1"), []byte("data"), nil)
-				_ = b.Put(KeyPath("key1"), []byte("data"), nil)
-				_ = b.Put("other/entry", []byte("data"), nil)
+				_ = b.Put(ctx, CertChainPath("chain1"), []byte("data"))
+				_ = b.Put(ctx, KeyPath("key1"), []byte("data"))
+				_ = b.Put(ctx, "other/entry", []byte("data"))
 				return b
 			},
 			expect: []string{"chain1"},
@@ -394,8 +412,8 @@ func TestListCertChains(t *testing.T) {
 			name: "handles chains with special characters",
 			setupFunc: func() Backend {
 				b := newMockBackend()
-				_ = b.Put(CertChainPath("example.com"), []byte("data"), nil)
-				_ = b.Put(CertChainPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"), nil)
+				_ = b.Put(ctx, CertChainPath("example.com"), []byte("data"))
+				_ = b.Put(ctx, CertChainPath("550e8400-e29b-41d4-a716-446655440000"), []byte("data"))
 				return b
 			},
 			expect: []string{"example.com", "550e8400-e29b-41d4-a716-446655440000"},
@@ -405,7 +423,7 @@ func TestListCertChains(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.setupFunc()
-			result, err := ListCertChains(backend)
+			result, err := ListCertChains(ctx, backend)
 			assert.NoError(t, err)
 			assert.ElementsMatch(t, tt.expect, result)
 		})
@@ -414,6 +432,8 @@ func TestListCertChains(t *testing.T) {
 
 // TestListKeys_Error tests error handling in ListKeys.
 func TestListKeys_Error(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name        string
 		backendFunc func() Backend
@@ -431,7 +451,7 @@ func TestListKeys_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.backendFunc()
-			_, err := ListKeys(backend)
+			_, err := ListKeys(ctx, backend)
 			assert.Error(t, err)
 		})
 	}
@@ -439,6 +459,8 @@ func TestListKeys_Error(t *testing.T) {
 
 // TestListCerts_Error tests error handling in ListCerts.
 func TestListCerts_Error(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name        string
 		backendFunc func() Backend
@@ -456,7 +478,7 @@ func TestListCerts_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.backendFunc()
-			_, err := ListCerts(backend)
+			_, err := ListCerts(ctx, backend)
 			assert.Error(t, err)
 		})
 	}
@@ -464,6 +486,8 @@ func TestListCerts_Error(t *testing.T) {
 
 // TestListCertChains_Error tests error handling in ListCertChains.
 func TestListCertChains_Error(t *testing.T) {
+	ctx := context.Background()
+
 	tests := []struct {
 		name        string
 		backendFunc func() Backend
@@ -481,7 +505,7 @@ func TestListCertChains_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			backend := tt.backendFunc()
-			_, err := ListCertChains(backend)
+			_, err := ListCertChains(ctx, backend)
 			assert.Error(t, err)
 		})
 	}
@@ -496,35 +520,42 @@ type errorMockBackend struct {
 	existsErr error
 }
 
-func (e *errorMockBackend) Get(key string) ([]byte, error) {
+func (e *errorMockBackend) Get(_ context.Context, key string) ([]byte, error) {
 	if e.getErr != nil {
 		return nil, e.getErr
 	}
 	return nil, ErrNotFound
 }
 
-func (e *errorMockBackend) Put(key string, value []byte, opts *Options) error {
+func (e *errorMockBackend) Put(_ context.Context, key string, value []byte) error {
 	if e.putErr != nil {
 		return e.putErr
 	}
 	return nil
 }
 
-func (e *errorMockBackend) Delete(key string) error {
+func (e *errorMockBackend) Delete(_ context.Context, key string) error {
 	if e.deleteErr != nil {
 		return e.deleteErr
 	}
 	return ErrNotFound
 }
 
-func (e *errorMockBackend) List(prefix string) ([]string, error) {
+func (e *errorMockBackend) List(_ context.Context, prefix string) ([]string, error) {
 	if e.listErr != nil {
 		return nil, e.listErr
 	}
 	return nil, nil
 }
 
-func (e *errorMockBackend) Exists(key string) (bool, error) {
+func (e *errorMockBackend) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
+	if e.listErr != nil {
+		return e.listErr
+	}
+	return nil
+}
+
+func (e *errorMockBackend) Exists(_ context.Context, key string) (bool, error) {
 	if e.existsErr != nil {
 		return false, e.existsErr
 	}

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -32,11 +32,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	keychainmocks "github.com/jeremyhahn/go-keychain/pkg/keychain/mocks"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	backendmocks "github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
@@ -70,17 +73,17 @@ func (a *testAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD
 	return nil, fmt.Errorf("not implemented")
 }
 
-// Helper to create a test server with initialized keychain
-func createTestServer(t *testing.T) (*Server, *keychainmocks.MockKeyStore) {
+// Helper to create a test server with initialized xkms
+func createTestServer(t *testing.T) (*Server, *xkmsmocks.MockKeyStore) {
 	t.Helper()
 
-	// Reset keychain state
-	keychain.Reset()
+	// Reset xkms state
+	xkms.Reset()
 
-	mockKS := keychainmocks.NewMockKeyStore()
+	mockKS := xkmsmocks.NewMockKeyStore()
 
-	err := keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err := xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": mockKS,
 		},
 		DefaultBackend: "software",
@@ -99,10 +102,107 @@ func createTestServer(t *testing.T) (*Server, *keychainmocks.MockKeyStore) {
 	return server, mockKS
 }
 
+// MockImportExportBackend extends MockBackend with import/export capabilities
+type MockImportExportBackend struct {
+	*backendmocks.MockBackend
+	getImportParamsFunc func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.ImportParameters, error)
+	wrapKeyFunc         func([]byte, *backend.ImportParameters) (*backend.WrappedKeyMaterial, error)
+	unwrapKeyFunc       func(*backend.WrappedKeyMaterial, *backend.ImportParameters) ([]byte, error)
+	importKeyFunc       func(*types.KeyAttributes, *backend.WrappedKeyMaterial) error
+	exportKeyFunc       func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error)
+}
+
+// NewMockImportExportBackend creates a mock backend that implements ImportExportBackend
+func NewMockImportExportBackend() *MockImportExportBackend {
+	return &MockImportExportBackend{
+		MockBackend: backendmocks.NewMockBackend(),
+	}
+}
+
+func (m *MockImportExportBackend) GetImportParameters(attrs *types.KeyAttributes, alg backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+	if m.getImportParamsFunc != nil {
+		return m.getImportParamsFunc(attrs, alg)
+	}
+	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	expiresAt := time.Now().Add(24 * time.Hour)
+	return &backend.ImportParameters{
+		WrappingPublicKey: &privKey.PublicKey,
+		ImportToken:       []byte("test-import-token"),
+		Algorithm:         alg,
+		ExpiresAt:         &expiresAt,
+		KeySpec:           "RSA_2048",
+	}, nil
+}
+
+func (m *MockImportExportBackend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
+	if m.wrapKeyFunc != nil {
+		return m.wrapKeyFunc(keyMaterial, params)
+	}
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("wrapped-key-material"),
+		Algorithm:   params.Algorithm,
+		ImportToken: params.ImportToken,
+	}, nil
+}
+
+func (m *MockImportExportBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
+	if m.unwrapKeyFunc != nil {
+		return m.unwrapKeyFunc(wrapped, params)
+	}
+	return []byte("unwrapped-key-material"), nil
+}
+
+func (m *MockImportExportBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.WrappedKeyMaterial) error {
+	if m.importKeyFunc != nil {
+		return m.importKeyFunc(attrs, wrapped)
+	}
+	return nil
+}
+
+func (m *MockImportExportBackend) ExportKey(attrs *types.KeyAttributes, alg backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
+	if m.exportKeyFunc != nil {
+		return m.exportKeyFunc(attrs, alg)
+	}
+	return &backend.WrappedKeyMaterial{
+		WrappedKey:  []byte("exported-wrapped-key"),
+		Algorithm:   alg,
+		ImportToken: []byte("export-token"),
+	}, nil
+}
+
+// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
+func (m *MockImportExportBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+	return nil, fmt.Errorf("not supported for asymmetric keys")
+}
+
+// Verify interface compliance
+var _ backend.ImportExportBackend = (*MockImportExportBackend)(nil)
+
+// MockKeyStoreWithImportExport wraps MockKeyStore to use a backend with import/export support
+type MockKeyStoreWithImportExport struct {
+	*xkmsmocks.MockKeyStore
+	importExportBackend *MockImportExportBackend
+}
+
+func NewMockKeyStoreWithImportExport() *MockKeyStoreWithImportExport {
+	mock := &MockKeyStoreWithImportExport{
+		MockKeyStore:        xkmsmocks.NewMockKeyStore(),
+		importExportBackend: NewMockImportExportBackend(),
+	}
+	return mock
+}
+
+func (m *MockKeyStoreWithImportExport) KeyProvider() types.KeyProvider {
+	return m.importExportBackend
+}
+
 // Tests for handleHealth
 func TestHandleHealth(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("GET returns healthy status", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -131,7 +231,7 @@ func TestHandleHealth(t *testing.T) {
 // Tests for handleListBackends
 func TestHandleListBackends(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("GET returns backends list", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -160,7 +260,7 @@ func TestHandleListBackends(t *testing.T) {
 // Tests for handleBackendOperations
 func TestHandleBackendOperations(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("GET specific backend returns info", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends/software", nil)
@@ -198,7 +298,7 @@ func TestHandleBackendOperations(t *testing.T) {
 // Tests for handleKeys (list and generate)
 func TestHandleKeys(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("GET lists keys", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys?backend=software", nil)
@@ -374,7 +474,7 @@ func TestHandleKeys(t *testing.T) {
 // Tests for key operations
 func TestHandleKeyOperations(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Pre-generate a key for testing
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -436,7 +536,7 @@ func TestHandleKeyOperations(t *testing.T) {
 // Tests for signing
 func TestHandleSign(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Pre-generate a key for signing
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -521,7 +621,7 @@ func TestHandleSign(t *testing.T) {
 // Tests for verification
 func TestHandleVerify(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Pre-generate a key for verification
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -606,7 +706,7 @@ func TestHandleVerify(t *testing.T) {
 // Tests for key rotation
 func TestHandleRotateKey(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Pre-generate a key
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -652,7 +752,7 @@ func TestHandleRotateKey(t *testing.T) {
 // Tests for certificate operations
 func TestHandleCerts(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("GET lists certificates", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/certs", nil)
@@ -742,7 +842,7 @@ func TestHandleCerts(t *testing.T) {
 // Tests for sendJSON and sendError
 func TestSendJSONAndError(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("sendJSON sets correct content type", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -757,7 +857,7 @@ func TestSendJSONAndError(t *testing.T) {
 // Tests for unknown operations
 func TestHandleKeyOperations_UnknownOperation(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Pre-generate a key
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -777,7 +877,7 @@ func TestHandleKeyOperations_UnknownOperation(t *testing.T) {
 // Tests for certificate operations
 func TestHandleCertOperations(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Create a test certificate
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -851,7 +951,7 @@ func TestHandleCertOperations(t *testing.T) {
 // Tests for certificate chain operations
 func TestHandleCertChainOperations(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Create test certificates
 	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -920,7 +1020,7 @@ func TestHandleCertChainOperations(t *testing.T) {
 // Test asymmetric encryption
 func TestHandleAsymmetricEncrypt(t *testing.T) {
 	server, mockKS := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Pre-generate an RSA key
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -971,7 +1071,7 @@ func TestHandleAsymmetricEncrypt(t *testing.T) {
 // Test empty key ID in path
 func TestHandleKeyOperations_EmptyKeyID(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Note: With standard http mux, /api/v1/keys/ without key ID
 	// will be handled by handleKeys, not handleKeyOperations
@@ -991,7 +1091,7 @@ func TestHandleKeyOperations_EmptyKeyID(t *testing.T) {
 // Test invalid curve for ECDSA
 func TestHandleGenerateKey_InvalidCurve(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("POST with invalid curve returns error", func(t *testing.T) {
 		reqBody := GenerateKeyRequest{
@@ -1016,7 +1116,7 @@ func TestHandleGenerateKey_InvalidCurve(t *testing.T) {
 // Test backend not found
 func TestHandleOperations_BackendNotFound(t *testing.T) {
 	server, _ := createTestServer(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("list keys with invalid backend returns error", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys?backend=nonexistent", nil)

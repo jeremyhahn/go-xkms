@@ -4,8 +4,8 @@ import (
 	"log/slog"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Creates a new RSA child key using the provided key attributes
@@ -31,7 +31,11 @@ func (tpm *TPM2) CreateSecretKey(
 
 	// Attach platform PCR policy digest if configured
 	if keyAttrs.PlatformPolicy {
-		aesTemplate.AuthPolicy = tpm.PlatformPolicyDigest()
+		policyDigest, err := tpm.PlatformPolicyDigest()
+		if err != nil {
+			return err
+		}
+		aesTemplate.AuthPolicy = policyDigest
 	}
 
 	// Create the parent key authorization session

@@ -1,25 +1,25 @@
-# go-keychain Deployment Guide
+# go-xkms Deployment Guide
 
-This directory contains service configuration files for deploying go-keychain as a system service on Linux.
+This directory contains service configuration files for deploying go-xkms as a system service on Linux.
 
 ## Prerequisites
 
-1. Build the keychain server binary:
+1. Build the xkms server binary:
    ```bash
    make build-server
    ```
 
 2. Copy the binary to the system path:
    ```bash
-   sudo cp bin/keychaind /usr/bin/
-   sudo chmod 755 /usr/bin/keychaind
+   sudo cp bin/xkmsd /usr/bin/
+   sudo chmod 755 /usr/bin/xkmsd
    ```
 
 3. Copy the CLI tool (optional, for administration):
    ```bash
    make build-cli
-   sudo cp bin/keychain /usr/bin/
-   sudo chmod 755 /usr/bin/keychain
+   sudo cp bin/xkmsctl /usr/bin/
+   sudo chmod 755 /usr/bin/xkmsctl
    ```
 
 ## Configuration
@@ -27,123 +27,123 @@ This directory contains service configuration files for deploying go-keychain as
 Create the configuration directory and file:
 
 ```bash
-sudo mkdir -p /etc/keychain
-sudo cp configs/config.yaml /etc/keychain/config.yaml
-sudo chmod 640 /etc/keychain/config.yaml
+sudo mkdir -p /etc/xkms
+sudo cp configs/config.yaml /etc/xkms/config.yaml
+sudo chmod 640 /etc/xkms/config.yaml
 ```
 
-Edit `/etc/keychain/config.yaml` to match your environment. See the main documentation for configuration options.
+Edit `/etc/xkms/config.yaml` to match your environment. See the main documentation for configuration options.
 
 ## systemd (Debian, Ubuntu, RHEL, Fedora, Arch, etc.)
 
 ### Installation
 
-1. Create the keychain user and directories:
+1. Create the xkms user and directories:
    ```bash
    # Using systemd-sysusers (recommended)
-   sudo cp deploy/systemd/keychain.sysusers /usr/lib/sysusers.d/keychain.conf
-   sudo systemd-sysusers /usr/lib/sysusers.d/keychain.conf
+   sudo cp deploy/systemd/xkms.sysusers /usr/lib/sysusers.d/xkms.conf
+   sudo systemd-sysusers /usr/lib/sysusers.d/xkms.conf
 
    # Create directories using tmpfiles
-   sudo cp deploy/systemd/keychain.tmpfiles /usr/lib/tmpfiles.d/keychain.conf
-   sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/keychain.conf
+   sudo cp deploy/systemd/xkms.tmpfiles /usr/lib/tmpfiles.d/xkms.conf
+   sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/xkms.conf
    ```
 
    Or manually:
    ```bash
-   sudo useradd -r -s /usr/sbin/nologin -d /var/lib/keychain -c "Keychain Service" keychain
-   sudo mkdir -p /var/lib/keychain/{keys,certs}
-   sudo mkdir -p /var/log/keychain
-   sudo chown -R keychain:keychain /var/lib/keychain /var/log/keychain
-   sudo chmod 750 /var/lib/keychain /var/log/keychain
-   sudo chmod 700 /var/lib/keychain/keys
+   sudo useradd -r -s /usr/sbin/nologin -d /var/lib/xkms -c "xKMS Service" xkms
+   sudo mkdir -p /var/lib/xkms/{keys,certs}
+   sudo mkdir -p /var/log/xkms
+   sudo chown -R xkms:xkms /var/lib/xkms /var/log/xkms
+   sudo chmod 750 /var/lib/xkms /var/log/xkms
+   sudo chmod 700 /var/lib/xkms/keys
    ```
 
 2. Install the service file:
    ```bash
-   sudo cp deploy/systemd/keychain.service /etc/systemd/system/
+   sudo cp deploy/systemd/xkms.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 
 3. (Optional) Create environment file for additional settings:
    ```bash
-   sudo touch /etc/keychain/environment
-   sudo chmod 640 /etc/keychain/environment
-   sudo chown root:keychain /etc/keychain/environment
+   sudo touch /etc/xkms/environment
+   sudo chmod 640 /etc/xkms/environment
+   sudo chown root:xkms /etc/xkms/environment
    ```
 
 ### Usage
 
 ```bash
 # Enable service to start on boot
-sudo systemctl enable keychain
+sudo systemctl enable xkms
 
 # Start the service
-sudo systemctl start keychain
+sudo systemctl start xkms
 
 # Check status
-sudo systemctl status keychain
+sudo systemctl status xkms
 
 # View logs
-sudo journalctl -u keychain -f
+sudo journalctl -u xkms -f
 
 # Reload configuration (sends HUP signal)
-sudo systemctl reload keychain
+sudo systemctl reload xkms
 
 # Stop the service
-sudo systemctl stop keychain
+sudo systemctl stop xkms
 ```
 
 ## OpenRC (Alpine Linux, Gentoo)
 
 ### Installation
 
-1. Create the keychain user and directories:
+1. Create the xkms user and directories:
    ```bash
    # Create user
-   sudo adduser -S -D -H -h /var/lib/keychain -s /sbin/nologin -G keychain keychain
-   sudo addgroup -S keychain
+   sudo adduser -S -D -H -h /var/lib/xkms -s /sbin/nologin -G xkms xkms
+   sudo addgroup -S xkms
 
    # Create directories
-   sudo mkdir -p /var/lib/keychain/{keys,certs}
-   sudo mkdir -p /var/log/keychain
-   sudo mkdir -p /run/keychain
-   sudo chown -R keychain:keychain /var/lib/keychain /var/log/keychain /run/keychain
-   sudo chmod 750 /var/lib/keychain /var/log/keychain
-   sudo chmod 700 /var/lib/keychain/keys
+   sudo mkdir -p /var/lib/xkms/{keys,certs}
+   sudo mkdir -p /var/log/xkms
+   sudo mkdir -p /run/xkms
+   sudo chown -R xkms:xkms /var/lib/xkms /var/log/xkms /run/xkms
+   sudo chmod 750 /var/lib/xkms /var/log/xkms
+   sudo chmod 700 /var/lib/xkms/keys
    ```
 
 2. Install the init script:
    ```bash
-   sudo cp deploy/openrc/keychain /etc/init.d/
-   sudo chmod 755 /etc/init.d/keychain
+   sudo cp deploy/openrc/xkms /etc/init.d/
+   sudo chmod 755 /etc/init.d/xkms
    ```
 
 3. Install the configuration file:
    ```bash
-   sudo cp deploy/openrc/keychain.confd /etc/conf.d/keychain
+   sudo cp deploy/openrc/xkms.confd /etc/conf.d/xkms
    ```
 
 ### Usage
 
 ```bash
 # Add to default runlevel
-sudo rc-update add keychain default
+sudo rc-update add xkms default
 
 # Start the service
-sudo rc-service keychain start
+sudo rc-service xkms start
 
 # Check status
-sudo rc-service keychain status
+sudo rc-service xkms status
 
 # View logs
-sudo tail -f /var/log/keychain/keychain.log
+sudo tail -f /var/log/xkms/xkms.log
 
 # Reload configuration
-sudo rc-service keychain reload
+sudo rc-service xkms reload
 
 # Stop the service
-sudo rc-service keychain stop
+sudo rc-service xkms stop
 ```
 
 ## First-Time Setup
@@ -154,7 +154,7 @@ After the service is running, you need to initialize the admin user with a FIDO2
 
 2. Run the admin creation command:
    ```bash
-   sudo -u keychain keychain admin create --username admin
+   sudo -u xkms xkmsctl admin create --username admin
    ```
 
 3. Follow the prompts to register your security key.
@@ -163,7 +163,7 @@ See the [Admin Guide](../docs/admin.md) for more details on user management.
 
 ## Security Considerations
 
-- The keychain service runs as a dedicated non-privileged user
+- The xkms service runs as a dedicated non-privileged user
 - Private keys are stored with mode 0700 (owner read/write only)
 - The service is hardened with systemd security features:
   - NoNewPrivileges
@@ -174,14 +174,14 @@ See the [Admin Guide](../docs/admin.md) for more details on user management.
 
 ### TPM Access
 
-If using TPM2 backend, ensure the keychain user has access to TPM devices:
+If using TPM2 backend, ensure the xkms user has access to TPM devices:
 
 ```bash
-# Add keychain to tss group (common on most distros)
-sudo usermod -a -G tss keychain
+# Add xkms to tss group (common on most distros)
+sudo usermod -a -G tss xkms
 
 # Or create udev rule for direct access
-echo 'SUBSYSTEM=="tpm", MODE="0660", GROUP="keychain"' | sudo tee /etc/udev/rules.d/99-keychain-tpm.rules
+echo 'SUBSYSTEM=="tpm", MODE="0660", GROUP="xkms"' | sudo tee /etc/udev/rules.d/99-xkms-tpm.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
@@ -195,8 +195,8 @@ If using PKCS#11 backend with smart cards:
 sudo systemctl enable pcscd
 sudo systemctl start pcscd
 
-# Add keychain user to appropriate group
-sudo usermod -a -G pcscd keychain  # or 'scard' on some systems
+# Add xkms user to appropriate group
+sudo usermod -a -G pcscd xkms  # or 'scard' on some systems
 ```
 
 ## Troubleshooting
@@ -206,28 +206,28 @@ sudo usermod -a -G pcscd keychain  # or 'scard' on some systems
 1. Check the logs:
    ```bash
    # systemd
-   sudo journalctl -u keychain -e
+   sudo journalctl -u xkms -e
 
    # OpenRC
-   sudo cat /var/log/keychain/keychain.log
+   sudo cat /var/log/xkms/xkms.log
    ```
 
 2. Verify configuration:
    ```bash
-   sudo -u keychain keychaind -config /etc/keychain/config.yaml -version
+   sudo -u xkms xkmsd -config /etc/xkms/config.yaml -version
    ```
 
 3. Check file permissions:
    ```bash
-   ls -la /etc/keychain/
-   ls -la /var/lib/keychain/
+   ls -la /etc/xkms/
+   ls -la /var/lib/xkms/
    ```
 
 ### Permission denied errors
 
-Ensure the keychain user owns all required directories:
+Ensure the xkms user owns all required directories:
 ```bash
-sudo chown -R keychain:keychain /var/lib/keychain /var/log/keychain
+sudo chown -R xkms:xkms /var/lib/xkms /var/log/xkms
 ```
 
 ### TPM not accessible
@@ -235,5 +235,5 @@ sudo chown -R keychain:keychain /var/lib/keychain /var/log/keychain
 Check TPM device permissions:
 ```bash
 ls -la /dev/tpm*
-groups keychain
+groups xkms
 ```

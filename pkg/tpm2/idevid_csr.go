@@ -14,8 +14,8 @@ import (
 
 	"fmt"
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"math"
 )
 
@@ -215,81 +215,48 @@ func (tpm *TPM2) createIDevIDContent(
 	// Resolve platform attributes with config-first-then-SMBIOS fallback
 	platformAttrs := ResolvePlatformAttributes(tpm.config.IDevID)
 
+	// Validate all CSR field sizes before building the struct
+	csrFields := []struct {
+		name string
+		size int
+	}{
+		{"model", len(platformAttrs.Model)},
+		{"serial", len(platformAttrs.Serial)},
+		{"bootEventLog", len(bootEventLog)},
+		{"ekCert.Raw", len(ekCert.Raw)},
+		{"akPublicBytes", len(akPublicBytes)},
+		{"atCreateTktBytes", len(atCreateTktBytes)},
+		{"akCertifyInfoBytes", len(akCertifyInfoBytes)},
+		{"akCertifyInfoSignature", len(akCertifyInfoSignature)},
+		{"signingPubBytes", len(signingPubBytes)},
+		{"sgnCertifyInfoBytes", len(sgnCertifyInfoBytes)},
+		{"sgnCertifyInfoSig", len(sgnCertifyInfoSig)},
+	}
+	for _, f := range csrFields {
+		if f.size > math.MaxUint32 {
+			return nil, fmt.Errorf("%w: %s (%d bytes)", ErrCSRFieldTooLarge, f.name, f.size)
+		}
+	}
+
 	// Build an unpacked TCG_IDEVID_CONTENT structure that omits
 	// the HashSz, PadSz, and Pad fields. They will be populated
 	// during the packing operation.
 	return &UNPACKED_TCG_IDEVID_CONTENT{
-		StructVer:  uint32(0x00000100),
-		HashAlgoId: uint32(akAttrs.TPMAttributes.HashAlg),
-		HashSz:     uint32(hashSz),
-		// Hash of all that follows is placed here
-		ProdModelSz: func() uint32 {
-			if len(platformAttrs.Model) > math.MaxUint32 {
-				panic("model too large")
-			}
-			return uint32(len(platformAttrs.Model))
-		}(),
-		ProdSerialSz: func() uint32 {
-			if len(platformAttrs.Serial) > math.MaxUint32 {
-				panic("serial too large")
-			}
-			return uint32(len(platformAttrs.Serial))
-		}(),
-		ProdCaDataSz: prodCaDataSz,
-		BootEvntLogSz: func() uint32 {
-			if len(bootEventLog) > math.MaxUint32 {
-				panic("bootEventLog too large")
-			}
-			return uint32(len(bootEventLog))
-		}(),
-		EkCertSZ: func() uint32 {
-			if len(ekCert.Raw) > math.MaxUint32 {
-				panic("ekCert.Raw too large")
-			}
-			return uint32(len(ekCert.Raw))
-		}(),
-		AttestPubSZ: func() uint32 {
-			if len(akPublicBytes) > math.MaxUint32 {
-				panic("akPublicBytes too large")
-			}
-			return uint32(len(akPublicBytes))
-		}(),
-		AtCreateTktSZ: func() uint32 {
-			if len(atCreateTktBytes) > math.MaxUint32 {
-				panic("atCreateTktBytes too large")
-			}
-			return uint32(len(atCreateTktBytes))
-		}(),
-		AtCertifyInfoSZ: func() uint32 {
-			if len(akCertifyInfoBytes) > math.MaxUint32 {
-				panic("akCertifyInfoBytes too large")
-			}
-			return uint32(len(akCertifyInfoBytes))
-		}(),
-		AtCertifyInfoSignatureSZ: func() uint32 {
-			if len(akCertifyInfoSignature) > math.MaxUint32 {
-				panic("akCertifyInfoSignature too large")
-			}
-			return uint32(len(akCertifyInfoSignature))
-		}(),
-		SigningPubSZ: func() uint32 {
-			if len(signingPubBytes) > math.MaxUint32 {
-				panic("signingPubBytes too large")
-			}
-			return uint32(len(signingPubBytes))
-		}(),
-		SgnCertifyInfoSZ: func() uint32 {
-			if len(sgnCertifyInfoBytes) > math.MaxUint32 {
-				panic("sgnCertifyInfoBytes too large")
-			}
-			return uint32(len(sgnCertifyInfoBytes))
-		}(),
-		SgnCertifyInfoSignatureSZ: func() uint32 {
-			if len(sgnCertifyInfoSig) > math.MaxUint32 {
-				panic("sgnCertifyInfoSig too large")
-			}
-			return uint32(len(sgnCertifyInfoSig))
-		}(),
+		StructVer:                 uint32(0x00000100),
+		HashAlgoId:                uint32(akAttrs.TPMAttributes.HashAlg),
+		HashSz:                    uint32(hashSz),
+		ProdModelSz:               uint32(len(platformAttrs.Model)),  // #nosec G115 -- Bounds checked above
+		ProdSerialSz:              uint32(len(platformAttrs.Serial)), // #nosec G115 -- Bounds checked above
+		ProdCaDataSz:              prodCaDataSz,
+		BootEvntLogSz:             uint32(len(bootEventLog)),           // #nosec G115 -- Bounds checked above
+		EkCertSZ:                  uint32(len(ekCert.Raw)),             // #nosec G115 -- Bounds checked above
+		AttestPubSZ:               uint32(len(akPublicBytes)),          // #nosec G115 -- Bounds checked above
+		AtCreateTktSZ:             uint32(len(atCreateTktBytes)),       // #nosec G115 -- Bounds checked above
+		AtCertifyInfoSZ:           uint32(len(akCertifyInfoBytes)),     // #nosec G115 -- Bounds checked above
+		AtCertifyInfoSignatureSZ:  uint32(len(akCertifyInfoSignature)), // #nosec G115 -- Bounds checked above
+		SigningPubSZ:              uint32(len(signingPubBytes)),        // #nosec G115 -- Bounds checked above
+		SgnCertifyInfoSZ:          uint32(len(sgnCertifyInfoBytes)),    // #nosec G115 -- Bounds checked above
+		SgnCertifyInfoSignatureSZ: uint32(len(sgnCertifyInfoSig)),      // #nosec G115 -- Bounds checked above
 		// Payload bytes begin here.
 		// All payloads are included as byte arrays (no delimiters)
 		// Payload is followed by padSz bytes of random data here to make

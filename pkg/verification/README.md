@@ -23,7 +23,7 @@ The verification package provides a flexible and comprehensive signature verific
 ## Installation
 
 ```bash
-go get github.com/jeremyhahn/go-keychain/pkg/verification
+go get github.com/jeremyhahn/go-xkms/pkg/verification
 ```
 
 ## Quick Start
@@ -36,7 +36,7 @@ import (
     "crypto/rand"
     "crypto/rsa"
 
-    "github.com/jeremyhahn/go-keychain/pkg/verification"
+    "github.com/jeremyhahn/go-xkms/pkg/verification"
 )
 
 // Generate key and sign data
@@ -61,7 +61,7 @@ import (
     "crypto/rsa"
     "crypto/x509"
 
-    "github.com/jeremyhahn/go-keychain/pkg/verification"
+    "github.com/jeremyhahn/go-xkms/pkg/verification"
 )
 
 // Sign with PSS
@@ -92,7 +92,7 @@ import (
     "crypto/rand"
     "crypto/x509"
 
-    "github.com/jeremyhahn/go-keychain/pkg/verification"
+    "github.com/jeremyhahn/go-xkms/pkg/verification"
 )
 
 // Generate ECDSA key and sign
@@ -118,7 +118,7 @@ import (
     "crypto/rand"
     "crypto/x509"
 
-    "github.com/jeremyhahn/go-keychain/pkg/verification"
+    "github.com/jeremyhahn/go-xkms/pkg/verification"
 )
 
 // Generate Ed25519 key and sign
@@ -144,7 +144,7 @@ The verification package supports optional integrity checking by verifying the d
 import (
     "encoding/hex"
 
-    "github.com/jeremyhahn/go-keychain/pkg/verification"
+    "github.com/jeremyhahn/go-xkms/pkg/verification"
 )
 
 // Implement ChecksumProvider interface
@@ -250,7 +250,7 @@ The package defines the following errors:
 The package includes comprehensive tests with 100% code coverage:
 
 ```bash
-cd /home/jhahn/sources/go-keychain
+cd /home/jhahn/sources/go-xkms
 go test ./pkg/verification/... -v -cover
 ```
 
@@ -282,4 +282,4 @@ The verification package follows Go best practices:
 
 ## License
 
-This package is part of the go-keychain project. See the main project LICENSE file for details.
+This package is part of the go-xkms project. See the main project LICENSE file for details.

@@ -6,7 +6,7 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TestTPMSessionEncryption verifies that session encryption is enabled and working
@@ -34,7 +34,7 @@ func TestTPMSessionEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewClearPassword(nil),
+		Password:     types.NewPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001, // TPM_RH_OWNER
@@ -104,7 +104,7 @@ func TestTPMSessionNoEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewClearPassword(nil),
+		Password:     types.NewPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001, // TPM_RH_OWNER
@@ -159,7 +159,7 @@ func TestTPMMultipleOperationsEncryption(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewClearPassword(nil),
+		Password:     types.NewPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: 0x40000001,

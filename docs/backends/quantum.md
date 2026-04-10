@@ -2,15 +2,67 @@
 
 ## Overview
 
-The quantum backend provides post-quantum cryptographic operations using NIST-standardized algorithms. This implementation uses ML-DSA (Module-Lattice Digital Signature Algorithm) for signing and ML-KEM (Module-Lattice Key Encapsulation Mechanism) for key establishment, both based on the Open Quantum Safe (liboqs) library.
+The quantum backend provides post-quantum cryptographic operations using NIST-standardized algorithms. This implementation uses ML-DSA (Module-Lattice Digital Signature Algorithm, FIPS 204) for signing via Cloudflare's `circl` library and ML-KEM (Module-Lattice Key Encapsulation Mechanism, FIPS 203) for key establishment via Go's standard library `crypto/mlkem` package.
+
+Both implementations are pure Go -- no CGO, no external C libraries, and no special build tags are required. Quantum support is always compiled in.
 
 Post-quantum cryptography protects against attacks from both classical and quantum computers. The quantum backend implements NIST FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) standards, providing quantum-resistant security for long-term data protection and future-proof cryptographic operations.
+
+## Service Integration
+
+Quantum support is always available -- no build tags or external dependencies are required. The backend auto-registers with the xkms service registry.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendQuantum) {
+    fmt.Println("Quantum backend is available")
+}
+```
+
+### Using via Service API
+
+```go
+import (
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a post-quantum signing key
+key, err := xkms.GenerateKeyWithBackend("quantum", &types.KeyAttributes{
+    CN:        "pq-signing-key",
+    KeyType:   types.KeyTypeSigning,
+    StoreType: types.StoreQuantum,
+    QuantumAttributes: &types.QuantumAttributes{
+        Algorithm: types.QuantumAlgorithmMLDSA65,
+    },
+})
+
+// Sign using the key ID with explicit backend
+sig, err := xkms.Sign("quantum:::pq-signing-key", data, nil)
+```
+
+### Auto-Initialize
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DataDir: "/var/lib/xkms",
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendQuantum: {
+            "key_dir": "/var/lib/xkms/quantum/keys",
+        },
+    },
+})
+defer xkms.Close()
+```
 
 ## Supported Algorithms
 
 ### ML-DSA (Digital Signatures)
 
-Module-Lattice Digital Signature Algorithm, standardized as NIST FIPS 204.
+Module-Lattice Digital Signature Algorithm, standardized as NIST FIPS 204. Implemented via Cloudflare's `circl` library (`github.com/cloudflare/circl/sign/mldsa`).
 
 - ML-DSA-44: NIST Security Level 2 (equivalent to AES-128)
   - Public key: 1312 bytes
@@ -26,12 +78,7 @@ Module-Lattice Digital Signature Algorithm, standardized as NIST FIPS 204.
 
 ### ML-KEM (Key Encapsulation)
 
-Module-Lattice Key Encapsulation Mechanism, standardized as NIST FIPS 203.
-
-- ML-KEM-512: NIST Security Level 1 (equivalent to AES-128)
-  - Public key: 800 bytes
-  - Ciphertext: 768 bytes
-  - Shared secret: 32 bytes
+Module-Lattice Key Encapsulation Mechanism, standardized as NIST FIPS 203. Implemented via Go's standard library `crypto/mlkem` package.
 
 - ML-KEM-768: NIST Security Level 3 (equivalent to AES-192) **recommended**
   - Public key: 1184 bytes
@@ -59,8 +106,8 @@ type Config struct {
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/backend/quantum"
-    "github.com/jeremyhahn/go-keychain/pkg/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
+    "github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // Initialize storage
@@ -80,7 +127,7 @@ defer backend.Close()
 ### With Custom AEAD Tracker
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/backend"
+import "github.com/jeremyhahn/go-xkms/pkg/backend"
 
 // Create custom tracker for AEAD safety
 tracker := backend.NewMemoryAEADTracker()
@@ -97,7 +144,7 @@ backend, err := quantum.NewWithConfig(store, config)
 ### Generating ML-DSA Signing Keys
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/types"
+import "github.com/jeremyhahn/go-xkms/pkg/types"
 
 // Generate ML-DSA-65 key (NIST Level 3)
 attrs := &types.KeyAttributes{
@@ -249,7 +296,7 @@ newPrivKey, err := backend.GetKey(attrs)
 
 ## AEAD Safety Tracking
 
-ML-KEM encryption uses AES-256-GCM internally, which requires strict nonce management and usage limits per NIST SP 800-38D. The quantum backend integrates with go-keychain's AEAD safety tracking to enforce these requirements.
+ML-KEM encryption uses AES-256-GCM internally, which requires strict nonce management and usage limits per NIST SP 800-38D. The quantum backend integrates with go-xkms's AEAD safety tracking to enforce these requirements.
 
 ### Default Protection
 
@@ -364,41 +411,31 @@ The size increase is the trade-off for quantum resistance. For most applications
 
 ## Build Requirements
 
-Quantum support requires the `quantum` build tag and liboqs library:
+Quantum support is built in by default with no special build tags or external dependencies:
 
 ```bash
-# Build with quantum support
-go build -tags="quantum" ./...
+# Build (quantum support included automatically)
+go build ./...
 
 # Run tests
-go test -tags="quantum" ./pkg/backend/quantum/
+go test ./pkg/keyprovider/quantum/
 
-# Docker (recommended - includes liboqs)
+# Docker integration tests
 make integration-test-quantum
 ```
 
-### Installing liboqs
+### Dependencies
 
-**Debian/Ubuntu:**
-```bash
-make deps-quantum-debian
-make deps-quantum
-```
+All quantum cryptographic dependencies are pure Go:
 
-**Manual:**
-```bash
-git clone https://github.com/open-quantum-safe/liboqs.git
-cd liboqs
-mkdir build && cd build
-cmake -GNinja -DBUILD_SHARED_LIBS=ON -DOQS_BUILD_ONLY_LIB=ON ..
-ninja
-sudo ninja install
-sudo ldconfig
-```
+- **ML-DSA**: `github.com/cloudflare/circl/sign/mldsa/{mldsa44,mldsa65,mldsa87}`
+- **ML-KEM**: Go standard library `crypto/mlkem` (ML-KEM-768, ML-KEM-1024)
+
+No CGO, cmake, ninja, pkg-config, or external C libraries are required.
 
 ## Integration with Other Backends
 
-The quantum backend implements the same `Backend` interface as all other backends (PKCS8, TPM2, PKCS11, etc.), enabling:
+The quantum backend implements the same `Backend` interface as all other backends (Software, TPM2, PKCS11, etc.), enabling:
 
 - Seamless integration with backend registry
 - Same API for key generation, signing, encryption
@@ -407,7 +444,7 @@ The quantum backend implements the same `Backend` interface as all other backend
 
 ```go
 // Register quantum alongside other backends
-registry.Register("pkcs8", pkcs8Backend)
+registry.Register("software", softwareBackend)
 registry.Register("tpm2", tpm2Backend)
 registry.Register("quantum", quantumBackend)
 
@@ -435,7 +472,7 @@ For maximum security during the transition period, consider using both classical
 
 ```go
 // Classical ECDSA signature
-ecdsaSigner, _ := pkcs8Backend.Signer(ecdsaAttrs)
+ecdsaSigner, _ := softwareBackend.Signer(ecdsaAttrs)
 ecdsaSig, _ := ecdsaSigner.Sign(rand.Reader, hash[:], crypto.SHA256)
 
 // Quantum ML-DSA signature
@@ -460,12 +497,12 @@ Use quantum cryptography when:
 - Hardware-backed keys (no HSM/TPM integration)
 - Quantum algorithms in X.509 certificates (limited PKI support)
 - Streaming encryption (use block-based approach)
+- ML-KEM-512 (not available in Go standard library)
 
 ### Platform Constraints
 
-- Requires CGO (no pure Go implementation)
-- Requires liboqs C library
-- Linux recommended (macOS and Windows require manual liboqs build)
+- Pure Go implementation -- runs on all platforms supported by Go
+- No CGO or external C library dependencies
 
 ### Network Overhead
 
@@ -476,28 +513,6 @@ Larger keys and signatures increase bandwidth requirements:
 Plan accordingly for constrained networks or high-volume applications.
 
 ## Troubleshooting
-
-### liboqs not found
-
-```
-pkg-config: package 'liboqs' not found
-```
-
-Solution: Install liboqs or use Docker:
-```bash
-make integration-test-quantum
-```
-
-### Build tag missing
-
-```
-build failed: no buildable Go source files
-```
-
-Solution: Add `quantum` build tag:
-```bash
-go build -tags="quantum" ./...
-```
 
 ### AEAD limit exceeded
 

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Installation script for keychaind
-# This script installs the keychain daemon and sets up the systemd service
+# Installation script for xkmsd
+# This script installs the xkms daemon and sets up the systemd service
 
 set -e
 
@@ -16,61 +16,61 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${GREEN}Installing keychain daemon...${NC}"
+echo -e "${GREEN}Installing xkms daemon...${NC}"
 
-# Create keychain user and group
-if ! id -u keychain &>/dev/null; then
-    echo "Creating keychain user..."
-    useradd --system --no-create-home --shell /bin/false keychain
+# Create xkms user and group
+if ! id -u xkms &>/dev/null; then
+    echo "Creating xkms user..."
+    useradd --system --no-create-home --shell /bin/false xkms
 else
-    echo "User 'keychain' already exists"
+    echo "User 'xkms' already exists"
 fi
 
 # Create required directories
 echo "Creating directories..."
-mkdir -p /etc/keychain /var/lib/keychain /var/run/keychain /var/log/keychain
-chown keychain:keychain /var/lib/keychain /var/run/keychain /var/log/keychain
-chmod 750 /var/lib/keychain /var/run/keychain /var/log/keychain
+mkdir -p /etc/xkms /var/lib/xkms /var/run/xkms /var/log/xkms
+chown xkms:xkms /var/lib/xkms /var/run/xkms /var/log/xkms
+chmod 750 /var/lib/xkms /var/run/xkms /var/log/xkms
 
 # Install binary
-if [ -f "bin/keychaind" ]; then
-    echo "Installing binary to /usr/bin/keychaind..."
-    install -m 755 -o root -g root bin/keychaind /usr/bin/keychaind
-elif [ -f "../bin/keychaind" ]; then
-    echo "Installing binary to /usr/bin/keychaind..."
-    install -m 755 -o root -g root ../bin/keychaind /usr/bin/keychaind
+if [ -f "bin/xkmsd" ]; then
+    echo "Installing binary to /usr/bin/xkmsd..."
+    install -m 755 -o root -g root bin/xkmsd /usr/bin/xkmsd
+elif [ -f "../bin/xkmsd" ]; then
+    echo "Installing binary to /usr/bin/xkmsd..."
+    install -m 755 -o root -g root ../bin/xkmsd /usr/bin/xkmsd
 else
-    echo -e "${RED}Error: keychaind binary not found${NC}"
-    echo "Please build the binary first: go build -o bin/keychaind ./cmd/server"
+    echo -e "${RED}Error: xkmsd binary not found${NC}"
+    echo "Please build the binary first: go build -o bin/xkmsd ./cmd/server"
     exit 1
 fi
 
 # Install configuration
-if [ ! -f /etc/keychain/keychaind.yaml ]; then
+if [ ! -f /etc/xkms/xkmsd.yaml ]; then
     echo "Installing default configuration..."
-    if [ -f "configs/keychaind.yaml.example" ]; then
-        install -m 640 -o keychain -g keychain configs/keychaind.yaml.example /etc/keychain/keychaind.yaml
-    elif [ -f "keychaind.yaml.example" ]; then
-        install -m 640 -o keychain -g keychain keychaind.yaml.example /etc/keychain/keychaind.yaml
+    if [ -f "configs/xkmsd.yaml.example" ]; then
+        install -m 640 -o xkms -g xkms configs/xkmsd.yaml.example /etc/xkms/xkmsd.yaml
+    elif [ -f "xkmsd.yaml.example" ]; then
+        install -m 640 -o xkms -g xkms xkmsd.yaml.example /etc/xkms/xkmsd.yaml
     else
         echo -e "${YELLOW}Warning: Example config not found, skipping config installation${NC}"
     fi
 
     # Update paths in config for production
-    if [ -f /etc/keychain/keychaind.yaml ]; then
-        sed -i 's|/tmp/keychain|/var/lib/keychain|g' /etc/keychain/keychaind.yaml
-        sed -i 's|socket_path: "/tmp/keychain.sock"|socket_path: "/var/run/keychain/keychain.sock"|g' /etc/keychain/keychaind.yaml
+    if [ -f /etc/xkms/xkmsd.yaml ]; then
+        sed -i 's|/tmp/xkms|/var/lib/xkms|g' /etc/xkms/xkmsd.yaml
+        sed -i 's|socket_path: "/tmp/xkms.sock"|socket_path: "/var/run/xkms/xkms.sock"|g' /etc/xkms/xkmsd.yaml
     fi
 else
-    echo "Configuration file already exists at /etc/keychain/keychaind.yaml"
+    echo "Configuration file already exists at /etc/xkms/xkmsd.yaml"
 fi
 
 # Install systemd service
 echo "Installing systemd service..."
-if [ -f "configs/keychaind.service" ]; then
-    install -m 644 -o root -g root configs/keychaind.service /etc/systemd/system/keychaind.service
-elif [ -f "keychaind.service" ]; then
-    install -m 644 -o root -g root keychaind.service /etc/systemd/system/keychaind.service
+if [ -f "configs/xkmsd.service" ]; then
+    install -m 644 -o root -g root configs/xkmsd.service /etc/systemd/system/xkmsd.service
+elif [ -f "xkmsd.service" ]; then
+    install -m 644 -o root -g root xkmsd.service /etc/systemd/system/xkmsd.service
 else
     echo -e "${YELLOW}Warning: Service file not found${NC}"
 fi
@@ -82,10 +82,10 @@ systemctl daemon-reload
 echo -e "${GREEN}Installation complete!${NC}"
 echo ""
 echo "Next steps:"
-echo "  1. Review and customize the configuration: /etc/keychain/keychaind.yaml"
-echo "  2. Enable the service: systemctl enable keychaind"
-echo "  3. Start the service: systemctl start keychaind"
-echo "  4. Check the status: systemctl status keychaind"
-echo "  5. View logs: journalctl -u keychaind -f"
+echo "  1. Review and customize the configuration: /etc/xkms/xkmsd.yaml"
+echo "  2. Enable the service: systemctl enable xkmsd"
+echo "  3. Start the service: systemctl start xkmsd"
+echo "  4. Check the status: systemctl status xkmsd"
+echo "  5. View logs: journalctl -u xkmsd -f"
 echo ""
-echo "For more information, see: /etc/keychain/README.md"
+echo "For more information, see: /etc/xkms/README.md"

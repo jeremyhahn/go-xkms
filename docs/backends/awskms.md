@@ -50,6 +50,75 @@ AWS KMS handles key generation, automatic rotation, and deletion while providing
 - Integration with AWS services
 - AWS Organizations support
 
+## Service Integration
+
+### Build Tag
+
+The AWS KMS backend requires the `awskms` build tag:
+
+```bash
+go build -tags awskms ./...
+```
+
+When compiled with this tag, the backend auto-registers with the xkms service registry via an `init()` function in `pkg/xkms/register_awskms.go`.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendAWSKMS) {
+    fmt.Println("AWS KMS backend is available")
+}
+
+// List all compiled-in backends
+for _, b := range xkms.SupportedBackends() {
+    fmt.Println("Available:", b)
+}
+```
+
+### Using via Service API
+
+Once initialized, use the xkms service API to work with AWS KMS keys without managing backend instances directly:
+
+```go
+import (
+    "crypto/x509"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a key on AWS KMS
+key, err := xkms.GenerateKeyWithBackend("awskms", &types.KeyAttributes{
+    CN:           "my-aws-key",
+    KeyAlgorithm: x509.ECDSA,
+    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+})
+
+// Sign using key ID format: backend:type:algo:keyname
+sig, err := xkms.Sign("awskms:::my-aws-key", data, nil)
+
+// Seal data with AWS KMS envelope encryption
+sealed, err := xkms.SealWithBackend(ctx, "awskms", secretData, opts)
+```
+
+### Auto-Initialize with Config
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DefaultBackend: "awskms",
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendAWSKMS: {
+            "region":            "us-east-1",
+            "access_key_id":     os.Getenv("AWS_ACCESS_KEY_ID"),
+            "secret_access_key": os.Getenv("AWS_SECRET_ACCESS_KEY"),
+        },
+    },
+})
+defer xkms.Close()
+```
+
 ## Authentication Methods
 
 ### IAM Roles (Recommended for EC2/ECS/Lambda)
@@ -323,8 +392,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/awskms"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/awskms"
 )
 
 func main() {
@@ -1072,12 +1141,12 @@ AWS KMS compliance:
 func migrateToAWSKMS() error {
     ctx := context.Background()
 
-    // Old PKCS#8 backend
-    pkcs8Config := &pkcs8.Config{
+    // Old software backend
+    softwareConfig := &software.Config{
         StoragePath: "./keys",
         Password:    os.Getenv("KEYSTORE_PASSWORD"),
     }
-    oldStore, err := pkcs8.NewBackend(pkcs8Config)
+    oldStore, err := software.NewBackend(softwareConfig)
     if err != nil {
         return err
     }
@@ -1105,7 +1174,7 @@ func migrateToAWSKMS() error {
 
     // Update application to use AWS KMS
     // Re-sign data with new keys
-    // Retire old PKCS#8 keys after transition
+    // Retire old software keys after transition
 
     return nil
 }
@@ -1131,4 +1200,4 @@ The AWS KMS backend has the following limitations:
 - Maximum 100,000 keys per account per region
 - Cross-region operations incur additional latency
 
-For on-premises HSM requirements, consider the PKCS#11 backend. For offline key storage, consider the PKCS#8 or TPM backends.
+For on-premises HSM requirements, consider the PKCS#11 backend. For offline key storage, consider the software or TPM backends.

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -24,9 +24,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // FROST request/response types
@@ -95,8 +96,9 @@ type FrostImportKeyResponse struct {
 
 // FrostListKeysResponse represents the list of FROST keys
 type FrostListKeysResponse struct {
-	Keys  []FrostKeyInfo `json:"keys"`
-	Total int            `json:"total"`
+	Keys       []FrostKeyInfo         `json:"keys"`
+	Total      int                    `json:"total"`
+	Pagination transport.PageResponse `json:"pagination"`
 }
 
 // FrostDeleteKeyResponse represents the response from key deletion
@@ -427,9 +429,13 @@ func (h *HandlerContext) FrostListKeysHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	pageReq := parsePageRequest(r)
+	paged, pageResp := applyPagination(respKeys, pageReq)
+
 	resp := FrostListKeysResponse{
-		Keys:  respKeys,
-		Total: len(respKeys),
+		Keys:       paged,
+		Total:      pageResp.Total,
+		Pagination: pageResp,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }
@@ -805,15 +811,15 @@ func (h *HandlerContext) FrostVerifyHandler(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, resp, http.StatusOK)
 }
 
-// getFrostBackend retrieves the FROST backend from the keychain service
+// getFrostBackend retrieves the FROST backend from the xkms service
 func getFrostBackend() (*frost.FrostBackend, error) {
-	backends := keychain.Backends()
+	backends := xkms.Backends()
 	for _, name := range backends {
-		ks, err := keychain.Backend(name)
+		ks, err := xkms.GetBackend(name)
 		if err != nil {
 			continue
 		}
-		backend := ks.Backend()
+		backend := ks.KeyProvider()
 		if backend.Type() == types.BackendTypeFrost {
 			if fb, ok := backend.(*frost.FrostBackend); ok {
 				return fb, nil

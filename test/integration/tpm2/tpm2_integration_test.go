@@ -16,9 +16,9 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // memCertStore is a simple in-memory certificate store for testing
@@ -551,7 +551,7 @@ func TestIntegration_SealUnseal(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewClearPassword(nil),
+		Password:     types.NewPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
@@ -603,7 +603,7 @@ func TestIntegration_RSASignVerify(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewClearPassword(nil),
+		Password:     types.NewPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,
@@ -653,7 +653,7 @@ func TestIntegration_ECDSASignVerify(t *testing.T) {
 		KeyAlgorithm: x509.ECDSA,
 		KeyType:      types.KeyTypeCA,
 		Parent:       srkAttrs,
-		Password:     types.NewClearPassword(nil),
+		Password:     types.NewPassword(nil),
 		StoreType:    types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Hierarchy: tpm2.TPMRHOwner,

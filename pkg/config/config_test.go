@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,7 +16,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // TestLoad_Success tests successful loading of a valid config file
@@ -64,14 +68,14 @@ health:
 
 storage:
   backend: "filesystem"
-  path: "/data/keychain"
+  path: "/data/xkms"
 
 default_backend: "pkcs8"
 
 backends:
   pkcs8:
     enabled: true
-    path: "/data/keychain/pkcs8"
+    path: "/data/xkms/pkcs8"
 `
 
 	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
@@ -119,8 +123,8 @@ backends:
 	if cfg.Storage.Backend != "filesystem" {
 		t.Errorf("Storage.Backend = %v, want filesystem", cfg.Storage.Backend)
 	}
-	if cfg.Storage.Path != "/data/keychain" {
-		t.Errorf("Storage.Path = %v, want /data/keychain", cfg.Storage.Path)
+	if cfg.Storage.Path != "/data/xkms" {
+		t.Errorf("Storage.Path = %v, want /data/xkms", cfg.Storage.Path)
 	}
 
 	// Validate default backend
@@ -238,7 +242,7 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		{
 			name: "override host",
 			env: map[string]string{
-				"KEYSTORE_HOST": "0.0.0.0",
+				"XKMS_HOST": "0.0.0.0",
 			},
 			initial: Config{
 				Server: ServerConfig{Host: "localhost"},
@@ -250,7 +254,7 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		{
 			name: "override REST port",
 			env: map[string]string{
-				"KEYSTORE_REST_PORT": "9000",
+				"XKMS_REST_PORT": "9000",
 			},
 			initial: Config{
 				Server: ServerConfig{RESTPort: 8443},
@@ -262,7 +266,7 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		{
 			name: "override gRPC port",
 			env: map[string]string{
-				"KEYSTORE_GRPC_PORT": "9001",
+				"XKMS_GRPC_PORT": "9001",
 			},
 			initial: Config{
 				Server: ServerConfig{GRPCPort: 9443},
@@ -274,7 +278,7 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		{
 			name: "override MCP port",
 			env: map[string]string{
-				"KEYSTORE_MCP_PORT": "9002",
+				"XKMS_MCP_PORT": "9002",
 			},
 			initial: Config{
 				Server: ServerConfig{MCPPort: 9444},
@@ -286,9 +290,9 @@ func TestApplyEnvOverrides_ServerSettings(t *testing.T) {
 		{
 			name: "override multiple server settings",
 			env: map[string]string{
-				"KEYSTORE_HOST":      "127.0.0.1",
-				"KEYSTORE_REST_PORT": "8080",
-				"KEYSTORE_GRPC_PORT": "9090",
+				"XKMS_HOST":      "127.0.0.1",
+				"XKMS_REST_PORT": "8080",
+				"XKMS_GRPC_PORT": "9090",
 			},
 			initial: Config{
 				Server: ServerConfig{
@@ -347,7 +351,7 @@ func TestApplyEnvOverrides_InvalidPorts(t *testing.T) {
 		{
 			name: "invalid REST port - not a number",
 			env: map[string]string{
-				"KEYSTORE_REST_PORT": "invalid",
+				"XKMS_REST_PORT": "invalid",
 			},
 			initial: Config{
 				Server: ServerConfig{RESTPort: 8443},
@@ -359,7 +363,7 @@ func TestApplyEnvOverrides_InvalidPorts(t *testing.T) {
 		{
 			name: "invalid gRPC port - empty string",
 			env: map[string]string{
-				"KEYSTORE_GRPC_PORT": "",
+				"XKMS_GRPC_PORT": "",
 			},
 			initial: Config{
 				Server: ServerConfig{GRPCPort: 9443},
@@ -371,7 +375,7 @@ func TestApplyEnvOverrides_InvalidPorts(t *testing.T) {
 		{
 			name: "invalid QUIC port - special characters",
 			env: map[string]string{
-				"KEYSTORE_QUIC_PORT": "abc123",
+				"XKMS_QUIC_PORT": "abc123",
 			},
 			initial: Config{
 				Server: ServerConfig{QUICPort: 8444},
@@ -383,7 +387,7 @@ func TestApplyEnvOverrides_InvalidPorts(t *testing.T) {
 		{
 			name: "invalid MCP port - decimal",
 			env: map[string]string{
-				"KEYSTORE_MCP_PORT": "9000.5",
+				"XKMS_MCP_PORT": "9000.5",
 			},
 			initial: Config{
 				Server: ServerConfig{MCPPort: 9444},
@@ -395,7 +399,7 @@ func TestApplyEnvOverrides_InvalidPorts(t *testing.T) {
 		{
 			name: "invalid REST port - negative number",
 			env: map[string]string{
-				"KEYSTORE_REST_PORT": "-1000",
+				"XKMS_REST_PORT": "-1000",
 			},
 			initial: Config{
 				Server: ServerConfig{RESTPort: 8443},
@@ -407,7 +411,7 @@ func TestApplyEnvOverrides_InvalidPorts(t *testing.T) {
 		{
 			name: "valid QUIC port override",
 			env: map[string]string{
-				"KEYSTORE_QUIC_PORT": "7777",
+				"XKMS_QUIC_PORT": "7777",
 			},
 			initial: Config{
 				Server: ServerConfig{QUICPort: 8444},
@@ -460,7 +464,7 @@ func TestApplyEnvOverrides_Logging(t *testing.T) {
 		{
 			name: "override log level",
 			env: map[string]string{
-				"KEYSTORE_LOG_LEVEL": "debug",
+				"XKMS_LOG_LEVEL": "debug",
 			},
 			initial:  LoggingConfig{Level: "info"},
 			expected: LoggingConfig{Level: "debug"},
@@ -468,7 +472,7 @@ func TestApplyEnvOverrides_Logging(t *testing.T) {
 		{
 			name: "override log format",
 			env: map[string]string{
-				"KEYSTORE_LOG_FORMAT": "text",
+				"XKMS_LOG_FORMAT": "text",
 			},
 			initial:  LoggingConfig{Format: "json"},
 			expected: LoggingConfig{Format: "text"},
@@ -476,8 +480,8 @@ func TestApplyEnvOverrides_Logging(t *testing.T) {
 		{
 			name: "override both level and format",
 			env: map[string]string{
-				"KEYSTORE_LOG_LEVEL":  "warn",
-				"KEYSTORE_LOG_FORMAT": "console",
+				"XKMS_LOG_LEVEL":  "warn",
+				"XKMS_LOG_FORMAT": "console",
 			},
 			initial:  LoggingConfig{Level: "info", Format: "json"},
 			expected: LoggingConfig{Level: "warn", Format: "console"},
@@ -510,8 +514,8 @@ func TestApplyEnvOverrides_Logging(t *testing.T) {
 func TestApplyEnvOverrides_Storage(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	_ = os.Setenv("KEYSTORE_DATA_DIR", tmpDir)
-	defer func() { _ = os.Unsetenv("KEYSTORE_DATA_DIR") }()
+	_ = os.Setenv("XKMS_DATA_DIR", tmpDir)
+	defer func() { _ = os.Unsetenv("XKMS_DATA_DIR") }()
 
 	cfg := Config{
 		Storage: StorageConfig{Path: "/old/path"},
@@ -963,6 +967,23 @@ func TestValidate_TLS(t *testing.T) {
 		},
 	}
 
+	// Test CA-backed TLS separately since it needs a CA config on the Config struct
+	t.Run("TLS enabled with CA config (no cert/key needed)", func(t *testing.T) {
+		cfg := Config{
+			Protocols: ProtocolsConfig{REST: true},
+			Server:    ServerConfig{RESTPort: 8443},
+			Logging:   LoggingConfig{Level: "info", Format: "json"},
+			TLS:       TLSConfig{Enabled: true, ServerCN: "test-server"},
+			Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+			Default:   "pkcs8",
+			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+			CA:        &ca.MultiIdentityCAConfig{}, // CA present — cert_file/key_file not required
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("Validate() error = %v, want nil (CA-backed TLS should not require cert/key files)", err)
+		}
+	})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
@@ -1313,13 +1334,13 @@ backends:
 	}
 
 	// Set environment variables
-	_ = os.Setenv("KEYSTORE_HOST", "0.0.0.0")
-	_ = os.Setenv("KEYSTORE_REST_PORT", "9000")
-	_ = os.Setenv("KEYSTORE_LOG_LEVEL", "debug")
+	_ = os.Setenv("XKMS_HOST", "0.0.0.0")
+	_ = os.Setenv("XKMS_REST_PORT", "9000")
+	_ = os.Setenv("XKMS_LOG_LEVEL", "debug")
 	defer func() {
-		_ = os.Unsetenv("KEYSTORE_HOST")
-		_ = os.Unsetenv("KEYSTORE_REST_PORT")
-		_ = os.Unsetenv("KEYSTORE_LOG_LEVEL")
+		_ = os.Unsetenv("XKMS_HOST")
+		_ = os.Unsetenv("XKMS_REST_PORT")
+		_ = os.Unsetenv("XKMS_LOG_LEVEL")
 	}()
 
 	cfg, err := Load(configPath)
@@ -1343,8 +1364,8 @@ backends:
 func TestApplyEnvOverrides_StorageWithAbsolutePath(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	_ = os.Setenv("KEYSTORE_DATA_DIR", tmpDir)
-	defer func() { _ = os.Unsetenv("KEYSTORE_DATA_DIR") }()
+	_ = os.Setenv("XKMS_DATA_DIR", tmpDir)
+	defer func() { _ = os.Unsetenv("XKMS_DATA_DIR") }()
 
 	absolutePath := "/absolute/path/to/pkcs8"
 	cfg := Config{
@@ -1519,8 +1540,8 @@ func TestGetRNGConfig_TPM2Settings(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides_NewKeychainEnvVars tests KEYCHAIN_* environment variable overrides
-func TestApplyEnvOverrides_NewKeychainEnvVars(t *testing.T) {
+// TestApplyEnvOverrides_NewBackendEnvVars tests XKMS_* environment variable overrides
+func TestApplyEnvOverrides_NewBackendEnvVars(t *testing.T) {
 	tests := []struct {
 		name     string
 		env      map[string]string
@@ -1528,9 +1549,9 @@ func TestApplyEnvOverrides_NewKeychainEnvVars(t *testing.T) {
 		expected Config
 	}{
 		{
-			name: "KEYCHAIN_HOST override",
+			name: "XKMS_HOST override",
 			env: map[string]string{
-				"KEYCHAIN_HOST": "192.168.1.1",
+				"XKMS_HOST": "192.168.1.1",
 			},
 			initial: Config{
 				Server: ServerConfig{Host: "localhost"},
@@ -1540,9 +1561,9 @@ func TestApplyEnvOverrides_NewKeychainEnvVars(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_REST_PORT override",
+			name: "XKMS_REST_PORT override",
 			env: map[string]string{
-				"KEYCHAIN_REST_PORT": "7443",
+				"XKMS_REST_PORT": "7443",
 			},
 			initial: Config{
 				Server: ServerConfig{RESTPort: 8443},
@@ -1552,9 +1573,9 @@ func TestApplyEnvOverrides_NewKeychainEnvVars(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_GRPC_PORT override",
+			name: "XKMS_GRPC_PORT override",
 			env: map[string]string{
-				"KEYCHAIN_GRPC_PORT": "7444",
+				"XKMS_GRPC_PORT": "7444",
 			},
 			initial: Config{
 				Server: ServerConfig{GRPCPort: 9443},
@@ -1564,9 +1585,9 @@ func TestApplyEnvOverrides_NewKeychainEnvVars(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_QUIC_PORT override",
+			name: "XKMS_QUIC_PORT override",
 			env: map[string]string{
-				"KEYCHAIN_QUIC_PORT": "7445",
+				"XKMS_QUIC_PORT": "7445",
 			},
 			initial: Config{
 				Server: ServerConfig{QUICPort: 8444},
@@ -1576,9 +1597,9 @@ func TestApplyEnvOverrides_NewKeychainEnvVars(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_MCP_PORT override",
+			name: "XKMS_MCP_PORT override",
 			env: map[string]string{
-				"KEYCHAIN_MCP_PORT": "7446",
+				"XKMS_MCP_PORT": "7446",
 			},
 			initial: Config{
 				Server: ServerConfig{MCPPort: 9444},
@@ -1632,15 +1653,15 @@ func TestApplyEnvOverrides_UnixSocketSettings(t *testing.T) {
 		{
 			name: "socket path override",
 			env: map[string]string{
-				"KEYCHAIN_SOCKET_PATH": "/var/run/keychain.sock",
+				"XKMS_SOCKET_PATH": "/var/run/xkms.sock",
 			},
-			initial:  UnixConfig{SocketPath: "/tmp/keychain.sock"},
-			expected: UnixConfig{SocketPath: "/var/run/keychain.sock"},
+			initial:  UnixConfig{SocketPath: "/tmp/xkms.sock"},
+			expected: UnixConfig{SocketPath: "/var/run/xkms.sock"},
 		},
 		{
 			name: "socket mode override",
 			env: map[string]string{
-				"KEYCHAIN_SOCKET_MODE": "0660",
+				"XKMS_SOCKET_MODE": "0660",
 			},
 			initial:  UnixConfig{SocketMode: "0600"},
 			expected: UnixConfig{SocketMode: "0660"},
@@ -1679,25 +1700,25 @@ func TestApplyEnvOverrides_InvalidPortRanges(t *testing.T) {
 	}{
 		{
 			name:    "REST port too high",
-			env:     map[string]string{"KEYSTORE_REST_PORT": "70000"},
+			env:     map[string]string{"XKMS_REST_PORT": "70000"},
 			initial: 8443,
 			field:   "REST",
 		},
 		{
 			name:    "gRPC port too high",
-			env:     map[string]string{"KEYSTORE_GRPC_PORT": "99999"},
+			env:     map[string]string{"XKMS_GRPC_PORT": "99999"},
 			initial: 9443,
 			field:   "gRPC",
 		},
 		{
 			name:    "QUIC port too high",
-			env:     map[string]string{"KEYSTORE_QUIC_PORT": "100000"},
+			env:     map[string]string{"XKMS_QUIC_PORT": "100000"},
 			initial: 8444,
 			field:   "QUIC",
 		},
 		{
 			name:    "MCP port too high",
-			env:     map[string]string{"KEYSTORE_MCP_PORT": "65536"},
+			env:     map[string]string{"XKMS_MCP_PORT": "65536"},
 			initial: 9444,
 			field:   "MCP",
 		},
@@ -1787,12 +1808,12 @@ func TestGetEnabledBackends_SoftwareBackend(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides_UnixProtocol tests KEYCHAIN_UNIX_PROTOCOL environment variable
+// TestApplyEnvOverrides_UnixProtocol tests XKMS_UNIX_PROTOCOL environment variable
 func TestApplyEnvOverrides_UnixProtocol(t *testing.T) {
-	if err := os.Setenv("KEYCHAIN_UNIX_PROTOCOL", "http"); err != nil {
+	if err := os.Setenv("XKMS_UNIX_PROTOCOL", "http"); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = os.Unsetenv("KEYCHAIN_UNIX_PROTOCOL") }()
+	defer func() { _ = os.Unsetenv("XKMS_UNIX_PROTOCOL") }()
 
 	cfg := Config{
 		Unix: UnixConfig{Protocol: "grpc"},
@@ -1813,33 +1834,17 @@ func TestApplyEnvOverrides_LoggingSettings(t *testing.T) {
 		expected LoggingConfig
 	}{
 		{
-			name: "KEYCHAIN_LOG_LEVEL override",
+			name: "XKMS_LOG_LEVEL override",
 			env: map[string]string{
-				"KEYCHAIN_LOG_LEVEL": "debug",
+				"XKMS_LOG_LEVEL": "debug",
 			},
 			initial:  LoggingConfig{Level: "info"},
 			expected: LoggingConfig{Level: "debug"},
 		},
 		{
-			name: "KEYSTORE_LOG_LEVEL legacy override",
+			name: "XKMS_LOG_FORMAT override",
 			env: map[string]string{
-				"KEYSTORE_LOG_LEVEL": "warn",
-			},
-			initial:  LoggingConfig{Level: "info"},
-			expected: LoggingConfig{Level: "warn"},
-		},
-		{
-			name: "KEYCHAIN_LOG_FORMAT override",
-			env: map[string]string{
-				"KEYCHAIN_LOG_FORMAT": "text",
-			},
-			initial:  LoggingConfig{Format: "json"},
-			expected: LoggingConfig{Format: "text"},
-		},
-		{
-			name: "KEYSTORE_LOG_FORMAT legacy override",
-			env: map[string]string{
-				"KEYSTORE_LOG_FORMAT": "text",
+				"XKMS_LOG_FORMAT": "text",
 			},
 			initial:  LoggingConfig{Format: "json"},
 			expected: LoggingConfig{Format: "text"},
@@ -1868,7 +1873,7 @@ func TestApplyEnvOverrides_LoggingSettings(t *testing.T) {
 	}
 }
 
-// TestApplyEnvOverrides_DataDir tests KEYCHAIN_DATA_DIR and KEYSTORE_DATA_DIR
+// TestApplyEnvOverrides_DataDir tests XKMS_DATA_DIR
 func TestApplyEnvOverrides_DataDir(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -1879,20 +1884,12 @@ func TestApplyEnvOverrides_DataDir(t *testing.T) {
 		expectedPKCS8   string
 	}{
 		{
-			name:            "KEYCHAIN_DATA_DIR override",
-			env:             map[string]string{"KEYCHAIN_DATA_DIR": "/new/data"},
+			name:            "XKMS_DATA_DIR override",
+			env:             map[string]string{"XKMS_DATA_DIR": "/new/data"},
 			initialStorage:  "/old/data",
 			initialPKCS8:    "pkcs8", // relative path
 			expectedStorage: "/new/data",
 			expectedPKCS8:   "/new/data/pkcs8",
-		},
-		{
-			name:            "KEYSTORE_DATA_DIR legacy override",
-			env:             map[string]string{"KEYSTORE_DATA_DIR": "/legacy/data"},
-			initialStorage:  "/old/data",
-			initialPKCS8:    "pkcs8", // relative path
-			expectedStorage: "/legacy/data",
-			expectedPKCS8:   "/legacy/data/pkcs8",
 		},
 	}
 
@@ -1932,40 +1929,22 @@ func TestApplyEnvOverrides_RateLimitSettings(t *testing.T) {
 		expected RateLimitConfig
 	}{
 		{
-			name:     "KEYCHAIN_RATELIMIT_ENABLED true",
-			env:      map[string]string{"KEYCHAIN_RATELIMIT_ENABLED": "true"},
+			name:     "XKMS_RATELIMIT_ENABLED true",
+			env:      map[string]string{"XKMS_RATELIMIT_ENABLED": "true"},
 			initial:  RateLimitConfig{Enabled: false},
 			expected: RateLimitConfig{Enabled: true},
 		},
 		{
-			name:     "KEYSTORE_RATELIMIT_ENABLED legacy",
-			env:      map[string]string{"KEYSTORE_RATELIMIT_ENABLED": "true"},
-			initial:  RateLimitConfig{Enabled: false},
-			expected: RateLimitConfig{Enabled: true},
-		},
-		{
-			name:     "KEYCHAIN_RATELIMIT_REQUESTS_PER_MIN",
-			env:      map[string]string{"KEYCHAIN_RATELIMIT_REQUESTS_PER_MIN": "100"},
+			name:     "XKMS_RATELIMIT_REQUESTS_PER_MIN",
+			env:      map[string]string{"XKMS_RATELIMIT_REQUESTS_PER_MIN": "100"},
 			initial:  RateLimitConfig{RequestsPerMin: 60},
 			expected: RateLimitConfig{RequestsPerMin: 100},
 		},
 		{
-			name:     "KEYSTORE_RATELIMIT_REQUESTS_PER_MIN legacy",
-			env:      map[string]string{"KEYSTORE_RATELIMIT_REQUESTS_PER_MIN": "200"},
-			initial:  RateLimitConfig{RequestsPerMin: 60},
-			expected: RateLimitConfig{RequestsPerMin: 200},
-		},
-		{
-			name:     "KEYCHAIN_RATELIMIT_BURST",
-			env:      map[string]string{"KEYCHAIN_RATELIMIT_BURST": "50"},
+			name:     "XKMS_RATELIMIT_BURST",
+			env:      map[string]string{"XKMS_RATELIMIT_BURST": "50"},
 			initial:  RateLimitConfig{Burst: 10},
 			expected: RateLimitConfig{Burst: 50},
-		},
-		{
-			name:     "KEYSTORE_RATELIMIT_BURST legacy",
-			env:      map[string]string{"KEYSTORE_RATELIMIT_BURST": "75"},
-			initial:  RateLimitConfig{Burst: 10},
-			expected: RateLimitConfig{Burst: 75},
 		},
 	}
 
@@ -2003,14 +1982,14 @@ func TestApplyEnvOverrides_RNGSettings(t *testing.T) {
 		expected RNGConfig
 	}{
 		{
-			name:     "KEYCHAIN_RNG_MODE",
-			env:      map[string]string{"KEYCHAIN_RNG_MODE": "hardware"},
+			name:     "XKMS_RNG_MODE",
+			env:      map[string]string{"XKMS_RNG_MODE": "hardware"},
 			initial:  RNGConfig{Mode: "software"},
 			expected: RNGConfig{Mode: "hardware"},
 		},
 		{
-			name:     "KEYCHAIN_RNG_FALLBACK",
-			env:      map[string]string{"KEYCHAIN_RNG_FALLBACK": "software"},
+			name:     "XKMS_RNG_FALLBACK",
+			env:      map[string]string{"XKMS_RNG_FALLBACK": "software"},
 			initial:  RNGConfig{FallbackMode: ""},
 			expected: RNGConfig{FallbackMode: "software"},
 		},
@@ -2046,8 +2025,8 @@ func TestApplyEnvOverrides_RNGTPM2Settings(t *testing.T) {
 		validate func(t *testing.T, cfg *Config)
 	}{
 		{
-			name: "KEYCHAIN_RNG_TPM2_DEVICE creates config",
-			env:  map[string]string{"KEYCHAIN_RNG_TPM2_DEVICE": "/dev/tpm0"},
+			name: "XKMS_RNG_TPM2_DEVICE creates config",
+			env:  map[string]string{"XKMS_RNG_TPM2_DEVICE": "/dev/tpm0"},
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.RNG.TPM2 == nil {
 					t.Fatal("RNG.TPM2 should not be nil")
@@ -2058,8 +2037,8 @@ func TestApplyEnvOverrides_RNGTPM2Settings(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_RNG_TPM2_SIMULATOR_HOST creates config",
-			env:  map[string]string{"KEYCHAIN_RNG_TPM2_SIMULATOR_HOST": "localhost"},
+			name: "XKMS_RNG_TPM2_SIMULATOR_HOST creates config",
+			env:  map[string]string{"XKMS_RNG_TPM2_SIMULATOR_HOST": "localhost"},
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.RNG.TPM2 == nil {
 					t.Fatal("RNG.TPM2 should not be nil")
@@ -2073,8 +2052,8 @@ func TestApplyEnvOverrides_RNGTPM2Settings(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_RNG_TPM2_SIMULATOR_PORT creates config",
-			env:  map[string]string{"KEYCHAIN_RNG_TPM2_SIMULATOR_PORT": "2321"},
+			name: "XKMS_RNG_TPM2_SIMULATOR_PORT creates config",
+			env:  map[string]string{"XKMS_RNG_TPM2_SIMULATOR_PORT": "2321"},
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.RNG.TPM2 == nil {
 					t.Fatal("RNG.TPM2 should not be nil")
@@ -2113,8 +2092,8 @@ func TestApplyEnvOverrides_RNGPKCS11Settings(t *testing.T) {
 		validate func(t *testing.T, cfg *Config)
 	}{
 		{
-			name: "KEYCHAIN_RNG_PKCS11_MODULE creates config",
-			env:  map[string]string{"KEYCHAIN_RNG_PKCS11_MODULE": "/usr/lib/libp11.so"},
+			name: "XKMS_RNG_PKCS11_MODULE creates config",
+			env:  map[string]string{"XKMS_RNG_PKCS11_MODULE": "/usr/lib/libp11.so"},
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.RNG.PKCS11 == nil {
 					t.Fatal("RNG.PKCS11 should not be nil")
@@ -2125,8 +2104,8 @@ func TestApplyEnvOverrides_RNGPKCS11Settings(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_RNG_PKCS11_SLOT creates config",
-			env:  map[string]string{"KEYCHAIN_RNG_PKCS11_SLOT": "1"},
+			name: "XKMS_RNG_PKCS11_SLOT creates config",
+			env:  map[string]string{"XKMS_RNG_PKCS11_SLOT": "1"},
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.RNG.PKCS11 == nil {
 					t.Fatal("RNG.PKCS11 should not be nil")
@@ -2137,8 +2116,8 @@ func TestApplyEnvOverrides_RNGPKCS11Settings(t *testing.T) {
 			},
 		},
 		{
-			name: "KEYCHAIN_RNG_PKCS11_PIN creates config",
-			env:  map[string]string{"KEYCHAIN_RNG_PKCS11_PIN": "1234"},
+			name: "XKMS_RNG_PKCS11_PIN creates config",
+			env:  map[string]string{"XKMS_RNG_PKCS11_PIN": "1234"},
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.RNG.PKCS11 == nil {
 					t.Fatal("RNG.PKCS11 should not be nil")
@@ -2183,5 +2162,1119 @@ func TestValidate_InvalidDefaultBackend(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil {
 		t.Error("Validate() should return error for invalid default backend")
+	}
+}
+
+// TestCredentialsConfig_YAMLParsing tests YAML loading of the credentials section.
+func TestCredentialsConfig_YAMLParsing(t *testing.T) {
+	tests := []struct {
+		name             string
+		yaml             string
+		expectedStrategy string
+	}{
+		{
+			name: "seal_strategy set to barrier",
+			yaml: `
+server:
+  host: "localhost"
+  rest_port: 8443
+  grpc_port: 9443
+
+protocols:
+  rest: true
+
+logging:
+  level: "info"
+  format: "json"
+
+storage:
+  backend: "filesystem"
+  path: "/data/xkms"
+
+default_backend: "pkcs8"
+
+backends:
+  pkcs8:
+    enabled: true
+    path: "/data/xkms/pkcs8"
+
+credentials:
+  seal_strategy: "barrier"
+`,
+			expectedStrategy: "barrier",
+		},
+		{
+			name: "seal_strategy set to tpm2",
+			yaml: `
+server:
+  host: "localhost"
+  rest_port: 8443
+  grpc_port: 9443
+
+protocols:
+  rest: true
+
+logging:
+  level: "info"
+  format: "json"
+
+storage:
+  backend: "filesystem"
+  path: "/data/xkms"
+
+default_backend: "pkcs8"
+
+backends:
+  pkcs8:
+    enabled: true
+    path: "/data/xkms/pkcs8"
+
+credentials:
+  seal_strategy: "tpm2"
+`,
+			expectedStrategy: "tpm2",
+		},
+		{
+			name: "seal_strategy set to software",
+			yaml: `
+server:
+  host: "localhost"
+  rest_port: 8443
+  grpc_port: 9443
+
+protocols:
+  rest: true
+
+logging:
+  level: "info"
+  format: "json"
+
+storage:
+  backend: "filesystem"
+  path: "/data/xkms"
+
+default_backend: "pkcs8"
+
+backends:
+  pkcs8:
+    enabled: true
+    path: "/data/xkms/pkcs8"
+
+credentials:
+  seal_strategy: "software"
+`,
+			expectedStrategy: "software",
+		},
+		{
+			name: "credentials section omitted defaults to empty string",
+			yaml: `
+server:
+  host: "localhost"
+  rest_port: 8443
+  grpc_port: 9443
+
+protocols:
+  rest: true
+
+logging:
+  level: "info"
+  format: "json"
+
+storage:
+  backend: "filesystem"
+  path: "/data/xkms"
+
+default_backend: "pkcs8"
+
+backends:
+  pkcs8:
+    enabled: true
+    path: "/data/xkms/pkcs8"
+`,
+			expectedStrategy: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.yaml")
+
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0644); err != nil {
+				t.Fatalf("Failed to write test config file: %v", err)
+			}
+
+			cfg, err := Load(configPath)
+			if err != nil {
+				t.Fatalf("Load() error = %v, want nil", err)
+			}
+
+			if cfg.Credentials.SealStrategy != tt.expectedStrategy {
+				t.Errorf("Credentials.SealStrategy = %q, want %q",
+					cfg.Credentials.SealStrategy, tt.expectedStrategy)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_CredentialsSealStrategy tests env override for the credential seal strategy.
+func TestApplyEnvOverrides_CredentialsSealStrategy(t *testing.T) {
+	tests := []struct {
+		name             string
+		envValue         string
+		initialStrategy  string
+		expectedStrategy string
+	}{
+		{
+			name:             "override from empty to barrier",
+			envValue:         "barrier",
+			initialStrategy:  "",
+			expectedStrategy: "barrier",
+		},
+		{
+			name:             "override manual to tpm2",
+			envValue:         "tpm2",
+			initialStrategy:  "manual",
+			expectedStrategy: "tpm2",
+		},
+		{
+			name:             "override to pkcs11",
+			envValue:         "pkcs11",
+			initialStrategy:  "software",
+			expectedStrategy: "pkcs11",
+		},
+		{
+			name:             "override to aws_kms",
+			envValue:         "aws_kms",
+			initialStrategy:  "",
+			expectedStrategy: "aws_kms",
+		},
+		{
+			name:             "override to gcp_kms",
+			envValue:         "gcp_kms",
+			initialStrategy:  "",
+			expectedStrategy: "gcp_kms",
+		},
+		{
+			name:             "override to azure_kv",
+			envValue:         "azure_kv",
+			initialStrategy:  "",
+			expectedStrategy: "azure_kv",
+		},
+		{
+			name:             "override to vault",
+			envValue:         "vault",
+			initialStrategy:  "",
+			expectedStrategy: "vault",
+		},
+		{
+			name:             "override to software",
+			envValue:         "software",
+			initialStrategy:  "",
+			expectedStrategy: "software",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.Setenv("XKMS_CREDENTIALS_SEAL_STRATEGY", tt.envValue); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = os.Unsetenv("XKMS_CREDENTIALS_SEAL_STRATEGY") }()
+
+			cfg := Config{
+				Credentials: CredentialsConfig{
+					SealStrategy: tt.initialStrategy,
+				},
+			}
+			applyEnvOverrides(&cfg)
+
+			if cfg.Credentials.SealStrategy != tt.expectedStrategy {
+				t.Errorf("Credentials.SealStrategy = %q, want %q",
+					cfg.Credentials.SealStrategy, tt.expectedStrategy)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverrides_CredentialsSealStrategy_NotSet tests that when the env var
+// is not set, the initial value is preserved.
+func TestApplyEnvOverrides_CredentialsSealStrategy_NotSet(t *testing.T) {
+	// Ensure env var is not set.
+	_ = os.Unsetenv("XKMS_CREDENTIALS_SEAL_STRATEGY")
+
+	cfg := Config{
+		Credentials: CredentialsConfig{
+			SealStrategy: "barrier",
+		},
+	}
+	applyEnvOverrides(&cfg)
+
+	if cfg.Credentials.SealStrategy != "barrier" {
+		t.Errorf("Credentials.SealStrategy = %q, want %q (should preserve initial value when env not set)",
+			cfg.Credentials.SealStrategy, "barrier")
+	}
+}
+
+// TestValidate_NoisePort tests validation of Noise protocol port
+func TestValidate_NoisePort(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    Config
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid Noise port",
+			config: Config{
+				Protocols: ProtocolsConfig{Noise: true},
+				Server:    ServerConfig{NoisePort: 9000},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+			},
+			wantError: false,
+		},
+		{
+			name: "invalid Noise port - zero",
+			config: Config{
+				Protocols: ProtocolsConfig{Noise: true},
+				Server:    ServerConfig{NoisePort: 0},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+			},
+			wantError: true,
+			errorMsg:  "invalid Noise port",
+		},
+		{
+			name: "invalid Noise port - too high",
+			config: Config{
+				Protocols: ProtocolsConfig{Noise: true},
+				Server:    ServerConfig{NoisePort: 70000},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+			},
+			wantError: true,
+			errorMsg:  "invalid Noise port",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("Validate() error = nil, want error")
+				}
+				if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Validate() error = %v, want error containing %q", err, tt.errorMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("Validate() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestValidate_UnixSocketProtocol tests validation of Unix socket protocol field
+func TestValidate_UnixSocketProtocol(t *testing.T) {
+	baseConfig := func() Config {
+		return Config{
+			Protocols: ProtocolsConfig{REST: true},
+			Server:    ServerConfig{RESTPort: 8443},
+			Logging:   LoggingConfig{Level: "info", Format: "json"},
+			Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+			Default:   "pkcs8",
+			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		unix      UnixConfig
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name:      "valid grpc protocol",
+			unix:      UnixConfig{Enabled: true, Protocol: "grpc"},
+			wantError: false,
+		},
+		{
+			name:      "valid http protocol",
+			unix:      UnixConfig{Enabled: true, Protocol: "http"},
+			wantError: false,
+		},
+		{
+			name:      "empty protocol is valid (default)",
+			unix:      UnixConfig{Enabled: true, Protocol: ""},
+			wantError: false,
+		},
+		{
+			name:      "invalid protocol",
+			unix:      UnixConfig{Enabled: true, Protocol: "websocket"},
+			wantError: true,
+			errorMsg:  "invalid Unix socket protocol",
+		},
+		{
+			name:      "disabled unix socket skips validation",
+			unix:      UnixConfig{Enabled: false, Protocol: "invalid"},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseConfig()
+			cfg.Unix = tt.unix
+			err := cfg.Validate()
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("Validate() error = nil, want error")
+				}
+				if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Validate() error = %v, want error containing %q", err, tt.errorMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("Validate() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestValidate_RNGMode tests validation of RNG mode configuration
+func TestValidate_RNGMode(t *testing.T) {
+	baseConfig := func() Config {
+		return Config{
+			Protocols: ProtocolsConfig{REST: true},
+			Server:    ServerConfig{RESTPort: 8443},
+			Logging:   LoggingConfig{Level: "info", Format: "json"},
+			Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+			Default:   "pkcs8",
+			Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		mode         string
+		fallbackMode string
+		wantError    bool
+		errorMsg     string
+	}{
+		{
+			name:      "valid auto mode",
+			mode:      "auto",
+			wantError: false,
+		},
+		{
+			name:      "valid software mode",
+			mode:      "software",
+			wantError: false,
+		},
+		{
+			name:      "valid tpm2 mode",
+			mode:      "tpm2",
+			wantError: false,
+		},
+		{
+			name:      "valid pkcs11 mode",
+			mode:      "pkcs11",
+			wantError: false,
+		},
+		{
+			name:      "empty mode is valid (default)",
+			mode:      "",
+			wantError: false,
+		},
+		{
+			name:      "invalid mode",
+			mode:      "hardware",
+			wantError: true,
+			errorMsg:  "invalid RNG mode",
+		},
+		{
+			name:         "valid software fallback mode",
+			fallbackMode: "software",
+			wantError:    false,
+		},
+		{
+			name:         "valid tpm2 fallback mode",
+			fallbackMode: "tpm2",
+			wantError:    false,
+		},
+		{
+			name:         "valid pkcs11 fallback mode",
+			fallbackMode: "pkcs11",
+			wantError:    false,
+		},
+		{
+			name:         "invalid fallback mode",
+			fallbackMode: "random",
+			wantError:    true,
+			errorMsg:     "invalid RNG fallback mode",
+		},
+		{
+			name:         "empty fallback mode is valid (default)",
+			fallbackMode: "",
+			wantError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := baseConfig()
+			cfg.RNG.Mode = tt.mode
+			cfg.RNG.FallbackMode = tt.fallbackMode
+			err := cfg.Validate()
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("Validate() error = nil, want error")
+				}
+				if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Validate() error = %v, want error containing %q", err, tt.errorMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("Validate() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestValidate_PhoneBackend tests validation of Phone backend configuration
+func TestValidate_PhoneBackend(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    Config
+		wantError bool
+		errorMsg  string
+	}{
+		{
+			name: "valid phone backend with BLE transport",
+			config: Config{
+				Protocols: ProtocolsConfig{REST: true},
+				Server:    ServerConfig{RESTPort: 8443},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends: BackendsConfig{
+					Phone: &PhoneConfig{Enabled: true, Transport: "ble"},
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "valid phone backend with TCP transport",
+			config: Config{
+				Protocols: ProtocolsConfig{REST: true},
+				Server:    ServerConfig{RESTPort: 8443},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends: BackendsConfig{
+					Phone: &PhoneConfig{Enabled: true, Transport: "tcp"},
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "phone backend with empty transport",
+			config: Config{
+				Protocols: ProtocolsConfig{REST: true},
+				Server:    ServerConfig{RESTPort: 8443},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends: BackendsConfig{
+					Phone: &PhoneConfig{Enabled: true, Transport: ""},
+				},
+			},
+			wantError: true,
+			errorMsg:  "phone backend transport is required",
+		},
+		{
+			name: "phone backend with invalid transport",
+			config: Config{
+				Protocols: ProtocolsConfig{REST: true},
+				Server:    ServerConfig{RESTPort: 8443},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends: BackendsConfig{
+					Phone: &PhoneConfig{Enabled: true, Transport: "usb"},
+				},
+			},
+			wantError: true,
+			errorMsg:  "invalid phone backend transport",
+		},
+		{
+			name: "disabled phone backend skips validation",
+			config: Config{
+				Protocols: ProtocolsConfig{REST: true},
+				Server:    ServerConfig{RESTPort: 8443},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+				Default:   "pkcs8",
+				Backends: BackendsConfig{
+					PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"},
+					Phone: &PhoneConfig{Enabled: false, Transport: "invalid"},
+				},
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("Validate() error = nil, want error")
+				}
+				if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Validate() error = %v, want error containing %q", err, tt.errorMsg)
+				}
+			} else if err != nil {
+				t.Fatalf("Validate() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestValidate_SoftwareBackendEmptyPath tests that software backend requires a path
+func TestValidate_SoftwareBackendEmptyPath(t *testing.T) {
+	cfg := Config{
+		Protocols: ProtocolsConfig{REST: true},
+		Server:    ServerConfig{RESTPort: 8443},
+		Logging:   LoggingConfig{Level: "info", Format: "json"},
+		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Default:   "software",
+		Backends: BackendsConfig{
+			Software: &SoftwareConfig{Enabled: true, Path: ""},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil, want error for empty software path")
+	}
+	if !strings.Contains(err.Error(), "software backend path is required") {
+		t.Errorf("Validate() error = %v, want error about software backend path", err)
+	}
+}
+
+// TestGetEnabledBackends_PhoneBackend tests that GetEnabledBackends includes the phone backend
+func TestGetEnabledBackends_PhoneBackend(t *testing.T) {
+	cfg := Config{
+		Backends: BackendsConfig{
+			PKCS8: &PKCS8Config{Enabled: true},
+			Phone: &PhoneConfig{Enabled: true},
+		},
+	}
+	backends := cfg.GetEnabledBackends()
+	if len(backends) != 2 {
+		t.Fatalf("GetEnabledBackends() returned %d backends, want 2; got %v", len(backends), backends)
+	}
+	found := false
+	for _, b := range backends {
+		if b == "phone" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("GetEnabledBackends() = %v, want phone backend included", backends)
+	}
+}
+
+// TestGetEnabledBackends_PhoneOnly tests that GetEnabledBackends works with only the phone backend
+func TestGetEnabledBackends_PhoneOnly(t *testing.T) {
+	cfg := Config{
+		Backends: BackendsConfig{
+			Phone: &PhoneConfig{Enabled: true},
+		},
+	}
+	backends := cfg.GetEnabledBackends()
+	if len(backends) != 1 {
+		t.Fatalf("GetEnabledBackends() returned %d backends, want 1; got %v", len(backends), backends)
+	}
+	if backends[0] != "phone" {
+		t.Errorf("GetEnabledBackends()[0] = %v, want phone", backends[0])
+	}
+}
+
+// TestApplyEnvOverrides_PhoneBackend tests that phone backend env vars are applied
+func TestApplyEnvOverrides_PhoneBackend(t *testing.T) {
+	tests := []struct {
+		name      string
+		envVars   map[string]string
+		initial   *PhoneConfig
+		checkFunc func(t *testing.T, cfg *PhoneConfig)
+	}{
+		{
+			name: "transport override",
+			envVars: map[string]string{
+				"XKMS_PHONE_TRANSPORT": "tcp",
+			},
+			initial: &PhoneConfig{Transport: "ble"},
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				if cfg.Transport != "tcp" {
+					t.Errorf("Phone.Transport = %q, want %q", cfg.Transport, "tcp")
+				}
+			},
+		},
+		{
+			name: "device address override",
+			envVars: map[string]string{
+				"XKMS_PHONE_DEVICE_ADDRESS": "192.168.1.100:5555",
+			},
+			initial: &PhoneConfig{Transport: "tcp"},
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				if cfg.DeviceAddress != "192.168.1.100:5555" {
+					t.Errorf("Phone.DeviceAddress = %q, want %q", cfg.DeviceAddress, "192.168.1.100:5555")
+				}
+			},
+		},
+		{
+			name: "noise static key override",
+			envVars: map[string]string{
+				"XKMS_PHONE_NOISE_STATIC_KEY": "abcd1234",
+			},
+			initial: &PhoneConfig{Transport: "tcp"},
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				if cfg.NoiseStaticKey != "abcd1234" {
+					t.Errorf("Phone.NoiseStaticKey = %q, want %q", cfg.NoiseStaticKey, "abcd1234")
+				}
+			},
+		},
+		{
+			name: "phone static key override",
+			envVars: map[string]string{
+				"XKMS_PHONE_STATIC_KEY": "efgh5678",
+			},
+			initial: &PhoneConfig{Transport: "tcp"},
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				if cfg.PhoneStaticKey != "efgh5678" {
+					t.Errorf("Phone.PhoneStaticKey = %q, want %q", cfg.PhoneStaticKey, "efgh5678")
+				}
+			},
+		},
+		{
+			name: "config path override",
+			envVars: map[string]string{
+				"XKMS_PHONE_CONFIG_PATH": "/etc/xkms/phone.yaml",
+			},
+			initial: &PhoneConfig{Transport: "tcp"},
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				if cfg.ConfigPath != "/etc/xkms/phone.yaml" {
+					t.Errorf("Phone.ConfigPath = %q, want %q", cfg.ConfigPath, "/etc/xkms/phone.yaml")
+				}
+			},
+		},
+		{
+			name: "request timeout override",
+			envVars: map[string]string{
+				"XKMS_PHONE_REQUEST_TIMEOUT": "60s",
+			},
+			initial: &PhoneConfig{Transport: "tcp"},
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				if cfg.RequestTimeout != 60*time.Second {
+					t.Errorf("Phone.RequestTimeout = %v, want %v", cfg.RequestTimeout, 60*time.Second)
+				}
+			},
+		},
+		{
+			name: "request timeout invalid value ignored",
+			envVars: map[string]string{
+				"XKMS_PHONE_REQUEST_TIMEOUT": "notaduration",
+			},
+			initial: &PhoneConfig{Transport: "tcp", RequestTimeout: 30 * time.Second},
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				if cfg.RequestTimeout != 30*time.Second {
+					t.Errorf("Phone.RequestTimeout = %v, want %v (should be unchanged)", cfg.RequestTimeout, 30*time.Second)
+				}
+			},
+		},
+		{
+			name: "nil phone config not affected",
+			envVars: map[string]string{
+				"XKMS_PHONE_TRANSPORT": "tcp",
+			},
+			initial: nil,
+			checkFunc: func(t *testing.T, cfg *PhoneConfig) {
+				// cfg is nil, nothing to check; test verifies no panic
+			},
+		},
+	}
+
+	phoneEnvVars := []string{
+		"XKMS_PHONE_TRANSPORT",
+		"XKMS_PHONE_DEVICE_ADDRESS",
+		"XKMS_PHONE_NOISE_STATIC_KEY",
+		"XKMS_PHONE_STATIC_KEY",
+		"XKMS_PHONE_CONFIG_PATH",
+		"XKMS_PHONE_REQUEST_TIMEOUT",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear all phone env vars first
+			for _, env := range phoneEnvVars {
+				_ = os.Unsetenv(env)
+			}
+			// Set test env vars
+			for k, v := range tt.envVars {
+				t.Setenv(k, v)
+			}
+
+			cfg := Config{
+				Backends: BackendsConfig{
+					Phone: tt.initial,
+				},
+			}
+			applyEnvOverrides(&cfg)
+			tt.checkFunc(t, cfg.Backends.Phone)
+		})
+	}
+}
+
+// TestApplyEnvOverrides_BootstrapNoise tests that Bootstrap Noise env vars are applied
+func TestApplyEnvOverrides_BootstrapNoise(t *testing.T) {
+	tests := []struct {
+		name      string
+		envVars   map[string]string
+		checkFunc func(t *testing.T, cfg *Config)
+	}{
+		{
+			name: "noise enabled true",
+			envVars: map[string]string{
+				"XKMS_NOISE_ENABLED": "true",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if !cfg.Bootstrap.Noise.Enabled {
+					t.Error("Bootstrap.Noise.Enabled = false, want true")
+				}
+			},
+		},
+		{
+			name: "noise enabled false",
+			envVars: map[string]string{
+				"XKMS_NOISE_ENABLED": "false",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Bootstrap.Noise.Enabled {
+					t.Error("Bootstrap.Noise.Enabled = true, want false")
+				}
+			},
+		},
+		{
+			name: "noise static key hex",
+			envVars: map[string]string{
+				"XKMS_NOISE_STATIC_KEY": "deadbeef01020304",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Bootstrap.Noise.StaticKeyHex != "deadbeef01020304" {
+					t.Errorf("Bootstrap.Noise.StaticKeyHex = %q, want %q", cfg.Bootstrap.Noise.StaticKeyHex, "deadbeef01020304")
+				}
+			},
+		},
+		{
+			name: "noise static key file",
+			envVars: map[string]string{
+				"XKMS_NOISE_STATIC_KEY_FILE": "/etc/xkms/noise.key",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Bootstrap.Noise.StaticKeyFile != "/etc/xkms/noise.key" {
+					t.Errorf("Bootstrap.Noise.StaticKeyFile = %q, want %q", cfg.Bootstrap.Noise.StaticKeyFile, "/etc/xkms/noise.key")
+				}
+			},
+		},
+		{
+			name: "noise port override",
+			envVars: map[string]string{
+				"XKMS_NOISE_PORT": "9100",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Server.NoisePort != 9100 {
+					t.Errorf("Server.NoisePort = %d, want %d", cfg.Server.NoisePort, 9100)
+				}
+			},
+		},
+	}
+
+	noiseEnvVars := []string{
+		"XKMS_NOISE_ENABLED",
+		"XKMS_NOISE_STATIC_KEY",
+		"XKMS_NOISE_STATIC_KEY_FILE",
+		"XKMS_NOISE_PORT",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, env := range noiseEnvVars {
+				_ = os.Unsetenv(env)
+			}
+			for k, v := range tt.envVars {
+				t.Setenv(k, v)
+			}
+
+			cfg := Config{}
+			applyEnvOverrides(&cfg)
+			tt.checkFunc(t, &cfg)
+		})
+	}
+}
+
+// TestApplyEnvOverrides_BootstrapSPKI tests that Bootstrap SPKI env vars are applied
+func TestApplyEnvOverrides_BootstrapSPKI(t *testing.T) {
+	_ = os.Unsetenv("XKMS_SPKI_PIN")
+
+	t.Run("spki pin sets enabled and value", func(t *testing.T) {
+		t.Setenv("XKMS_SPKI_PIN", "sha256/abc123def456")
+		cfg := Config{}
+		applyEnvOverrides(&cfg)
+		if !cfg.Bootstrap.SPKI.Enabled {
+			t.Error("Bootstrap.SPKI.Enabled = false, want true")
+		}
+		if cfg.Bootstrap.SPKI.PinSHA256 != "sha256/abc123def456" {
+			t.Errorf("Bootstrap.SPKI.PinSHA256 = %q, want %q", cfg.Bootstrap.SPKI.PinSHA256, "sha256/abc123def456")
+		}
+	})
+
+	t.Run("spki pin not set preserves defaults", func(t *testing.T) {
+		_ = os.Unsetenv("XKMS_SPKI_PIN")
+		cfg := Config{}
+		applyEnvOverrides(&cfg)
+		if cfg.Bootstrap.SPKI.Enabled {
+			t.Error("Bootstrap.SPKI.Enabled = true, want false when env not set")
+		}
+	})
+}
+
+// TestApplyEnvOverrides_BootstrapDANE tests that Bootstrap DANE env vars are applied
+func TestApplyEnvOverrides_BootstrapDANE(t *testing.T) {
+	daneEnvVars := []string{
+		"XKMS_DANE_ENABLED",
+		"XKMS_DANE_HOSTNAME",
+		"XKMS_DANE_PORT",
+		"XKMS_DANE_DNS_SERVER",
+	}
+	for _, env := range daneEnvVars {
+		_ = os.Unsetenv(env)
+	}
+
+	tests := []struct {
+		name      string
+		envVars   map[string]string
+		checkFunc func(t *testing.T, cfg *Config)
+	}{
+		{
+			name: "dane enabled",
+			envVars: map[string]string{
+				"XKMS_DANE_ENABLED": "true",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if !cfg.Bootstrap.DANE.Enabled {
+					t.Error("Bootstrap.DANE.Enabled = false, want true")
+				}
+			},
+		},
+		{
+			name: "dane hostname",
+			envVars: map[string]string{
+				"XKMS_DANE_HOSTNAME": "xkms.example.com",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Bootstrap.DANE.Hostname != "xkms.example.com" {
+					t.Errorf("Bootstrap.DANE.Hostname = %q, want %q", cfg.Bootstrap.DANE.Hostname, "xkms.example.com")
+				}
+			},
+		},
+		{
+			name: "dane port",
+			envVars: map[string]string{
+				"XKMS_DANE_PORT": "8443",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Bootstrap.DANE.Port != 8443 {
+					t.Errorf("Bootstrap.DANE.Port = %d, want %d", cfg.Bootstrap.DANE.Port, 8443)
+				}
+			},
+		},
+		{
+			name: "dane dns server",
+			envVars: map[string]string{
+				"XKMS_DANE_DNS_SERVER": "8.8.8.8:53",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Bootstrap.DANE.DNSServer != "8.8.8.8:53" {
+					t.Errorf("Bootstrap.DANE.DNSServer = %q, want %q", cfg.Bootstrap.DANE.DNSServer, "8.8.8.8:53")
+				}
+			},
+		},
+		{
+			name: "dane port invalid ignored",
+			envVars: map[string]string{
+				"XKMS_DANE_PORT": "notaport",
+			},
+			checkFunc: func(t *testing.T, cfg *Config) {
+				if cfg.Bootstrap.DANE.Port != 0 {
+					t.Errorf("Bootstrap.DANE.Port = %d, want 0 (should be unchanged)", cfg.Bootstrap.DANE.Port)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, env := range daneEnvVars {
+				_ = os.Unsetenv(env)
+			}
+			for k, v := range tt.envVars {
+				t.Setenv(k, v)
+			}
+
+			cfg := Config{}
+			applyEnvOverrides(&cfg)
+			tt.checkFunc(t, &cfg)
+		})
+	}
+}
+
+// TestValidate_UnixProtocolCaseSensitivity verifies the protocol matching is case-insensitive
+func TestValidate_UnixProtocolCaseSensitivity(t *testing.T) {
+	cfg := Config{
+		Protocols: ProtocolsConfig{REST: true},
+		Server:    ServerConfig{RESTPort: 8443},
+		Logging:   LoggingConfig{Level: "info", Format: "json"},
+		Storage:   StorageConfig{Backend: "filesystem", Path: "/data"},
+		Default:   "pkcs8",
+		Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+		Unix:      UnixConfig{Enabled: true, Protocol: "GRPC"},
+	}
+	err := cfg.Validate()
+	if err != nil {
+		t.Fatalf("Validate() error = %v, want nil for uppercase GRPC protocol", err)
+	}
+}
+
+// TestStorageConfig_QRDB tests validation of QRDB storage backend configuration.
+func TestStorageConfig_QRDB(t *testing.T) {
+	tests := []struct {
+		name      string
+		storage   StorageConfig
+		wantError bool
+		errSubstr string
+	}{
+		{
+			name: "valid qrdb config",
+			storage: StorageConfig{
+				Backend: "qrdb",
+				QRDB: QRDBConfig{
+					Address:   "https://localhost:63002",
+					Transport: "rest",
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "qrdb missing address",
+			storage: StorageConfig{
+				Backend: "qrdb",
+				QRDB: QRDBConfig{
+					Transport: "rest",
+				},
+			},
+			wantError: true,
+			errSubstr: "qrdb storage address is required",
+		},
+		{
+			name: "qrdb does not require path",
+			storage: StorageConfig{
+				Backend: "qrdb",
+				Path:    "",
+				QRDB: QRDBConfig{
+					Address:   "https://node1:63002",
+					Transport: "grpc",
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "qrdb with tls",
+			storage: StorageConfig{
+				Backend: "qrdb",
+				QRDB: QRDBConfig{
+					Address:   "https://node1:63002",
+					Transport: "rest",
+					TLS: TLSConfig{
+						Enabled:  true,
+						CertFile: "/path/to/cert.pem",
+						KeyFile:  "/path/to/key.pem",
+					},
+				},
+			},
+			wantError: false,
+		},
+		{
+			name: "file backend still requires path",
+			storage: StorageConfig{
+				Backend: "file",
+				Path:    "",
+			},
+			wantError: true,
+			errSubstr: "storage path must be specified",
+		},
+		{
+			name: "memory backend requires path",
+			storage: StorageConfig{
+				Backend: "memory",
+				Path:    "/data",
+			},
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{
+				Protocols: ProtocolsConfig{REST: true},
+				Server:    ServerConfig{RESTPort: 8443},
+				Logging:   LoggingConfig{Level: "info", Format: "json"},
+				Storage:   tt.storage,
+				Default:   "pkcs8",
+				Backends:  BackendsConfig{PKCS8: &PKCS8Config{Enabled: true, Path: "/data/pkcs8"}},
+			}
+
+			err := cfg.Validate()
+			if tt.wantError {
+				if err == nil {
+					t.Error("Validate() error = nil, want error")
+					return
+				}
+				if tt.errSubstr != "" && !strings.Contains(err.Error(), tt.errSubstr) {
+					t.Errorf("Validate() error = %v, want substring %q", err, tt.errSubstr)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Validate() error = %v, want nil", err)
+				}
+			}
+		})
+	}
+}
+
+// TestStorageConfig_QRDBDefaults verifies the zero value of QRDBConfig.
+func TestStorageConfig_QRDBDefaults(t *testing.T) {
+	sc := StorageConfig{Backend: "file", Path: "/data"}
+	if sc.QRDB.Address != "" {
+		t.Errorf("QRDBConfig.Address zero value = %q, want empty", sc.QRDB.Address)
+	}
+	if sc.QRDB.Transport != "" {
+		t.Errorf("QRDBConfig.Transport zero value = %q, want empty", sc.QRDB.Transport)
 	}
 }

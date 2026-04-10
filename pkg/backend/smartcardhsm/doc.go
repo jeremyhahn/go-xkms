@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,98 +11,63 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build pkcs11
-
-// Package smartcardhsm provides a backend implementation for SmartCard-HSM devices.
+// Package smartcardhsm provides a backend for SmartCard-HSM devices.
 //
-// SmartCard-HSM is a lightweight, affordable hardware security module that provides:
-//   - PKCS#11 interface for standard cryptographic operations
-//   - DKEK (Device Key Encryption Key) protocol for secure key backup/restore
-//   - Support for RSA, ECDSA, and Ed25519 key operations
-//   - Symmetric encryption (AES-GCM)
-//   - Hardware-backed key storage
+// SmartCard-HSM is a lightweight hardware security module available as a
+// USB token (Nitrokey HSM) or smart card (CardContact SmartCard-HSM).
+// It provides secure key storage with support for M-of-N key splitting
+// using DKEK (Device Key Encryption Key).
 //
-// # DKEK Protocol
+// # Features
 //
-// The DKEK protocol enables secure key backup and restore operations using
-// Shamir's Secret Sharing scheme. A master DKEK is split into N shares, where
-// any M shares can reconstruct the original key (M-of-N threshold scheme).
-//
-// This is useful for:
-//   - Distributing key management across multiple administrators
-//   - Creating secure backups of HSM keys
-//   - Migrating keys between SmartCard-HSM devices
-//   - Distributed key management in raft clusters (e.g., go-dragondb)
-//
-// # Usage Example
-//
-//	// Create PKCS#11 config for SmartCard-HSM
-//	pkcs11Config := &pkcs11.Config{
-//		Library:    "/usr/lib/opensc-pkcs11.so",
-//		TokenLabel: "SmartCard-HSM",
-//		PIN:        "648219",
-//		KeyStorage: keyStorage,
-//		CertStorage: certStorage,
-//	}
-//
-//	// Create SmartCard-HSM backend with DKEK
-//	config := &smartcardhsm.Config{
-//		PKCS11Config:  pkcs11Config,
-//		DKEKShares:    5, // Create 5 shares
-//		DKEKThreshold: 3, // Need any 3 to reconstruct
-//		DKEKStorage:   dkekStorage,
-//	}
-//
-//	backend, err := smartcardhsm.NewBackend(config)
-//	if err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	// Initialize and login
-//	if err := backend.Initialize(); err != nil {
-//		log.Fatal(err)
-//	}
-//	if err := backend.Login("648219"); err != nil {
-//		log.Fatal(err)
-//	}
-//
-//	// Use like any other backend
-//	pubKey, err := backend.GenerateRSA([]byte("my-key"), 2048, attrs)
-//
-// # DKEK Operations
-//
-// Generate DKEK shares:
-//
-//	shares, err := backend.DKEK().Generate()
-//	// Distribute shares to N administrators
-//
-// Reconstruct DKEK from shares:
-//
-//	// Collect M shares from administrators
-//	dkek, err := backend.DKEK().Reconstruct(shares)
-//
-// # Security Considerations
-//
-// - DKEK shares should be stored securely and distributed to different administrators
-// - The threshold should be chosen to balance security and availability
-// - Shares can be stored offline, on paper, or in secure vaults
-// - The reconstructed DKEK should never be stored; regenerate when needed
-// - This backend requires the PKCS#11 library for SmartCard-HSM
+//   - Standard PKCS#11 operations via embedded pkcs11.Backend
+//   - M-of-N DKEK key splitting using Shamir's Secret Sharing
+//   - Secure key backup/restore with DKEK-wrapped keys
+//   - Key migration between devices with matching DKEK
+//   - Device initialization with configurable PIN retry counter
 //
 // # Build Tags
 //
-// This package requires the 'pkcs11' build tag:
+// This package requires the "smartcardhsm" build tag:
 //
-//	go build -tags=pkcs11
+//	go build -tags smartcardhsm
 //
-// # Supported Devices
+// Without this tag, stub implementations are provided that return errors.
 //
-// - SmartCard-HSM (Nitrokey HSM, CardContact SmartCard-HSM)
-// - Any PKCS#11 device that supports similar DKEK protocol
+// # DKEK (Device Key Encryption Key)
 //
-// # References
+// DKEK enables secure key export/import between SmartCard-HSM devices.
+// The DKEK can be split into N shares where M shares are required to
+// reconstruct it (M-of-N threshold scheme).
 //
-//   - SmartCard-HSM: https://www.smartcard-hsm.com/
-//   - PKCS#11: https://docs.oasis-open.org/pkcs11/pkcs11-base/v2.40/
-//   - Shamir's Secret Sharing: https://en.wikipedia.org/wiki/Shamir%27s_Secret_Sharing
+// Example: 3-of-5 DKEK setup
+//
+//	// Generate 5 shares, require 3 to reconstruct
+//	shares, err := smartcardhsm.GenerateDKEKShares(5, 3)
+//
+//	// Initialize device with DKEK
+//	backend.InitializeDevice(soPin, userPin, 3, 5, 3)
+//
+//	// Import shares (need 3 of 5)
+//	backend.ImportDKEKShare(shares[0])
+//	backend.ImportDKEKShare(shares[2])
+//	backend.ImportDKEKShare(shares[4])
+//
+//	// Now can wrap/unwrap keys
+//	wrapped, _ := backend.WrapKey(keyRef)
+//	backend.UnwrapKey(keyRef, wrapped)
+//
+// # Dependencies
+//
+// This package requires:
+//   - github.com/ebfe/scard - PC/SC smart card communication
+//   - OpenSC PKCS#11 library installed on the system
+//
+// On Debian/Ubuntu:
+//
+//	apt install opensc pcscd libpcsclite-dev
+//
+// On macOS:
+//
+//	brew install opensc
 package smartcardhsm

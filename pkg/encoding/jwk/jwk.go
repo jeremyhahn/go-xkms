@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -356,8 +356,8 @@ func fromECDSAPublicKey(key *ecdsa.PublicKey) (*JWK, error) {
 	return &JWK{
 		Kty: string(KeyTypeEC),
 		Crv: string(crv),
-		X:   base64.RawURLEncoding.EncodeToString(key.X.Bytes()),
-		Y:   base64.RawURLEncoding.EncodeToString(key.Y.Bytes()),
+		X:   base64.RawURLEncoding.EncodeToString(key.X.Bytes()), //nolint:staticcheck // JWK RFC 7518 requires raw EC coordinates
+		Y:   base64.RawURLEncoding.EncodeToString(key.Y.Bytes()), //nolint:staticcheck // JWK RFC 7518 requires raw EC coordinates
 	}, nil
 }
 
@@ -367,7 +367,7 @@ func fromECDSAPrivateKey(key *ecdsa.PrivateKey) (*JWK, error) {
 		return nil, err
 	}
 
-	jwk.D = base64.RawURLEncoding.EncodeToString(key.D.Bytes())
+	jwk.D = base64.RawURLEncoding.EncodeToString(key.D.Bytes()) //nolint:staticcheck // JWK RFC 7518 requires raw private scalar
 	return jwk, nil
 }
 

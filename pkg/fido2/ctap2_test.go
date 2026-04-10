@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -294,47 +294,6 @@ func TestAuthenticator_GetAssertion_WithAllowListTransports(t *testing.T) {
 	resp, err := auth.GetAssertion(req)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-}
-
-func TestAuthenticator_GetAssertion_WithCanoKeyWorkaround(t *testing.T) {
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	config := DefaultConfig
-	config.WorkaroundCanoKey = true
-
-	ctapDev, err := NewCTAPHIDDevice(mockDev, &config)
-	require.NoError(t, err)
-	defer func() { _ = ctapDev.Close() }()
-
-	auth, err := NewAuthenticator(ctapDev, &config)
-	require.NoError(t, err)
-
-	credID := make([]byte, 32)
-	salt := make([]byte, 32)
-
-	req := &GetAssertionRequest{
-		RPID:           "example.com",
-		ClientDataHash: CreateClientDataHash([]byte("test challenge")),
-		AllowList: []PublicKeyCredentialDescriptor{
-			{
-				Type: "public-key",
-				ID:   credID,
-			},
-		},
-		Extensions: map[string]interface{}{
-			ExtensionHMACSecret: map[string]interface{}{
-				"salt1": salt,
-			},
-		},
-		Options: AuthenticatorOptions{
-			UP: true,
-		},
-	}
-
-	resp, err := auth.GetAssertion(req)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-
-	assert.NotEmpty(t, resp.AuthData)
 }
 
 func TestAuthenticator_Info(t *testing.T) {

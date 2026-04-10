@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // TestIntegration_Capabilities_AllAlgorithms queries all supported algorithms from the TPM

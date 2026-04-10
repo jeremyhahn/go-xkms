@@ -124,11 +124,11 @@ docker compose down -v
 docker volume ls
 
 # Inspect volume
-docker volume inspect go-keychain_swtpm-data
-docker volume inspect go-keychain_softhsm-tokens
+docker volume inspect go-xkms_swtpm-data
+docker volume inspect go-xkms_softhsm-tokens
 
 # Remove volumes
-docker volume rm go-keychain_swtpm-data go-keychain_softhsm-tokens
+docker volume rm go-xkms_swtpm-data go-xkms_softhsm-tokens
 ```
 
 ## Health Checks
@@ -152,8 +152,8 @@ docker volume rm go-keychain_swtpm-data go-keychain_softhsm-tokens
 docker compose ps
 
 # Check specific service
-docker inspect go-keychain-swtpm --format='{{.State.Health.Status}}'
-docker inspect go-keychain-softhsm --format='{{.State.Health.Status}}'
+docker inspect go-xkms-swtpm --format='{{.State.Health.Status}}'
+docker inspect go-xkms-softhsm --format='{{.State.Health.Status}}'
 ```
 
 ## Troubleshooting

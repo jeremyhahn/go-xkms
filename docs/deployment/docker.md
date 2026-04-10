@@ -1,10 +1,10 @@
 # Docker Deployment Guide
 
-This guide covers building and deploying go-keychain using Docker containers.
+This guide covers building and deploying go-xkms using Docker containers.
 
 ## Available Images
 
-go-keychain provides six production-ready Docker images:
+go-xkms provides six production-ready Docker images:
 
 1. **Dockerfile.server** - Unified server (all protocols: REST, gRPC, QUIC, MCP)
 2. **Dockerfile.rest** - REST-only server
@@ -126,20 +126,20 @@ When running multiple services, ports are mapped to avoid conflicts:
 
 ### Volume Mounts
 
-All containers expect configuration in `/etc/keychain/config.yaml`:
+All containers expect configuration in `/etc/xkms/config.yaml`:
 
 ```bash
 docker run -d \
-  -v $(PWD)/configs:/etc/keychain:ro \
+  -v $(PWD)/configs:/etc/xkms:ro \
   -p 8443:8443 \
-  go-keychain/server:latest
+  go-xkms/server:latest
 ```
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| KEYSTORE_CONFIG | /etc/keychain/config.yaml | Path to config file |
+| KEYSTORE_CONFIG | /etc/xkms/config.yaml | Path to config file |
 
 ### Data Persistence
 
@@ -147,9 +147,9 @@ Mount volumes for persistent data:
 
 ```bash
 docker run -d \
-  -v keychain-data:/var/lib/keychain \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  go-keychain/server:latest
+  -v xkms-data:/var/lib/xkms \
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms/server:latest
 ```
 
 ## Configuration Files
@@ -174,15 +174,15 @@ protocols:
 
 tls:
   enabled: true
-  cert_file: /etc/keychain/server.crt
-  key_file: /etc/keychain/server.key
+  cert_file: /etc/xkms/server.crt
+  key_file: /etc/xkms/server.key
 
-default_backend: pkcs8
+default_backend: software
 
 backends:
-  pkcs8:
+  software:
     enabled: true
-    path: /var/lib/keychain/keys
+    path: /var/lib/xkms/keys
 ```
 
 ### configs/config-rest.yaml (REST-only)
@@ -227,7 +227,7 @@ Build with version metadata:
 docker build \
   --build-arg VERSION=v1.0.0 \
   --build-arg COMMIT=$(git rev-parse --short HEAD) \
-  -t go-keychain/server:v1.0.0 \
+  -t go-xkms/server:v1.0.0 \
   -f Dockerfile.server .
 ```
 
@@ -264,9 +264,9 @@ make docker-push-all
 ### Push Individual Images
 
 ```bash
-docker push ghcr.io/your-org/go-keychain-server:latest
-docker push ghcr.io/your-org/go-keychain-rest:latest
-docker push ghcr.io/your-org/go-keychain-grpc:latest
+docker push ghcr.io/your-org/go-xkms-server:latest
+docker push ghcr.io/your-org/go-xkms-rest:latest
+docker push ghcr.io/your-org/go-xkms-grpc:latest
 ```
 
 ## Health Checks
@@ -276,7 +276,7 @@ All server images include health checks:
 ```bash
 # Check container health
 docker ps
-docker inspect keychain-server | grep -A 10 Health
+docker inspect xkms-server | grep -A 10 Health
 ```
 
 ### REST Health Endpoint
@@ -302,11 +302,11 @@ Always use TLS in production:
 ```yaml
 tls:
   enabled: true
-  cert_file: /etc/keychain/server.crt
-  key_file: /etc/keychain/server.key
+  cert_file: /etc/xkms/server.crt
+  key_file: /etc/xkms/server.key
   client_auth: require_and_verify
   client_cas:
-    - /etc/keychain/client-ca.crt
+    - /etc/xkms/client-ca.crt
 ```
 
 ### Secrets Management
@@ -319,9 +319,9 @@ Never commit secrets to the repository. Use:
 
 ```bash
 docker run -d \
-  -v /secure/path/certs:/etc/keychain:ro \
+  -v /secure/path/certs:/etc/xkms:ro \
   --secret server_key \
-  go-keychain/server:latest
+  go-xkms/server:latest
 ```
 
 ## Troubleshooting
@@ -330,10 +330,10 @@ docker run -d \
 
 ```bash
 # Docker logs
-docker logs keychain-server
+docker logs xkms-server
 
 # Follow logs
-docker logs -f keychain-server
+docker logs -f xkms-server
 
 # Docker Compose logs
 make compose-prod-logs
@@ -344,7 +344,7 @@ make compose-prod-logs
 Access running container:
 
 ```bash
-docker exec -it keychain-server sh
+docker exec -it xkms-server sh
 ```
 
 ### Verify Binary
@@ -352,7 +352,7 @@ docker exec -it keychain-server sh
 Check server version:
 
 ```bash
-docker run --rm go-keychain/server:latest --version
+docker run --rm go-xkms/server:latest --version
 ```
 
 ### Check Health
@@ -362,7 +362,7 @@ docker run --rm go-keychain/server:latest --version
 curl -k https://localhost:8443/health
 
 # Container health status
-docker inspect --format='{{.State.Health.Status}}' keychain-server
+docker inspect --format='{{.State.Health.Status}}' xkms-server
 ```
 
 ## Performance Tuning
@@ -373,7 +373,7 @@ Set resource limits in docker-compose.yml:
 
 ```yaml
 services:
-  keychain-server:
+  xkms-server:
     deploy:
       resources:
         limits:
@@ -390,7 +390,7 @@ For production, use custom networks:
 
 ```yaml
 networks:
-  keychain-net:
+  xkms-net:
     driver: bridge
     ipam:
       config:
@@ -447,25 +447,25 @@ server:
 protocols:
   rest: true
   grpc: true
-default_backend: pkcs8
+default_backend: software
 backends:
-  pkcs8:
+  software:
     enabled: true
-    path: /var/lib/keychain/keys
+    path: /var/lib/xkms/keys
 EOF
 
 # Run container
-docker run -d --name keychain \
+docker run -d --name xkms \
   -p 8443:8443 -p 9443:9443 \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  -v keychain-data:/var/lib/keychain \
-  go-keychain/server:latest
+  -v $(PWD)/configs:/etc/xkms:ro \
+  -v xkms-data:/var/lib/xkms \
+  go-xkms/server:latest
 
 # Check health
 curl -k https://localhost:8443/health
 
 # View logs
-docker logs -f keychain
+docker logs -f xkms
 ```
 
 ### Running REST-Only Server
@@ -486,14 +486,14 @@ make docker-build-cli
 
 # Run CLI command
 docker run --rm \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  go-keychain/cli:latest \
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms/cli:latest \
   keys list
 
 # Interactive shell
 docker run -it --rm \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  go-keychain/cli:latest \
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms/cli:latest \
   sh
 ```
 

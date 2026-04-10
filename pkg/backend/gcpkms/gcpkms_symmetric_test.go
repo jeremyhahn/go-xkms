@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,9 +22,9 @@ import (
 	"testing"
 
 	"cloud.google.com/go/kms/apiv1/kmspb"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -519,7 +519,7 @@ func TestSymmetricEncrypter_Encrypt(t *testing.T) {
 			}
 
 			if encrypted.Algorithm != string(types.SymmetricAES256GCM) {
-				t.Errorf("Algorithm = %v, want %v", encrypted.Algorithm, backend.ALG_AES256_GCM)
+				t.Errorf("Algorithm = %v, want %v", encrypted.Algorithm, "aes256-gcm")
 			}
 		})
 	}
@@ -882,5 +882,64 @@ func TestGCPKMSBackend_BytesLimit(t *testing.T) {
 	// Verify error is ErrBytesLimitExceeded
 	if !errors.Is(err, backend.ErrBytesLimitExceeded) {
 		t.Errorf("Expected ErrBytesLimitExceeded, got: %v", err)
+	}
+}
+
+// TestGetTracker_ReturnsTracker verifies that GetTracker returns the configured tracker.
+func TestGetTracker_ReturnsTracker(t *testing.T) {
+	config := &Config{
+		ProjectID:   "test-project",
+		LocationID:  "us-central1",
+		KeyRingID:   "test-keyring",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	mockClient := &MockKMSClient{}
+
+	b, err := NewBackendWithClient(config, mockClient)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+
+	tracker := b.GetTracker()
+	if tracker == nil {
+		t.Fatal("GetTracker() returned nil, expected non-nil default tracker")
+	}
+
+	// Verify it is the same instance as the backend's tracker field
+	if tracker != b.tracker {
+		t.Error("GetTracker() returned a different tracker instance than the backend's tracker field")
+	}
+}
+
+// TestGetTracker_DefaultTracker verifies that a backend created without an explicit
+// tracker gets a non-nil default tracker from NewBackendWithClient.
+func TestGetTracker_DefaultTracker(t *testing.T) {
+	config := &Config{
+		ProjectID:   "test-project",
+		LocationID:  "us-central1",
+		KeyRingID:   "test-keyring",
+		KeyStorage:  storage.New(),
+		CertStorage: storage.New(),
+	}
+
+	mockClient := &MockKMSClient{}
+
+	b, err := NewBackendWithClient(config, mockClient)
+	if err != nil {
+		t.Fatalf("Failed to create backend: %v", err)
+	}
+
+	tracker := b.GetTracker()
+	if tracker == nil {
+		t.Fatal("GetTracker() returned nil, expected a default tracker to be initialized")
+	}
+
+	// Verify the tracker is functional by performing a basic operation
+	keyID := "test-default-tracker-key"
+	opts := types.DefaultAEADOptions()
+	if err := tracker.SetAEADOptions(keyID, opts); err != nil {
+		t.Errorf("Default tracker SetAEADOptions() failed: %v", err)
 	}
 }

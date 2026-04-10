@@ -1,0 +1,103 @@
+# Default xkmsd configuration
+# Uses xkms-data/ in current working directory (no root required)
+
+server:
+  host: "127.0.0.1"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 8445
+
+protocols:
+  unix: true
+  rest: false
+  grpc: false
+  quic: false
+  mcp: false
+
+unix:
+  enabled: true
+  socket_path: "xkms-data/xkms.sock"
+  socket_mode: "0660"
+  protocol: "grpc"
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: false
+
+auth:
+  enabled: false
+  type: "noop"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+  path: "/metrics"
+  port: 9090
+
+health:
+  enabled: true
+  path: "/health"
+
+storage:
+  backend: "file"
+  path: "xkms-data/storage"
+
+rng:
+  mode: "software"
+  fallback_mode: "software"
+
+default_backend: "software"
+
+backends:
+  # Software backends (always available)
+  software:
+    enabled: true
+    key_dir: "xkms-data/keys/software"
+
+  pkcs8:
+    enabled: true
+    key_dir: "xkms-data/keys/pkcs8"
+
+  aes:
+    enabled: true
+    key_dir: "xkms-data/keys/aes"
+
+  # Hardware backends (may not be available in all environments)
+  tpm2:
+    enabled: true
+    device: "/dev/tpmrm0"
+    key_dir: "xkms-data/keys/tpm2"
+    use_simulator: false
+    encrypt_session: false
+
+  pkcs11:
+    enabled: true
+    library_path: "/usr/lib/softhsm/libsofthsm2.so"
+    token_label: "xkms"
+    pin: "1234"
+
+  # Cloud backends (will fail if credentials not available)
+  awskms:
+    enabled: true
+    region: "us-east-1"
+
+  gcpkms:
+    enabled: true
+    project_id: ""
+    location_id: "us-east1"
+    key_ring_id: "xkms"
+
+  azurekv:
+    enabled: true
+    # Will use environment variables for Azure authentication
+
+  vault:
+    enabled: true
+    address: "http://localhost:8200"
+    # Will use VAULT_TOKEN env var

@@ -47,6 +47,53 @@ func createMockEventLog() []byte {
 	return buf.Bytes()
 }
 
+// createEventLogEntry creates a binary event log entry for testing
+func createEventLogEntry(pcrIndex uint32, eventType uint32, digests []struct {
+	algID  uint16
+	digest []byte
+}, eventData []byte) []byte {
+	buf := new(bytes.Buffer)
+
+	// PCR Index (4 bytes)
+	_ = binary.Write(buf, binary.LittleEndian, pcrIndex)
+
+	// Event Type (4 bytes)
+	_ = binary.Write(buf, binary.LittleEndian, eventType)
+
+	// Digest Count (4 bytes)
+	_ = binary.Write(buf, binary.LittleEndian, uint32(len(digests)))
+
+	// Digests
+	for _, d := range digests {
+		_ = binary.Write(buf, binary.LittleEndian, d.algID)
+		buf.Write(d.digest)
+	}
+
+	// Event Size (4 bytes)
+	_ = binary.Write(buf, binary.LittleEndian, uint32(len(eventData)))
+
+	// Event Data
+	buf.Write(eventData)
+
+	return buf.Bytes()
+}
+
+// createTempEventLogFile creates a temporary file with binary data
+func createTempEventLogFile(t *testing.T, data []byte) string {
+	t.Helper()
+	f, err := os.CreateTemp("", "eventlog_test_*.bin")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	if _, err := f.Write(data); err != nil {
+		t.Fatalf("failed to write to temp file: %v", err)
+	}
+
+	return f.Name()
+}
+
 func TestParseEventLog_Success(t *testing.T) {
 	// Create mock event log file
 	data := createMockEventLog()
@@ -192,6 +239,11 @@ func TestEstimateDigestSize(t *testing.T) {
 			expected: 32,
 		},
 		{
+			name:     "platform extension algorithm 0x7FFF",
+			algID:    0x7FFF,
+			expected: 32,
+		},
+		{
 			name:     "high range algorithm 0xFFFF",
 			algID:    0xFFFF,
 			expected: 32,
@@ -210,6 +262,21 @@ func TestEstimateDigestSize(t *testing.T) {
 			name:     "edge case just below threshold 0x1FFF",
 			algID:    0x1FFF,
 			expected: 0,
+		},
+		{
+			name:     "unknown standard range algorithm 0x0001",
+			algID:    0x0001,
+			expected: 0,
+		},
+		{
+			name:     "zero algorithm",
+			algID:    0x0000,
+			expected: 0,
+		},
+		{
+			name:     "vendor extension 0x3000",
+			algID:    0x3000,
+			expected: 32,
 		},
 	}
 
@@ -409,6 +476,14 @@ func TestInitializePCRs(t *testing.T) {
 			t.Error("InitializePCRs() returns shared state")
 		}
 	})
+
+	t.Run("maps are writable", func(t *testing.T) {
+		pcrs := InitializePCRs()
+		pcrs["sha256"][0] = make([]byte, 32)
+		if len(pcrs["sha256"]) != 1 {
+			t.Errorf("expected 1 entry in sha256 map after adding")
+		}
+	})
 }
 
 // Tests for GetHashFunction
@@ -458,6 +533,18 @@ func TestGetHashFunction(t *testing.T) {
 		{
 			name:         "empty string returns error",
 			algorithmId:  "",
+			expectedSize: 0,
+			expectError:  true,
+		},
+		{
+			name:         "md5 returns error",
+			algorithmId:  "md5",
+			expectedSize: 0,
+			expectError:  true,
+		},
+		{
+			name:         "SHA-256 with dash returns error",
+			algorithmId:  "SHA-256",
 			expectedSize: 0,
 			expectError:  true,
 		},
@@ -589,6 +676,15 @@ func TestExtendPCR(t *testing.T) {
 		if !bytes.Equal(result, result2) {
 			t.Error("ExtendPCR() is not deterministic")
 		}
+
+		// Verify manually
+		hasher := sha1.New()
+		hasher.Write(currentPCR)
+		hasher.Write(digest)
+		expected := hasher.Sum(nil)
+		if !bytes.Equal(result, expected) {
+			t.Errorf("SHA1 extension mismatch\nexpected: %x\ngot:      %x", expected, result)
+		}
 	})
 
 	t.Run("extend SHA256 PCR", func(t *testing.T) {
@@ -601,6 +697,15 @@ func TestExtendPCR(t *testing.T) {
 		}
 		if len(result) != sha256.Size {
 			t.Errorf("ExtendPCR() returned %d bytes, want %d", len(result), sha256.Size)
+		}
+
+		// Verify manually
+		hasher := sha256.New()
+		hasher.Write(currentPCR)
+		hasher.Write(digest)
+		expected := hasher.Sum(nil)
+		if !bytes.Equal(result, expected) {
+			t.Errorf("SHA256 extension mismatch\nexpected: %x\ngot:      %x", expected, result)
 		}
 	})
 
@@ -647,6 +752,22 @@ func TestExtendPCR(t *testing.T) {
 		_, err := ExtendPCR(currentPCR, digest, "unknown")
 		if err == nil {
 			t.Error("ExtendPCR() expected error for unknown algorithm")
+		}
+		if !strings.Contains(err.Error(), "unsupported hash algorithm") {
+			t.Errorf("expected 'unsupported hash algorithm' error, got: %v", err)
+		}
+	})
+
+	t.Run("error on invalid algorithm returns nil result", func(t *testing.T) {
+		currentPCR := make([]byte, 32)
+		digest := make([]byte, 32)
+
+		result, err := ExtendPCR(currentPCR, digest, "invalid")
+		if err == nil {
+			t.Error("ExtendPCR() with invalid algorithm expected error, got nil")
+		}
+		if result != nil {
+			t.Errorf("ExtendPCR() with invalid algorithm expected nil result, got %v", result)
 		}
 	})
 
@@ -697,6 +818,36 @@ func TestExtendPCR(t *testing.T) {
 		}
 		if allZero {
 			t.Error("ExtendPCR() multiple extensions resulted in all zeros")
+		}
+	})
+
+	t.Run("chained extensions produce correct result", func(t *testing.T) {
+		pcr := make([]byte, sha256.Size)
+		digests := [][]byte{
+			make([]byte, sha256.Size),
+			{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32},
+			{255, 254, 253, 252, 251, 250, 249, 248, 247, 246, 245, 244, 243, 242, 241, 240, 239, 238, 237, 236, 235, 234, 233, 232, 231, 230, 229, 228, 227, 226, 225, 224},
+		}
+
+		var err error
+		for _, digest := range digests {
+			pcr, err = ExtendPCR(pcr, digest, "sha256")
+			if err != nil {
+				t.Fatalf("ExtendPCR failed: %v", err)
+			}
+		}
+
+		// Verify by computing manually
+		expected := make([]byte, sha256.Size)
+		for _, digest := range digests {
+			hasher := sha256.New()
+			hasher.Write(expected)
+			hasher.Write(digest)
+			expected = hasher.Sum(nil)
+		}
+
+		if !bytes.Equal(pcr, expected) {
+			t.Errorf("chained extensions mismatch\nexpected: %x\ngot:      %x", expected, pcr)
 		}
 	})
 }
@@ -754,6 +905,16 @@ func TestCalculatePCRs(t *testing.T) {
 		}
 		if allZero {
 			t.Error("CalculatePCRs() PCR should not be all zeros after extension")
+		}
+
+		// Verify the PCR extension is correct: PCR = SHA256(0x00...00 || digest)
+		hasher := sha256.New()
+		hasher.Write(make([]byte, sha256.Size))
+		digestBytes, _ := hex.DecodeString(digest)
+		hasher.Write(digestBytes)
+		expected := hasher.Sum(nil)
+		if !bytes.Equal(pcr, expected) {
+			t.Errorf("PCR 0 mismatch\nexpected: %x\ngot:      %x", expected, pcr)
 		}
 	})
 
@@ -901,6 +1062,77 @@ func TestCalculatePCRs(t *testing.T) {
 			t.Error("CalculatePCRs() PCR 1 and 7 should be different")
 		}
 	})
+
+	t.Run("unsupported algorithm only", func(t *testing.T) {
+		events := []Event{
+			{
+				EventNum:  1,
+				PCRIndex:  0,
+				EventType: "EV_NO_ACTION",
+				Digests: []Digest{
+					{AlgorithmId: "sm3_256", Digest: strings.Repeat("00", 32)},
+				},
+			},
+		}
+
+		pcrs := CalculatePCRs(events)
+
+		// SM3_256 should be skipped, so no PCRs should be calculated
+		hasAnyPCR := false
+		for _, algMap := range pcrs {
+			if len(algMap) > 0 {
+				hasAnyPCR = true
+				break
+			}
+		}
+
+		if hasAnyPCR {
+			t.Error("expected no PCRs to be calculated for unsupported algorithm")
+		}
+	})
+
+	t.Run("multiple algorithms per event", func(t *testing.T) {
+		events := []Event{
+			{
+				EventNum:  1,
+				PCRIndex:  0,
+				EventType: "EV_NO_ACTION",
+				Digests: []Digest{
+					{AlgorithmId: "sha1", Digest: strings.Repeat("00", 20)},
+					{AlgorithmId: "sha256", Digest: strings.Repeat("00", 32)},
+					{AlgorithmId: "sha384", Digest: strings.Repeat("00", 48)},
+					{AlgorithmId: "sha512", Digest: strings.Repeat("00", 64)},
+				},
+			},
+		}
+
+		pcrs := CalculatePCRs(events)
+
+		// Verify all algorithms have PCR 0
+		for _, alg := range []string{"sha1", "sha256", "sha384", "sha512"} {
+			if _, exists := pcrs[alg]; !exists {
+				t.Errorf("expected %s in PCR map", alg)
+				continue
+			}
+			if _, exists := pcrs[alg][0]; !exists {
+				t.Errorf("expected PCR 0 in %s map", alg)
+			}
+		}
+
+		// Verify correct sizes
+		if len(pcrs["sha1"][0]) != sha1.Size {
+			t.Errorf("sha1 PCR size wrong: %d", len(pcrs["sha1"][0]))
+		}
+		if len(pcrs["sha256"][0]) != sha256.Size {
+			t.Errorf("sha256 PCR size wrong: %d", len(pcrs["sha256"][0]))
+		}
+		if len(pcrs["sha384"][0]) != sha512.Size384 {
+			t.Errorf("sha384 PCR size wrong: %d", len(pcrs["sha384"][0]))
+		}
+		if len(pcrs["sha512"][0]) != sha512.Size {
+			t.Errorf("sha512 PCR size wrong: %d", len(pcrs["sha512"][0]))
+		}
+	})
 }
 
 // Tests for printPCRSummary (captured output testing)
@@ -1015,11 +1247,123 @@ func TestPrintPCRSummary(t *testing.T) {
 		if !strings.Contains(output, "sha256:") {
 			t.Error("printPCRSummary() should print sha256")
 		}
-
-		// Empty banks should not print (no PCR values means no header)
-		// Note: The current implementation may still print empty banks
-		// This test validates the behavior
 	})
+}
+
+// Tests for PrintEvents
+func TestPrintEvents(t *testing.T) {
+	tests := []struct {
+		name     string
+		events   []Event
+		expected []string
+	}{
+		{
+			name: "single event with SHA1 digest",
+			events: []Event{
+				{
+					EventNum:    1,
+					PCRIndex:    0,
+					EventType:   "EV_NO_ACTION",
+					DigestCount: 1,
+					Digests: []Digest{
+						{
+							AlgorithmId: "sha1",
+							Digest:      "0000000000000000000000000000000000000000",
+						},
+					},
+					EventSize:   4,
+					EventString: "test",
+				},
+			},
+			expected: []string{
+				"EventNum: 1",
+				"PCRIndex: 0",
+				"EventType: EV_NO_ACTION",
+				"DigestCount: 1",
+				"AlgorithmId: sha1",
+				"Digest: \"0000000000000000000000000000000000000000\"",
+				"EventSize: 4",
+				"String: \"test\"",
+			},
+		},
+		{
+			name: "multiple events with different algorithms",
+			events: []Event{
+				{
+					EventNum:    1,
+					PCRIndex:    0,
+					EventType:   "EV_S_POST_CODE",
+					DigestCount: 2,
+					Digests: []Digest{
+						{
+							AlgorithmId: "sha1",
+							Digest:      "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+						},
+						{
+							AlgorithmId: "sha256",
+							Digest:      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+						},
+					},
+					EventSize:   8,
+					EventString: "POSTCODE",
+				},
+				{
+					EventNum:    2,
+					PCRIndex:    1,
+					EventType:   "EV_SEPARATOR",
+					DigestCount: 1,
+					Digests: []Digest{
+						{
+							AlgorithmId: "sha256",
+							Digest:      "0000000000000000000000000000000000000000000000000000000000000000",
+						},
+					},
+					EventSize:   4,
+					EventString: "SEP",
+				},
+			},
+			expected: []string{
+				"EventNum: 1",
+				"PCRIndex: 0",
+				"EventType: EV_S_POST_CODE",
+				"DigestCount: 2",
+				"AlgorithmId: sha1",
+				"AlgorithmId: sha256",
+				"EventNum: 2",
+				"PCRIndex: 1",
+				"EventType: EV_SEPARATOR",
+			},
+		},
+		{
+			name:     "empty events",
+			events:   []Event{},
+			expected: []string{"pcrs:"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Capture stdout
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			PrintEvents(tt.events)
+
+			_ = w.Close()
+			os.Stdout = oldStdout
+
+			var buf bytes.Buffer
+			_, _ = buf.ReadFrom(r)
+			output := buf.String()
+
+			for _, exp := range tt.expected {
+				if !strings.Contains(output, exp) {
+					t.Errorf("expected output to contain %q, but it didn't\nOutput: %s", exp, output)
+				}
+			}
+		})
+	}
 }
 
 // Tests for getDigestSizeByAlgID
@@ -1035,7 +1379,10 @@ func TestGetDigestSizeByAlgID(t *testing.T) {
 		{"SHA512", AlgSHA512, 64},
 		{"SM3_256", AlgSM3256, 32},
 		{"SM3_256 Alt", AlgSM3256Alt, 32},
-		{"Unknown", 0xFFFF, 0},
+		{"Unknown 0xFFFF", 0xFFFF, 0},
+		{"Unknown 0x0001", 0x0001, 0},
+		{"Zero", 0x0000, 0},
+		{"Unknown 0x9999", 0x9999, 0},
 	}
 
 	for _, tt := range tests {
@@ -1062,6 +1409,7 @@ func TestParseAlgorithmId(t *testing.T) {
 		{"SM3_256", AlgSM3256, "sm3_256"},
 		{"SM3_256 Alt", AlgSM3256Alt, "sm3_256"},
 		{"Unknown 0x1234", 0x1234, "unknown_0x1234"},
+		{"Unknown 0xFFFF", 0xFFFF, "unknown_0xffff"},
 	}
 
 	for _, tt := range tests {
@@ -1111,6 +1459,20 @@ func TestParseEventType(t *testing.T) {
 			t.Errorf("parseEventType(unknown) = %q, want prefix 'Unknown'", result)
 		}
 	})
+
+	t.Run("unknown event type format", func(t *testing.T) {
+		result := parseEventType(0x99999999)
+		if result != "Unknown (0x99999999)" {
+			t.Errorf("parseEventType(0x99999999) = %s, expected Unknown (0x99999999)", result)
+		}
+	})
+
+	t.Run("unknown event type format 2", func(t *testing.T) {
+		result := parseEventType(0x12345678)
+		if result != "Unknown (0x12345678)" {
+			t.Errorf("parseEventType(0x12345678) = %q, want %q", result, "Unknown (0x12345678)")
+		}
+	})
 }
 
 // Tests for parseEventString
@@ -1145,6 +1507,31 @@ func TestParseEventString(t *testing.T) {
 			data:     []byte{0x00, 0x01, 0x02, 0x03},
 			expected: "",
 		},
+		{
+			name:     "grub command",
+			data:     []byte("grub_cmd: test command"),
+			expected: "grub_cmd: test command",
+		},
+		{
+			name:     "with null bytes",
+			data:     []byte("test\x00\x00\x00string"),
+			expected: "string",
+		},
+		{
+			name:     "multiple sequences returns longest",
+			data:     []byte("short\x00\x00\x00\x00longer sequence here"),
+			expected: "longer sequence here",
+		},
+		{
+			name:     "special characters",
+			data:     []byte("Key=Value;Test!@#$%"),
+			expected: "Key=Value;Test!@#$%",
+		},
+		{
+			name:     "with spaces",
+			data:     []byte("   test   "),
+			expected: "   test   ",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1154,6 +1541,486 @@ func TestParseEventString(t *testing.T) {
 				t.Errorf("parseEventString(%v) = %q, want %q", tt.data, result, tt.expected)
 			}
 		})
+	}
+}
+
+// Tests for DefaultParseEventLogOptions
+func TestDefaultParseEventLogOptions(t *testing.T) {
+	opts := DefaultParseEventLogOptions()
+
+	if !opts.SkipUnknownAlgorithms {
+		t.Error("expected SkipUnknownAlgorithms to be true by default")
+	}
+}
+
+// Tests for ParseEventLog with single SHA1 event
+func TestParseEventLog_SingleSHA1Event(t *testing.T) {
+	sha1Digest := make([]byte, 20)
+	for i := range sha1Digest {
+		sha1Digest[i] = byte(i)
+	}
+
+	eventData := createEventLogEntry(
+		0,          // PCR 0
+		0x00000003, // EV_NO_ACTION
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA1, sha1Digest},
+		},
+		[]byte("TEST EVENT"),
+	)
+
+	tmpFile := createTempEventLogFile(t, eventData)
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	events, err := ParseEventLog(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to parse event log: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	event := events[0]
+	if event.PCRIndex != 0 {
+		t.Errorf("expected PCRIndex 0, got %d", event.PCRIndex)
+	}
+	if event.EventType != "EV_NO_ACTION" {
+		t.Errorf("expected EventType EV_NO_ACTION, got %s", event.EventType)
+	}
+	if event.DigestCount != 1 {
+		t.Errorf("expected DigestCount 1, got %d", event.DigestCount)
+	}
+	if event.Digests[0].AlgorithmId != "sha1" {
+		t.Errorf("expected AlgorithmId sha1, got %s", event.Digests[0].AlgorithmId)
+	}
+	expectedDigest := hex.EncodeToString(sha1Digest)
+	if event.Digests[0].Digest != expectedDigest {
+		t.Errorf("expected Digest %s, got %s", expectedDigest, event.Digests[0].Digest)
+	}
+	if event.EventString != "TEST EVENT" {
+		t.Errorf("expected EventString 'TEST EVENT', got %s", event.EventString)
+	}
+}
+
+// Tests for ParseEventLog with single SHA256 event
+func TestParseEventLog_SingleSHA256Event(t *testing.T) {
+	sha256Digest := make([]byte, 32)
+	for i := range sha256Digest {
+		sha256Digest[i] = byte(i * 2)
+	}
+
+	eventData := createEventLogEntry(
+		1,          // PCR 1
+		0x80000006, // EV_S_POST_CODE
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA256, sha256Digest},
+		},
+		[]byte("POST CODE DATA"),
+	)
+
+	tmpFile := createTempEventLogFile(t, eventData)
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	events, err := ParseEventLog(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to parse event log: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	event := events[0]
+	if event.PCRIndex != 1 {
+		t.Errorf("expected PCRIndex 1, got %d", event.PCRIndex)
+	}
+	if event.EventType != "EV_S_POST_CODE" {
+		t.Errorf("expected EventType EV_S_POST_CODE, got %s", event.EventType)
+	}
+	if event.Digests[0].AlgorithmId != "sha256" {
+		t.Errorf("expected AlgorithmId sha256, got %s", event.Digests[0].AlgorithmId)
+	}
+}
+
+// Tests for ParseEventLog with multiple events and algorithms
+func TestParseEventLog_MultipleEventsMultipleAlgorithms(t *testing.T) {
+	sha1Digest := make([]byte, 20)
+	sha256Digest := make([]byte, 32)
+	sha384Digest := make([]byte, 48)
+	sha512Digest := make([]byte, 64)
+
+	for i := range sha1Digest {
+		sha1Digest[i] = byte(i)
+	}
+	for i := range sha256Digest {
+		sha256Digest[i] = byte(i * 2)
+	}
+	for i := range sha384Digest {
+		sha384Digest[i] = byte(i * 3)
+	}
+	for i := range sha512Digest {
+		sha512Digest[i] = byte(i * 4)
+	}
+
+	// Event 1: SHA1 + SHA256
+	event1 := createEventLogEntry(
+		0,
+		0x00000003, // EV_NO_ACTION
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA1, sha1Digest},
+			{AlgSHA256, sha256Digest},
+		},
+		[]byte("Event 1"),
+	)
+
+	// Event 2: SHA384 + SHA512
+	event2 := createEventLogEntry(
+		7,
+		0x00000004, // EV_SEPARATOR
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA384, sha384Digest},
+			{AlgSHA512, sha512Digest},
+		},
+		[]byte("Event 2"),
+	)
+
+	// Event 3: All four algorithms
+	event3 := createEventLogEntry(
+		14,
+		0x00000008, // EV_ACTION
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA1, sha1Digest},
+			{AlgSHA256, sha256Digest},
+			{AlgSHA384, sha384Digest},
+			{AlgSHA512, sha512Digest},
+		},
+		[]byte("Event 3 with all algorithms"),
+	)
+
+	var allData bytes.Buffer
+	allData.Write(event1)
+	allData.Write(event2)
+	allData.Write(event3)
+
+	tmpFile := createTempEventLogFile(t, allData.Bytes())
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	events, err := ParseEventLog(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to parse event log: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	// Verify Event 1
+	if events[0].PCRIndex != 0 {
+		t.Errorf("event 1: expected PCRIndex 0, got %d", events[0].PCRIndex)
+	}
+	if events[0].DigestCount != 2 {
+		t.Errorf("event 1: expected DigestCount 2, got %d", events[0].DigestCount)
+	}
+
+	// Verify Event 2
+	if events[1].PCRIndex != 7 {
+		t.Errorf("event 2: expected PCRIndex 7, got %d", events[1].PCRIndex)
+	}
+	if events[1].EventType != "EV_SEPARATOR" {
+		t.Errorf("event 2: expected EventType EV_SEPARATOR, got %s", events[1].EventType)
+	}
+
+	// Verify Event 3
+	if events[2].PCRIndex != 14 {
+		t.Errorf("event 3: expected PCRIndex 14, got %d", events[2].PCRIndex)
+	}
+	if events[2].DigestCount != 4 {
+		t.Errorf("event 3: expected DigestCount 4, got %d", events[2].DigestCount)
+	}
+}
+
+// Tests for ParseEventLog with various truncated data
+func TestParseEventLog_TruncatedData(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "truncated PCR index",
+			data: []byte{0x00, 0x00}, // Only 2 bytes instead of 4
+		},
+		{
+			name: "truncated event type",
+			data: func() []byte {
+				buf := new(bytes.Buffer)
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0)) // PCR index
+				buf.Write([]byte{0x00, 0x00})                         // Only 2 bytes for event type
+				return buf.Bytes()
+			}(),
+		},
+		{
+			name: "truncated digest count",
+			data: func() []byte {
+				buf := new(bytes.Buffer)
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0))          // PCR index
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0x00000003)) // Event type
+				buf.Write([]byte{0x01})                                        // Only 1 byte for digest count
+				return buf.Bytes()
+			}(),
+		},
+		{
+			name: "truncated algorithm ID",
+			data: func() []byte {
+				buf := new(bytes.Buffer)
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0))          // PCR index
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0x00000003)) // Event type
+				_ = binary.Write(buf, binary.LittleEndian, uint32(1))          // Digest count
+				buf.Write([]byte{0x04})                                        // Only 1 byte for alg ID
+				return buf.Bytes()
+			}(),
+		},
+		{
+			name: "truncated digest data",
+			data: func() []byte {
+				buf := new(bytes.Buffer)
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0))          // PCR index
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0x00000003)) // Event type
+				_ = binary.Write(buf, binary.LittleEndian, uint32(1))          // Digest count
+				_ = binary.Write(buf, binary.LittleEndian, AlgSHA1)            // SHA1 algorithm
+				buf.Write(make([]byte, 10))                                    // Only 10 bytes instead of 20
+				return buf.Bytes()
+			}(),
+		},
+		{
+			name: "truncated event size",
+			data: func() []byte {
+				buf := new(bytes.Buffer)
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0))          // PCR index
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0x00000003)) // Event type
+				_ = binary.Write(buf, binary.LittleEndian, uint32(1))          // Digest count
+				_ = binary.Write(buf, binary.LittleEndian, AlgSHA1)            // SHA1 algorithm
+				buf.Write(make([]byte, 20))                                    // Full SHA1 digest
+				buf.Write([]byte{0x00, 0x00})                                  // Only 2 bytes for event size
+				return buf.Bytes()
+			}(),
+		},
+		{
+			name: "truncated event data",
+			data: func() []byte {
+				buf := new(bytes.Buffer)
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0))          // PCR index
+				_ = binary.Write(buf, binary.LittleEndian, uint32(0x00000003)) // Event type
+				_ = binary.Write(buf, binary.LittleEndian, uint32(1))          // Digest count
+				_ = binary.Write(buf, binary.LittleEndian, AlgSHA1)            // SHA1 algorithm
+				buf.Write(make([]byte, 20))                                    // Full SHA1 digest
+				_ = binary.Write(buf, binary.LittleEndian, uint32(100))        // Event size = 100
+				buf.Write([]byte("short"))                                     // Only 5 bytes instead of 100
+				return buf.Bytes()
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile := createTempEventLogFile(t, tt.data)
+			defer func() { _ = os.Remove(tmpFile) }()
+
+			_, err := ParseEventLog(tmpFile)
+			if err == nil {
+				t.Errorf("expected error for truncated data, got nil")
+			}
+		})
+	}
+}
+
+// Tests for ParseEventLog with file not found
+func TestParseEventLog_FileNotFound(t *testing.T) {
+	_, err := ParseEventLog("/nonexistent/path/to/eventlog.bin")
+	if err == nil {
+		t.Error("expected error for non-existent file, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to open file") {
+		t.Errorf("expected 'failed to open file' error, got: %v", err)
+	}
+}
+
+// Tests for ParseEventLog with empty file
+func TestParseEventLog_EmptyFile(t *testing.T) {
+	tmpFile := createTempEventLogFile(t, []byte{})
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	events, err := ParseEventLog(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to parse empty event log: %v", err)
+	}
+
+	if len(events) != 0 {
+		t.Errorf("expected 0 events for empty file, got %d", len(events))
+	}
+}
+
+// Tests for ParseEventLog with zero event size
+func TestParseEventLog_ZeroEventSize(t *testing.T) {
+	sha1Digest := make([]byte, 20)
+	eventData := createEventLogEntry(
+		0,
+		0x00000003, // EV_NO_ACTION
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA1, sha1Digest},
+		},
+		[]byte{}, // Empty event data
+	)
+
+	tmpFile := createTempEventLogFile(t, eventData)
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	events, err := ParseEventLog(tmpFile)
+	if err != nil {
+		t.Fatalf("failed to parse event log: %v", err)
+	}
+
+	if events[0].EventSize != 0 {
+		t.Errorf("expected EventSize 0, got %d", events[0].EventSize)
+	}
+	if events[0].EventString != "" {
+		t.Errorf("expected empty EventString, got %q", events[0].EventString)
+	}
+}
+
+// Tests for ParseEventLogWithOptions with skip unknown algorithms
+func TestParseEventLogWithOptions_SkipUnknownAlgorithms(t *testing.T) {
+	// Create event with known algorithm (AlgSHA1) followed by unknown vendor algorithm
+	sha1Digest := make([]byte, 20)
+	unknownDigest := make([]byte, 32) // Vendor algorithms often use 32 bytes
+
+	for i := range sha1Digest {
+		sha1Digest[i] = byte(i)
+	}
+
+	eventData := createEventLogEntry(
+		0,
+		0x00000003, // EV_NO_ACTION
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA1, sha1Digest},
+			{0x2001, unknownDigest}, // Unknown vendor algorithm (>= 0x2000)
+		},
+		[]byte("Event with unknown algorithm"),
+	)
+
+	tmpFile := createTempEventLogFile(t, eventData)
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	// Test with SkipUnknownAlgorithms = true
+	opts := ParseEventLogOptions{SkipUnknownAlgorithms: true}
+	events, err := ParseEventLogWithOptions(tmpFile, opts)
+	if err != nil {
+		t.Fatalf("failed to parse with SkipUnknownAlgorithms=true: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].DigestCount != 2 {
+		t.Errorf("expected DigestCount 2, got %d", events[0].DigestCount)
+	}
+	if len(events[0].Digests) != 2 {
+		t.Errorf("expected 2 digests, got %d", len(events[0].Digests))
+	}
+}
+
+// Tests for ParseEventLogWithOptions with don't skip unknown algorithms
+func TestParseEventLogWithOptions_DontSkipUnknownAlgorithms(t *testing.T) {
+	// Create event with unknown algorithm in standard range (cannot estimate size)
+	sha1Digest := make([]byte, 20)
+
+	eventData := createEventLogEntry(
+		0,
+		0x00000003, // EV_NO_ACTION
+		[]struct {
+			algID  uint16
+			digest []byte
+		}{
+			{AlgSHA1, sha1Digest},
+			{0x0099, make([]byte, 32)}, // Unknown algorithm in standard range
+		},
+		[]byte("Event with unknown standard algorithm"),
+	)
+
+	tmpFile := createTempEventLogFile(t, eventData)
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	// Test with SkipUnknownAlgorithms = false
+	opts := ParseEventLogOptions{SkipUnknownAlgorithms: false}
+	_, err := ParseEventLogWithOptions(tmpFile, opts)
+	if err == nil {
+		t.Error("expected error for unknown algorithm with SkipUnknownAlgorithms=false")
+	}
+	if !strings.Contains(err.Error(), "unknown algorithm ID") {
+		t.Errorf("expected 'unknown algorithm ID' error, got: %v", err)
+	}
+}
+
+// Tests for ParseEventLog with multi-digest event
+func TestParseEventLog_MultiDigestEvent(t *testing.T) {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(7))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(0x0004))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(3))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(AlgSHA1))
+	buf.Write(make([]byte, 20))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(AlgSHA256))
+	buf.Write(make([]byte, 32))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(AlgSHA384))
+	buf.Write(make([]byte, 48))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(0))
+
+	tmpFile := createTempEventLogFile(t, buf.Bytes())
+	defer func() { _ = os.Remove(tmpFile) }()
+
+	events, err := ParseEventLog(tmpFile)
+	if err != nil {
+		t.Fatalf("ParseEventLog() unexpected error: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("ParseEventLog() expected 1 event, got %d", len(events))
+	}
+
+	event := events[0]
+	if event.DigestCount != 3 {
+		t.Errorf("Event DigestCount = %d, want 3", event.DigestCount)
+	}
+	if len(event.Digests) != 3 {
+		t.Errorf("Event Digests length = %d, want 3", len(event.Digests))
+	}
+
+	expectedAlgos := []string{"sha1", "sha256", "sha384"}
+	for i, alg := range expectedAlgos {
+		if event.Digests[i].AlgorithmId != alg {
+			t.Errorf("Digest[%d].AlgorithmId = %q, want %q", i, event.Digests[i].AlgorithmId, alg)
+		}
 	}
 }
 

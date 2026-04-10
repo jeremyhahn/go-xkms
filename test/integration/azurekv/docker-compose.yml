@@ -10,8 +10,11 @@ services:
       - AZURE_CLIENT_SECRET=test-secret
     volumes:
       - ../../..:/app
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
     working_dir: /app
 
 networks:
   default:
-    name: keychain-azurekv-test
+    name: xkms-azurekv-test

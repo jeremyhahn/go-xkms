@@ -62,7 +62,6 @@ remoteVerifier.Verify(stmt, opts)
 ### PKCS#11 HSM
 - Thales nShield
 - YubiKey HSM
-- SmartCard-HSM
 - Gemalto/SafeNet devices
 - SoftHSM (for testing)
 
@@ -95,8 +94,8 @@ remoteVerifier.Verify(stmt, opts)
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/types"
-    "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // Initialize hardware backend
@@ -134,7 +133,7 @@ attestStmt := stmt.(*attestation.AttestationStatement)
 ### Verifying an Attestation
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/attestation"
+import "github.com/jeremyhahn/go-xkms/pkg/attestation"
 
 // Create verifier with trusted roots
 trustedRoots := loadTrustedRoots()
@@ -285,14 +284,14 @@ verifier.Verify(stmt, opts)
 ## Error Handling
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/keychain"
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
 
 stmt, err := backend.AttestKey(keyAttrs, nonce)
 switch err {
-case keychain.ErrNotSupported:
+case xkms.ErrNotSupported:
     // Hardware doesn't support attestation
     fmt.Println("This backend does not support key attestation")
-case keychain.ErrNotFound:
+case xkms.ErrNotFound:
     // Key doesn't exist
     fmt.Println("Key not found")
 default:

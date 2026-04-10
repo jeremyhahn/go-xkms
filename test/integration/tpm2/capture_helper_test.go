@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2/transport"
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 )
 
 // setupTPM2WithCapture creates a TPM2 instance with traffic capture enabled

@@ -1,6 +1,6 @@
 # Storage Integration Tests
 
-Comprehensive integration tests for go-keychain storage packages.
+Comprehensive integration tests for go-xkms storage packages.
 
 ## Overview
 
@@ -212,7 +212,7 @@ docker-compose restart tpm-simulator
 ```bash
 # File storage permission issues
 chmod 755 test/integration/storage
-rm -rf /tmp/go-keychain-test-*
+rm -rf /tmp/go-xkms-test-*
 
 # SoftHSM token directory
 sudo mkdir -p /var/lib/softhsm/tokens

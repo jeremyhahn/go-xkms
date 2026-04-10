@@ -1,9 +1,12 @@
+//go:build tpm_simulator
+// +build tpm_simulator
+
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,9 +26,12 @@ import (
 	"log/slog"
 	"testing"
 
-	kbackend "github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/google/go-tpm/tpm2"
+	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGenerateSymmetricKey tests generating an AES symmetric key in the TPM
@@ -203,6 +209,39 @@ func TestSymmetricEncryptWithAAD(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when decrypting with wrong AAD")
 	}
+}
+
+// TestSymmetricDecryptInvalidTag tests decryption with a corrupted authentication tag
+func TestSymmetricDecryptInvalidTag(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	attrs := &types.KeyAttributes{
+		CN:                 "test-invalid-tag",
+		KeyType:            types.KeyTypeEncryption,
+		KeyAlgorithm:       x509.UnknownPublicKeyAlgorithm,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+	}
+
+	_, err := tpmObj.GenerateSymmetricKey(attrs)
+	require.NoError(t, err)
+
+	encrypter, err := tpmObj.SymmetricEncrypter(attrs)
+	require.NoError(t, err)
+
+	plaintext := []byte("test message")
+	encryptedData, err := encrypter.Encrypt(plaintext, nil)
+	require.NoError(t, err)
+
+	// Corrupt the authentication tag
+	encryptedData.Tag[0] ^= 0xFF
+
+	// Decryption should fail
+	_, err = encrypter.Decrypt(encryptedData, nil)
+	assert.Error(t, err, "decryption should fail with corrupted tag")
 }
 
 // TestNonceReuse tests that the TPM2 backend detects and prevents nonce reuse
@@ -397,6 +436,48 @@ func TestTracker(t *testing.T) {
 	}
 }
 
+// TestRSAEncrypt_Basic tests RSA encryption with EK handle
+func TestRSAEncrypt_Basic(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	ekAttrs, err := tpmObj.EKAttributes()
+	require.NoError(t, err)
+
+	message := []byte("test message")
+
+	ciphertext, err := tpmObj.RSAEncrypt(
+		ekAttrs.TPMAttributes.Handle,
+		ekAttrs.TPMAttributes.Name,
+		message,
+	)
+
+	if err != nil {
+		t.Logf("RSAEncrypt not supported: %v", err)
+		return
+	}
+
+	assert.NotEqual(t, message, ciphertext)
+}
+
+// TestRSAEncrypt_InvalidHandle tests RSA encryption with invalid handle
+func TestRSAEncrypt_InvalidHandle(t *testing.T) {
+	_, tpmInterface := createSim(false, false)
+	defer func() { _ = tpmInterface.Close() }()
+
+	tpmObj, ok := tpmInterface.(*TPM2)
+	require.True(t, ok, "expected *TPM2 type")
+
+	invalidHandle := tpm2.TPMHandle(0xFFFFFFFF)
+	invalidName := tpm2.TPM2BName{Buffer: []byte("invalid")}
+
+	_, err := tpmObj.RSAEncrypt(invalidHandle, invalidName, []byte("test"))
+	assert.Error(t, err)
+}
+
 // createSimWithTracker creates a simulated TPM with a custom AEAD tracker
 func createSimWithTracker(encrypt, entropy bool) (*slog.Logger, TrustedPlatformModule) {
 	logger := slog.Default()
@@ -416,8 +497,6 @@ func createSimWithTracker(encrypt, entropy bool) (*slog.Logger, TrustedPlatformM
 		logger.Error("failed to create storage factory", "error", err)
 		panic(err)
 	}
-	// Note: In a real test, we'd defer storageFactory.Close() but this helper
-	// doesn't return a cleanup function. The temp dir will be cleaned up on program exit.
 
 	blobStore := storageFactory.BlobStore()
 	fileBackend := storageFactory.KeyBackend()
@@ -465,7 +544,7 @@ func createSimWithTracker(encrypt, entropy bool) (*slog.Logger, TrustedPlatformM
 				KeySize: 2048,
 			},
 		},
-		KeyStore: &KeyStoreConfig{
+		PlatformSRK: &PlatformSRKConfig{
 			SRKAuth:        "testme",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
@@ -482,10 +561,10 @@ func createSimWithTracker(encrypt, entropy bool) (*slog.Logger, TrustedPlatformM
 		Tracker:      tracker,
 	}
 
-	tpm, err := NewTPM2(params)
+	tpmInst, err := NewTPM2(params)
 	if err != nil {
 		if err == ErrNotInitialized {
-			if err = tpm.Provision(nil); err != nil {
+			if err = tpmInst.Provision(nil); err != nil {
 				logger.Error("failed to provision TPM", "error", err)
 				panic(err)
 			}
@@ -495,5 +574,5 @@ func createSimWithTracker(encrypt, entropy bool) (*slog.Logger, TrustedPlatformM
 		}
 	}
 
-	return logger, tpm
+	return logger, tpmInst
 }

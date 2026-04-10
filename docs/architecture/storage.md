@@ -1,12 +1,34 @@
 # Storage Architecture
 
-This document describes the storage interfaces and abstraction layer in go-keychain.
+This document describes the storage interfaces and abstraction layer in go-xkms.
+
+## Consolidated Storage Layer
+
+Canonical storage engines (file, memory, pebble, namespace) are now maintained in **go-qrdb** (`go-qrdb/pkg/storage/`). go-xkms imports these engines directly. A thin QRDB networked adapter at `pkg/storage/qrdb/` wraps the go-qrdb SDK client for distributed mode.
+
+```yaml
+storage:
+  backend: memory    # memory | file | pebble
+  path: /var/lib/xkms/metadata
+```
+
+Available constructors:
+
+| Constructor | Description |
+|-------------|-------------|
+| `storage.New()` / `storage.NewMemory()` | In-memory storage |
+| `file.New(path)` | File-based storage (go-xkms native) |
+| `storage.NewFile(path)` | File storage via go-qrdb engine |
+| `storage.NewPebble(path)` | PebbleDB storage via go-qrdb engine |
+| `qrdb.NewMemory()` | go-qrdb in-memory engine |
+| `qrdb.NewFile(path)` | go-qrdb file engine |
+| `qrdb.NewPebble(path)` | go-qrdb PebbleDB engine |
 
 ## Overview
 
-The storage abstraction layer provides pluggable persistence for keychain backends with the following benefits:
+The storage abstraction layer provides pluggable persistence for xkms backends with the following benefits:
 
-- **Flexibility**: Switch storage backends without changing keychain code
+- **Flexibility**: Switch storage backends without changing xkms code
 - **Testability**: Use memory storage for tests, file storage for production
 - **Extensibility**: Implement custom storage backends (database, cloud, etc.)
 - **Separation**: Keystore logic independent of persistence details
@@ -15,66 +37,79 @@ The storage abstraction layer provides pluggable persistence for keychain backen
 ## Interface Hierarchy
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│          Application Layer                                   │
-│  (Can create adapters for external storage like go-objstore)│
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│          General Storage                                     │
-│          storage.Backend Interface                           │
-│  - Get / Put / Delete / List / Exists                        │
-│  - []byte based key-value storage                            │
-│  - Built-in: File and Memory implementations                 │
-└─────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|          Application Layer                                       |
+|  (Can create adapters for external storage like go-objstore)    |
++----------------------------+------------------------------------+
+                             |
++----------------------------v------------------------------------+
+|          General Storage                                         |
+|          storage.Backend Interface                               |
+|  - Get / Put / Delete / List / Scan / Exists                    |
+|  - []byte based key-value storage                                |
+|  - Built-in: File, Memory, PebbleDB implementations             |
++------------------------------------------------------------------+
 
-┌─────────────────────────────────────────────────────────────┐
-│          TPM Blob Storage                                    │
-│          BlobStorer Interface                                │
-│  - Read / Write / Delete                                     │
-│  - []byte based (simple)                                     │
-│  - TPM private/public blobs                                  │
-└─────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------+
+|          TPM Blob Storage                                        |
+|          BlobStorer Interface                                    |
+|  - Read / Write / Delete                                         |
+|  - []byte based (simple)                                         |
+|  - TPM private/public blobs                                      |
++------------------------------------------------------------------+
 
-┌─────────────────────────────────────────────────────────────┐
-│          Certificate Storage                                 │
-│          CertStore Interface                                 │
-│  - StoreCertificate / GetCertificate                         │
-│  - Certificate chain management                              │
-│  - CRL operations                                            │
-│  - Certificate verification                                  │
-└─────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------+
+|          Certificate Storage                                     |
+|          CertStore Interface                                     |
+|  - StoreCertificate / GetCertificate                             |
+|  - Certificate chain management                                  |
+|  - CRL operations                                                |
+|  - Certificate verification                                      |
++------------------------------------------------------------------+
 ```
 
 ## Core Interfaces
 
 ### storage.Backend
 
-General-purpose key-value storage abstraction.
+General-purpose key-value storage abstraction. All methods accept a `context.Context` for cancellation and deadline propagation.
 
-**Location**: `/home/jhahn/sources/go-keychain/pkg/storage/interface.go`
+**Location**: `/home/jhahn/sources/go-xkms/pkg/storage/interface.go`
 
 ```go
 type Backend interface {
-    Get(key string) ([]byte, error)
-    Put(key string, data []byte, opts *Options) error
-    Delete(key string) error
-    List(prefix string) ([]string, error)
-    Exists(key string) (bool, error)
+    Get(ctx context.Context, key string) ([]byte, error)
+    Put(ctx context.Context, key string, value []byte) error
+    Delete(ctx context.Context, key string) error
+    List(ctx context.Context, prefix string) ([]string, error)
+    Scan(ctx context.Context, prefix string) (map[string][]byte, error)
+    Exists(ctx context.Context, key string) (bool, error)
     Close() error
 }
 ```
 
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `Get` | Retrieve a value by key |
+| `Put` | Store a key-value pair |
+| `Delete` | Remove a key-value pair |
+| `List` | List keys matching a prefix (keys only) |
+| `Scan` | Retrieve all key-value pairs matching a prefix |
+| `Exists` | Check whether a key exists |
+| `Close` | Release resources |
+
 **Usage**:
 - General-purpose storage
-- File-based and in-memory implementations
+- File-based, in-memory, and PebbleDB implementations
 - Foundation for higher-level storage
 
 ### BlobStorer (TPM2)
 
 Store TPM binary blobs (private/public keys, contexts).
 
-**Location**: `/home/jhahn/sources/go-keychain/pkg/tpm2/store/interfaces.go`
+**Location**: `/home/jhahn/sources/go-xkms/pkg/tpm2/store/interfaces.go`
 
 ```go
 type BlobStorer interface {
@@ -96,7 +131,7 @@ type BlobStorer interface {
 
 Comprehensive certificate management.
 
-**Location**: `/home/jhahn/sources/go-keychain/pkg/certstore/certstore.go`
+**Location**: `/home/jhahn/sources/go-xkms/pkg/certstore/certstore.go`
 
 ```go
 type CertStore interface {
@@ -133,39 +168,40 @@ type CertStore interface {
 
 ### File Storage
 
-Persistent file-based storage using go-keychain's filesystem abstraction.
+Persistent file-based storage using go-xkms's filesystem abstraction.
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+    "context"
+    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
+ctx := context.Background()
+
 // Create file storage
-storage, err := file.New("/var/lib/keychain")
+storage, err := file.New("/var/lib/xkms")
 if err != nil {
     log.Fatal(err)
 }
 defer storage.Close()
 
 // Store data
-err = storage.Put("my-key", []byte("key-data"), nil)
-
-// Store with custom permissions
-err = storage.Put("secure-key", []byte("data"), &storage.Options{
-    Permissions: 0600,
-})
+err = storage.Put(ctx, "my-key", []byte("key-data"))
 
 // Retrieve data
-data, err := storage.Get("my-key")
+data, err := storage.Get(ctx, "my-key")
 
 // List keys
-keys, err := storage.List("")
+keys, err := storage.List(ctx, "")
+
+// Scan all key-value pairs under a prefix
+entries, err := storage.Scan(ctx, "my-prefix/")
 
 // Check existence
-exists, err := storage.Exists("my-key")
+exists, err := storage.Exists(ctx, "my-key")
 
 // Delete key
-err = storage.Delete("my-key")
+err = storage.Delete(ctx, "my-key")
 ```
 
 ### Memory Storage
@@ -174,16 +210,29 @@ Ephemeral in-memory storage for testing.
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/storage"
+    "context"
+    "github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
+ctx := context.Background()
+
 // Create memory storage
-storage := storage.NewMemory()
-defer storage.Close()
+store := storage.NewMemory()
+defer store.Close()
 
 // Same API as file storage
-storage.Put("test-key", []byte("test-data"), nil)
-data, _ := storage.Get("test-key")
+store.Put(ctx, "test-key", []byte("test-data"))
+data, _ := store.Get(ctx, "test-key")
+```
+
+### PebbleDB Storage
+
+High-performance embedded key-value storage via the go-qrdb PebbleDB engine.
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/storage"
+
+store, err := storage.NewPebble("/var/lib/xkms/metadata")
 ```
 
 ## Custom Storage Backends
@@ -193,7 +242,10 @@ Implement the `Backend` interface for custom storage solutions:
 ```go
 package custom
 
-import "github.com/jeremyhahn/go-keychain/pkg/storage"
+import (
+    "context"
+    "github.com/jeremyhahn/go-xkms/pkg/storage"
+)
 
 type CustomStorage struct {
     // Your implementation
@@ -203,27 +255,32 @@ func New() storage.Backend {
     return &CustomStorage{}
 }
 
-func (s *CustomStorage) Get(key string) ([]byte, error) {
+func (s *CustomStorage) Get(ctx context.Context, key string) ([]byte, error) {
     // Implement
     return nil, nil
 }
 
-func (s *CustomStorage) Put(key string, data []byte, opts *storage.Options) error {
+func (s *CustomStorage) Put(ctx context.Context, key string, value []byte) error {
     // Implement
     return nil
 }
 
-func (s *CustomStorage) Delete(key string) error {
+func (s *CustomStorage) Delete(ctx context.Context, key string) error {
     // Implement
     return nil
 }
 
-func (s *CustomStorage) List(prefix string) ([]string, error) {
+func (s *CustomStorage) List(ctx context.Context, prefix string) ([]string, error) {
     // Implement
     return nil, nil
 }
 
-func (s *CustomStorage) Exists(key string) (bool, error) {
+func (s *CustomStorage) Scan(ctx context.Context, prefix string) (map[string][]byte, error) {
+    // Implement
+    return nil, nil
+}
+
+func (s *CustomStorage) Exists(ctx context.Context, key string) (bool, error) {
     // Implement
     return false, nil
 }
@@ -240,8 +297,9 @@ func (s *CustomStorage) Close() error {
 package database
 
 import (
+    "context"
     "database/sql"
-    "github.com/jeremyhahn/go-keychain/pkg/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 type DBStorage struct {
@@ -256,8 +314,8 @@ func New(connectionString string) (storage.Backend, error) {
     return &DBStorage{db: db}, nil
 }
 
-func (s *DBStorage) Put(key string, data []byte, opts *storage.Options) error {
-    _, err := s.db.Exec(
+func (s *DBStorage) Put(ctx context.Context, key string, data []byte) error {
+    _, err := s.db.ExecContext(ctx,
         "INSERT INTO keys (key, data) VALUES ($1, $2) "+
         "ON CONFLICT (key) DO UPDATE SET data = $2",
         key, data,
@@ -265,22 +323,22 @@ func (s *DBStorage) Put(key string, data []byte, opts *storage.Options) error {
     return err
 }
 
-func (s *DBStorage) Get(key string) ([]byte, error) {
+func (s *DBStorage) Get(ctx context.Context, key string) ([]byte, error) {
     var data []byte
-    err := s.db.QueryRow(
+    err := s.db.QueryRowContext(ctx,
         "SELECT data FROM keys WHERE key = $1",
         key,
     ).Scan(&data)
     return data, err
 }
 
-func (s *DBStorage) Delete(key string) error {
-    _, err := s.db.Exec("DELETE FROM keys WHERE key = $1", key)
+func (s *DBStorage) Delete(ctx context.Context, key string) error {
+    _, err := s.db.ExecContext(ctx, "DELETE FROM keys WHERE key = $1", key)
     return err
 }
 
-func (s *DBStorage) List(prefix string) ([]string, error) {
-    rows, err := s.db.Query(
+func (s *DBStorage) List(ctx context.Context, prefix string) ([]string, error) {
+    rows, err := s.db.QueryContext(ctx,
         "SELECT key FROM keys WHERE key LIKE $1",
         prefix+"%",
     )
@@ -300,9 +358,31 @@ func (s *DBStorage) List(prefix string) ([]string, error) {
     return keys, rows.Err()
 }
 
-func (s *DBStorage) Exists(key string) (bool, error) {
+func (s *DBStorage) Scan(ctx context.Context, prefix string) (map[string][]byte, error) {
+    rows, err := s.db.QueryContext(ctx,
+        "SELECT key, data FROM keys WHERE key LIKE $1",
+        prefix+"%",
+    )
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    result := make(map[string][]byte)
+    for rows.Next() {
+        var key string
+        var data []byte
+        if err := rows.Scan(&key, &data); err != nil {
+            return nil, err
+        }
+        result[key] = data
+    }
+    return result, rows.Err()
+}
+
+func (s *DBStorage) Exists(ctx context.Context, key string) (bool, error) {
     var exists bool
-    err := s.db.QueryRow(
+    err := s.db.QueryRowContext(ctx,
         "SELECT EXISTS(SELECT 1 FROM keys WHERE key = $1)",
         key,
     ).Scan(&exists)
@@ -316,7 +396,7 @@ func (s *DBStorage) Close() error {
 
 ## External Storage Integration
 
-go-keychain's `storage.Backend` interface is designed to be compatible with external object storage libraries. Higher-level applications can create adapters to use cloud storage backends.
+go-xkms's `storage.Backend` interface is designed to be compatible with external object storage libraries. Higher-level applications can create adapters to use cloud storage backends.
 
 See [Storage Interface Compatibility](./objstore-integration.md) for details on integrating with libraries like go-objstore.
 
@@ -330,14 +410,14 @@ type SafeStorage struct {
     data map[string][]byte
 }
 
-func (s *SafeStorage) Put(key string, data []byte, opts *storage.Options) error {
+func (s *SafeStorage) Put(ctx context.Context, key string, data []byte) error {
     s.mu.Lock()
     defer s.mu.Unlock()
     s.data[key] = data
     return nil
 }
 
-func (s *SafeStorage) Get(key string) ([]byte, error) {
+func (s *SafeStorage) Get(ctx context.Context, key string) ([]byte, error) {
     s.mu.RLock()
     defer s.mu.RUnlock()
     data, exists := s.data[key]
@@ -363,7 +443,7 @@ var (
 Usage:
 
 ```go
-data, err := storage.Get("nonexistent-key")
+data, err := storage.Get(ctx, "nonexistent-key")
 if errors.Is(err, storage.ErrNotFound) {
     // Handle missing key
 }
@@ -373,9 +453,10 @@ if errors.Is(err, storage.ErrNotFound) {
 
 | Storage Type | Read Latency | Write Latency | Throughput | Use Case |
 |-------------|--------------|---------------|------------|----------|
-| Memory | ~10µs | ~10µs | Very High | Testing, cache |
+| Memory | ~10us | ~10us | Very High | Testing, cache |
 | File (Local) | ~0.5ms | ~1ms | High | Production, local |
 | File (SSD) | ~0.1ms | ~0.5ms | Very High | Production, high perf |
+| PebbleDB | ~0.05ms | ~0.2ms | Very High | Production, high perf |
 | Database | ~2-5ms | ~5-10ms | Medium | Multi-tenant, query |
 
 ## Interface Selection Guide
@@ -401,13 +482,14 @@ if errors.Is(err, storage.ErrNotFound) {
 ## Best Practices
 
 ### 1. Choose the Right Interface
-- TPM blobs → BlobStorer
-- Certificates → CertStore
-- General data → storage.Backend
+- TPM blobs -> BlobStorer
+- Certificates -> CertStore
+- General data -> storage.Backend
 
 ### 2. Error Handling
 ```go
-data, err := storage.Get("key")
+ctx := context.Background()
+data, err := storage.Get(ctx, "key")
 if err != nil {
     if errors.Is(err, storage.ErrNotFound) {
         // Handle missing key
@@ -416,12 +498,12 @@ if err != nil {
 }
 ```
 
-### 3. Use Buffering for Bulk Operations
+### 3. Use Scan for Bulk Reads
 ```go
-for _, item := range items {
-    if err := storage.Put(item.Key, item.Data, nil); err != nil {
-        // Handle error
-    }
+// Efficient: single call to retrieve all entries under a prefix
+entries, err := storage.Scan(ctx, "keys/")
+for key, value := range entries {
+    // Process each entry
 }
 ```
 

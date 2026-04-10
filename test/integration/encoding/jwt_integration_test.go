@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,7 +26,7 @@ import (
 	"time"
 
 	jwtgo "github.com/golang-jwt/jwt/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/encoding/jwt"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -197,20 +197,20 @@ func TestJWTIntegration_BasicSigningVerification(t *testing.T) {
 	})
 }
 
-// TestJWTIntegration_KeychainIntegration tests JWT signing and verification
-// using keychain-backed keys
-func TestJWTIntegration_KeychainIntegration(t *testing.T) {
-	t.Run("RSA_KeychainSigning", func(t *testing.T) {
+// TestJWTIntegration_XKMSIntegration tests JWT signing and verification
+// using xkms-backed keys
+func TestJWTIntegration_XKMSIntegration(t *testing.T) {
+	t.Run("RSA_XKMSSigning", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		// Generate RSA key in keychain
+		// Generate RSA key in xkms
 		keyID := "pkcs8:jwt-rsa-key"
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		// Create keychain signer
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		// Create xkms signer
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 
 		claims := jwtgo.MapClaims{
 			"sub": "user123",
@@ -218,7 +218,7 @@ func TestJWTIntegration_KeychainIntegration(t *testing.T) {
 			"exp": time.Now().Add(time.Hour).Unix(),
 		}
 
-		// Sign with keychain key
+		// Sign with xkms key
 		tokenString, err := signer.SignWithKeyID(keyID, claims)
 		require.NoError(t, err)
 		assert.NotEmpty(t, tokenString)
@@ -228,14 +228,14 @@ func TestJWTIntegration_KeychainIntegration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, keyID, token.Header["kid"])
 
-		// Verify signature using keychain verifier
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		// Verify signature using xkms verifier
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		verifiedToken, err := verifier.VerifyWithKeyID(tokenString, keyID)
 		require.NoError(t, err)
 		assert.True(t, verifiedToken.Valid)
 	})
 
-	t.Run("ECDSA_P256_KeychainSigning", func(t *testing.T) {
+	t.Run("ECDSA_P256_XKMSSigning", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
@@ -243,19 +243,19 @@ func TestJWTIntegration_KeychainIntegration(t *testing.T) {
 		err := setup.GenerateECDSAKey(keyID, elliptic.P256())
 		require.NoError(t, err)
 
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{"sub": "user123"}
 
 		tokenString, err := signer.SignWithKeyID(keyID, claims)
 		require.NoError(t, err)
 
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithKeyID(tokenString, keyID)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
 	})
 
-	t.Run("Ed25519_KeychainSigning", func(t *testing.T) {
+	t.Run("Ed25519_XKMSSigning", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
@@ -263,13 +263,13 @@ func TestJWTIntegration_KeychainIntegration(t *testing.T) {
 		err := setup.GenerateEd25519Key(keyID)
 		require.NoError(t, err)
 
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{"sub": "user123"}
 
 		tokenString, err := signer.SignWithKeyID(keyID, claims)
 		require.NoError(t, err)
 
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithKeyID(tokenString, keyID)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
@@ -283,7 +283,7 @@ func TestJWTIntegration_KeychainIntegration(t *testing.T) {
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{"sub": "user123"}
 
 		// Sign with kid in header
@@ -291,7 +291,7 @@ func TestJWTIntegration_KeychainIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify with automatic kid extraction
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithAutoKeyID(tokenString)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
@@ -305,14 +305,14 @@ func TestJWTIntegration_KeychainIntegration(t *testing.T) {
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{"sub": "user123"}
 
 		// Sign with PS512 explicitly
 		tokenString, err := signer.SignWithKeyIDAndAlgorithm(keyID, claims, jwt.PS512)
 		require.NoError(t, err)
 
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		token, err := verifier.VerifyWithKeyID(tokenString, keyID)
 		require.NoError(t, err)
 		assert.True(t, token.Valid)
@@ -333,7 +333,7 @@ func TestJWTIntegration_ClaimsValidation(t *testing.T) {
 
 		now := time.Now()
 		claims := jwtgo.MapClaims{
-			"iss": "go-keychain",
+			"iss": "go-xkms",
 			"sub": "user123",
 			"aud": "my-app",
 			"exp": now.Add(time.Hour).Unix(),
@@ -350,7 +350,7 @@ func TestJWTIntegration_ClaimsValidation(t *testing.T) {
 
 		tokenClaims, ok := token.Claims.(jwtgo.MapClaims)
 		require.True(t, ok)
-		assert.Equal(t, "go-keychain", tokenClaims["iss"])
+		assert.Equal(t, "go-xkms", tokenClaims["iss"])
 		assert.Equal(t, "user123", tokenClaims["sub"])
 		assert.Equal(t, "my-app", tokenClaims["aud"])
 		assert.Equal(t, "unique-token-id", tokenClaims["jti"])
@@ -364,7 +364,7 @@ func TestJWTIntegration_ClaimsValidation(t *testing.T) {
 		verifier := jwt.NewVerifier()
 
 		claims := jwtgo.MapClaims{
-			"iss": "go-keychain",
+			"iss": "go-xkms",
 			"sub": "user123",
 		}
 
@@ -374,7 +374,7 @@ func TestJWTIntegration_ClaimsValidation(t *testing.T) {
 		// Valid issuer
 		opts := &jwt.VerifyOptions{
 			ValidateIssuer: true,
-			ExpectedIssuer: "go-keychain",
+			ExpectedIssuer: "go-xkms",
 		}
 		token, err := verifier.VerifyWithOptions(tokenString, privateKey.Public(), opts)
 		require.NoError(t, err)
@@ -552,11 +552,11 @@ func TestJWTIntegration_ErrorHandling(t *testing.T) {
 		assert.Contains(t, err.Error(), "unsupported algorithm")
 	})
 
-	t.Run("KeychainKeyNotFound", func(t *testing.T) {
+	t.Run("XKMSKeyNotFound", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{"sub": "user123"}
 
 		// Try to sign with non-existent key
@@ -583,7 +583,7 @@ func TestJWTIntegration_ErrorHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Try to verify with auto kid (should fail - no kid in header)
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		_, err = verifier.VerifyWithAutoKeyID(tokenString)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "kid")
@@ -611,7 +611,7 @@ func TestJWTIntegration_TokenLifecycle(t *testing.T) {
 		}
 
 		// 3. Sign
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		tokenString, err := signer.SignWithKeyID(keyID, claims)
 		require.NoError(t, err)
 		assert.NotEmpty(t, tokenString)
@@ -627,7 +627,7 @@ func TestJWTIntegration_TokenLifecycle(t *testing.T) {
 		assert.Equal(t, keyID, token.Header["kid"])
 
 		// 6. Verify signature
-		verifier := jwt.NewKeychainVerifier(setup.GetKeyByID)
+		verifier := jwt.NewXKMSVerifier(setup.GetKeyByID)
 		verifiedToken, err := verifier.VerifyWithAutoKeyID(tokenString)
 		require.NoError(t, err)
 		assert.True(t, verifiedToken.Valid)
@@ -676,7 +676,7 @@ func TestJWTIntegration_KIDHeader(t *testing.T) {
 		assert.Equal(t, "test-key-123", kid)
 	})
 
-	t.Run("KeychainKIDFormat", func(t *testing.T) {
+	t.Run("XKMSKIDFormat", func(t *testing.T) {
 		setup := createTestBackend(t)
 		defer setup.Close()
 
@@ -684,13 +684,13 @@ func TestJWTIntegration_KIDHeader(t *testing.T) {
 		err := setup.GenerateRSAKey(keyID, 2048)
 		require.NoError(t, err)
 
-		signer := jwt.NewKeychainSigner(setup.GetKeyByID, setup.GetSignerByID)
+		signer := jwt.NewXKMSSigner(setup.GetKeyByID, setup.GetSignerByID)
 		claims := jwtgo.MapClaims{"sub": "user123"}
 
 		tokenString, err := signer.SignWithKeyID(keyID, claims)
 		require.NoError(t, err)
 
-		// Verify kid matches keychain format
+		// Verify kid matches xkms format
 		kid, err := jwt.ExtractKID(tokenString)
 		require.NoError(t, err)
 		assert.Equal(t, keyID, kid)

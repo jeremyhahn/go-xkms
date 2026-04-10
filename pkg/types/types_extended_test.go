@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -332,12 +332,12 @@ func TestSimpleVerifier_Verify_UnsupportedKeyType(t *testing.T) {
 func TestKeyAttributesFromConfig_RSA(t *testing.T) {
 	config := &KeyConfig{
 		CN:                 "test-key",
-		Algorithm:          "RSA",
-		Hash:               "SHA256",
-		RSAKeySize:         4096,
-		SignatureAlgorithm: "SHA256-RSA",
-		StoreType:          "PKCS8",
-		KeyType:            "TLS",
+		KeyAlgorithm:       AlgorithmRSA,
+		Hash:               HashSHA256,
+		RSAConfig:          &RSAConfig{KeySize: 4096},
+		SignatureAlgorithm: SigSHA256WithRSA,
+		StoreType:          StoreType("PKCS8"),
+		KeyType:            KeyTypeStringTLS,
 	}
 
 	attrs, err := KeyAttributesFromConfig(config)
@@ -351,8 +351,8 @@ func TestKeyAttributesFromConfig_RSA(t *testing.T) {
 
 func TestKeyAttributesFromConfig_RSADefaultKeySize(t *testing.T) {
 	config := &KeyConfig{
-		CN:        "test-key",
-		Algorithm: "RSA",
+		CN:           "test-key",
+		KeyAlgorithm: AlgorithmRSA,
 	}
 
 	attrs, err := KeyAttributesFromConfig(config)
@@ -363,9 +363,9 @@ func TestKeyAttributesFromConfig_RSADefaultKeySize(t *testing.T) {
 
 func TestKeyAttributesFromConfig_ECDSA(t *testing.T) {
 	config := &KeyConfig{
-		CN:        "test-key",
-		Algorithm: "ECDSA",
-		ECCCurve:  "P-384",
+		CN:           "test-key",
+		KeyAlgorithm: AlgorithmECDSA,
+		ECCConfig:    &ECCConfig{Curve: CurveP384},
 	}
 
 	attrs, err := KeyAttributesFromConfig(config)
@@ -377,9 +377,8 @@ func TestKeyAttributesFromConfig_ECDSA(t *testing.T) {
 
 func TestKeyAttributesFromConfig_ECDSADefaultCurve(t *testing.T) {
 	config := &KeyConfig{
-		CN:        "test-key",
-		Algorithm: "ECDSA",
-		ECCCurve:  "",
+		CN:           "test-key",
+		KeyAlgorithm: AlgorithmECDSA,
 	}
 
 	attrs, err := KeyAttributesFromConfig(config)
@@ -396,7 +395,7 @@ func TestKeyAttributesFromConfig_NilConfig(t *testing.T) {
 
 func TestKeyAttributesFromConfig_InvalidAlgorithm(t *testing.T) {
 	config := &KeyConfig{
-		Algorithm: "INVALID",
+		KeyAlgorithm: "INVALID",
 	}
 
 	_, err := KeyAttributesFromConfig(config)
@@ -405,7 +404,7 @@ func TestKeyAttributesFromConfig_InvalidAlgorithm(t *testing.T) {
 
 func TestKeyAttributesFromConfig_InvalidSignatureAlgorithm(t *testing.T) {
 	config := &KeyConfig{
-		Algorithm:          "RSA",
+		KeyAlgorithm:       AlgorithmRSA,
 		SignatureAlgorithm: "INVALID-SIG-ALGO",
 	}
 
@@ -413,6 +412,44 @@ func TestKeyAttributesFromConfig_InvalidSignatureAlgorithm(t *testing.T) {
 	attrs, err := KeyAttributesFromConfig(config)
 	require.NoError(t, err)
 	assert.Equal(t, x509.UnknownSignatureAlgorithm, attrs.SignatureAlgorithm)
+}
+
+func TestKeyAttributesFromConfig_CustomBackendName(t *testing.T) {
+	// Custom backend names should be preserved to allow xkms facade
+	// to route operations to custom registered backends
+	config := &KeyConfig{
+		CN:           "test-key",
+		KeyAlgorithm: AlgorithmECDSA,
+		StoreType:    "pkcs8-ca2", // Custom backend name
+	}
+
+	attrs, err := KeyAttributesFromConfig(config)
+	require.NoError(t, err)
+	assert.Equal(t, StoreType("pkcs8-ca2"), attrs.StoreType)
+}
+
+func TestKeyAttributesFromConfig_EmptyStoreTypeDefaultsToSoftware(t *testing.T) {
+	config := &KeyConfig{
+		CN:           "test-key",
+		KeyAlgorithm: AlgorithmECDSA,
+		StoreType:    "", // Empty should default to software
+	}
+
+	attrs, err := KeyAttributesFromConfig(config)
+	require.NoError(t, err)
+	assert.Equal(t, StoreSoftware, attrs.StoreType)
+}
+
+func TestKeyAttributesFromConfig_StandardStoreType(t *testing.T) {
+	config := &KeyConfig{
+		CN:           "test-key",
+		KeyAlgorithm: AlgorithmECDSA,
+		StoreType:    StoreSoftware,
+	}
+
+	attrs, err := KeyAttributesFromConfig(config)
+	require.NoError(t, err)
+	assert.Equal(t, StoreSoftware, attrs.StoreType)
 }
 
 // ========================================================================
@@ -468,12 +505,6 @@ func TestNewKeySerializer_UnsupportedType(t *testing.T) {
 	_, err := NewKeySerializer(SerializerType(999))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported serializer type")
-}
-
-func TestNewSerializer_BackwardCompatibility(t *testing.T) {
-	s, err := NewSerializer(SerializerJSON)
-	require.NoError(t, err)
-	assert.NotNil(t, s)
 }
 
 // ========================================================================
@@ -691,7 +722,7 @@ func TestParseHashFromSignatureAlgorithm_UnknownAlgo(t *testing.T) {
 func TestClearPassword_Clear(t *testing.T) {
 	// Create a password with some data
 	password := []byte("secret-password")
-	clearPwd := NewClearPassword(password)
+	clearPwd := NewPassword(password)
 
 	// Verify the password was stored
 	bytes := clearPwd.Bytes()
@@ -709,7 +740,7 @@ func TestClearPassword_Clear(t *testing.T) {
 
 func TestClearPassword_ClearEmpty(t *testing.T) {
 	// Test clearing an empty password
-	clearPwd := NewClearPassword([]byte{})
+	clearPwd := NewPassword([]byte{})
 	clearPwd.Clear() // Should not panic
 	bytes := clearPwd.Bytes()
 	assert.Empty(t, bytes)

@@ -1,4 +1,4 @@
-# Go-Keychain API Specifications
+# Go-xKMS API Specifications
 
 **Comprehensive API reference for all protocols**
 
@@ -22,17 +22,13 @@
 
 ### Authentication
 
-All API requests (except health) require authentication:
-
-```http
-X-API-Key: your-api-key-here
-```
-
-or
+All API requests (except health) require cryptographic authentication:
 
 ```http
 Authorization: Bearer <jwt-token>
 ```
+
+or mutual TLS with a client certificate. See [Authentication Adapter Framework](../architecture/adapter-framework.md) for all supported methods.
 
 ### Endpoints
 
@@ -73,9 +69,9 @@ List available backends.
 {
   "backends": [
     {
-      "name": "pkcs8",
-      "type": "pkcs8",
-      "description": "PKCS#8 software backend",
+      "name": "software",
+      "type": "software",
+      "description": "Software backend",
       "hardware_backed": false,
       "capabilities": {
         "signing": true,
@@ -106,9 +102,9 @@ Get backend information.
 **Response (200 OK):**
 ```json
 {
-  "name": "pkcs8",
-  "type": "pkcs8",
-  "description": "PKCS#8 software backend",
+  "name": "software",
+  "type": "software",
+  "description": "Software backend",
   "hardware_backed": false,
   "capabilities": {
     "signing": true,
@@ -116,8 +112,8 @@ Get backend information.
     "key_rotation": false
   },
   "config": {
-    "key_dir": "/var/lib/keychain/keys",
-    "cert_dir": "/var/lib/keychain/certs"
+    "key_dir": "/var/lib/xkms/keys",
+    "cert_dir": "/var/lib/xkms/certs"
   }
 }
 ```
@@ -132,7 +128,7 @@ Generate a new key.
 ```json
 {
   "key_id": "my-signing-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "key_type": "rsa",
   "key_size": 2048,
   "curve": "",
@@ -152,7 +148,7 @@ Generate a new key.
 ```json
 {
   "key_id": "my-signing-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "key_type": "rsa",
   "key_size": 2048,
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----",
@@ -177,7 +173,7 @@ List keys.
 
 **Example:**
 ```
-GET /api/v1/keys?backend=pkcs8&limit=10&tags=environment=production
+GET /api/v1/keys?backend=software&limit=10&tags=environment=production
 ```
 
 **Response (200 OK):**
@@ -186,7 +182,7 @@ GET /api/v1/keys?backend=pkcs8&limit=10&tags=environment=production
   "keys": [
     {
       "key_id": "my-signing-key",
-      "backend": "pkcs8",
+      "backend": "software",
       "key_type": "rsa",
       "key_size": 2048,
       "fingerprint": "SHA256:abc123...",
@@ -214,14 +210,14 @@ Get key details.
 
 **Example:**
 ```
-GET /api/v1/keys/my-signing-key?backend=pkcs8
+GET /api/v1/keys/my-signing-key?backend=software
 ```
 
 **Response (200 OK):**
 ```json
 {
   "key_id": "my-signing-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "key_type": "rsa",
   "key_size": 2048,
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----",
@@ -244,7 +240,7 @@ Delete a key.
 
 **Example:**
 ```
-DELETE /api/v1/keys/my-signing-key?backend=pkcs8
+DELETE /api/v1/keys/my-signing-key?backend=software
 ```
 
 **Response (200 OK):**
@@ -253,7 +249,7 @@ DELETE /api/v1/keys/my-signing-key?backend=pkcs8
   "success": true,
   "message": "Key deleted successfully",
   "key_id": "my-signing-key",
-  "backend": "pkcs8"
+  "backend": "software"
 }
 ```
 
@@ -281,7 +277,7 @@ Sign data.
   "signature": "MEUCIQDxYz...",  // Base64-encoded signature
   "algorithm": "SHA256withRSA",
   "key_id": "my-signing-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "timestamp": "2025-11-05T14:00:00Z"
 }
 ```
@@ -309,7 +305,7 @@ Verify signature.
   "valid": true,
   "algorithm": "SHA256withRSA",
   "key_id": "my-signing-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "timestamp": "2025-11-05T14:00:00Z"
 }
 ```
@@ -335,7 +331,7 @@ Decrypt data (if backend supports).
   "plaintext": "decrypted-data-base64",
   "algorithm": "RSA-OAEP",
   "key_id": "my-key",
-  "backend": "pkcs8"
+  "backend": "software"
 }
 ```
 
@@ -395,9 +391,9 @@ All errors follow this format:
 ```protobuf
 syntax = "proto3";
 
-package keychain.v1;
+package xkms.v1;
 
-option go_package = "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1";
+option go_package = "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1";
 
 // KeystoreService provides key management and cryptographic operations
 service KeystoreService {
@@ -469,7 +465,7 @@ message SignResponse {
 **Go Client:**
 ```go
 import (
-    pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
+    pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
     "google.golang.org/grpc"
     "google.golang.org/grpc/credentials/insecure"
 )
@@ -487,7 +483,7 @@ client := pb.NewKeystoreServiceClient(conn)
 // Generate key
 resp, err := client.GenerateKey(ctx, &pb.GenerateKeyRequest{
     KeyId:   "my-key",
-    Backend: "pkcs8",
+    Backend: "software",
     KeyType: "rsa",
     KeySize: 2048,
 })
@@ -496,15 +492,15 @@ resp, err := client.GenerateKey(ctx, &pb.GenerateKeyRequest{
 **grpcurl (CLI):**
 ```bash
 # Health check
-grpcurl -plaintext localhost:9443 keychain.v1.KeystoreService/Health
+grpcurl -plaintext localhost:9443 xkms.v1.KeystoreService/Health
 
 # Generate key
 grpcurl -plaintext -d '{
   "key_id": "my-key",
-  "backend": "pkcs8",
+  "backend": "software",
   "key_type": "rsa",
   "key_size": 2048
-}' localhost:9443 keychain.v1.KeystoreService/GenerateKey
+}' localhost:9443 xkms.v1.KeystoreService/GenerateKey
 ```
 
 ### gRPC Error Codes
@@ -513,7 +509,7 @@ grpcurl -plaintext -d '{
 |-----------|------------|-------------|
 | OK | 200 | Success |
 | INVALID_ARGUMENT | 400 | Invalid input |
-| UNAUTHENTICATED | 401 | Missing credentials |
+| UNAUTHENTICATED | 401 | Missing or invalid authentication |
 | PERMISSION_DENIED | 403 | Insufficient permissions |
 | NOT_FOUND | 404 | Resource not found |
 | ALREADY_EXISTS | 409 | Resource exists |
@@ -591,13 +587,13 @@ Health check.
 }
 ```
 
-#### keychain.listBackends
+#### xkms.listBackends
 
 List backends.
 
 **Request:**
 ```json
-{"jsonrpc": "2.0", "method": "keychain.listBackends", "id": 2}
+{"jsonrpc": "2.0", "method": "xkms.listBackends", "id": 2}
 ```
 
 **Response:**
@@ -607,8 +603,8 @@ List backends.
   "result": {
     "backends": [
       {
-        "name": "pkcs8",
-        "type": "pkcs8",
+        "name": "software",
+        "type": "software",
         "hardware_backed": false
       }
     ],
@@ -618,7 +614,7 @@ List backends.
 }
 ```
 
-#### keychain.generateKey
+#### xkms.generateKey
 
 Generate key.
 
@@ -626,10 +622,10 @@ Generate key.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "keychain.generateKey",
+  "method": "xkms.generateKey",
   "params": {
     "key_id": "my-key",
-    "backend": "pkcs8",
+    "backend": "software",
     "key_type": "rsa",
     "key_size": 2048
   },
@@ -643,7 +639,7 @@ Generate key.
   "jsonrpc": "2.0",
   "result": {
     "key_id": "my-key",
-    "backend": "pkcs8",
+    "backend": "software",
     "key_type": "rsa",
     "key_size": 2048,
     "public_key_pem": "-----BEGIN PUBLIC KEY-----...",
@@ -653,7 +649,7 @@ Generate key.
 }
 ```
 
-#### keychain.sign
+#### xkms.sign
 
 Sign data.
 
@@ -661,10 +657,10 @@ Sign data.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "keychain.sign",
+  "method": "xkms.sign",
   "params": {
     "key_id": "my-key",
-    "backend": "pkcs8",
+    "backend": "software",
     "data": "SGVsbG8gV29ybGQ=",
     "hash": "SHA256"
   },
@@ -684,7 +680,7 @@ Sign data.
 }
 ```
 
-#### keychain.subscribe
+#### xkms.subscribe
 
 Subscribe to events.
 
@@ -692,7 +688,7 @@ Subscribe to events.
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "keychain.subscribe",
+  "method": "xkms.subscribe",
   "params": {
     "events": ["key.created", "key.deleted", "key.rotated"]
   },
@@ -722,7 +718,7 @@ After subscribing, server sends notifications:
   "method": "key.created",
   "params": {
     "key_id": "new-key",
-    "backend": "pkcs8",
+    "backend": "software",
     "timestamp": "2025-11-05T12:00:00Z"
   }
 }
@@ -736,7 +732,7 @@ Multiple requests in one call:
 ```json
 [
   {"jsonrpc": "2.0", "method": "health", "id": 1},
-  {"jsonrpc": "2.0", "method": "keychain.listBackends", "id": 2}
+  {"jsonrpc": "2.0", "method": "xkms.listBackends", "id": 2}
 ]
 ```
 
@@ -818,7 +814,7 @@ See [REST API](#rest-api) section for complete endpoint documentation.
 
 ## CLI Commands
 
-**Binary:** `keychain`
+**Binary:** `xkmsctl`
 
 ### Global Flags
 
@@ -837,10 +833,10 @@ See [REST API](#rest-api) section for complete endpoint documentation.
 Show version information.
 
 ```bash
-keychain version
+xkmsctl version
 
 # Output:
-# keychain version 0.0.1-alpha
+# xkmsctl version 0.0.1-alpha
 # commit: abc123def
 # built: 2025-11-05T12:00:00Z
 ```
@@ -850,16 +846,16 @@ keychain version
 List available backends.
 
 ```bash
-keychain backends list
+xkmsctl backends list
 
 # Output (table):
 # NAME      TYPE      HARDWARE  SIGNING  DECRYPTION
-# pkcs8     pkcs8     false     true     true
-# pkcs11    pkcs11    true      true     true
+# software  software  false     true     true
 # tpm2      tpm2      true      true     false
+# pkcs11    pkcs11    true      true     true
 
 # JSON output:
-keychain backends list --output json
+xkmsctl backends list --output json
 ```
 
 #### backends info
@@ -867,12 +863,12 @@ keychain backends list --output json
 Get backend details.
 
 ```bash
-keychain backends info pkcs8
+xkmsctl backends info software
 
 # Output:
-# Name:           pkcs8
-# Type:           pkcs8
-# Description:    PKCS#8 software backend
+# Name:           software
+# Type:           software
+# Description:    Software backend
 # Hardware:       false
 # Capabilities:
 #   - Signing:      true
@@ -886,25 +882,25 @@ Generate a new key.
 
 ```bash
 # RSA key
-keychain key generate my-rsa-key \
-  --backend pkcs8 \
+xkmsctl key generate my-rsa-key \
+  --backend software \
   --key-type rsa \
   --key-size 2048
 
 # ECDSA key
-keychain key generate my-ecdsa-key \
-  --backend pkcs8 \
+xkmsctl key generate my-ecdsa-key \
+  --backend software \
   --key-type ecdsa \
   --curve P256
 
 # Ed25519 key
-keychain key generate my-ed25519-key \
-  --backend pkcs8 \
+xkmsctl key generate my-ed25519-key \
+  --backend software \
   --key-type ed25519
 
 # With tags
-keychain key generate my-key \
-  --backend pkcs8 \
+xkmsctl key generate my-key \
+  --backend software \
   --key-type rsa \
   --key-size 2048 \
   --tag environment=production \
@@ -915,7 +911,7 @@ keychain key generate my-key \
 # ID:          my-rsa-key
 # Type:        rsa
 # Size:        2048
-# Backend:     pkcs8
+# Backend:     software
 # Fingerprint: SHA256:abc123...
 # Created:     2025-11-05 12:00:00
 ```
@@ -925,15 +921,15 @@ keychain key generate my-key \
 List keys.
 
 ```bash
-keychain key list --backend pkcs8
+xkmsctl key list --backend software
 
 # With filters
-keychain key list --backend pkcs8 --tag environment=production
+xkmsctl key list --backend software --tag environment=production
 
 # Output (table):
-# ID             TYPE    SIZE  BACKEND  CREATED
-# my-rsa-key     rsa     2048  pkcs8    2025-11-05 12:00:00
-# my-ecdsa-key   ecdsa   256   pkcs8    2025-11-05 12:05:00
+# ID             TYPE    SIZE  BACKEND   CREATED
+# my-rsa-key     rsa     2048  software  2025-11-05 12:00:00
+# my-ecdsa-key   ecdsa   256   software  2025-11-05 12:05:00
 ```
 
 #### key get
@@ -941,16 +937,16 @@ keychain key list --backend pkcs8 --tag environment=production
 Get key details.
 
 ```bash
-keychain key get my-rsa-key --backend pkcs8
+xkmsctl key get my-rsa-key --backend software
 
 # With public key export
-keychain key get my-rsa-key --backend pkcs8 --export-public > public.pem
+xkmsctl key get my-rsa-key --backend software --export-public > public.pem
 
 # Output:
 # ID:          my-rsa-key
 # Type:        rsa
 # Size:        2048
-# Backend:     pkcs8
+# Backend:     software
 # Fingerprint: SHA256:abc123...
 # Created:     2025-11-05 12:00:00
 # Last Used:   2025-11-05 13:30:00
@@ -964,15 +960,15 @@ keychain key get my-rsa-key --backend pkcs8 --export-public > public.pem
 Delete a key.
 
 ```bash
-keychain key delete my-rsa-key --backend pkcs8
+xkmsctl key delete my-rsa-key --backend software
 
 # With confirmation
-keychain key delete my-rsa-key --backend pkcs8 --confirm
+xkmsctl key delete my-rsa-key --backend software --confirm
 
 # Output:
 # Key deleted successfully
 # ID:      my-rsa-key
-# Backend: pkcs8
+# Backend: software
 ```
 
 #### key sign
@@ -981,13 +977,13 @@ Sign data.
 
 ```bash
 # Sign string
-keychain key sign my-rsa-key "Hello World" \
-  --backend pkcs8 \
+xkmsctl key sign my-rsa-key "Hello World" \
+  --backend software \
   --hash SHA256
 
 # Sign file
-keychain key sign my-rsa-key --file data.txt \
-  --backend pkcs8 \
+xkmsctl key sign my-rsa-key --file data.txt \
+  --backend software \
   --hash SHA256 \
   --output signature.sig
 
@@ -1003,15 +999,15 @@ Verify signature.
 
 ```bash
 # Verify with inline signature
-keychain key verify my-rsa-key "Hello World" \
+xkmsctl key verify my-rsa-key "Hello World" \
   --signature "MEUCIQDxYz..." \
-  --backend pkcs8 \
+  --backend software \
   --hash SHA256
 
 # Verify with file
-keychain key verify my-rsa-key --file data.txt \
+xkmsctl key verify my-rsa-key --file data.txt \
   --signature-file signature.sig \
-  --backend pkcs8 \
+  --backend software \
   --hash SHA256
 
 # Output:
@@ -1025,7 +1021,7 @@ keychain key verify my-rsa-key --file data.txt \
 Rotate key (if supported).
 
 ```bash
-keychain key rotate my-aws-key --backend awskms
+xkmsctl key rotate my-aws-key --backend awskms
 
 # Output:
 # Key rotated successfully
@@ -1040,10 +1036,10 @@ keychain key rotate my-aws-key --backend awskms
 Start server (all protocols).
 
 ```bash
-keychain server start --config /etc/keychain/config.yaml
+xkmsd --config /etc/xkms/config.yaml
 
 # Or with inline config
-keychain server start \
+xkmsd \
   --rest-address :8443 \
   --grpc-address :9443 \
   --mcp-address :9444 \
@@ -1055,7 +1051,7 @@ keychain server start \
 Check server status.
 
 ```bash
-keychain server status --server http://localhost:8443
+xkmsctl server status --server http://localhost:8443
 
 # Output:
 # Status:  healthy
@@ -1179,33 +1175,33 @@ X-RateLimit-Reset: 1699200000
 
 ```bash
 # 1. Start server
-keychain server start --config config.yaml
+xkmsd --config config.yaml
 
 # 2. List backends
-keychain backends list
+xkmsctl backends list
 
 # 3. Generate key
-keychain key generate my-key \
-  --backend pkcs8 \
+xkmsctl key generate my-key \
+  --backend software \
   --key-type rsa \
   --key-size 2048
 
 # 4. Sign data
-echo "Hello World" | keychain key sign my-key - \
-  --backend pkcs8 \
+echo "Hello World" | xkmsctl key sign my-key - \
+  --backend software \
   --hash SHA256 > signature.sig
 
 # 5. Verify signature
-echo "Hello World" | keychain key verify my-key - \
+echo "Hello World" | xkmsctl key verify my-key - \
   --signature-file signature.sig \
-  --backend pkcs8 \
+  --backend software \
   --hash SHA256
 
 # 6. List keys
-keychain key list --backend pkcs8
+xkmsctl key list --backend software
 
 # 7. Delete key
-keychain key delete my-key --backend pkcs8
+xkmsctl key delete my-key --backend software
 ```
 
 

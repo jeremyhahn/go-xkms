@@ -14,14 +14,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     pkg-config \
     libssl-dev \
-    libfido2-dev \
     libcbor-dev \
     libudev-dev \
+    libpcsclite-dev \
     python3 \
     python3-pip \
     python3-dev \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# Build libfido2 v1.17.0 from source for HID_NAME fallback support
+WORKDIR /build
+RUN git clone --depth 1 --branch main https://github.com/Yubico/libfido2.git && \
+    cd libfido2 && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr .. && \
+    make -j$(nproc) && \
+    make install
 
 # Create Python virtual environment and install dependencies
 RUN python3 -m venv /opt/venv
@@ -45,9 +54,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libfido2-1 \
-    fido2-tools \
     libcbor0.8 \
+    libpcsclite1 \
     libssl3 \
     python3 \
     python3-venv \
@@ -55,6 +63,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     netcat-openbsd \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy built libfido2 v1.17.0 from builder stage (includes library, headers, and tools)
+COPY --from=builder /usr/lib/libfido2.* /usr/lib/
+COPY --from=builder /usr/bin/fido2-token /usr/bin/fido2-cred /usr/bin/fido2-assert /usr/bin/
+RUN ldconfig
 
 # Copy Python virtual environment
 COPY --from=builder /opt/venv /opt/venv
@@ -66,8 +79,8 @@ RUN mkdir -p /var/lib/softfido /var/run/softfido /etc/softfido
 # Create SoftFIDO configuration
 RUN cat > /etc/softfido/config.json << 'EOF'
 {
-    "rp_id": "go-keychain-test",
-    "rp_name": "Go Keychain Integration Tests",
+    "rp_id": "go-xkms-test",
+    "rp_name": "Go xKMS Integration Tests",
     "pin": "123456",
     "user_verification": true,
     "resident_keys": true,

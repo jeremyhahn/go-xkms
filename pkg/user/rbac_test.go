@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/rbac"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/rbac"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,8 +57,8 @@ func TestUserRBACAdapter_CheckPermission(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("admin has all permissions", func(t *testing.T) {
-		_, err := store.Create(ctx, "admin@example.com", "Admin", RoleAdmin)
+	t.Run("admin has key and user permissions", func(t *testing.T) {
+		_, err := store.Create(ctx, "admin@example.com", "Admin", RoleAdmin, "")
 		require.NoError(t, err)
 
 		hasPermission, err := adapter.CheckPermission(ctx, "admin@example.com", rbac.NewPermission(rbac.ResourceKeys, rbac.ActionCreate))
@@ -71,7 +71,7 @@ func TestUserRBACAdapter_CheckPermission(t *testing.T) {
 	})
 
 	t.Run("user has limited permissions", func(t *testing.T) {
-		_, err := store.Create(ctx, "user@example.com", "User", RoleUser)
+		_, err := store.Create(ctx, "user@example.com", "User", RoleUser, "")
 		require.NoError(t, err)
 
 		// User can sign
@@ -101,7 +101,7 @@ func TestUserRBACAdapter_CheckPermission(t *testing.T) {
 	})
 
 	t.Run("disabled user has no permissions", func(t *testing.T) {
-		user, err := store.Create(ctx, "disabled@example.com", "Disabled", RoleAdmin)
+		user, err := store.Create(ctx, "disabled@example.com", "Disabled", RoleAdmin, "")
 		require.NoError(t, err)
 
 		user.Enabled = false
@@ -127,7 +127,7 @@ func TestUserRBACAdapter_AssignRole(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("assigns role successfully", func(t *testing.T) {
-		_, err := store.Create(ctx, "assign@example.com", "Assign", RoleUser)
+		_, err := store.Create(ctx, "assign@example.com", "Assign", RoleUser, "")
 		require.NoError(t, err)
 
 		err = adapter.AssignRole(ctx, "assign@example.com", rbac.RoleOperator)
@@ -145,7 +145,7 @@ func TestUserRBACAdapter_AssignRole(t *testing.T) {
 	})
 
 	t.Run("returns error for invalid role", func(t *testing.T) {
-		_, err := store.Create(ctx, "assigninvalid@example.com", "User", RoleUser)
+		_, err := store.Create(ctx, "assigninvalid@example.com", "User", RoleUser, "")
 		require.NoError(t, err)
 
 		err = adapter.AssignRole(ctx, "assigninvalid@example.com", "invalid-role")
@@ -159,17 +159,17 @@ func TestUserRBACAdapter_RevokeRole(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("revokes role successfully", func(t *testing.T) {
-		_, err := store.Create(ctx, "revoke@example.com", "Revoke", RoleOperator)
+	t.Run("denies role revocation per FIPS 140-2", func(t *testing.T) {
+		_, err := store.Create(ctx, "revoke@example.com", "Revoke", RoleOperator, "")
 		require.NoError(t, err)
 
 		err = adapter.RevokeRole(ctx, "revoke@example.com", rbac.RoleOperator)
-		require.NoError(t, err)
+		assert.ErrorIs(t, err, ErrRoleRevocationDenied)
 
-		// Verify role was set to guest
+		// Verify role remains unchanged
 		user, err := store.GetByUsername(ctx, "revoke@example.com")
 		require.NoError(t, err)
-		assert.Equal(t, RoleGuest, user.Role)
+		assert.Equal(t, RoleOperator, user.Role)
 	})
 
 	t.Run("returns error for nonexistent user", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestUserRBACAdapter_RevokeRole(t *testing.T) {
 	})
 
 	t.Run("returns error when user doesnt have role", func(t *testing.T) {
-		_, err := store.Create(ctx, "revokewrong@example.com", "User", RoleUser)
+		_, err := store.Create(ctx, "revokewrong@example.com", "User", RoleUser, "")
 		require.NoError(t, err)
 
 		err = adapter.RevokeRole(ctx, "revokewrong@example.com", rbac.RoleOperator)
@@ -193,7 +193,7 @@ func TestUserRBACAdapter_GetUserRoles(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns user role", func(t *testing.T) {
-		_, err := store.Create(ctx, "roles@example.com", "Roles", RoleOperator)
+		_, err := store.Create(ctx, "roles@example.com", "Roles", RoleOperator, "")
 		require.NoError(t, err)
 
 		roles, err := adapter.GetUserRoles(ctx, "roles@example.com")
@@ -275,7 +275,7 @@ func TestUserRBACAdapter_ListPermissions(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns permissions for user", func(t *testing.T) {
-		_, err := store.Create(ctx, "perms@example.com", "Perms", RoleAdmin)
+		_, err := store.Create(ctx, "perms@example.com", "Perms", RoleAdmin, "")
 		require.NoError(t, err)
 
 		permissions, err := adapter.ListPermissions(ctx, "perms@example.com")
@@ -299,9 +299,9 @@ func TestRoleToRBAC(t *testing.T) {
 		{RoleOperator, rbac.RoleOperator},
 		{RoleAuditor, rbac.RoleAuditor},
 		{RoleUser, rbac.RoleUser},
-		{RoleReadOnly, rbac.RoleReadOnly},
-		{RoleGuest, rbac.RoleGuest},
-		{Role("unknown"), rbac.RoleGuest},
+		{RoleSO, rbac.RoleSO},
+		{RoleCustodian, rbac.RoleCustodian},
+		{Role("unknown"), ""},
 	}
 
 	for _, tt := range tests {
@@ -320,9 +320,9 @@ func TestRBACToRole(t *testing.T) {
 		{rbac.RoleOperator, RoleOperator},
 		{rbac.RoleAuditor, RoleAuditor},
 		{rbac.RoleUser, RoleUser},
-		{rbac.RoleReadOnly, RoleReadOnly},
-		{rbac.RoleGuest, RoleGuest},
-		{"unknown", RoleGuest},
+		{rbac.RoleSO, RoleSO},
+		{rbac.RoleCustodian, RoleCustodian},
+		{"unknown", Role("")},
 	}
 
 	for _, tt := range tests {
@@ -343,7 +343,7 @@ func TestUserRBACAdapter_CheckPermission_StorageError(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a user first
-	_, err := store.Create(ctx, "error@example.com", "Error", RoleAdmin)
+	_, err := store.Create(ctx, "error@example.com", "Error", RoleAdmin, "")
 	require.NoError(t, err)
 
 	// Close store to simulate storage error
@@ -373,7 +373,7 @@ func TestUserRBACAdapter_ListPermissions_InvalidRole(t *testing.T) {
 	ctx := context.Background()
 
 	// Create user with a custom invalid role (manually)
-	user, err := store.Create(ctx, "invalid@example.com", "Invalid", RoleAdmin)
+	user, err := store.Create(ctx, "invalid@example.com", "Invalid", RoleAdmin, "")
 	require.NoError(t, err)
 
 	// Manually set an invalid role
@@ -385,4 +385,26 @@ func TestUserRBACAdapter_ListPermissions_InvalidRole(t *testing.T) {
 	permissions, err := adapter.ListPermissions(ctx, "invalid@example.com")
 	require.NoError(t, err)
 	assert.Len(t, permissions, 0)
+}
+
+func TestRoleToRBAC_AllRoles(t *testing.T) {
+	// Verify all defined user roles map correctly to RBAC role names
+	assert.Equal(t, rbac.RoleSO, RoleToRBAC(RoleSO))
+	assert.Equal(t, rbac.RoleCustodian, RoleToRBAC(RoleCustodian))
+	assert.Equal(t, rbac.RoleAdmin, RoleToRBAC(RoleAdmin))
+	assert.Equal(t, rbac.RoleOperator, RoleToRBAC(RoleOperator))
+	assert.Equal(t, rbac.RoleAuditor, RoleToRBAC(RoleAuditor))
+	assert.Equal(t, rbac.RoleUser, RoleToRBAC(RoleUser))
+	assert.Equal(t, "", RoleToRBAC(Role("invalid")))
+}
+
+func TestRBACToRole_AllRoles(t *testing.T) {
+	// Verify all defined RBAC role names map correctly to user roles
+	assert.Equal(t, RoleSO, RBACToRole(rbac.RoleSO))
+	assert.Equal(t, RoleCustodian, RBACToRole(rbac.RoleCustodian))
+	assert.Equal(t, RoleAdmin, RBACToRole(rbac.RoleAdmin))
+	assert.Equal(t, RoleOperator, RBACToRole(rbac.RoleOperator))
+	assert.Equal(t, RoleAuditor, RBACToRole(rbac.RoleAuditor))
+	assert.Equal(t, RoleUser, RBACToRole(rbac.RoleUser))
+	assert.Equal(t, Role(""), RBACToRole("invalid"))
 }

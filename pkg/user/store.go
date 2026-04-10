@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 const (
@@ -40,14 +40,18 @@ const (
 
 // Store defines the interface for user persistence.
 type Store interface {
-	// Create creates a new user.
-	Create(ctx context.Context, username, displayName string, role Role) (*User, error)
+	// Create creates a new user scoped to the given tenant.
+	// Pass an empty tenantID for system-level users.
+	Create(ctx context.Context, username, displayName string, role Role, tenantID string) (*User, error)
 
 	// GetByID retrieves a user by their ID.
 	GetByID(ctx context.Context, id []byte) (*User, error)
 
 	// GetByUsername retrieves a user by their username.
 	GetByUsername(ctx context.Context, username string) (*User, error)
+
+	// GetByCertFingerprint retrieves a user by a bound certificate fingerprint.
+	GetByCertFingerprint(ctx context.Context, fingerprint string) (*User, error)
 
 	// Update saves changes to a user.
 	Update(ctx context.Context, user *User) error
@@ -57,6 +61,10 @@ type Store interface {
 
 	// List returns all users.
 	List(ctx context.Context) ([]*User, error)
+
+	// ListByTenant returns users belonging to the given tenant.
+	// If tenantID is empty, only system-level users (with empty TenantID) are returned.
+	ListByTenant(ctx context.Context, tenantID string) ([]*User, error)
 
 	// Count returns the number of users.
 	Count(ctx context.Context) (int, error)
@@ -133,8 +141,8 @@ func NewFileStore(backend storage.Backend, opts ...FileStoreOption) (*FileStore,
 	return store, nil
 }
 
-// Create creates a new user.
-func (s *FileStore) Create(ctx context.Context, username, displayName string, role Role) (*User, error) {
+// Create creates a new user scoped to the given tenant.
+func (s *FileStore) Create(ctx context.Context, username, displayName string, role Role, tenantID string) (*User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -155,7 +163,7 @@ func (s *FileStore) Create(ctx context.Context, username, displayName string, ro
 
 	// Check if username already exists
 	nameKey := userByNamePrefix + username
-	exists, err := s.backend.Exists(nameKey)
+	exists, err := s.backend.Exists(ctx, nameKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check username: %w", err)
 	}
@@ -171,13 +179,14 @@ func (s *FileStore) Create(ctx context.Context, username, displayName string, ro
 		Username:    username,
 		DisplayName: displayName,
 		Role:        role,
+		TenantID:    tenantID,
 		Credentials: []Credential{},
 		CreatedAt:   time.Now().UTC(),
 		Enabled:     true,
 	}
 
 	// Store the user
-	if err := s.saveUserLocked(user); err != nil {
+	if err := s.saveUserLocked(ctx, user); err != nil {
 		return nil, err
 	}
 
@@ -194,7 +203,7 @@ func (s *FileStore) GetByID(ctx context.Context, id []byte) (*User, error) {
 	}
 
 	idKey := userByIDPrefix + base64.URLEncoding.EncodeToString(id)
-	data, err := s.backend.Get(idKey)
+	data, err := s.backend.Get(ctx, idKey)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, ErrUserNotFound
@@ -223,7 +232,7 @@ func (s *FileStore) GetByUsername(ctx context.Context, username string) (*User, 
 	nameKey := userByNamePrefix + username
 
 	// Get the user ID from the name index
-	idData, err := s.backend.Get(nameKey)
+	idData, err := s.backend.Get(ctx, nameKey)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, ErrUserNotFound
@@ -233,7 +242,7 @@ func (s *FileStore) GetByUsername(ctx context.Context, username string) (*User, 
 
 	// Get the actual user data
 	idKey := userByIDPrefix + string(idData)
-	data, err := s.backend.Get(idKey)
+	data, err := s.backend.Get(ctx, idKey)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return nil, ErrUserNotFound
@@ -249,6 +258,46 @@ func (s *FileStore) GetByUsername(ctx context.Context, username string) (*User, 
 	return &user, nil
 }
 
+// GetByCertFingerprint retrieves a user by a bound certificate fingerprint.
+// This performs a scan of all users since fingerprint is not a primary index.
+func (s *FileStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (*User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.closed {
+		return nil, ErrStorageClosed
+	}
+
+	if fingerprint == "" {
+		return nil, ErrCertBindingNotFound
+	}
+
+	keys, err := s.backend.List(ctx, userByIDPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+
+	for _, key := range keys {
+		data, err := s.backend.Get(ctx, key)
+		if err != nil {
+			continue
+		}
+
+		var u User
+		if err := json.Unmarshal(data, &u); err != nil {
+			continue
+		}
+
+		for _, binding := range u.CertBindings {
+			if binding.Fingerprint == fingerprint {
+				return &u, nil
+			}
+		}
+	}
+
+	return nil, ErrCertBindingNotFound
+}
+
 // Update saves changes to a user.
 func (s *FileStore) Update(ctx context.Context, user *User) error {
 	s.mu.Lock()
@@ -260,7 +309,7 @@ func (s *FileStore) Update(ctx context.Context, user *User) error {
 
 	// Verify user exists
 	idKey := userByIDPrefix + base64.URLEncoding.EncodeToString(user.ID)
-	exists, err := s.backend.Exists(idKey)
+	exists, err := s.backend.Exists(ctx, idKey)
 	if err != nil {
 		return fmt.Errorf("failed to check user: %w", err)
 	}
@@ -268,7 +317,7 @@ func (s *FileStore) Update(ctx context.Context, user *User) error {
 		return ErrUserNotFound
 	}
 
-	return s.saveUserLocked(user)
+	return s.saveUserLocked(ctx, user)
 }
 
 // Delete removes a user by their ID.
@@ -282,7 +331,7 @@ func (s *FileStore) Delete(ctx context.Context, id []byte) error {
 
 	// Get the user first to get the username and role
 	idKey := userByIDPrefix + base64.URLEncoding.EncodeToString(id)
-	data, err := s.backend.Get(idKey)
+	data, err := s.backend.Get(ctx, idKey)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			return ErrUserNotFound
@@ -297,7 +346,7 @@ func (s *FileStore) Delete(ctx context.Context, id []byte) error {
 
 	// Check if this is the last admin
 	if user.Role == RoleAdmin {
-		adminCount, err := s.countAdminsLocked()
+		adminCount, err := s.countAdminsLocked(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to count admins: %w", err)
 		}
@@ -308,10 +357,10 @@ func (s *FileStore) Delete(ctx context.Context, id []byte) error {
 
 	// Delete the name index
 	nameKey := userByNamePrefix + user.Username
-	_ = s.backend.Delete(nameKey) // Ignore error if not exists
+	_ = s.backend.Delete(ctx, nameKey) // Ignore error if not exists
 
 	// Delete the user data
-	if err := s.backend.Delete(idKey); err != nil {
+	if err := s.backend.Delete(ctx, idKey); err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
@@ -327,27 +376,32 @@ func (s *FileStore) List(ctx context.Context) ([]*User, error) {
 		return nil, ErrStorageClosed
 	}
 
-	keys, err := s.backend.List(userByIDPrefix)
+	return s.listUsersLocked(ctx)
+}
+
+// ListByTenant returns users belonging to the given tenant.
+// If tenantID is empty, only system-level users (with empty TenantID) are returned.
+func (s *FileStore) ListByTenant(ctx context.Context, tenantID string) ([]*User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.closed {
+		return nil, ErrStorageClosed
+	}
+
+	allUsers, err := s.listUsersLocked(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list users: %w", err)
+		return nil, err
 	}
 
-	users := make([]*User, 0, len(keys))
-	for _, key := range keys {
-		data, err := s.backend.Get(key)
-		if err != nil {
-			continue // Skip invalid entries
+	filtered := make([]*User, 0)
+	for _, u := range allUsers {
+		if u.TenantID == tenantID {
+			filtered = append(filtered, u)
 		}
-
-		var user User
-		if err := json.Unmarshal(data, &user); err != nil {
-			continue // Skip invalid entries
-		}
-
-		users = append(users, &user)
 	}
 
-	return users, nil
+	return filtered, nil
 }
 
 // Count returns the number of users.
@@ -359,7 +413,7 @@ func (s *FileStore) Count(ctx context.Context) (int, error) {
 		return 0, ErrStorageClosed
 	}
 
-	keys, err := s.backend.List(userByIDPrefix)
+	keys, err := s.backend.List(ctx, userByIDPrefix)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count users: %w", err)
 	}
@@ -385,7 +439,7 @@ func (s *FileStore) CountAdmins(ctx context.Context) (int, error) {
 		return 0, ErrStorageClosed
 	}
 
-	return s.countAdminsLocked()
+	return s.countAdminsLocked(ctx)
 }
 
 // SaveSession stores a WebAuthn session for later retrieval.
@@ -460,39 +514,62 @@ func (s *FileStore) Close() error {
 
 // Helper functions
 
-func (s *FileStore) saveUserLocked(user *User) error {
+func (s *FileStore) saveUserLocked(ctx context.Context, user *User) error {
 	data, err := json.Marshal(user)
 	if err != nil {
 		return fmt.Errorf("failed to marshal user: %w", err)
 	}
 
 	idKey := userByIDPrefix + base64.URLEncoding.EncodeToString(user.ID)
-	opts := storage.DefaultOptions()
-	opts.Permissions = 0600 // Secure permissions for user data
 
-	if err := s.backend.Put(idKey, data, opts); err != nil {
+	if err := s.backend.Put(ctx, idKey, data); err != nil {
 		return fmt.Errorf("failed to save user: %w", err)
 	}
 
 	// Create name index
 	nameKey := userByNamePrefix + user.Username
 	encodedID := base64.URLEncoding.EncodeToString(user.ID)
-	if err := s.backend.Put(nameKey, []byte(encodedID), opts); err != nil {
+	if err := s.backend.Put(ctx, nameKey, []byte(encodedID)); err != nil {
 		return fmt.Errorf("failed to save name index: %w", err)
 	}
 
 	return nil
 }
 
-func (s *FileStore) countAdminsLocked() (int, error) {
-	keys, err := s.backend.List(userByIDPrefix)
+// listUsersLocked returns all users. Caller must hold at least s.mu.RLock().
+func (s *FileStore) listUsersLocked(ctx context.Context) ([]*User, error) {
+	keys, err := s.backend.List(ctx, userByIDPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+
+	users := make([]*User, 0, len(keys))
+	for _, key := range keys {
+		data, err := s.backend.Get(ctx, key)
+		if err != nil {
+			continue // Skip invalid entries
+		}
+
+		var user User
+		if err := json.Unmarshal(data, &user); err != nil {
+			continue // Skip invalid entries
+		}
+
+		users = append(users, &user)
+	}
+
+	return users, nil
+}
+
+func (s *FileStore) countAdminsLocked(ctx context.Context) (int, error) {
+	keys, err := s.backend.List(ctx, userByIDPrefix)
 	if err != nil {
 		return 0, fmt.Errorf("failed to list users: %w", err)
 	}
 
 	count := 0
 	for _, key := range keys {
-		data, err := s.backend.Get(key)
+		data, err := s.backend.Get(ctx, key)
 		if err != nil {
 			continue
 		}

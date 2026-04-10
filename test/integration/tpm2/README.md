@@ -94,7 +94,7 @@ docker-compose down -v
   - State: Ephemeral (fresh state per test run)
 
 - **`test`** - Test runner container
-  - Base: golang:1.23
+  - Base: golang:1.26.1
   - Includes: tcpdump, tpm2-tools for debugging
   - Working directory: `/app`
 
@@ -306,7 +306,7 @@ Tests require both tags:
 ### Dependencies
 
 Runtime dependencies (in Docker):
-- golang:1.23 or later
+- golang:1.26.1 or later
 - TPM 2.0 simulator (SWTPM)
 - netcat (for connectivity checks)
 
@@ -363,5 +363,5 @@ See [LICENSE](../../../LICENSE) file for project licensing.
 
 ---
 
-**Maintained by**: go-keychain project
+**Maintained by**: go-xkms project
 **Last Updated**: 2025-11-09

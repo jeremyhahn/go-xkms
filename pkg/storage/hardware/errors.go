@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -62,6 +62,12 @@ var (
 
 	// ErrNilStorage indicates a nil storage backend was provided
 	ErrNilStorage = errors.New("storage backend cannot be nil")
+
+	// ErrDeleteNotSupportedOnToken indicates the token silently no-op'd a
+	// C_DestroyObject call. YubiKey PIV is a known offender: its libykcs11
+	// accepts DestroyObject but leaves the slot object intact because PIV
+	// slots can only be overwritten or reset, never individually deleted.
+	ErrDeleteNotSupportedOnToken = errors.New("hardware: token silently rejected cert deletion")
 )
 
 // IsCapacityError returns true if the error indicates a capacity-related issue

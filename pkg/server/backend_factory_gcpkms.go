@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,28 +17,27 @@ package server
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-func createGCPKMSBackend(config BackendConfig) (types.Backend, error) {
+func createGCPKMSBackend(config BackendConfig) (types.KeyProvider, error) {
 	projectID, _ := config.Config["project_id"].(string)
 	if projectID == "" {
-		return nil, fmt.Errorf("project_id is required for GCP KMS backend")
+		return nil, &ErrConfigRequired{Field: "project_id", Backend: "GCP KMS"}
 	}
 
 	locationID, _ := config.Config["location_id"].(string)
 	if locationID == "" {
-		return nil, fmt.Errorf("location_id is required for GCP KMS backend")
+		return nil, &ErrConfigRequired{Field: "location_id", Backend: "GCP KMS"}
 	}
 
 	keyRingID, _ := config.Config["key_ring_id"].(string)
 	if keyRingID == "" {
-		return nil, fmt.Errorf("key_ring_id is required for GCP KMS backend")
+		return nil, &ErrConfigRequired{Field: "key_ring_id", Backend: "GCP KMS"}
 	}
 
 	credentialsFile, _ := config.Config["credentials_file"].(string)
@@ -61,7 +60,7 @@ func createGCPKMSBackend(config BackendConfig) (types.Backend, error) {
 	} else {
 		keyStorage, err = file.New(keyDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create key storage: %w", err)
+			return nil, &ErrStorageCreate{Resource: "key storage", Err: err}
 		}
 	}
 
@@ -71,7 +70,7 @@ func createGCPKMSBackend(config BackendConfig) (types.Backend, error) {
 	} else {
 		certStorage, err = file.New(certDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create cert storage: %w", err)
+			return nil, &ErrStorageCreate{Resource: "cert storage", Err: err}
 		}
 	}
 

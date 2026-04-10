@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package keychain
+package xkms
 
 import (
 	"context"
@@ -21,14 +21,14 @@ import (
 	"time"
 )
 
-// mockService implements KeychainServicer for testing.
+// mockService implements XKMSServicer for testing.
 type mockService struct{}
 
 func (m *mockService) Health(ctx context.Context) (string, string, error) {
 	return "healthy", "1.0.0", nil
 }
 
-func (m *mockService) ListBackends(ctx context.Context) ([]BackendInfo, error) {
+func (m *mockService) ListBackends(ctx context.Context, opts ...ListOption) ([]BackendInfo, error) {
 	return nil, nil
 }
 
@@ -40,7 +40,7 @@ func (m *mockService) GenerateKey(ctx context.Context, req *GenerateKeyRequest) 
 	return nil, nil
 }
 
-func (m *mockService) ListKeys(ctx context.Context, backend string) (*ListKeysResponse, error) {
+func (m *mockService) ListKeys(ctx context.Context, backend string, opts ...ListOption) (*ListKeysResponse, error) {
 	return nil, nil
 }
 
@@ -100,26 +100,6 @@ func (m *mockService) RotateKey(ctx context.Context, req *RotateKeyRequest) (*Ro
 	return nil, nil
 }
 
-func (m *mockService) ListKeyVersions(ctx context.Context, req *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) EnableKeyVersion(ctx context.Context, req *EnableKeyVersionRequest) (*EnableKeyVersionResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) DisableKeyVersion(ctx context.Context, req *DisableKeyVersionRequest) (*DisableKeyVersionResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) EnableAllKeyVersions(ctx context.Context, req *EnableAllKeyVersionsRequest) (*EnableAllKeyVersionsResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) DisableAllKeyVersions(ctx context.Context, req *DisableAllKeyVersionsRequest) (*DisableAllKeyVersionsResponse, error) {
-	return nil, nil
-}
-
 func (m *mockService) GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error) {
 	return nil, nil
 }
@@ -136,7 +116,7 @@ func (m *mockService) CopyKey(ctx context.Context, req *CopyKeyRequest) (*CopyKe
 	return nil, nil
 }
 
-func (m *mockService) ListCertificates(ctx context.Context, backend string) (*ListCertificatesResponse, error) {
+func (m *mockService) ListCertificates(ctx context.Context, backend string, opts ...ListOption) (*ListCertificatesResponse, error) {
 	return nil, nil
 }
 
@@ -164,9 +144,13 @@ func (m *mockService) CanSeal(ctx context.Context, backend string) (*CanSealResp
 	return nil, nil
 }
 
+func (m *mockService) AttestKey(ctx context.Context, req *AttestKeyRequest) (*AttestKeyResponse, error) {
+	return nil, nil
+}
+
 // User management methods
 
-func (m *mockService) ListUsers(ctx context.Context) (*ListUsersResponse, error) {
+func (m *mockService) ListUsers(ctx context.Context, opts ...ListOption) (*ListUsersResponse, error) {
 	return nil, nil
 }
 
@@ -205,6 +189,200 @@ func (m *mockService) BeginAuthentication(ctx context.Context, req *BeginAuthent
 }
 
 func (m *mockService) FinishAuthentication(ctx context.Context, req *FinishAuthenticationRequest) (*FinishAuthenticationResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) DeriveKey(ctx context.Context, req *DeriveKeyRequest) (*DeriveKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) WrapKeyByID(ctx context.Context, req *WrapKeyByIDRequest) (*WrapKeyByIDResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) UnwrapKeyByID(ctx context.Context, req *UnwrapKeyByIDRequest) (*UnwrapKeyByIDResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ExportKeyMaterial(ctx context.Context, req *ExportKeyMaterialRequest) (*ExportKeyMaterialResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) DeriveKeyECDH(ctx context.Context, req *DeriveKeyECDHRequest) (*DeriveKeyECDHResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetCABundle(ctx context.Context, req *GetCABundleRequest) (*GetCABundleResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetCACertificate(ctx context.Context, req *GetCACertificateRequest) (*GetCACertificateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SignCSR(ctx context.Context, req *SignCSRRequest) (*SignCSRResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) IssueCertificate(ctx context.Context, req *IssueCertificateRequest) (*IssueCertificateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) RevokeCertificate(ctx context.Context, req *RevokeCertificateRequest) (*RevokeCertificateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GenerateCRL(ctx context.Context, req *GenerateCRLRequest) (*GenerateCRLResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) IsRevoked(ctx context.Context, req *IsRevokedRequest) (*IsRevokedResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) IssueEKCertificate(ctx context.Context, req *IssueEKCertificateRequest) (*IssueEKCertificateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) IssueAKCertificate(ctx context.Context, req *IssueAKCertificateRequest) (*IssueAKCertificateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SignTCGCSR(ctx context.Context, req *SignTCGCSRRequest) (*SignTCGCSRResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) EnrollDevice(ctx context.Context, req *EnrollDeviceRequest) (*EnrollDeviceResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ListPIVSlots(ctx context.Context, req *ListPIVSlotsRequest) (*ListPIVSlotsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetPIVCertificate(ctx context.Context, req *GetPIVCertificateRequest) (*GetPIVCertificateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) StorePIVCertificate(ctx context.Context, req *StorePIVCertificateRequest) error {
+	return nil
+}
+
+func (m *mockService) DeletePIVCertificate(ctx context.Context, req *DeletePIVCertificateRequest) error {
+	return nil
+}
+
+func (m *mockService) GeneratePIVKey(ctx context.Context, req *GeneratePIVKeyRequest) (*GeneratePIVKeyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ImportPIVCertificate(ctx context.Context, req *StorePIVCertificateRequest) error {
+	return nil
+}
+
+func (m *mockService) ExportPIVCertificate(ctx context.Context, req *GetPIVCertificateRequest) (*GetPIVCertificateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GeneratePIVCSR(ctx context.Context, req *GeneratePIVCSRRequest) (*GeneratePIVCSRResponse, error) {
+	return nil, nil
+}
+
+// Password store methods
+
+func (m *mockService) PasswordAdd(ctx context.Context, req *PasswordAddRequest) (*PasswordAddResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordGet(ctx context.Context, req *PasswordGetRequest) (*PasswordGetResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordList(ctx context.Context, req *PasswordListRequest) (*PasswordListResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordUpdate(ctx context.Context, req *PasswordUpdateRequest) error {
+	return nil
+}
+
+func (m *mockService) PasswordDelete(ctx context.Context, req *PasswordDeleteRequest) error {
+	return nil
+}
+
+func (m *mockService) PasswordStoreUnlock(ctx context.Context, req *PasswordStoreUnlockRequest) error {
+	return nil
+}
+
+func (m *mockService) PasswordStoreLock(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockService) PasswordStoreStatus(ctx context.Context) (*PasswordStoreStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PasswordStoreSetAccessMode(ctx context.Context, req *PasswordStoreSetAccessModeRequest) error {
+	return nil
+}
+
+func (m *mockService) PasswordGenerate(ctx context.Context, req *PasswordGenerateRequest) (*PasswordGenerateResponse, error) {
+	return nil, nil
+}
+
+// Platform store methods
+
+func (m *mockService) SealStorePut(ctx context.Context, req *SealStorePutRequest) error {
+	return nil
+}
+
+func (m *mockService) SealStoreGet(ctx context.Context, req *SealStoreGetRequest) (*SealStoreGetResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SealStoreDelete(ctx context.Context, req *SealStoreDeleteRequest) error {
+	return nil
+}
+
+func (m *mockService) SealStoreList(ctx context.Context) (*SealStoreListResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SealStoreReseal(ctx context.Context, req *SealStoreResealRequest) error {
+	return nil
+}
+
+func (m *mockService) SealStoreStatus(ctx context.Context) (*SealStoreStatusResponse, error) {
+	return nil, nil
+}
+
+// Policy methods
+
+func (m *mockService) PolicyCreate(ctx context.Context, req *PolicyCreateRequest) (*PolicyCreateResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PolicyGet(ctx context.Context, req *PolicyGetRequest) (*PolicyGetResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PolicyList(ctx context.Context) (*PolicyListResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PolicyDelete(ctx context.Context, req *PolicyDeleteRequest) error {
+	return nil
+}
+
+func (m *mockService) PolicyRefresh(ctx context.Context, req *PolicyRefreshRequest) (*PolicyGetResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PolicyVerify(ctx context.Context, req *PolicyVerifyRequest) (*PolicyVerifyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) PolicyExport(ctx context.Context, req *PolicyExportRequest) (*PolicyExportResponse, error) {
 	return nil, nil
 }
 
@@ -333,33 +511,6 @@ func TestWithTLSEnabled(t *testing.T) {
 		}
 		if opts.tlsEnabled {
 			t.Error("WithTLSEnabled(false) did not disable TLS")
-		}
-	})
-}
-
-func TestWithTLSInsecureSkipVerify(t *testing.T) {
-	t.Run("skip verify true", func(t *testing.T) {
-		opts := newDefaultClientOptions()
-		opt := WithTLSInsecureSkipVerify(true)
-		err := opt(opts)
-		if err != nil {
-			t.Errorf("WithTLSInsecureSkipVerify(true) returned unexpected error: %v", err)
-		}
-		if !opts.tlsInsecureSkipVerify {
-			t.Error("WithTLSInsecureSkipVerify(true) did not set skip verify")
-		}
-	})
-
-	t.Run("skip verify false", func(t *testing.T) {
-		opts := newDefaultClientOptions()
-		opts.tlsInsecureSkipVerify = true
-		opt := WithTLSInsecureSkipVerify(false)
-		err := opt(opts)
-		if err != nil {
-			t.Errorf("WithTLSInsecureSkipVerify(false) returned unexpected error: %v", err)
-		}
-		if opts.tlsInsecureSkipVerify {
-			t.Error("WithTLSInsecureSkipVerify(false) did not clear skip verify")
 		}
 	})
 }
@@ -772,16 +923,15 @@ func TestDefaultAddressForProtocol(t *testing.T) {
 
 func TestClientOptions_ToConfig(t *testing.T) {
 	opts := &clientOptions{
-		protocol:              ProtocolGRPC,
-		address:               "localhost:9000",
-		tlsEnabled:            true,
-		tlsInsecureSkipVerify: true,
-		tlsCertFile:           "/cert.pem",
-		tlsKeyFile:            "/key.pem",
-		tlsCAFile:             "/ca.pem",
-		jwtToken:              "token",
-		headers:               map[string]string{"X-Key": "value"},
-		service:               &mockService{},
+		protocol:    ProtocolGRPC,
+		address:     "localhost:9000",
+		tlsEnabled:  true,
+		tlsCertFile: "/cert.pem",
+		tlsKeyFile:  "/key.pem",
+		tlsCAFile:   "/ca.pem",
+		jwtToken:    "token",
+		headers:     map[string]string{"X-Key": "value"},
+		service:     &mockService{},
 	}
 
 	cfg := opts.toConfig()
@@ -794,9 +944,6 @@ func TestClientOptions_ToConfig(t *testing.T) {
 	}
 	if !cfg.TLSEnabled {
 		t.Error("expected TLSEnabled true")
-	}
-	if !cfg.TLSInsecureSkipVerify {
-		t.Error("expected TLSInsecureSkipVerify true")
 	}
 	if cfg.TLSCertFile != "/cert.pem" {
 		t.Errorf("expected TLSCertFile /cert.pem, got %s", cfg.TLSCertFile)
@@ -871,7 +1018,7 @@ func TestNewWithOptions_EquivalenceWithNew(t *testing.T) {
 	svc := &mockService{}
 
 	// Create with New.
-	cfg := &Config{
+	cfg := &BackendConfig{
 		Protocol: ProtocolEmbedded,
 		Service:  svc,
 	}
@@ -921,7 +1068,6 @@ func TestNewWithOptions_TLSOptions(t *testing.T) {
 			WithProtocol(ProtocolEmbedded),
 			WithService(svc),
 			WithTLSEnabled(true),
-			WithTLSInsecureSkipVerify(true),
 			WithTLSCertFile("/path/to/cert.pem"),
 			WithTLSKeyFile("/path/to/key.pem"),
 			WithTLSCAFile("/path/to/ca.pem"),
@@ -934,8 +1080,7 @@ func TestNewWithOptions_TLSOptions(t *testing.T) {
 
 	t.Run("custom TLS config", func(t *testing.T) {
 		tlsCfg := &tls.Config{
-			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: false,
+			MinVersion: tls.VersionTLS13,
 		}
 		client, err := NewWithOptions(
 			WithProtocol(ProtocolEmbedded),
@@ -1093,4 +1238,244 @@ func TestWithTimeout_EdgeCases(t *testing.T) {
 			t.Errorf("expected timeout 24h, got %v", opts.timeout)
 		}
 	})
+}
+
+func TestWithSPKIPin(t *testing.T) {
+	t.Run("sets pin and enables TLS", func(t *testing.T) {
+		opts := newDefaultClientOptions()
+		opt := WithSPKIPin("abc123deadbeef")
+		err := opt(opts)
+		if err != nil {
+			t.Fatalf("WithSPKIPin() returned error: %v", err)
+		}
+		if opts.spkiPin != "abc123deadbeef" {
+			t.Errorf("spkiPin = %q, want %q", opts.spkiPin, "abc123deadbeef")
+		}
+		if !opts.tlsEnabled {
+			t.Error("tlsEnabled should be true when SPKI pin is set")
+		}
+	})
+
+	t.Run("empty pin still enables TLS", func(t *testing.T) {
+		opts := newDefaultClientOptions()
+		opt := WithSPKIPin("")
+		err := opt(opts)
+		if err != nil {
+			t.Fatalf("WithSPKIPin() returned error: %v", err)
+		}
+		if opts.spkiPin != "" {
+			t.Errorf("spkiPin = %q, want empty", opts.spkiPin)
+		}
+		if !opts.tlsEnabled {
+			t.Error("tlsEnabled should be true even with empty pin")
+		}
+	})
+}
+
+// Barrier operations
+func (m *mockService) BarrierInitialize(ctx context.Context, req *BarrierInitializeRequest) error {
+	return nil
+}
+
+func (m *mockService) BarrierUnseal(ctx context.Context, req *BarrierUnsealRequest) error {
+	return nil
+}
+
+func (m *mockService) BarrierSeal(ctx context.Context) error {
+	return nil
+}
+
+func (m *mockService) BarrierStatus(ctx context.Context) (*BarrierStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) BarrierInitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) BarrierUnsealWithShare(ctx context.Context, req *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) BarrierUnsealWithShares(ctx context.Context, req *BarrierUnsealSharesRequest) error {
+	return nil
+}
+
+// BarrierShamirListShares returns Shamir share metadata.
+func (m *mockService) BarrierShamirListShares(_ context.Context) (*BarrierShamirSharesResponse, error) {
+	return nil, nil
+}
+
+// BarrierShamirDeleteShare deletes a Shamir share by index.
+func (m *mockService) BarrierShamirDeleteShare(_ context.Context, _ *BarrierShamirDeleteShareRequest) error {
+	return nil
+}
+
+// BarrierShamirDeleteAllShares deletes all Shamir shares.
+func (m *mockService) BarrierShamirDeleteAllShares(_ context.Context) error {
+	return nil
+}
+
+// BarrierShamirVerify verifies Shamir share integrity.
+func (m *mockService) BarrierShamirVerify(_ context.Context) error {
+	return nil
+}
+
+// BarrierRekey re-encrypts the barrier with a new root key.
+func (m *mockService) BarrierRekey(_ context.Context, _ *BarrierRekeyRequest) (*BarrierRekeyResponse, error) {
+	return nil, nil
+}
+
+// BarrierGenerateRecoveryKeys generates recovery keys.
+func (m *mockService) BarrierGenerateRecoveryKeys(_ context.Context, _ *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error) {
+	return nil, nil
+}
+
+// BarrierRecoverWithKeys recovers the barrier using recovery keys.
+func (m *mockService) BarrierRecoverWithKeys(_ context.Context, _ *BarrierRecoverWithKeysRequest) error {
+	return nil
+}
+
+// BarrierDeleteRecoveryKeys deletes all recovery keys.
+func (m *mockService) BarrierDeleteRecoveryKeys(_ context.Context) error {
+	return nil
+}
+
+// BarrierHasRecoveryKeys checks if recovery keys exist.
+func (m *mockService) BarrierHasRecoveryKeys(_ context.Context) (*BarrierHasRecoveryKeysResponse, error) {
+	return nil, nil
+}
+
+// BarrierGenerateRootToken generates a root token.
+func (m *mockService) BarrierGenerateRootToken(_ context.Context, _ *BarrierGenerateRootTokenRequest) (*BarrierRootTokenResponse, error) {
+	return nil, nil
+}
+
+// PIN operations
+func (m *mockService) SetSOPIN(ctx context.Context, req *SetSOPINRequest) error {
+	return nil
+}
+
+func (m *mockService) SetUserPIN(ctx context.Context, req *SetUserPINRequest) error {
+	return nil
+}
+
+func (m *mockService) ChangeSOPIN(ctx context.Context, req *ChangeSOPINRequest) error {
+	return nil
+}
+
+func (m *mockService) ChangeUserPIN(ctx context.Context, req *ChangeUserPINRequest) error {
+	return nil
+}
+
+func (m *mockService) VerifySOPIN(ctx context.Context, req *VerifySOPINRequest) error {
+	return nil
+}
+
+func (m *mockService) VerifyUserPIN(ctx context.Context, req *VerifyUserPINRequest) error {
+	return nil
+}
+
+func (m *mockService) GetLockoutStatus(ctx context.Context) (*LockoutStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ResetLockout(ctx context.Context, req *ResetLockoutRequest) error {
+	return nil
+}
+
+func (m *mockService) CreateCustodianGroup(ctx context.Context, req *CreateCustodianGroupRequest) (*CreateCustodianGroupResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetCustodianGroup(ctx context.Context, groupID string) (*GetCustodianGroupResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ListCustodianGroups(ctx context.Context) (*ListCustodianGroupsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) DeleteCustodianGroup(ctx context.Context, groupID string) error {
+	return nil
+}
+
+func (m *mockService) AddCustodianMember(ctx context.Context, req *AddCustodianMemberRequest) (*AddCustodianMemberResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) RemoveCustodianMember(ctx context.Context, req *RemoveCustodianMemberRequest) error {
+	return nil
+}
+
+func (m *mockService) DistributeShares(ctx context.Context, req *DistributeSharesRequest) (*DistributeSharesResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SubmitShare(ctx context.Context, req *SubmitShareRequest) (*SubmitShareResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ListShares(ctx context.Context) (*ListSharesResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetShareCollectionStatus(ctx context.Context, groupID string) (*ShareCollectionStatus, error) {
+	return nil, nil
+}
+
+func (m *mockService) CreateTenant(ctx context.Context, req *CreateTenantRequest) (*CreateTenantResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetTenant(ctx context.Context, tenantID string) (*GetTenantResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ListTenants(ctx context.Context) (*ListTenantsResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) DeleteTenant(ctx context.Context, tenantID string) error {
+	return nil
+}
+
+func (m *mockService) TenantBarrierInit(ctx context.Context, req *TenantBarrierInitRequest) error {
+	return nil
+}
+
+func (m *mockService) TenantBarrierUnseal(ctx context.Context, req *TenantBarrierUnsealRequest) error {
+	return nil
+}
+
+// InitCeremonyService methods
+
+func (m *mockService) GetInitStatus(ctx context.Context) (*InitStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ClaimCertBegin(ctx context.Context, req *ClaimCertBeginRequest) (*ClaimCertBeginResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ClaimCertComplete(ctx context.Context, req *ClaimCertCompleteRequest) (*ClaimCertCompleteResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ClaimShare(ctx context.Context, req *ClaimShareRequest) (*ClaimShareResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) SignCSRInit(ctx context.Context, req *SignCSRInitRequest) (*SignCSRInitResponse, error) {
+	return nil, nil
+}
+
+// CredentialManagementService methods
+
+func (m *mockService) SubmitCredential(ctx context.Context, req *CredentialSubmitRequest) (*CredentialSubmitResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetCredentialStrategy(ctx context.Context) (*CredentialStrategyResponse, error) {
+	return nil, nil
 }

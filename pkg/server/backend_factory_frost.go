@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,15 +16,13 @@
 package server
 
 import (
-	"fmt"
-
-	"github.com/jeremyhahn/go-keychain/pkg/backend/frost"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-func createFrostBackend(config BackendConfig) (types.Backend, error) {
+func createFrostBackend(config BackendConfig) (types.KeyProvider, error) {
 	// Create public storage
 	publicDir, ok := config.Config["public_dir"].(string)
 	if !ok || publicDir == "" {
@@ -38,12 +36,12 @@ func createFrostBackend(config BackendConfig) (types.Backend, error) {
 	} else {
 		publicStorage, err = file.New(publicDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create public storage: %w", err)
+			return nil, &ErrStorageCreate{Resource: "public storage", Err: err}
 		}
 	}
 
 	// Get secret backend configuration
-	// The secret backend should be another types.Backend (TPM2, PKCS#11, etc.)
+	// The secret backend should be another types.KeyProvider (TPM2, PKCS#11, etc.)
 	secretBackendName, _ := config.Config["secret_backend"].(string)
 	if secretBackendName == "" {
 		secretBackendName = "pkcs8" // Default to PKCS8 for secret storage
@@ -52,7 +50,7 @@ func createFrostBackend(config BackendConfig) (types.Backend, error) {
 	// Create secret backend
 	secretBackend, err := createSecretBackendForFrost(secretBackendName, config)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create secret backend: %w", err)
+		return nil, &ErrBackendCreate{Backend: "FROST secret", Err: err}
 	}
 
 	// Parse FROST-specific configuration
@@ -105,7 +103,7 @@ func createFrostBackend(config BackendConfig) (types.Backend, error) {
 		} else {
 			nonceStorage, err = file.New(nonceDir)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create nonce storage: %w", err)
+				return nil, &ErrStorageCreate{Resource: "nonce storage", Err: err}
 			}
 		}
 	}
@@ -126,8 +124,8 @@ func createFrostBackend(config BackendConfig) (types.Backend, error) {
 }
 
 // createSecretBackendForFrost creates a backend for storing FROST secret shares.
-// This can be any types.Backend that supports key storage.
-func createSecretBackendForFrost(backendName string, config BackendConfig) (types.Backend, error) {
+// This can be any types.KeyProvider that supports key storage.
+func createSecretBackendForFrost(backendName string, config BackendConfig) (types.KeyProvider, error) {
 	// Create a sub-configuration for the secret backend
 	secretConfig := BackendConfig{
 		Name:    backendName,

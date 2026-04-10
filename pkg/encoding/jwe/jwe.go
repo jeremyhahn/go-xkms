@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -111,7 +111,7 @@ import (
 	"strings"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 )
 
 // Encrypter wraps go-jose encrypter with a simplified API for JWE encryption.

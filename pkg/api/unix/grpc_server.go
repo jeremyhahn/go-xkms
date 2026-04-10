@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,12 +26,12 @@ import (
 
 	"google.golang.org/grpc"
 
-	grpcinternal "github.com/jeremyhahn/go-keychain/pkg/api/grpc"
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
+	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 )
 
 // DefaultSocketPath is the default path for the Unix socket
-const DefaultSocketPath = "/var/run/keychain/keychain.sock"
+const DefaultSocketPath = "/var/run/xkms/xkms.sock"
 
 // GRPCConfig holds the gRPC Unix socket server configuration
 type GRPCConfig struct {
@@ -148,8 +148,8 @@ func (s *GRPCServer) Start() error {
 	s.server = grpc.NewServer(opts...)
 
 	// Register the keystore service
-	// Uses the global keychain service for backend management
-	service := grpcinternal.NewService()
+	// Uses the global xkms service for backend management
+	service := grpcinternal.NewService(nil, nil)
 	pb.RegisterKeystoreServiceServer(s.server, service)
 	s.mu.Unlock()
 

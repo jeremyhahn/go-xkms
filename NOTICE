@@ -1,4 +1,4 @@
-go-keychain
+go-xkms
 Copyright (c) 2025 Jeremy Hahn
 Copyright (c) 2025 Automate The Things, LLC
 
@@ -57,7 +57,7 @@ https://github.com/hashicorp/vault
 
 TRADEMARKS
 
-"go-keychain" is a trademark of Automate The Things, LLC.
+"xHSM" is a trademark of Automate The Things, LLC.
 
 TPM, Trusted Platform Module are trademarks of Trusted Computing Group.
 PKCS is a trademark of RSA Security LLC.

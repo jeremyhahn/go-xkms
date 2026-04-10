@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,7 +18,7 @@ import (
 	"unicode/utf8"
 )
 
-func TestNewClearPassword(t *testing.T) {
+func TestNewPassword(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   []byte
@@ -58,14 +58,14 @@ func TestNewClearPassword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pwd, err := NewClearPassword(tt.input)
+			pwd, err := NewPassword(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("NewClearPassword() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("NewPassword() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr {
 				if pwd == nil {
-					t.Error("NewClearPassword() returned nil password without error")
+					t.Error("NewPassword() returned nil password without error")
 					return
 				}
 				// Verify password is correctly stored
@@ -90,7 +90,7 @@ func TestNewClearPassword(t *testing.T) {
 	}
 }
 
-func TestNewClearPasswordFromString(t *testing.T) {
+func TestNewPasswordFromString(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
@@ -130,14 +130,14 @@ func TestNewClearPasswordFromString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pwd, err := NewClearPasswordFromString(tt.input)
+			pwd, err := NewPasswordFromString(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("NewClearPasswordFromString() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("NewPasswordFromString() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr {
 				if pwd == nil {
-					t.Error("NewClearPasswordFromString() returned nil password without error")
+					t.Error("NewPasswordFromString() returned nil password without error")
 					return
 				}
 				str, err := pwd.String()
@@ -178,9 +178,9 @@ func TestClearPassword_String(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pwd, err := NewClearPasswordFromString(tt.input)
+			pwd, err := NewPasswordFromString(tt.input)
 			if err != nil {
-				t.Fatalf("NewClearPasswordFromString() error = %v", err)
+				t.Fatalf("NewPasswordFromString() error = %v", err)
 			}
 			got, err := pwd.String()
 			if (err != nil) != tt.wantErr {
@@ -219,9 +219,9 @@ func TestClearPassword_Bytes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pwd, err := NewClearPassword(tt.input)
+			pwd, err := NewPassword(tt.input)
 			if err != nil {
-				t.Fatalf("NewClearPassword() error = %v", err)
+				t.Fatalf("NewPassword() error = %v", err)
 			}
 			got := pwd.Bytes()
 			if !tt.wantErr {
@@ -235,9 +235,9 @@ func TestClearPassword_Bytes(t *testing.T) {
 
 func TestClearPassword_Clear(t *testing.T) {
 	t.Run("password can be cleared", func(t *testing.T) {
-		pwd, err := NewClearPasswordFromString("sensitive-password")
+		pwd, err := NewPasswordFromString("sensitive-password")
 		if err != nil {
-			t.Fatalf("NewClearPasswordFromString() error = %v", err)
+			t.Fatalf("NewPasswordFromString() error = %v", err)
 		}
 
 		// Verify password works before clearing
@@ -269,9 +269,9 @@ func TestClearPassword_Clear(t *testing.T) {
 	})
 
 	t.Run("clear is idempotent", func(t *testing.T) {
-		pwd, err := NewClearPasswordFromString("test-password")
+		pwd, err := NewPasswordFromString("test-password")
 		if err != nil {
-			t.Fatalf("NewClearPasswordFromString() error = %v", err)
+			t.Fatalf("NewPasswordFromString() error = %v", err)
 		}
 
 		// Clear multiple times should not panic
@@ -290,9 +290,9 @@ func TestClearPassword_Clear(t *testing.T) {
 func TestClearPassword_IsolationAndSecurity(t *testing.T) {
 	t.Run("external modification does not affect password", func(t *testing.T) {
 		original := []byte("original-password")
-		pwd, err := NewClearPassword(original)
+		pwd, err := NewPassword(original)
 		if err != nil {
-			t.Fatalf("NewClearPassword() error = %v", err)
+			t.Fatalf("NewPassword() error = %v", err)
 		}
 
 		// Modify the original slice
@@ -309,9 +309,9 @@ func TestClearPassword_IsolationAndSecurity(t *testing.T) {
 	})
 
 	t.Run("returned bytes are independent copies", func(t *testing.T) {
-		pwd, err := NewClearPasswordFromString("test-password")
+		pwd, err := NewPasswordFromString("test-password")
 		if err != nil {
-			t.Fatalf("NewClearPasswordFromString() error = %v", err)
+			t.Fatalf("NewPasswordFromString() error = %v", err)
 		}
 
 		// Get two copies
@@ -397,13 +397,13 @@ func TestEqual(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p1, err := NewClearPasswordFromString(tt.pwd1)
+			p1, err := NewPasswordFromString(tt.pwd1)
 			if err != nil {
-				t.Fatalf("NewClearPasswordFromString(pwd1) error = %v", err)
+				t.Fatalf("NewPasswordFromString(pwd1) error = %v", err)
 			}
-			p2, err := NewClearPasswordFromString(tt.pwd2)
+			p2, err := NewPasswordFromString(tt.pwd2)
 			if err != nil {
-				t.Fatalf("NewClearPasswordFromString(pwd2) error = %v", err)
+				t.Fatalf("NewPasswordFromString(pwd2) error = %v", err)
 			}
 
 			got, err := Equal(p1, p2)
@@ -418,8 +418,8 @@ func TestEqual(t *testing.T) {
 	}
 
 	t.Run("equal returns error for cleared password", func(t *testing.T) {
-		p1, _ := NewClearPasswordFromString("password1")
-		p2, _ := NewClearPasswordFromString("password2")
+		p1, _ := NewPasswordFromString("password1")
+		p2, _ := NewPasswordFromString("password2")
 
 		p1.Clear()
 
@@ -428,7 +428,7 @@ func TestEqual(t *testing.T) {
 			t.Error("Equal() should return error when first password is cleared")
 		}
 
-		p1, _ = NewClearPasswordFromString("password1")
+		p1, _ = NewPasswordFromString("password1")
 		p2.Clear()
 
 		_, err = Equal(p1, p2)
@@ -441,9 +441,9 @@ func TestEqual(t *testing.T) {
 func TestClearPassword_EdgeCases(t *testing.T) {
 	t.Run("password with null bytes", func(t *testing.T) {
 		input := []byte{'p', 'a', 's', 's', 0x00, 'w', 'o', 'r', 'd'}
-		pwd, err := NewClearPassword(input)
+		pwd, err := NewPassword(input)
 		if err != nil {
-			t.Fatalf("NewClearPassword() error = %v", err)
+			t.Fatalf("NewPassword() error = %v", err)
 		}
 
 		got := pwd.Bytes()
@@ -454,9 +454,9 @@ func TestClearPassword_EdgeCases(t *testing.T) {
 
 	t.Run("password with only special characters", func(t *testing.T) {
 		input := "!@#$%^&*()_+-=[]{}|;':\",./<>?"
-		pwd, err := NewClearPasswordFromString(input)
+		pwd, err := NewPasswordFromString(input)
 		if err != nil {
-			t.Fatalf("NewClearPasswordFromString() error = %v", err)
+			t.Fatalf("NewPasswordFromString() error = %v", err)
 		}
 
 		got, err := pwd.String()
@@ -470,9 +470,9 @@ func TestClearPassword_EdgeCases(t *testing.T) {
 
 	t.Run("password with mixed valid utf8", func(t *testing.T) {
 		input := "Hello世界🌍Мир"
-		pwd, err := NewClearPasswordFromString(input)
+		pwd, err := NewPasswordFromString(input)
 		if err != nil {
-			t.Fatalf("NewClearPasswordFromString() error = %v", err)
+			t.Fatalf("NewPasswordFromString() error = %v", err)
 		}
 
 		got, err := pwd.String()
@@ -488,17 +488,17 @@ func TestClearPassword_EdgeCases(t *testing.T) {
 	})
 }
 
-func BenchmarkNewClearPassword(b *testing.B) {
+func BenchmarkNewPassword(b *testing.B) {
 	password := []byte("benchmark-password-123")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = NewClearPassword(password)
+		_, _ = NewPassword(password)
 	}
 }
 
 func BenchmarkClearPassword_Bytes(b *testing.B) {
 	password := []byte("benchmark-password-123")
-	pwd, _ := NewClearPassword(password)
+	pwd, _ := NewPassword(password)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = pwd.Bytes()
@@ -507,7 +507,7 @@ func BenchmarkClearPassword_Bytes(b *testing.B) {
 
 func BenchmarkClearPassword_String(b *testing.B) {
 	password := []byte("benchmark-password-123")
-	pwd, _ := NewClearPassword(password)
+	pwd, _ := NewPassword(password)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = pwd.String()
@@ -517,15 +517,15 @@ func BenchmarkClearPassword_String(b *testing.B) {
 func BenchmarkClearPassword_Clear(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
-		pwd, _ := NewClearPassword([]byte("benchmark-password-123"))
+		pwd, _ := NewPassword([]byte("benchmark-password-123"))
 		b.StartTimer()
 		pwd.Clear()
 	}
 }
 
 func BenchmarkEqual(b *testing.B) {
-	pwd1, _ := NewClearPasswordFromString("password1")
-	pwd2, _ := NewClearPasswordFromString("password1")
+	pwd1, _ := NewPasswordFromString("password1")
+	pwd2, _ := NewPasswordFromString("password1")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = Equal(pwd1, pwd2)

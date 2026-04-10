@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package rest provides a REST API server for the go-keychain library.
+// Package rest provides a REST API server for the go-xkms library.
 //
 // The REST API exposes KeyStore functionality over HTTP, allowing remote clients
 // to perform key management operations including generation, signing, verification,
@@ -22,10 +22,10 @@
 // Create a REST server by providing a configuration with one or more KeyStore backends:
 //
 //	import (
-//	    "github.com/jeremyhahn/go-keychain/pkg/api/rest"
-//	    "github.com/jeremyhahn/go-keychain/pkg/keychain"
-//	    "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-//	    "github.com/jeremyhahn/go-keychain/pkg/storage/file"
+//	    "github.com/jeremyhahn/go-xkms/pkg/api/rest"
+//	    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+//	    "github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+//	    "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 //	)
 //
 //	// Create backend
@@ -34,7 +34,7 @@
 //	backend, _ := pkcs8.NewBackend(&pkcs8.Config{KeyStorage: keyStorage})
 //
 //	// Create keystore
-//	ks, _ := keychain.New(&keychain.Config{
+//	ks, _ := xkms.New(&xkms.BackendConfig{
 //	    Backend:     backend,
 //	    CertStorage: certStorage,
 //	})
@@ -42,7 +42,7 @@
 //	// Create REST server
 //	server, _ := rest.NewServer(&rest.Config{
 //	    Port:     8443,
-//	    Backends: map[string]keychain.KeyStore{"pkcs8": ks},
+//	    Backends: map[string]xkms.Backend{"pkcs8": ks},
 //	    Version:  "1.0.0",
 //	})
 //

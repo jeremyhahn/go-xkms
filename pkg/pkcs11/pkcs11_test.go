@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,22 +26,22 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	pkcs11backend "github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/opaque"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/opaque"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// TestNewKeyStore tests creating a new PKCS#11 keychain.
+// TestNewKeyStore tests creating a new PKCS#11 xkms.
 func TestNewKeyStore(t *testing.T) {
 	t.Run("nil backend", func(t *testing.T) {
 		ks, err := NewKeyStore(nil, storage.New())
 		if err == nil {
 			t.Fatal("Expected error but got none")
 		}
-		if !errors.Is(err, keychain.ErrBackendNotInitialized) {
+		if !errors.Is(err, xkms.ErrBackendNotInitialized) {
 			t.Errorf("Expected ErrBackendNotInitialized, got %v", err)
 		}
 		if ks != nil {
@@ -78,7 +78,7 @@ func TestBackend(t *testing.T) {
 	be, _ := pkcs11backend.NewBackend(config)
 	ks := &KeyStore{backend: be}
 
-	wrapper := ks.Backend()
+	wrapper := ks.KeyProvider()
 	if wrapper == nil {
 		t.Fatal("Expected non-nil backend wrapper")
 	}
@@ -98,7 +98,7 @@ func TestBackendWrapperClose(t *testing.T) {
 	be, _ := pkcs11backend.NewBackend(config)
 	ks := &KeyStore{backend: be}
 
-	wrapper := ks.Backend()
+	wrapper := ks.KeyProvider()
 	err := wrapper.Close()
 	if err != nil {
 		t.Errorf("Expected nil error from wrapper Close, got %v", err)
@@ -182,7 +182,7 @@ func TestGenerateKeyInvalidAlgorithm(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error for invalid algorithm")
 	}
-	if !errors.Is(err, keychain.ErrInvalidKeyAlgorithm) {
+	if !errors.Is(err, xkms.ErrInvalidKeyAlgorithm) {
 		t.Errorf("Expected ErrInvalidKeyAlgorithm, got %v", err)
 	}
 }

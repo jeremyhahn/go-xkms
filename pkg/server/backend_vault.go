@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,10 +16,7 @@
 package server
 
 import (
-	"fmt"
-
-	"github.com/jeremyhahn/go-keychain/pkg/backend/vault"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/vault"
 )
 
 // initVaultBackend initializes the HashiCorp Vault backend if enabled in configuration
@@ -29,9 +26,9 @@ func (s *Server) initVaultBackend() error {
 	}
 
 	// Create storage for Vault metadata
-	storage, err := file.New(s.config.Storage.Path + "/vault")
+	storage, err := s.createStorage("vault")
 	if err != nil {
-		return fmt.Errorf("failed to create Vault storage: %w", err)
+		return &ErrStorageCreate{Resource: "Vault storage", Err: err}
 	}
 
 	transitPath := s.config.Backends.Vault.MountPath
@@ -47,10 +44,10 @@ func (s *Server) initVaultBackend() error {
 		KeyStorage:  storage,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create Vault backend: %w", err)
+		return &ErrBackendCreate{Backend: "Vault", Err: err}
 	}
 
-	s.backends["vault"] = vaultBackend
+	s.keyProviders["vault"] = vaultBackend
 	s.logger.Info("Vault backend initialized", "backend", "vault", "address", s.config.Backends.Vault.Address)
 	return nil
 }

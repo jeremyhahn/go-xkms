@@ -1,0 +1,59 @@
+services:
+  # Android emulator for E2E testing via budtmo/docker-android.
+  # Requires /dev/kvm access (hardware virtualization).
+  android-emulator:
+    image: budtmo/docker-android:emulator_14.0
+    privileged: true
+    devices:
+      - /dev/kvm
+    ports:
+      - "6080:6080"   # noVNC web interface
+      - "5555:5555"   # ADB
+    environment:
+      EMULATOR_DEVICE: pixel_7
+      WEB_VNC: "true"
+    healthcheck:
+      test: ["CMD", "adb", "shell", "getprop", "sys.boot_completed"]
+      interval: 10s
+      retries: 30
+      start_period: 120s
+
+  # xKey desktop running the TCP relay server.
+  xkey-desktop:
+    build:
+      context: ../../../..
+      dockerfile: .devcontainer/Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../../go-qrdb
+        go-quicraft: ../../../../../go-quicraft
+    command: >
+      sh -c "cd /workspace/xkey &&
+             go build -o /tmp/xkey ./cmd/xkey &&
+             /tmp/xkey device relay --listen :8444"
+    ports:
+      - "8444:8444"
+    depends_on:
+      android-emulator:
+        condition: service_healthy
+
+  # Test runner that orchestrates the E2E test flow:
+  # 1. Wait for emulator boot
+  # 2. Install xKey Android APK
+  # 3. Configure TCP pairing target
+  # 4. Run pairing flow
+  # 5. Verify pairing on both sides
+  test-runner:
+    build:
+      context: ../../../..
+      dockerfile: xkey/test/integration/phone/Dockerfile.e2e
+      additional_contexts:
+        go-qrdb: ../../../../../go-qrdb
+        go-quicraft: ../../../../../go-quicraft
+    environment:
+      ANDROID_ADB_HOST: android-emulator
+      XKEY_RELAY_ADDR: xkey-desktop:8444
+    depends_on:
+      android-emulator:
+        condition: service_healthy
+      xkey-desktop:
+        condition: service_started

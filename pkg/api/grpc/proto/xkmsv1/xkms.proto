@@ -1,0 +1,2375 @@
+// Copyright (c) 2025 Jeremy Hahn
+// SPDX-License-Identifier: AGPL-3.0
+
+syntax = "proto3";
+
+package xkms.v1;
+
+option go_package = "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+// KeystoreService provides key management and cryptographic operations
+service KeystoreService {
+  // Health returns the health status of the service
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // ListBackends returns all available backend providers
+  rpc ListBackends(ListBackendsRequest) returns (ListBackendsResponse);
+
+  // GetBackendInfo returns detailed information about a specific backend
+  rpc GetBackendInfo(GetBackendInfoRequest) returns (GetBackendInfoResponse);
+
+  // GenerateKey generates a new cryptographic key
+  rpc GenerateKey(GenerateKeyRequest) returns (GenerateKeyResponse);
+
+  // ListKeys lists all keys in the specified backend
+  rpc ListKeys(ListKeysRequest) returns (ListKeysResponse);
+
+  // GetKey retrieves information about a specific key
+  rpc GetKey(GetKeyRequest) returns (GetKeyResponse);
+
+  // Sign signs data with the specified key
+  rpc Sign(SignRequest) returns (SignResponse);
+
+  // Verify verifies a signature with the specified key
+  rpc Verify(VerifyRequest) returns (VerifyResponse);
+
+  // DeleteKey deletes a key from the backend
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+
+  // RotateKey rotates an existing key
+  rpc RotateKey(RotateKeyRequest) returns (RotateKeyResponse);
+
+  // ListKeyVersions lists all versions of a key
+  rpc ListKeyVersions(ListKeyVersionsRequest) returns (ListKeyVersionsResponse);
+
+  // EnableKeyVersion enables a specific version of a key
+  rpc EnableKeyVersion(EnableKeyVersionRequest) returns (EnableKeyVersionResponse);
+
+  // DisableKeyVersion disables a specific version of a key
+  rpc DisableKeyVersion(DisableKeyVersionRequest) returns (DisableKeyVersionResponse);
+
+  // EnableAllKeyVersions enables all versions of a key
+  rpc EnableAllKeyVersions(EnableAllKeyVersionsRequest) returns (EnableAllKeyVersionsResponse);
+
+  // DisableAllKeyVersions disables all versions of a key
+  rpc DisableAllKeyVersions(DisableAllKeyVersionsRequest) returns (DisableAllKeyVersionsResponse);
+
+  // Encrypt encrypts data with the specified key (symmetric encryption)
+  rpc Encrypt(EncryptRequest) returns (EncryptResponse);
+
+  // Decrypt decrypts data with the specified key
+  rpc Decrypt(DecryptRequest) returns (DecryptResponse);
+
+  // EncryptAsym encrypts data using asymmetric encryption (RSA-OAEP)
+  rpc EncryptAsym(EncryptAsymRequest) returns (EncryptAsymResponse);
+
+  // DeriveKey derives a key using the specified algorithm and parameters
+  // Supports HKDF, ECDH, DH, SP800-108, PBKDF2, and other key derivation mechanisms
+  rpc DeriveKey(DeriveKeyRequest) returns (DeriveKeyResponse);
+
+  // DeriveKeyECDH performs ECDH key agreement and derives a symmetric key
+  // This operation combines ECDH shared secret computation with a KDF to produce
+  // a derived key suitable for symmetric encryption
+  rpc DeriveKeyECDH(DeriveKeyECDHRequest) returns (DeriveKeyECDHResponse);
+
+  // DeriveKeyECDHSecure performs ECDH key agreement with configurable security modes
+  // Supports EXPORT (returns key bytes), HSM_RESIDENT (keeps key in HSM),
+  // HSM_KDF (runs KDF in HSM), and TPM_WRAPPED (seals key in TPM)
+  rpc DeriveKeyECDHSecure(DeriveKeyECDHSecureRequest) returns (DeriveKeyECDHSecureResponse);
+
+  // UseResidentKey performs a cryptographic operation using an HSM/TPM-resident key
+  rpc UseResidentKey(UseResidentKeyRequest) returns (UseResidentKeyResponse);
+
+  // DestroyResidentKey destroys an HSM/TPM-resident derived key
+  rpc DestroyResidentKey(DestroyResidentKeyRequest) returns (DestroyResidentKeyResponse);
+
+  // GenerateEphemeralECDH generates an ephemeral ECDH key pair inside the TPM
+  // and derives a shared secret with the peer's static public key
+  rpc GenerateEphemeralECDH(GenerateEphemeralECDHRequest) returns (GenerateEphemeralECDHResponse);
+
+  // SaveCert stores a certificate
+  rpc SaveCert(SaveCertRequest) returns (SaveCertResponse);
+
+  // GetCert retrieves a certificate
+  rpc GetCert(GetCertRequest) returns (GetCertResponse);
+
+  // DeleteCert removes a certificate
+  rpc DeleteCert(DeleteCertRequest) returns (DeleteCertResponse);
+
+  // ListCerts lists all certificates
+  rpc ListCerts(ListCertsRequest) returns (ListCertsResponse);
+
+  // CertExists checks if a certificate exists
+  rpc CertExists(CertExistsRequest) returns (CertExistsResponse);
+
+  // SaveCertChain stores a certificate chain
+  rpc SaveCertChain(SaveCertChainRequest) returns (SaveCertChainResponse);
+
+  // GetCertChain retrieves a certificate chain
+  rpc GetCertChain(GetCertChainRequest) returns (GetCertChainResponse);
+
+  // GetTLSCertificate returns a TLS certificate with private key
+  rpc GetTLSCertificate(GetTLSCertificateRequest) returns (GetTLSCertificateResponse);
+
+  // GetImportParameters retrieves parameters needed to import a key
+  rpc GetImportParameters(GetImportParametersRequest) returns (GetImportParametersResponse);
+
+  // WrapKey wraps key material for secure transport
+  rpc WrapKey(WrapKeyRequest) returns (WrapKeyResponse);
+
+  // UnwrapKey unwraps previously wrapped key material
+  rpc UnwrapKey(UnwrapKeyRequest) returns (UnwrapKeyResponse);
+
+  // WrapKeyByID wraps a target key using a wrapping key, both identified by key IDs.
+  // This enables PKCS#11 C_WrapKey functionality with server-side keys.
+  // The target key must be extractable (exportable=true for symmetric keys).
+  rpc WrapKeyByID(WrapKeyByIDRequest) returns (WrapKeyByIDResponse);
+
+  // UnwrapKeyByID unwraps key material and imports it as a new key.
+  // This enables PKCS#11 C_UnwrapKey functionality with server-side keys.
+  rpc UnwrapKeyByID(UnwrapKeyByIDRequest) returns (UnwrapKeyByIDResponse);
+
+  // ImportKey imports externally generated key material into the backend
+  rpc ImportKey(ImportKeyRequest) returns (ImportKeyResponse);
+
+  // ExportKey exports a key in wrapped form for secure transport
+  rpc ExportKey(ExportKeyRequest) returns (ExportKeyResponse);
+
+  // ExportKeyMaterial exports raw symmetric key bytes for extractable keys.
+  //
+  // SECURITY WARNING: This method returns plaintext key material without any
+  // cryptographic protection. Use with extreme caution:
+  //   - ONLY works for symmetric keys (AES, ChaCha20, etc.)
+  //   - Key must have been created with exportable=true
+  //   - Asymmetric keys (RSA, ECDSA, Ed25519) cannot be exported via this method
+  //   - For secure key transport between backends, use ExportKey instead
+  //
+  // Use cases:
+  //   - Extracting symmetric keys for use in external systems
+  //   - Key backup scenarios where raw material is required
+  //   - Testing and development environments
+  rpc ExportKeyMaterial(ExportKeyMaterialRequest) returns (ExportKeyMaterialResponse);
+
+  // CopyKey copies a key from one backend to another
+  rpc CopyKey(CopyKeyRequest) returns (CopyKeyResponse);
+
+  // ==================== Sealing Operations ====================
+
+  // Seal encrypts data using the backend's sealing mechanism
+  rpc Seal(SealRequest) returns (SealResponse);
+
+  // Unseal decrypts previously sealed data
+  rpc Unseal(UnsealRequest) returns (UnsealResponse);
+
+  // CanSeal checks if a backend supports sealing operations
+  rpc CanSeal(CanSealRequest) returns (CanSealResponse);
+
+  // ==================== Attestation Operations ====================
+
+  // AttestKey generates a key attestation statement proving hardware backing
+  rpc AttestKey(AttestKeyRequest) returns (AttestKeyResponse);
+
+  // ==================== FROST Threshold Signature Operations ====================
+
+  // FrostGenerateKey generates FROST key packages using trusted dealer model
+  rpc FrostGenerateKey(FrostGenerateKeyRequest) returns (FrostGenerateKeyResponse);
+
+  // FrostImportKey imports a FROST key package
+  rpc FrostImportKey(FrostImportKeyRequest) returns (FrostImportKeyResponse);
+
+  // FrostListKeys lists all FROST keys
+  rpc FrostListKeys(FrostListKeysRequest) returns (FrostListKeysResponse);
+
+  // FrostGetKey retrieves information about a specific FROST key
+  rpc FrostGetKey(FrostGetKeyRequest) returns (FrostGetKeyResponse);
+
+  // FrostDeleteKey deletes a FROST key
+  rpc FrostDeleteKey(FrostDeleteKeyRequest) returns (FrostDeleteKeyResponse);
+
+  // FrostGenerateNonces generates nonces and commitments for Round 1 of FROST signing
+  rpc FrostGenerateNonces(FrostGenerateNoncesRequest) returns (FrostGenerateNoncesResponse);
+
+  // FrostSignRound generates a signature share for Round 2 of FROST signing
+  rpc FrostSignRound(FrostSignRoundRequest) returns (FrostSignRoundResponse);
+
+  // FrostAggregate combines signature shares into a final FROST signature
+  rpc FrostAggregate(FrostAggregateRequest) returns (FrostAggregateResponse);
+
+  // FrostVerify verifies a FROST signature against the group public key
+  rpc FrostVerify(FrostVerifyRequest) returns (FrostVerifyResponse);
+
+  // ==================== CA Bundle Operations ====================
+
+  // GetCABundle retrieves the CA certificate bundle for trust store population.
+  // REST equivalent: GET /v1/ca/bundle
+  rpc GetCABundle(GetCABundleRequest) returns (GetCABundleResponse);
+
+  // ==================== CA Operations ====================
+
+  // GetCACertificate retrieves the CA certificate with metadata.
+  rpc GetCACertificate(GetCACertificateRequest) returns (GetCACertificateResponse);
+
+  // SignCSR signs a certificate signing request.
+  rpc SignCSR(SignCSRRequest) returns (SignCSRResponse);
+
+  // IssueCertificate issues a new certificate.
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+
+  // RevokeCertificate revokes a certificate by serial number.
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse);
+
+  // GenerateCRL generates a certificate revocation list.
+  rpc GenerateCRL(GenerateCRLRequest) returns (GenerateCRLResponse);
+
+  // IsRevoked checks if a certificate is revoked.
+  rpc IsRevoked(IsRevokedRequest) returns (IsRevokedResponse);
+
+  // ==================== TCG Certificate Operations ====================
+
+  // IssueEKCertificate issues an Endorsement Key certificate for a TPM.
+  rpc IssueEKCertificate(IssueEKCertificateRequest) returns (IssueEKCertificateResponse);
+
+  // IssueAKCertificate issues an Attestation Key certificate for a TPM.
+  rpc IssueAKCertificate(IssueAKCertificateRequest) returns (IssueAKCertificateResponse);
+
+  // SignTCGCSR signs a TCG-CSR-IDEVID and returns IAK and IDevID certificates.
+  rpc SignTCGCSR(SignTCGCSRRequest) returns (SignTCGCSRResponse);
+
+  // EnrollDevice performs full TCG device enrollment with credential activation challenge.
+  rpc EnrollDevice(EnrollDeviceRequest) returns (EnrollDeviceResponse);
+
+  // ==================== Barrier Operations ====================
+
+  // BarrierInitialize generates a root key, seals it with the best available
+  // strategy, and transitions the barrier to unsealed state. Must be called
+  // exactly once for a new barrier.
+  rpc BarrierInitialize(BarrierInitializeRequest) returns (google.protobuf.Empty);
+
+  // BarrierUnseal loads and unseals the root key, deriving the data encryption
+  // key to enable storage operations.
+  rpc BarrierUnseal(BarrierUnsealRequest) returns (google.protobuf.Empty);
+
+  // BarrierSeal transitions the barrier to sealed state and zeros the DEK.
+  // All subsequent storage operations will fail until Unseal is called again.
+  rpc BarrierSeal(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierStatus returns the current state of the barrier including whether
+  // it is sealed, which strategy is active, and hardware backing status.
+  rpc BarrierStatus(google.protobuf.Empty) returns (BarrierStatusResponse);
+
+  // BarrierInitializeShamir generates a root key and splits it into Shamir
+  // shares. In direct mode (StrategyShamir), the root key IS the secret.
+  // In credential mode, the credential password is split into shares.
+  rpc BarrierInitializeShamir(BarrierInitializeShamirRequest) returns (BarrierShamirInitResponse);
+
+  // BarrierUnsealShare submits a single share for quorum-based unsealing.
+  // When enough shares reach the threshold, the barrier auto-unseals.
+  rpc BarrierUnsealShare(BarrierUnsealShareRequest) returns (BarrierQuorumProgressResponse);
+
+  // BarrierUnsealShares performs stateless batch unsealing with all shares.
+  rpc BarrierUnsealShares(BarrierUnsealSharesRequest) returns (google.protobuf.Empty);
+
+  // BarrierShamirListShares returns metadata about stored Shamir shares.
+  rpc BarrierShamirListShares(google.protobuf.Empty) returns (BarrierShamirSharesResponse);
+
+  // BarrierShamirDeleteShare removes a single share by index.
+  rpc BarrierShamirDeleteShare(BarrierShamirDeleteShareRequest) returns (google.protobuf.Empty);
+
+  // BarrierShamirDeleteAllShares removes all shares from storage.
+  rpc BarrierShamirDeleteAllShares(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierShamirVerify checks the integrity and consistency of stored shares.
+  rpc BarrierShamirVerify(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierRekey generates new Shamir shares for the existing root key.
+  rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitResponse);
+
+  // BarrierGenerateRecoveryKeys generates an independent set of recovery
+  // shares from the current DEK for disaster recovery.
+  rpc BarrierGenerateRecoveryKeys(BarrierGenerateRecoveryKeysRequest) returns (BarrierRecoveryKeysResponse);
+
+  // BarrierRecoverWithKeys reconstructs the DEK from recovery shares.
+  rpc BarrierRecoverWithKeys(BarrierRecoverWithKeysRequest) returns (google.protobuf.Empty);
+
+  // BarrierDeleteRecoveryKeys removes recovery key metadata from storage.
+  rpc BarrierDeleteRecoveryKeys(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // BarrierGenerateRootToken generates a one-time root token by proving
+  // knowledge of the master key through Shamir share reconstruction.
+  rpc BarrierGenerateRootToken(BarrierGenerateRootTokenRequest) returns (BarrierRootTokenResponse);
+
+  // ==================== PIN Operations ====================
+
+  // SetSOPIN sets the Security Officer PIN. If the SO PIN is already set,
+  // current_so_pin must match the existing PIN.
+  rpc SetSOPIN(SetSOPINRequest) returns (google.protobuf.Empty);
+
+  // SetUserPIN sets the user PIN. Requires SO PIN authorization.
+  rpc SetUserPIN(SetUserPINRequest) returns (google.protobuf.Empty);
+
+  // ChangeSOPIN changes the Security Officer PIN.
+  rpc ChangeSOPIN(ChangeSOPINRequest) returns (google.protobuf.Empty);
+
+  // ChangeUserPIN changes the user PIN.
+  rpc ChangeUserPIN(ChangeUserPINRequest) returns (google.protobuf.Empty);
+
+  // VerifySOPIN verifies the provided Security Officer PIN.
+  rpc VerifySOPIN(VerifySOPINRequest) returns (google.protobuf.Empty);
+
+  // VerifyUserPIN verifies the provided user PIN.
+  rpc VerifyUserPIN(VerifyUserPINRequest) returns (google.protobuf.Empty);
+
+  // GetLockoutStatus returns the current PIN lockout status including
+  // failed attempts, max attempts, and lockout duration.
+  rpc GetLockoutStatus(google.protobuf.Empty) returns (LockoutStatusResponse);
+
+  // ResetLockout resets the PIN lockout counter using SO PIN authorization.
+  rpc ResetLockout(ResetLockoutRequest) returns (google.protobuf.Empty);
+
+  // ==================== PIV Operations ====================
+
+  // ListPIVSlots returns the status of all PIV slots for the specified backend.
+  rpc ListPIVSlots(ListPIVSlotsRequest) returns (ListPIVSlotsResponse);
+
+  // GetPIVCertificate retrieves a certificate from a PIV slot.
+  rpc GetPIVCertificate(GetPIVCertificateRequest) returns (GetPIVCertificateResponse);
+
+  // StorePIVCertificate stores a certificate in a PIV slot.
+  rpc StorePIVCertificate(StorePIVCertificateRequest) returns (google.protobuf.Empty);
+
+  // DeletePIVCertificate removes a certificate from a PIV slot.
+  rpc DeletePIVCertificate(DeletePIVCertificateRequest) returns (google.protobuf.Empty);
+
+  // GeneratePIVKey generates a new key pair in a PIV slot with a self-signed certificate.
+  rpc GeneratePIVKey(GeneratePIVKeyRequest) returns (GeneratePIVKeyResponse);
+
+  // ImportPIVCertificate imports a certificate into a PIV slot.
+  rpc ImportPIVCertificate(StorePIVCertificateRequest) returns (google.protobuf.Empty);
+
+  // ExportPIVCertificate exports a certificate from a PIV slot.
+  rpc ExportPIVCertificate(GetPIVCertificateRequest) returns (GetPIVCertificateResponse);
+
+  // GeneratePIVCSR generates a certificate signing request for a PIV slot key.
+  rpc GeneratePIVCSR(GeneratePIVCSRRequest) returns (GeneratePIVCSRResponse);
+
+  // ==================== Custodian Group Operations ====================
+
+  // CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
+  rpc CreateCustodianGroup(CreateCustodianGroupRequest) returns (CreateCustodianGroupResponse);
+
+  // GetCustodianGroup retrieves a custodian group by ID.
+  rpc GetCustodianGroup(GetCustodianGroupRequest) returns (GetCustodianGroupResponse);
+
+  // ListCustodianGroups returns all custodian groups.
+  rpc ListCustodianGroups(ListCustodianGroupsRequest) returns (ListCustodianGroupsResponse);
+
+  // DeleteCustodianGroup deletes a custodian group.
+  rpc DeleteCustodianGroup(DeleteCustodianGroupRequest) returns (google.protobuf.Empty);
+
+  // AddCustodianMember adds a member to a custodian group.
+  rpc AddCustodianMember(AddCustodianMemberRequest) returns (AddCustodianMemberResponse);
+
+  // RemoveCustodianMember removes a member from a custodian group.
+  rpc RemoveCustodianMember(RemoveCustodianMemberRequest) returns (google.protobuf.Empty);
+
+  // DistributeShares triggers share distribution for a custodian group.
+  rpc DistributeShares(DistributeSharesRequest) returns (DistributeSharesResponse);
+
+  // ==================== Share Operations ====================
+
+  // SubmitShare submits a Shamir share for storage.
+  rpc SubmitShare(SubmitShareRequest) returns (SubmitShareResponse);
+
+  // ListShares returns all stored shares.
+  rpc ListShares(ListSharesRequest) returns (ListSharesResponse);
+
+  // GetShareCollectionStatus returns the share collection status for a group.
+  rpc GetShareCollectionStatus(GetShareCollectionStatusRequest) returns (ShareCollectionStatusResponse);
+
+  // ==================== Tenant Operations ====================
+
+  // CreateTenant creates a new tenant.
+  rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+
+  // GetTenant retrieves a tenant by ID.
+  rpc GetTenant(GetTenantRequest) returns (GetTenantResponse);
+
+  // ListTenants returns all tenants.
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+
+  // DeleteTenant deletes a tenant.
+  rpc DeleteTenant(DeleteTenantRequest) returns (google.protobuf.Empty);
+
+  // TenantBarrierInit initializes the barrier for a tenant.
+  rpc TenantBarrierInit(TenantBarrierInitRequest) returns (google.protobuf.Empty);
+
+  // TenantBarrierUnseal unseals the barrier for a tenant.
+  rpc TenantBarrierUnseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty);
+
+  // ==================== Password Store Operations ====================
+
+  // PasswordAdd adds a new password entry to the encrypted store.
+  rpc PasswordAdd(PasswordAddRequest) returns (PasswordAddResponse);
+
+  // PasswordGet retrieves a password entry by ID or name.
+  rpc PasswordGet(PasswordGetRequest) returns (PasswordGetResponse);
+
+  // PasswordList lists password entries, optionally filtered by folder or scope.
+  rpc PasswordList(PasswordListRequest) returns (PasswordListResponse);
+
+  // PasswordUpdate updates an existing password entry.
+  rpc PasswordUpdate(PasswordUpdateRequest) returns (PasswordUpdateResponse);
+
+  // PasswordDelete removes a password entry from the store.
+  rpc PasswordDelete(PasswordDeleteRequest) returns (PasswordDeleteResponse);
+
+  // PasswordStoreUnlock unlocks the tenant password store session.
+  rpc PasswordStoreUnlock(PasswordStoreUnlockRequest) returns (PasswordStoreStatusResponse);
+
+  // PasswordStoreLock locks the tenant password store session.
+  rpc PasswordStoreLock(PasswordStoreLockRequest) returns (PasswordStoreStatusResponse);
+
+  // PasswordStoreStatus returns the current status of the password store.
+  rpc PasswordStoreStatus(PasswordStoreStatusRequest) returns (PasswordStoreStatusResponse);
+
+  // PasswordGenerate generates a random password with specified constraints.
+  rpc PasswordGenerate(PasswordGenerateRequest) returns (PasswordGenerateResponse);
+}
+
+// HealthRequest is the request for health check
+message HealthRequest {}
+
+// HealthResponse contains the health status
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+}
+
+// BackendInfo describes a backend provider
+message BackendInfo {
+  string name = 1;
+  string type = 2;
+  string description = 3;
+  bool hardware_backed = 4;
+  bool supports_signing = 5;
+  bool supports_decryption = 6;
+  bool supports_rotation = 7;
+  bool supports_symmetric_encryption = 8;
+}
+
+// ListBackendsRequest requests the list of available backends
+message ListBackendsRequest {}
+
+// ListBackendsResponse contains the list of backends
+message ListBackendsResponse {
+  repeated BackendInfo backends = 1;
+  int32 count = 2;
+}
+
+// GetBackendInfoRequest requests info about a specific backend
+message GetBackendInfoRequest {
+  string name = 1;
+}
+
+// GetBackendInfoResponse contains backend information
+message GetBackendInfoResponse {
+  BackendInfo backend = 1;
+}
+
+// GenerateKeyRequest requests generation of a new key
+message GenerateKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;  // "rsa", "ecdsa", "ed25519", "symmetric"
+  int32 key_size = 4;
+  string curve = 5;
+  string hash = 6;
+  string partition = 7;
+  string algorithm = 8;  // Explicit algorithm: "aes-128-gcm", "aes-192-gcm", "aes-256-gcm"
+  bool exportable = 9;   // Whether the key can be exported
+}
+
+// GenerateKeyResponse contains the generated key information
+message GenerateKeyResponse {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;
+  string public_key_pem = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+// KeyInfo contains information about a key
+message KeyInfo {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;
+  string algorithm = 4;
+  int32 key_size = 5;
+  string curve = 6;
+  string partition = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// ListKeysRequest requests a list of keys
+message ListKeysRequest {
+  string backend = 1;
+  string partition = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+}
+
+// ListKeysResponse contains the list of keys
+message ListKeysResponse {
+  repeated KeyInfo keys = 1;
+  int32 total = 2;
+}
+
+// GetKeyRequest requests information about a specific key
+message GetKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// GetKeyResponse contains key information
+message GetKeyResponse {
+  KeyInfo key = 1;
+  string public_key_pem = 2;
+}
+
+// SignRequest requests data to be signed
+message SignRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes data = 3;
+  string hash = 4;
+}
+
+// SignResponse contains the signature
+message SignResponse {
+  bytes signature = 1;
+}
+
+// VerifyRequest requests signature verification
+message VerifyRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes data = 3;
+  bytes signature = 4;
+  string hash = 5;
+}
+
+// VerifyResponse contains verification result
+message VerifyResponse {
+  bool valid = 1;
+  string message = 2;
+}
+
+// DeleteKeyRequest requests deletion of a key
+message DeleteKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// DeleteKeyResponse contains deletion result
+message DeleteKeyResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// RotateKeyRequest requests rotation of an existing key
+message RotateKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// RotateKeyResponse contains the rotated key information
+message RotateKeyResponse {
+  string key_id = 1;
+  string backend = 2;
+  string key_type = 3;
+  string public_key_pem = 4;
+  google.protobuf.Timestamp rotated_at = 5;
+}
+
+// KeyVersionInfo contains information about a key version
+message KeyVersionInfo {
+  int32 version = 1;
+  string status = 2;
+  string created_at = 3;
+  string created_by = 4;
+}
+
+// ListKeyVersionsRequest requests listing of key versions
+message ListKeyVersionsRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// ListKeyVersionsResponse contains the list of key versions
+message ListKeyVersionsResponse {
+  string key_id = 1;
+  repeated KeyVersionInfo versions = 2;
+  int32 total = 3;
+}
+
+// EnableKeyVersionRequest requests enabling of a key version
+message EnableKeyVersionRequest {
+  string key_id = 1;
+  string backend = 2;
+  int32 version = 3;
+}
+
+// EnableKeyVersionResponse contains the result of enabling a key version
+message EnableKeyVersionResponse {
+  string key_id = 1;
+  int32 version = 2;
+  string status = 3;
+}
+
+// DisableKeyVersionRequest requests disabling of a key version
+message DisableKeyVersionRequest {
+  string key_id = 1;
+  string backend = 2;
+  int32 version = 3;
+}
+
+// DisableKeyVersionResponse contains the result of disabling a key version
+message DisableKeyVersionResponse {
+  string key_id = 1;
+  int32 version = 2;
+  string status = 3;
+}
+
+// EnableAllKeyVersionsRequest requests enabling of all key versions
+message EnableAllKeyVersionsRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// EnableAllKeyVersionsResponse contains the result of enabling all key versions
+message EnableAllKeyVersionsResponse {
+  string key_id = 1;
+  int32 count = 2;
+  string message = 3;
+}
+
+// DisableAllKeyVersionsRequest requests disabling of all key versions
+message DisableAllKeyVersionsRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// DisableAllKeyVersionsResponse contains the result of disabling all key versions
+message DisableAllKeyVersionsResponse {
+  string key_id = 1;
+  int32 count = 2;
+  string message = 3;
+}
+
+// EncryptRequest requests encryption of data (symmetric encryption)
+message EncryptRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes plaintext = 3;
+  bytes additional_data = 4;  // Optional AAD for GCM mode
+}
+
+// EncryptResponse contains the encrypted data
+message EncryptResponse {
+  bytes ciphertext = 1;
+  bytes nonce = 2;
+  bytes tag = 3;
+}
+
+// DecryptRequest requests decryption of data
+message DecryptRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes ciphertext = 3;
+  bytes additional_data = 4;  // Optional AAD for symmetric decryption
+  bytes nonce = 5;            // Required for symmetric decryption
+  bytes tag = 6;              // Required for symmetric decryption (GCM)
+}
+
+// DecryptResponse contains the decrypted data
+message DecryptResponse {
+  bytes plaintext = 1;
+}
+
+// EncryptAsymRequest requests asymmetric encryption (RSA-OAEP)
+message EncryptAsymRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes plaintext = 3;
+  string hash = 4;  // Hash algorithm for OAEP (e.g., "sha256")
+}
+
+// EncryptAsymResponse contains the asymmetrically encrypted data
+message EncryptAsymResponse {
+  bytes ciphertext = 1;
+}
+
+// DeriveKeyRequest requests key derivation using the specified algorithm
+message DeriveKeyRequest {
+  string backend = 1;              // Backend identifier
+  string key_id = 2;               // Source key ID (for key-based derivation like ECDH)
+  string algorithm = 3;            // Algorithm: HKDF, ECDH, DH, SP800-108-COUNTER, etc.
+  bytes input_key_material = 4;    // Input key material (for HKDF without a key)
+  bytes salt = 5;                  // Salt value
+  bytes info = 6;                  // Context/application-specific info (HKDF)
+  bytes peer_public_key = 7;       // Peer's public key (ECDH/DH key agreement)
+  int32 key_length = 8;            // Desired output key length in bytes
+  string hash = 9;                 // Hash algorithm (SHA-256, SHA-384, SHA-512)
+  int32 iterations = 10;           // Iteration count (PBKDF2)
+  string prf = 11;                 // Pseudo-random function (SP800-108)
+  bytes label = 12;                // Label (SP800-108)
+  bytes context = 13;              // Context (SP800-108)
+  uint32 counter = 14;             // Counter value (SP800-108 counter mode)
+  bool use_cofactor = 15;          // Use cofactor multiplication (ECDH)
+  bool store_result = 16;          // Store the derived key in the backend
+  string derived_key_id = 17;      // Key ID for stored derived key
+  string derived_key_type = 18;    // Type of derived key (AES, HMAC)
+}
+
+// DeriveKeyResponse contains the result of key derivation
+message DeriveKeyResponse {
+  bytes derived_key = 1;           // Derived key material (if store_result is false)
+  string key_id = 2;               // Key ID of stored derived key (if store_result is true)
+  string algorithm = 3;            // Algorithm used
+  int32 key_length = 4;            // Actual output key length in bytes
+}
+
+// DeriveKeyECDHRequest requests ECDH key agreement and key derivation
+// This combines ECDH shared secret computation with a KDF to produce a derived key
+message DeriveKeyECDHRequest {
+  // key_id identifies the local private key to use for ECDH
+  // This key must be an ECDSA key (P-256, P-384, or P-521)
+  string key_id = 1;
+
+  // backend specifies which backend contains the private key
+  string backend = 2;
+
+  // peer_public_key is the peer's public key in DER or uncompressed point format
+  // The public key must use the same curve as the private key
+  bytes peer_public_key = 3;
+
+  // kdf_algorithm specifies the KDF to apply to the raw ECDH shared secret
+  // Supported values: "HKDF", "SP800-108-COUNTER", "SP800-108-FEEDBACK",
+  // "SP800-56A", "X963"
+  // If empty, defaults to "HKDF"
+  string kdf_algorithm = 4;
+
+  // kdf_hash specifies the hash algorithm for the KDF
+  // Supported values: "SHA-256", "SHA-384", "SHA-512"
+  // If empty, defaults to "SHA-256"
+  string kdf_hash = 5;
+
+  // kdf_salt is an optional salt value for the KDF
+  // For HKDF, this is used in the extract phase
+  bytes kdf_salt = 6;
+
+  // kdf_info is optional context/application-specific information
+  // For HKDF, this is used in the expand phase
+  // For SP800-108, this is incorporated into the context
+  bytes kdf_info = 7;
+
+  // key_length specifies the desired output key length in bytes
+  // Must be positive. Common values: 16 (AES-128), 32 (AES-256)
+  // If not specified or 0, defaults to 32 bytes
+  int32 key_length = 8;
+}
+
+// DeriveKeyECDHResponse contains the derived key from ECDH key agreement
+message DeriveKeyECDHResponse {
+  // derived_key is the key material derived from ECDH + KDF
+  // The length matches the requested key_length
+  bytes derived_key = 1;
+}
+
+// =============================================================================
+// Secure ECDH Key Agreement Types
+// =============================================================================
+
+// KeyDerivationMode specifies how the derived key from ECDH is handled
+enum KeyDerivationMode {
+  // KEY_DERIVATION_MODE_EXPORT returns derived key bytes to the caller
+  KEY_DERIVATION_MODE_EXPORT = 0;
+
+  // KEY_DERIVATION_MODE_HSM_RESIDENT keeps the derived key inside the HSM
+  KEY_DERIVATION_MODE_HSM_RESIDENT = 1;
+
+  // KEY_DERIVATION_MODE_HSM_KDF runs the KDF inside the HSM, then exports the result
+  KEY_DERIVATION_MODE_HSM_KDF = 2;
+
+  // KEY_DERIVATION_MODE_TPM_WRAPPED seals the derived key using TPM2
+  KEY_DERIVATION_MODE_TPM_WRAPPED = 3;
+}
+
+// ResidentKeyOperation identifies operations that can be performed with a resident key
+enum ResidentKeyOperation {
+  // RESIDENT_KEY_OP_ENCRYPT uses the key for encryption
+  RESIDENT_KEY_OP_ENCRYPT = 0;
+
+  // RESIDENT_KEY_OP_DECRYPT uses the key for decryption
+  RESIDENT_KEY_OP_DECRYPT = 1;
+
+  // RESIDENT_KEY_OP_MAC uses the key for MAC computation
+  RESIDENT_KEY_OP_MAC = 2;
+
+  // RESIDENT_KEY_OP_VERIFY_MAC uses the key for MAC verification
+  RESIDENT_KEY_OP_VERIFY_MAC = 3;
+
+  // RESIDENT_KEY_OP_WRAP uses the key to wrap another key
+  RESIDENT_KEY_OP_WRAP = 4;
+
+  // RESIDENT_KEY_OP_UNWRAP uses the key to unwrap another key
+  RESIDENT_KEY_OP_UNWRAP = 5;
+}
+
+// DerivedKeyHandle references a key that resides within an HSM or TPM
+message DerivedKeyHandle {
+  // id is a unique identifier for this derived key
+  string id = 1;
+
+  // backend identifies which backend contains this key
+  string backend = 2;
+
+  // extractable indicates whether the key can be exported
+  bool extractable = 3;
+
+  // key_length is the length of the derived key in bytes
+  int32 key_length = 4;
+
+  // algorithm identifies the key type (e.g., "AES", "HMAC")
+  string algorithm = 5;
+
+  // ephemeral indicates the key should be destroyed when the session ends
+  bool ephemeral = 6;
+
+  // hsm_handle is the PKCS#11 object handle for HSM-resident keys
+  uint64 hsm_handle = 7;
+
+  // tpm_handle contains TPM-specific handle information
+  TPMDerivedKeyHandle tpm_handle = 8;
+}
+
+// TPMDerivedKeyHandle contains TPM-specific information for derived keys
+message TPMDerivedKeyHandle {
+  // handle is the TPM object handle
+  uint32 handle = 1;
+
+  // parent_handle is the handle of the parent storage key
+  uint32 parent_handle = 2;
+
+  // public contains the TPM2B_PUBLIC structure for the key
+  bytes public = 3;
+
+  // private contains the TPM2B_PRIVATE structure (encrypted)
+  bytes private = 4;
+
+  // policy_digest is the policy digest if policy-based authorization is used
+  bytes policy_digest = 5;
+}
+
+// DerivedKeyTemplate specifies attributes for HSM-resident derived keys
+message DerivedKeyTemplate {
+  // label is a human-readable name for the key
+  string label = 1;
+
+  // id is an optional byte identifier for the key
+  string id = 2;
+
+  // key_type specifies the type of key to create (e.g., "AES", "GENERIC_SECRET")
+  string key_type = 3;
+
+  // token indicates whether the key should persist on the token
+  bool token = 4;
+
+  // private indicates whether the key requires login to use
+  bool private = 5;
+
+  // sensitive indicates the key is sensitive and should never be revealed
+  bool sensitive = 6;
+
+  // allow_encrypt permits use for encryption operations
+  bool allow_encrypt = 7;
+
+  // allow_decrypt permits use for decryption operations
+  bool allow_decrypt = 8;
+
+  // allow_wrap permits use for key wrapping operations
+  bool allow_wrap = 9;
+
+  // allow_unwrap permits use for key unwrapping operations
+  bool allow_unwrap = 10;
+
+  // allow_derive permits use for further key derivation
+  bool allow_derive = 11;
+}
+
+// OperationParams contains parameters for operations using resident keys
+message OperationParams {
+  // algorithm specifies the algorithm to use (e.g., "AES-GCM", "AES-CBC")
+  string algorithm = 1;
+
+  // iv is the initialization vector for CBC/CTR modes
+  bytes iv = 2;
+
+  // aad is additional authenticated data for AEAD modes
+  bytes aad = 3;
+
+  // tag_length is the authentication tag length in bits for AEAD modes
+  int32 tag_length = 4;
+}
+
+// DeriveKeyECDHSecureRequest requests secure ECDH key agreement with mode selection
+message DeriveKeyECDHSecureRequest {
+  // key_id identifies the local private key to use for ECDH
+  string key_id = 1;
+
+  // backend specifies which backend contains the private key
+  string backend = 2;
+
+  // peer_public_key is the peer's public key in DER or uncompressed point format
+  bytes peer_public_key = 3;
+
+  // kdf_algorithm specifies the KDF to apply to the raw ECDH shared secret
+  string kdf_algorithm = 4;
+
+  // kdf_hash specifies the hash algorithm for the KDF
+  string kdf_hash = 5;
+
+  // kdf_salt is an optional salt value for the KDF
+  bytes kdf_salt = 6;
+
+  // kdf_info is optional context/application-specific information
+  bytes kdf_info = 7;
+
+  // key_length specifies the desired output key length in bytes
+  int32 key_length = 8;
+
+  // derivation_mode specifies how the derived key should be handled
+  KeyDerivationMode derivation_mode = 9;
+
+  // derived_key_template contains template parameters for HSM-resident keys
+  // Only used when derivation_mode is KEY_DERIVATION_MODE_HSM_RESIDENT
+  DerivedKeyTemplate derived_key_template = 10;
+
+  // hsm_kdf_type specifies the PKCS#11 KDF type for HSM_KDF mode
+  uint32 hsm_kdf_type = 11;
+}
+
+// DeriveKeyECDHSecureResponse contains the result of secure ECDH key derivation
+message DeriveKeyECDHSecureResponse {
+  // mode indicates which derivation mode was used
+  KeyDerivationMode mode = 1;
+
+  // derived_key contains the key bytes for EXPORT and HSM_KDF modes
+  bytes derived_key = 2;
+
+  // handle references the HSM/TPM-resident key for HSM_RESIDENT and TPM_WRAPPED modes
+  DerivedKeyHandle handle = 3;
+
+  // ephemeral_public_key is the ephemeral public key for TPM_WRAPPED mode
+  bytes ephemeral_public_key = 4;
+}
+
+// UseResidentKeyRequest requests a cryptographic operation using a resident key
+message UseResidentKeyRequest {
+  // handle is the DerivedKeyHandle from a previous DeriveKeyECDHSecure call
+  DerivedKeyHandle handle = 1;
+
+  // operation is the operation to perform
+  ResidentKeyOperation operation = 2;
+
+  // data is the input data for the operation
+  bytes data = 3;
+
+  // params contains additional parameters for the operation
+  OperationParams params = 4;
+}
+
+// UseResidentKeyResponse contains the result of a resident key operation
+message UseResidentKeyResponse {
+  // result is the operation result (ciphertext, plaintext, MAC, etc.)
+  bytes result = 1;
+}
+
+// DestroyResidentKeyRequest requests destruction of a resident derived key
+message DestroyResidentKeyRequest {
+  // handle is the DerivedKeyHandle to destroy
+  DerivedKeyHandle handle = 1;
+}
+
+// DestroyResidentKeyResponse contains the result of key destruction
+message DestroyResidentKeyResponse {
+  // success indicates whether the key was successfully destroyed
+  bool success = 1;
+}
+
+// GenerateEphemeralECDHRequest requests ephemeral ECDH key generation in TPM
+message GenerateEphemeralECDHRequest {
+  // backend specifies which backend to use (must be "tpm2")
+  string backend = 1;
+
+  // curve specifies the elliptic curve to use (e.g., "P-256", "P-384")
+  string curve = 2;
+
+  // peer_static_public_key is the peer's static public key
+  bytes peer_static_public_key = 3;
+
+  // kdf_algorithm specifies the KDF to apply
+  string kdf_algorithm = 4;
+
+  // kdf_hash specifies the hash algorithm for the KDF
+  string kdf_hash = 5;
+
+  // kdf_salt is an optional salt value for the KDF
+  bytes kdf_salt = 6;
+
+  // kdf_info is optional context/application-specific information
+  bytes kdf_info = 7;
+
+  // key_length specifies the desired output key length in bytes
+  int32 key_length = 8;
+
+  // derivation_mode specifies how the derived key should be handled
+  KeyDerivationMode derivation_mode = 9;
+}
+
+// GenerateEphemeralECDHResponse contains the result of ephemeral ECDH generation
+message GenerateEphemeralECDHResponse {
+  // mode indicates which derivation mode was used
+  KeyDerivationMode mode = 1;
+
+  // derived_key contains the key bytes for EXPORT mode
+  bytes derived_key = 2;
+
+  // handle references the TPM-resident key for TPM_WRAPPED mode
+  DerivedKeyHandle handle = 3;
+
+  // ephemeral_public_key is the ephemeral public key that the peer needs
+  // to compute the same shared secret
+  bytes ephemeral_public_key = 4;
+}
+
+// SaveCertRequest requests storage of a certificate
+message SaveCertRequest {
+  string key_id = 1;
+  string cert_pem = 2;
+}
+
+// SaveCertResponse contains the result of certificate storage
+message SaveCertResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// GetCertRequest requests retrieval of a certificate
+message GetCertRequest {
+  string key_id = 1;
+}
+
+// GetCertResponse contains the certificate
+message GetCertResponse {
+  string cert_pem = 1;
+}
+
+// DeleteCertRequest requests deletion of a certificate
+message DeleteCertRequest {
+  string key_id = 1;
+}
+
+// DeleteCertResponse contains the result of certificate deletion
+message DeleteCertResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// ListCertsRequest requests a list of all certificates
+message ListCertsRequest {}
+
+// ListCertsResponse contains the list of certificate IDs
+message ListCertsResponse {
+  repeated string key_ids = 1;
+  int32 total = 2;
+}
+
+// CertExistsRequest checks if a certificate exists
+message CertExistsRequest {
+  string key_id = 1;
+}
+
+// CertExistsResponse contains the result of existence check
+message CertExistsResponse {
+  bool exists = 1;
+}
+
+// SaveCertChainRequest requests storage of a certificate chain
+message SaveCertChainRequest {
+  string key_id = 1;
+  repeated string cert_chain_pem = 2;
+}
+
+// SaveCertChainResponse contains the result of certificate chain storage
+message SaveCertChainResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// GetCertChainRequest requests retrieval of a certificate chain
+message GetCertChainRequest {
+  string key_id = 1;
+}
+
+// GetCertChainResponse contains the certificate chain
+message GetCertChainResponse {
+  repeated string cert_chain_pem = 1;
+}
+
+// GetTLSCertificateRequest requests a TLS certificate with private key
+message GetTLSCertificateRequest {
+  string key_id = 1;
+  string backend = 2;
+}
+
+// GetTLSCertificateResponse contains the TLS certificate and private key
+message GetTLSCertificateResponse {
+  string cert_pem = 1;
+  repeated string cert_chain_pem = 2;
+  string private_key_pem = 3;
+}
+
+// GetImportParametersRequest requests parameters needed to import a key
+message GetImportParametersRequest {
+  string key_id = 1;
+  string backend = 2;
+  string wrapping_algorithm = 3;  // "RSAES_OAEP_SHA_1", "RSAES_OAEP_SHA_256", "RSA_AES_KEY_WRAP_SHA_1", "RSA_AES_KEY_WRAP_SHA_256"
+  string key_type = 4;  // "rsa", "ecdsa", "ed25519", "symmetric"
+  int32 key_size = 5;
+  string curve = 6;
+  string hash = 7;
+  string partition = 8;
+}
+
+// GetImportParametersResponse contains parameters needed for key import
+message GetImportParametersResponse {
+  bytes wrapping_public_key = 1;  // DER-encoded public key
+  bytes import_token = 2;
+  string algorithm = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  string key_spec = 5;
+}
+
+// WrapKeyRequest requests wrapping of key material
+message WrapKeyRequest {
+  bytes key_material = 1;
+  bytes wrapping_public_key = 2;  // DER-encoded public key
+  bytes import_token = 3;
+  string algorithm = 4;
+  string key_spec = 5;
+}
+
+// WrapKeyResponse contains wrapped key material
+message WrapKeyResponse {
+  bytes wrapped_key = 1;
+  string algorithm = 2;
+  bytes import_token = 3;
+  map<string, string> metadata = 4;
+}
+
+// UnwrapKeyRequest requests unwrapping of key material
+message UnwrapKeyRequest {
+  bytes wrapped_key = 1;
+  string algorithm = 2;
+  bytes import_token = 3;
+  bytes wrapping_public_key = 4;  // DER-encoded public key
+  string key_spec = 5;
+  map<string, string> metadata = 6;
+}
+
+// UnwrapKeyResponse contains unwrapped key material
+message UnwrapKeyResponse {
+  bytes key_material = 1;
+}
+
+// WrapKeyByIDRequest wraps a target key using a wrapping key identified by key IDs.
+// This corresponds to PKCS#11 C_WrapKey operation.
+message WrapKeyByIDRequest {
+  // ID of the key used for wrapping (Key Encryption Key)
+  string wrapping_key_id = 1;
+  // Backend containing the wrapping key
+  string wrapping_key_backend = 2;
+  // ID of the key to be wrapped (must be extractable/exportable)
+  string target_key_id = 3;
+  // Backend containing the target key
+  string target_key_backend = 4;
+  // Wrapping algorithm (e.g., "RSAES_OAEP_SHA_256", "AES_KEY_WRAP")
+  string algorithm = 5;
+}
+
+// WrapKeyByIDResponse contains the wrapped key material
+message WrapKeyByIDResponse {
+  // The wrapped (encrypted) key material
+  bytes wrapped_key = 1;
+  // Algorithm used for wrapping
+  string algorithm = 2;
+}
+
+// UnwrapKeyByIDRequest unwraps key material and imports it as a new key.
+// This corresponds to PKCS#11 C_UnwrapKey operation.
+message UnwrapKeyByIDRequest {
+  // The wrapped key material to unwrap
+  bytes wrapped_key = 1;
+  // ID of the key used for unwrapping
+  string unwrapping_key_id = 2;
+  // Backend containing the unwrapping key
+  string unwrapping_key_backend = 3;
+  // Unwrapping algorithm used
+  string algorithm = 4;
+  // Target key template - attributes for the newly created key
+  // ID for the new key
+  string target_key_id = 5;
+  // Backend to store the new key
+  string target_key_backend = 6;
+  // Key type: "symmetric", "rsa", "ecdsa", "ed25519"
+  string target_key_type = 7;
+  // Key size in bits (e.g., 128, 192, 256 for AES)
+  int32 target_key_size = 8;
+  // Curve for ECDSA keys (e.g., "P-256", "P-384")
+  string target_curve = 9;
+  // Partition for the new key
+  string target_partition = 10;
+  // Whether the new key can be exported
+  bool target_exportable = 11;
+}
+
+// UnwrapKeyByIDResponse contains the result of the unwrap operation
+message UnwrapKeyByIDResponse {
+  // ID of the newly created key
+  string key_id = 1;
+  // Backend where the key was stored
+  string backend = 2;
+  // Whether the operation succeeded
+  bool success = 3;
+  // Status message
+  string message = 4;
+}
+
+// ImportKeyRequest requests import of externally generated key material
+message ImportKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+  bytes wrapped_key = 3;
+  string algorithm = 4;
+  bytes import_token = 5;
+  map<string, string> metadata = 6;
+  string key_type = 7;  // "rsa", "ecdsa", "ed25519", "symmetric"
+  int32 key_size = 8;
+  string curve = 9;
+  string hash = 10;
+  string partition = 11;
+}
+
+// ImportKeyResponse contains the result of key import
+message ImportKeyResponse {
+  bool success = 1;
+  string message = 2;
+  string key_id = 3;
+}
+
+// ExportKeyRequest requests export of a key in wrapped form
+message ExportKeyRequest {
+  string key_id = 1;
+  string backend = 2;
+  string wrapping_algorithm = 3;
+}
+
+// ExportKeyResponse contains wrapped key material for export
+message ExportKeyResponse {
+  bytes wrapped_key = 1;
+  string algorithm = 2;
+  bytes import_token = 3;
+  map<string, string> metadata = 4;
+}
+
+// ExportKeyMaterialRequest requests export of raw symmetric key bytes.
+//
+// SECURITY WARNING: This exports plaintext key material without cryptographic
+// protection. Only use for extractable symmetric keys.
+message ExportKeyMaterialRequest {
+  // Key identifier
+  string key_id = 1;
+  // Backend containing the key
+  string backend = 2;
+}
+
+// ExportKeyMaterialResponse contains the raw key material.
+//
+// SECURITY WARNING: The key_material field contains plaintext secret key bytes.
+// Handle with extreme care - do not log, store insecurely, or transmit over
+// untrusted channels.
+message ExportKeyMaterialResponse {
+  // Raw key bytes (plaintext symmetric key material)
+  bytes key_material = 1;
+  // Type of the key (e.g., "aes256-gcm", "chacha20-poly1305")
+  string key_type = 2;
+  // Size of the key in bits (e.g., 128, 192, 256)
+  int32 key_size = 3;
+}
+
+// CopyKeyRequest requests copying a key from one backend to another
+message CopyKeyRequest {
+  string source_backend = 1;
+  string source_key_id = 2;
+  string dest_backend = 3;
+  string dest_key_id = 4;
+  string wrapping_algorithm = 5;  // Wrapping algorithm to use for secure transport
+}
+
+// CopyKeyResponse contains the result of key copy operation
+message CopyKeyResponse {
+  bool success = 1;
+  string message = 2;
+  string dest_key_id = 3;
+}
+
+// ==================== Sealing Operations Messages ====================
+
+// SealRequest requests sealing (encryption) of data using the backend's sealing mechanism
+message SealRequest {
+  string backend = 1;
+  string key_id = 2;
+  bytes data = 3;
+  bytes aad = 4; // Additional authenticated data (optional)
+}
+
+// SealResponse contains the sealed data
+message SealResponse {
+  string backend = 1;
+  bytes ciphertext = 2;
+  bytes nonce = 3;
+  bytes tag = 4;
+  map<string, string> metadata = 5;
+}
+
+// UnsealRequest requests unsealing (decryption) of previously sealed data
+message UnsealRequest {
+  string backend = 1;
+  string key_id = 2;
+  bytes ciphertext = 3;
+  bytes nonce = 4;
+  bytes tag = 5;
+  bytes aad = 6;
+}
+
+// UnsealResponse contains the unsealed (decrypted) data
+message UnsealResponse {
+  bytes plaintext = 1;
+}
+
+// CanSealRequest checks if a backend supports sealing operations
+message CanSealRequest {
+  string backend = 1; // Optional - if empty, checks default backend
+}
+
+// CanSealResponse contains the sealing capability status
+message CanSealResponse {
+  bool can_seal = 1;
+}
+
+// ==================== Attestation Operations Messages ====================
+
+// AttestKeyRequest contains parameters for requesting key attestation.
+message AttestKeyRequest {
+  string backend = 1;
+  string key_id = 2;
+  bytes nonce = 3;
+}
+
+// AttestKeyResponse contains the attestation statement.
+message AttestKeyResponse {
+  string format = 1;
+  repeated bytes certificate_chain = 2;
+  bytes attestation_data = 3;
+  bytes signature = 4;
+  string signature_algorithm = 5;
+  bytes nonce = 6;
+  string backend = 7;
+}
+
+// ==================== FROST Threshold Signature Messages ====================
+
+// FrostKeyInfo contains information about a FROST key
+message FrostKeyInfo {
+  string key_id = 1;
+  string algorithm = 2;  // FROST ciphersuite (e.g., "FROST-Ed25519-SHA512")
+  int32 threshold = 3;   // Minimum signers required (M)
+  int32 total = 4;       // Total participants (N)
+  uint32 participant_id = 5;
+  bytes group_public_key = 6;
+  repeated string participants = 7;  // Participant names/identifiers
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// FrostKeyPackage represents a participant's key package for import/export
+message FrostKeyPackage {
+  string key_id = 1;
+  string algorithm = 2;
+  int32 threshold = 3;
+  int32 total = 4;
+  uint32 participant_id = 5;
+  string participant_name = 6;
+  bytes secret_share = 7;
+  bytes group_public_key = 8;
+  map<uint32, bytes> verification_shares = 9;
+}
+
+// FrostCommitment represents a participant's nonce commitments
+message FrostCommitment {
+  uint32 participant_id = 1;
+  bytes hiding_commitment = 2;
+  bytes binding_commitment = 3;
+}
+
+// FrostSignatureShare represents a participant's signature share
+message FrostSignatureShare {
+  uint32 participant_id = 1;
+  string session_id = 2;
+  bytes share = 3;
+}
+
+// FrostGenerateKeyRequest requests generation of FROST key packages
+message FrostGenerateKeyRequest {
+  string key_id = 1;           // Custom key identifier (auto-generated if empty)
+  string algorithm = 2;        // FROST ciphersuite (default: "FROST-Ed25519-SHA512")
+  int32 threshold = 3;         // Minimum signers required (M)
+  int32 total = 4;             // Total participants (N)
+  repeated string participants = 5;  // Participant names/identifiers
+  uint32 participant_id = 6;   // This participant's ID (1 to total); 0 = dealer mode
+  bool dealer_mode = 7;        // Generate all packages (trusted dealer mode)
+}
+
+// FrostGenerateKeyResponse contains the generated key information
+message FrostGenerateKeyResponse {
+  string key_id = 1;
+  string algorithm = 2;
+  int32 threshold = 3;
+  int32 total = 4;
+  bytes group_public_key = 5;
+  uint32 participant_id = 6;   // Only set in participant mode
+  repeated FrostKeyPackage packages = 7;  // All packages in dealer mode
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// FrostImportKeyRequest requests import of a FROST key package
+message FrostImportKeyRequest {
+  FrostKeyPackage package = 1;
+}
+
+// FrostImportKeyResponse contains the result of key package import
+message FrostImportKeyResponse {
+  bool success = 1;
+  string message = 2;
+  string key_id = 3;
+  uint32 participant_id = 4;
+  bytes group_public_key = 5;
+}
+
+// FrostListKeysRequest requests listing of all FROST keys
+message FrostListKeysRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+}
+
+// FrostListKeysResponse contains the list of FROST keys
+message FrostListKeysResponse {
+  repeated FrostKeyInfo keys = 1;
+  int32 total = 2;
+}
+
+// FrostGetKeyRequest requests information about a specific FROST key
+message FrostGetKeyRequest {
+  string key_id = 1;
+}
+
+// FrostGetKeyResponse contains FROST key information
+message FrostGetKeyResponse {
+  FrostKeyInfo key = 1;
+}
+
+// FrostDeleteKeyRequest requests deletion of a FROST key
+message FrostDeleteKeyRequest {
+  string key_id = 1;
+}
+
+// FrostDeleteKeyResponse contains the result of key deletion
+message FrostDeleteKeyResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// FrostGenerateNoncesRequest requests generation of nonces for Round 1
+message FrostGenerateNoncesRequest {
+  string key_id = 1;
+}
+
+// FrostGenerateNoncesResponse contains the nonces and commitments for Round 1
+message FrostGenerateNoncesResponse {
+  uint32 participant_id = 1;
+  string session_id = 2;
+  bytes hiding_nonce = 3;      // Secret - keep private
+  bytes binding_nonce = 4;     // Secret - keep private
+  bytes hiding_commitment = 5; // Public - share with participants
+  bytes binding_commitment = 6; // Public - share with participants
+}
+
+// FrostSignRoundRequest requests generation of a signature share for Round 2
+message FrostSignRoundRequest {
+  string key_id = 1;
+  bytes message = 2;
+  string session_id = 3;
+  bytes hiding_nonce = 4;      // This participant's hiding nonce
+  bytes binding_nonce = 5;     // This participant's binding nonce
+  bytes hiding_commitment = 6; // This participant's hiding commitment
+  bytes binding_commitment = 7; // This participant's binding commitment
+  repeated FrostCommitment commitments = 8;  // All participants' commitments
+}
+
+// FrostSignRoundResponse contains the signature share
+message FrostSignRoundResponse {
+  uint32 participant_id = 1;
+  string session_id = 2;
+  bytes signature_share = 3;
+}
+
+// FrostAggregateRequest requests aggregation of signature shares
+message FrostAggregateRequest {
+  string key_id = 1;
+  bytes message = 2;
+  repeated FrostCommitment commitments = 3;
+  repeated FrostSignatureShare shares = 4;
+  bool verify = 5;  // Verify signature after aggregation (default: true)
+}
+
+// FrostAggregateResponse contains the final aggregated signature
+message FrostAggregateResponse {
+  bytes signature = 1;
+  bool verified = 2;
+}
+
+// FrostVerifyRequest requests verification of a FROST signature
+message FrostVerifyRequest {
+  string key_id = 1;
+  bytes message = 2;
+  bytes signature = 3;
+}
+
+// FrostVerifyResponse contains the verification result
+message FrostVerifyResponse {
+  bool valid = 1;
+  string message = 2;
+}
+
+// ==================== CA Bundle Messages ====================
+
+// GetCABundleRequest requests the CA certificate bundle
+message GetCABundleRequest {
+  // Optional: Filter by store type ("software", "tpm2", "pkcs11")
+  string store_type = 1;
+  // Optional: Filter by algorithm ("RSA", "ECDSA", "Ed25519")
+  string algorithm = 2;
+}
+
+// GetCABundleResponse contains the CA certificate bundle
+message GetCABundleResponse {
+  // PEM-encoded certificate chain (intermediate + root)
+  bytes bundle_pem = 1;
+  // Individual DER-encoded certificates
+  repeated bytes certificates = 2;
+  // Content type: "application/pem-certificate-chain"
+  string content_type = 3;
+}
+
+// ==================== CA Operations Messages ====================
+
+// GetCACertificateRequest requests the CA certificate.
+message GetCACertificateRequest {
+  string identity = 1;
+}
+
+// GetCACertificateResponse contains the CA certificate.
+message GetCACertificateResponse {
+  bytes certificate_pem = 1;
+  string subject = 2;
+  string issuer = 3;
+  string serial_number = 4;
+  string not_before = 5;
+  string not_after = 6;
+  bool is_ca = 7;
+}
+
+// SignCSRRequest contains a CSR to be signed.
+message SignCSRRequest {
+  bytes csr_pem = 1;
+  string profile = 2;
+  int32 validity_days = 3;
+}
+
+// SignCSRResponse contains the signed certificate.
+message SignCSRResponse {
+  bytes certificate_pem = 1;
+  bytes chain_pem = 2;
+  string serial_number = 3;
+}
+
+// IssueCertificateRequest requests certificate issuance.
+message IssueCertificateRequest {
+  string profile = 1;
+  string common_name = 2;
+  string organization = 3;
+  repeated string sans = 4;
+  int32 validity_days = 5;
+  string algorithm = 6;
+}
+
+// IssueCertificateResponse contains the issued certificate.
+message IssueCertificateResponse {
+  bytes certificate_pem = 1;
+  bytes chain_pem = 2;
+  bytes private_key_pem = 3;
+  string serial_number = 4;
+}
+
+// RevokeCertificateRequest requests certificate revocation.
+message RevokeCertificateRequest {
+  string serial_number = 1;
+  int32 reason = 2;
+}
+
+// RevokeCertificateResponse confirms revocation.
+message RevokeCertificateResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// GenerateCRLRequest requests CRL generation.
+message GenerateCRLRequest {}
+
+// GenerateCRLResponse contains the generated CRL.
+message GenerateCRLResponse {
+  bytes crl_pem = 1;
+}
+
+// IsRevokedRequest checks revocation status.
+message IsRevokedRequest {
+  string serial_number = 1;
+}
+
+// IsRevokedResponse contains the revocation status.
+message IsRevokedResponse {
+  bool revoked = 1;
+  int32 reason = 2;
+  string message = 3;
+}
+
+
+// ==================== TCG Certificate Messages ====================
+
+// IssueEKCertificateRequest requests issuance of an Endorsement Key certificate.
+message IssueEKCertificateRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes ek_public_key = 3;
+}
+
+// IssueEKCertificateResponse contains the issued EK certificate.
+message IssueEKCertificateResponse {
+  bytes certificate_der = 1;
+  bytes certificate_pem = 2;
+  string serial_number = 3;
+}
+
+// IssueAKCertificateRequest requests issuance of an Attestation Key certificate.
+message IssueAKCertificateRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes public_key = 3;
+}
+
+// IssueAKCertificateResponse contains the issued AK certificate.
+message IssueAKCertificateResponse {
+  bytes certificate_der = 1;
+  bytes certificate_pem = 2;
+  string serial_number = 3;
+}
+
+// SignTCGCSRRequest requests signing of a TCG-CSR-IDEVID.
+message SignTCGCSRRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes tcg_csr = 3;
+}
+
+// SignTCGCSRResponse contains the signed IAK and IDevID certificates.
+message SignTCGCSRResponse {
+  bytes iak_cert_der = 1;
+  bytes idevid_cert_der = 2;
+}
+
+// EnrollDeviceRequest requests full TCG device enrollment.
+message EnrollDeviceRequest {
+  string common_name = 1;
+  string organization = 2;
+  bytes packed_csr = 3;
+}
+
+// EnrollDeviceResponse contains the enrollment result with certificates and challenge.
+message EnrollDeviceResponse {
+  bytes iak_cert_der = 1;
+  bytes idevid_cert_der = 2;
+  bytes credential_blob = 3;
+  bytes encrypted_secret = 4;
+  bytes plain_secret = 5;
+}
+// ==================== Barrier Operations Messages ====================
+
+// BarrierInitializeRequest requests initialization of the barrier with a secret.
+message BarrierInitializeRequest {
+  // secret is the credential used to seal the root key.
+  // Interpreted per strategy: password for software, auth value for TPM2.
+  string secret = 1;
+}
+
+// BarrierUnsealRequest requests unsealing of the barrier.
+message BarrierUnsealRequest {
+  // secret is the credential used to unseal the root key.
+  string secret = 1;
+}
+
+// BarrierStatusResponse reports the current state of the barrier.
+message BarrierStatusResponse {
+  // sealed is true when the barrier is in sealed state.
+  bool sealed = 1;
+  // strategy identifies which sealing strategy protects the root key.
+  string strategy = 2;
+  // hardware_backed is true when the active strategy uses dedicated
+  // cryptographic hardware (TPM, HSM, cloud HSM).
+  bool hardware_backed = 3;
+  // initialized_at records when the barrier was first initialized (RFC 3339).
+  string initialized_at = 4;
+}
+
+// BarrierInitializeShamirRequest requests initialization with Shamir secret sharing.
+message BarrierInitializeShamirRequest {
+  // secret is the credential used for credential mode. Empty for direct mode.
+  string secret = 1;
+}
+
+// BarrierShamirInitResponse returns the generated shares from initialization or rekey.
+message BarrierShamirInitResponse {
+  // shares are the base64-encoded Shamir share values.
+  repeated string shares = 1;
+  // threshold is the minimum number of shares needed to reconstruct.
+  int32 threshold = 2;
+  // total_shares is the total number of shares generated.
+  int32 total_shares = 3;
+}
+
+// BarrierUnsealShareRequest submits a single share for quorum unsealing.
+message BarrierUnsealShareRequest {
+  // share is the base64-encoded share value.
+  string share = 1;
+}
+
+// BarrierUnsealSharesRequest submits all shares for batch unsealing.
+message BarrierUnsealSharesRequest {
+  // shares are the base64-encoded share values.
+  repeated string shares = 1;
+}
+
+// BarrierQuorumProgressResponse reports the state of quorum accumulation.
+message BarrierQuorumProgressResponse {
+  // required is the threshold number of shares needed.
+  int32 required = 1;
+  // submitted is the number of shares submitted so far.
+  int32 submitted = 2;
+  // complete is true when the threshold has been met.
+  bool complete = 3;
+}
+
+// BarrierShamirSharesResponse returns metadata about stored shares.
+message BarrierShamirSharesResponse {
+  // count is the number of shares currently in storage.
+  int32 count = 1;
+  // threshold is the minimum shares needed to reconstruct.
+  int32 threshold = 2;
+  // total is the total number of shares.
+  int32 total = 3;
+}
+
+// BarrierShamirDeleteShareRequest requests deletion of a share by index.
+message BarrierShamirDeleteShareRequest {
+  // index is the 1-based share index.
+  int32 index = 1;
+}
+
+// BarrierRekeyRequest requests generation of new shares for the existing root key.
+message BarrierRekeyRequest {
+  // threshold is the new minimum shares needed.
+  int32 threshold = 1;
+  // total is the new total number of shares.
+  int32 total = 2;
+}
+
+// BarrierGenerateRecoveryKeysRequest requests generation of recovery key shares.
+message BarrierGenerateRecoveryKeysRequest {
+  // threshold is the minimum recovery keys needed.
+  int32 threshold = 1;
+  // total is the total number of recovery keys.
+  int32 total = 2;
+}
+
+// BarrierRecoveryKeysResponse returns the generated recovery key shares.
+message BarrierRecoveryKeysResponse {
+  // shares are the base64-encoded recovery share values.
+  repeated string shares = 1;
+  // threshold is the minimum shares needed to recover.
+  int32 threshold = 2;
+  // total_shares is the total number of recovery shares generated.
+  int32 total_shares = 3;
+}
+
+// BarrierRecoverWithKeysRequest requests recovery using recovery key shares.
+message BarrierRecoverWithKeysRequest {
+  // keys are the base64-encoded recovery share values.
+  repeated string keys = 1;
+}
+
+// BarrierGenerateRootTokenRequest requests a one-time root token.
+message BarrierGenerateRootTokenRequest {
+  // shares are the Shamir share values to prove master key knowledge.
+  repeated string shares = 1;
+}
+
+// BarrierRootTokenResponse returns the generated root token.
+message BarrierRootTokenResponse {
+  // token is the hex-encoded root token value.
+  string token = 1;
+  // created_at records when the token was generated (RFC 3339).
+  string created_at = 2;
+}
+
+// ==================== PIN Operations Messages ====================
+
+// SetSOPINRequest requests setting the Security Officer PIN.
+message SetSOPINRequest {
+  // current_so_pin must match the existing SO PIN, or be empty if not yet set.
+  string current_so_pin = 1;
+  // new_so_pin is the new Security Officer PIN to set.
+  string new_so_pin = 2;
+}
+
+// SetUserPINRequest requests setting the user PIN.
+message SetUserPINRequest {
+  // so_pin is required for SO PIN authorization.
+  string so_pin = 1;
+  // new_user_pin is the new user PIN to set.
+  string new_user_pin = 2;
+}
+
+// ChangeSOPINRequest requests changing the Security Officer PIN.
+message ChangeSOPINRequest {
+  // current_so_pin is the current SO PIN for verification.
+  string current_so_pin = 1;
+  // new_so_pin is the new SO PIN to set.
+  string new_so_pin = 2;
+}
+
+// ChangeUserPINRequest requests changing the user PIN.
+message ChangeUserPINRequest {
+  // current_user_pin is the current user PIN for verification.
+  string current_user_pin = 1;
+  // new_user_pin is the new user PIN to set.
+  string new_user_pin = 2;
+}
+
+// VerifySOPINRequest requests verification of the Security Officer PIN.
+message VerifySOPINRequest {
+  // so_pin is the SO PIN to verify.
+  string so_pin = 1;
+}
+
+// VerifyUserPINRequest requests verification of the user PIN.
+message VerifyUserPINRequest {
+  // user_pin is the user PIN to verify.
+  string user_pin = 1;
+}
+
+// LockoutStatusResponse reports the current PIN lockout state.
+message LockoutStatusResponse {
+  // failed_attempts is the number of consecutive failed PIN attempts.
+  int32 failed_attempts = 1;
+  // max_attempts is the maximum allowed failed attempts before lockout.
+  int32 max_attempts = 2;
+  // is_locked is true when the PIN is locked due to too many failed attempts.
+  bool is_locked = 3;
+  // lockout_until is the time when the lockout expires (RFC 3339).
+  // Empty if not locked.
+  string lockout_until = 4;
+  // recovery_seconds is the number of seconds remaining until lockout expires.
+  int32 recovery_seconds = 5;
+}
+
+// ResetLockoutRequest requests resetting the PIN lockout counter.
+message ResetLockoutRequest {
+  // so_pin is the Security Officer PIN for authorization.
+  string so_pin = 1;
+}
+
+// ==================== PIV Operations Messages ====================
+
+// PIVSlotStatus describes the status of a single PIV slot.
+message PIVSlotStatus {
+  // slot is the PIV slot identifier (e.g., "9a", "9c", "9d", "9e").
+  string slot = 1;
+  // name is the human-readable slot name (e.g., "Authentication").
+  string name = 2;
+  // description is a longer description of the slot's purpose.
+  string description = 3;
+  // has_cert indicates whether the slot contains a certificate.
+  bool has_cert = 4;
+  // subject is the certificate subject CN (populated when has_cert is true).
+  string subject = 5;
+  // algorithm is the key algorithm (e.g., "ECDSA", "RSA").
+  string algorithm = 6;
+  // key_size is the key size in bits.
+  int32 key_size = 7;
+  // not_after is the certificate expiry date (RFC 3339).
+  string not_after = 8;
+  // fingerprint is the certificate SHA-256 fingerprint.
+  string fingerprint = 9;
+}
+
+// ListPIVSlotsRequest requests listing all PIV slots.
+message ListPIVSlotsRequest {
+  // backend is the backend identifier.
+  string backend = 1;
+}
+
+// ListPIVSlotsResponse contains the list of PIV slot statuses.
+message ListPIVSlotsResponse {
+  // slots contains the status of each PIV slot.
+  repeated PIVSlotStatus slots = 1;
+}
+
+// GetPIVCertificateRequest requests retrieval of a PIV certificate.
+message GetPIVCertificateRequest {
+  // backend is the backend identifier.
+  string backend = 1;
+  // slot is the PIV slot identifier.
+  string slot = 2;
+  // format is the certificate format ("pem" or "der").
+  string format = 3;
+}
+
+// GetPIVCertificateResponse contains the PIV certificate data.
+message GetPIVCertificateResponse {
+  // slot is the PIV slot identifier.
+  string slot = 1;
+  // certificate is the certificate data in the requested format.
+  bytes certificate = 2;
+  // format is the certificate format.
+  string format = 3;
+}
+
+// StorePIVCertificateRequest requests storing a certificate in a PIV slot.
+message StorePIVCertificateRequest {
+  // backend is the backend identifier.
+  string backend = 1;
+  // slot is the PIV slot identifier.
+  string slot = 2;
+  // certificate is the certificate data.
+  bytes certificate = 3;
+  // format is the certificate format ("pem" or "der").
+  string format = 4;
+}
+
+// DeletePIVCertificateRequest requests deletion of a PIV certificate.
+message DeletePIVCertificateRequest {
+  // backend is the backend identifier.
+  string backend = 1;
+  // slot is the PIV slot identifier.
+  string slot = 2;
+}
+
+// GeneratePIVKeyRequest requests generation of a key pair in a PIV slot.
+message GeneratePIVKeyRequest {
+  // backend is the backend identifier.
+  string backend = 1;
+  // slot is the PIV slot identifier.
+  string slot = 2;
+  // algorithm is the key algorithm ("rsa2048", "rsa4096", "ecdsap256", "ecdsap384", "ed25519").
+  string algorithm = 3;
+  // subject is the certificate subject CN.
+  string subject = 4;
+}
+
+// GeneratePIVKeyResponse contains the result of PIV key generation.
+message GeneratePIVKeyResponse {
+  // slot is the PIV slot identifier.
+  string slot = 1;
+  // certificate is the self-signed certificate (PEM-encoded).
+  bytes certificate = 2;
+  // public_key is the public key (PEM-encoded).
+  bytes public_key = 3;
+}
+
+// GeneratePIVCSRRequest requests generation of a CSR for a PIV slot key.
+message GeneratePIVCSRRequest {
+  // backend is the backend identifier.
+  string backend = 1;
+  // slot is the PIV slot identifier.
+  string slot = 2;
+  // subject is the CSR subject CN.
+  string subject = 3;
+}
+
+// GeneratePIVCSRResponse contains the generated CSR.
+message GeneratePIVCSRResponse {
+  // slot is the PIV slot identifier.
+  string slot = 1;
+  // csr is the PEM-encoded certificate signing request.
+  bytes csr = 2;
+}
+
+// ==================== Custodian Group Messages ====================
+
+// CustodianMember represents a member in a custodian group.
+message CustodianMember {
+  string user_id = 1;
+  string name = 2;
+  string email = 3;
+  string role = 4;
+}
+
+// CustodianGroup represents a group of custodians for threshold ceremonies.
+message CustodianGroup {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  int32 threshold = 4;
+  repeated CustodianMember members = 5;
+  string created_at = 6;
+  string updated_at = 7;
+}
+
+// CreateCustodianGroupRequest requests creation of a new custodian group.
+message CreateCustodianGroupRequest {
+  string name = 1;
+  string description = 2;
+  int32 threshold = 3;
+}
+
+// CreateCustodianGroupResponse contains the created custodian group.
+message CreateCustodianGroupResponse {
+  CustodianGroup group = 1;
+}
+
+// GetCustodianGroupRequest requests retrieval of a custodian group.
+message GetCustodianGroupRequest {
+  string group_id = 1;
+}
+
+// GetCustodianGroupResponse contains the custodian group.
+message GetCustodianGroupResponse {
+  CustodianGroup group = 1;
+}
+
+// ListCustodianGroupsRequest requests listing all custodian groups.
+message ListCustodianGroupsRequest {}
+
+// ListCustodianGroupsResponse contains the list of custodian groups.
+message ListCustodianGroupsResponse {
+  repeated CustodianGroup groups = 1;
+}
+
+// DeleteCustodianGroupRequest requests deletion of a custodian group.
+message DeleteCustodianGroupRequest {
+  string group_id = 1;
+}
+
+// AddCustodianMemberRequest requests adding a member to a custodian group.
+message AddCustodianMemberRequest {
+  string group_id = 1;
+  string user_id = 2;
+  string name = 3;
+  string email = 4;
+  string role = 5;
+}
+
+// AddCustodianMemberResponse contains the added member information.
+message AddCustodianMemberResponse {
+  CustodianMember member = 1;
+}
+
+// RemoveCustodianMemberRequest requests removal of a member from a custodian group.
+message RemoveCustodianMemberRequest {
+  string group_id = 1;
+  string user_id = 2;
+}
+
+// DistributeSharesRequest requests share distribution for a custodian group.
+message DistributeSharesRequest {
+  string group_id = 1;
+}
+
+// DistributeSharesResponse contains the distribution result.
+message DistributeSharesResponse {
+  int32 distributed = 1;
+}
+
+// ==================== Share Messages ====================
+
+// ShareInfo represents a stored Shamir share.
+message ShareInfo {
+  string id = 1;
+  string group_id = 2;
+  string server_url = 3;
+  string group_name = 4;
+  int32 share_index = 5;
+  string purpose = 6;
+  string tenant_id = 7;
+  string submitted_at = 8;
+}
+
+// SubmitShareRequest requests storage of a Shamir share.
+message SubmitShareRequest {
+  string group_id = 1;
+  string share_data = 2;
+  string server_url = 3;
+  string group_name = 4;
+  int32 share_index = 5;
+  string purpose = 6;
+  string tenant_id = 7;
+}
+
+// SubmitShareResponse contains the submission result.
+message SubmitShareResponse {
+  string id = 1;
+  string message = 2;
+}
+
+// ListSharesRequest requests listing of all shares.
+message ListSharesRequest {}
+
+// ListSharesResponse contains the list of shares.
+message ListSharesResponse {
+  repeated ShareInfo shares = 1;
+}
+
+// GetShareCollectionStatusRequest requests the collection status for a group.
+message GetShareCollectionStatusRequest {
+  string group_id = 1;
+}
+
+// ShareCollectionStatusResponse contains the collection status.
+message ShareCollectionStatusResponse {
+  string group_id = 1;
+  int32 collected = 2;
+  int32 required = 3;
+  bool complete = 4;
+}
+
+// ==================== Tenant Messages ====================
+
+// TenantInfo represents a tenant.
+message TenantInfo {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string status = 4;
+  string created_at = 5;
+  string updated_at = 6;
+}
+
+// CreateTenantRequest requests creation of a new tenant.
+message CreateTenantRequest {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+}
+
+// CreateTenantResponse contains the created tenant.
+message CreateTenantResponse {
+  TenantInfo tenant = 1;
+}
+
+// GetTenantRequest requests retrieval of a tenant.
+message GetTenantRequest {
+  string tenant_id = 1;
+}
+
+// GetTenantResponse contains the tenant.
+message GetTenantResponse {
+  TenantInfo tenant = 1;
+}
+
+// ListTenantsRequest requests listing of all tenants.
+message ListTenantsRequest {}
+
+// ListTenantsResponse contains the list of tenants.
+message ListTenantsResponse {
+  repeated TenantInfo tenants = 1;
+}
+
+// DeleteTenantRequest requests deletion of a tenant.
+message DeleteTenantRequest {
+  string tenant_id = 1;
+}
+
+// TenantBarrierInitRequest requests initialization of a tenant barrier.
+message TenantBarrierInitRequest {
+  string tenant_id = 1;
+  string secret = 2;
+  int32 shares = 3;
+  int32 threshold = 4;
+}
+
+// TenantBarrierUnsealRequest requests unsealing of a tenant barrier.
+message TenantBarrierUnsealRequest {
+  string tenant_id = 1;
+  string secret = 2;
+  repeated string share_values = 3;
+}
+
+// ==================== Password Store Messages ====================
+
+// PasswordEntry represents a stored password.
+message PasswordEntry {
+  string id = 1;
+  string name = 2;
+  string username = 3;
+  string password = 4;
+  string url = 5;
+  string notes = 6;
+  string folder_path = 7;
+  string backend_id = 8;
+  google.protobuf.Timestamp expires_at = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+  bool read_only = 12;
+  bool encrypted = 13;
+  string owner_id = 14;
+  bool shared = 15;
+}
+
+// PasswordAddRequest requests adding a new password entry.
+message PasswordAddRequest {
+  string name = 1;
+  string username = 2;
+  string password = 3;
+  string url = 4;
+  string notes = 5;
+  string folder_path = 6;
+  string expires_at = 7;
+  bool shared = 8;
+}
+
+// PasswordAddResponse contains the result of adding a password.
+message PasswordAddResponse {
+  string id = 1;
+  string name = 2;
+  string created_at = 3;
+}
+
+// PasswordGetRequest requests retrieval of a password entry.
+message PasswordGetRequest {
+  string id = 1;
+  bool decrypt = 2;
+}
+
+// PasswordGetResponse contains the password entry.
+message PasswordGetResponse {
+  PasswordEntry entry = 1;
+}
+
+// PasswordListRequest requests listing of password entries.
+message PasswordListRequest {
+  string folder_path = 1;
+  string scope = 2;
+}
+
+// PasswordListResponse contains the list of password entries.
+message PasswordListResponse {
+  repeated PasswordEntry passwords = 1;
+  int32 total = 2;
+}
+
+// PasswordUpdateRequest requests updating a password entry.
+message PasswordUpdateRequest {
+  string id = 1;
+  optional string name = 2;
+  optional string username = 3;
+  optional string password = 4;
+  optional string url = 5;
+  optional string notes = 6;
+  optional string folder_path = 7;
+  optional string expires_at = 8;
+}
+
+// PasswordUpdateResponse contains the result of updating a password.
+message PasswordUpdateResponse {
+  string id = 1;
+  string message = 2;
+}
+
+// PasswordDeleteRequest requests deletion of a password entry.
+message PasswordDeleteRequest {
+  string id = 1;
+}
+
+// PasswordDeleteResponse contains the result of deleting a password.
+message PasswordDeleteResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// PasswordStoreUnlockRequest requests unlocking the password store.
+message PasswordStoreUnlockRequest {
+  string pin = 1;
+}
+
+// PasswordStoreLockRequest requests locking the password store.
+message PasswordStoreLockRequest {}
+
+// PasswordStoreStatusRequest requests the password store status.
+message PasswordStoreStatusRequest {}
+
+// PasswordStoreStatusResponse contains the password store status.
+message PasswordStoreStatusResponse {
+  string access_mode = 1;
+  bool is_locked = 2;
+  bool barrier_sealed = 3;
+  bool auto_unsealed = 4;
+  int32 password_count = 5;
+  string message = 6;
+}
+
+// PasswordGenerateRequest requests generation of a random password.
+message PasswordGenerateRequest {
+  int32 length = 1;
+  bool upper = 2;
+  bool lower = 3;
+  bool digits = 4;
+  bool symbols = 5;
+}
+
+// PasswordGenerateResponse contains the generated password.
+message PasswordGenerateResponse {
+  string password = 1;
+  int32 length = 2;
+}

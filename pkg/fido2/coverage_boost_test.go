@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -622,152 +622,6 @@ func TestHandler_SelectDevice_DevicePathOpenError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to open configured device")
 }
 
-// TestVirtualDeviceRead_ClosedDevice tests reading from a closed virtual device.
-func TestVirtualDeviceRead_ClosedDevice(t *testing.T) {
-	client := NewMockFIDOClient()
-
-	deviceConfig := &VirtualDeviceConfig{
-		FIDOClient: client,
-	}
-
-	device, err := NewVirtualFIDO2Device(deviceConfig)
-	require.NoError(t, err)
-
-	// Close the device
-	err = device.Close()
-	require.NoError(t, err)
-
-	// Try to read - should return error
-	buf := make([]byte, 64)
-	_, err = device.Read(buf)
-	assert.Error(t, err)
-	assert.Equal(t, ErrVirtualDeviceClosed, err)
-}
-
-// TestVirtualDeviceWrite_ClosedDevice tests writing to a closed virtual device.
-func TestVirtualDeviceWrite_ClosedDevice(t *testing.T) {
-	client := NewMockFIDOClient()
-
-	deviceConfig := &VirtualDeviceConfig{
-		FIDOClient: client,
-	}
-
-	device, err := NewVirtualFIDO2Device(deviceConfig)
-	require.NoError(t, err)
-
-	err = device.Close()
-	require.NoError(t, err)
-
-	// Try to write - should return error
-	_, err = device.Write([]byte("test"))
-	assert.Error(t, err)
-	assert.Equal(t, ErrVirtualDeviceClosed, err)
-}
-
-// TestVirtualDeviceDoubleClose tests closing a device twice.
-func TestVirtualDeviceDoubleClose(t *testing.T) {
-	client := NewMockFIDOClient()
-
-	deviceConfig := &VirtualDeviceConfig{
-		FIDOClient: client,
-	}
-
-	device, err := NewVirtualFIDO2Device(deviceConfig)
-	require.NoError(t, err)
-
-	// First close should succeed
-	err = device.Close()
-	assert.NoError(t, err)
-
-	// Second close should also succeed (idempotent)
-	err = device.Close()
-	assert.NoError(t, err)
-}
-
-// TestCombinedEnumerator_NoEnumerators tests combined enumerator with no underlying enumerators.
-func TestCombinedEnumerator_NoEnumerators(t *testing.T) {
-	combined := NewCombinedEnumerator()
-
-	devices, err := combined.Enumerate(0, 0)
-	require.NoError(t, err)
-	assert.Empty(t, devices)
-}
-
-// TestCombinedEnumerator_MultipleSources tests combined enumerator with devices from multiple sources.
-func TestCombinedEnumerator_MultipleSources(t *testing.T) {
-	enum1 := NewMockHIDDeviceEnumerator()
-	enum1.AddDevice(NewMockHIDDevice("/dev/hidraw0"))
-
-	enum2 := NewVirtualDeviceEnumerator()
-	vDevice, _ := NewVirtualFIDO2Device(&VirtualDeviceConfig{FIDOClient: NewMockFIDOClient()})
-	_ = enum2.RegisterDevice(vDevice)
-
-	combined := NewCombinedEnumerator(enum1, enum2)
-
-	devices, err := combined.Enumerate(0, 0)
-	require.NoError(t, err)
-	assert.Len(t, devices, 2)
-}
-
-// TestVirtualEnumerator_EnumerateWithFilter tests Enumerate with vendor/product filters.
-func TestVirtualEnumerator_EnumerateWithFilter(t *testing.T) {
-	enum := NewVirtualDeviceEnumerator()
-
-	device, _ := NewVirtualFIDO2Device(&VirtualDeviceConfig{FIDOClient: NewMockFIDOClient()})
-	_ = enum.RegisterDevice(device)
-
-	// Enumerate with matching vendor ID
-	devices, err := enum.Enumerate(VirtualFIDOVendorID, 0)
-	require.NoError(t, err)
-	assert.Len(t, devices, 1)
-
-	// Enumerate with non-matching vendor ID
-	devices, err = enum.Enumerate(0x1234, 0)
-	require.NoError(t, err)
-	assert.Empty(t, devices)
-
-	// Enumerate with matching product ID
-	devices, err = enum.Enumerate(0, VirtualFIDOProductID)
-	require.NoError(t, err)
-	assert.Len(t, devices, 1)
-
-	// Enumerate with non-matching product ID
-	devices, err = enum.Enumerate(0, 0x9999)
-	require.NoError(t, err)
-	assert.Empty(t, devices)
-}
-
-// TestVirtualEnumerator_CloseAll tests closing all devices.
-func TestVirtualEnumerator_CloseAll(t *testing.T) {
-	enum := NewVirtualDeviceEnumerator()
-
-	device1, _ := NewVirtualFIDO2Device(&VirtualDeviceConfig{FIDOClient: NewMockFIDOClient(), SerialNumber: "001"})
-	device2, _ := NewVirtualFIDO2Device(&VirtualDeviceConfig{FIDOClient: NewMockFIDOClient(), SerialNumber: "002"})
-
-	_ = enum.RegisterDevice(device1)
-	_ = enum.RegisterDevice(device2)
-
-	assert.Equal(t, 2, enum.DeviceCount())
-
-	err := enum.Close()
-	require.NoError(t, err)
-
-	assert.Equal(t, 0, enum.DeviceCount())
-}
-
-// TestVirtualEnumerator_OpenNonVirtualPath tests opening a non-virtual path.
-func TestVirtualEnumerator_OpenNonVirtualPath(t *testing.T) {
-	enum := NewVirtualDeviceEnumerator()
-
-	device, _ := NewVirtualFIDO2Device(&VirtualDeviceConfig{FIDOClient: NewMockFIDOClient()})
-	_ = enum.RegisterDevice(device)
-
-	// Try to open a path that doesn't exist
-	_, err := enum.Open("/dev/hidraw0")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
-}
-
 // TestHandler_EnrollKey_CloseDeviceError tests close error handling in EnrollKey.
 func TestHandler_EnrollKey_CloseDeviceError(t *testing.T) {
 	config := DefaultConfig
@@ -922,20 +776,6 @@ func TestHandlerClose(t *testing.T) {
 
 	err = handler.Close()
 	assert.NoError(t, err)
-}
-
-// TestCombinedEnumerator_OpenFromSecondEnumerator tests Open finding device in second enumerator.
-func TestCombinedEnumerator_OpenFromSecondEnumerator(t *testing.T) {
-	enum1 := NewMockHIDDeviceEnumerator() // Empty
-	enum2 := NewMockHIDDeviceEnumerator()
-	mockDev := NewMockHIDDevice("/dev/hidraw0")
-	enum2.AddDevice(mockDev)
-
-	combined := NewCombinedEnumerator(enum1, enum2)
-
-	device, err := combined.Open("/dev/hidraw0")
-	require.NoError(t, err)
-	assert.Equal(t, "/dev/hidraw0", device.Path())
 }
 
 // TestEnrollKey_HMACExtensionWithSalt tests EnrollKey with provided salt.

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -32,8 +32,8 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // KeyVaultClient defines the interface for Azure Key Vault operations.
@@ -135,7 +135,7 @@ func (r *realKeyVaultClient) Close() error {
 	return nil
 }
 
-// Backend implements the types.Backend interface for Azure Key Vault.
+// Backend implements the types.KeyProvider interface for Azure Key Vault.
 // It provides secure key management operations using Azure Key Vault.
 type Backend struct {
 	config   *Config
@@ -258,11 +258,13 @@ func (b *Backend) initClient(ctx context.Context) error {
 // Capabilities returns the capabilities of this backend.
 // Azure Key Vault is a cloud-based HSM service with hardware-backed security.
 // Symmetric encryption is supported by storing AES keys as secrets (not oct key type).
+// SecurityLevel is Medium - keys are protected by cloud HSMs but network-dependent.
 func (b *Backend) Capabilities() types.Capabilities {
 	caps := types.NewHardwareCapabilities()
 	caps.SymmetricEncryption = true // Supported via Secrets API
 	caps.Import = true              // Supported via ImportKey API
 	caps.Export = false             // Azure KV does not allow key extraction for security
+	caps.SecurityLevel = types.SecurityLevelMedium
 	return caps
 }
 

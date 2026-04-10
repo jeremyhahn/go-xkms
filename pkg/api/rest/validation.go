@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -117,8 +117,8 @@ func ValidateAndGetBackend(backendName string) (interface{}, error) {
 	}
 
 	// Note: This returns interface{} to avoid import cycle
-	// Callers should type assert to keychain.KeyStore
-	return nil, fmt.Errorf("use keychain.Backend() directly after validation")
+	// Callers should type assert to xkms.Backend
+	return nil, fmt.Errorf("use xkms.KeyProvider() directly after validation")
 }
 
 // ValidateURLParam validates a URL parameter (like keyID from path).

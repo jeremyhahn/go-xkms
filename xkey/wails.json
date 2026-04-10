@@ -1,0 +1,16 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "xkey",
+  "outputfilename": "xkey-gui",
+  "build:dir": "cmd/xkey",
+  "wailsjsdir": "frontend",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "tags": "ble,production,codec_json",
+  "author": {
+    "name": "Jeremy Hahn",
+    "email": "jeremy@automatethethings.com"
+  }
+}

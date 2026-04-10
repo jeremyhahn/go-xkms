@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"sync"
@@ -46,7 +47,7 @@ func NewMemory() Backend {
 }
 
 // Get retrieves the value for the given key.
-func (m *MemoryBackend) Get(key string) ([]byte, error) {
+func (m *MemoryBackend) Get(_ context.Context, key string) ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -66,7 +67,7 @@ func (m *MemoryBackend) Get(key string) ([]byte, error) {
 }
 
 // Put stores the value for the given key.
-func (m *MemoryBackend) Put(key string, value []byte, opts *Options) error {
+func (m *MemoryBackend) Put(_ context.Context, key string, value []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -82,7 +83,7 @@ func (m *MemoryBackend) Put(key string, value []byte, opts *Options) error {
 }
 
 // Delete removes the key and its value from storage.
-func (m *MemoryBackend) Delete(key string) error {
+func (m *MemoryBackend) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -101,7 +102,7 @@ func (m *MemoryBackend) Delete(key string) error {
 // List returns all keys with the given prefix in sorted order.
 // Keys are sorted to ensure deterministic ordering since Go map
 // iteration order is not guaranteed.
-func (m *MemoryBackend) List(prefix string) ([]string, error) {
+func (m *MemoryBackend) List(_ context.Context, prefix string) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -119,8 +120,31 @@ func (m *MemoryBackend) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
+// Scan iterates over all key-value pairs matching the given prefix,
+// calling fn for each pair. Return a non-nil error from fn to stop early.
+func (m *MemoryBackend) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return ErrClosed
+	}
+
+	for key, value := range m.data {
+		if prefix == "" || strings.HasPrefix(key, prefix) {
+			// Pass a copy to prevent modification
+			valueCopy := make([]byte, len(value))
+			copy(valueCopy, value)
+			if err := fn(key, valueCopy); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // Exists checks if a key exists in storage.
-func (m *MemoryBackend) Exists(key string) (bool, error) {
+func (m *MemoryBackend) Exists(_ context.Context, key string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -148,7 +172,6 @@ func (m *MemoryBackend) Close() error {
 
 // New creates a new in-memory storage backend.
 // This is a convenience function for testing and development.
-// For persistent storage, use file.New() with a directory path.
 func New() Backend {
 	return NewMemory()
 }

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,72 +16,63 @@
 package storage_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/x509"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestFileStorageIntegration_BasicCRUD tests basic Create, Read, Update, Delete operations
 func TestFileStorageIntegration_BasicCRUD(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	opts := &storage.Options{
-		Path:        tmpDir,
-		Permissions: 0600,
-	}
-
-	backend, err := file.New(opts.Path)
+	backend, err := file.New(tmpDir)
 	require.NoError(t, err)
 	defer backend.Close()
 
 	// Create - Put a value
 	testKey := "test-key-1"
 	testValue := []byte("test-value-1")
-	err = backend.Put(testKey, testValue, nil)
+	err = backend.Put(ctx, testKey, testValue)
 	require.NoError(t, err)
 
 	// Read - Get the value
-	retrieved, err := backend.Get(testKey)
+	retrieved, err := backend.Get(ctx, testKey)
 	require.NoError(t, err)
 	assert.Equal(t, testValue, retrieved)
 
 	// Update - Overwrite with new value
 	newValue := []byte("updated-value-1")
-	err = backend.Put(testKey, newValue, nil)
+	err = backend.Put(ctx, testKey, newValue)
 	require.NoError(t, err)
 
-	retrieved, err = backend.Get(testKey)
+	retrieved, err = backend.Get(ctx, testKey)
 	require.NoError(t, err)
 	assert.Equal(t, newValue, retrieved)
 
 	// Delete
-	err = backend.Delete(testKey)
+	err = backend.Delete(ctx, testKey)
 	require.NoError(t, err)
 
 	// Verify deletion
-	_, err = backend.Get(testKey)
+	_, err = backend.Get(ctx, testKey)
 	assert.ErrorIs(t, err, storage.ErrNotFound)
 }
 
 // TestFileStorageIntegration_MultipleKeys tests storing and retrieving multiple keys
 func TestFileStorageIntegration_MultipleKeys(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	opts := &storage.Options{
-		Path:        tmpDir,
-		Permissions: 0600,
-	}
-
-	backend, err := file.New(opts.Path)
+	backend, err := file.New(tmpDir)
 	require.NoError(t, err)
 	defer backend.Close()
 
@@ -90,46 +81,42 @@ func TestFileStorageIntegration_MultipleKeys(t *testing.T) {
 	for i := 0; i < keyCount; i++ {
 		key := fmt.Sprintf("key-%d", i)
 		value := []byte(fmt.Sprintf("value-%d", i))
-		err := backend.Put(key, value, nil)
+		err := backend.Put(ctx, key, value)
 		require.NoError(t, err)
 	}
 
 	// Verify all keys exist
 	for i := 0; i < keyCount; i++ {
 		key := fmt.Sprintf("key-%d", i)
-		exists, err := backend.Exists(key)
+		exists, err := backend.Exists(ctx, key)
 		require.NoError(t, err)
 		assert.True(t, exists)
 	}
 
 	// List all keys
-	keys, err := backend.List("")
+	keys, err := backend.List(ctx, "")
 	require.NoError(t, err)
 	assert.Equal(t, keyCount, len(keys))
 
 	// Delete all keys
 	for i := 0; i < keyCount; i++ {
 		key := fmt.Sprintf("key-%d", i)
-		err := backend.Delete(key)
+		err := backend.Delete(ctx, key)
 		require.NoError(t, err)
 	}
 
 	// Verify all deleted
-	keys, err = backend.List("")
+	keys, err = backend.List(ctx, "")
 	require.NoError(t, err)
 	assert.Equal(t, 0, len(keys))
 }
 
 // TestFileStorageIntegration_NestedPaths tests storing keys with nested path structure
 func TestFileStorageIntegration_NestedPaths(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	opts := &storage.Options{
-		Path:        tmpDir,
-		Permissions: 0600,
-	}
-
-	backend, err := file.New(opts.Path)
+	backend, err := file.New(tmpDir)
 	require.NoError(t, err)
 	defer backend.Close()
 
@@ -144,38 +131,87 @@ func TestFileStorageIntegration_NestedPaths(t *testing.T) {
 
 	for _, key := range testCases {
 		value := []byte(fmt.Sprintf("value-for-%s", key))
-		err := backend.Put(key, value, nil)
+		err := backend.Put(ctx, key, value)
 		require.NoError(t, err)
 	}
 
 	// List with prefix filter
-	level1Keys, err := backend.List("level1/")
+	level1Keys, err := backend.List(ctx, "level1/")
 	require.NoError(t, err)
 	assert.Equal(t, len(testCases), len(level1Keys))
 
-	level2Keys, err := backend.List("level1/level2/")
+	level2Keys, err := backend.List(ctx, "level1/level2/")
 	require.NoError(t, err)
 	assert.Equal(t, 3, len(level2Keys))
 
 	// Verify retrieval
 	for _, key := range testCases {
-		retrieved, err := backend.Get(key)
+		retrieved, err := backend.Get(ctx, key)
 		require.NoError(t, err)
 		expectedValue := []byte(fmt.Sprintf("value-for-%s", key))
 		assert.Equal(t, expectedValue, retrieved)
 	}
 }
 
-// TestFileStorageIntegration_ConcurrentAccess tests concurrent read/write operations
-func TestFileStorageIntegration_ConcurrentAccess(t *testing.T) {
+// TestFileStorageIntegration_Scan tests Scan operation for file storage
+func TestFileStorageIntegration_Scan(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	opts := &storage.Options{
-		Path:        tmpDir,
-		Permissions: 0600,
+	backend, err := file.New(tmpDir)
+	require.NoError(t, err)
+	defer backend.Close()
+
+	// Create keys with different prefixes
+	testData := map[string][]byte{
+		"scan/key1":  []byte("value1"),
+		"scan/key2":  []byte("value2"),
+		"scan/key3":  []byte("value3"),
+		"other/key1": []byte("other-value1"),
 	}
 
-	backend, err := file.New(opts.Path)
+	for key, value := range testData {
+		err := backend.Put(ctx, key, value)
+		require.NoError(t, err)
+	}
+
+	// Scan with prefix
+	results := make(map[string][]byte)
+	err = backend.Scan(ctx, "scan/", func(key string, value []byte) error {
+		results[key] = value
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(results))
+	assert.Equal(t, []byte("value1"), results["scan/key1"])
+	assert.Equal(t, []byte("value2"), results["scan/key2"])
+	assert.Equal(t, []byte("value3"), results["scan/key3"])
+
+	// Scan all
+	allResults := make(map[string][]byte)
+	err = backend.Scan(ctx, "", func(key string, value []byte) error {
+		allResults[key] = value
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 4, len(allResults))
+
+	// Scan with non-matching prefix
+	emptyResults := make(map[string][]byte)
+	err = backend.Scan(ctx, "nonexistent/", func(key string, value []byte) error {
+		emptyResults[key] = value
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, len(emptyResults))
+}
+
+// TestFileStorageIntegration_ConcurrentAccess tests concurrent read/write operations
+func TestFileStorageIntegration_ConcurrentAccess(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	backend, err := file.New(tmpDir)
 	require.NoError(t, err)
 	defer backend.Close()
 
@@ -194,7 +230,7 @@ func TestFileStorageIntegration_ConcurrentAccess(t *testing.T) {
 			for j := 0; j < opsPerGoroutine; j++ {
 				key := fmt.Sprintf("concurrent-key-%d-%d", id, j)
 				value := []byte(fmt.Sprintf("concurrent-value-%d-%d", id, j))
-				if err := backend.Put(key, value, nil); err != nil {
+				if err := backend.Put(ctx, key, value); err != nil {
 					errors <- err
 				}
 			}
@@ -223,7 +259,7 @@ func TestFileStorageIntegration_ConcurrentAccess(t *testing.T) {
 			for j := 0; j < opsPerGoroutine; j++ {
 				key := fmt.Sprintf("concurrent-key-%d-%d", id, j)
 				expectedValue := []byte(fmt.Sprintf("concurrent-value-%d-%d", id, j))
-				retrieved, err := backend.Get(key)
+				retrieved, err := backend.Get(ctx, key)
 				if err != nil {
 					readErrors <- err
 				} else if string(retrieved) != string(expectedValue) {
@@ -245,45 +281,12 @@ func TestFileStorageIntegration_ConcurrentAccess(t *testing.T) {
 	assert.Equal(t, 0, readErrorCount, "Expected no concurrent read errors")
 }
 
-// TestFileStorageIntegration_Permissions tests file permission handling
-func TestFileStorageIntegration_Permissions(t *testing.T) {
+// TestFileStorageIntegration_LargeValues tests storing large values
+func TestFileStorageIntegration_LargeValues(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
 	backend, err := file.New(tmpDir)
-	require.NoError(t, err)
-	defer backend.Close()
-
-	testKey := "perm-test-key"
-	testValue := []byte("perm-test-value")
-
-	// Test with custom permissions passed via Put options
-	customPerms := os.FileMode(0640)
-	opts := &storage.Options{
-		Permissions: customPerms,
-	}
-
-	err = backend.Put(testKey, testValue, opts)
-	require.NoError(t, err)
-
-	// Verify file permissions
-	filePath := filepath.Join(tmpDir, testKey)
-	info, err := os.Stat(filePath)
-	require.NoError(t, err)
-
-	// Check permissions (may vary based on OS umask)
-	assert.Equal(t, customPerms, info.Mode().Perm())
-}
-
-// TestFileStorageIntegration_LargeValues tests storing large values
-func TestFileStorageIntegration_LargeValues(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	opts := &storage.Options{
-		Path:        tmpDir,
-		Permissions: 0600,
-	}
-
-	backend, err := file.New(opts.Path)
 	require.NoError(t, err)
 	defer backend.Close()
 
@@ -293,11 +296,11 @@ func TestFileStorageIntegration_LargeValues(t *testing.T) {
 	require.NoError(t, err)
 
 	testKey := "large-value-key"
-	err = backend.Put(testKey, largeValue, nil)
+	err = backend.Put(ctx, testKey, largeValue)
 	require.NoError(t, err)
 
 	// Retrieve and verify
-	retrieved, err := backend.Get(testKey)
+	retrieved, err := backend.Get(ctx, testKey)
 	require.NoError(t, err)
 	assert.Equal(t, len(largeValue), len(retrieved))
 	assert.Equal(t, largeValue, retrieved)
@@ -305,33 +308,30 @@ func TestFileStorageIntegration_LargeValues(t *testing.T) {
 
 // TestFileStorageIntegration_ErrorHandling tests error cases
 func TestFileStorageIntegration_ErrorHandling(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	opts := &storage.Options{
-		Path:        tmpDir,
-		Permissions: 0600,
-	}
-
-	backend, err := file.New(opts.Path)
+	backend, err := file.New(tmpDir)
 	require.NoError(t, err)
 	defer backend.Close()
 
 	// Test Get on non-existent key
-	_, err = backend.Get("non-existent")
+	_, err = backend.Get(ctx, "non-existent")
 	assert.ErrorIs(t, err, storage.ErrNotFound)
 
 	// Test Delete on non-existent key
-	err = backend.Delete("non-existent")
+	err = backend.Delete(ctx, "non-existent")
 	assert.ErrorIs(t, err, storage.ErrNotFound)
 
 	// Test Exists on non-existent key
-	exists, err := backend.Exists("non-existent")
+	exists, err := backend.Exists(ctx, "non-existent")
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
 
 // TestFileStorageIntegration_KeyStorage tests KeyStorage interface operations
 func TestFileStorageIntegration_KeyStorage(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
 	keyStorage, err := file.New(tmpDir)
@@ -341,36 +341,37 @@ func TestFileStorageIntegration_KeyStorage(t *testing.T) {
 	// Save a key
 	keyID := "test-key-id"
 	keyData := []byte("test-key-data-content")
-	err = storage.SaveKey(keyStorage, keyID, keyData)
+	err = storage.SaveKey(ctx, keyStorage, keyID, keyData)
 	require.NoError(t, err)
 
 	// Get the key
-	retrieved, err := storage.GetKey(keyStorage, keyID)
+	retrieved, err := storage.GetKey(ctx, keyStorage, keyID)
 	require.NoError(t, err)
 	assert.Equal(t, keyData, retrieved)
 
 	// Check key exists
-	exists, err := storage.KeyExists(keyStorage, keyID)
+	exists, err := storage.KeyExists(ctx, keyStorage, keyID)
 	require.NoError(t, err)
 	assert.True(t, exists)
 
 	// List keys
-	keys, err := storage.ListKeys(keyStorage)
+	keys, err := storage.ListKeys(ctx, keyStorage)
 	require.NoError(t, err)
 	assert.Contains(t, keys, keyID)
 
 	// Delete key
-	err = storage.DeleteKey(keyStorage, keyID)
+	err = storage.DeleteKey(ctx, keyStorage, keyID)
 	require.NoError(t, err)
 
 	// Verify deletion
-	exists, err = storage.KeyExists(keyStorage, keyID)
+	exists, err = storage.KeyExists(ctx, keyStorage, keyID)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
 
 // TestFileStorageIntegration_CertStorage tests CertificateStorage interface operations
 func TestFileStorageIntegration_CertStorage(t *testing.T) {
+	ctx := context.Background()
 	tmpDir := t.TempDir()
 
 	certStorage, err := file.New(tmpDir)
@@ -382,41 +383,41 @@ func TestFileStorageIntegration_CertStorage(t *testing.T) {
 
 	// Save certificate
 	certID := "test-cert-id"
-	err = storage.SaveCertParsed(certStorage, certID, cert)
+	err = storage.SaveCertParsed(ctx, certStorage, certID, cert)
 	require.NoError(t, err)
 
 	// Get certificate
-	retrieved, err := storage.GetCertParsed(certStorage, certID)
+	retrieved, err := storage.GetCertParsed(ctx, certStorage, certID)
 	require.NoError(t, err)
 	assert.Equal(t, cert.Raw, retrieved.Raw)
 
 	// Check certificate exists
-	exists, err := storage.CertExists(certStorage, certID)
+	exists, err := storage.CertExists(ctx, certStorage, certID)
 	require.NoError(t, err)
 	assert.True(t, exists)
 
 	// List certificates
-	certs, err := storage.ListCerts(certStorage)
+	certs, err := storage.ListCerts(ctx, certStorage)
 	require.NoError(t, err)
 	assert.Contains(t, certs, certID)
 
 	// Save certificate chain
 	chainID := "test-chain-id"
 	chain := []*x509.Certificate{cert, cert}
-	err = storage.SaveCertChainParsed(certStorage, chainID, chain)
+	err = storage.SaveCertChainParsed(ctx, certStorage, chainID, chain)
 	require.NoError(t, err)
 
 	// Get certificate chain
-	retrievedChain, err := storage.GetCertChainParsed(certStorage, chainID)
+	retrievedChain, err := storage.GetCertChainParsed(ctx, certStorage, chainID)
 	require.NoError(t, err)
 	assert.Equal(t, len(chain), len(retrievedChain))
 
 	// Delete certificate
-	err = storage.DeleteCert(certStorage, certID)
+	err = storage.DeleteCert(ctx, certStorage, certID)
 	require.NoError(t, err)
 
 	// Verify deletion
-	exists, err = storage.CertExists(certStorage, certID)
+	exists, err = storage.CertExists(ctx, certStorage, certID)
 	require.NoError(t, err)
 	assert.False(t, exists)
 }

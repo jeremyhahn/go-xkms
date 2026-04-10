@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -337,16 +337,6 @@ func (a *Authenticator) GetAssertion(req *GetAssertionRequest) (*GetAssertionRes
 	resp, err := a.device.SendCBOR(CmdGetAssertion, reqMap)
 	if err != nil {
 		return nil, fmt.Errorf("GetAssertion command failed: %w", err)
-	}
-
-	// Workaround for CanoKey CBOR truncation bug
-	if a.config.WorkaroundCanoKey && len(resp) > 0 {
-		// Attempt to decode, if it fails, try padding
-		var testMap map[int]interface{}
-		if err := cbor.Unmarshal(resp, &testMap); err != nil {
-			// Pad with zeros and retry
-			resp = append(resp, make([]byte, 32)...)
-		}
 	}
 
 	// Decode response

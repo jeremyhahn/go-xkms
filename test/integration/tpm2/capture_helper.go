@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -29,12 +29,12 @@ import (
 	"github.com/google/go-tpm/tpm2/transport/tcp"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	tpm2ks "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	tpm2ks "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TPM2TestSetup contains all components needed for TPM testing with capture
@@ -44,7 +44,7 @@ type TPM2TestSetup struct {
 	TmpDir      string
 	KeyStorage  storage.Backend
 	CertStorage storage.Backend
-	PKCS8       types.Backend
+	PKCS8       types.KeyProvider
 }
 
 // NewTPM2TestSetup creates a complete TPM test environment with packet capture
@@ -110,7 +110,8 @@ func NewTPM2TestSetup(t *testing.T, encryptSession bool) *TPM2TestSetup {
 	memStorage := storage.New()
 
 	// Create blob store
-	blobStore := store.NewFSBlobStore(logger, memStorage)
+	blobStore, err := store.NewFSBlobStore(logger, memStorage)
+	require.NoError(t, err, "Failed to create blob store")
 
 	// Create file backend
 	fileBackend := store.NewFileBackend(logger, memStorage)

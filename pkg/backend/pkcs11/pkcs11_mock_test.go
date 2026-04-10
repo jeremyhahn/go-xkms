@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -28,10 +28,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ThalesGroup/crypto11"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
 
@@ -76,16 +75,12 @@ func TestBackend_Get_SuccessPath(t *testing.T) {
 		t.Fatalf("NewBackend() failed: %v", err)
 	}
 
-	// We can't mock crypto11.Context without panics, so we test with nil context
-	// which is already covered. The key insight is that even with a valid context,
-	// Get() returns ErrUnsupportedOperation after finding a key.
-
+	// Test with nil pool (not initialized)
 	attrs := &types.KeyAttributes{
 		CN:           "test",
 		KeyAlgorithm: x509.RSA,
 	}
 
-	// Test with nil context
 	_, err = b.Get(attrs, backend.FSEXT_PRIVATE_PKCS8)
 	if err == nil {
 		t.Error("Get() should return error")
@@ -124,7 +119,7 @@ func TestBackend_Delete_SuccessPath(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	// Delete without context returns error
+	// Delete without pool returns error
 	err = b.Delete(attrs)
 	if err == nil {
 		t.Error("Delete() should return error when not initialized")
@@ -146,31 +141,26 @@ func TestBackend_Close_PanicRecovery(t *testing.T) {
 		CertStorage: storage.New(),
 	}
 
-	// Create backend with a context that will cause panic on Close
+	// Create backend with a pool sentinel to test Close cleanup
 	b := &Backend{
-		config:  config,
-		ctx:     &crypto11.Context{}, // Empty context will panic on Close
-		ownsCtx: true,
+		config:     config,
+		pool:       &SessionPool{}, // Non-nil sentinel for "initialized" state
+		ownsP11ctx: true,
 	}
 
-	// Close should recover from panic and clear context
+	// Close should handle cleanup gracefully
 	err := b.Close()
-	// May return error or nil depending on panic recovery
-	t.Logf("Close() with panic recovery returned: %v", err)
+	// May return error or nil depending on cleanup behavior
+	t.Logf("Close() returned: %v", err)
 
-	// Verify context was cleared despite panic
-	if b.ctx != nil {
-		t.Error("Close() should clear context even after panic recovery")
+	// Verify pool was cleared
+	if b.pool != nil {
+		t.Error("Close() should clear pool")
 	}
 }
 
-// TestBackend_Close_CacheRefCountDecrement tests cache reference count decrement
-func TestBackend_Close_CacheRefCountDecrement(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
+// TestBackend_Close_PoolCleanup tests that Close properly cleans up the session pool
+func TestBackend_Close_PoolCleanup(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
 	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
@@ -179,64 +169,32 @@ func TestBackend_Close_CacheRefCountDecrement(t *testing.T) {
 
 	config := &Config{
 		Library:     tempLib,
-		TokenLabel:  "test-refcount",
+		TokenLabel:  "test-pool-cleanup",
 		PIN:         "1234",
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	}
 
-	cacheKey := contextCacheKey(config)
+	b := &Backend{
+		config:     config,
+		pool:       &SessionPool{}, // Non-nil sentinel
+		ownsP11ctx: true,
+	}
 
-	t.Run("decrement but keep in cache", func(t *testing.T) {
-		// Clear cache
-		contextCacheMu.Lock()
-		contextCache = make(map[string]*contextRef)
-		contextCacheMu.Unlock()
+	// Close should clean up pool
+	err := b.Close()
+	if err != nil {
+		t.Logf("Close() error (expected): %v", err)
+	}
 
-		// Add cache entry with refCount = 3
-		contextCacheMu.Lock()
-		contextCache[cacheKey] = &contextRef{
-			ctx:      &crypto11.Context{},
-			refCount: 3,
-		}
-		contextCacheMu.Unlock()
-
-		b := &Backend{
-			config: config,
-			ctx:    &crypto11.Context{},
-		}
-
-		// Close should decrement
-		err := b.Close()
-		if err != nil {
-			t.Logf("Close() error (expected): %v", err)
-		}
-
-		// Verify refCount was decremented
-		contextCacheMu.RLock()
-		ref, exists := contextCache[cacheKey]
-		contextCacheMu.RUnlock()
-
-		if !exists {
-			t.Error("Cache entry should still exist")
-		} else if ref.refCount != 2 {
-			t.Errorf("refCount = %d, want 2", ref.refCount)
-		}
-
-		// Clean up
-		contextCacheMu.Lock()
-		delete(contextCache, cacheKey)
-		contextCacheMu.Unlock()
-	})
+	// Verify pool was cleared
+	if b.pool != nil {
+		t.Error("Close() should clear pool")
+	}
 }
 
-// TestBackend_Initialize_CacheHit tests Initialize finding cached context
-func TestBackend_Initialize_CacheHitMock(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
+// TestBackend_Initialize_AlreadyInitialized tests Initialize when pool is already set
+func TestBackend_Initialize_AlreadyInitializedMock(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
 	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
@@ -245,120 +203,30 @@ func TestBackend_Initialize_CacheHitMock(t *testing.T) {
 
 	config := &Config{
 		Library:     tempLib,
-		TokenLabel:  "test-init-cache",
+		TokenLabel:  "test-init-already",
 		PIN:         "1234",
 		SOPIN:       "5678",
 		KeyStorage:  storage.New(),
 		CertStorage: storage.New(),
 	}
 
-	// Add cache entry
-	cacheKey := contextCacheKey(config)
-	contextCacheMu.Lock()
-	contextCache[cacheKey] = &contextRef{
-		ctx:      &crypto11.Context{},
-		refCount: 1,
-	}
-	contextCacheMu.Unlock()
-
 	b, err := NewBackend(config)
 	if err != nil {
 		t.Fatalf("NewBackend() failed: %v", err)
 	}
 
-	// Initialize should find cached context and return ErrAlreadyInitialized
+	// Set pool to simulate already initialized state
+	b.pool = &SessionPool{}
+
+	// Initialize should return ErrAlreadyInitialized
 	err = b.Initialize("5678", "1234")
 	if err != ErrAlreadyInitialized {
 		t.Errorf("Initialize() error = %v, want %v", err, ErrAlreadyInitialized)
 	}
-
-	// Verify refCount was incremented
-	contextCacheMu.RLock()
-	ref := contextCache[cacheKey]
-	contextCacheMu.RUnlock()
-
-	if ref.refCount != 2 {
-		t.Errorf("Initialize() refCount = %d, want 2", ref.refCount)
-	}
-
-	// Clean up
-	contextCacheMu.Lock()
-	delete(contextCache, cacheKey)
-	contextCacheMu.Unlock()
-}
-
-// TestBackend_loginUser_CacheHit tests loginUser with cached context
-func TestBackend_loginUser_CacheHit(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
-	tempDir := t.TempDir()
-	tempLib := filepath.Join(tempDir, "libtest.so")
-	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
-		t.Fatalf("failed to create temp library: %v", err)
-	}
-
-	config := &Config{
-		Library:     tempLib,
-		TokenLabel:  "test-login-cache",
-		PIN:         "1234",
-		KeyStorage:  storage.New(),
-		CertStorage: storage.New(),
-	}
-
-	// Add cache entry
-	cacheKey := contextCacheKey(config)
-	mockCtx := &crypto11.Context{}
-	contextCacheMu.Lock()
-	contextCache[cacheKey] = &contextRef{
-		ctx:      mockCtx,
-		refCount: 1,
-	}
-	contextCacheMu.Unlock()
-
-	b, err := NewBackend(config)
-	if err != nil {
-		t.Fatalf("NewBackend() failed: %v", err)
-	}
-
-	// Call loginUser with cache hit
-	b.mu.Lock()
-	err = b.loginUser("1234")
-	b.mu.Unlock()
-
-	if err != nil {
-		t.Errorf("loginUser() error = %v, want nil", err)
-	}
-
-	// Verify context was set from cache
-	if b.ctx != mockCtx {
-		t.Error("loginUser() should use cached context")
-	}
-
-	// Verify refCount was incremented
-	contextCacheMu.RLock()
-	ref := contextCache[cacheKey]
-	contextCacheMu.RUnlock()
-
-	if ref.refCount != 2 {
-		t.Errorf("loginUser() refCount = %d, want 2", ref.refCount)
-	}
-
-	// Clean up
-	contextCacheMu.Lock()
-	delete(contextCache, cacheKey)
-	contextCacheMu.Unlock()
 }
 
 // TestBackend_loginUser_NewContext tests loginUser creating new context
 func TestBackend_loginUser_NewContext(t *testing.T) {
-	// Clear cache
-	contextCacheMu.Lock()
-	contextCache = make(map[string]*contextRef)
-	contextCacheMu.Unlock()
-
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
 	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
@@ -389,12 +257,6 @@ func TestBackend_loginUser_NewContext(t *testing.T) {
 
 	// Error should be about PKCS#11 configuration - just log it since we can't test with real library
 	t.Logf("loginUser() error (expected): %v", err)
-
-	// Clean up cache if entry was created
-	cacheKey := contextCacheKey(config)
-	contextCacheMu.Lock()
-	delete(contextCache, cacheKey)
-	contextCacheMu.Unlock()
 }
 
 // TestBackend_initializeToken_LibraryPath tests initializeToken library loading
@@ -479,9 +341,9 @@ func TestBackend_Close_WithP11Ctx(t *testing.T) {
 
 	t.Run("close with p11ctx", func(t *testing.T) {
 		b := &Backend{
-			config:  config,
-			p11ctx:  pkcs11.New(tempLib),
-			ownsCtx: true,
+			config:     config,
+			p11ctx:     pkcs11.New(tempLib),
+			ownsP11ctx: true,
 		}
 
 		// Close should handle p11ctx cleanup
@@ -497,7 +359,7 @@ func TestBackend_Close_WithP11Ctx(t *testing.T) {
 	})
 }
 
-// TestBackend_Save_WithContext tests Save returns unsupported operation
+// TestBackend_Save_WithContextMock tests Save returns unsupported operation
 func TestBackend_Save_WithContextMock(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
@@ -517,8 +379,8 @@ func TestBackend_Save_WithContextMock(t *testing.T) {
 		t.Fatalf("NewBackend() failed: %v", err)
 	}
 
-	// Even with a context, Save should return unsupported operation
-	// We test with nil context first (already covered in other tests)
+	// Even with a pool, Save should return unsupported operation
+	// We test with nil pool first (already covered in other tests)
 	attrs := &types.KeyAttributes{
 		CN:           "test",
 		KeyAlgorithm: x509.RSA,
@@ -707,8 +569,8 @@ func TestBackend_GenerateECDSAWithCurve_Curves(t *testing.T) {
 	}
 }
 
-// TestBackend_Context_WithContext tests Context when initialized
-func TestBackend_Context_WithContext(t *testing.T) {
+// TestBackend_Pool_WithPool tests Pool when initialized
+func TestBackend_Pool_WithPool(t *testing.T) {
 	tempDir := t.TempDir()
 	tempLib := filepath.Join(tempDir, "libtest.so")
 	if err := os.WriteFile(tempLib, []byte("test"), 0644); err != nil {
@@ -727,26 +589,22 @@ func TestBackend_Context_WithContext(t *testing.T) {
 		t.Fatalf("NewBackend() failed: %v", err)
 	}
 
-	// Test with nil context first
-	_, err = b.Context()
-	if err != ErrNotInitialized {
-		t.Errorf("Context() error = %v, want %v", err, ErrNotInitialized)
+	// Test with nil pool first
+	pool := b.Pool()
+	if pool != nil {
+		t.Error("Pool() should return nil when not initialized")
 	}
 
-	// Now test with a context set (even if it's empty)
-	// We can't use crypto11.Context methods, but we can test the getter
-	mockCtx := &crypto11.Context{}
-	b.ctx = mockCtx
+	// Now test with a pool set (even if it's empty)
+	mockPool := &SessionPool{}
+	b.pool = mockPool
 
-	ctx, err := b.Context()
-	if err != nil {
-		t.Errorf("Context() error = %v, want nil", err)
-	}
-	if ctx != mockCtx {
-		t.Error("Context() should return the set context")
+	pool = b.Pool()
+	if pool != mockPool {
+		t.Error("Pool() should return the set pool")
 	}
 
-	b.ctx = nil
+	b.pool = nil
 }
 
 // TestBackend_Initialize_ValidationPaths tests Initialize PIN validation
@@ -813,7 +671,7 @@ func TestBackend_AllBranches(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	t.Run("all operations without context", func(t *testing.T) {
+	t.Run("all operations without pool", func(t *testing.T) {
 		// Get
 		_, err := b.Get(attrs, backend.FSEXT_PRIVATE_PKCS8)
 		if err == nil {

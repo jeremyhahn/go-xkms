@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/fido2"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,10 +37,7 @@ func TestFIDO2ListDevices(t *testing.T) {
 
 	devices, err := handler.ListDevices()
 	require.NoError(t, err, "Failed to list FIDO2 devices")
-
-	if len(devices) == 0 {
-		t.Skip("No FIDO2 devices found. Set FIDO2_DEVICE_PATH or CANOKEY_QEMU to virtual device socket path.")
-	}
+	require.Greater(t, len(devices), 0, "Expected at least one FIDO2 device. Set FIDO2_DEVICE_PATH to device socket path.")
 
 	t.Logf("Found %d FIDO2 device(s)", len(devices))
 
@@ -63,11 +60,7 @@ func TestFIDO2ListDevices(t *testing.T) {
 // TestFIDO2WaitForDevice tests waiting for device insertion
 func TestFIDO2WaitForDevice(t *testing.T) {
 	cfg := LoadFIDO2TestConfig()
-
-	// Quick check if device is already available
-	if !cfg.CheckDeviceAvailable(t) {
-		t.Skip("No FIDO2 device available for wait test. Set FIDO2_DEVICE_PATH or CANOKEY_QEMU.")
-	}
+	cfg.RequireDevice(t)
 
 	handler := cfg.CreateHandler(t)
 	defer handler.Close()
@@ -124,7 +117,7 @@ func TestFIDO2EnrollmentFlow(t *testing.T) {
 	AssertEnrollmentResult(t, result)
 
 	assert.Equal(t, username, result.User.Name, "Username should match")
-	assert.Equal(t, "go-keychain-test", result.RelyingParty.ID, "RP ID should match")
+	assert.Equal(t, "go-xkms-test", result.RelyingParty.ID, "RP ID should match")
 	assert.NotEmpty(t, result.AAGUID, "AAGUID should be present")
 
 	t.Logf("Enrollment successful for user: %s", username)
@@ -232,7 +225,7 @@ func TestFIDO2InvalidCredential(t *testing.T) {
 	fakeSalt := []byte("fake-salt-value-for-testing-purposes")
 
 	authConfig := fido2.DefaultAuthenticationConfig(fakeCredID, fakeSalt)
-	authConfig.RelyingPartyID = "go-keychain-test"
+	authConfig.RelyingPartyID = "go-xkms-test"
 	authConfig.Timeout = 5 * time.Second
 
 	t.Log("Attempting authentication with invalid credential (should fail)...")
@@ -270,23 +263,17 @@ func TestFIDO2DeviceInfo(t *testing.T) {
 
 	// Validate device info
 	AssertDeviceInfo(t, &device)
-
-	// Check for CanoKey QEMU virtual device (only when using actual hardware, not virtual fallback)
-	if cfg.IsCanoKeyQEMU() && !cfg.UseVirtualDevice() {
-		t.Log("Using CanoKey QEMU virtual device")
-		assert.Contains(t, device.Path, "/dev/hidraw", "CanoKey QEMU should use hidraw device")
-	}
 }
 
-// TestFIDO2EnrollmentWithUserVerification tests enrollment with PIN
+// TestFIDO2EnrollmentWithUserVerification tests enrollment with PIN/UV.
+// When running with a virtual device (no PIN support), it verifies that
+// requesting user verification completes without error since the virtual
+// device accepts the UV flag but does not enforce PIN verification
+// (no CTAP2 PIN protocol implementation client-side).
+// When running with a physical device that has a PIN configured, it tests
+// the happy path.
 func TestFIDO2EnrollmentWithUserVerification(t *testing.T) {
 	cfg := LoadFIDO2TestConfig()
-
-	// Skip if no PIN configured
-	if cfg.PIN == "" {
-		t.Skip("User verification test requires PIN. Set FIDO2_PIN environment variable.")
-	}
-
 	cfg.RequireDevice(t)
 
 	t.Log("=== FIDO2 Enrollment With User Verification Test ===")
@@ -301,15 +288,29 @@ func TestFIDO2EnrollmentWithUserVerification(t *testing.T) {
 	enrollConfig.RequireUserVerification = true
 	enrollConfig.Timeout = cfg.Timeout
 
-	t.Log("Enrolling with user verification (PIN required)...")
+	if cfg.UseVirtualDevice() {
+		// Virtual devices accept UV=true but don't enforce PIN verification
+		// (no CTAP2 PIN protocol implementation client-side).
+		// Verify enrollment completes and produces valid results.
+		t.Log("Using virtual device: verifying UV=true enrollment completes gracefully...")
 
-	result, err := handler.EnrollKey(enrollConfig)
-	require.NoError(t, err, "Enrollment with UV should succeed")
-	require.NotNil(t, result)
+		result, err := handler.EnrollKey(enrollConfig)
+		require.NoError(t, err, "Virtual device should accept UV=true enrollment without enforcing PIN")
+		AssertEnrollmentResult(t, result)
+		t.Log("Virtual device accepted UV=true enrollment (UV not enforced without PIN protocol)")
+	} else {
+		// Physical device path: PIN must be configured
+		require.NotEmpty(t, cfg.PIN, "Physical device user verification test requires PIN. Set FIDO2_PIN environment variable.")
 
-	AssertEnrollmentResult(t, result)
+		t.Log("Enrolling with user verification (PIN required)...")
 
-	t.Log("Enrollment with user verification successful")
+		result, err := handler.EnrollKey(enrollConfig)
+		require.NoError(t, err, "Enrollment with UV should succeed on physical device with PIN")
+		require.NotNil(t, result)
+
+		AssertEnrollmentResult(t, result)
+		t.Log("Enrollment with user verification successful")
+	}
 }
 
 // TestFIDO2ConcurrentOperations tests concurrent device operations
@@ -364,7 +365,7 @@ func TestFIDO2ErrorHandling(t *testing.T) {
 
 		// Try to authenticate with empty credential ID
 		authConfig := fido2.DefaultAuthenticationConfig([]byte{}, []byte("salt"))
-		authConfig.RelyingPartyID = "go-keychain-test"
+		authConfig.RelyingPartyID = "go-xkms-test"
 
 		_, err := handler.UnlockWithKey(authConfig)
 		assert.Error(t, err, "Authentication with empty credential ID should fail")

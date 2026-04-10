@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
+	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +30,7 @@ func createTPMWithFullProvisioning(t *testing.T) (tpm2pkg.TrustedPlatformModule,
 		Hash:         "SHA-256",
 		EK: &tpm2pkg.EKConfig{
 			Handle:          0x81010001,
-			HierarchyAuth:   store.NewClearPassword([]byte("")),
+			HierarchyAuth:   store.NewPassword([]byte("")),
 			RSAConfig:       &store.RSAConfig{KeySize: 2048},
 			SignatureAlg:    x509.SHA256WithRSAPSS,
 			CertHandle:      0x01C00002,
@@ -38,21 +38,21 @@ func createTPMWithFullProvisioning(t *testing.T) (tpm2pkg.TrustedPlatformModule,
 		},
 		SSRK: &tpm2pkg.SRKConfig{
 			Handle:        0x81000001,
-			HierarchyAuth: store.NewClearPassword([]byte("")),
+			HierarchyAuth: store.NewPassword([]byte("")),
 			RSAConfig:     &store.RSAConfig{KeySize: 2048},
 			SignatureAlg:  x509.SHA256WithRSAPSS,
 		},
 		IAK: &tpm2pkg.IAKConfig{
 			CN:            "test-iak",
 			Handle:        0x81000003,
-			HierarchyAuth: store.NewClearPassword([]byte("")),
+			HierarchyAuth: store.NewPassword([]byte("")),
 			RSAConfig:     &store.RSAConfig{KeySize: 2048},
 			SignatureAlg:  x509.SHA256WithRSAPSS,
 		},
 		IDevID: &tpm2pkg.IDevIDConfig{
 			CN:            "test-idevid",
 			Handle:        0x81000005,
-			HierarchyAuth: store.NewClearPassword([]byte("")),
+			HierarchyAuth: store.NewPassword([]byte("")),
 			RSAConfig:     &store.RSAConfig{KeySize: 2048},
 			SignatureAlg:  x509.SHA256WithRSAPSS,
 			Model:         "TestDevice",
@@ -130,7 +130,8 @@ func TestIDevID_FullCreateIDevID(t *testing.T) {
 	t.Logf("IAK CN: %s, Handle: 0x%x", iakAttrs.CN, iakAttrs.TPMAttributes.Handle)
 
 	// Step 3: Get EK public key
-	ekPub := tpmInstance.EK()
+	ekPub, ekErr := tpmInstance.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	require.NotNil(t, ekPub, "EK public key should not be nil")
 
 	// Step 4: Create EK certificate
@@ -205,13 +206,16 @@ func TestIDevID_CreateTCGCSR(t *testing.T) {
 	iakAttrs, err := tpmInstance.IAKAttributes()
 	require.NoError(t, err)
 
-	ekPub := tpmInstance.EK()
+	ekPub, ekErr := tpmInstance.EK()
+	require.NoError(t, ekErr, "EK should succeed")
 	ekCert, ekCertDER, err := createSelfSignedEKCert(ekPub)
 	require.NoError(t, err)
 	_ = ekCert
 
 	// Get IAK public key bytes
-	iakPubBytes, err := x509.MarshalPKIXPublicKey(tpmInstance.IAK())
+	iakPub, iakErr := tpmInstance.IAK()
+	require.NoError(t, iakErr, "IAK should succeed")
+	iakPubBytes, err := x509.MarshalPKIXPublicKey(iakPub)
 	require.NoError(t, err)
 
 	// Test CreateTCG_CSR_IDEVID directly

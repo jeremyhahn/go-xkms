@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 type PCRBankAlgo string
@@ -78,7 +78,7 @@ var (
 		IAK: &IAKConfig{
 			Debug:        true,
 			Hash:         crypto.SHA256.String(),
-			Handle:       0x81010002,
+			Handle:       0x81020001,
 			KeyAlgorithm: x509.RSA.String(),
 			RSAConfig: &store.RSAConfig{
 				KeySize: 2048,
@@ -101,7 +101,7 @@ var (
 			RSAConfig:          &store.RSAConfig{KeySize: 2048},
 			SignatureAlgorithm: x509.SHA256WithRSAPSS.String(),
 		},
-		KeyStore: &KeyStoreConfig{
+		PlatformSRK: &PlatformSRKConfig{
 			SRKAuth:        "platform",
 			SRKHandle:      0x81000002,
 			PlatformPolicy: true,
@@ -143,7 +143,7 @@ type Config struct {
 	IAK                          *IAKConfig              `yaml:"iak" json:"iak" mapstructure:"iak"`
 	IdentityProvisioningStrategy string                  `yaml:"identity-provisioning" json:"identity_provisioning" mapstructure:"identity-provisioning"`
 	IDevID                       *IDevIDConfig           `yaml:"idevid" json:"idevid" mapstructure:"idevid"`
-	KeyStore                     *KeyStoreConfig         `yaml:"keystore" json:"keystore" mapstructure:"keystore"`
+	PlatformSRK                  *PlatformSRKConfig      `yaml:"platform-srk" json:"platform_srk" mapstructure:"platform-srk"`
 	LockoutAuth                  string                  `yaml:"lockout-auth,omitempty" json:"lockout-auth" mapstructure:"lockout-auth"`
 	PlatformAddress              string                  `yaml:"platform-address,omitempty" json:"platform_address" mapstructure:"platform-address"`
 	PlatformPCR                  uint                    `yaml:"platform-pcr" json:"platform_pcr" mapstructure:"platform-pcr"`
@@ -154,7 +154,7 @@ type Config struct {
 	UseSimulator                 bool                    `yaml:"simulator" json:"simulator" mapstructure:"simulator"`
 }
 
-type KeyStoreConfig struct {
+type PlatformSRKConfig struct {
 	CN             string `yaml:"cn,omitempty" json:"cn" mapstructure:"cn"`
 	SRKAuth        string `yaml:"srk-auth,omitempty" json:"srk_auth" mapstructure:"srk-auth"`
 	SRKHandle      uint32 `yaml:"srk-handle" json:"srk-handle" mapstructure:"srk-handle"`
@@ -282,12 +282,23 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 		ekTemplate.AuthPolicy = *policyDigest
 	}
 
+	// Only set Password/HierarchyAuth when non-empty to avoid selecting the
+	// wrong PlatformPolicySession branch on restart (see SRKAttributesFromConfig).
+	var ekPassword types.Password
+	if config.Password != "" {
+		ekPassword = types.NewPassword([]byte(config.Password))
+	}
+	var ekHierarchyAuth types.Password
+	if config.HierarchyAuth != "" {
+		ekHierarchyAuth = types.NewPassword([]byte(config.HierarchyAuth))
+	}
+
 	attrs := &types.KeyAttributes{
 		CN:             config.CN,
 		Debug:          config.Debug,
 		KeyAlgorithm:   algorithm,
 		KeyType:        types.KeyTypeEndorsement,
-		Password:       types.NewClearPassword([]byte(config.Password)),
+		Password:       ekPassword,
 		PlatformPolicy: config.PlatformPolicy,
 		StoreType:      types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
@@ -295,7 +306,7 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 			Handle:        tpm2.TPMHandle(config.Handle),
 			HandleType:    tpm2.TPMHTPersistent,
 			Hierarchy:     tpm2.TPMHandle(tpm2.TPMRHEndorsement),
-			HierarchyAuth: types.NewClearPassword([]byte(config.HierarchyAuth)),
+			HierarchyAuth: ekHierarchyAuth,
 			Template:      ekTemplate,
 		},
 	}
@@ -353,19 +364,37 @@ func SRKAttributesFromConfig(config SRKConfig, policyDigest *tpm2.TPM2BDigest) (
 		srkTemplate.AuthPolicy = *policyDigest
 	}
 
+	// Only set Password when the config value is non-empty. An empty
+	// password must remain nil so that CreateSession selects the PCR branch
+	// of PlatformPolicySession (auto-unseal) instead of the password branch.
+	// After a restart the user PIN is not available; a non-nil empty Password
+	// would cause CreateSession to choose the password branch with empty auth,
+	// mismatching the SRK's actual UserAuth and producing TPM_RC_BAD_AUTH.
+	var srkPassword types.Password
+	if config.Password != "" {
+		srkPassword = types.NewPassword([]byte(config.Password))
+	}
+
+	// Same guard for HierarchyAuth: leave nil when the config value is empty
+	// so that downstream TPM2_CreatePrimary uses empty auth (TPM default).
+	var hierarchyAuth types.Password
+	if config.HierarchyAuth != "" {
+		hierarchyAuth = types.NewPassword([]byte(config.HierarchyAuth))
+	}
+
 	attrs := &types.KeyAttributes{
 		CN:             config.CN,
 		Debug:          config.Debug,
 		KeyAlgorithm:   algorithm,
 		KeyType:        types.KeyTypeStorage,
-		Password:       types.NewClearPassword([]byte(config.Password)),
+		Password:       srkPassword,
 		PlatformPolicy: config.PlatformPolicy,
 		StoreType:      types.StoreTPM2,
 		TPMAttributes: &types.TPMAttributes{
 			Handle:        tpm2.TPMHandle(config.Handle),
 			HandleType:    tpm2.TPMHTPersistent,
 			Hierarchy:     tpm2.TPMHandle(tpm2.TPMRHOwner),
-			HierarchyAuth: types.NewClearPassword([]byte(config.HierarchyAuth)),
+			HierarchyAuth: hierarchyAuth,
 			Template:      srkTemplate,
 		},
 	}
@@ -434,7 +463,7 @@ func IAKAttributesFromConfig(
 		Hash:               hash,
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeAttestation,
-		Password:           types.NewClearPassword([]byte(config.Password)),
+		Password:           types.NewPassword([]byte(config.Password)),
 		PlatformPolicy:     config.PlatformPolicy,
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,
@@ -520,7 +549,7 @@ func IDevIDAttributesFromConfig(
 		Hash:               hash,
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeIDevID,
-		Password:           types.NewClearPassword([]byte(config.Password)),
+		Password:           types.NewPassword([]byte(config.Password)),
 		PlatformPolicy:     config.PlatformPolicy,
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,
@@ -600,7 +629,7 @@ func LDevIDAttributesFromConfig(
 		Hash:               hash,
 		KeyAlgorithm:       algorithm,
 		KeyType:            types.KeyTypeIDevID,
-		Password:           types.NewClearPassword([]byte(config.Password)),
+		Password:           types.NewPassword([]byte(config.Password)),
 		PlatformPolicy:     config.PlatformPolicy,
 		SignatureAlgorithm: sigAlgo,
 		StoreType:          types.StoreTPM2,

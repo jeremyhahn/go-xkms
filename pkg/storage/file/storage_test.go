@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -15,13 +15,14 @@ package file
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // skipIfRoot skips the test if running as root, since root bypasses file permission checks
@@ -46,6 +47,7 @@ func setupTestDir(t *testing.T) string {
 }
 
 func TestNew(t *testing.T) {
+	ctx := context.Background()
 	t.Run("valid directory", func(t *testing.T) {
 		dir := setupTestDir(t)
 
@@ -61,7 +63,7 @@ func TestNew(t *testing.T) {
 		_ = store
 
 		// Should start empty
-		keys, err := store.List("")
+		keys, err := store.List(ctx, "")
 		if err != nil {
 			t.Fatalf("List() error = %v", err)
 		}
@@ -133,6 +135,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestPutGet(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name    string
 		key     string
@@ -180,13 +183,13 @@ func TestPutGet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.Put(tt.key, tt.value, nil)
+			err := store.Put(ctx, tt.key, tt.value)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Put() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
-			got, err := store.Get(tt.key)
+			got, err := store.Get(ctx, tt.key)
 			if err != nil {
 				t.Fatalf("Get() error = %v", err)
 			}
@@ -199,6 +202,7 @@ func TestPutGet(t *testing.T) {
 }
 
 func TestGetNotFound(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -206,13 +210,14 @@ func TestGetNotFound(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	_, err = store.Get("nonexistent")
+	_, err = store.Get(ctx, "nonexistent")
 	if err != storage.ErrNotFound {
 		t.Errorf("Get() error = %v, want %v", err, storage.ErrNotFound)
 	}
 }
 
 func TestDelete(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -224,12 +229,12 @@ func TestDelete(t *testing.T) {
 	value := []byte("value")
 
 	// Put a value
-	if err := store.Put(key, value, nil); err != nil {
+	if err := store.Put(ctx, key, value); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
 
 	// Verify it exists
-	exists, err := store.Exists(key)
+	exists, err := store.Exists(ctx, key)
 	if err != nil {
 		t.Fatalf("Exists() error = %v", err)
 	}
@@ -238,12 +243,12 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Delete it
-	if err := store.Delete(key); err != nil {
+	if err := store.Delete(ctx, key); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 
 	// Verify it's gone
-	exists, err = store.Exists(key)
+	exists, err = store.Exists(ctx, key)
 	if err != nil {
 		t.Fatalf("Exists() error = %v", err)
 	}
@@ -252,13 +257,14 @@ func TestDelete(t *testing.T) {
 	}
 
 	// Get should return ErrNotFound
-	_, err = store.Get(key)
+	_, err = store.Get(ctx, key)
 	if err != storage.ErrNotFound {
 		t.Errorf("Get() after Delete() error = %v, want %v", err, storage.ErrNotFound)
 	}
 }
 
 func TestDeleteNotFound(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -266,13 +272,14 @@ func TestDeleteNotFound(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	err = store.Delete("nonexistent")
+	err = store.Delete(ctx, "nonexistent")
 	if err != storage.ErrNotFound {
 		t.Errorf("Delete() error = %v, want %v", err, storage.ErrNotFound)
 	}
 }
 
 func TestList(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -291,7 +298,7 @@ func TestList(t *testing.T) {
 	}
 
 	for key, value := range testData {
-		if err := store.Put(key, value, nil); err != nil {
+		if err := store.Put(ctx, key, value); err != nil {
 			t.Fatalf("Put(%s) error = %v", key, err)
 		}
 	}
@@ -339,7 +346,7 @@ func TestList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			keys, err := store.List(tt.prefix)
+			keys, err := store.List(ctx, tt.prefix)
 			if err != nil {
 				t.Fatalf("List() error = %v", err)
 			}
@@ -364,6 +371,7 @@ func TestList(t *testing.T) {
 }
 
 func TestExists(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -375,7 +383,7 @@ func TestExists(t *testing.T) {
 	value := []byte("test-value")
 
 	// Should not exist initially
-	exists, err := store.Exists(key)
+	exists, err := store.Exists(ctx, key)
 	if err != nil {
 		t.Fatalf("Exists() error = %v", err)
 	}
@@ -384,12 +392,12 @@ func TestExists(t *testing.T) {
 	}
 
 	// Put the key
-	if err := store.Put(key, value, nil); err != nil {
+	if err := store.Put(ctx, key, value); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
 
 	// Should exist now
-	exists, err = store.Exists(key)
+	exists, err = store.Exists(ctx, key)
 	if err != nil {
 		t.Fatalf("Exists() error = %v", err)
 	}
@@ -398,12 +406,12 @@ func TestExists(t *testing.T) {
 	}
 
 	// Delete the key
-	if err := store.Delete(key); err != nil {
+	if err := store.Delete(ctx, key); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 
 	// Should not exist after delete
-	exists, err = store.Exists(key)
+	exists, err = store.Exists(ctx, key)
 	if err != nil {
 		t.Fatalf("Exists() error = %v", err)
 	}
@@ -413,6 +421,7 @@ func TestExists(t *testing.T) {
 }
 
 func TestFilePermissions(t *testing.T) {
+	ctx := context.Background()
 	tests := []struct {
 		name     string
 		key      string
@@ -448,7 +457,7 @@ func TestFilePermissions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := store.Put(tt.key, tt.value, nil); err != nil {
+			if err := store.Put(ctx, tt.key, tt.value); err != nil {
 				t.Fatalf("Put() error = %v", err)
 			}
 
@@ -466,7 +475,8 @@ func TestFilePermissions(t *testing.T) {
 	}
 }
 
-func TestFilePermissionsWithOptions(t *testing.T) {
+func TestFilePermissionsKeyPrefixBased(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -474,31 +484,27 @@ func TestFilePermissionsWithOptions(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	key := "keys/custom-perms"
+	// keys/ prefix should get 0600 permissions
+	key := "keys/perm-test"
 	value := []byte("data")
-	customPerms := os.FileMode(0640)
 
-	opts := &storage.Options{
-		Permissions: customPerms,
-	}
-
-	if err := store.Put(key, value, opts); err != nil {
+	if err := store.Put(ctx, key, value); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
 
-	// Check file permissions
 	filePath := filepath.Join(dir, key)
 	info, err := os.Stat(filePath)
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
 
-	if info.Mode().Perm() != customPerms {
-		t.Errorf("File permissions = %o, want %o", info.Mode().Perm(), customPerms)
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("File permissions for keys/ = %o, want 0600", info.Mode().Perm())
 	}
 }
 
 func TestDirectoryCreation(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -509,7 +515,7 @@ func TestDirectoryCreation(t *testing.T) {
 	key := "deeply/nested/path/to/key"
 	value := []byte("nested-value")
 
-	if err := store.Put(key, value, nil); err != nil {
+	if err := store.Put(ctx, key, value); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
 
@@ -529,7 +535,7 @@ func TestDirectoryCreation(t *testing.T) {
 	}
 
 	// Verify the file was created
-	got, err := store.Get(key)
+	got, err := store.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -539,6 +545,7 @@ func TestDirectoryCreation(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -560,11 +567,11 @@ func TestConcurrentAccess(t *testing.T) {
 				key := fmt.Sprintf("key-%d-%d", id, j)
 				value := []byte(fmt.Sprintf("value-%d-%d", id, j))
 
-				if err := store.Put(key, value, nil); err != nil {
+				if err := store.Put(ctx, key, value); err != nil {
 					t.Errorf("Put() error = %v", err)
 				}
 
-				got, err := store.Get(key)
+				got, err := store.Get(ctx, key)
 				if err != nil {
 					t.Errorf("Get() error = %v", err)
 				}
@@ -579,7 +586,7 @@ func TestConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// Verify total count
-	keys, err := store.List("")
+	keys, err := store.List(ctx, "")
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -591,6 +598,7 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestConcurrentReadWrite(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -602,7 +610,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("key-%d", i)
 		value := []byte(fmt.Sprintf("value-%d", i))
-		if err := store.Put(key, value, nil); err != nil {
+		if err := store.Put(ctx, key, value); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 	}
@@ -616,7 +624,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
 				key := fmt.Sprintf("key-%d", j)
-				_, _ = store.Get(key)
+				_, _ = store.Get(ctx, key)
 			}
 		}()
 	}
@@ -629,7 +637,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 			for j := 0; j < 100; j++ {
 				key := fmt.Sprintf("key-%d", j)
 				value := []byte(fmt.Sprintf("value-%d-%d", id, j))
-				_ = store.Put(key, value, nil)
+				_ = store.Put(ctx, key, value)
 			}
 		}(i)
 	}
@@ -638,6 +646,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 }
 
 func TestConcurrentDeleteList(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -649,7 +658,7 @@ func TestConcurrentDeleteList(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		key := fmt.Sprintf("key-%d", i)
 		value := []byte(fmt.Sprintf("value-%d", i))
-		if err := store.Put(key, value, nil); err != nil {
+		if err := store.Put(ctx, key, value); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 	}
@@ -663,7 +672,7 @@ func TestConcurrentDeleteList(t *testing.T) {
 			defer wg.Done()
 			for j := id; j < 100; j += 25 {
 				key := fmt.Sprintf("key-%d", j)
-				_ = store.Delete(key)
+				_ = store.Delete(ctx, key)
 			}
 		}(i)
 	}
@@ -674,7 +683,7 @@ func TestConcurrentDeleteList(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
-				_, _ = store.List("")
+				_, _ = store.List(ctx, "")
 			}
 		}()
 	}
@@ -683,6 +692,7 @@ func TestConcurrentDeleteList(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -690,7 +700,7 @@ func TestClose(t *testing.T) {
 	}
 
 	// Put some data
-	if err := store.Put("key", []byte("value"), nil); err != nil {
+	if err := store.Put(ctx, "key", []byte("value")); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
 
@@ -705,7 +715,8 @@ func TestClose(t *testing.T) {
 	}
 }
 
-func TestPutWithOptions(t *testing.T) {
+func TestPutAndRetrieve(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -713,22 +724,15 @@ func TestPutWithOptions(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	opts := &storage.Options{
-		Metadata: map[string]string{
-			"version": "1",
-			"author":  "test",
-		},
-	}
-
 	key := "test-key"
 	value := []byte("test-value")
 
-	if err := store.Put(key, value, opts); err != nil {
-		t.Fatalf("Put() with options error = %v", err)
+	if err := store.Put(ctx, key, value); err != nil {
+		t.Fatalf("Put() error = %v", err)
 	}
 
 	// Verify the value was stored
-	got, err := store.Get(key)
+	got, err := store.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -739,6 +743,7 @@ func TestPutWithOptions(t *testing.T) {
 }
 
 func TestEmptyList(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -747,7 +752,7 @@ func TestEmptyList(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	// List on empty store should return empty slice
-	keys, err := store.List("")
+	keys, err := store.List(ctx, "")
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -762,6 +767,7 @@ func TestEmptyList(t *testing.T) {
 }
 
 func TestOverwriteKey(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -774,12 +780,12 @@ func TestOverwriteKey(t *testing.T) {
 	value2 := []byte("second-value")
 
 	// Put first value
-	if err := store.Put(key, value1, nil); err != nil {
+	if err := store.Put(ctx, key, value1); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
 
 	// Verify first value
-	got, err := store.Get(key)
+	got, err := store.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -788,12 +794,12 @@ func TestOverwriteKey(t *testing.T) {
 	}
 
 	// Overwrite with second value
-	if err := store.Put(key, value2, nil); err != nil {
+	if err := store.Put(ctx, key, value2); err != nil {
 		t.Fatalf("Put() error = %v", err)
 	}
 
 	// Verify second value
-	got, err = store.Get(key)
+	got, err = store.Get(ctx, key)
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
@@ -802,7 +808,7 @@ func TestOverwriteKey(t *testing.T) {
 	}
 
 	// Should still only be one key
-	keys, err := store.List("")
+	keys, err := store.List(ctx, "")
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -811,57 +817,39 @@ func TestOverwriteKey(t *testing.T) {
 	}
 }
 
-func TestGetPermissionsErrorCases(t *testing.T) {
-	dir := setupTestDir(t)
-	fs := &FileStorage{rootDir: dir}
-
+func TestFilePermissionsForKey(t *testing.T) {
 	tests := []struct {
 		name     string
 		key      string
-		opts     *storage.Options
 		wantPerm os.FileMode
 	}{
 		{
-			name:     "nil options uses default for keys",
+			name:     "keys prefix uses 0600",
 			key:      "keys/test",
-			opts:     nil,
 			wantPerm: 0600,
 		},
 		{
-			name:     "nil options uses default for certs",
+			name:     "certs prefix uses 0644",
 			key:      "certs/test",
-			opts:     nil,
 			wantPerm: 0644,
 		},
 		{
-			name:     "nil options uses default for other",
+			name:     "other prefix uses default 0600",
 			key:      "other/test",
-			opts:     nil,
 			wantPerm: 0600,
 		},
 		{
-			name: "options with zero permissions uses default",
-			key:  "keys/test",
-			opts: &storage.Options{
-				Permissions: 0,
-			},
+			name:     "no prefix uses default 0600",
+			key:      "test",
 			wantPerm: 0600,
-		},
-		{
-			name: "options with custom permissions",
-			key:  "keys/test",
-			opts: &storage.Options{
-				Permissions: 0640,
-			},
-			wantPerm: 0640,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			perms := fs.getFilePermissions(tt.key, tt.opts)
+			perms := filePermissionsForKey(tt.key)
 			if perms != tt.wantPerm {
-				t.Errorf("getFilePermissions() = %o, want %o", perms, tt.wantPerm)
+				t.Errorf("filePermissionsForKey() = %o, want %o", perms, tt.wantPerm)
 			}
 		})
 	}
@@ -904,6 +892,7 @@ func TestPathConversion(t *testing.T) {
 }
 
 func TestListSorting(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -914,13 +903,13 @@ func TestListSorting(t *testing.T) {
 	// Put keys in random order
 	keys := []string{"zebra", "apple", "mango", "banana"}
 	for _, key := range keys {
-		if err := store.Put(key, []byte("value"), nil); err != nil {
+		if err := store.Put(ctx, key, []byte("value")); err != nil {
 			t.Fatalf("Put(%s) error = %v", key, err)
 		}
 	}
 
 	// List should return sorted
-	got, err := store.List("")
+	got, err := store.List(ctx, "")
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
@@ -938,6 +927,7 @@ func TestListSorting(t *testing.T) {
 }
 
 func TestExistsEdgeCases(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
 	store, err := New(dir)
 	if err != nil {
@@ -947,15 +937,15 @@ func TestExistsEdgeCases(t *testing.T) {
 
 	t.Run("exists after delete returns false", func(t *testing.T) {
 		key := "temp-key"
-		if err := store.Put(key, []byte("data"), nil); err != nil {
+		if err := store.Put(ctx, key, []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
-		if err := store.Delete(key); err != nil {
+		if err := store.Delete(ctx, key); err != nil {
 			t.Fatalf("Delete() error = %v", err)
 		}
 
-		exists, err := store.Exists(key)
+		exists, err := store.Exists(ctx, key)
 		if err != nil {
 			t.Fatalf("Exists() error = %v", err)
 		}
@@ -966,12 +956,12 @@ func TestExistsEdgeCases(t *testing.T) {
 
 	t.Run("multiple exists checks", func(t *testing.T) {
 		key := "multi-check"
-		if err := store.Put(key, []byte("data"), nil); err != nil {
+		if err := store.Put(ctx, key, []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
 		for i := 0; i < 5; i++ {
-			exists, err := store.Exists(key)
+			exists, err := store.Exists(ctx, key)
 			if err != nil {
 				t.Fatalf("Exists() iteration %d error = %v", i, err)
 			}
@@ -983,6 +973,7 @@ func TestExistsEdgeCases(t *testing.T) {
 }
 
 func TestErrorConditions(t *testing.T) {
+	ctx := context.Background()
 	t.Run("new with invalid path causes error during mkdir", func(t *testing.T) {
 		// Create a file where we want to create a directory
 		tempFile, err := os.CreateTemp("", "filestorage-test-")
@@ -1012,7 +1003,7 @@ func TestErrorConditions(t *testing.T) {
 
 		key := "test-key"
 		// Put a key
-		if err := store.Put(key, []byte("data"), nil); err != nil {
+		if err := store.Put(ctx, key, []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
@@ -1024,7 +1015,7 @@ func TestErrorConditions(t *testing.T) {
 		defer func() { _ = os.Chmod(filePath, 0600) }() // Restore for cleanup
 
 		// Try to read - should get error
-		_, err = store.Get(key)
+		_, err = store.Get(ctx, key)
 		if err == nil {
 			t.Error("Get() on unreadable file should return error")
 		}
@@ -1054,7 +1045,7 @@ func TestErrorConditions(t *testing.T) {
 
 		// Try to write to read-only directory
 		key := "readonly/file"
-		err = store.Put(key, []byte("data"), nil)
+		err = store.Put(ctx, key, []byte("data"))
 		if err == nil {
 			t.Error("Put() in read-only directory should return error")
 		}
@@ -1076,7 +1067,7 @@ func TestErrorConditions(t *testing.T) {
 		}
 
 		key := "statdir/file"
-		if err := store.Put(key, []byte("data"), nil); err != nil {
+		if err := store.Put(ctx, key, []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
@@ -1087,7 +1078,7 @@ func TestErrorConditions(t *testing.T) {
 		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
 
 		// Try to delete - should get stat error
-		err = store.Delete(key)
+		err = store.Delete(ctx, key)
 		if err == nil {
 			t.Error("Delete() with stat error should return error")
 		}
@@ -1112,7 +1103,7 @@ func TestErrorConditions(t *testing.T) {
 		}
 
 		key := "rodir/file"
-		if err := store.Put(key, []byte("data"), nil); err != nil {
+		if err := store.Put(ctx, key, []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
@@ -1123,7 +1114,7 @@ func TestErrorConditions(t *testing.T) {
 		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
 
 		// Try to delete - should get error
-		err = store.Delete(key)
+		err = store.Delete(ctx, key)
 		if err == nil {
 			t.Error("Delete() in read-only directory should return error")
 		}
@@ -1142,7 +1133,7 @@ func TestErrorConditions(t *testing.T) {
 		defer func() { _ = store.Close() }()
 
 		// Create some test data
-		if err := store.Put("test-key", []byte("data"), nil); err != nil {
+		if err := store.Put(ctx, "test-key", []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
@@ -1157,7 +1148,7 @@ func TestErrorConditions(t *testing.T) {
 		defer func() { _ = os.Chmod(badDir, 0700) }() // Restore for cleanup
 
 		// List should return error
-		_, err = store.List("")
+		_, err = store.List(ctx, "")
 		if err == nil {
 			t.Error("List() with inaccessible directory should return error")
 		}
@@ -1179,7 +1170,7 @@ func TestErrorConditions(t *testing.T) {
 		}
 
 		key := "existsdir/file"
-		if err := store.Put(key, []byte("data"), nil); err != nil {
+		if err := store.Put(ctx, key, []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
@@ -1190,7 +1181,7 @@ func TestErrorConditions(t *testing.T) {
 		defer func() { _ = os.Chmod(subdir, 0700) }() // Restore for cleanup
 
 		// Try to check existence - should get stat error
-		_, err = store.Exists(key)
+		_, err = store.Exists(ctx, key)
 		if err == nil {
 			t.Error("Exists() with stat error should return error")
 		}

@@ -1,6 +1,6 @@
 # Backend Integration Tests
 
-This directory contains comprehensive integration tests for the go-keychain backend packages.
+This directory contains comprehensive integration tests for the go-xkms backend packages.
 
 ## Packages Tested
 
@@ -57,11 +57,11 @@ go test -v -tags=integration ./test/integration/backend/... -run TestSoftware -t
 ### Run with Coverage
 ```bash
 # AES backend coverage
-go test -tags=integration -coverpkg=github.com/jeremyhahn/go-keychain/pkg/backend/symmetric \
+go test -tags=integration -coverpkg=github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric \
   ./test/integration/backend/... -coverprofile=aes-coverage.out
 
 # Software backend coverage
-go test -tags=integration -coverpkg=github.com/jeremyhahn/go-keychain/pkg/backend/software \
+go test -tags=integration -coverpkg=github.com/jeremyhahn/go-xkms/pkg/backend/software \
   ./test/integration/backend/... -coverprofile=software-coverage.out
 
 # View coverage report

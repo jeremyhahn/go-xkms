@@ -1,4 +1,4 @@
-# Example configuration for gRPC-only go-keychain server
+# Example configuration for gRPC-only go-xkms server
 
 server:
   host: 0.0.0.0
@@ -16,12 +16,12 @@ logging:
 
 tls:
   enabled: true
-  cert_file: /etc/keychain/server.crt
-  key_file: /etc/keychain/server.key
-  ca_file: /etc/keychain/ca.crt
+  cert_file: /etc/xkms/server.crt
+  key_file: /etc/xkms/server.key
+  ca_file: /etc/xkms/ca.crt
   client_auth: require_and_verify
   client_cas:
-    - /etc/keychain/client-ca.crt
+    - /etc/xkms/client-ca.crt
   min_version: TLS1.2
 
 auth:
@@ -44,11 +44,11 @@ health:
 
 storage:
   backend: file
-  path: /var/lib/keychain/metadata
+  path: /var/lib/xkms/metadata
 
 default_backend: pkcs8
 
 backends:
   pkcs8:
     enabled: true
-    path: /var/lib/keychain/keys
+    path: /var/lib/xkms/keys

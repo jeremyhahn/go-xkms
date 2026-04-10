@@ -1,3 +1,6 @@
+//go:build tpm_simulator
+// +build tpm_simulator
+
 package tpm2
 
 import (
@@ -5,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -48,8 +51,8 @@ func TestSealUnseal(t *testing.T) {
 					var srkAuth types.Password
 					var keyAuth types.Password
 					if passwdOpt {
-						srkAuth = store.NewClearPassword([]byte("srk-password"))
-						keyAuth = store.NewClearPassword([]byte("key-password"))
+						srkAuth = store.NewPassword([]byte("srk-password"))
+						keyAuth = store.NewPassword([]byte("key-password"))
 					}
 
 					srkAttrs := &types.KeyAttributes{
@@ -141,8 +144,8 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 			var srkAuth types.Password
 			var keyAuth types.Password
 			if passwdOpt {
-				srkAuth = store.NewClearPassword([]byte("srk-password"))
-				keyAuth = store.NewClearPassword([]byte("key-password"))
+				srkAuth = store.NewPassword([]byte("srk-password"))
+				keyAuth = store.NewPassword([]byte("key-password"))
 			}
 
 			srkAttrs := &types.KeyAttributes{
@@ -196,7 +199,7 @@ func TestCreateKeyWithPolicy(t *testing.T) {
 			}
 
 			// incorrect password with policy auth - should work
-			keyAttrs.Parent.Password = store.NewClearPassword([]byte("foo"))
+			keyAttrs.Parent.Password = store.NewPassword([]byte("foo"))
 			keyAttrs.CN = "test5"
 			rsaPub5, err5 := tpm.CreateRSA(keyAttrs, nil, false)
 			assert.Nil(t, err5)
@@ -261,8 +264,8 @@ func TestCreateKeyWithoutPolicy(t *testing.T) {
 			var srkAuth types.Password
 			var keyAuth types.Password
 			if passwdOpt {
-				srkAuth = store.NewClearPassword([]byte("srk-password"))
-				keyAuth = store.NewClearPassword([]byte("key-password"))
+				srkAuth = store.NewPassword([]byte("srk-password"))
+				keyAuth = store.NewPassword([]byte("key-password"))
 			}
 
 			srkAttrs := &types.KeyAttributes{
@@ -324,7 +327,7 @@ func TestCreateKeyWithoutPolicy(t *testing.T) {
 			}
 
 			// incorrect password without policy auth - should fail
-			keyAttrs.Parent.Password = store.NewClearPassword([]byte("foo"))
+			keyAttrs.Parent.Password = store.NewPassword([]byte("foo"))
 			keyAttrs.CN = "test5"
 			rsaPub3, err3 := tpm.CreateRSA(keyAttrs, nil, false)
 			assert.NotNil(t, err3)

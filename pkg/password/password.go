@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package password provides secure password handling utilities for the keychain.
+// Package password provides secure password handling utilities for the xkms.
 //
 // This package implements the types.Password interface for managing sensitive password
 // data in memory, with support for secure string handling and memory zeroing when
@@ -22,7 +22,7 @@ import (
 	"crypto/subtle"
 	"errors"
 
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 var (
@@ -63,18 +63,6 @@ func NewPasswordFromString(password string) (types.Password, error) {
 		return nil, ErrEmptyPassword
 	}
 	return &ClearPassword{password: []byte(password)}, nil
-}
-
-// NewClearPassword is an alias for NewPassword for backward compatibility.
-// Deprecated: Use NewPassword instead.
-func NewClearPassword(password []byte) (types.Password, error) {
-	return NewPassword(password)
-}
-
-// NewClearPasswordFromString is an alias for NewPasswordFromString for backward compatibility.
-// Deprecated: Use NewPasswordFromString instead.
-func NewClearPasswordFromString(password string) (types.Password, error) {
-	return NewPasswordFromString(password)
 }
 
 // String returns the password as a string.

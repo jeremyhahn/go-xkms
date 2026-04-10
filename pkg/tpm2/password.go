@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 const (
@@ -280,7 +280,7 @@ func (p *PlatformPassword) Create() error {
 
 	var passwd []byte
 	if p.keyAttrs.Password == nil {
-		p.keyAttrs.Password = store.NewClearPassword(nil)
+		p.keyAttrs.Password = store.NewPassword(nil)
 		return nil
 	} else {
 		// Check if password is valid (error passwords return error from String())
@@ -295,7 +295,7 @@ func (p *PlatformPassword) Create() error {
 			if _, err := rng.Read(passwd); err != nil {
 				return err
 			}
-			p.keyAttrs.Password = store.NewClearPassword(passwd)
+			p.keyAttrs.Password = store.NewPassword(passwd)
 		}
 	}
 	if _, err := p.tpm.SealKey(p.keyAttrs, p.backend, false); err != nil {

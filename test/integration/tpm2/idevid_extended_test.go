@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // setupIDevIDExtendedTPM provisions TPM with EK and IAK for IDevID testing

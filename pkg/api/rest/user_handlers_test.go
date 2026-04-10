@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -25,7 +25,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-keychain/pkg/user"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/user"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -35,7 +36,7 @@ type mockUserStore struct {
 	mu           sync.RWMutex
 	users        map[string]*user.User
 	sessions     map[string][]byte
-	createFunc   func(ctx context.Context, username, displayName string, role user.Role) (*user.User, error)
+	createFunc   func(ctx context.Context, username, displayName string, role user.Role, tenantID string) (*user.User, error)
 	getByIDFunc  func(ctx context.Context, id []byte) (*user.User, error)
 	updateFunc   func(ctx context.Context, u *user.User) error
 	deleteFunc   func(ctx context.Context, id []byte) error
@@ -52,9 +53,9 @@ func newMockUserStore() *mockUserStore {
 	}
 }
 
-func (m *mockUserStore) Create(ctx context.Context, username, displayName string, role user.Role) (*user.User, error) {
+func (m *mockUserStore) Create(ctx context.Context, username, displayName string, role user.Role, tenantID string) (*user.User, error) {
 	if m.createFunc != nil {
-		return m.createFunc(ctx, username, displayName, role)
+		return m.createFunc(ctx, username, displayName, role, tenantID)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -66,6 +67,7 @@ func (m *mockUserStore) Create(ctx context.Context, username, displayName string
 		DisplayName: displayName,
 		Role:        role,
 		Enabled:     true,
+		TenantID:    tenantID,
 		CreatedAt:   time.Now(),
 	}
 	m.users[username] = u
@@ -95,6 +97,20 @@ func (m *mockUserStore) GetByUsername(ctx context.Context, username string) (*us
 		return u, nil
 	}
 	return nil, user.ErrUserNotFound
+}
+
+func (m *mockUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (*user.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, u := range m.users {
+		for _, b := range u.CertBindings {
+			if b.Fingerprint == fingerprint {
+				return u, nil
+			}
+		}
+	}
+	return nil, user.ErrCertBindingNotFound
 }
 
 func (m *mockUserStore) Update(ctx context.Context, u *user.User) error {
@@ -136,6 +152,19 @@ func (m *mockUserStore) List(ctx context.Context) ([]*user.User, error) {
 		users = append(users, u)
 	}
 	return users, nil
+}
+
+func (m *mockUserStore) ListByTenant(ctx context.Context, tenantID string) ([]*user.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]*user.User, 0)
+	for _, u := range m.users {
+		if u.TenantID == tenantID {
+			result = append(result, u)
+		}
+	}
+	return result, nil
 }
 
 func (m *mockUserStore) Count(ctx context.Context) (int, error) {
@@ -1058,5 +1087,402 @@ func TestUpdateUserHandler_UpdateError(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+}
+
+// --- Tenant filtering tests ---
+
+// TestIsCrossTenantAccess tests the isCrossTenantAccess helper function.
+func TestIsCrossTenantAccess(t *testing.T) {
+	t.Run("nil identity allows access", func(t *testing.T) {
+		assert.False(t, isCrossTenantAccess(nil, "tenant-a"))
+	})
+
+	t.Run("system-level identity allows access", func(t *testing.T) {
+		identity := &auth.Identity{Subject: "so-user", TenantID: ""}
+		assert.False(t, isCrossTenantAccess(identity, "tenant-a"))
+	})
+
+	t.Run("same tenant allows access", func(t *testing.T) {
+		identity := &auth.Identity{Subject: "user1", TenantID: "tenant-a"}
+		assert.False(t, isCrossTenantAccess(identity, "tenant-a"))
+	})
+
+	t.Run("different tenant denies access", func(t *testing.T) {
+		identity := &auth.Identity{Subject: "user1", TenantID: "tenant-a"}
+		assert.True(t, isCrossTenantAccess(identity, "tenant-b"))
+	})
+
+	t.Run("target with no tenant allows access", func(t *testing.T) {
+		identity := &auth.Identity{Subject: "user1", TenantID: "tenant-a"}
+		assert.False(t, isCrossTenantAccess(identity, ""))
+	})
+}
+
+// TestListUsersHandler_TenantFiltering tests tenant-scoped filtering for ListUsersHandler.
+func TestListUsersHandler_TenantFiltering(t *testing.T) {
+	t.Run("SO sees all users", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-a"),
+			Username: "user-a",
+			Role:     user.RoleUser,
+			TenantID: "tenant-a",
+		})
+		store.addUser(&user.User{
+			ID:       []byte("user-b"),
+			Username: "user-b",
+			Role:     user.RoleUser,
+			TenantID: "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+		// SO has empty TenantID
+		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handlers.ListUsersHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp UserListResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, 2, resp.Total)
+	})
+
+	t.Run("tenant user sees only own tenant", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-a1"),
+			Username: "user-a1",
+			Role:     user.RoleUser,
+			TenantID: "tenant-a",
+		})
+		store.addUser(&user.User{
+			ID:       []byte("user-a2"),
+			Username: "user-a2",
+			Role:     user.RoleUser,
+			TenantID: "tenant-a",
+		})
+		store.addUser(&user.User{
+			ID:       []byte("user-b1"),
+			Username: "user-b1",
+			Role:     user.RoleUser,
+			TenantID: "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+		identity := &auth.Identity{Subject: "user-a1", TenantID: "tenant-a"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handlers.ListUsersHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp UserListResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, 2, resp.Total)
+		for _, u := range resp.Users {
+			assert.Contains(t, []string{"user-a1", "user-a2"}, u.Username)
+		}
+	})
+
+	t.Run("no identity returns all users", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-a"),
+			Username: "user-a",
+			Role:     user.RoleUser,
+			TenantID: "tenant-a",
+		})
+		store.addUser(&user.User{
+			ID:       []byte("user-b"),
+			Username: "user-b",
+			Role:     user.RoleUser,
+			TenantID: "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		// No identity in context
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+		w := httptest.NewRecorder()
+		handlers.ListUsersHandler(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp UserListResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, 2, resp.Total)
+	})
+}
+
+// TestGetUserHandler_TenantFiltering tests tenant-scoped filtering for GetUserHandler.
+func TestGetUserHandler_TenantFiltering(t *testing.T) {
+	t.Run("SO can access any tenant user", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-b"),
+			Username: "user-b",
+			Role:     user.RoleUser,
+			TenantID: "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
+
+		// base64url of "user-b"
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dXNlci1i", nil)
+		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp UserDetailResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "user-b", resp.Username)
+	})
+
+	t.Run("tenant user gets 404 for other tenant user", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-b"),
+			Username: "user-b",
+			Role:     user.RoleUser,
+			TenantID: "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dXNlci1i", nil)
+		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "User not found")
+	})
+
+	t.Run("tenant user can access own tenant user", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-a"),
+			Username: "user-a",
+			Role:     user.RoleUser,
+			TenantID: "tenant-a",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dXNlci1h", nil)
+		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp UserDetailResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "user-a", resp.Username)
+	})
+}
+
+// TestUpdateUserHandler_TenantFiltering tests tenant-scoped filtering for UpdateUserHandler.
+func TestUpdateUserHandler_TenantFiltering(t *testing.T) {
+	t.Run("tenant user gets 404 for cross-tenant update", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:          []byte("user-b"),
+			Username:    "user-b",
+			DisplayName: "User B",
+			Role:        user.RoleUser,
+			TenantID:    "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dXNlci1i", strings.NewReader(`{"display_name": "Hacked"}`))
+		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "User not found")
+	})
+
+	t.Run("tenant user can update own tenant user", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:          []byte("user-a"),
+			Username:    "user-a",
+			DisplayName: "User A",
+			Role:        user.RoleUser,
+			TenantID:    "tenant-a",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dXNlci1h", strings.NewReader(`{"display_name": "Updated A"}`))
+		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp UpdateUserResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "Updated A", resp.DisplayName)
+	})
+
+	t.Run("SO can update any tenant user", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:          []byte("user-b"),
+			Username:    "user-b",
+			DisplayName: "User B",
+			Role:        user.RoleUser,
+			TenantID:    "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
+
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dXNlci1i", strings.NewReader(`{"display_name": "Updated by SO"}`))
+		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp UpdateUserResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "Updated by SO", resp.DisplayName)
+	})
+}
+
+// TestDeleteUserHandler_TenantFiltering tests tenant-scoped filtering for DeleteUserHandler.
+func TestDeleteUserHandler_TenantFiltering(t *testing.T) {
+	t.Run("tenant user gets 404 for cross-tenant delete", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-b"),
+			Username: "user-b",
+			Role:     user.RoleUser,
+			TenantID: "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dXNlci1i", nil)
+		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusNotFound, w.Code)
+		assert.Contains(t, w.Body.String(), "User not found")
+	})
+
+	t.Run("tenant user can delete own tenant user", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-a"),
+			Username: "user-a",
+			Role:     user.RoleUser,
+			TenantID: "tenant-a",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dXNlci1h", nil)
+		identity := &auth.Identity{Subject: "admin-a", TenantID: "tenant-a"}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp DeleteUserResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Contains(t, resp.Message, "successfully")
+	})
+
+	t.Run("SO can delete any tenant user", func(t *testing.T) {
+		store := newMockUserStore()
+		store.addUser(&user.User{
+			ID:       []byte("user-b"),
+			Username: "user-b",
+			Role:     user.RoleUser,
+			TenantID: "tenant-b",
+		})
+		handlers := NewUserHandlers(store)
+
+		router := chi.NewRouter()
+		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
+
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dXNlci1i", nil)
+		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
+		ctx := auth.WithIdentity(req.Context(), identity)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var resp DeleteUserResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Contains(t, resp.Message, "successfully")
 	})
 }

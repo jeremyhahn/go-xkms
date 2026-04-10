@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -285,6 +285,131 @@ func TestAutoResolver_CloseCalledOnBoth(t *testing.T) {
 	}
 }
 
+// TestAutoResolver_CloseErrorFromPrimaryOnly tests Close error propagation
+// when only the primary resolver returns an error
+func TestAutoResolver_CloseErrorFromPrimaryOnly(t *testing.T) {
+	expectedErr := errors.New("primary close error")
+	primary := &mockResolver{
+		closeFunc: func() error { return expectedErr },
+	}
+	fallback := &mockResolver{}
+
+	ar := &autoResolver{
+		resolver: primary,
+		fallback: fallback,
+	}
+
+	err := ar.Close()
+	if err == nil {
+		t.Error("Expected error from Close when primary fails")
+	}
+	if !errors.Is(err, expectedErr) {
+		t.Errorf("Expected wrapped primary error, got: %v", err)
+	}
+}
+
+// TestAutoResolver_CloseErrorFromFallbackOnly tests Close error propagation
+// when only the fallback resolver returns an error
+func TestAutoResolver_CloseErrorFromFallbackOnly(t *testing.T) {
+	primary := &mockResolver{}
+	fallbackErr := errors.New("fallback close error")
+	fallback := &mockResolver{
+		closeFunc: func() error { return fallbackErr },
+	}
+
+	ar := &autoResolver{
+		resolver: primary,
+		fallback: fallback,
+	}
+
+	err := ar.Close()
+	if err == nil {
+		t.Error("Expected error from Close when fallback fails")
+	}
+	if !errors.Is(err, fallbackErr) {
+		t.Errorf("Expected wrapped fallback error, got: %v", err)
+	}
+}
+
+// TestAutoResolver_CloseErrorFromBoth tests Close error propagation
+// when both primary and fallback resolvers return errors. The primary
+// error should take precedence per the implementation.
+func TestAutoResolver_CloseErrorFromBoth(t *testing.T) {
+	primaryErr := errors.New("primary close error")
+	fallbackErr := errors.New("fallback close error")
+	primary := &mockResolver{
+		closeFunc: func() error { return primaryErr },
+	}
+	fallback := &mockResolver{
+		closeFunc: func() error { return fallbackErr },
+	}
+
+	ar := &autoResolver{
+		resolver: primary,
+		fallback: fallback,
+	}
+
+	err := ar.Close()
+	if err == nil {
+		t.Error("Expected error from Close when both fail")
+	}
+	// Primary error should be returned first per the implementation
+	if !errors.Is(err, primaryErr) {
+		t.Errorf("Expected primary error to take precedence, got: %v", err)
+	}
+}
+
+// TestAutoResolver_ReadErrorWithoutFallback tests Read error handling
+// when the primary resolver fails and no fallback is configured
+func TestAutoResolver_ReadErrorWithoutFallback(t *testing.T) {
+	expectedErr := errors.New("read error from rand")
+	primary := &mockResolver{
+		randFunc: func(n int) ([]byte, error) {
+			return nil, expectedErr
+		},
+	}
+
+	ar := &autoResolver{
+		resolver: primary,
+		fallback: nil,
+	}
+
+	buf := make([]byte, 32)
+	n, err := ar.Read(buf)
+	if err == nil {
+		t.Error("Expected error from Read when primary fails and no fallback")
+	}
+	if n != 0 {
+		t.Errorf("Expected 0 bytes read on error, got %d", n)
+	}
+}
+
+// TestAutoResolver_ReadFallbackOnPrimaryError tests Read uses fallback
+// when primary resolver fails
+func TestAutoResolver_ReadFallbackOnPrimaryError(t *testing.T) {
+	primary := &mockResolver{
+		randFunc: func(n int) ([]byte, error) {
+			return nil, errors.New("primary failed")
+		},
+	}
+	fallback, _ := newSoftwareResolver()
+
+	ar := &autoResolver{
+		resolver: primary,
+		fallback: fallback,
+	}
+	defer func() { _ = ar.Close() }()
+
+	buf := make([]byte, 32)
+	n, err := ar.Read(buf)
+	if err != nil {
+		t.Errorf("Read should succeed with fallback: %v", err)
+	}
+	if n != 32 {
+		t.Errorf("Expected 32 bytes, got %d", n)
+	}
+}
+
 // TestAutoResolver_ThreadSafety tests concurrent access to all methods
 func TestAutoResolver_ThreadSafety(t *testing.T) {
 	resolver, _ := newSoftwareResolver()
@@ -544,6 +669,112 @@ func TestAutoResolver_MultipleFallbackLevels(t *testing.T) {
 		}
 		if len(data) != 32 {
 			t.Errorf("Call %d: Expected 32 bytes, got %d", i, len(data))
+		}
+	}
+}
+
+// TestNewTPM2Resolver_NilConfig tests that nil config gets defaults applied
+func TestNewTPM2Resolver_NilConfig(t *testing.T) {
+	// newTPM2Resolver with nil config should set defaults and attempt connection.
+	// The connection will fail because /dev/tpm0 likely doesn't exist,
+	// but we exercise the config-defaulting code path.
+	_, err := newTPM2Resolver(nil)
+	// We expect an error because no real TPM device exists
+	if err == nil {
+		t.Log("TPM2 device was actually available (unexpected in CI)")
+	}
+}
+
+// TestNewTPM2Resolver_SimulatorDefaults tests simulator config defaults
+func TestNewTPM2Resolver_SimulatorDefaults(t *testing.T) {
+	cfg := &TPM2Config{
+		UseSimulator: true,
+		// Leave host, port, type empty to exercise defaults
+	}
+	_, err := newTPM2Resolver(cfg)
+	// Will fail to connect to localhost:2321 but exercises the default logic
+	if err != nil {
+		// Expected: simulator not running
+		if cfg.SimulatorHost != "localhost" {
+			t.Errorf("Expected SimulatorHost default 'localhost', got %q", cfg.SimulatorHost)
+		}
+		if cfg.SimulatorPort != 2321 {
+			t.Errorf("Expected SimulatorPort default 2321, got %d", cfg.SimulatorPort)
+		}
+		if cfg.SimulatorType != "swtpm" {
+			t.Errorf("Expected SimulatorType default 'swtpm', got %q", cfg.SimulatorType)
+		}
+	}
+}
+
+// TestNewTPM2Resolver_SimulatorWithPartialConfig tests partial simulator config
+func TestNewTPM2Resolver_SimulatorWithPartialConfig(t *testing.T) {
+	cfg := &TPM2Config{
+		UseSimulator:  true,
+		SimulatorHost: "127.0.0.1",
+		SimulatorPort: 9999,
+		SimulatorType: "custom",
+	}
+	_, err := newTPM2Resolver(cfg)
+	// Connection to 127.0.0.1:9999 will fail
+	if err == nil {
+		t.Log("Unexpectedly connected to simulator")
+	} else {
+		// Verify the custom config was preserved (not overwritten by defaults)
+		if cfg.SimulatorHost != "127.0.0.1" {
+			t.Errorf("SimulatorHost should remain '127.0.0.1', got %q", cfg.SimulatorHost)
+		}
+		if cfg.SimulatorPort != 9999 {
+			t.Errorf("SimulatorPort should remain 9999, got %d", cfg.SimulatorPort)
+		}
+		if cfg.SimulatorType != "custom" {
+			t.Errorf("SimulatorType should remain 'custom', got %q", cfg.SimulatorType)
+		}
+	}
+}
+
+// TestNewTPM2Resolver_DeviceDefault tests that Device gets defaulted
+func TestNewTPM2Resolver_DeviceDefault(t *testing.T) {
+	cfg := &TPM2Config{
+		UseSimulator: false,
+		Device:       "", // Should default to /dev/tpm0
+	}
+	_, err := newTPM2Resolver(cfg)
+	if err != nil {
+		// Expected: /dev/tpm0 not available
+		if cfg.Device != "/dev/tpm0" {
+			t.Errorf("Expected Device default '/dev/tpm0', got %q", cfg.Device)
+		}
+	}
+}
+
+// TestNewTPM2Resolver_MaxRequestSizeDefault tests MaxRequestSize defaulting
+func TestNewTPM2Resolver_MaxRequestSizeDefault(t *testing.T) {
+	cfg := &TPM2Config{
+		UseSimulator:   false,
+		Device:         "/dev/nonexistent_tpm",
+		MaxRequestSize: 0, // Should default to 32
+	}
+	_, err := newTPM2Resolver(cfg)
+	if err != nil {
+		// Expected: device not available
+		if cfg.MaxRequestSize != 32 {
+			t.Errorf("Expected MaxRequestSize default 32, got %d", cfg.MaxRequestSize)
+		}
+	}
+}
+
+// TestNewTPM2Resolver_NegativeMaxRequestSize tests negative MaxRequestSize
+func TestNewTPM2Resolver_NegativeMaxRequestSize(t *testing.T) {
+	cfg := &TPM2Config{
+		UseSimulator:   false,
+		Device:         "/dev/nonexistent_tpm",
+		MaxRequestSize: -5, // Should default to 32
+	}
+	_, err := newTPM2Resolver(cfg)
+	if err != nil {
+		if cfg.MaxRequestSize != 32 {
+			t.Errorf("Expected MaxRequestSize default 32, got %d", cfg.MaxRequestSize)
 		}
 	}
 }

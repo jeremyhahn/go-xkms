@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,10 +26,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/symmetric"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // simplePassword implements types.Password for examples
@@ -106,7 +106,7 @@ func main() {
 
 // basicEncryption demonstrates basic AES-256-GCM encryption and decryption
 // without password protection.
-func basicEncryption(b types.SymmetricBackend) error {
+func basicEncryption(b types.SymmetricKeyProvider) error {
 	// Define key attributes for AES-256-GCM
 	attrs := &types.KeyAttributes{
 		CN:                 "basic-aes-key",
@@ -162,7 +162,7 @@ func basicEncryption(b types.SymmetricBackend) error {
 
 // passwordProtectedEncryption demonstrates AES-256-GCM encryption
 // with password-protected key storage.
-func passwordProtectedEncryption(b types.SymmetricBackend) error {
+func passwordProtectedEncryption(b types.SymmetricKeyProvider) error {
 	// Define a password for key encryption
 	password := newPassword([]byte("my-secure-password"))
 
@@ -238,7 +238,7 @@ func passwordProtectedEncryption(b types.SymmetricBackend) error {
 // encryptionWithAAD demonstrates authenticated encryption with
 // Additional Authenticated Data (AAD). AAD is authenticated but not encrypted,
 // useful for associating metadata with encrypted data.
-func encryptionWithAAD(b types.SymmetricBackend) error {
+func encryptionWithAAD(b types.SymmetricKeyProvider) error {
 	// Define key attributes
 	attrs := &types.KeyAttributes{
 		CN:                 "aad-example-key",

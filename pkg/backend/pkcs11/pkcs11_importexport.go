@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,16 +16,17 @@
 package pkcs11
 
 import (
+	"context"
+	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
 
-	"github.com/ThalesGroup/crypto11"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/wrapping"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
 
@@ -35,7 +36,7 @@ var _ backend.ImportExportBackend = (*Backend)(nil)
 // PKCS#11 wrapping key constants
 const (
 	// wrappingKeyLabel is the label for the HSM wrapping key used for import/export
-	wrappingKeyLabel = "go-keychain-wrapping-key"
+	wrappingKeyLabel = "go-xkms-wrapping-key"
 
 	// wrappingKeySize is the size of the RSA wrapping key in bits
 	wrappingKeySize = 4096
@@ -54,7 +55,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.ctx == nil {
+	if b.pool == nil {
 		return nil, ErrNotInitialized
 	}
 
@@ -77,7 +78,7 @@ func (b *Backend) GetImportParameters(attrs *types.KeyAttributes, algorithm back
 	wrappingKeyID := []byte(wrappingKeyLabel)
 
 	// Try to find existing wrapping key
-	wrappingKeySigner, err := b.ctx.FindKeyPair(wrappingKeyID, nil)
+	wrappingKeySigner, err := findKeyPairByID(b.pool, wrappingKeyID)
 	if err != nil || wrappingKeySigner == nil {
 		// Wrapping key doesn't exist, create it with explicit wrap/unwrap capabilities
 		wrappingKeySigner, err = b.generateWrappingKeyPair(wrappingKeyID)
@@ -188,7 +189,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.ctx == nil {
+	if b.pool == nil {
 		return ErrNotInitialized
 	}
 
@@ -364,7 +365,7 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	}
 
 	if b.config.KeyStorage != nil {
-		if err := storage.SaveKey(b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
+		if err := storage.SaveKey(context.Background(), b.config.KeyStorage, attrs.ID(), metadataBytes); err != nil {
 			return fmt.Errorf("failed to save metadata: %w", err)
 		}
 	}
@@ -537,7 +538,7 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.ctx == nil {
+	if b.pool == nil {
 		return nil, ErrNotInitialized
 	}
 
@@ -690,119 +691,13 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 }
 
 // generateWrappingKeyPair generates an RSA key pair with wrap/unwrap/encrypt/decrypt capabilities.
-// This is used for import/export operations and needs specific attributes that crypto11 doesn't set by default.
-//
-// This function uses the low-level PKCS#11 C_GenerateKeyPair API to set all required attributes:
-// - CKA_WRAP, CKA_UNWRAP: For key wrapping operations
-// - CKA_ENCRYPT, CKA_DECRYPT: For encryption/decryption
-// - CKA_TOKEN: To store the key permanently in the HSM
-// - CKA_PRIVATE, CKA_SENSITIVE: For private key security
-// - CKA_EXTRACTABLE: Set to false to prevent key extraction
-//
-// After generating the key with proper attributes, we retrieve it using crypto11's FindKeyPair
-// to get a proper crypto11.Signer that can be used with the rest of the system.
-func (b *Backend) generateWrappingKeyPair(keyID []byte) (crypto11.Signer, error) {
-	// Initialize low-level PKCS#11 context if not already done
-	if b.p11ctx == nil {
-		p := pkcs11.New(b.config.Library)
-		if p == nil {
-			return nil, fmt.Errorf("failed to load PKCS#11 library: %s", b.config.Library)
-		}
-
-		if err := p.Initialize(); err != nil {
-			if err != pkcs11.Error(pkcs11.CKR_CRYPTOKI_ALREADY_INITIALIZED) {
-				return nil, fmt.Errorf("failed to initialize PKCS#11: %w", err)
-			}
-		}
-
-		b.p11ctx = p
-	}
-
-	// Get token slot
-	slots, err := b.p11ctx.GetSlotList(true)
+// This is used for import/export operations. The key pair is created using the raw PKCS#11 API
+// with explicit wrap/unwrap attributes, then wrapped in a pkcs11RSASigner.
+func (b *Backend) generateWrappingKeyPair(keyID []byte) (crypto.Signer, error) {
+	signer, err := generateRSAWrappingKeyPair(b.pool, keyID, wrappingKeySize)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get slot list: %w", err)
+		return nil, fmt.Errorf("failed to generate wrapping key pair: %w", err)
 	}
-
-	if len(slots) == 0 {
-		return nil, ErrTokenNotFound
-	}
-
-	slot := slots[0]
-	if b.config.Slot != nil {
-		slot = uint(*b.config.Slot)
-	}
-
-	// Open session
-	session, err := b.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION|pkcs11.CKF_RW_SESSION)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open session: %w", err)
-	}
-	defer b.p11ctx.CloseSession(session)
-
-	// Login as user (only logout if we performed the login)
-	var didLogin bool
-	if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
-		if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
-			return nil, fmt.Errorf("failed to login: %w", err)
-		}
-		// Already logged in, don't logout later
-		didLogin = false
-	} else {
-		// We logged in successfully, logout when done
-		didLogin = true
-	}
-	if didLogin {
-		defer b.p11ctx.Logout(session)
-	}
-
-	// Build public key template with wrap/verify capabilities
-	publicKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PUBLIC_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyID),
-		pkcs11.NewAttribute(pkcs11.CKA_ENCRYPT, true),
-		pkcs11.NewAttribute(pkcs11.CKA_WRAP, true),
-		pkcs11.NewAttribute(pkcs11.CKA_VERIFY, true),
-		pkcs11.NewAttribute(pkcs11.CKA_MODULUS_BITS, wrappingKeySize),
-		pkcs11.NewAttribute(pkcs11.CKA_PUBLIC_EXPONENT, []byte{0x01, 0x00, 0x01}), // 65537
-	}
-
-	// Build private key template with wrap/unwrap capabilities
-	privateKeyTemplate := []*pkcs11.Attribute{
-		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_PRIVATE_KEY),
-		pkcs11.NewAttribute(pkcs11.CKA_TOKEN, true),
-		pkcs11.NewAttribute(pkcs11.CKA_ID, keyID),
-		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyID),
-		pkcs11.NewAttribute(pkcs11.CKA_PRIVATE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_SENSITIVE, true),
-		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, false),
-		pkcs11.NewAttribute(pkcs11.CKA_DECRYPT, true),
-		pkcs11.NewAttribute(pkcs11.CKA_UNWRAP, true),
-		pkcs11.NewAttribute(pkcs11.CKA_SIGN, true),
-	}
-
-	// RSA key generation mechanism
-	mechanism := pkcs11.NewMechanism(pkcs11.CKM_RSA_PKCS_KEY_PAIR_GEN, nil)
-
-	// Generate the key pair using low-level C_GenerateKeyPair
-	_, _, err = b.p11ctx.GenerateKeyPair(session, []*pkcs11.Mechanism{mechanism}, publicKeyTemplate, privateKeyTemplate)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate RSA key pair with C_GenerateKeyPair: %w", err)
-	}
-
-	// Now retrieve the generated key using crypto11's FindKeyPair
-	// This returns a proper crypto11.Signer that can be used throughout the system
-	signer, err := b.ctx.FindKeyPair(keyID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find generated wrapping key: %w", err)
-	}
-
-	if signer == nil {
-		return nil, fmt.Errorf("wrapping key not found after generation")
-	}
-
 	return signer, nil
 }
 
@@ -834,4 +729,133 @@ func determineKeySpec(attrs *types.KeyAttributes) string {
 			return "UNKNOWN"
 		}
 	}
+}
+
+// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
+// This method provides direct access to the plaintext key bytes without wrapping.
+//
+// Security restrictions:
+//   - ONLY works for symmetric keys (AES, etc.)
+//   - Returns ErrAsymmetricKeyExportNotAllowed for asymmetric keys (RSA, ECDSA, Ed25519)
+//   - Key must have CKA_EXTRACTABLE=true in the HSM
+//   - Returns ErrKeyNotExportable if the key is not marked as extractable
+//
+// For PKCS#11 backends, this requires:
+//  1. The key object to have CKA_EXTRACTABLE = CK_TRUE
+//  2. The key to be a CKO_SECRET_KEY (symmetric key)
+//
+// Note: Most HSM security policies will prevent keys from having CKA_EXTRACTABLE=true.
+// This is primarily useful for testing with SoftHSM or specific compliance scenarios.
+func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.pool == nil {
+		return nil, ErrNotInitialized
+	}
+
+	if attrs == nil {
+		return nil, fmt.Errorf("%w: key attributes cannot be nil", backend.ErrInvalidAttributes)
+	}
+
+	// Check if this is an asymmetric key - we don't allow raw export of those
+	switch attrs.KeyAlgorithm {
+	case x509.RSA, x509.ECDSA, x509.Ed25519, x509.DSA:
+		return nil, backend.ErrAsymmetricKeyExportNotAllowed
+	}
+
+	// Initialize low-level PKCS#11 context if needed
+	if b.p11ctx == nil {
+		return nil, fmt.Errorf("PKCS#11 context not initialized for export operations")
+	}
+
+	// Get token slot
+	slots, err := b.p11ctx.GetSlotList(true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get slot list: %w", err)
+	}
+
+	if len(slots) == 0 {
+		return nil, ErrTokenNotFound
+	}
+
+	slot := slots[0]
+	if b.config.Slot != nil {
+		slot = uint(*b.config.Slot)
+	}
+
+	// Open session
+	session, err := b.p11ctx.OpenSession(slot, pkcs11.CKF_SERIAL_SESSION)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open session: %w", err)
+	}
+	defer b.p11ctx.CloseSession(session)
+
+	// Login if required
+	if b.config.PIN != "" {
+		if err := b.p11ctx.Login(session, pkcs11.CKU_USER, b.config.PIN); err != nil {
+			if err != pkcs11.Error(pkcs11.CKR_USER_ALREADY_LOGGED_IN) {
+				return nil, fmt.Errorf("failed to login: %w", err)
+			}
+		}
+	}
+
+	// Find the secret key
+	keyLabel := createKeyID(attrs)
+	template := []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_CLASS, pkcs11.CKO_SECRET_KEY),
+		pkcs11.NewAttribute(pkcs11.CKA_LABEL, keyLabel),
+	}
+
+	if err := b.p11ctx.FindObjectsInit(session, template); err != nil {
+		return nil, fmt.Errorf("failed to init key search: %w", err)
+	}
+
+	handles, _, err := b.p11ctx.FindObjects(session, 1)
+	if err != nil {
+		b.p11ctx.FindObjectsFinal(session)
+		return nil, fmt.Errorf("failed to find key: %w", err)
+	}
+
+	if err := b.p11ctx.FindObjectsFinal(session); err != nil {
+		return nil, fmt.Errorf("failed to finalize key search: %w", err)
+	}
+
+	if len(handles) == 0 {
+		return nil, fmt.Errorf("%w: %s", backend.ErrKeyNotFound, attrs.CN)
+	}
+
+	keyHandle := handles[0]
+
+	// Check if the key is extractable
+	extractableAttr, err := b.p11ctx.GetAttributeValue(session, keyHandle, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_EXTRACTABLE, nil),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get extractable attribute: %w", err)
+	}
+
+	if len(extractableAttr) == 0 || len(extractableAttr[0].Value) == 0 {
+		return nil, backend.ErrKeyNotExportable
+	}
+
+	// PKCS#11 boolean is typically a single byte: 0x00 = false, 0x01 = true
+	if extractableAttr[0].Value[0] == 0x00 {
+		return nil, backend.ErrKeyNotExportable
+	}
+
+	// Get the key value
+	valueAttr, err := b.p11ctx.GetAttributeValue(session, keyHandle, []*pkcs11.Attribute{
+		pkcs11.NewAttribute(pkcs11.CKA_VALUE, nil),
+	})
+	if err != nil {
+		// This could fail if the key is sensitive (CKA_SENSITIVE=true)
+		return nil, fmt.Errorf("%w: failed to extract key value (key may be sensitive): %v", backend.ErrKeyNotExportable, err)
+	}
+
+	if len(valueAttr) == 0 || len(valueAttr[0].Value) == 0 {
+		return nil, fmt.Errorf("%w: empty key value returned", backend.ErrKeyNotExportable)
+	}
+
+	return valueAttr[0].Value, nil
 }

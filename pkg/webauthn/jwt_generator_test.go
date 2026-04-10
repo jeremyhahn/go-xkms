@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -364,7 +364,7 @@ func TestDefaultJWTGenerator_Issuer(t *testing.T) {
 		{
 			name:           "default issuer",
 			configIssuer:   "",
-			expectedIssuer: "go-keychain",
+			expectedIssuer: "go-xkms",
 		},
 		{
 			name:           "custom issuer",
@@ -397,12 +397,12 @@ func TestDefaultJWTGenerator_Audience(t *testing.T) {
 		{
 			name:             "default audience",
 			configAudience:   nil,
-			expectedAudience: []string{"go-keychain"},
+			expectedAudience: []string{"go-xkms"},
 		},
 		{
 			name:             "empty audience slice",
 			configAudience:   []string{},
-			expectedAudience: []string{"go-keychain"},
+			expectedAudience: []string{"go-xkms"},
 		},
 		{
 			name:             "single custom audience",

@@ -1,0 +1,35 @@
+services:
+  test-site:
+    image: python:3.12-slim
+    working_dir: /site
+    volumes:
+      - ./fixtures/test-site:/site:ro
+    # Run as non-root (nobody user).
+    user: "65534:65534"
+    command: python -m http.server 8080
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  extension-test:
+    build:
+      context: ../../../../
+      dockerfile: xkey/test/integration/extension/Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../../go-qrdb
+        go-quicraft: ../../../../../go-quicraft
+    depends_on:
+      test-site:
+        condition: service_healthy
+    # Runs as non-root testuser (UID 1000) defined in Dockerfile.
+    environment:
+      - CI=true
+      - TEST_SITE_URL=http://test-site:8080
+      - XKEY_HOME=/tmp/xkey-test
+      - IPC_SOCKET=/tmp/xkey-test/xkey.sock
+      - EXTENSION_DIR=/extension/dist
+      - PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+    # Chrome needs shared memory for tab rendering.
+    shm_size: '1gb'

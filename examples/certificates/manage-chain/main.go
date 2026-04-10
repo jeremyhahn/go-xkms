@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -27,11 +27,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func main() {
@@ -55,7 +55,7 @@ func main() {
 	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     pkcs8Backend,
 		CertStorage: storage,
 	})
@@ -131,7 +131,7 @@ func main() {
 }
 
 // createRootCA creates a root CA certificate
-func createRootCA(ks keychain.KeyStore, cn string) (*x509.Certificate, interface{}) {
+func createRootCA(ks xkms.Backend, cn string) (*x509.Certificate, interface{}) {
 	keyAttrs := &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,
@@ -186,7 +186,7 @@ func createRootCA(ks keychain.KeyStore, cn string) (*x509.Certificate, interface
 }
 
 // createIntermediateCA creates an intermediate CA certificate
-func createIntermediateCA(ks keychain.KeyStore, issuerCert *x509.Certificate, issuerKey interface{}, cn string) (*x509.Certificate, interface{}) {
+func createIntermediateCA(ks xkms.Backend, issuerCert *x509.Certificate, issuerKey interface{}, cn string) (*x509.Certificate, interface{}) {
 	keyAttrs := &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,
@@ -241,7 +241,7 @@ func createIntermediateCA(ks keychain.KeyStore, issuerCert *x509.Certificate, is
 }
 
 // createLeafCertificate creates an end-entity (leaf) certificate
-func createLeafCertificate(ks keychain.KeyStore, issuerCert *x509.Certificate, issuerKey interface{}, cn string) *x509.Certificate {
+func createLeafCertificate(ks xkms.Backend, issuerCert *x509.Certificate, issuerKey interface{}, cn string) *x509.Certificate {
 	keyAttrs := &types.KeyAttributes{
 		CN:           cn,
 		KeyType:      backend.KEY_TYPE_TLS,

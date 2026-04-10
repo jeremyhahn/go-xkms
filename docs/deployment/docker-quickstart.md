@@ -1,6 +1,6 @@
 # Docker Quick Start Guide
 
-Get go-keychain running in Docker in 5 minutes.
+Get go-xkms running in Docker in 5 minutes.
 
 ## Prerequisites
 
@@ -17,7 +17,7 @@ Get go-keychain running in Docker in 5 minutes.
 make docker-build-server
 
 # Or directly with Docker
-docker build -t go-keychain/server:latest -f Dockerfile.server .
+docker build -t go-xkms/server:latest -f Dockerfile.server .
 ```
 
 ### 2. Create a Minimal Config
@@ -51,24 +51,24 @@ health:
 
 storage:
   backend: file
-  path: /var/lib/keychain/metadata
+  path: /var/lib/xkms/metadata
 
-default_backend: pkcs8
+default_backend: software
 
 backends:
-  pkcs8:
+  software:
     enabled: true
-    path: /var/lib/keychain/keys
+    path: /var/lib/xkms/keys
 EOF
 ```
 
 ### 3. Run the Server
 
 ```bash
-docker run -d --name keychain \
+docker run -d --name xkms \
   -p 8443:8443 \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  go-keychain/server:latest
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms/server:latest
 ```
 
 ### 4. Test the Server
@@ -78,17 +78,17 @@ docker run -d --name keychain \
 curl http://localhost:8443/health
 
 # View logs
-docker logs keychain
+docker logs xkms
 
 # Follow logs
-docker logs -f keychain
+docker logs -f xkms
 ```
 
 ### 5. Stop and Clean Up
 
 ```bash
-docker stop keychain
-docker rm keychain
+docker stop xkms
+docker rm xkms
 ```
 
 ## Production Deployment
@@ -113,8 +113,8 @@ openssl req -x509 -newkey rsa:4096 \
 cp examples/config/config-server.yaml configs/config.yaml
 # Edit configs/config.yaml and set:
 # - tls.enabled: true
-# - tls.cert_file: /etc/keychain/certs/server.crt
-# - tls.key_file: /etc/keychain/certs/server.key
+# - tls.cert_file: /etc/xkms/certs/server.crt
+# - tls.key_file: /etc/xkms/certs/server.key
 # - auth.enabled: true
 ```
 
@@ -172,8 +172,8 @@ make docker-build-cli
 
 # Run commands
 docker run --rm \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  go-keychain/cli:latest \
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms/cli:latest \
   --help
 ```
 
@@ -186,7 +186,7 @@ docker run --rm \
 sudo lsof -i :8443
 
 # Use different port
-docker run -d -p 9443:8443 go-keychain/server:latest
+docker run -d -p 9443:8443 go-xkms/server:latest
 ```
 
 ### Permission Denied
@@ -203,12 +203,12 @@ docker run --user root ...
 
 ```bash
 # Check logs
-docker logs keychain
+docker logs xkms
 
 # Run interactively
 docker run -it --rm \
-  -v $(PWD)/configs:/etc/keychain:ro \
-  go-keychain/server:latest \
+  -v $(PWD)/configs:/etc/xkms:ro \
+  go-xkms/server:latest \
   sh
 ```
 
@@ -216,22 +216,22 @@ docker run -it --rm \
 
 ```bash
 # Check if server is listening
-docker exec keychain netstat -tlnp
+docker exec xkms netstat -tlnp
 
 # Test health endpoint directly
-docker exec keychain wget -O- http://localhost:8443/health
+docker exec xkms wget -O- http://localhost:8443/health
 ```
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| KEYSTORE_CONFIG | /etc/keychain/config.yaml | Config file path |
+| KEYSTORE_CONFIG | /etc/xkms/config.yaml | Config file path |
 
 ```bash
 docker run -d \
   -e KEYSTORE_CONFIG=/custom/path/config.yaml \
-  go-keychain/server:latest
+  go-xkms/server:latest
 ```
 
 ## Volume Mounts
@@ -239,19 +239,19 @@ docker run -d \
 ### Configuration (Read-Only)
 
 ```bash
--v $(PWD)/configs:/etc/keychain:ro
+-v $(PWD)/configs:/etc/xkms:ro
 ```
 
 ### Persistent Data
 
 ```bash
--v keychain-data:/var/lib/keychain
+-v xkms-data:/var/lib/xkms
 ```
 
 ### Certificates
 
 ```bash
--v $(PWD)/configs/certs:/etc/keychain/certs:ro
+-v $(PWD)/configs/certs:/etc/xkms/certs:ro
 ```
 
 ## Make Targets
@@ -302,4 +302,4 @@ make docker-help
 
 - [Docker Documentation](https://docs.docker.com/)
 - [Docker Compose](https://docs.docker.com/compose/)
-- [go-keychain Documentation](README.md)
+- [go-xkms Documentation](README.md)

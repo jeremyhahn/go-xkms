@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -158,13 +158,22 @@ func (m *MockAuthenticator) PublicKey() crypto.PublicKey {
 func (m *MockAuthenticator) PublicKeyBytes() ([]byte, error) {
 	pubKey := m.privateKey.Public().(*ecdsa.PublicKey)
 
+	// Extract raw coordinates from uncompressed point (0x04 || X || Y)
+	uncompressed, err := pubKey.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	coordLen := (len(uncompressed) - 1) / 2
+	xBytes := uncompressed[1 : 1+coordLen]
+	yBytes := uncompressed[1+coordLen:]
+
 	// Create COSE key representation for ES256
 	coseKey := map[int]interface{}{
 		1:  2,                          // kty: EC2
 		3:  int(webauthncose.AlgES256), // alg: ES256
 		-1: 1,                          // crv: P-256
-		-2: pubKey.X.Bytes(),           // x coordinate
-		-3: pubKey.Y.Bytes(),           // y coordinate
+		-2: xBytes,                     // x coordinate
+		-3: yBytes,                     // y coordinate
 	}
 
 	return webauthncbor.Marshal(coseKey)

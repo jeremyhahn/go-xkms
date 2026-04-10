@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,11 +23,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs8"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 func main() {
@@ -51,7 +51,7 @@ func main() {
 	defer func() { _ = pkcs8Backend.Close() }()
 
 	// Create keystore instance
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     pkcs8Backend,
 		CertStorage: storage,
 	})
@@ -86,7 +86,7 @@ func main() {
 }
 
 // demonstrateBasicRotation shows a simple key rotation
-func demonstrateBasicRotation(ks keychain.KeyStore) {
+func demonstrateBasicRotation(ks xkms.Backend) {
 	keyAttrs := &types.KeyAttributes{
 		CN:           "basic-rotation-key",
 		KeyType:      backend.KEY_TYPE_TLS,
@@ -127,7 +127,7 @@ func demonstrateBasicRotation(ks keychain.KeyStore) {
 }
 
 // demonstrateVersionedRotation shows rotation with version tracking
-func demonstrateVersionedRotation(ks keychain.KeyStore) {
+func demonstrateVersionedRotation(ks xkms.Backend) {
 	keyBaseName := "versioned-key"
 	versions := []string{"v1", "v2", "v3"}
 
@@ -188,7 +188,7 @@ func demonstrateVersionedRotation(ks keychain.KeyStore) {
 }
 
 // demonstrateBlueGreenRotation shows blue-green deployment style rotation
-func demonstrateBlueGreenRotation(ks keychain.KeyStore) {
+func demonstrateBlueGreenRotation(ks xkms.Backend) {
 	fmt.Println("   a. Blue-Green rotation scenario...")
 
 	// Blue key (current production)
@@ -256,7 +256,7 @@ func demonstrateBlueGreenRotation(ks keychain.KeyStore) {
 }
 
 // demonstrateGracefulRotation shows rotation with an overlap period
-func demonstrateGracefulRotation(ks keychain.KeyStore) {
+func demonstrateGracefulRotation(ks xkms.Backend) {
 	fmt.Println("   a. Graceful rotation with overlap period...")
 
 	// Current key
@@ -314,7 +314,7 @@ func demonstrateGracefulRotation(ks keychain.KeyStore) {
 }
 
 // demonstrateEmergencyRotation shows emergency rotation scenario
-func demonstrateEmergencyRotation(ks keychain.KeyStore) {
+func demonstrateEmergencyRotation(ks xkms.Backend) {
 	fmt.Println("   a. Emergency rotation scenario...")
 
 	compromisedAttrs := &types.KeyAttributes{

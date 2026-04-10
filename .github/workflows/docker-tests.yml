@@ -127,6 +127,6 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: false
-          tags: go-keychain-test:${{ github.sha }}
+          tags: go-xkms-test:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

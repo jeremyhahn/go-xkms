@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,6 +16,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -27,10 +28,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -714,11 +715,11 @@ func TestGCPKMSMock(t *testing.T) {
 			cert := createTestCert(keyID)
 
 			// Save certificate
-			err := storage.SaveCertParsed(certStorage, keyID, cert)
+			err := storage.SaveCertParsed(context.Background(), certStorage, keyID, cert)
 			require.NoError(t, err, "Failed to save certificate")
 
 			// Retrieve certificate
-			retrievedCert, err := storage.GetCertParsed(certStorage, keyID)
+			retrievedCert, err := storage.GetCertParsed(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "Failed to get certificate")
 			require.NotNil(t, retrievedCert, "Retrieved certificate should not be nil")
 			assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
@@ -726,7 +727,7 @@ func TestGCPKMSMock(t *testing.T) {
 			t.Logf("✓ Successfully saved and retrieved certificate")
 
 			// Cleanup
-			err = storage.DeleteCert(certStorage, keyID)
+			err = storage.DeleteCert(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "Failed to delete certificate")
 		})
 
@@ -735,23 +736,23 @@ func TestGCPKMSMock(t *testing.T) {
 			cert := createTestCert(keyID)
 
 			// Check non-existent cert
-			exists, err := storage.CertExists(certStorage, keyID)
+			exists, err := storage.CertExists(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "CertExists should not error")
 			assert.False(t, exists, "Certificate should not exist yet")
 
 			// Save certificate
-			err = storage.SaveCertParsed(certStorage, keyID, cert)
+			err = storage.SaveCertParsed(context.Background(), certStorage, keyID, cert)
 			require.NoError(t, err, "Failed to save certificate")
 
 			// Check existing cert
-			exists, err = storage.CertExists(certStorage, keyID)
+			exists, err = storage.CertExists(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "CertExists should not error")
 			assert.True(t, exists, "Certificate should exist")
 
 			t.Logf("✓ CertExists works correctly")
 
 			// Cleanup
-			err = storage.DeleteCert(certStorage, keyID)
+			err = storage.DeleteCert(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "Failed to delete certificate")
 		})
 
@@ -760,15 +761,15 @@ func TestGCPKMSMock(t *testing.T) {
 			cert := createTestCert(keyID)
 
 			// Save certificate
-			err := storage.SaveCertParsed(certStorage, keyID, cert)
+			err := storage.SaveCertParsed(context.Background(), certStorage, keyID, cert)
 			require.NoError(t, err, "Failed to save certificate")
 
 			// Delete certificate
-			err = storage.DeleteCert(certStorage, keyID)
+			err = storage.DeleteCert(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "Failed to delete certificate")
 
 			// Verify it's gone
-			_, err = storage.GetCertParsed(certStorage, keyID)
+			_, err = storage.GetCertParsed(context.Background(), certStorage, keyID)
 			require.Error(t, err, "Getting deleted certificate should return error")
 
 			t.Logf("✓ Successfully deleted certificate and verified it's gone")
@@ -785,11 +786,11 @@ func TestGCPKMSMock(t *testing.T) {
 			}
 
 			// Save certificate chain
-			err := storage.SaveCertChainParsed(certStorage, keyID, chain)
+			err := storage.SaveCertChainParsed(context.Background(), certStorage, keyID, chain)
 			require.NoError(t, err, "Failed to save certificate chain")
 
 			// Retrieve certificate chain
-			retrievedChain, err := storage.GetCertChainParsed(certStorage, keyID)
+			retrievedChain, err := storage.GetCertChainParsed(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "Failed to get certificate chain")
 			require.NotNil(t, retrievedChain, "Retrieved chain should not be nil")
 			require.Len(t, retrievedChain, 3, "Chain should have 3 certificates")
@@ -802,7 +803,7 @@ func TestGCPKMSMock(t *testing.T) {
 			t.Logf("✓ Successfully saved and retrieved certificate chain with %d certificates", len(retrievedChain))
 
 			// Cleanup
-			err = storage.DeleteCertChain(certStorage, keyID)
+			err = storage.DeleteCertChain(context.Background(), certStorage, keyID)
 			require.NoError(t, err, "Failed to delete certificate chain")
 		})
 
@@ -816,12 +817,12 @@ func TestGCPKMSMock(t *testing.T) {
 
 			for _, id := range certIDs {
 				cert := createTestCert(id)
-				err := storage.SaveCertParsed(certStorage, id, cert)
+				err := storage.SaveCertParsed(context.Background(), certStorage, id, cert)
 				require.NoError(t, err, "Failed to save certificate %s", id)
 			}
 
 			// List certificates
-			listedCerts, err := storage.ListCerts(certStorage)
+			listedCerts, err := storage.ListCerts(context.Background(), certStorage)
 			require.NoError(t, err, "Failed to list certificates")
 			require.NotNil(t, listedCerts, "Listed certificates should not be nil")
 
@@ -842,7 +843,7 @@ func TestGCPKMSMock(t *testing.T) {
 
 			// Cleanup
 			for _, id := range certIDs {
-				err := storage.DeleteCert(certStorage, id)
+				err := storage.DeleteCert(context.Background(), certStorage, id)
 				require.NoError(t, err, "Failed to delete certificate %s", id)
 			}
 		})
@@ -851,7 +852,7 @@ func TestGCPKMSMock(t *testing.T) {
 			keyID := "test-cert-nonexistent"
 
 			// Try to get non-existent certificate
-			_, err := storage.GetCertParsed(certStorage, keyID)
+			_, err := storage.GetCertParsed(context.Background(), certStorage, keyID)
 			require.Error(t, err, "Getting non-existent certificate should return error")
 
 			t.Logf("✓ GetCert correctly returns error for non-existent certificate")
@@ -870,7 +871,7 @@ func TestGCPKMSMock(t *testing.T) {
 			return
 		}
 
-		symBackend, ok := interface{}(b).(types.SymmetricBackend)
+		symBackend, ok := interface{}(b).(types.SymmetricKeyProvider)
 		require.True(t, ok, "Backend should implement SymmetricBackend")
 
 		t.Run("AES-256-GCM-BasicEncryptDecrypt", func(t *testing.T) {

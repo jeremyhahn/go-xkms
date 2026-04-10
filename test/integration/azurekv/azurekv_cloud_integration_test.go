@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -26,9 +26,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/azurekv"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/azurekv"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,8 +47,8 @@ import (
 //
 // Setup:
 //
-//	az group create --name keychain-test-rg --location eastus
-//	az keyvault create --name keychain-test-kv-$(date +%s) --resource-group keychain-test-rg --location eastus
+//	az group create --name xkms-test-rg --location eastus
+//	az keyvault create --name xkms-test-kv-$(date +%s) --resource-group xkms-test-rg --location eastus
 //
 // Run with:
 //
@@ -57,7 +57,7 @@ import (
 //
 // Cleanup:
 //
-//	az group delete --name keychain-test-rg --yes --no-wait
+//	az group delete --name xkms-test-rg --yes --no-wait
 func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 	// Check required environment variables
 	vaultURI := os.Getenv("AZURE_KEYVAULT_URI")
@@ -346,7 +346,7 @@ func TestAzureKeyVaultCloudIntegration(t *testing.T) {
 			return
 		}
 
-		symBackend, ok := interface{}(b).(types.SymmetricBackend)
+		symBackend, ok := interface{}(b).(types.SymmetricKeyProvider)
 		require.True(t, ok, "Backend should implement SymmetricBackend")
 
 		attrs := &types.KeyAttributes{

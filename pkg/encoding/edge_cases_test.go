@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -247,7 +247,7 @@ func TestPublicKeyEncodeDecodeRoundTrips(t *testing.T) {
 			t.Fatal("Decoded key is not *ecdsa.PublicKey")
 		}
 
-		if decodedECDSA.X.Cmp(publicKey.X) != 0 || decodedECDSA.Y.Cmp(publicKey.Y) != 0 {
+		if !decodedECDSA.Equal(publicKey) {
 			t.Fatal("Decoded public key doesn't match original")
 		}
 	})

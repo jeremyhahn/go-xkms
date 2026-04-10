@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -160,7 +160,7 @@ func TestRecordGRPCRequest(t *testing.T) {
 	GRPCRequestDuration.Reset()
 
 	// Record gRPC request
-	RecordGRPCRequest("/keychain.v1.KeychainService/Generate", "OK", 0.1)
+	RecordGRPCRequest("/xkms.v1.XKMSService/Generate", "OK", 0.1)
 
 	// Verify metrics recorded
 	count := testutil.CollectAndCount(GRPCRequestsTotal)
@@ -301,8 +301,8 @@ func TestMetricsNamespace(t *testing.T) {
 	if Namespace == "" {
 		t.Error("Namespace constant is empty")
 	}
-	if Namespace != "keychain" {
-		t.Errorf("Expected namespace 'keychain', got '%s'", Namespace)
+	if Namespace != "xkms" {
+		t.Errorf("Expected namespace 'xkms', got '%s'", Namespace)
 	}
 }
 

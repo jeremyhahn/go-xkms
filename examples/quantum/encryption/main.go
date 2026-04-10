@@ -1,5 +1,3 @@
-//go:build quantum
-
 // Package main demonstrates quantum-safe encryption using ML-KEM + AES-256-GCM.
 package main
 
@@ -9,13 +7,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend/quantum"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/quantum"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 func main() {
-	// Create a temporary directory for the keychain
+	// Create a temporary directory for the xkms
 	tmpDir := filepath.Join(os.TempDir(), "quantum-encryption")
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
@@ -32,7 +30,7 @@ func main() {
 	}
 	defer func() { _ = backend.Close() }()
 
-	fmt.Println("=== Quantum-Safe Encryption Examples ===\n")
+	fmt.Println("=== Quantum-Safe Encryption Examples ===")
 	fmt.Println("Using ML-KEM (Key Encapsulation) + AES-256-GCM (Symmetric Encryption)")
 	fmt.Println()
 
@@ -231,7 +229,7 @@ func main() {
 	fmt.Println("\nAPI Features:")
 	fmt.Println("  ✓ Simple Encrypt/Decrypt methods")
 	fmt.Println("  ✓ Additional Authenticated Data (AAD) support")
-	fmt.Println("  ✓ Seamless keychain integration")
+	fmt.Println("  ✓ Seamless xkms integration")
 
 	fmt.Printf("\n✓ All quantum encryption examples completed successfully!\n")
 }

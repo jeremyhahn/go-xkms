@@ -1,6 +1,6 @@
 # WebAuthn Example
 
-This example demonstrates how to implement passwordless authentication using go-keychain's WebAuthn support.
+This example demonstrates how to implement passwordless authentication using go-xkms's WebAuthn support.
 
 ## Overview
 
@@ -134,7 +134,7 @@ The server can be configured via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WEBAUTHN_RP_ID` | `localhost` | Relying Party ID (your domain) |
-| `WEBAUTHN_RP_NAME` | `go-keychain Example` | Display name shown to users |
+| `WEBAUTHN_RP_NAME` | `go-xkms Example` | Display name shown to users |
 | `WEBAUTHN_RP_ORIGINS` | `https://localhost:8443` | Allowed origins (comma-separated) |
 | `PORT` | `8443` | Server port |
 
@@ -224,5 +224,5 @@ defer cancel()
 ## Further Reading
 
 - [WebAuthn Specification](https://www.w3.org/TR/webauthn-2/)
-- [go-keychain WebAuthn Documentation](../../docs/usage/webauthn.md)
+- [go-xkms WebAuthn Documentation](../../xkey/docs/usage/webauthn.md)
 - [FIDO Alliance](https://fidoalliance.org/)

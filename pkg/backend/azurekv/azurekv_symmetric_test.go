@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -19,9 +19,9 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // testBackend creates a test backend with mock client and memory storage
@@ -41,7 +41,7 @@ func testBackend(t *testing.T) (*Backend, *MockKeyVaultClient) {
 
 // TestSymmetricBackendImplementation verifies that Backend implements SymmetricBackend interface
 func TestSymmetricBackendImplementation(t *testing.T) {
-	var _ types.SymmetricBackend = (*Backend)(nil)
+	var _ types.SymmetricKeyProvider = (*Backend)(nil)
 }
 
 // TestGenerateSymmetricKey tests symmetric key generation
@@ -629,4 +629,39 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestGetTracker_ReturnsTracker verifies that GetTracker returns the configured tracker.
+func TestGetTracker_ReturnsTracker(t *testing.T) {
+	b, _ := testBackend(t)
+	defer func() { _ = b.Close() }()
+
+	tracker := b.GetTracker()
+	if tracker == nil {
+		t.Fatal("GetTracker() returned nil, expected non-nil default tracker")
+	}
+
+	// Verify it is the same instance as the backend's tracker field
+	if tracker != b.tracker {
+		t.Error("GetTracker() returned a different tracker instance than the backend's tracker field")
+	}
+}
+
+// TestGetTracker_DefaultTracker verifies that a backend created without an explicit
+// tracker gets a non-nil default tracker from NewBackendWithClient.
+func TestGetTracker_DefaultTracker(t *testing.T) {
+	b, _ := testBackend(t)
+	defer func() { _ = b.Close() }()
+
+	tracker := b.GetTracker()
+	if tracker == nil {
+		t.Fatal("GetTracker() returned nil, expected a default tracker to be initialized")
+	}
+
+	// Verify the tracker is functional by performing a basic operation
+	keyID := "test-default-tracker-key"
+	opts := types.DefaultAEADOptions()
+	if err := tracker.SetAEADOptions(keyID, opts); err != nil {
+		t.Errorf("Default tracker SetAEADOptions() failed: %v", err)
+	}
 }

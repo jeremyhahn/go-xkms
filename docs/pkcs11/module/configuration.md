@@ -1,291 +1,263 @@
 # Configuration
 
-The PKCS#11 module can be configured via YAML configuration file or environment variables.
-
-## Configuration File
-
-Default location: `/etc/gokeychain/pkcs11.yaml`
-
-```yaml
-pkcs11:
-  # Backend mode: embedded | unix | rest | grpc | quic
-  mode: embedded
-
-  # Embedded backend configuration
-  # Links directly against libkeychain.so
-  embedded:
-    library_path: /usr/lib/libkeychain.so
-    config_path: /etc/gokeychain/config.yaml
-
-  # Unix socket backend configuration
-  # Direct IPC to keychain daemon using go-codec protocol
-  unix:
-    socket_path: /var/run/keychain/keychain.sock
-    timeout_ms: 5000
-    # Codec: cbor | msgpack | json (default: msgpack)
-    codec: msgpack
-
-  # REST backend configuration
-  # HTTP/HTTPS API client
-  rest:
-    base_url: https://localhost:8443
-    tls_ca_file: /etc/gokeychain/ca.crt
-    tls_cert_file: /etc/gokeychain/client.crt
-    tls_key_file: /etc/gokeychain/client.key
-    timeout_ms: 10000
-    # Skip TLS verification (not recommended for production)
-    tls_insecure: false
-
-  # gRPC backend configuration
-  # Protocol Buffers RPC client
-  grpc:
-    address: localhost:9443
-    tls_enabled: true
-    tls_ca_file: /etc/gokeychain/ca.crt
-    tls_cert_file: /etc/gokeychain/client.crt
-    tls_key_file: /etc/gokeychain/client.key
-    # Connection timeout
-    timeout_ms: 10000
-    # Keep-alive interval
-    keepalive_ms: 30000
-
-  # QUIC backend configuration
-  # HTTP/3 over UDP client
-  quic:
-    address: localhost:8443
-    tls_ca_file: /etc/gokeychain/ca.crt
-    tls_cert_file: /etc/gokeychain/client.crt
-    tls_key_file: /etc/gokeychain/client.key
-    # 0-RTT early data (requires session resumption)
-    enable_0rtt: true
-    # Max idle timeout
-    idle_timeout_ms: 30000
-
-# Token definitions
-# Each token appears as a separate slot in PKCS#11
-tokens:
-  - slot_id: 0
-    label: "GO-KEYCHAIN"
-    # Backend to use for this token (inherits from pkcs11.mode if not set)
-    backend: default
-    # PIN for user login (can also use KEYCHAIN_PIN env var)
-    # pin: 123456
-    # SO PIN for security officer login
-    # so_pin: 87654321
-    # Serial number (auto-generated if not set)
-    # serial: "0001"
-    # Token flags
-    flags:
-      # Token requires login for private key operations
-      login_required: true
-      # Token supports user PIN change
-      user_pin_change: true
-      # Token is write-protected
-      write_protected: false
-
-  # Example: Separate token for certificates
-  - slot_id: 1
-    label: "GO-KEYCHAIN-CERTS"
-    backend: default
-    flags:
-      login_required: false
-      write_protected: true
-```
+The PKCS#11 module supports configuration via environment variables and configuration files.
 
 ## Environment Variables
 
-Environment variables override configuration file settings:
+Environment variables take precedence over configuration file settings.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `KEYCHAIN_PKCS11_CONFIG` | Path to configuration file | `/etc/gokeychain/pkcs11.yaml` |
-| `KEYCHAIN_PKCS11_MODE` | Backend mode | `embedded` |
-| `KEYCHAIN_PKCS11_LIBRARY` | Path to libkeychain.so (embedded mode) | `/usr/lib/libkeychain.so` |
-| `KEYCHAIN_PKCS11_SOCKET` | Unix socket path (unix mode) | `/var/run/keychain/keychain.sock` |
-| `KEYCHAIN_PKCS11_URL` | REST base URL (rest mode) | `https://localhost:8443` |
-| `KEYCHAIN_PKCS11_GRPC_ADDR` | gRPC address (grpc mode) | `localhost:9443` |
-| `KEYCHAIN_PKCS11_QUIC_ADDR` | QUIC address (quic mode) | `localhost:8443` |
-| `KEYCHAIN_PKCS11_TLS_CA` | TLS CA certificate file | - |
-| `KEYCHAIN_PKCS11_TLS_CERT` | TLS client certificate file | - |
-| `KEYCHAIN_PKCS11_TLS_KEY` | TLS client key file | - |
-| `KEYCHAIN_PKCS11_TLS_INSECURE` | Skip TLS verification | `false` |
-| `KEYCHAIN_PKCS11_TIMEOUT` | Operation timeout (ms) | `5000` |
-| `KEYCHAIN_PIN` | Default user PIN | - |
-| `KEYCHAIN_SO_PIN` | Default SO PIN | - |
-| `KEYCHAIN_DEBUG` | Enable debug logging | `false` |
-| `KEYCHAIN_LOG_FILE` | Log file path | stderr |
+| `XKMS_PKCS11_TARGET` | Server connection target | `unix:///var/run/xkms/xkms.sock` |
+| `XKMS_PKCS11_TLS_ENABLED` | Enable TLS | `false` |
+| `XKMS_PKCS11_TLS_CERT` | Client certificate file | - |
+| `XKMS_PKCS11_TLS_KEY` | Client private key file | - |
+| `XKMS_PKCS11_TLS_CA` | CA certificate file | - |
+| `XKMS_PKCS11_TIMEOUT` | Operation timeout | `30s` |
 
-## Configuration by Mode
+## Configuration File
 
-### Embedded Mode
+Default location: `/etc/xkms/pkcs11.conf`
 
-Minimal configuration for single-process applications:
+### File Format
 
-```bash
-export KEYCHAIN_PKCS11_MODE=embedded
-export KEYCHAIN_PKCS11_LIBRARY=/usr/lib/libkeychain.so
+INI-style format with key = value pairs:
+
+```ini
+# PKCS#11 Module Configuration
+
+# Server target address
+# Formats:
+#   unix:///path/to/socket  - Unix domain socket
+#   dns:///host:port        - DNS-based TCP
+#   host:port               - Direct TCP
+target = unix:///var/run/xkms/xkms.sock
+
+# TLS configuration
+tls_enabled = false
+tls_cert = /etc/xkms/client.crt
+tls_key = /etc/xkms/client.key
+tls_ca = /etc/xkms/ca.crt
+
+# Operation timeout (Go duration format)
+timeout = 30s
 ```
 
-Or in YAML:
+## Configuration Precedence
 
-```yaml
-pkcs11:
-  mode: embedded
-  embedded:
-    library_path: /usr/lib/libkeychain.so
-```
+Configuration loads in the following order (highest precedence first):
 
-### Unix Mode
+1. Environment variables
+2. Configuration file
+3. Default values
 
-For multi-process deployments on the same host:
+## Unix Socket Configuration
+
+For local connections using Unix domain sockets:
 
 ```bash
-# Start the daemon
-keychain daemon --unix /var/run/keychain/keychain.sock
+# Start the xkms daemon
+xkms daemon --unix /var/run/xkms/xkms.sock
 
 # Configure PKCS#11 module
-export KEYCHAIN_PKCS11_MODE=unix
-export KEYCHAIN_PKCS11_SOCKET=/var/run/keychain/keychain.sock
+export XKMS_PKCS11_TARGET=unix:///var/run/xkms/xkms.sock
 ```
 
-Unix mode features:
-- SO_PEERCRED for kernel-verified authentication
-- go-codec serialization (CBOR/MsgPack/JSON)
-- Multiplexed streams over single connection
-- 1-5 microsecond latency
+Configuration file:
 
-### REST Mode
+```ini
+target = unix:///var/run/xkms/xkms.sock
+timeout = 30s
+```
 
-For remote access with web integration:
+Unix socket advantages:
+- Fastest connection method
+- Kernel-enforced access control
+- No network overhead
+
+## TCP Configuration
+
+For remote connections over TCP:
 
 ```bash
-# Start the REST server
-keychain server --rest --listen :8443 \
-  --tls-cert /etc/gokeychain/server.crt \
-  --tls-key /etc/gokeychain/server.key
+# Start the xkms server
+xkms server --listen :9443
 
 # Configure PKCS#11 module
-export KEYCHAIN_PKCS11_MODE=rest
-export KEYCHAIN_PKCS11_URL=https://keychain.example.com:8443
-export KEYCHAIN_PKCS11_TLS_CA=/etc/gokeychain/ca.crt
+export XKMS_PKCS11_TARGET=xkms.example.com:9443
 ```
 
-### gRPC Mode
+Configuration file:
 
-For high-performance remote access:
+```ini
+target = xkms.example.com:9443
+timeout = 30s
+```
+
+## TLS Configuration
+
+For secure remote connections:
 
 ```bash
-# Start the gRPC server
-keychain server --grpc --listen :9443 \
-  --tls-cert /etc/gokeychain/server.crt \
-  --tls-key /etc/gokeychain/server.key
+# Start the xkms server with TLS
+xkms server --listen :9443 \
+  --tls-cert /etc/xkms/server.crt \
+  --tls-key /etc/xkms/server.key \
+  --tls-ca /etc/xkms/ca.crt
 
 # Configure PKCS#11 module
-export KEYCHAIN_PKCS11_MODE=grpc
-export KEYCHAIN_PKCS11_GRPC_ADDR=keychain.example.com:9443
-export KEYCHAIN_PKCS11_TLS_CA=/etc/gokeychain/ca.crt
+export XKMS_PKCS11_TARGET=xkms.example.com:9443
+export XKMS_PKCS11_TLS_ENABLED=true
+export XKMS_PKCS11_TLS_CA=/etc/xkms/ca.crt
 ```
 
-### QUIC Mode
+Configuration file:
 
-For low-latency remote access:
+```ini
+target = xkms.example.com:9443
+tls_enabled = true
+tls_ca = /etc/xkms/ca.crt
+timeout = 30s
+```
+
+## mTLS Configuration
+
+For mutual TLS authentication (client certificates):
 
 ```bash
-# Start the QUIC server
-keychain server --quic --listen :8443 \
-  --tls-cert /etc/gokeychain/server.crt \
-  --tls-key /etc/gokeychain/server.key
-
-# Configure PKCS#11 module
-export KEYCHAIN_PKCS11_MODE=quic
-export KEYCHAIN_PKCS11_QUIC_ADDR=keychain.example.com:8443
-export KEYCHAIN_PKCS11_TLS_CA=/etc/gokeychain/ca.crt
+# Environment variables
+export XKMS_PKCS11_TARGET=xkms.example.com:9443
+export XKMS_PKCS11_TLS_ENABLED=true
+export XKMS_PKCS11_TLS_CERT=/etc/xkms/client.crt
+export XKMS_PKCS11_TLS_KEY=/etc/xkms/client.key
+export XKMS_PKCS11_TLS_CA=/etc/xkms/ca.crt
 ```
 
-## Token Configuration
+Configuration file:
 
-### Multiple Tokens
-
-Configure separate tokens for different purposes:
-
-```yaml
-tokens:
-  # Primary signing token
-  - slot_id: 0
-    label: "SIGNING-KEYS"
-    flags:
-      login_required: true
-
-  # Certificate storage (public access)
-  - slot_id: 1
-    label: "CERTIFICATES"
-    flags:
-      login_required: false
-      write_protected: true
-
-  # Admin operations
-  - slot_id: 2
-    label: "ADMIN"
-    flags:
-      login_required: true
-      user_pin_change: true
+```ini
+target = xkms.example.com:9443
+tls_enabled = true
+tls_cert = /etc/xkms/client.crt
+tls_key = /etc/xkms/client.key
+tls_ca = /etc/xkms/ca.crt
+timeout = 30s
 ```
 
-### PIN Configuration
+## Timeout Configuration
 
-PINs can be configured in multiple ways (in order of precedence):
+The timeout applies to individual operations. Use Go duration format:
 
-1. Environment variable: `KEYCHAIN_PIN`
-2. Configuration file: `tokens[].pin`
-3. Runtime via `C_Login()`
-
-For security, avoid storing PINs in configuration files in production.
-
-## Logging Configuration
-
-Enable debug logging for troubleshooting:
-
-```bash
-export KEYCHAIN_DEBUG=true
-export KEYCHAIN_LOG_FILE=/var/log/gokeychain-pkcs11.log
+```ini
+# Examples
+timeout = 5s      # 5 seconds
+timeout = 100ms   # 100 milliseconds
+timeout = 1m      # 1 minute
+timeout = 30s     # 30 seconds (default)
 ```
 
-Log levels:
-- `error`: Only errors
-- `warn`: Warnings and errors
-- `info`: General information
-- `debug`: Detailed debugging information
+For high-latency networks, increase the timeout:
 
-## Performance Tuning
-
-### Connection Pooling
-
-For remote backends, configure connection pooling:
-
-```yaml
-pkcs11:
-  mode: rest
-  rest:
-    base_url: https://localhost:8443
-    # Maximum concurrent connections
-    max_connections: 10
-    # Keep connections alive
-    keepalive_ms: 30000
+```ini
+target = remote-xkms.example.com:9443
+timeout = 60s
 ```
 
-### Timeout Configuration
+## DNS-Based Configuration
 
-Configure appropriate timeouts for your network:
+For DNS-based service discovery:
 
-```yaml
-pkcs11:
-  mode: grpc
-  grpc:
-    address: localhost:9443
-    # Connection timeout
-    connect_timeout_ms: 5000
-    # Operation timeout
-    timeout_ms: 30000
-    # Keep-alive ping interval
-    keepalive_ms: 30000
+```ini
+target = dns:///xkms.service.consul:9443
+```
+
+This uses DNS SRV records for service discovery and load balancing.
+
+## Configuration Validation
+
+The module validates configuration at load time:
+
+- Target format must be valid (unix://, dns://, or host:port)
+- TLS certificate and key files must exist if specified
+- TLS CA file must exist if specified
+- Timeout must be non-negative
+
+Validation errors:
+
+| Error | Cause |
+|-------|-------|
+| `target is required` | Empty target |
+| `invalid target format` | Unrecognized target format |
+| `TLS certificate file is required` | TLS key without cert |
+| `TLS key file is required` | TLS cert without key |
+| `TLS certificate file not found` | Cert file does not exist |
+| `timeout must be non-negative` | Negative timeout value |
+
+## Example Configurations
+
+### Development (Local)
+
+```ini
+target = unix:///tmp/xkms.sock
+timeout = 5s
+```
+
+### Production (Remote with mTLS)
+
+```ini
+target = xkms.prod.internal:9443
+tls_enabled = true
+tls_cert = /etc/xkms/client.crt
+tls_key = /etc/xkms/client.key
+tls_ca = /etc/xkms/ca.crt
+timeout = 30s
+```
+
+### High-Availability (DNS)
+
+```ini
+target = dns:///xkms.service.consul:9443
+tls_enabled = true
+tls_ca = /etc/xkms/ca.crt
+timeout = 60s
+```
+
+## Programmatic Configuration
+
+When using the module as a Go library:
+
+```go
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+package main
+
+import (
+    "time"
+
+    "github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+)
+
+func main() {
+    cfg := &module.Config{
+        Target:  "unix:///var/run/xkms/xkms.sock",
+        Timeout: 30 * time.Second,
+        TLS: module.TLSConfig{
+            Enabled: false,
+        },
+    }
+
+    cfg.SetDefaults()
+    if err := cfg.Validate(); err != nil {
+        panic(err)
+    }
+
+    m, _ := module.New(module.WithConfig(cfg))
+    rv := m.Initialize(cfg)
+    if rv != module.CKR_OK {
+        panic("initialization failed")
+    }
+    defer m.Finalize()
+}
 ```

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/stretchr/testify/require"
 )
 

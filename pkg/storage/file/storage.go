@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,6 +16,7 @@
 package file
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -24,7 +25,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 const (
@@ -74,7 +75,7 @@ func New(rootDir string) (storage.Backend, error) {
 
 // Get retrieves the value for the given key.
 // Returns storage.ErrNotFound if the key does not exist.
-func (f *FileStorage) Get(key string) ([]byte, error) {
+func (f *FileStorage) Get(_ context.Context, key string) ([]byte, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -95,13 +96,13 @@ func (f *FileStorage) Get(key string) ([]byte, error) {
 	return data, nil
 }
 
-// Put stores the value for the given key with optional metadata.
+// Put stores the value for the given key.
 // If the key already exists, it will be overwritten.
 // File permissions are determined by the key prefix:
 //   - keys/* = 0600 (owner rw only)
 //   - certs/* = 0644 (owner rw, others r)
 //   - default = 0600 (owner rw only)
-func (f *FileStorage) Put(key string, value []byte, opts *storage.Options) error {
+func (f *FileStorage) Put(_ context.Context, key string, value []byte) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -113,8 +114,8 @@ func (f *FileStorage) Put(key string, value []byte, opts *storage.Options) error
 		return fmt.Errorf("file storage: failed to create directory for key %q: %w", key, err)
 	}
 
-	// Determine file permissions based on key prefix or options
-	perms := f.getFilePermissions(key, opts)
+	// Determine file permissions based on key prefix
+	perms := filePermissionsForKey(key)
 
 	// Write the file
 	if err := os.WriteFile(filePath, value, perms); err != nil {
@@ -126,7 +127,7 @@ func (f *FileStorage) Put(key string, value []byte, opts *storage.Options) error
 
 // Delete removes the key and its value from storage.
 // Returns storage.ErrNotFound if the key does not exist.
-func (f *FileStorage) Delete(key string) error {
+func (f *FileStorage) Delete(_ context.Context, key string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -151,7 +152,7 @@ func (f *FileStorage) Delete(key string) error {
 // List returns all keys with the given prefix.
 // If prefix is empty, all keys are returned.
 // Keys are returned in sorted order.
-func (f *FileStorage) List(prefix string) ([]string, error) {
+func (f *FileStorage) List(_ context.Context, prefix string) ([]string, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -191,8 +192,52 @@ func (f *FileStorage) List(prefix string) ([]string, error) {
 	return keys, nil
 }
 
+// Scan iterates over all key-value pairs matching the given prefix,
+// calling fn for each pair. If prefix is empty, all pairs are visited.
+// Return a non-nil error from fn to stop iteration early.
+func (f *FileStorage) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	err := filepath.WalkDir(f.rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories
+		if d.IsDir() {
+			return nil
+		}
+
+		// Convert file path back to key
+		key, err := f.pathToKey(path)
+		if err != nil {
+			return err
+		}
+
+		// Filter by prefix
+		if prefix != "" && !strings.HasPrefix(key, prefix) {
+			return nil
+		}
+
+		// Read the file contents
+		data, err := os.ReadFile(path) // #nosec G122 -- path comes from WalkDir, not user input
+		if err != nil {
+			return fmt.Errorf("file storage: failed to read key %q: %w", key, err)
+		}
+
+		return fn(key, data)
+	})
+
+	if err != nil {
+		return fmt.Errorf("file storage: failed to scan keys: %w", err)
+	}
+
+	return nil
+}
+
 // Exists checks if a key exists in storage.
-func (f *FileStorage) Exists(key string) (bool, error) {
+func (f *FileStorage) Exists(_ context.Context, key string) (bool, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
@@ -266,14 +311,8 @@ func (f *FileStorage) pathToKey(path string) (string, error) {
 	return rel, nil
 }
 
-// getFilePermissions determines the file permissions based on the key prefix.
-func (f *FileStorage) getFilePermissions(key string, opts *storage.Options) fs.FileMode {
-	// If options specify permissions, use them
-	if opts != nil && opts.Permissions != 0 {
-		return opts.Permissions
-	}
-
-	// Otherwise, use default permissions based on key prefix
+// filePermissionsForKey determines the file permissions based on the key prefix.
+func filePermissionsForKey(key string) fs.FileMode {
 	if strings.HasPrefix(key, "keys/") {
 		return keysFilePerms
 	}

@@ -1,6 +1,6 @@
 # Docker Compose configuration for SDK integration tests
 #
-# This file sets up the keychain server and all required services
+# This file sets up the xkms server and all required services
 # for running SDK integration tests against real protocol endpoints.
 #
 # Usage:
@@ -13,15 +13,18 @@
 #   docker compose -f test/integration/sdk/docker-compose.yml down -v
 
 services:
-  # Keychain server with all protocols enabled
-  keychain-server:
+  # xKMS server with all protocols enabled
+  xkms-server:
     build:
       context: ../../..
       dockerfile: Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../go-qrdb
+        go-quicraft: ../../../../go-quicraft
       args:
         - VERSION=${VERSION:-0.0.1-dev}
-    image: go-keychain-sdk-test:latest
-    container_name: keychain-sdk-server
+    image: go-xkms-sdk-test:latest
+    container_name: xkms-sdk-server
     ports:
       - "8443:8443"       # REST API (HTTPS)
       - "9443:9443"       # gRPC
@@ -32,13 +35,13 @@ services:
     # Required for QUIC UDP buffer settings
     privileged: true
     volumes:
-      - keychain-data:/data
-      - keychain-socket:/var/run/keychain
-      - keychain-certs:/etc/keychain/certs
-      - ./config.sdk.yaml:/etc/keychain/keychaind.yaml:ro
+      - xkms-data:/data
+      - xkms-socket:/var/run/xkms
+      - xkms-certs:/etc/xkms/certs
+      - ./config.sdk.yaml:/etc/xkms/xkmsd.yaml:ro
       - ./scripts:/scripts:ro
     environment:
-      - KEYCHAIN_CONFIG=/etc/keychain/keychaind.yaml
+      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration
@@ -48,20 +51,20 @@ services:
       - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
       # Certificate directory
-      - CERT_DIR=/etc/keychain/certs
+      - CERT_DIR=/etc/xkms/certs
     depends_on:
       swtpm:
         condition: service_healthy
       softhsm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--no-check-certificate", "https://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 5s
       retries: 15
       start_period: 20s
     networks:
-      - keychain-sdk
+      - xkms-sdk
     # Run as root for integration tests (allows cert generation and UDP buffer config)
     user: root
     entrypoint:
@@ -73,24 +76,24 @@ services:
         echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo "Warning: Could not set rmem_max"
         echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo "Warning: Could not set wmem_max"
         # Ensure directories exist
-        mkdir -p /etc/keychain/certs /var/run/keychain /data
+        mkdir -p /etc/xkms/certs /var/run/xkms /data
         # Generate TLS certificates for QUIC/HTTPS
         if [ -f /scripts/generate-test-certs.sh ]; then
           echo "Generating TLS certificates..."
           /scripts/generate-test-certs.sh
         fi
         # Verify certificates were created
-        ls -la /etc/keychain/certs/ || true
-        echo "Starting keychain server..."
-        exec /app/keychaind
+        ls -la /etc/xkms/certs/ || true
+        echo "Starting xkms server..."
+        exec /app/xkmsd
 
   # SWTPM TPM 2.0 Simulator
   swtpm:
     build:
       context: ../../../test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-keychain-swtpm:sdk-test
-    container_name: keychain-sdk-swtpm
+    image: go-xkms-swtpm:sdk-test
+    container_name: xkms-sdk-swtpm
     ports:
       - "2321:2321"  # TPM command port
       - "2322:2322"  # TPM control port
@@ -102,15 +105,15 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - keychain-sdk
+      - xkms-sdk
 
   # SoftHSM PKCS#11 Service
   softhsm:
     build:
       context: ../../../test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-keychain-softhsm:sdk-test
-    container_name: keychain-sdk-softhsm
+    image: go-xkms-softhsm:sdk-test
+    container_name: xkms-sdk-softhsm
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -122,44 +125,49 @@ services:
       timeout: 3s
       retries: 3
     networks:
-      - keychain-sdk
+      - xkms-sdk
 
   # SDK integration test runner
   sdk-tests:
     build:
       context: ../../..
       dockerfile: Dockerfile
-    image: go-keychain-sdk-test:latest
-    container_name: keychain-sdk-tests
+      additional_contexts:
+        go-qrdb: ../../../../go-qrdb
+        go-quicraft: ../../../../go-quicraft
+    image: go-xkms-sdk-test:latest
+    container_name: xkms-sdk-tests
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root
     depends_on:
-      keychain-server:
+      xkms-server:
         condition: service_healthy
     volumes:
       - ../../..:/workspace
-      - keychain-socket:/var/run/keychain
-      - keychain-certs:/etc/keychain/certs:ro
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
+      - xkms-socket:/var/run/xkms
+      - xkms-certs:/etc/xkms/certs:ro
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
       # Server endpoints (container network addresses)
-      - KEYSTORE_UNIX_SOCKET=/var/run/keychain/keychain.sock
-      - KEYSTORE_REST_URL=https://keychain-server:8443
-      - KEYSTORE_GRPC_ADDR=keychain-server:9443
-      - KEYSTORE_QUIC_URL=https://keychain-server:8444
-      - KEYSTORE_MCP_ADDR=keychain-server:9444
-      # TLS configuration - use insecure for self-signed certs
-      - KEYSTORE_TLS_CA=/etc/keychain/certs/ca.crt
-      - KEYSTORE_TLS_INSECURE=true
+      - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
+      - KEYSTORE_REST_URL=https://xkms-server:8443
+      - KEYSTORE_GRPC_ADDR=xkms-server:9443
+      - KEYSTORE_QUIC_URL=https://xkms-server:8444
+      - KEYSTORE_MCP_ADDR=xkms-server:9444
+      # TLS configuration - use CA certificate for proper verification
+      - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
       # Test configuration
       - INTEGRATION_TIMEOUT=120s
       - GO_TEST_FLAGS=-v -tags=integration
     working_dir: /workspace
     networks:
-      - keychain-sdk
+      - xkms-sdk
     command: >
       sh -c "
       echo 'Configuring UDP buffers for QUIC...' &&
@@ -168,19 +176,19 @@ services:
       echo 'Waiting for server to be ready...' &&
       sleep 5 &&
       echo 'Checking Unix socket...' &&
-      ls -la /var/run/keychain/ || true &&
+      ls -la /var/run/xkms/ || true &&
       echo 'Checking TLS certificates...' &&
-      ls -la /etc/keychain/certs/ || true &&
+      ls -la /etc/xkms/certs/ || true &&
       echo 'Running SDK integration tests...' &&
-      go test -v -tags=integration ./test/integration/sdk/go/... -timeout 15m
+      go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/sdk/go/... -timeout 15m
       "
 
 volumes:
-  keychain-data:
+  xkms-data:
     driver: local
-  keychain-socket:
+  xkms-socket:
     driver: local
-  keychain-certs:
+  xkms-certs:
     driver: local
   softhsm-tokens:
     driver: local
@@ -192,5 +200,5 @@ volumes:
     driver: local
 
 networks:
-  keychain-sdk:
+  xkms-sdk:
     driver: bridge

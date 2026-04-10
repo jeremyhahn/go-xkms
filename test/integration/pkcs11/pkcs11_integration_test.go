@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -17,6 +17,7 @@
 package integration
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -33,10 +34,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // TestPKCS11Integration performs comprehensive integration tests for PKCS11 backend
@@ -427,13 +428,13 @@ func TestPKCS11Integration(t *testing.T) {
 		testCert := createTestCertificate(t, "test-cert")
 
 		t.Run("SaveAndGetCert", func(t *testing.T) {
-			err := storage.SaveCertParsed(certStorage, "test-cert", testCert)
+			err := storage.SaveCertParsed(context.Background(), certStorage, "test-cert", testCert)
 			if err != nil {
 				t.Fatalf("Failed to save certificate: %v", err)
 			}
 			t.Log("✓ Certificate saved")
 
-			retrievedCert, err := storage.GetCertParsed(certStorage, "test-cert")
+			retrievedCert, err := storage.GetCertParsed(context.Background(), certStorage, "test-cert")
 			if err != nil {
 				t.Fatalf("Failed to retrieve certificate: %v", err)
 			}
@@ -446,7 +447,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("CertExists", func(t *testing.T) {
-			exists, err := storage.CertExists(certStorage, "test-cert")
+			exists, err := storage.CertExists(context.Background(), certStorage, "test-cert")
 			if err != nil {
 				t.Fatalf("Failed to check certificate existence: %v", err)
 			}
@@ -455,7 +456,7 @@ func TestPKCS11Integration(t *testing.T) {
 			}
 			t.Log("✓ Certificate exists check passed")
 
-			exists, err = storage.CertExists(certStorage, "non-existent-cert")
+			exists, err = storage.CertExists(context.Background(), certStorage, "non-existent-cert")
 			if err != nil {
 				t.Fatalf("Failed to check non-existent certificate: %v", err)
 			}
@@ -466,13 +467,13 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("DeleteCert", func(t *testing.T) {
-			err := storage.DeleteCert(certStorage, "test-cert")
+			err := storage.DeleteCert(context.Background(), certStorage, "test-cert")
 			if err != nil {
 				t.Fatalf("Failed to delete certificate: %v", err)
 			}
 			t.Log("✓ Certificate deleted")
 
-			exists, err := storage.CertExists(certStorage, "test-cert")
+			exists, err := storage.CertExists(context.Background(), certStorage, "test-cert")
 			if err != nil {
 				t.Fatalf("Failed to check certificate existence after deletion: %v", err)
 			}
@@ -487,13 +488,13 @@ func TestPKCS11Integration(t *testing.T) {
 			cert2 := createTestCertificate(t, "chain-cert-2")
 			chain := []*x509.Certificate{cert1, cert2}
 
-			err := storage.SaveCertChainParsed(certStorage, "test-chain", chain)
+			err := storage.SaveCertChainParsed(context.Background(), certStorage, "test-chain", chain)
 			if err != nil {
 				t.Fatalf("Failed to save certificate chain: %v", err)
 			}
 			t.Log("✓ Certificate chain saved")
 
-			retrievedChain, err := storage.GetCertChainParsed(certStorage, "test-chain")
+			retrievedChain, err := storage.GetCertChainParsed(context.Background(), certStorage, "test-chain")
 			if err != nil {
 				t.Fatalf("Failed to retrieve certificate chain: %v", err)
 			}
@@ -506,7 +507,7 @@ func TestPKCS11Integration(t *testing.T) {
 		})
 
 		t.Run("ListCerts", func(t *testing.T) {
-			certs, err := storage.ListCerts(certStorage)
+			certs, err := storage.ListCerts(context.Background(), certStorage)
 			if err != nil {
 				t.Fatalf("Failed to list certificates: %v", err)
 			}

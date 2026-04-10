@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,12 +14,13 @@
 package hardware
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // BackendCertStorageAdapter wraps a storage.Backend to implement HardwareCertStorage interface.
@@ -55,7 +56,7 @@ func (a *BackendCertStorageAdapter) SaveCert(id string, cert *x509.Certificate) 
 		return storage.ErrInvalidData
 	}
 
-	return storage.SaveCert(a.backend, id, cert.Raw)
+	return storage.SaveCert(context.Background(), a.backend, id, cert.Raw)
 }
 
 // GetCert retrieves and parses a certificate from the backend.
@@ -71,7 +72,7 @@ func (a *BackendCertStorageAdapter) GetCert(id string) (*x509.Certificate, error
 		return nil, storage.ErrInvalidID
 	}
 
-	certData, err := storage.GetCert(a.backend, id)
+	certData, err := storage.GetCert(context.Background(), a.backend, id)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +98,7 @@ func (a *BackendCertStorageAdapter) DeleteCert(id string) error {
 		return storage.ErrInvalidID
 	}
 
-	return storage.DeleteCert(a.backend, id)
+	return storage.DeleteCert(context.Background(), a.backend, id)
 }
 
 // SaveCertChain stores a certificate chain by concatenating DER-encoded certificates.
@@ -125,7 +126,7 @@ func (a *BackendCertStorageAdapter) SaveCertChain(id string, chain []*x509.Certi
 		chainData = append(chainData, cert.Raw...)
 	}
 
-	return storage.SaveCertChain(a.backend, id, chainData)
+	return storage.SaveCertChain(context.Background(), a.backend, id, chainData)
 }
 
 // GetCertChain retrieves and parses a certificate chain from the backend.
@@ -141,7 +142,7 @@ func (a *BackendCertStorageAdapter) GetCertChain(id string) ([]*x509.Certificate
 		return nil, storage.ErrInvalidID
 	}
 
-	chainData, err := storage.GetCertChain(a.backend, id)
+	chainData, err := storage.GetCertChain(context.Background(), a.backend, id)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +172,7 @@ func (a *BackendCertStorageAdapter) ListCerts() ([]string, error) {
 	}
 
 	// List all keys with "certs/" prefix
-	keys, err := a.backend.List("certs/")
+	keys, err := a.backend.List(context.Background(), "certs/")
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +203,7 @@ func (a *BackendCertStorageAdapter) CertExists(id string) (bool, error) {
 		return false, storage.ErrInvalidID
 	}
 
-	return storage.CertExists(a.backend, id)
+	return storage.CertExists(context.Background(), a.backend, id)
 }
 
 // Close closes the underlying backend.

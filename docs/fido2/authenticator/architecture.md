@@ -1,365 +1,181 @@
 # Authenticator Architecture
 
-This document describes the detailed architecture of the native FIDO2 authenticator, including component design, data flow, and protocol implementations.
+> This document covers the FIDO2-specific view of the unified PIN system. For the project-wide PIN architecture covering all subsystems, see [Unified PIN Architecture](../../architecture/pin-architecture.md).
 
-## Component Architecture
+## Unified PIN Architecture
 
-### Core Components
+xkey operates three independent PIN subsystems. The **PINCoordinator** unifies them
+through an observer-pattern fan-out so that a PIN change in any subsystem propagates
+to the others automatically.
 
-```
-+------------------------------------------------------------------+
-|                        Authenticator                              |
-|                                                                   |
-|  config: *Config           # Configuration (immutable after init) |
-|  storage: StatefulCredentialStorage  # Credential persistence     |
-|  state: *AuthenticatorState          # Runtime state              |
-|  pinState: authenticatorPINState     # PIN protocol state         |
-|  credMgmtState: *credMgmtEnumerationState  # Enumeration state   |
-|  closed: atomic.Bool       # Lifecycle flag                       |
-|  mu: sync.RWMutex          # State protection                     |
-|                                                                   |
-|  +-- matchingCredentials: []*StoredCredential  # GetNextAssertion |
-|  +-- currentCredentialIndex: int               # state            |
-|  +-- lastClientDataHash: []byte                #                  |
-+------------------------------------------------------------------+
-```
+### PIN Subsystems
 
-### State Management
+| Subsystem | Storage Format | Location |
+|-----------|---------------|----------|
+| FilePINManager | Argon2id hash | `~/.xkey/pin/state.json` |
+| FIDO2 Authenticator | SHA-256(PIN)[:16] | Authenticator state file |
+| PKCS#11 Module | SHA-256(PIN) | Token state |
+
+Each subsystem retains its own storage format. The coordinator does not normalize
+formats -- each subscriber receives the raw PIN and/or hash and converts locally.
+
+### PIN Hierarchy
 
 ```
-+------------------------------------------------------------------+
-|                    AuthenticatorState                             |
-|                                                                   |
-|  AAGUID: [16]byte          # Authenticator Attestation GUID       |
-|  PINHash: []byte           # SHA-256(PIN)[:16]                    |
-|  PINSet: bool              # PIN configured flag                  |
-|  pinRetries: atomic.Int32  # Remaining PIN attempts               |
-|  uvRetries: atomic.Int32   # Remaining UV attempts                |
-|  AttestationKey: *ecdsa.PrivateKey  # Self-attestation key        |
-|  AttestationCert: []byte   # Self-attestation certificate         |
-+------------------------------------------------------------------+
+SO PIN (Admin)
+  +-- xkey SO PIN / Key Manager SMK derivation
+  +-- PKCS#11 SO PIN (default=SO PIN, overridable)
+  +-- TPM Hierarchy Passwords
+
+User PIN (Day-to-day)
+  +-- FIDO2 PIN, SHA-256[:16] (default=User PIN, overridable via --unified-pin=false)
+  +-- PKCS#11 User PIN, SHA-256 (default=User PIN, overridable)
+  +-- Key Manager UMK derivation
 ```
 
-## Data Flow Diagrams
+### PINCoordinator
 
-### MakeCredential Flow
-
-```
-Client                 Authenticator                Storage
-  |                         |                          |
-  |  MakeCredential(req)   |                          |
-  |----------------------->|                          |
-  |                         |                          |
-  |                         | validate request         |
-  |                         |------------------------->|
-  |                         |                          |
-  |                         | check excludeList        |
-  |                         |<-------------------------|
-  |                         |                          |
-  |                         | select algorithm         |
-  |                         |                          |
-  |                         | check limits             |
-  |                         |------------------------->|
-  |                         |                          |
-  |                         | generate key pair        |
-  |                         |                          |
-  |                         | generate credential ID   |
-  |                         |                          |
-  |                         | build authData           |
-  |                         |                          |
-  |                         | store credential         |
-  |                         |------------------------->|
-  |                         |                          |
-  |                         | build response           |
-  |                         |                          |
-  |  MakeCredentialResponse |                          |
-  |<------------------------|                          |
-```
-
-### GetAssertion Flow
-
-```
-Client                 Authenticator                Storage
-  |                         |                          |
-  |  GetAssertion(req)      |                          |
-  |------------------------>|                          |
-  |                         |                          |
-  |                         | decode request           |
-  |                         |                          |
-  |                         | find matching creds      |
-  |                         |------------------------->|
-  |                         |<-------------------------|
-  |                         |                          |
-  |                         | check credProtect        |
-  |                         |                          |
-  |                         | process extensions       |
-  |                         | (hmac-secret)           |
-  |                         |                          |
-  |                         | build authData           |
-  |                         |                          |
-  |                         | increment signCount      |
-  |                         |------------------------->|
-  |                         |                          |
-  |                         | sign(authData || cdHash) |
-  |                         |                          |
-  |  GetAssertionResponse   |                          |
-  |<------------------------|                          |
-```
-
-### PIN Protocol Flow
-
-```
-Platform                Authenticator
-   |                         |
-   | GetKeyAgreement         |
-   |------------------------>|
-   |                         | generate ECDH key pair
-   |                         |
-   | aG (auth public key)    |
-   |<------------------------|
-   |                         |
-   | SetPIN(bG, enc(PIN))    |
-   | bG = platform pub key   |
-   |------------------------>|
-   |                         | K = ECDH(a, bG)
-   |                         | sharedSecret = SHA-256(K)
-   |                         | PIN = decrypt(enc(PIN))
-   |                         | store(SHA-256(PIN)[:16])
-   |                         |
-   | success                 |
-   |<------------------------|
-   |                         |
-   | GetPINToken(bG, enc(pinHash)) |
-   |------------------------>|
-   |                         | K = ECDH(a, bG)
-   |                         | verify pinHash
-   |                         | generate token
-   |                         | encrypt(token)
-   |                         |
-   | enc(pinToken)           |
-   |<------------------------|
-```
-
-### hmac-secret Extension Flow
-
-```
-Platform                Authenticator
-   |                         |
-   | GetAssertion with       |
-   | hmac-secret extension   |
-   |------------------------>|
-   |                         |
-   | Input:                  |
-   | - keyAgreement (bG)     | K = ECDH(ephemeral, bG)
-   | - saltEnc               | sharedSecret = SHA-256(K)
-   | - saltAuth              |
-   | - pinUvAuthProtocol     | verify saltAuth
-   |                         | salt1 = decrypt(saltEnc)
-   |                         |
-   |                         | output1 = HMAC-SHA-256(
-   |                         |   credentialHMACKey,
-   |                         |   salt1)
-   |                         |
-   |                         | encOutput = encrypt(output1)
-   |                         |
-   | Output:                 |
-   | - encrypted HMAC output |
-   |<------------------------|
-```
-
-## Credential Storage
-
-### StoredCredential Structure
+`pin_coordinator.go` -- pure propagation mechanism, stores no PINs.
 
 ```go
-type StoredCredential struct {
-    CredentialID    []byte    // 32 bytes, random
-    RPID            string    // Relying party ID
-    RPName          string    // Relying party name
-    UserID          []byte    // User handle
-    UserName        string    // Username
-    UserDisplayName string    // Display name
-    PrivateKey      []byte    // PKCS#8 encoded
-    PublicKeyCOSE   []byte    // CBOR COSE_Key
-    Algorithm       int       // COSE algorithm ID
-    SignCount       uint32    // Signature counter
-    Discoverable    bool      // Resident key flag
-    HMACSecretKey   []byte    // 32 bytes for hmac-secret
-    CreatedAt       int64     // Unix timestamp
+type PINCoordinator struct {
+    subscribers []PINSubscriber
+    enabled     bool
+    logger      *slog.Logger
+    mu          sync.RWMutex
 }
 ```
 
-### Storage Interface Hierarchy
+**API:**
 
-```
-CredentialStorage (base)
-    |
-    +-- StatefulCredentialStorage (+ state persistence)
-            |
-            +-- MemoryStorage (in-memory)
-            |
-            +-- BackendStorage (persistent)
+- `NewPINCoordinator(enabled bool, logger *slog.Logger) *PINCoordinator`
+- `Register(sub PINSubscriber)` -- thread-safe subscriber registration
+- `NotifyUserPINChanged(callerName, rawPIN string, pinHash []byte) error` -- fan-out,
+  skips the subscriber whose `Name()` matches `callerName`
+- `NotifyUserPINChangedHashOnly(callerName string, pinHash []byte) error` -- delegates
+  to `NotifyUserPINChanged` with empty `rawPIN`; used by SO reset flows
+- `IsEnabled() bool`
 
-Optional interfaces:
-    +-- CredentialEnumerator (for credential management)
-    +-- ClearableStorage (for reset operations)
-    +-- ListableStorage (for enumeration)
-```
+**Design decisions:**
 
-## Cryptographic Operations
+- Subscriber errors are logged at Warn level but never propagated. The primary PIN
+  change always succeeds regardless of subscriber failures.
+- `callerName` exclusion prevents circular notification loops.
+- Notifications are fire-and-forget via goroutines in the CTAP2 command handlers
+  (`cmd_clientpin.go`, `cmd_config.go`).
+- A snapshot of the subscriber slice is taken under RLock before iteration, so
+  Register and Notify are safe for concurrent use.
 
-### Key Generation
-
-```
-Algorithm       Curve         Signature Hash
----------       -----         --------------
-ES256 (-7)      P-256         SHA-256
-ES384 (-35)     P-384         SHA-384
-ES512 (-36)     P-521         SHA-512
-EdDSA (-8)      Ed25519       (intrinsic)
-```
-
-### COSE Key Encoding
-
-EC2 Key (P-256 example):
-```
-{
-    1: 2,      // kty: EC2
-    3: -7,     // alg: ES256
-   -1: 1,      // crv: P-256
-   -2: x,      // x coordinate (32 bytes)
-   -3: y       // y coordinate (32 bytes)
-}
-```
-
-OKP Key (Ed25519):
-```
-{
-    1: 1,      // kty: OKP
-    3: -8,     // alg: EdDSA
-   -1: 6,      // crv: Ed25519
-   -2: pub     // public key (32 bytes)
-}
-```
-
-### Authenticator Data Structure
-
-```
-+------------------+--------+-----------------------------------+
-| Field            | Bytes  | Description                       |
-+------------------+--------+-----------------------------------+
-| rpIdHash         | 32     | SHA-256(rpId)                     |
-| flags            | 1      | UP, UV, AT, ED bits               |
-| signCount        | 4      | Big-endian counter                |
-| attestedCredData | var    | Present if AT flag set            |
-|   - aaguid       | 16     | Authenticator ID                  |
-|   - credIdLen    | 2      | Big-endian                        |
-|   - credId       | var    | Credential ID                     |
-|   - pubKeyCOSE   | var    | CBOR-encoded public key           |
-| extensions       | var    | Present if ED flag set (CBOR)     |
-+------------------+--------+-----------------------------------+
-```
-
-### Flags Byte
-
-```
-Bit 0 (0x01): UP - User Present
-Bit 2 (0x04): UV - User Verified
-Bit 6 (0x40): AT - Attested Credential Data present
-Bit 7 (0x80): ED - Extension Data present
-```
-
-## CTAP-HID Layer
-
-The CTAPHIDHandler provides HID protocol framing for virtual device usage.
-
-### Packet Format
-
-**Initialization Packet:**
-```
-+----------+------+--------+---------+
-| CID (4B) | CMD  | LEN(2) | DATA    |
-+----------+------+--------+---------+
-| bytes    | 1    | BE     | 0-57B   |
-+----------+------+--------+---------+
-```
-
-**Continuation Packet:**
-```
-+----------+------+---------+
-| CID (4B) | SEQ  | DATA    |
-+----------+------+---------+
-| bytes    | 1    | 0-59B   |
-+----------+------+---------+
-```
-
-### HID Commands
-
-| Command | Code | Description |
-|---------|------|-------------|
-| PING | 0x81 | Echo data back |
-| INIT | 0x86 | Allocate channel |
-| CBOR | 0x90 | CTAP2 command |
-| CANCEL | 0x91 | Cancel operation |
-| WINK | 0x88 | Visual indicator |
-| ERROR | 0xBF | Error response |
-
-## Thread Safety
-
-### Mutex Strategy
+### PINSubscriber Interface
 
 ```go
-type Authenticator struct {
-    // Protected by mu
-    state           *AuthenticatorState
-    pinState        authenticatorPINState
-    credMgmtState   *credMgmtEnumerationState
-    matchingCredentials    []*StoredCredential
-    currentCredentialIndex int
-    lastClientDataHash     []byte
-
-    // Atomic (lock-free)
-    closed atomic.Bool
-
-    mu sync.RWMutex
+type PINSubscriber interface {
+    OnUserPINChanged(rawPIN string, pinHash []byte) error
+    Name() string
 }
 ```
 
-### Lock Ordering
+Subscribers that require the raw PIN (PKCS#11, File) return nil when `rawPIN` is
+empty. Subscribers that only need the hash (FIDO2) return an error when `pinHash`
+is empty.
 
-1. Authenticator.mu (outer)
-2. Storage operations (inner)
+### Subscriber Implementations
 
-Never hold authenticator lock when calling external callbacks.
+**FIDO2PINSubscriber** (`pin_subscriber_fido2.go`, Name: `"fido2"`)
 
-## Error Mapping
+Updates `AuthenticatorState.PINHash`, sets `PINSet = true`, resets retries, and
+persists state. If a `KeyManager` is present and SO-unlocked, syncs the user key
+material. If SO is locked, sets `PINSyncPending = true` for deferred sync.
 
-CTAP2 errors map to Go typed errors:
+**PKCS11PINSubscriber** (`pin_subscriber_pkcs11.go`, Name: `"pkcs11"`)
+
+Forwards `rawPIN` to the `PKCS11PINSetter` interface (`SetUserPin(pin string)`).
+Skips gracefully on hash-only notifications.
+
+**FilePINSubscriber** (`pin_subscriber_file.go`, Name: `"file"`)
+
+Forwards `rawPIN` to the `FilePINSetter` interface (`SetUserPIN(soPIN, newUserPIN string) error`).
+Holds the SO PIN at construction time. Skips gracefully on hash-only notifications.
+
+### Sequence Flows
+
+**PIN set via Chrome WebAuthn:**
+
+```
+Chrome -> CTAP2 setPIN -> handleSetPIN -> state saved
+  -> goroutine: PINCoordinator.NotifyUserPINChanged("fido2", rawPIN, hash)
+       -> PKCS11PINSubscriber.OnUserPINChanged(rawPIN, hash)
+       -> FilePINSubscriber.OnUserPINChanged(rawPIN, hash)
+```
+
+**PIN set via CLI:**
+
+```
+CLI -> FilePINManager.SetUserPIN()
+  -> PINCoordinator.NotifyUserPINChanged("file", rawPIN, hash)
+       -> FIDO2PINSubscriber.OnUserPINChanged(rawPIN, hash)
+       -> PKCS11PINSubscriber.OnUserPINChanged(rawPIN, hash)
+```
+
+**SO resets User PIN (hash-only):**
+
+```
+SO -> handleVendorResetUserPIN -> state saved
+  -> goroutine: PINCoordinator.NotifyUserPINChangedHashOnly("fido2", hash)
+       -> PKCS11PINSubscriber: skips (no rawPIN)
+       -> FilePINSubscriber: skips (no rawPIN)
+```
+
+### Deferred Sync
+
+When a FIDO2 PIN is set before the SO PIN is configured, the `KeyManager` cannot
+derive key material. The `FIDO2PINSubscriber` sets `PINSyncPending = true` on the
+authenticator state. When SO later unlocks via `KeyManager.UnlockWithSOPIN()`, the
+pending sync executes automatically:
 
 ```go
-switch {
-case errors.Is(err, ErrCredentialNotFound):
-    return StatusNoCredentials      // 0x2E
-case errors.Is(err, ErrPINBlocked):
-    return StatusPINBlocked         // 0x32
-case errors.Is(err, ErrPINInvalid):
-    return StatusPINInvalid         // 0x31
-// ... etc
+// key_manager.go - UnlockWithSOPIN()
+if km.state.PINSyncPending && km.state.PINSet && len(km.state.PINHash) > 0 {
+    // Initialize or reset user key material
+    km.state.PINSyncPending = false
 }
 ```
 
-## Extension Points
+### Configuration
 
-### Adding New Extensions
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `--unified-pin` | `true` | Enable/disable PIN coordination |
+| `Config.UnifiedPIN` | `true` | YAML: `unified-pin`, JSON: `unified_pin` |
 
-1. Add input parsing in command handler
-2. Implement extension processing logic
-3. Include output in response/authData
-4. Update GetInfo to advertise support
+When disabled, no `PINCoordinator` is created. Each subsystem manages PINs
+independently.
 
-### Adding New Storage Backend
+### Wiring (cmd/xkey/cmd/fido2.go)
 
-1. Implement `StatefulCredentialStorage` interface
-2. Optionally implement `CredentialEnumerator`
-3. Handle serialization of `StoredCredential`
-4. Handle atomic state persistence
+The `fido2` command wires the coordinator at device startup:
+
+1. Creates `PINCoordinator` if `Config.UnifiedPIN` is true
+2. Registers `FIDO2PINSubscriber` (always present)
+3. Additional subscribers (PKCS#11, File) are registered when those subsystems
+   are configured
+4. Calls `auth.SetPINCoordinator(coord)` so CTAP2 handlers can dispatch
+   notifications
+
+### Source Files
+
+```
+xkey/pkg/authenticator/
+  pin_coordinator.go          PINCoordinator implementation
+  pin_coordinator_test.go     Coordinator unit tests
+  pin_subscriber_fido2.go     FIDO2 subscriber
+  pin_subscriber_fido2_test.go
+  pin_subscriber_pkcs11.go    PKCS#11 subscriber
+  pin_subscriber_pkcs11_test.go
+  pin_subscriber_file.go      File PIN manager subscriber
+  pin_subscriber_file_test.go
+  cmd_clientpin.go            CTAP2 SetPIN/ChangePIN (notification call sites)
+  cmd_config.go               Vendor resetUserPIN (hash-only notification)
+  key_manager.go              Deferred PINSyncPending handling
+  config.go                   UnifiedPIN config field
+```

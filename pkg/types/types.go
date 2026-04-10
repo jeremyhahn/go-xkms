@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package types contains shared type definitions used across the keychain,
+// Package types contains shared type definitions used across the xkms,
 // including key attributes, backend interfaces, and cryptographic types.
-// This package has no dependencies on pkg/backend or pkg/keychain to prevent
+// This package has no dependencies on pkg/backend or pkg/xkms to prevent
 // import cycles.
 package types
 
@@ -85,7 +85,7 @@ var (
 // File System Types
 // =============================================================================
 
-// FSExtension represents file extension types used by the keychain
+// FSExtension represents file extension types used by the xkms
 // file backend for storing cryptographic material.
 type FSExtension string
 
@@ -106,7 +106,7 @@ const (
 // Partition Types
 // =============================================================================
 
-// Partition represents logical storage partitions within the keychain
+// Partition represents logical storage partitions within the xkms
 // for organizing keys by their purpose.
 type Partition string
 
@@ -114,6 +114,7 @@ const (
 	// Partition constants for organizing keys by type
 	PartitionRoot           Partition = ""
 	PartitionTLS            Partition = "issued"
+	PartitionEncapsulation  Partition = "encapsulation"
 	PartitionEncryptionKeys Partition = "crypto"
 	PartitionSigningKeys    Partition = "signing"
 	PartitionHMAC           Partition = "hmac"
@@ -124,6 +125,7 @@ const (
 var Partitions = []Partition{
 	PartitionRoot,
 	PartitionTLS,
+	PartitionEncapsulation,
 	PartitionEncryptionKeys,
 	PartitionSigningKeys,
 	PartitionHMAC,
@@ -149,6 +151,7 @@ const (
 	StoreQuantum   StoreType = "quantum"
 	StoreThreshold StoreType = "threshold"
 	StoreFrost     StoreType = "frost"
+	StorePhone     StoreType = "phone"
 	StoreUnknown   StoreType = "unknown"
 )
 
@@ -208,7 +211,6 @@ const (
 	BackendTypeSymmetric    BackendType = "symmetric"    // Symmetric encryption (AES-GCM, ChaCha20-Poly1305)
 	BackendTypeSoftware     BackendType = "software"     // Unified software backend (asymmetric + symmetric)
 	BackendTypePKCS11       BackendType = "pkcs11"       // PKCS#11 hardware security modules
-	BackendTypeSmartCardHSM BackendType = "smartcardhsm" // SmartCard-HSM with DKEK support
 	BackendTypeTPM2         BackendType = "tpm2"         // TPM 2.0 hardware security module
 	BackendTypeAWSKMS       BackendType = "awskms"       // AWS Key Management Service
 	BackendTypeGCPKMS       BackendType = "gcpkms"       // Google Cloud Key Management Service
@@ -217,6 +219,10 @@ const (
 	BackendTypeQuantum      BackendType = "quantum"      // Quantum-safe cryptography (ML-DSA, ML-KEM)
 	BackendTypeThreshold    BackendType = "threshold"    // Threshold cryptography (Shamir, threshold ECDSA)
 	BackendTypeFrost        BackendType = "frost"        // FROST threshold signatures (RFC 9591)
+	BackendTypePhone        BackendType = "phone"        // Android phone as HSM via BLE/USB (TEE/StrongBox)
+	BackendTypeSmartCardHSM BackendType = "smartcardhsm" // SmartCard-HSM (Nitrokey HSM, CardContact)
+	BackendTypeYubiKey      BackendType = "yubikey"      // YubiKey PIV
+	BackendTypeSoftHSM      BackendType = "softhsm"      // SoftHSM2 (development/testing)
 )
 
 // =============================================================================
@@ -230,6 +236,7 @@ const (
 	// Key type constants
 	KeyTypeAttestation KeyType = 1 + iota
 	KeyTypeCA
+	KeyTypeEncapsulation
 	KeyTypeEncryption
 	KeyTypeEndorsement
 	KeyTypeHMAC
@@ -249,6 +256,8 @@ func (kt KeyType) String() string {
 		return "ATTESTATION"
 	case KeyTypeCA:
 		return "CA"
+	case KeyTypeEncapsulation:
+		return "ENCAPSULATION"
 	case KeyTypeEncryption:
 		return "ENCRYPTION"
 	case KeyTypeEndorsement:
@@ -757,18 +766,6 @@ func NewPasswordFromString(password string) Password {
 	return &ClearPassword{password: []byte(password)}
 }
 
-// NewClearPassword is an alias for NewPassword for backward compatibility.
-// Deprecated: Use NewPassword instead.
-func NewClearPassword(password []byte) Password {
-	return NewPassword(password)
-}
-
-// NewClearPasswordFromString is an alias for NewPasswordFromString for backward compatibility.
-// Deprecated: Use NewPasswordFromString instead.
-func NewClearPasswordFromString(password string) Password {
-	return NewPasswordFromString(password)
-}
-
 // String returns the password as a string.
 func (p *ClearPassword) String() (string, error) {
 	return string(p.password), nil
@@ -888,6 +885,11 @@ type KeyAttributes struct {
 	// CN is the common name identifier for the key
 	CN string
 
+	// TenantID optionally identifies the tenant that owns this key.
+	// When empty, single-tenant mode is used (existing behavior).
+	// When set, storage paths are namespaced by tenant for isolation.
+	TenantID string
+
 	// Debug enables detailed logging for this key
 	Debug bool
 
@@ -959,6 +961,12 @@ type KeyAttributes struct {
 	// TPMAttributes contains TPM-specific configuration
 	TPMAttributes *TPMAttributes
 
+	// PIVSlot specifies the target PIV slot for slot-constrained PKCS#11 tokens
+	// (e.g., YubiKey PIV). When empty, the backend uses its default CKA_ID
+	// derivation. This field is only meaningful for PKCS#11 backends that
+	// implement pivcert.SlotModel.
+	PIVSlot string `json:"piv_slot,omitempty" yaml:"piv_slot,omitempty"`
+
 	// WrapAttributes specifies key wrapping configuration
 	WrapAttributes *KeyAttributes
 
@@ -997,21 +1005,21 @@ func (attrs KeyAttributes) String() string {
 	}
 
 	sb.WriteString("Key Attributes\n")
-	sb.WriteString(fmt.Sprintf("  Common Name: %s\n", attrs.CN))
-	sb.WriteString(fmt.Sprintf("  Debug: %t\n", attrs.Debug))
-	sb.WriteString(fmt.Sprintf("  Hash: %s\n", attrs.Hash.String()))
-	sb.WriteString(fmt.Sprintf("  Key Algorithm: %s\n", attrs.KeyAlgorithm))
-	sb.WriteString(fmt.Sprintf("  Platform Policy: %t\n", attrs.PlatformPolicy))
-	sb.WriteString(fmt.Sprintf("  Signature Algorithm: %s\n", attrs.SignatureAlgorithm.String()))
-	sb.WriteString(fmt.Sprintf("  Store: %s\n", attrs.StoreType))
-	sb.WriteString(fmt.Sprintf("  Type: %s\n", attrs.KeyType))
+	fmt.Fprintf(&sb, "  Common Name: %s\n", attrs.CN)
+	fmt.Fprintf(&sb, "  Debug: %t\n", attrs.Debug)
+	fmt.Fprintf(&sb, "  Hash: %s\n", attrs.Hash.String())
+	fmt.Fprintf(&sb, "  Key Algorithm: %s\n", attrs.KeyAlgorithm)
+	fmt.Fprintf(&sb, "  Platform Policy: %t\n", attrs.PlatformPolicy)
+	fmt.Fprintf(&sb, "  Signature Algorithm: %s\n", attrs.SignatureAlgorithm.String())
+	fmt.Fprintf(&sb, "  Store: %s\n", attrs.StoreType)
+	fmt.Fprintf(&sb, "  Type: %s\n", attrs.KeyType)
 
 	if attrs.ECCAttributes != nil {
 		sb.WriteString("ECC Attributes\n")
-		sb.WriteString(fmt.Sprintf("  Curve: %s\n", attrs.ECCAttributes.Curve.Params().Name))
+		fmt.Fprintf(&sb, "  Curve: %s\n", attrs.ECCAttributes.Curve.Params().Name)
 	} else if attrs.RSAAttributes != nil {
 		sb.WriteString("RSA Attributes\n")
-		sb.WriteString(fmt.Sprintf("  Size: %d\n", attrs.RSAAttributes.KeySize))
+		fmt.Fprintf(&sb, "  Size: %d\n", attrs.RSAAttributes.KeySize)
 	} else if attrs.X25519Attributes != nil {
 		sb.WriteString("X25519 Attributes\n")
 		sb.WriteString("  Curve: X25519 (Curve25519)\n")
@@ -1019,8 +1027,8 @@ func (attrs KeyAttributes) String() string {
 
 	if attrs.Debug {
 		sb.WriteString("Secrets\n")
-		sb.WriteString(fmt.Sprintf("  Password: %s\n", password))
-		sb.WriteString(fmt.Sprintf("  SealData: %s\n", sealDataStr))
+		fmt.Fprintf(&sb, "  Password: %s\n", password)
+		fmt.Fprintf(&sb, "  SealData: %s\n", sealDataStr)
 	}
 
 	return sb.String()
@@ -1101,10 +1109,11 @@ func (attrs *KeyAttributes) IsSymmetric() bool {
 }
 
 // ID returns a unique identifier for the key based on its attributes.
-// Format for X25519 keys: [partition:]storetype:keytype:cn:x25519
-// Format for quantum keys: [partition:]storetype:keytype:cn:quantumalgorithm
-// Format for asymmetric keys: [partition:]storetype:keytype:cn:keyalgorithm
-// Format for symmetric keys: [partition:]storetype:keytype:cn:symmetricalgorithm
+// When TenantID is set, it is prefixed: tenantid:[partition:]storetype:keytype:cn:algorithm
+// Format for X25519 keys: [tenantid:][partition:]storetype:keytype:cn:x25519
+// Format for quantum keys: [tenantid:][partition:]storetype:keytype:cn:quantumalgorithm
+// Format for asymmetric keys: [tenantid:][partition:]storetype:keytype:cn:keyalgorithm
+// Format for symmetric keys: [tenantid:][partition:]storetype:keytype:cn:symmetricalgorithm
 func (attrs *KeyAttributes) ID() string {
 	var algorithm string
 
@@ -1126,23 +1135,31 @@ func (attrs *KeyAttributes) ID() string {
 		algorithm = "unknown"
 	}
 
-	// Build ID based on whether partition is set
+	// Build base ID based on whether partition is set
 	// Use lowercase for KeyType to ensure consistent key ID format
 	keyType := strings.ToLower(attrs.KeyType.String())
+	var baseID string
 	if attrs.Partition != "" {
-		return fmt.Sprintf("%s:%s:%s:%s:%s",
+		baseID = fmt.Sprintf("%s:%s:%s:%s:%s",
 			attrs.Partition,
+			attrs.StoreType,
+			keyType,
+			attrs.CN,
+			algorithm)
+	} else {
+		baseID = fmt.Sprintf("%s:%s:%s:%s",
 			attrs.StoreType,
 			keyType,
 			attrs.CN,
 			algorithm)
 	}
 
-	return fmt.Sprintf("%s:%s:%s:%s",
-		attrs.StoreType,
-		keyType,
-		attrs.CN,
-		algorithm)
+	// Prefix with TenantID when set for multi-tenant isolation
+	if attrs.TenantID != "" {
+		return attrs.TenantID + ":" + baseID
+	}
+
+	return baseID
 }
 
 // KeyID returns the unique identifier for this key in the 4-part format:
@@ -1157,7 +1174,7 @@ func (attrs *KeyAttributes) ID() string {
 //   - Backend only: "pkcs11:::my-key"
 //   - Shorthand: "my-key" (when only CN is set)
 //
-// This is the canonical identifier format used throughout the keychain API.
+// This is the canonical identifier format used throughout the xkms API.
 func (attrs *KeyAttributes) KeyID() string {
 	// If only CN is set, return just the keyname as shorthand
 	if attrs.StoreType == "" && attrs.KeyType == 0 && attrs.KeyAlgorithm == x509.UnknownPublicKeyAlgorithm {
@@ -1223,6 +1240,64 @@ func (attrs *KeyAttributes) CertificateID() string {
 // Backend Capabilities
 // =============================================================================
 
+// SecurityLevel indicates the security strength of a backend implementation.
+// Higher values indicate more secure implementations with stronger key protection.
+type SecurityLevel uint8
+
+const (
+	// SecurityLevelLow indicates software-only key protection.
+	// Keys are stored on disk with software encryption.
+	// Examples: Software/PKCS8 backend
+	SecurityLevelLow SecurityLevel = 0
+
+	// SecurityLevelMedium indicates cloud-managed key protection.
+	// Keys are protected by remote HSMs via network APIs.
+	// Examples: AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault
+	SecurityLevelMedium SecurityLevel = 1
+
+	// SecurityLevelHigh indicates local HSM key protection.
+	// Keys are protected by hardware security modules under local control.
+	// Examples: PKCS#11 HSMs, SmartCards
+	SecurityLevelHigh SecurityLevel = 2
+
+	// SecurityLevelVeryHigh indicates hardware-bound non-exportable keys.
+	// Keys are generated in and never leave the hardware.
+	// Examples: TPM 2.0 (with FixedTPM attribute)
+	SecurityLevelVeryHigh SecurityLevel = 3
+)
+
+// String returns a human-readable name for the security level.
+func (l SecurityLevel) String() string {
+	switch l {
+	case SecurityLevelLow:
+		return "Low"
+	case SecurityLevelMedium:
+		return "Medium"
+	case SecurityLevelHigh:
+		return "High"
+	case SecurityLevelVeryHigh:
+		return "VeryHigh"
+	default:
+		return "Unknown"
+	}
+}
+
+// Description returns a detailed description of the security level.
+func (l SecurityLevel) Description() string {
+	switch l {
+	case SecurityLevelLow:
+		return "Software-only, keys stored on disk"
+	case SecurityLevelMedium:
+		return "Cloud KMS, network-dependent HSM protection"
+	case SecurityLevelHigh:
+		return "Local HSM, hardware-protected keys"
+	case SecurityLevelVeryHigh:
+		return "TPM 2.0, hardware-bound non-exportable keys"
+	default:
+		return "Unknown security level"
+	}
+}
+
 // Capabilities declares what features a backend supports.
 type Capabilities struct {
 	// Keys indicates if the backend supports key generation and storage.
@@ -1266,6 +1341,21 @@ type Capabilities struct {
 
 	// ECIES indicates if the backend supports ECIES public key encryption.
 	ECIES bool
+
+	// Attestation indicates if the backend supports key attestation.
+	// Attesting backends can produce cryptographic proof that keys are hardware-backed.
+	Attestation bool
+
+	// QuantumSigning indicates if the backend supports post-quantum digital signatures (ML-DSA).
+	QuantumSigning bool
+
+	// KeyEncapsulation indicates if the backend supports key encapsulation mechanisms (ML-KEM).
+	KeyEncapsulation bool
+
+	// SecurityLevel indicates the security strength of this backend.
+	// Used for sorting backends by security preference in UIs.
+	// Values: 0=Low (software), 1=Medium (cloud), 2=High (PKCS11), 3=VeryHigh (TPM2)
+	SecurityLevel SecurityLevel
 }
 
 // SupportsSymmetricEncryption returns true if the backend implements symmetric operations.
@@ -1286,6 +1376,16 @@ func (c Capabilities) SupportsKeyAgreement() bool {
 // SupportsECIES returns true if the backend implements ECIES encryption/decryption.
 func (c Capabilities) SupportsECIES() bool {
 	return c.ECIES
+}
+
+// SupportsQuantumSigning returns true if the backend supports post-quantum digital signatures.
+func (c Capabilities) SupportsQuantumSigning() bool {
+	return c.QuantumSigning
+}
+
+// SupportsKeyEncapsulation returns true if the backend supports key encapsulation mechanisms.
+func (c Capabilities) SupportsKeyEncapsulation() bool {
+	return c.KeyEncapsulation
 }
 
 // HasKeys returns true if the backend supports key storage.
@@ -1318,13 +1418,19 @@ func (c Capabilities) SupportsKeyRotation() bool {
 	return c.KeyRotation
 }
 
+// GetSecurityLevel returns the security level of this backend.
+func (c Capabilities) GetSecurityLevel() SecurityLevel {
+	return c.SecurityLevel
+}
+
 // String returns a string representation of the capabilities.
 func (c Capabilities) String() string {
-	return fmt.Sprintf("Capabilities{Keys: %v, HardwareBacked: %v, Signing: %v, Decryption: %v, KeyRotation: %v}",
-		c.Keys, c.HardwareBacked, c.Signing, c.Decryption, c.KeyRotation)
+	return fmt.Sprintf("Capabilities{Keys: %v, HardwareBacked: %v, Signing: %v, Decryption: %v, KeyRotation: %v, SecurityLevel: %v}",
+		c.Keys, c.HardwareBacked, c.Signing, c.Decryption, c.KeyRotation, c.SecurityLevel)
 }
 
 // NewSoftwareCapabilities returns capabilities for a software-based backend.
+// SecurityLevel is set to Low (software-only key protection).
 func NewSoftwareCapabilities() Capabilities {
 	return Capabilities{
 		Keys:           true,
@@ -1332,10 +1438,13 @@ func NewSoftwareCapabilities() Capabilities {
 		Signing:        true,
 		Decryption:     true,
 		KeyRotation:    false,
+		SecurityLevel:  SecurityLevelLow,
 	}
 }
 
 // NewHardwareCapabilities returns capabilities for a hardware-based backend.
+// SecurityLevel defaults to High (local HSM) but should be overridden by
+// specific backends (e.g., TPM2 sets VeryHigh, Cloud KMS sets Medium).
 func NewHardwareCapabilities() Capabilities {
 	return Capabilities{
 		Keys:           true,
@@ -1343,11 +1452,13 @@ func NewHardwareCapabilities() Capabilities {
 		Signing:        true,
 		Decryption:     true,
 		KeyRotation:    false,
+		SecurityLevel:  SecurityLevelHigh,
 	}
 }
 
 // NewUnifiedSoftwareCapabilities returns capabilities for the unified software backend
 // which supports both asymmetric and symmetric operations.
+// SecurityLevel is set to Low (software-only key protection).
 func NewUnifiedSoftwareCapabilities() Capabilities {
 	return Capabilities{
 		Keys:                true,
@@ -1356,6 +1467,7 @@ func NewUnifiedSoftwareCapabilities() Capabilities {
 		Decryption:          true,
 		KeyRotation:         true,
 		SymmetricEncryption: true,
+		SecurityLevel:       SecurityLevelLow,
 	}
 }
 
@@ -1373,7 +1485,7 @@ func NewUnifiedSoftwareCapabilities() Capabilities {
 //   - Backends handle crypto operations (generate, sign, decrypt)
 //   - Certificate storage is ALWAYS external (even for PKCS#11/TPM2)
 //   - This allows maximum flexibility in storage strategies
-type Backend interface {
+type KeyProvider interface {
 	// Type returns the backend type identifier.
 	Type() BackendType
 
@@ -1420,16 +1532,16 @@ type Backend interface {
 	Close() error
 }
 
-// AttestingBackend extends Backend with key attestation capabilities.
-// Backends that support hardware key attestation should implement this interface.
+// AttestingKeyProvider extends KeyProvider with key attestation capabilities.
+// Key providers that support hardware key attestation should implement this interface.
 // Attestation proves that a key was generated in hardware and never left the secure boundary.
 //
 // This is critical for zero-trust architectures and compliance requirements
 // (FIPS 140-2, Common Criteria, supply chain security).
 //
-// Only hardware-backed backends (TPM2, PKCS#11) may implement this interface.
-type AttestingBackend interface {
-	Backend
+// Only hardware-backed key providers (TPM2, PKCS#11) may implement this interface.
+type AttestingKeyProvider interface {
+	KeyProvider
 
 	// AttestKey generates an attestation statement proving a key was created in hardware.
 	//
@@ -1514,10 +1626,10 @@ type SymmetricEncrypter interface {
 	Decrypt(data *EncryptedData, opts *DecryptOptions) ([]byte, error)
 }
 
-// SymmetricBackend extends Backend with symmetric encryption capabilities.
-// Backends that support symmetric operations should implement this interface.
-type SymmetricBackend interface {
-	Backend
+// SymmetricKeyProvider extends KeyProvider with symmetric encryption capabilities.
+// Key providers that support symmetric operations should implement this interface.
+type SymmetricKeyProvider interface {
+	KeyProvider
 
 	// GenerateSymmetricKey generates a new symmetric key with the given attributes.
 	// The key is stored internally by the backend (if it supports native storage)
@@ -1533,6 +1645,589 @@ type SymmetricBackend interface {
 	// exposing the key material (especially important for HSM/KMS backends).
 	// Returns an error if the key does not exist or doesn't support symmetric operations.
 	SymmetricEncrypter(attrs *KeyAttributes) (SymmetricEncrypter, error)
+}
+
+// =============================================================================
+// Key Agreement Types
+// =============================================================================
+
+// KDFAlgorithm identifies the key derivation function to use.
+type KDFAlgorithm string
+
+const (
+	// KDFAlgorithmHKDF uses HMAC-based Extract-and-Expand Key Derivation Function (RFC 5869).
+	// This is the most widely used KDF for key agreement outputs.
+	KDFAlgorithmHKDF KDFAlgorithm = "HKDF"
+
+	// KDFAlgorithmSP800108Counter uses NIST SP 800-108 Counter Mode KDF.
+	// Required for FIPS-compliant key derivation in some government contexts.
+	KDFAlgorithmSP800108Counter KDFAlgorithm = "SP800-108-COUNTER"
+
+	// KDFAlgorithmSP800108Feedback uses NIST SP 800-108 Feedback Mode KDF.
+	KDFAlgorithmSP800108Feedback KDFAlgorithm = "SP800-108-FEEDBACK"
+
+	// KDFAlgorithmSP80056A uses NIST SP 800-56A Concatenation KDF.
+	// Often used in ECDH key agreement protocols.
+	KDFAlgorithmSP80056A KDFAlgorithm = "SP800-56A"
+
+	// KDFAlgorithmX963 uses ANSI X9.63 Key Derivation Function.
+	// Compatible with many cryptographic libraries and standards.
+	KDFAlgorithmX963 KDFAlgorithm = "X963"
+)
+
+// String returns the string representation of the KDF algorithm.
+func (k KDFAlgorithm) String() string {
+	return string(k)
+}
+
+// IsValid returns true if the KDF algorithm is recognized.
+func (k KDFAlgorithm) IsValid() bool {
+	switch k {
+	case KDFAlgorithmHKDF, KDFAlgorithmSP800108Counter, KDFAlgorithmSP800108Feedback,
+		KDFAlgorithmSP80056A, KDFAlgorithmX963:
+		return true
+	default:
+		return false
+	}
+}
+
+// KDFParams contains parameters for key derivation functions used in key agreement.
+// These parameters control how the raw shared secret from ECDH is transformed
+// into usable cryptographic key material.
+type KDFParams struct {
+	// Algorithm specifies the KDF algorithm to use (e.g., HKDF, SP800-108-COUNTER).
+	// If empty, defaults to HKDF.
+	Algorithm KDFAlgorithm
+
+	// Hash specifies the hash algorithm for the KDF (e.g., SHA-256, SHA-384, SHA-512).
+	// Must be compatible with the chosen KDF algorithm.
+	// If empty, defaults to SHA-256.
+	Hash string
+
+	// Salt is the optional salt value for the KDF.
+	// For HKDF, this is used in the extract phase.
+	// For SP800-108, this may be incorporated into the context.
+	// Can be nil for unsalted derivation.
+	Salt []byte
+
+	// Info is the optional context and application specific information.
+	// For HKDF, this is used in the expand phase.
+	// For SP800-108, this is the Label || 0x00 || Context || L structure.
+	// Can be nil if no additional context is needed.
+	Info []byte
+
+	// KeyLength specifies the desired output key length in bytes.
+	// Must be positive and appropriate for the intended use.
+	// For example: 16 for AES-128, 32 for AES-256.
+	KeyLength int
+
+	// DerivationMode specifies how the derived key should be handled.
+	// For standard ECDH operations, this defaults to KeyDerivationModeExport.
+	// For secure key agreement operations, this can be set to keep the key
+	// within hardware security boundaries.
+	DerivationMode KeyDerivationMode
+
+	// DerivedKeyAttributes contains template parameters for HSM-resident keys.
+	// Only used when DerivationMode is KeyDerivationModeHSMResident.
+	// If nil, default template parameters are used.
+	DerivedKeyAttributes *DerivedKeyTemplateParams
+
+	// HSMKDFType specifies the PKCS#11 KDF type for HSM_KDF mode.
+	// This is the CKD_* value passed to CKM_ECDH1_DERIVE mechanism.
+	// Common values: CKD_SHA256_KDF, CKD_SHA384_KDF, CKD_SHA512_KDF.
+	// If zero, the backend selects an appropriate default.
+	HSMKDFType uint32
+}
+
+// Validate validates the KDF parameters and sets defaults.
+func (p *KDFParams) Validate() error {
+	// Set defaults
+	if p.Algorithm == "" {
+		p.Algorithm = KDFAlgorithmHKDF
+	}
+	if p.Hash == "" {
+		p.Hash = "SHA-256"
+	}
+
+	// Validate algorithm
+	if !p.Algorithm.IsValid() {
+		return fmt.Errorf("invalid KDF algorithm: %s", p.Algorithm)
+	}
+
+	// Validate hash
+	switch p.Hash {
+	case "SHA-256", "SHA-384", "SHA-512", "SHA3-256", "SHA3-384", "SHA3-512":
+		// Valid hash algorithms
+	default:
+		return fmt.Errorf("unsupported hash algorithm: %s", p.Hash)
+	}
+
+	// Validate key length
+	if p.KeyLength <= 0 {
+		return fmt.Errorf("key length must be positive, got %d", p.KeyLength)
+	}
+	if p.KeyLength > 1024 {
+		return fmt.Errorf("key length %d exceeds maximum of 1024 bytes", p.KeyLength)
+	}
+
+	// Validate derivation mode
+	if !p.DerivationMode.IsValid() {
+		return fmt.Errorf("invalid derivation mode: %d", p.DerivationMode)
+	}
+
+	return nil
+}
+
+// DefaultKDFParams returns recommended default KDF parameters for ECDH key derivation.
+// Uses HKDF with SHA-256 and produces a 32-byte (256-bit) key suitable for AES-256.
+func DefaultKDFParams() *KDFParams {
+	return &KDFParams{
+		Algorithm: KDFAlgorithmHKDF,
+		Hash:      "SHA-256",
+		KeyLength: 32,
+	}
+}
+
+// KeyAgreementProvider extends KeyProvider with ECDH key agreement capabilities.
+// Key providers that support elliptic curve Diffie-Hellman key agreement should
+// implement this interface to enable secure key exchange protocols.
+//
+// Key agreement is essential for:
+//   - TLS key exchange
+//   - ECIES hybrid encryption
+//   - Secure messaging protocols
+//   - Key encapsulation mechanisms
+//
+// Example usage:
+//
+//	// Derive a shared encryption key using ECDH + HKDF
+//	kdfParams := &types.KDFParams{
+//	    Algorithm: types.KDFAlgorithmHKDF,
+//	    Hash:      "SHA-256",
+//	    Info:      []byte("encryption-key-v1"),
+//	    KeyLength: 32,
+//	}
+//	sharedKey, err := backend.DeriveKeyECDH(ctx, myKeyAttrs, peerPublicKeyBytes, kdfParams)
+type KeyAgreementProvider interface {
+	KeyProvider
+
+	// DeriveKeyECDH performs ECDH key agreement and derives a symmetric key.
+	//
+	// The operation:
+	//   1. Retrieves the private key identified by privateKeyAttrs
+	//   2. Parses the peer's public key from peerPublicKey bytes
+	//   3. Performs ECDH to compute the raw shared secret
+	//   4. Applies the KDF specified in kdfParams to derive the final key
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and deadline propagation
+	//   - privateKeyAttrs: Attributes identifying the local private key
+	//   - peerPublicKey: The peer's public key in DER or uncompressed point format
+	//   - kdfParams: Parameters for the key derivation function
+	//
+	// The private key must be an ECDSA key with a curve supported by both parties.
+	// The peer public key must use the same curve as the private key.
+	//
+	// Returns the derived key bytes or an error if the operation fails.
+	// Possible errors:
+	//   - ErrKeyNotFound if the private key does not exist
+	//   - ErrInvalidKeyAlgorithm if the key is not an EC key
+	//   - ErrInvalidParameter if the peer public key is malformed
+	//   - ErrCurveMismatch if the curves do not match
+	DeriveKeyECDH(ctx context.Context, privateKeyAttrs *KeyAttributes, peerPublicKey []byte, kdfParams *KDFParams) ([]byte, error)
+
+	// SupportedCurves returns the list of elliptic curves supported for key agreement.
+	//
+	// Common curves include:
+	//   - "P-256" (secp256r1, prime256v1) - 128-bit security
+	//   - "P-384" (secp384r1) - 192-bit security
+	//   - "P-521" (secp521r1) - 256-bit security
+	//   - "X25519" - Modern curve for key agreement (Curve25519)
+	//
+	// Returns a slice of curve identifiers. The order may indicate preference.
+	SupportedCurves() []string
+}
+
+// =============================================================================
+// Secure ECDH Key Derivation Types
+// =============================================================================
+
+// KeyDerivationMode specifies how the derived key from ECDH is handled.
+// Different modes provide varying levels of security and flexibility.
+type KeyDerivationMode int
+
+const (
+	// KeyDerivationModeExport returns derived key bytes to the caller.
+	// This is the default mode compatible with existing DeriveKeyECDH behavior.
+	// Security: Application-level protection only - key exists in application memory.
+	KeyDerivationModeExport KeyDerivationMode = iota
+
+	// KeyDerivationModeHSMResident keeps the derived key inside the HSM.
+	// The key is created with CKA_EXTRACTABLE=false and never leaves the HSM.
+	// Security: Maximum - key never exposed, all operations performed by HSM.
+	KeyDerivationModeHSMResident
+
+	// KeyDerivationModeHSMKDF runs the KDF inside the HSM, then exports the result.
+	// The raw ECDH shared secret never leaves the HSM, only the KDF output does.
+	// Security: Raw secret protected - compromise doesn't reveal ECDH secret.
+	KeyDerivationModeHSMKDF
+
+	// KeyDerivationModeTPMWrapped seals the derived key using TPM2.
+	// Uses TPM2_ECDH_KeyGen for ephemeral key exchange and TPM2_Create for sealing.
+	// Security: TPM-bound - key can only be used on the same TPM platform.
+	KeyDerivationModeTPMWrapped
+)
+
+// String returns the string representation of the KeyDerivationMode.
+func (m KeyDerivationMode) String() string {
+	switch m {
+	case KeyDerivationModeExport:
+		return "EXPORT"
+	case KeyDerivationModeHSMResident:
+		return "HSM_RESIDENT"
+	case KeyDerivationModeHSMKDF:
+		return "HSM_KDF"
+	case KeyDerivationModeTPMWrapped:
+		return "TPM_WRAPPED"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", m)
+	}
+}
+
+// IsValid returns true if the mode is a recognized KeyDerivationMode.
+func (m KeyDerivationMode) IsValid() bool {
+	switch m {
+	case KeyDerivationModeExport, KeyDerivationModeHSMResident,
+		KeyDerivationModeHSMKDF, KeyDerivationModeTPMWrapped:
+		return true
+	default:
+		return false
+	}
+}
+
+// ParseKeyDerivationMode converts a string to a KeyDerivationMode.
+// Returns KeyDerivationModeExport as default for unrecognized strings.
+func ParseKeyDerivationMode(s string) KeyDerivationMode {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "EXPORT", "":
+		return KeyDerivationModeExport
+	case "HSM_RESIDENT", "HSMRESIDENT":
+		return KeyDerivationModeHSMResident
+	case "HSM_KDF", "HSMKDF":
+		return KeyDerivationModeHSMKDF
+	case "TPM_WRAPPED", "TPMWRAPPED":
+		return KeyDerivationModeTPMWrapped
+	default:
+		return KeyDerivationModeExport
+	}
+}
+
+// DerivedKeyHandle references a key that resides within an HSM or TPM.
+// This handle is returned by DeriveKeyECDHSecure when using HSM_RESIDENT
+// or TPM_WRAPPED modes, and can be used with UseResidentKey to perform
+// cryptographic operations without ever exposing the key material.
+type DerivedKeyHandle struct {
+	// ID is a unique identifier for this derived key.
+	ID string `json:"id"`
+
+	// Backend identifies which backend contains this key.
+	Backend string `json:"backend"`
+
+	// Extractable indicates whether the key can be exported.
+	// For HSM_RESIDENT mode, this is always false.
+	Extractable bool `json:"extractable"`
+
+	// KeyLength is the length of the derived key in bytes.
+	KeyLength int `json:"key_length"`
+
+	// Algorithm identifies the key type (e.g., "AES", "HMAC").
+	Algorithm string `json:"algorithm"`
+
+	// Ephemeral indicates the key should be destroyed when the session ends.
+	Ephemeral bool `json:"ephemeral"`
+
+	// HSMHandle is the PKCS#11 object handle for HSM-resident keys.
+	// Only valid when Backend is "pkcs11" or similar.
+	HSMHandle uint64 `json:"hsm_handle,omitempty"`
+
+	// TPMHandle contains TPM-specific handle information.
+	// Only valid when Backend is "tpm2".
+	TPMHandle *TPMDerivedKeyHandle `json:"tpm_handle,omitempty"`
+}
+
+// TPMDerivedKeyHandle contains TPM-specific information for derived keys.
+type TPMDerivedKeyHandle struct {
+	// Handle is the TPM object handle.
+	Handle uint32 `json:"handle"`
+
+	// ParentHandle is the handle of the parent storage key.
+	ParentHandle uint32 `json:"parent_handle"`
+
+	// Public contains the TPM2B_PUBLIC structure for the key.
+	Public []byte `json:"public,omitempty"`
+
+	// Private contains the TPM2B_PRIVATE structure (encrypted).
+	Private []byte `json:"private,omitempty"`
+
+	// PolicyDigest is the policy digest if policy-based authorization is used.
+	PolicyDigest []byte `json:"policy_digest,omitempty"`
+}
+
+// ECDHResult contains the result of a secure ECDH key derivation operation.
+// Depending on the DerivationMode, either DerivedKey or Handle will be populated.
+type ECDHResult struct {
+	// Mode indicates which derivation mode was used.
+	Mode KeyDerivationMode `json:"mode"`
+
+	// DerivedKey contains the key bytes for EXPORT and HSM_KDF modes.
+	// For HSM_RESIDENT and TPM_WRAPPED modes, this is nil.
+	DerivedKey []byte `json:"derived_key,omitempty"`
+
+	// Handle references the HSM/TPM-resident key for HSM_RESIDENT and TPM_WRAPPED modes.
+	// For EXPORT and HSM_KDF modes, this is nil.
+	Handle *DerivedKeyHandle `json:"handle,omitempty"`
+
+	// EphemeralPublicKey is the ephemeral public key for TPM_WRAPPED mode.
+	// This is the public key generated by TPM2_ECDH_KeyGen that the peer
+	// needs to compute their half of the shared secret.
+	EphemeralPublicKey []byte `json:"ephemeral_public_key,omitempty"`
+}
+
+// HasKey returns true if this result contains usable key material or handle.
+func (r *ECDHResult) HasKey() bool {
+	return len(r.DerivedKey) > 0 || r.Handle != nil
+}
+
+// IsExported returns true if the derived key is available as bytes.
+func (r *ECDHResult) IsExported() bool {
+	return len(r.DerivedKey) > 0
+}
+
+// IsResident returns true if the derived key is HSM/TPM-resident.
+func (r *ECDHResult) IsResident() bool {
+	return r.Handle != nil
+}
+
+// DerivedKeyTemplateParams specifies attributes for HSM-resident derived keys.
+// These parameters control how the derived key is stored and what operations
+// it can perform within the HSM.
+type DerivedKeyTemplateParams struct {
+	// Label is a human-readable name for the key.
+	Label string `json:"label,omitempty"`
+
+	// ID is an optional byte identifier for the key.
+	ID string `json:"id,omitempty"`
+
+	// KeyType specifies the type of key to create (e.g., "AES", "GENERIC_SECRET").
+	KeyType string `json:"key_type"`
+
+	// Token indicates whether the key should persist on the token.
+	// If false, the key is session-only.
+	Token bool `json:"token"`
+
+	// Private indicates whether the key requires login to use.
+	Private bool `json:"private"`
+
+	// Sensitive indicates the key is sensitive and should never be revealed
+	// in plaintext outside the HSM.
+	Sensitive bool `json:"sensitive"`
+
+	// AllowEncrypt permits use for encryption operations.
+	AllowEncrypt bool `json:"allow_encrypt"`
+
+	// AllowDecrypt permits use for decryption operations.
+	AllowDecrypt bool `json:"allow_decrypt"`
+
+	// AllowWrap permits use for key wrapping operations.
+	AllowWrap bool `json:"allow_wrap"`
+
+	// AllowUnwrap permits use for key unwrapping operations.
+	AllowUnwrap bool `json:"allow_unwrap"`
+
+	// AllowDerive permits use for further key derivation.
+	AllowDerive bool `json:"allow_derive"`
+}
+
+// DefaultDerivedKeyTemplateParams returns secure default template parameters
+// for HSM-resident derived keys.
+func DefaultDerivedKeyTemplateParams() *DerivedKeyTemplateParams {
+	return &DerivedKeyTemplateParams{
+		KeyType:      "AES",
+		Token:        false, // Session key by default
+		Private:      true,  // Require login
+		Sensitive:    true,  // Never reveal plaintext
+		AllowEncrypt: true,  // Typical use case
+		AllowDecrypt: true,  // Typical use case
+		AllowWrap:    false, // Not needed by default
+		AllowUnwrap:  false, // Not needed by default
+		AllowDerive:  false, // Single derivation by default
+	}
+}
+
+// ResidentKeyOperation identifies operations that can be performed
+// with an HSM/TPM-resident derived key.
+type ResidentKeyOperation int
+
+const (
+	// ResidentKeyOpEncrypt uses the key for encryption.
+	ResidentKeyOpEncrypt ResidentKeyOperation = iota
+
+	// ResidentKeyOpDecrypt uses the key for decryption.
+	ResidentKeyOpDecrypt
+
+	// ResidentKeyOpMAC uses the key for MAC computation.
+	ResidentKeyOpMAC
+
+	// ResidentKeyOpVerifyMAC uses the key for MAC verification.
+	ResidentKeyOpVerifyMAC
+
+	// ResidentKeyOpWrap uses the key to wrap another key.
+	ResidentKeyOpWrap
+
+	// ResidentKeyOpUnwrap uses the key to unwrap another key.
+	ResidentKeyOpUnwrap
+)
+
+// String returns the string representation of the ResidentKeyOperation.
+func (op ResidentKeyOperation) String() string {
+	switch op {
+	case ResidentKeyOpEncrypt:
+		return "ENCRYPT"
+	case ResidentKeyOpDecrypt:
+		return "DECRYPT"
+	case ResidentKeyOpMAC:
+		return "MAC"
+	case ResidentKeyOpVerifyMAC:
+		return "VERIFY_MAC"
+	case ResidentKeyOpWrap:
+		return "WRAP"
+	case ResidentKeyOpUnwrap:
+		return "UNWRAP"
+	default:
+		return fmt.Sprintf("UNKNOWN(%d)", op)
+	}
+}
+
+// OperationParams contains parameters for operations using resident keys.
+type OperationParams struct {
+	// Algorithm specifies the algorithm to use (e.g., "AES-GCM", "AES-CBC").
+	Algorithm string `json:"algorithm"`
+
+	// IV is the initialization vector for CBC/CTR modes.
+	IV []byte `json:"iv,omitempty"`
+
+	// AAD is additional authenticated data for AEAD modes.
+	AAD []byte `json:"aad,omitempty"`
+
+	// TagLength is the authentication tag length in bits for AEAD modes.
+	TagLength int `json:"tag_length,omitempty"`
+}
+
+// SecureKeyAgreementProvider extends KeyAgreementProvider with secure key
+// derivation modes that keep derived keys within hardware security boundaries.
+//
+// This interface supports four derivation modes:
+//   - EXPORT: Returns derived key bytes (compatible with DeriveKeyECDH)
+//   - HSM_RESIDENT: Keeps key in HSM with CKA_EXTRACTABLE=false
+//   - HSM_KDF: Runs KDF inside HSM, exports only KDF output
+//   - TPM_WRAPPED: Uses TPM2_ECDH_KeyGen with TPM-sealed secrets
+//
+// Backends should implement this interface when they can provide enhanced
+// security guarantees for derived key material.
+type SecureKeyAgreementProvider interface {
+	KeyAgreementProvider
+
+	// DeriveKeyECDHSecure performs ECDH key agreement with configurable security modes.
+	//
+	// The operation varies based on kdfParams.DerivationMode:
+	//   - EXPORT: Same as DeriveKeyECDH, returns key bytes in ECDHResult.DerivedKey
+	//   - HSM_RESIDENT: Derives key inside HSM, returns handle in ECDHResult.Handle
+	//   - HSM_KDF: Runs KDF in HSM, returns KDF output in ECDHResult.DerivedKey
+	//   - TPM_WRAPPED: Seals derived key in TPM, returns handle in ECDHResult.Handle
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and deadline propagation
+	//   - privateKeyAttrs: Attributes identifying the local private key
+	//   - peerPublicKey: The peer's public key in DER or uncompressed point format
+	//   - kdfParams: Parameters for KDF including DerivationMode
+	//
+	// Returns ECDHResult containing either key bytes or a handle, depending on mode.
+	DeriveKeyECDHSecure(ctx context.Context, privateKeyAttrs *KeyAttributes,
+		peerPublicKey []byte, kdfParams *KDFParams) (*ECDHResult, error)
+
+	// SupportedDerivationModes returns the list of derivation modes supported
+	// by this backend. Not all backends support all modes.
+	//
+	// Returns a slice of supported KeyDerivationMode values.
+	SupportedDerivationModes() []KeyDerivationMode
+
+	// UseResidentKey performs a cryptographic operation using an HSM/TPM-resident key.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and deadline propagation
+	//   - handle: The DerivedKeyHandle from a previous DeriveKeyECDHSecure call
+	//   - operation: The operation to perform (encrypt, decrypt, MAC, etc.)
+	//   - data: Input data for the operation
+	//   - params: Additional parameters for the operation
+	//
+	// Returns the operation result (ciphertext, plaintext, MAC, etc.) or error.
+	UseResidentKey(ctx context.Context, handle *DerivedKeyHandle,
+		operation ResidentKeyOperation, data []byte, params *OperationParams) ([]byte, error)
+
+	// DestroyResidentKey destroys an HSM/TPM-resident derived key.
+	// This should be called when the key is no longer needed to free resources.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and deadline propagation
+	//   - handle: The DerivedKeyHandle to destroy
+	//
+	// Returns nil on success or error if destruction fails.
+	DestroyResidentKey(ctx context.Context, handle *DerivedKeyHandle) error
+}
+
+// TPMKeyAgreementProvider extends SecureKeyAgreementProvider with TPM-specific
+// ECDH operations using TPM2_ECDH_KeyGen and TPM2_ECDH_ZGen commands.
+//
+// This interface enables TPM-bound key exchange where:
+//   - The raw ECDH shared secret never leaves the TPM
+//   - Derived keys can be sealed to the TPM's platform state
+//   - Ephemeral key generation provides forward secrecy
+type TPMKeyAgreementProvider interface {
+	SecureKeyAgreementProvider
+
+	// GenerateEphemeralECDH generates an ephemeral ECDH key pair inside the TPM
+	// and derives a shared secret with the peer's static public key.
+	//
+	// This implements the initiator side of a one-pass ECDH protocol using
+	// TPM2_ECDH_KeyGen. The ephemeral public key is returned so the peer
+	// can compute the same shared secret.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and deadline propagation
+	//   - keyAttrs: Attributes for the ephemeral key (curve, etc.)
+	//   - peerStaticPublicKey: The peer's static public key
+	//   - kdfParams: Parameters for the KDF including DerivationMode
+	//
+	// Returns ECDHResult with Handle and EphemeralPublicKey populated.
+	GenerateEphemeralECDH(ctx context.Context, keyAttrs *KeyAttributes,
+		peerStaticPublicKey []byte, kdfParams *KDFParams) (*ECDHResult, error)
+
+	// RecoverWrappedSecret recovers a shared secret from the peer's ephemeral
+	// public key using the local static private key.
+	//
+	// This implements the responder side of a one-pass ECDH protocol using
+	// TPM2_ECDH_ZGen. The peer's ephemeral public key is used with our
+	// static private key to compute the same shared secret.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and deadline propagation
+	//   - privateKeyAttrs: Attributes identifying our static private key in the TPM
+	//   - ephemeralPublicKey: The peer's ephemeral public key
+	//   - kdfParams: Parameters for the KDF including DerivationMode
+	//
+	// Returns the derived key bytes or error.
+	RecoverWrappedSecret(ctx context.Context, privateKeyAttrs *KeyAttributes,
+		ephemeralPublicKey []byte, kdfParams *KDFParams) ([]byte, error)
 }
 
 // KeyAgreement provides ECDH (Elliptic Curve Diffie-Hellman) key agreement.
@@ -1642,15 +2337,15 @@ type AEADSafetyTracker interface {
 	ResetTracking(keyID string) error
 }
 
-// SymmetricBackendWithTracking extends SymmetricBackend with AEAD safety tracking.
-// Backends that support symmetric encryption should implement this interface to
+// SymmetricKeyProviderWithTracking extends SymmetricKeyProvider with AEAD safety tracking.
+// Key providers that support symmetric encryption should implement this interface to
 // provide nonce uniqueness checking and bytes encrypted tracking.
 //
-// This interface is optional - backends can implement basic SymmetricBackend
+// This interface is optional - key providers can implement basic SymmetricKeyProvider
 // without tracking, but implementing tracking is HIGHLY RECOMMENDED for
 // production systems to prevent nonce reuse and enforce cryptographic limits.
-type SymmetricBackendWithTracking interface {
-	SymmetricBackend
+type SymmetricKeyProviderWithTracking interface {
+	SymmetricKeyProvider
 
 	// GetTracker returns the AEAD safety tracker for this backend.
 	// Returns nil if tracking is not supported or disabled.
@@ -1716,6 +2411,10 @@ type SealOptions struct {
 	// This data is authenticated but not encrypted.
 	// Supported by PKCS#11, Cloud KMS, and PKCS#8 backends.
 	AAD []byte
+
+	// Password provides authentication for the sealed object (TPM-specific).
+	// This is the UserAuth value set during sealing.
+	Password Password
 
 	// Backend specifies the storage backend for sealed data.
 	// For TPM2, this should be a store.KeyBackend implementation.
@@ -1794,10 +2493,10 @@ type SealedData struct {
 	Metadata map[string][]byte `json:"metadata,omitempty"`
 }
 
-// SealingBackend extends Backend with sealing capabilities.
-// Backends that support data sealing should implement this interface.
-type SealingBackend interface {
-	Backend
+// SealingKeyProvider extends KeyProvider with sealing capabilities.
+// Key providers that support data sealing should implement this interface.
+type SealingKeyProvider interface {
+	KeyProvider
 	Sealer
 }
 
@@ -2018,6 +2717,8 @@ func ParseKeyType(s string) KeyType {
 		return KeyTypeAttestation
 	case "CA":
 		return KeyTypeCA
+	case "ENCAPSULATION":
+		return KeyTypeEncapsulation
 	case "ENCRYPTION":
 		return KeyTypeEncryption
 	case "ENDORSEMENT":
@@ -2054,15 +2755,15 @@ func ParseHash(s string) crypto.Hash {
 		return crypto.MD4
 	case "MD5":
 		return crypto.MD5
-	case "SHA1":
+	case "SHA1", "SHA_1":
 		return crypto.SHA1
-	case "SHA224":
+	case "SHA224", "SHA_224":
 		return crypto.SHA224
-	case "SHA256":
+	case "SHA256", "SHA_256":
 		return crypto.SHA256
-	case "SHA384":
+	case "SHA384", "SHA_384":
 		return crypto.SHA384
-	case "SHA512":
+	case "SHA512", "SHA_512":
 		return crypto.SHA512
 	case "MD5SHA1":
 		return crypto.MD5SHA1
@@ -2183,10 +2884,6 @@ type Verifier interface {
 	Verify(publicKey crypto.PublicKey, digest, signature []byte) error
 }
 
-// KeyStorer is an alias for Backend for backward compatibility.
-// New code should use Backend directly.
-type KeyStorer = Backend
-
 // ParseHashFromSignatureAlgorithm returns the hash function for a signature algorithm.
 func ParseHashFromSignatureAlgorithm(sigAlgo *x509.SignatureAlgorithm) (crypto.Hash, error) {
 	if sigAlgo == nil {
@@ -2255,17 +2952,34 @@ func (v *SimpleVerifier) Verify(publicKey crypto.PublicKey, digest, signature []
 	}
 }
 
-// KeyConfig represents key configuration for external systems like ACME
+// ECCConfig holds ECC-specific configuration for YAML serialization.
+type ECCConfig struct {
+	Curve EllipticCurve `yaml:"curve" json:"curve" mapstructure:"curve"`
+}
+
+// RSAConfig holds RSA-specific configuration for YAML serialization.
+type RSAConfig struct {
+	KeySize int `yaml:"size" json:"size" mapstructure:"size"`
+}
+
+// KeyConfig represents key configuration for YAML/JSON serialization.
+// It uses typed string fields and nested algorithm-specific structs
+// for type safety at the configuration boundary.
 type KeyConfig struct {
-	CN                 string `yaml:"cn" json:"cn" mapstructure:"cn"`
-	Algorithm          string `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
-	Hash               string `yaml:"hash" json:"hash" mapstructure:"hash"`
-	RSAKeySize         int    `yaml:"rsa_key_size" json:"rsa_key_size" mapstructure:"rsa_key_size"`
-	ECCCurve           string `yaml:"ecc_curve" json:"ecc_curve" mapstructure:"ecc_curve"`
-	SignatureAlgorithm string `yaml:"signature-algorithm" json:"signature-algorithm" mapstructure:"signature-algorithm"`
-	StoreType          string `yaml:"store" json:"store" mapstructure:"store"`
-	KeyType            string `yaml:"key_type" json:"key_type" mapstructure:"key_type"`
-	PlatformPolicy     bool   `yaml:"platform_policy" json:"platform_policy" mapstructure:"platform_policy"`
+	CN                 string                 `yaml:"cn,omitempty" json:"cn,omitempty" mapstructure:"cn"`
+	KeyAlgorithm       KeyAlgorithmString     `yaml:"algorithm" json:"algorithm" mapstructure:"algorithm"`
+	Hash               HashName               `yaml:"hash,omitempty" json:"hash,omitempty" mapstructure:"hash"`
+	SignatureAlgorithm SignatureAlgorithmName `yaml:"signature-algorithm,omitempty" json:"signature-algorithm,omitempty" mapstructure:"signature-algorithm"`
+	StoreType          StoreType              `yaml:"store,omitempty" json:"store,omitempty" mapstructure:"store"`
+	KeyType            KeyTypeString          `yaml:"key-type,omitempty" json:"key-type,omitempty" mapstructure:"key-type"`
+	ECCConfig          *ECCConfig             `yaml:"ecc,omitempty" json:"ecc,omitempty" mapstructure:"ecc"`
+	RSAConfig          *RSAConfig             `yaml:"rsa,omitempty" json:"rsa,omitempty" mapstructure:"rsa"`
+	Parent             *KeyConfig             `yaml:"parent,omitempty" json:"parent,omitempty" mapstructure:"parent"`
+	Password           string                 `yaml:"password,omitempty" json:"password,omitempty" mapstructure:"password"`
+	Secret             string                 `yaml:"secret,omitempty" json:"secret,omitempty" mapstructure:"secret"`
+	PlatformPolicy     bool                   `yaml:"platform-policy,omitempty" json:"platform_policy,omitempty" mapstructure:"platform-policy"`
+	Debug              bool                   `yaml:"debug,omitempty" json:"debug,omitempty" mapstructure:"debug"`
+	Default            bool                   `yaml:"default,omitempty" json:"default,omitempty" mapstructure:"default"`
 }
 
 // KeySerializer provides key serialization capabilities
@@ -2275,51 +2989,75 @@ type KeySerializer interface {
 	Type() SerializerType
 }
 
-// KeyAttributesFromConfig creates KeyAttributes from a KeyConfig
+// KeyAttributesFromConfig creates KeyAttributes from a KeyConfig.
+// This is the boundary parser that converts typed config strings to
+// runtime crypto types.
 func KeyAttributesFromConfig(config *KeyConfig) (*KeyAttributes, error) {
 	if config == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
 
-	keyAlgo, err := ParseKeyAlgorithm(config.Algorithm)
+	keyAlgo, err := ParseKeyAlgorithm(string(config.KeyAlgorithm))
 	if err != nil {
 		return nil, err
 	}
 
-	hash := ParseHash(config.Hash)
+	hash := ParseHash(string(config.Hash))
 
-	sigAlgo, err := ParseSignatureAlgorithm(config.SignatureAlgorithm)
+	sigAlgo, err := ParseSignatureAlgorithm(string(config.SignatureAlgorithm))
 	if err != nil {
 		sigAlgo = x509.UnknownSignatureAlgorithm
 	}
 
-	attrs := &KeyAttributes{
-		CN:                 config.CN,
-		KeyAlgorithm:       keyAlgo,
-		Hash:               hash,
-		SignatureAlgorithm: sigAlgo,
-		StoreType:          ParseStoreType(config.StoreType),
-		KeyType:            ParseKeyType(config.KeyType),
-		PlatformPolicy:     config.PlatformPolicy,
+	// Preserve custom backend names (e.g., "pkcs8-ca2") instead of
+	// converting them to "unknown" via ParseStoreType. This allows the
+	// xkms facade to route operations to the correct registered backend.
+	storeType := config.StoreType
+	if storeType == "" {
+		storeType = StoreSoftware // Default to software if not specified
 	}
 
-	switch keyAlgo {
-	case x509.RSA:
-		keySize := config.RSAKeySize
-		if keySize == 0 {
-			keySize = 2048
-		}
-		attrs.RSAAttributes = &RSAAttributes{
-			KeySize: keySize,
-		}
-	case x509.ECDSA:
-		curve, err := ParseCurve(config.ECCCurve)
+	attrs := &KeyAttributes{
+		CN:                 config.CN,
+		Debug:              config.Debug,
+		Hash:               hash,
+		KeyAlgorithm:       keyAlgo,
+		PlatformPolicy:     config.PlatformPolicy,
+		SignatureAlgorithm: sigAlgo,
+		StoreType:          storeType,
+		KeyType:            ParseKeyType(string(config.KeyType)),
+	}
+
+	// Parse algorithm-specific config from nested structs
+	if config.ECCConfig != nil {
+		curve, err := ParseCurve(string(config.ECCConfig.Curve))
 		if err != nil {
 			curve = elliptic.P256()
 		}
-		attrs.ECCAttributes = &ECCAttributes{
-			Curve: curve,
+		attrs.ECCAttributes = &ECCAttributes{Curve: curve}
+	} else if keyAlgo == x509.ECDSA {
+		// Default to P-256 for ECDSA if no ECCConfig provided
+		attrs.ECCAttributes = &ECCAttributes{Curve: elliptic.P256()}
+	}
+
+	if config.RSAConfig != nil {
+		keySize := config.RSAConfig.KeySize
+		if keySize == 0 {
+			keySize = 2048
 		}
+		attrs.RSAAttributes = &RSAAttributes{KeySize: keySize}
+	} else if keyAlgo == x509.RSA {
+		// Default to 2048 for RSA if no RSAConfig provided
+		attrs.RSAAttributes = &RSAAttributes{KeySize: 2048}
+	}
+
+	// Parse parent config recursively
+	if config.Parent != nil {
+		parent, err := KeyAttributesFromConfig(config.Parent)
+		if err != nil {
+			return nil, err
+		}
+		attrs.Parent = parent
 	}
 
 	return attrs, nil
@@ -2374,11 +3112,6 @@ func NewKeySerializer(serializerType SerializerType) (KeySerializer, error) {
 	default:
 		return nil, fmt.Errorf("unsupported serializer type: %d", serializerType)
 	}
-}
-
-// NewSerializer is an alias for NewKeySerializer for backward compatibility
-func NewSerializer(serializerType SerializerType) (KeySerializer, error) {
-	return NewKeySerializer(serializerType)
 }
 
 // KeyMap represents a JWK-like map for ACME key operations

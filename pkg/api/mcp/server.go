@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -18,29 +18,72 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"sync"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/correlation"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/correlation"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Typed errors for barrier MCP handlers.
+var (
+	// ErrBarrierNotConfigured is returned when a barrier operation is attempted
+	// on a server that does not have a barrier configured.
+	ErrBarrierNotConfigured = errors.New("barrier not configured")
+
+	// ErrBarrierSecretRequired is returned when a barrier operation requires
+	// a secret but none was provided.
+	ErrBarrierSecretRequired = errors.New("secret is required")
+
+	// ErrBarrierShareRequired is returned when a barrier unseal share
+	// operation is missing the share value.
+	ErrBarrierShareRequired = errors.New("share is required")
+
+	// ErrBarrierSharesRequired is returned when a barrier operation requires
+	// shares but none were provided.
+	ErrBarrierSharesRequired = errors.New("shares are required")
+
+	// ErrBarrierShamirNotConfigured is returned when a Shamir strategy
+	// operation is attempted but no Shamir strategy is registered.
+	ErrBarrierShamirNotConfigured = errors.New("shamir strategy not configured")
+
+	// ErrBarrierThresholdInvalid is returned when the threshold parameter
+	// is less than 2.
+	ErrBarrierThresholdInvalid = errors.New("threshold must be >= 2")
+
+	// ErrBarrierTotalInvalid is returned when the total parameter is less
+	// than the threshold.
+	ErrBarrierTotalInvalid = errors.New("total must be >= threshold")
+
+	// ErrBarrierShareIndexInvalid is returned when a share index is less than 1.
+	ErrBarrierShareIndexInvalid = errors.New("share index must be >= 1")
+
+	// ErrBarrierRecoveryKeysRequired is returned when a recovery operation
+	// requires keys but none were provided.
+	ErrBarrierRecoveryKeysRequired = errors.New("recovery keys are required")
 )
 
 // Server represents an MCP JSON-RPC 2.0 server
 type Server struct {
-	addr          string
-	keystore      keychain.KeyStore // Default keystore for backward compatibility
-	listener      net.Listener
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	tlsConfig     *tls.Config
-	authenticator auth.Authenticator
-	logger        *slog.Logger
-	rateLimiter   *ratelimit.Limiter
+	addr            string
+	keystore        xkms.Backend // Default keystore for backward compatibility
+	barrier         *seal.Barrier
+	passwordManager *staticpw.TenantPasswordStoreManager
+	listener        net.Listener
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	tlsConfig       *tls.Config
+	authenticator   auth.Authenticator
+	logger          *slog.Logger
+	rateLimiter     *ratelimit.Limiter
 
 	// Event subscribers
 	subscribers map[net.Conn]*Subscriber
@@ -56,18 +99,20 @@ type Subscriber struct {
 
 // Config holds the MCP server configuration
 type Config struct {
-	Addr          string
-	TLSConfig     *tls.Config
-	Authenticator auth.Authenticator
-	Logger        *slog.Logger
-	RateLimiter   *ratelimit.Limiter
+	Addr            string
+	TLSConfig       *tls.Config
+	Authenticator   auth.Authenticator
+	Logger          *slog.Logger
+	RateLimiter     *ratelimit.Limiter
+	Barrier         *seal.Barrier
+	PasswordManager *staticpw.TenantPasswordStoreManager
 }
 
 // NewServer creates a new MCP JSON-RPC server
-// The server uses the global keychain service for backend management
+// The server uses the global xkms service for backend management
 func NewServer(config *Config) (*Server, error) {
-	if !keychain.IsInitialized() {
-		return nil, fmt.Errorf("keychain service must be initialized before creating MCP server")
+	if !xkms.IsInitialized() {
+		return nil, fmt.Errorf("xkms service must be initialized before creating MCP server")
 	}
 
 	if config.Addr == "" {
@@ -89,14 +134,16 @@ func NewServer(config *Config) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &Server{
-		addr:          config.Addr,
-		ctx:           ctx,
-		cancel:        cancel,
-		tlsConfig:     config.TLSConfig,
-		authenticator: authenticator,
-		logger:        log,
-		rateLimiter:   config.RateLimiter,
-		subscribers:   make(map[net.Conn]*Subscriber),
+		addr:            config.Addr,
+		barrier:         config.Barrier,
+		passwordManager: config.PasswordManager,
+		ctx:             ctx,
+		cancel:          cancel,
+		tlsConfig:       config.TLSConfig,
+		authenticator:   authenticator,
+		logger:          log,
+		rateLimiter:     config.RateLimiter,
+		subscribers:     make(map[net.Conn]*Subscriber),
 	}
 
 	// Log if rate limiting is enabled
@@ -105,7 +152,7 @@ func NewServer(config *Config) (*Server, error) {
 	}
 
 	// Set default keystore from default backend for backward compatibility
-	keystore, err := keychain.DefaultBackend()
+	keystore, err := xkms.DefaultBackend()
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to get default keystore: %w", err)
@@ -113,6 +160,16 @@ func NewServer(config *Config) (*Server, error) {
 	s.keystore = keystore
 
 	return s, nil
+}
+
+// SetBarrier configures the barrier for the MCP server.
+func (s *Server) SetBarrier(b *seal.Barrier) {
+	s.barrier = b
+}
+
+// SetPasswordManager configures the password store manager for the MCP server.
+func (s *Server) SetPasswordManager(pm *staticpw.TenantPasswordStoreManager) {
+	s.passwordManager = pm
 }
 
 // Start starts the MCP server
@@ -319,76 +376,181 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 	switch req.Method {
 	case "health":
 		result, err = s.handleHealth(req)
-	case "keychain.listBackends":
+	case "xkms.listBackends":
 		result, err = s.handleListBackends(req)
-	case "keychain.generateKey":
+	case "xkms.generateKey":
 		result, err = s.handleGenerateKey(req)
-	case "keychain.getKey":
+	case "xkms.getKey":
 		result, err = s.handleGetKey(req)
-	case "keychain.deleteKey":
+	case "xkms.deleteKey":
 		result, err = s.handleDeleteKey(req)
-	case "keychain.listKeys":
+	case "xkms.listKeys":
 		result, err = s.handleListKeys(req)
-	case "keychain.rotateKey":
+	case "xkms.rotateKey":
 		result, err = s.handleRotateKey(req)
-	case "keychain.sign":
+	case "xkms.sign":
 		result, err = s.handleSign(req)
-	case "keychain.verify":
+	case "xkms.verify":
 		result, err = s.handleVerify(req)
-	case "keychain.encrypt":
+	case "xkms.encrypt":
 		result, err = s.handleEncrypt(req)
-	case "keychain.decrypt":
+	case "xkms.decrypt":
 		result, err = s.handleDecrypt(req)
-	case "keychain.asymmetricEncrypt":
+	case "xkms.asymmetricEncrypt":
 		result, err = s.handleAsymmetricEncrypt(req)
-	case "keychain.asymmetricDecrypt":
+	case "xkms.asymmetricDecrypt":
 		result, err = s.handleAsymmetricDecrypt(req)
-	case "keychain.getImportParameters":
+	case "xkms.getImportParameters":
 		result, err = s.handleGetImportParameters(req)
-	case "keychain.wrapKey":
+	case "xkms.wrapKey":
 		result, err = s.handleWrapKey(req)
-	case "keychain.unwrapKey":
+	case "xkms.unwrapKey":
 		result, err = s.handleUnwrapKey(req)
-	case "keychain.importKey":
+	case "xkms.importKey":
 		result, err = s.handleImportKeyMaterial(req)
-	case "keychain.exportKey":
+	case "xkms.exportKey":
 		result, err = s.handleExportKeyMaterial(req)
-	case "keychain.copyKey":
+	case "xkms.copyKey":
 		result, err = s.handleCopyKey(req)
-	case "keychain.saveCert":
+	case "xkms.saveCert":
 		result, err = s.handleSaveCert(req)
-	case "keychain.getCert":
+	case "xkms.getCert":
 		result, err = s.handleGetCert(req)
-	case "keychain.deleteCert":
+	case "xkms.deleteCert":
 		result, err = s.handleDeleteCert(req)
-	case "keychain.listCerts":
+	case "xkms.listCerts":
 		result, err = s.handleListCerts(req)
-	case "keychain.certExists":
+	case "xkms.certExists":
 		result, err = s.handleCertExists(req)
-	case "keychain.saveCertChain":
+	case "xkms.saveCertChain":
 		result, err = s.handleSaveCertChain(req)
-	case "keychain.getCertChain":
+	case "xkms.getCertChain":
 		result, err = s.handleGetCertChain(req)
-	case "keychain.getTLSCertificate":
+	case "xkms.getTLSCertificate":
 		result, err = s.handleGetTLSCertificate(req)
-	case "keychain.subscribe":
+	case "xkms.subscribe":
 		result, err = s.handleSubscribe(req, conn)
-	case "keychain.listKeyVersions":
-		result, err = s.handleListKeyVersions(req)
-	case "keychain.enableKeyVersion":
-		result, err = s.handleEnableKeyVersion(req)
-	case "keychain.disableKeyVersion":
-		result, err = s.handleDisableKeyVersion(req)
-	case "keychain.enableAllKeyVersions":
-		result, err = s.handleEnableAllKeyVersions(req)
-	case "keychain.disableAllKeyVersions":
-		result, err = s.handleDisableAllKeyVersions(req)
-	case "keychain.seal":
+	case "xkms.seal":
 		result, err = s.handleSeal(ctx, req)
-	case "keychain.unseal":
+	case "xkms.unseal":
 		result, err = s.handleUnseal(ctx, req)
-	case "keychain.canSeal":
+	case "xkms.canSeal":
 		result, err = s.handleCanSeal(req)
+	case "xkms.listPIVSlots":
+		result, err = s.handleListPIVSlots(req)
+	case "xkms.getPIVCertificate":
+		result, err = s.handleGetPIVCertificate(req)
+	case "xkms.storePIVCertificate":
+		result, err = s.handleStorePIVCertificate(req)
+	case "xkms.deletePIVCertificate":
+		result, err = s.handleDeletePIVCertificate(req)
+	case "xkms.generatePIVKey":
+		result, err = s.handleGeneratePIVKey(req)
+	case "xkms.importPIVCertificate":
+		result, err = s.handleImportPIVCertificate(req)
+	case "xkms.exportPIVCertificate":
+		result, err = s.handleExportPIVCertificate(req)
+	case "xkms.generatePIVCSR":
+		result, err = s.handleGeneratePIVCSR(req)
+
+	// CA operations
+	case "xkms.ca.bundle":
+		result, err = s.handleGetCABundle(ctx, req)
+	case "xkms.ca.certificate":
+		result, err = s.handleGetCACertificate(ctx, req)
+	case "xkms.ca.sign-csr":
+		result, err = s.handleSignCSR(ctx, req)
+	case "xkms.ca.issue":
+		result, err = s.handleIssueCertificate(ctx, req)
+	case "xkms.ca.revoke":
+		result, err = s.handleRevokeCertificate(ctx, req)
+	case "xkms.ca.crl":
+		result, err = s.handleGenerateCRL(ctx, req)
+	case "xkms.ca.is-revoked":
+		result, err = s.handleIsRevoked(ctx, req)
+
+	// TCG CA operations
+	case "xkms.ca.tcg.issue-ek":
+		result, err = s.handleIssueEKCertificate(ctx, req)
+	case "xkms.ca.tcg.issue-ak":
+		result, err = s.handleIssueAKCertificate(ctx, req)
+	case "xkms.ca.tcg.sign-csr":
+		result, err = s.handleSignTCGCSR(ctx, req)
+	case "xkms.ca.tcg.enroll":
+		result, err = s.handleEnrollDevice(ctx, req)
+
+	// Barrier and Shamir operations
+	case "barrier.initialize":
+		result, err = s.handleBarrierInitialize(ctx, req)
+	case "barrier.initializeShamir":
+		result, err = s.handleBarrierInitializeShamir(ctx, req)
+	case "barrier.unseal":
+		result, err = s.handleBarrierUnseal(ctx, req)
+	case "barrier.unsealShare":
+		result, err = s.handleBarrierUnsealShare(ctx, req)
+	case "barrier.unsealShares":
+		result, err = s.handleBarrierUnsealShares(ctx, req)
+	case "barrier.seal":
+		result, err = s.handleBarrierSeal(req)
+	case "barrier.status":
+		result, err = s.handleBarrierStatus(req)
+	case "barrier.rekey":
+		result, err = s.handleBarrierRekey(ctx, req)
+	case "barrier.shamirListShares":
+		result, err = s.handleBarrierShamirListShares(ctx, req)
+	case "barrier.shamirDeleteShare":
+		result, err = s.handleBarrierShamirDeleteShare(ctx, req)
+	case "barrier.shamirDeleteAllShares":
+		result, err = s.handleBarrierShamirDeleteAllShares(ctx, req)
+	case "barrier.shamirVerify":
+		result, err = s.handleBarrierShamirVerify(ctx, req)
+	case "barrier.generateRecoveryKeys":
+		result, err = s.handleBarrierGenerateRecoveryKeys(ctx, req)
+	case "barrier.recoverWithKeys":
+		result, err = s.handleBarrierRecoverWithKeys(ctx, req)
+	case "barrier.deleteRecoveryKeys":
+		result, err = s.handleBarrierDeleteRecoveryKeys(ctx, req)
+	case "barrier.generateRootToken":
+		result, err = s.handleBarrierGenerateRootToken(ctx, req)
+
+	// Init ceremony operations
+	case "init.getStatus":
+		result, err = s.handleGetInitStatus(ctx, req)
+	case "init.claimCertBegin":
+		result, err = s.handleClaimCertBegin(ctx, req)
+	case "init.claimCertComplete":
+		result, err = s.handleClaimCertComplete(ctx, req)
+	case "init.claimShare":
+		result, err = s.handleClaimShare(ctx, req)
+	case "init.signCSR":
+		result, err = s.handleSignCSRInit(ctx, req)
+
+	// Credential management operations
+	case "credentials.submit":
+		result, err = s.handleCredentialSubmit(ctx, req)
+	case "credentials.strategy":
+		result, err = s.handleCredentialStrategy(ctx, req)
+
+	// Password store operations
+	case "password.add":
+		result, err = s.handlePasswordAdd(ctx, req)
+	case "password.get":
+		result, err = s.handlePasswordGet(ctx, req)
+	case "password.list":
+		result, err = s.handlePasswordList(ctx, req)
+	case "password.update":
+		result, err = s.handlePasswordUpdate(ctx, req)
+	case "password.delete":
+		result, err = s.handlePasswordDelete(ctx, req)
+	case "password.unlock":
+		result, err = s.handlePasswordUnlock(ctx, req)
+	case "password.lock":
+		result, err = s.handlePasswordLock(ctx, req)
+	case "password.status":
+		result, err = s.handlePasswordStatus(ctx, req)
+	case "password.generate":
+		result, err = s.handlePasswordGenerate(ctx, req)
+
 	default:
 		return s.makeErrorResponse(req.ID, correlationID, ErrCodeMethodNotFound, "Method not found", nil)
 	}

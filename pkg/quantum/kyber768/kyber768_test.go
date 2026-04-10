@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -11,11 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build quantum
-
 package kyber768
 
 import (
+	"crypto/mlkem"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +25,9 @@ func TestNew(t *testing.T) {
 	k, err := New()
 	require.NoError(t, err)
 	defer k.Clean()
-	assert.NotNil(t, k.kem)
+	assert.NotNil(t, k.dk)
+	assert.NotNil(t, k.seed)
+	assert.Len(t, k.seed, SeedSize)
 }
 
 func TestGenerateKeyPair(t *testing.T) {
@@ -37,11 +38,17 @@ func TestGenerateKeyPair(t *testing.T) {
 	pubKey, err := k.GenerateKeyPair()
 	require.NoError(t, err)
 	assert.NotEmpty(t, pubKey)
-	assert.Equal(t, k.PublicKeyLength(), len(pubKey))
+	assert.Len(t, pubKey, mlkem.EncapsulationKeySize768)
 
-	secretKey := k.ExportSecretKey()
-	assert.NotEmpty(t, secretKey)
-	assert.Equal(t, k.SecretKeyLength(), len(secretKey))
+	seed := k.ExportSecretKey()
+	assert.NotEmpty(t, seed)
+	assert.Len(t, seed, mlkem.SeedSize)
+}
+
+func TestGenerateKeyPair_NotInitialized(t *testing.T) {
+	k := &Kyber768{}
+	_, err := k.GenerateKeyPair()
+	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestEncapsulateDecapsulate(t *testing.T) {
@@ -62,8 +69,8 @@ func TestEncapsulateDecapsulate(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, ciphertext)
 	assert.NotEmpty(t, bobSharedSecret)
-	assert.Equal(t, alice.CiphertextLength(), len(ciphertext))
-	assert.Equal(t, alice.SharedSecretLength(), len(bobSharedSecret))
+	assert.Len(t, ciphertext, mlkem.CiphertextSize768)
+	assert.Len(t, bobSharedSecret, mlkem.SharedKeySize)
 
 	// Alice decapsulates to recover the shared secret
 	aliceSharedSecret, err := alice.Decapsulate(ciphertext)
@@ -76,14 +83,16 @@ func TestDecapsulateInvalidCiphertext(t *testing.T) {
 	require.NoError(t, err)
 	defer k.Clean()
 
-	_, err = k.GenerateKeyPair()
-	require.NoError(t, err)
-
-	// Create an invalid ciphertext (wrong length)
+	// Wrong length ciphertext should fail
 	invalidCiphertext := make([]byte, 10)
-
 	_, err = k.Decapsulate(invalidCiphertext)
-	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrDecapsulationFailed)
+}
+
+func TestDecapsulate_NotInitialized(t *testing.T) {
+	k := &Kyber768{}
+	_, err := k.Decapsulate(make([]byte, mlkem.CiphertextSize768))
+	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 func TestCreateWithExistingKey(t *testing.T) {
@@ -94,19 +103,21 @@ func TestCreateWithExistingKey(t *testing.T) {
 	pubKey, err := k1.GenerateKeyPair()
 	require.NoError(t, err)
 
-	// ExportSecretKey returns a reference to internal memory that gets zeroed
-	// when Clean() is called, so we must copy it before cleaning
-	exportedKey := k1.ExportSecretKey()
-	secretKey := make([]byte, len(exportedKey))
-	copy(secretKey, exportedKey)
+	// Export the seed before cleaning
+	seed := k1.ExportSecretKey()
 	k1.Clean()
 
-	// Create new instance with existing secret key
-	k2, err := Create(secretKey)
+	// Recreate from seed
+	k2, err := Create(seed)
 	require.NoError(t, err)
 	defer k2.Clean()
 
-	// Bob encapsulates for our recreated key
+	// The recreated key should produce the same public key
+	pubKey2, err := k2.GenerateKeyPair()
+	require.NoError(t, err)
+	assert.Equal(t, pubKey, pubKey2)
+
+	// Bob encapsulates for the recreated key
 	bob, err := New()
 	require.NoError(t, err)
 	defer bob.Clean()
@@ -120,6 +131,40 @@ func TestCreateWithExistingKey(t *testing.T) {
 	assert.Equal(t, bobSecret, aliceSecret)
 }
 
+func TestCreateWithInvalidSeed(t *testing.T) {
+	// Too short
+	_, err := Create(make([]byte, 32))
+	assert.ErrorIs(t, err, ErrInvalidSeed)
+
+	// Too long
+	_, err = Create(make([]byte, 128))
+	assert.ErrorIs(t, err, ErrInvalidSeed)
+
+	// Empty
+	_, err = Create(nil)
+	assert.ErrorIs(t, err, ErrInvalidSeed)
+}
+
+func TestEncapsulateInvalidPublicKey(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+	defer k.Clean()
+
+	// Too short
+	_, _, err = k.Encapsulate(make([]byte, 10))
+	assert.ErrorIs(t, err, ErrInvalidPublicKey)
+
+	// Empty
+	_, _, err = k.Encapsulate(nil)
+	assert.ErrorIs(t, err, ErrInvalidPublicKey)
+}
+
+func TestEncapsulate_NotInitialized(t *testing.T) {
+	k := &Kyber768{}
+	_, _, err := k.Encapsulate(make([]byte, mlkem.EncapsulationKeySize768))
+	assert.ErrorIs(t, err, ErrNotInitialized)
+}
+
 func TestDetails(t *testing.T) {
 	k, err := New()
 	require.NoError(t, err)
@@ -127,10 +172,21 @@ func TestDetails(t *testing.T) {
 
 	details := k.Details()
 	assert.Equal(t, AlgorithmName, details.Name)
-	assert.Greater(t, details.LengthPublicKey, 0)
-	assert.Greater(t, details.LengthSecretKey, 0)
-	assert.Greater(t, details.LengthCiphertext, 0)
-	assert.Greater(t, details.LengthSharedSecret, 0)
+	assert.Equal(t, mlkem.EncapsulationKeySize768, details.LengthPublicKey)
+	assert.Equal(t, mlkem.SeedSize, details.LengthSecretKey)
+	assert.Equal(t, mlkem.CiphertextSize768, details.LengthCiphertext)
+	assert.Equal(t, mlkem.SharedKeySize, details.LengthSharedSecret)
+}
+
+func TestHelperMethods(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+	defer k.Clean()
+
+	assert.Equal(t, mlkem.EncapsulationKeySize768, k.PublicKeyLength())
+	assert.Equal(t, mlkem.SeedSize, k.SecretKeyLength())
+	assert.Equal(t, mlkem.CiphertextSize768, k.CiphertextLength())
+	assert.Equal(t, mlkem.SharedKeySize, k.SharedSecretLength())
 }
 
 func TestTypeStrings(t *testing.T) {
@@ -139,4 +195,82 @@ func TestTypeStrings(t *testing.T) {
 
 	var kemAlgo Kyber768KEMAlgorithm
 	assert.Equal(t, "Kyber768", kemAlgo.String())
+}
+
+func TestExportSecretKey_NotInitialized(t *testing.T) {
+	k := &Kyber768{}
+	assert.Nil(t, k.ExportSecretKey())
+}
+
+func TestExportSecretKey_ReturnsCopy(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+	defer k.Clean()
+
+	seed1 := k.ExportSecretKey()
+	seed2 := k.ExportSecretKey()
+
+	// Should be equal but not the same slice
+	assert.Equal(t, seed1, seed2)
+
+	// Modifying one should not affect the other
+	seed1[0] ^= 0xFF
+	assert.NotEqual(t, seed1, seed2)
+}
+
+func TestClean(t *testing.T) {
+	k, err := New()
+	require.NoError(t, err)
+
+	// Verify key is functional
+	_, err = k.GenerateKeyPair()
+	require.NoError(t, err)
+
+	k.Clean()
+
+	// After clean, operations should fail
+	assert.Nil(t, k.dk)
+	assert.Nil(t, k.seed)
+	assert.Nil(t, k.ExportSecretKey())
+
+	_, err = k.GenerateKeyPair()
+	assert.ErrorIs(t, err, ErrNotInitialized)
+
+	// Clean on already-cleaned instance should not panic
+	k.Clean()
+}
+
+func TestWrongKeyDecapsulation(t *testing.T) {
+	// Alice generates a key pair
+	alice, err := New()
+	require.NoError(t, err)
+	defer alice.Clean()
+
+	alicePubKey, err := alice.GenerateKeyPair()
+	require.NoError(t, err)
+
+	// Bob generates a different key pair
+	bob, err := New()
+	require.NoError(t, err)
+	defer bob.Clean()
+
+	// Sender encapsulates for Alice
+	sender, err := New()
+	require.NoError(t, err)
+	defer sender.Clean()
+
+	ciphertext, senderSecret, err := sender.Encapsulate(alicePubKey)
+	require.NoError(t, err)
+
+	// Alice decapsulates correctly
+	aliceSecret, err := alice.Decapsulate(ciphertext)
+	require.NoError(t, err)
+	assert.Equal(t, senderSecret, aliceSecret)
+
+	// Bob decapsulates with wrong key - ML-KEM uses implicit rejection,
+	// so decapsulation succeeds but produces a different shared secret
+	bobSecret, err := bob.Decapsulate(ciphertext)
+	require.NoError(t, err)
+	assert.NotEqual(t, senderSecret, bobSecret,
+		"Wrong key should produce different shared secret (implicit rejection)")
 }

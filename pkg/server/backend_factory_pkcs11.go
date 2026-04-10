@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -16,24 +16,22 @@
 package server
 
 import (
-	"fmt"
-
-	"github.com/jeremyhahn/go-keychain/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/file"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-func createPKCS11Backend(config BackendConfig) (types.Backend, error) {
+func createPKCS11Backend(config BackendConfig) (types.KeyProvider, error) {
 	// Extract configuration values
 	library, _ := config.Config["library_path"].(string)
 	if library == "" {
-		return nil, fmt.Errorf("library_path is required for PKCS11 backend")
+		return nil, &ErrConfigRequired{Field: "library_path", Backend: "PKCS11"}
 	}
 
 	tokenLabel, _ := config.Config["token_label"].(string)
 	if tokenLabel == "" {
-		return nil, fmt.Errorf("token_label is required for PKCS11 backend")
+		return nil, &ErrConfigRequired{Field: "token_label", Backend: "PKCS11"}
 	}
 
 	pin, _ := config.Config["pin"].(string)
@@ -67,7 +65,7 @@ func createPKCS11Backend(config BackendConfig) (types.Backend, error) {
 	} else {
 		keyStorage, err = file.New(keyDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create key storage: %w", err)
+			return nil, &ErrStorageCreate{Resource: "key storage", Err: err}
 		}
 	}
 
@@ -77,7 +75,7 @@ func createPKCS11Backend(config BackendConfig) (types.Backend, error) {
 	} else {
 		certStorage, err = file.New(certDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create cert storage: %w", err)
+			return nil, &ErrStorageCreate{Resource: "cert storage", Err: err}
 		}
 	}
 

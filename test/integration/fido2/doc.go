@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -28,17 +28,13 @@
 // # Requirements
 //
 //  - FIDO2-compatible security key (optional, tests skip if not available)
-//  - CanoKey QEMU virtual device (optional, via CANOKEY_QEMU env var)
-//  - go-keychain server running (for multi-protocol and server tests)
+//  - go-xkms server running (for multi-protocol and server tests)
 //  - libfido2 or compatible FIDO2 library
 //
 // # Running Tests
 //
 //	# Run all FIDO2 integration tests (requires FIDO2 device)
 //	go test -v -tags "integration,fido2" ./test/integration/fido2/...
-//
-//	# Run with CanoKey QEMU virtual device
-//	CANOKEY_QEMU=/dev/hidraw0 go test -v -tags "integration,fido2" ./test/integration/fido2/...
 //
 //	# Run only CLI tests (requires running server)
 //	go test -v -tags "integration,fido2" -run TestCLI ./test/integration/fido2/...
@@ -49,9 +45,8 @@
 // # Environment Variables
 //
 //  - FIDO2_DEVICE_PATH: Specific FIDO2 device path to use
-//  - CANOKEY_QEMU: Path to CanoKey QEMU virtual device (e.g., /dev/hidraw0)
 //  - FIDO2_PIN: PIN for user verification (if required by device)
-//  - KEYSTORE_CLI_BIN: Path to keychain CLI binary
+//  - KEYSTORE_CLI_BIN: Path to xkmsctl CLI binary
 //  - KEYSTORE_REST_URL: REST API server URL
 //  - KEYSTORE_GRPC_ADDR: gRPC server address
 //  - KEYSTORE_QUIC_URL: QUIC server URL

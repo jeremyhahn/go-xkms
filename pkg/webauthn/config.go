@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -179,14 +179,22 @@ func (c *Config) ToWebAuthnConfig() *webauthn.Config {
 		cfg.AuthenticatorSelection.UserVerification = protocol.VerificationDiscouraged
 	}
 
-	// Set resident key requirement
+	// Set resident key requirement.
+	// Both ResidentKey and RequireResidentKey must be set for full compatibility.
+	// The legacy RequireResidentKey (*bool) field is needed because some browsers
+	// and authenticators rely on it when ResidentKey is omitted from JSON due to
+	// omitempty. This mirrors the go-webauthn library's WithResidentKeyRequirement()
+	// helper which explicitly sets both fields.
 	switch c.ResidentKeyRequirement {
 	case "required":
 		cfg.AuthenticatorSelection.ResidentKey = protocol.ResidentKeyRequirementRequired
+		cfg.AuthenticatorSelection.RequireResidentKey = protocol.ResidentKeyRequired()
 	case "preferred":
 		cfg.AuthenticatorSelection.ResidentKey = protocol.ResidentKeyRequirementPreferred
+		cfg.AuthenticatorSelection.RequireResidentKey = protocol.ResidentKeyNotRequired()
 	case "discouraged":
 		cfg.AuthenticatorSelection.ResidentKey = protocol.ResidentKeyRequirementDiscouraged
+		cfg.AuthenticatorSelection.RequireResidentKey = protocol.ResidentKeyNotRequired()
 	}
 
 	// Set authenticator attachment

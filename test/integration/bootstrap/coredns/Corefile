@@ -1,0 +1,11 @@
+.:8053 {
+    health {
+        lameduck 5s
+    }
+}
+
+bootstrap.test:1053 {
+    file /etc/coredns/zones/bootstrap.test.zone
+    reload 2s
+    log
+}

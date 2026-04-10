@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package transport
 
 import (
+	"crypto/tls"
 	"testing"
 	"time"
 )
@@ -103,6 +104,48 @@ func TestConfigClone(t *testing.T) {
 
 		if clone.Headers != nil {
 			t.Error("expected nil Headers for config without headers")
+		}
+	})
+}
+
+func TestConfigCloneWithTLSConfig(t *testing.T) {
+	t.Run("clone preserves TLSConfig pointer", func(t *testing.T) {
+		originalTLS := &tls.Config{
+			MinVersion: tls.VersionTLS13,
+		}
+		cfg := &Config{
+			Address:    "localhost:8080",
+			TLSEnabled: true,
+			TLSConfig:  originalTLS,
+		}
+
+		clone := cfg.Clone()
+
+		// TLSConfig should be the same pointer (shallow copy is intentional)
+		if clone.TLSConfig != cfg.TLSConfig {
+			t.Error("clone TLSConfig should be the same pointer as original (shared PKCS#11 config)")
+		}
+
+		// Verify other fields are copied
+		if clone.Address != cfg.Address {
+			t.Errorf("expected Address %s, got %s", cfg.Address, clone.Address)
+		}
+		if clone.TLSEnabled != cfg.TLSEnabled {
+			t.Errorf("expected TLSEnabled %v, got %v", cfg.TLSEnabled, clone.TLSEnabled)
+		}
+	})
+
+	t.Run("clone with nil TLSConfig", func(t *testing.T) {
+		cfg := &Config{
+			Address:    "localhost:8080",
+			TLSEnabled: true,
+			TLSConfig:  nil,
+		}
+
+		clone := cfg.Clone()
+
+		if clone.TLSConfig != nil {
+			t.Error("clone TLSConfig should be nil when original is nil")
 		}
 	})
 }
@@ -256,22 +299,6 @@ func TestWithTLS(t *testing.T) {
 	}
 }
 
-func TestWithTLSInsecure(t *testing.T) {
-	cfg := &Config{}
-	opt := WithTLSInsecure()
-	err := opt(cfg)
-
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if !cfg.TLSEnabled {
-		t.Error("expected TLSEnabled to be true")
-	}
-	if !cfg.TLSInsecureSkipVerify {
-		t.Error("expected TLSInsecureSkipVerify to be true")
-	}
-}
-
 func TestWithMTLS(t *testing.T) {
 	t.Run("valid mTLS config", func(t *testing.T) {
 		cfg := &Config{}
@@ -312,6 +339,44 @@ func TestWithMTLS(t *testing.T) {
 
 		if err == nil {
 			t.Error("expected error for empty key file")
+		}
+	})
+}
+
+func TestWithTLSConfig(t *testing.T) {
+	t.Run("valid TLS config", func(t *testing.T) {
+		cfg := &Config{}
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS13,
+		}
+		opt := WithTLSConfig(tlsConfig)
+		err := opt(cfg)
+
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !cfg.TLSEnabled {
+			t.Error("expected TLSEnabled to be true")
+		}
+		if cfg.TLSConfig != tlsConfig {
+			t.Error("expected TLSConfig to be set to provided config")
+		}
+	})
+
+	t.Run("nil TLS config", func(t *testing.T) {
+		cfg := &Config{}
+		opt := WithTLSConfig(nil)
+		err := opt(cfg)
+
+		if err == nil {
+			t.Error("expected error for nil TLS config")
+		}
+		configErr, ok := err.(*ConfigError)
+		if !ok {
+			t.Fatalf("expected *ConfigError, got %T", err)
+		}
+		if configErr.Field != "TLSConfig" {
+			t.Errorf("expected error field TLSConfig, got %s", configErr.Field)
 		}
 	})
 }

@@ -10,14 +10,14 @@ import (
 	"fmt"
 	"log"
 
-	keychain "github.com/jeremyhahn/go-keychain/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func main() {
 	ctx := context.Background()
 
 	// Create a client with default Unix socket configuration
-	client, err := keychain.New(nil)
+	client, err := xkms.New(nil)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -50,7 +50,7 @@ func main() {
 	}
 
 	// Generate an EC key
-	keyResp, err := client.GenerateKey(ctx, &keychain.GenerateKeyRequest{
+	keyResp, err := client.GenerateKey(ctx, &xkms.GenerateKeyRequest{
 		KeyID:   "example-key",
 		Backend: "software",
 		KeyType: "EC",
@@ -62,8 +62,8 @@ func main() {
 	fmt.Printf("Generated key: %s (type: %s)\n", keyResp.KeyID, keyResp.KeyType)
 
 	// Sign data
-	data := []byte("Hello, go-keychain!")
-	signResp, err := client.Sign(ctx, &keychain.SignRequest{
+	data := []byte("Hello, go-xkms!")
+	signResp, err := client.Sign(ctx, &xkms.SignRequest{
 		Backend: "software",
 		KeyID:   "example-key",
 		Data:    data,
@@ -75,7 +75,7 @@ func main() {
 	fmt.Printf("Signature: %x...\n", signResp.Signature[:32])
 
 	// Verify signature
-	verifyResp, err := client.Verify(ctx, &keychain.VerifyRequest{
+	verifyResp, err := client.Verify(ctx, &xkms.VerifyRequest{
 		Backend:   "software",
 		KeyID:     "example-key",
 		Data:      data,

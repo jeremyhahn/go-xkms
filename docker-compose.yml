@@ -4,8 +4,8 @@ services:
     build:
       context: test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-keychain-swtpm:latest
-    container_name: go-keychain-swtpm
+    image: go-xkms-swtpm:latest
+    container_name: go-xkms-swtpm
     ports:
       - "2321:2321"  # TPM command port
       - "2322:2322"  # TPM control port
@@ -17,15 +17,15 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - keychain-test
+      - xkms-test
 
   # SoftHSM PKCS#11 Service
   softhsm:
     build:
       context: test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-keychain-softhsm:latest
-    container_name: go-keychain-softhsm
+    image: go-xkms-softhsm:latest
+    container_name: go-xkms-softhsm
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -37,15 +37,15 @@ services:
       timeout: 3s
       retries: 3
     networks:
-      - keychain-test
+      - xkms-test
 
   # Integration test service
   integration-test:
     build:
       context: .
       dockerfile: Dockerfile
-    image: go-keychain-test:latest
-    container_name: go-keychain-integration
+    image: go-xkms-test:latest
+    container_name: go-xkms-integration
     depends_on:
       swtpm:
         condition: service_healthy
@@ -72,30 +72,30 @@ services:
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
     command: ["go", "test", "-v", "-tags=integration", "./test/integration/..."]
     networks:
-      - keychain-test
+      - xkms-test
 
   # Unit test service
   unit-test:
     build:
       context: .
       dockerfile: Dockerfile
-    image: go-keychain-test:latest
-    container_name: go-keychain-unit
+    image: go-xkms-test:latest
+    container_name: go-xkms-unit
     volumes:
       - .:/workspace:cached
     environment:
       - CGO_ENABLED=1
     command: ["go", "test", "-v", "-race", "-coverprofile=coverage.out", "./..."]
     networks:
-      - keychain-test
+      - xkms-test
 
   # Development shell service
   dev:
     build:
       context: .
       dockerfile: Dockerfile
-    image: go-keychain-test:latest
-    container_name: go-keychain-dev
+    image: go-xkms-test:latest
+    container_name: go-xkms-dev
     depends_on:
       swtpm:
         condition: service_healthy
@@ -123,7 +123,7 @@ services:
     stdin_open: true
     tty: true
     networks:
-      - keychain-test
+      - xkms-test
 
 volumes:
   softhsm-tokens:
@@ -132,5 +132,5 @@ volumes:
     driver: local
 
 networks:
-  keychain-test:
+  xkms-test:
     driver: bridge

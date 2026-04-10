@@ -1,11 +1,11 @@
-# Go-Keychain Architecture Documentation
+# Go-xKMS Architecture Documentation
 
-Comprehensive architecture documentation for the go-keychain multi-protocol server.
+Comprehensive architecture documentation for the go-xkms multi-protocol server.
 
 
 ## Documentation Overview
 
-This directory contains the complete architecture and implementation guidance for building the go-keychain server that exposes the KeyStore interface via multiple protocols.
+This directory contains the complete architecture and implementation guidance for building the go-xkms server that exposes the KeyStore interface via multiple protocols.
 
 ### Core Documents
 
@@ -64,7 +64,7 @@ This directory contains the complete architecture and implementation guidance fo
    - **Audience:** Platform developers
    - **Contents:**
      - Adapter architecture
-     - Auth adapters (API key, JWT, mTLS)
+     - Auth adapters (JWT, mTLS, OIDC, Adaptive, Composite)
      - Logging adapters
      - Custom adapter development
 
@@ -202,7 +202,7 @@ Read [overview.md](./overview.md) for high-level understanding of the system arc
                     │
         ┌───────────▼───────────┐
         │   Backend Layer       │
-        │  - PKCS#8  - TPM2     │
+        │  - Software - TPM2    │
         │  - PKCS#11 - Cloud    │
         └───────────────────────┘
 ```
@@ -218,7 +218,7 @@ Read [overview.md](./overview.md) for high-level understanding of the system arc
 
 **Security:**
 - TLS 1.2+ for all network protocols
-- API key, JWT, and mTLS authentication
+- JWT, mTLS, and OIDC authentication
 - Rate limiting per client
 - Comprehensive audit logging
 
@@ -272,25 +272,24 @@ All protocols support:
 ## Directory Structure
 
 ```
-go-keychain/
+go-xkms/
 ├── cmd/
-│   ├── server/          # Multi-protocol server binary
-│   └── cli/             # CLI binary
-├── internal/
-│   ├── server/          # Server orchestration
-│   ├── config/          # Configuration management
-│   ├── service/         # Business logic layer
-│   ├── rest/            # REST API implementation
-│   ├── grpc/            # gRPC implementation
-│   ├── mcp/             # MCP implementation
-│   ├── quic/            # QUIC/HTTP3 implementation
-│   └── cli/             # CLI implementation
-├── api/
-│   ├── proto/           # Protocol Buffer definitions
-│   └── openapi/         # OpenAPI/Swagger specs
+│   ├── xkmsd/           # Multi-protocol server binary
+│   └── xkmsctl/         # CLI binary
 ├── pkg/
-│   ├── keychain/        # KeyStore interface
-│   └── backend/         # Backend interface
+│   ├── server/          # Server orchestration & service layer
+│   ├── config/          # Configuration management
+│   ├── api/
+│   │   ├── rest/        # REST API implementation
+│   │   ├── grpc/        # gRPC implementation
+│   │   ├── mcp/         # MCP implementation
+│   │   ├── quic/        # QUIC/HTTP3 implementation
+│   │   └── unix/        # Unix socket gRPC
+│   ├── backend/         # Backend interface & implementations
+│   ├── crypto/          # Cryptographic primitives
+│   ├── encoding/        # Encoding (JWK, JWE, JWT, PEM)
+│   ├── storage/         # Storage layer
+│   └── types/           # Common types
 ├── test/
 │   └── integration/
 │       └── api/         # Integration tests
@@ -303,7 +302,7 @@ go-keychain/
 
 ### Unit Tests
 - **Target:** 90%+ coverage
-- **Command:** `go test -v ./internal/...`
+- **Command:** `go test -v ./pkg/...`
 - **Focus:** Validation, error handling, configuration
 
 ### Integration Tests
@@ -319,7 +318,7 @@ go-keychain/
   - E2E workflow tests
 
 ### Benchmark Tests
-- **Command:** `go test -bench=. ./internal/...`
+- **Command:** `go test -bench=. ./pkg/...`
 - **Targets:**
   - Key generation < 100ms (RSA 2048)
   - Signing < 10ms (RSA 2048)
@@ -337,15 +336,15 @@ go-keychain/
 - `github.com/prometheus/client_golang` - Metrics
 
 ### Existing Packages
-- `github.com/jeremyhahn/go-keychain/pkg/keychain` - KeyStore interface
-- `github.com/jeremyhahn/go-keychain/pkg/backend` - Backend interface
+- `github.com/jeremyhahn/go-xkms/pkg/xkms` - KeyStore interface
+- `github.com/jeremyhahn/go-xkms/pkg/backend` - Backend interface
 
 
 ## Configuration Example
 
 ```yaml
 server:
-  data_dir: /var/lib/keychain
+  data_dir: /var/lib/xkms
   log_level: info
 
 rest:
@@ -366,17 +365,17 @@ quic:
 
 auth:
   enabled: true
-  type: api_key
+  type: adaptive  # jwt, mtls, oidc, adaptive, composite
 
 metrics:
   enabled: true
   address: :9090
 
 backends:
-  - name: pkcs8
-    type: pkcs8
+  - name: software
+    type: software
     config:
-      key_dir: /var/lib/keychain/keys
+      key_dir: /var/lib/xkms/keys
 ```
 
 
@@ -434,9 +433,11 @@ All protocols provide equivalent functionality:
 ## Security Considerations
 
 ### Authentication
-- API Key (X-API-Key header)
-- JWT (Bearer token)
+- JWT (Bearer token with public key verification)
 - Mutual TLS (client certificates)
+- OIDC (OpenID Connect with provider discovery)
+- Adaptive (auto-switches between bootstrap and secured mode)
+- Composite (chains multiple authenticators)
 
 ### TLS Configuration
 - TLS 1.2+ required
@@ -466,11 +467,11 @@ All protocols provide equivalent functionality:
 
 ### Metrics (Prometheus)
 ```
-keychain_key_generate_total{backend, key_type}
-keychain_key_generate_duration_seconds{backend, key_type}
-keychain_sign_total{backend}
-keychain_http_requests_total{method, path, status}
-keychain_grpc_requests_total{method, status}
+xkms_key_generate_total{backend, key_type}
+xkms_key_generate_duration_seconds{backend, key_type}
+xkms_sign_total{backend}
+xkms_http_requests_total{method, path, status}
+xkms_grpc_requests_total{method, status}
 ```
 
 ### Health Checks
@@ -492,8 +493,8 @@ Structured JSON logging with fields:
 
 ### Docker
 ```bash
-docker build -t go-keychain-server .
-docker run -p 8443:8443 -p 9443:9443 -p 9444:9444 go-keychain-server
+docker build -t go-xkms-server .
+docker run -p 8443:8443 -p 9443:9443 -p 9444:9444 go-xkms-server
 ```
 
 ### Kubernetes
@@ -507,7 +508,7 @@ kubectl apply -f deployments/kubernetes/
 make build
 
 # Run
-./bin/keychaind --config /etc/keychain/config.yaml
+./bin/xkmsd --config /etc/xkms/config.yaml
 ```
 
 
@@ -581,7 +582,7 @@ The following documents have been consolidated to reduce duplication and improve
 - [API Specifications](./api-specifications.md) - Complete API reference
 - [Storage Architecture](./storage.md) - Storage layer design
 - [RBAC](./rbac.md) - Role-based access control
-- [KeyStore Interface](../../pkg/keychain/keystore.go) - Core interface
+- [KeyStore Interface](../../pkg/xkms/keystore.go) - Core interface
 - [Backend Interface](../../pkg/backend/backend.go) - Backend contract
 - [Existing Tests](../../test/integration/api/) - Integration test suite
 

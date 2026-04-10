@@ -5,7 +5,7 @@ package integration
 import (
 	"testing"
 
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // setupTPM2 creates a TPM2 instance for testing

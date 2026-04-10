@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"testing"
 
-	tpm2lib "github.com/jeremyhahn/go-keychain/pkg/tpm2"
+	tpm2lib "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // setupQuoteTPM provisions TPM with IAK for quote testing

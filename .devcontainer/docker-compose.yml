@@ -24,11 +24,14 @@ services:
         hard: -1
     volumes:
       - ..:/workspace:cached
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../go-qrdb:/go-qrdb:cached
+      - ../../go-quicraft:/go-quicraft:cached
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/home/vscode/.cache/go-build
       - /var/run/docker.sock:/var/run/docker.sock
-      # CanoKey QEMU state directory (for VM-based FIDO2 testing)
-      - canokey-state:/var/lib/canokey
+      # Shared socket volume for xkms server communication
+      - xkms-socket:/var/run/xkms
     environment:
       - GOPATH=/go
       - CGO_ENABLED=1
@@ -37,24 +40,36 @@ services:
       - TPM_SIMULATOR_PORT=2321
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
       - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
-      # Integration test endpoints
-      - KEYSTORE_UNIX_SOCKET=/var/run/keychain/keychain.sock
-      - KEYSTORE_REST_URL=http://keychain-server:8443
-      - KEYSTORE_GRPC_ADDR=keychain-server:9443
-      - KEYSTORE_QUIC_URL=https://keychain-server:8444
-      - KEYSTORE_MCP_ADDR=keychain-server:9444
-      # CanoKey QEMU configuration (for VM-based FIDO2 testing)
-      - QEMU_CANOKEY_BIN=/usr/local/bin/qemu-system-x86_64-canokey
-      - CANOKEY_STATE_DIR=/var/lib/canokey
-      # CanoKey hardware configuration (uses OpenSC PKCS#11)
-      - CANOKEY_PKCS11_LIBRARY=/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
-      - CANOKEY_PIN=123456
-      - CANOKEY_SOPIN=12345678
+      # Integration test endpoints (XKMS_* prefix for PKCS#11 module)
+      - XKMS_UNIX_SOCKET=/var/run/xkms/xkms.sock
+      - XKMS_GRPC_ADDR=xkms-server:9443
+      - XKMS_GRPC_TLS_ENABLED=true
+      - XKMS_GRPC_TLS_CA=/etc/xkms/certs/ca.crt
+      # Legacy endpoints (KEYSTORE_* prefix)
+      - KEYSTORE_UNIX_SOCKET=/var/run/xkms/xkms.sock
+      - KEYSTORE_REST_URL=https://xkms-server:8443
+      - KEYSTORE_GRPC_ADDR=xkms-server:9443
+      - KEYSTORE_QUIC_URL=https://xkms-server:8444
+      - KEYSTORE_MCP_ADDR=xkms-server:8445
+      - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
+      # PKCS#11 module configuration
+      - PKCS11_MODULE=/workspace/build/lib/libxkms_pkcs11.so
+      - PKCS11_TOKEN_LABEL=xkms-token
+      - PKCS11_PIN=87654321
+      - PKCS11_SO_PIN=12345678
+      # PKCS#11 module auto-initialization and persistence
+      - XKMS_PKCS11_AUTO_INIT_TOKEN=true
+      - XKMS_PKCS11_SO_PIN=12345678
+      - XKMS_PKCS11_USER_PIN=87654321
+      - XKMS_PKCS11_TOKEN_LABEL=test-token
+      - XKMS_PKCS11_STORAGE_TYPE=file
+      - XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage
       # FIDO2 configuration (auto-detect device or use FIDO2_DEVICE_PATH)
       - FIDO2_PIN=123456
       - FIDO2_DEVICE_PATH=
+      - FIDO2_USE_VIRTUAL=true
     networks:
-      - keychain-dev
+      - xkms-dev
     depends_on:
       swtpm:
         condition: service_healthy
@@ -69,8 +84,8 @@ services:
     build:
       context: ../test/docker/swtpm
       dockerfile: Dockerfile
-    image: go-keychain-swtpm:dev
-    container_name: keychain-dev-swtpm
+    image: go-xkms-swtpm:dev
+    container_name: xkms-dev-swtpm
     volumes:
       - swtpm-state:/var/lib/swtpm/tpmstate
     healthcheck:
@@ -79,15 +94,15 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - keychain-dev
+      - xkms-dev
 
   # SoftHSM PKCS#11 Service (shared across all tests)
   softhsm:
     build:
       context: ../test/docker/softhsm
       dockerfile: Dockerfile
-    image: go-keychain-softhsm:dev
-    container_name: keychain-dev-softhsm
+    image: go-xkms-softhsm:dev
+    container_name: xkms-dev-softhsm
     volumes:
       - softhsm-tokens:/tokens
     environment:
@@ -99,31 +114,35 @@ services:
       timeout: 3s
       retries: 3
     networks:
-      - keychain-dev
+      - xkms-dev
 
-  # Keychain server for integration tests (optional, started manually)
-  keychain-server:
+  # XKMS server for integration tests (optional, started manually)
+  xkms-server:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: go-keychain-server:dev
-    container_name: keychain-dev-server
+      additional_contexts:
+        go-qrdb: ../../go-qrdb
+        go-quicraft: ../../go-quicraft
+    image: go-xkms-server:dev
+    container_name: xkms-dev-server
     ports:
       - "8443:8443"   # REST API
       - "9443:9443"   # gRPC
       - "8444:8444"   # QUIC
-      - "9444:9444"   # MCP
+      - "8445:8445"   # MCP
       - "9090:9090"   # Metrics
     volumes:
-      - keychain-data:/data
-      - keychain-socket:/var/run/keychain
+      - xkms-data:/data
+      - xkms-socket:/var/run/xkms
+      - ../configs/xkmsd-integration.yaml:/etc/xkms/xkmsd.yaml:ro
     environment:
-      - KEYCHAIN_CONFIG=/etc/keychain/keychaind.yaml
+      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       - TPM_DEVICE_PATH=tcp://swtpm:2321
       - TPM_USE_SIMULATOR=true
-      - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
+      - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
     depends_on:
       swtpm:
@@ -131,14 +150,14 @@ services:
       softhsm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8443/health"]
+      test: ["CMD", "test", "-S", "/var/run/xkms/xkms.sock"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 10s
     networks:
-      - keychain-dev
-    command: ["/app/keychaind"]
+      - xkms-dev
+    command: ["/app/xkmsd"]
 
   # Virtual FIDO2 Authenticator Service (for WebAuthn testing without hardware)
   # Uses software CTAP2 implementation with socket-based interface
@@ -146,8 +165,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.softfido
-    image: go-keychain-softfido:dev
-    container_name: keychain-dev-softfido
+    image: go-xkms-softfido:dev
+    container_name: xkms-dev-softfido
     volumes:
       - softfido-state:/var/lib/softfido
       - softfido-run:/var/run/softfido
@@ -160,19 +179,18 @@ services:
       retries: 10
       start_period: 10s
     networks:
-      - keychain-dev
+      - xkms-dev
 
 volumes:
   go-mod-cache:
   go-build-cache:
   swtpm-state:
   softhsm-tokens:
-  canokey-state:
-  keychain-data:
-  keychain-socket:
+  xkms-data:
+  xkms-socket:
   softfido-state:
   softfido-run:
 
 networks:
-  keychain-dev:
+  xkms-dev:
     driver: bridge

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,8 +22,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // ExtendedMockBackend extends MockBackend with SymmetricBackend and ImportExportBackend interfaces.
@@ -46,6 +46,7 @@ type ExtendedMockBackend struct {
 	UnwrapKeyFunc           func(*backend.WrappedKeyMaterial, *backend.ImportParameters) ([]byte, error)
 	ImportKeyFunc           func(*types.KeyAttributes, *backend.WrappedKeyMaterial) error
 	ExportKeyFunc           func(*types.KeyAttributes, backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error)
+	ExportKeyMaterialFunc   func(*types.KeyAttributes) ([]byte, error)
 
 	// Call tracking for symmetric operations
 	GenerateSymmetricKeyCalls []string
@@ -58,6 +59,7 @@ type ExtendedMockBackend struct {
 	UnwrapKeyCalls           int
 	ImportKeyCalls           []string
 	ExportKeyCalls           []string
+	ExportKeyMaterialCalls   []string
 }
 
 // NewExtendedMockBackend creates a new ExtendedMockBackend with default behavior.
@@ -257,6 +259,37 @@ func (m *ExtendedMockBackend) ExportKey(attrs *types.KeyAttributes, algorithm ba
 	}, nil
 }
 
+// ExportKeyMaterial returns the raw key material for extractable symmetric keys only.
+// This method provides direct access to the plaintext key bytes without wrapping.
+func (m *ExtendedMockBackend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.ExportKeyMaterialCalls = append(m.ExportKeyMaterialCalls, attrs.CN)
+
+	if m.ExportKeyMaterialFunc != nil {
+		return m.ExportKeyMaterialFunc(attrs)
+	}
+
+	// Security check: Reject asymmetric keys
+	if !attrs.IsSymmetric() {
+		return nil, backend.ErrAsymmetricKeyExportNotAllowed
+	}
+
+	// Check if key is marked as exportable
+	if !attrs.Exportable {
+		return nil, backend.ErrKeyNotExportable
+	}
+
+	// Get the symmetric key material
+	keyMaterial, ok := m.symmetricKeys[attrs.CN]
+	if !ok {
+		return nil, backend.ErrKeyNotFound
+	}
+
+	return keyMaterial, nil
+}
+
 // Reset clears all state and call tracking.
 func (m *ExtendedMockBackend) Reset() {
 	m.MockBackend.Reset()
@@ -272,6 +305,7 @@ func (m *ExtendedMockBackend) Reset() {
 	m.UnwrapKeyCalls = 0
 	m.ImportKeyCalls = nil
 	m.ExportKeyCalls = nil
+	m.ExportKeyMaterialCalls = nil
 }
 
 // StoreKey directly stores a key for testing (bypasses GenerateKey).
@@ -397,7 +431,7 @@ func (e *MockSymmetricEncrypter) Decrypt(encrypted *types.EncryptedData, opts *t
 
 // Verify interface compliance
 var (
-	_ types.Backend               = (*ExtendedMockBackend)(nil)
-	_ types.SymmetricBackend      = (*ExtendedMockBackend)(nil)
+	_ types.KeyProvider           = (*ExtendedMockBackend)(nil)
+	_ types.SymmetricKeyProvider  = (*ExtendedMockBackend)(nil)
 	_ backend.ImportExportBackend = (*ExtendedMockBackend)(nil)
 )

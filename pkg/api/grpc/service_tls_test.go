@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,18 +23,18 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/jeremyhahn/go-keychain/pkg/api/grpc/proto/keychainv1"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// setupTLSTest initializes keychain for TLS tests
+// setupTLSTest initializes xkms for TLS tests
 func setupTLSTest(t *testing.T) *Service {
 	t.Helper()
-	keychain.Reset()
+	xkms.Reset()
 
 	keyStorage := storage.New()
 	certStorage := storage.New()
@@ -46,7 +46,7 @@ func setupTLSTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create backend: %v", err)
 	}
 
-	ks, err := keychain.New(&keychain.Config{
+	ks, err := xkms.New(&xkms.BackendConfig{
 		Backend:     backend,
 		CertStorage: certStorage,
 	})
@@ -54,23 +54,23 @@ func setupTLSTest(t *testing.T) *Service {
 		t.Fatalf("Failed to create keystore: %v", err)
 	}
 
-	err = keychain.Initialize(&keychain.ServiceConfig{
-		Backends: map[string]keychain.KeyStore{
+	err = xkms.Initialize(&xkms.ServiceConfig{
+		Backends: map[string]xkms.Backend{
 			"software": ks,
 		},
 		DefaultBackend: "software",
 	})
 	if err != nil {
-		t.Fatalf("Failed to initialize keychain: %v", err)
+		t.Fatalf("Failed to initialize xkms: %v", err)
 	}
 
-	return NewService()
+	return NewService(nil, nil)
 }
 
 // TestGetTLSCertificateWithFullSetup tests GetTLSCertificate with proper key and cert setup
 func TestGetTLSCertificateWithFullSetup(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("gets TLS certificate successfully", func(t *testing.T) {
 		// Generate key
@@ -129,7 +129,7 @@ func TestGetTLSCertificateWithFullSetup(t *testing.T) {
 // TestFindKeyAttributes tests the findKeyAttributes helper function
 func TestFindKeyAttributes(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Generate a key first
 	_, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -143,7 +143,7 @@ func TestFindKeyAttributes(t *testing.T) {
 	}
 
 	t.Run("finds key attributes for existing key", func(t *testing.T) {
-		ks, err := keychain.Backend("software")
+		ks, err := xkms.GetBackend("software")
 		if err != nil {
 			t.Fatalf("Failed to get backend: %v", err)
 		}
@@ -159,7 +159,7 @@ func TestFindKeyAttributes(t *testing.T) {
 	})
 
 	t.Run("returns error for nonexistent key", func(t *testing.T) {
-		ks, err := keychain.Backend("software")
+		ks, err := xkms.GetBackend("software")
 		if err != nil {
 			t.Fatalf("Failed to get backend: %v", err)
 		}
@@ -174,7 +174,7 @@ func TestFindKeyAttributes(t *testing.T) {
 // TestGenerateKeyWithAllCurves tests generating keys with all ECDSA curves
 func TestGenerateKeyWithAllCurves(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	curves := []string{"P256", "P384", "P521"}
 
@@ -200,7 +200,7 @@ func TestGenerateKeyWithAllCurves(t *testing.T) {
 // TestGenerateKeyWithAllRSASizes tests generating RSA keys with various sizes
 func TestGenerateKeyWithAllRSASizes(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	sizes := []int32{2048, 3072, 4096}
 
@@ -220,7 +220,7 @@ func TestGenerateKeyWithAllRSASizes(t *testing.T) {
 				t.Errorf("Expected key_id 'rsa-size-test', got '%s'", resp.KeyId)
 			}
 		})
-		keychain.Reset()
+		xkms.Reset()
 		service = setupTLSTest(t)
 	}
 }
@@ -228,7 +228,7 @@ func TestGenerateKeyWithAllRSASizes(t *testing.T) {
 // TestGetImportParametersAllCurves tests GetImportParameters with all curves
 func TestGetImportParametersAllCurves(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	curves := []string{"P256", "P384", "P521"}
 
@@ -256,7 +256,7 @@ func TestGetImportParametersAllCurves(t *testing.T) {
 // TestImportKeyAllCurves tests ImportKey with all curves
 func TestImportKeyAllCurves(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	curves := []string{"P256", "P384", "P521"}
 
@@ -285,7 +285,7 @@ func TestImportKeyAllCurves(t *testing.T) {
 // TestListCertsPagination tests ListCerts with pagination
 func TestListCertsPagination(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	// Save multiple certificates
 	for i := 0; i < 5; i++ {
@@ -319,7 +319,7 @@ func TestListCertsPagination(t *testing.T) {
 // TestVerifyWithNonexistentBackend tests Verify with a nonexistent backend
 func TestVerifyWithNonexistentBackend(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for nonexistent backend", func(t *testing.T) {
 		_, err := service.Verify(context.Background(), &pb.VerifyRequest{
@@ -345,7 +345,7 @@ func TestVerifyWithNonexistentBackend(t *testing.T) {
 // TestSignWithNonexistentBackend tests Sign with a nonexistent backend
 func TestSignWithNonexistentBackend(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("returns error for nonexistent backend", func(t *testing.T) {
 		_, err := service.Sign(context.Background(), &pb.SignRequest{
@@ -370,7 +370,7 @@ func TestSignWithNonexistentBackend(t *testing.T) {
 // TestGenerateKeyRSADefaultSize tests RSA key generation with default size
 func TestGenerateKeyRSADefaultSize(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("generates RSA key with default size when not specified", func(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
@@ -392,7 +392,7 @@ func TestGenerateKeyRSADefaultSize(t *testing.T) {
 // TestGenerateKeyECDSADefaultCurve tests ECDSA key generation with default curve
 func TestGenerateKeyECDSADefaultCurve(t *testing.T) {
 	service := setupTLSTest(t)
-	defer keychain.Reset()
+	defer xkms.Reset()
 
 	t.Run("generates ECDSA key with default curve when not specified", func(t *testing.T) {
 		resp, err := service.GenerateKey(context.Background(), &pb.GenerateKeyRequest{

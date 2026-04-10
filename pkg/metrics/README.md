@@ -1,12 +1,12 @@
 # Metrics Package
 
-The metrics package provides comprehensive Prometheus instrumentation for the go-keychain server, enabling detailed monitoring of operations, performance, resource usage, and health.
+The metrics package provides comprehensive Prometheus instrumentation for the go-xkms server, enabling detailed monitoring of operations, performance, resource usage, and health.
 
 ## Overview
 
 The metrics package exposes:
 
-- **Operational metrics**: Track keychain operations (generate, sign, encrypt, etc.)
+- **Operational metrics**: Track xkms operations (generate, sign, encrypt, etc.)
 - **Performance metrics**: Monitor request latency and throughput
 - **Error tracking**: Record and categorize errors by type
 - **Resource metrics**: Monitor goroutines, memory, and GC statistics
@@ -19,7 +19,7 @@ The metrics package exposes:
 
 Defines all Prometheus metrics and provides helper functions for recording events:
 
-- **OperationsTotal**: Counter tracking keychain operations by type, backend, and status
+- **OperationsTotal**: Counter tracking xkms operations by type, backend, and status
 - **OperationDuration**: Histogram tracking operation latency
 - **ErrorsTotal**: Counter tracking errors by operation, backend, and error type
 - **HTTPRequestsTotal/Duration**: HTTP request metrics
@@ -70,10 +70,10 @@ The metrics endpoint is exposed at the configured path (default: `/metrics`).
 
 ### Recording Operations
 
-Use `RecordOperation` to track keychain operations:
+Use `RecordOperation` to track xkms operations:
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/metrics"
+import "github.com/jeremyhahn/go-xkms/pkg/metrics"
 
 start := time.Now()
 err := keystore.Generate(ctx, params)
@@ -92,7 +92,7 @@ if err != nil {
 The HTTP middleware is automatically applied in the REST server:
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/metrics"
+import "github.com/jeremyhahn/go-xkms/pkg/metrics"
 
 router := chi.NewRouter()
 router.Use(metrics.HTTPMiddleware)
@@ -108,7 +108,7 @@ This tracks:
 The gRPC interceptors are automatically registered in the gRPC server:
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/metrics"
+import "github.com/jeremyhahn/go-xkms/pkg/metrics"
 
 opts := []grpc.ServerOption{
     grpc.UnaryInterceptor(metrics.GRPCUnaryServerInterceptor()),
@@ -121,7 +121,7 @@ opts := []grpc.ServerOption{
 The resource collector starts automatically with the server:
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/metrics"
+import "github.com/jeremyhahn/go-xkms/pkg/metrics"
 
 // Starts collector in background
 collector := metrics.StartResourceCollector(ctx, 30*time.Second)
@@ -134,7 +134,7 @@ collector := metrics.StartResourceCollector(ctx, 30*time.Second)
 For protocols without built-in middleware (QUIC, MCP):
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/metrics"
+import "github.com/jeremyhahn/go-xkms/pkg/metrics"
 
 tracker := metrics.NewConnectionTracker(metrics.ProtocolQUIC)
 defer tracker.Close()
@@ -158,47 +158,47 @@ metrics:
 ### Operation Metrics
 
 ```
-keychain_operations_total{operation="generate",backend="pkcs8",status="success"} 42
-keychain_operation_duration_seconds_bucket{operation="generate",backend="pkcs8",le="0.005"} 38
+xkms_operations_total{operation="generate",backend="pkcs8",status="success"} 42
+xkms_operation_duration_seconds_bucket{operation="generate",backend="pkcs8",le="0.005"} 38
 ```
 
 ### HTTP Metrics
 
 ```
-keychain_http_requests_total{method="GET",status_code="200"} 156
-keychain_http_request_duration_seconds_bucket{method="GET",le="0.1"} 152
+xkms_http_requests_total{method="GET",status_code="200"} 156
+xkms_http_request_duration_seconds_bucket{method="GET",le="0.1"} 152
 ```
 
 ### gRPC Metrics
 
 ```
-keychain_grpc_requests_total{method="/keychain.v1.KeychainService/Generate",status_code="OK"} 89
-keychain_grpc_request_duration_seconds_bucket{method="/keychain.v1.KeychainService/Generate",le="0.1"} 85
+xkms_grpc_requests_total{method="/xkms.v1.XKMSService/Generate",status_code="OK"} 89
+xkms_grpc_request_duration_seconds_bucket{method="/xkms.v1.XKMSService/Generate",le="0.1"} 85
 ```
 
 ### Resource Metrics
 
 ```
-keychain_goroutines 47
-keychain_memory_alloc_bytes 8388608
-keychain_memory_sys_bytes 75497472
-keychain_gc_pause_total_seconds 0.00234
-keychain_server_uptime_seconds 3600
+xkms_goroutines 47
+xkms_memory_alloc_bytes 8388608
+xkms_memory_sys_bytes 75497472
+xkms_gc_pause_total_seconds 0.00234
+xkms_server_uptime_seconds 3600
 ```
 
 ### Connection Metrics
 
 ```
-keychain_active_connections{protocol="http"} 5
-keychain_active_connections{protocol="grpc"} 2
+xkms_active_connections{protocol="http"} 5
+xkms_active_connections{protocol="grpc"} 2
 ```
 
 ### Backend Metrics
 
 ```
-keychain_keys_total{backend="pkcs8"} 15
-keychain_certs_total{backend="pkcs8"} 8
-keychain_backend_healthy{backend="pkcs8"} 1
+xkms_keys_total{backend="pkcs8"} 15
+xkms_certs_total{backend="pkcs8"} 8
+xkms_backend_healthy{backend="pkcs8"} 1
 ```
 
 ## Operation Constants
@@ -290,22 +290,22 @@ go tool cover -func=coverage.out
 
 Track error rate:
 ```promql
-rate(keychain_errors_total[5m])
+rate(xkms_errors_total[5m])
 ```
 
 Operation latency p95:
 ```promql
-histogram_quantile(0.95, rate(keychain_operation_duration_seconds_bucket[5m]))
+histogram_quantile(0.95, rate(xkms_operation_duration_seconds_bucket[5m]))
 ```
 
 Request rate by protocol:
 ```promql
-sum(rate(keychain_http_requests_total[5m])) + sum(rate(keychain_grpc_requests_total[5m]))
+sum(rate(xkms_http_requests_total[5m])) + sum(rate(xkms_grpc_requests_total[5m]))
 ```
 
 ### Grafana Dashboard
 
-A sample Grafana dashboard is available in `examples/grafana/keychain-dashboard.json` with:
+A sample Grafana dashboard is available in `examples/grafana/xkms-dashboard.json` with:
 
 - Request rate by protocol
 - Error rate by operation
@@ -329,7 +329,7 @@ The metrics package integrates seamlessly with standard observability tools:
 
 - **Prometheus**: Native Prometheus exposition format
 - **Grafana**: Import provided dashboard templates
-- **Alertmanager**: Use Prometheus alerts with keychain metrics
+- **Alertmanager**: Use Prometheus alerts with xkms metrics
 - **OpenTelemetry**: Metrics can be exported via OTLP if needed
 
 ## Thread Safety

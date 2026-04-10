@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -419,7 +419,7 @@ func TestRegisteredClaims(t *testing.T) {
 
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
-		Issuer:    "go-keychain",
+		Issuer:    "go-xkms",
 		Subject:   "test-user",
 		Audience:  jwt.ClaimStrings{"test-audience"},
 		ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
@@ -441,7 +441,7 @@ func TestRegisteredClaims(t *testing.T) {
 	// Parse claims
 	parsedClaims, ok := token.Claims.(jwt.MapClaims)
 	assert.True(t, ok)
-	assert.Equal(t, "go-keychain", parsedClaims["iss"])
+	assert.Equal(t, "go-xkms", parsedClaims["iss"])
 	assert.Equal(t, "test-user", parsedClaims["sub"])
 	assert.Equal(t, "test-jti", parsedClaims["jti"])
 }
@@ -493,7 +493,7 @@ func TestVerifyWithOptions(t *testing.T) {
 
 	now := time.Now()
 	claims := jwt.RegisteredClaims{
-		Issuer:    "go-keychain",
+		Issuer:    "go-xkms",
 		Audience:  jwt.ClaimStrings{"test-app"},
 		ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
 		IssuedAt:  jwt.NewNumericDate(now),
@@ -506,7 +506,7 @@ func TestVerifyWithOptions(t *testing.T) {
 	verifier := NewVerifier()
 	opts := &VerifyOptions{
 		ValidateIssuer:   true,
-		ExpectedIssuer:   "go-keychain",
+		ExpectedIssuer:   "go-xkms",
 		ValidateAudience: true,
 		ExpectedAudience: "test-app",
 	}
@@ -537,7 +537,7 @@ func TestVerifyWithOptions_InvalidIssuer(t *testing.T) {
 	verifier := NewVerifier()
 	opts := &VerifyOptions{
 		ValidateIssuer: true,
-		ExpectedIssuer: "go-keychain",
+		ExpectedIssuer: "go-xkms",
 	}
 
 	_, err = verifier.VerifyWithOptions(tokenString, &privateKey.PublicKey, opts)
@@ -706,7 +706,7 @@ func TestVerifyWithOptions_MissingIssuer(t *testing.T) {
 	verifier := NewVerifier()
 	opts := &VerifyOptions{
 		ValidateIssuer: true,
-		ExpectedIssuer: "go-keychain",
+		ExpectedIssuer: "go-xkms",
 	}
 
 	_, err = verifier.VerifyWithOptions(tokenString, &privateKey.PublicKey, opts)

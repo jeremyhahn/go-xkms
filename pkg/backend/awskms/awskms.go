@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -31,12 +31,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/kms/types"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/crypto/wrapping"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
-// Backend implements the types.Backend interface for AWS KMS.
+// Backend implements the types.KeyProvider interface for AWS KMS.
 // It provides secure key management operations using AWS Key Management Service.
 type Backend struct {
 	config   *Config
@@ -504,6 +504,7 @@ func (b *Backend) Type() types.BackendType {
 }
 
 // Capabilities returns what features this backend supports.
+// SecurityLevel is Medium - keys are protected by cloud HSMs but network-dependent.
 func (b *Backend) Capabilities() types.Capabilities {
 	return types.Capabilities{
 		Keys:                true,
@@ -514,6 +515,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 		SymmetricEncryption: true,  // AWS KMS supports symmetric encryption (AES-256-GCM)
 		Import:              true,  // AWS KMS supports key import via wrapping
 		Export:              false, // AWS KMS does not allow key extraction
+		SecurityLevel:       types.SecurityLevelMedium,
 	}
 }
 

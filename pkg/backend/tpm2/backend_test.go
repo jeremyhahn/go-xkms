@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -32,10 +32,10 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	pkgtpm2 "github.com/jeremyhahn/go-keychain/pkg/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // mockKeyBackend is a minimal mock for testing
@@ -99,23 +99,33 @@ var _ transport.TPM = (*mockTransport)(nil)
 
 // mockTPM implements TrustedPlatformModule interface for testing
 type mockTPM struct {
-	closeErr            error
-	createRSAErr        error
-	createECDSAErr      error
-	deleteKeyErr        error
-	signErr             error
-	rsaDecryptErr       error
-	loadKeyPairErr      error
-	parsePublicKeyErr   error
-	parsePublicKeyValue crypto.PublicKey
-	ssrkAttrsErr        error
-	ssrkAttrsValue      *types.KeyAttributes
-	rsaPublicKey        *rsa.PublicKey
-	ecdsaPublicKey      *ecdsa.PublicKey
-	signatureValue      []byte
-	decryptValue        []byte
-	loadResponse        *tpm2.LoadResponse
-	transport           transport.TPM
+	closeErr                   error
+	createRSAErr               error
+	createECDSAErr             error
+	deleteKeyErr               error
+	signErr                    error
+	rsaDecryptErr              error
+	loadKeyPairErr             error
+	parsePublicKeyErr          error
+	parsePublicKeyValue        crypto.PublicKey
+	ssrkAttrsErr               error
+	ssrkAttrsValue             *types.KeyAttributes
+	rsaPublicKey               *rsa.PublicKey
+	ecdsaPublicKey             *ecdsa.PublicKey
+	signatureValue             []byte
+	decryptValue               []byte
+	loadResponse               *tpm2.LoadResponse
+	transport                  transport.TPM
+	ecdhZGenErr                error
+	ecdhZGenValue              []byte
+	certifyKeyErr              error
+	certifyKeyResult           *pkgtpm2.CertifyResult
+	generateSymmetricKeyErr    error
+	generateSymmetricKeyResult types.SymmetricKey
+	getSymmetricKeyErr         error
+	getSymmetricKeyResult      types.SymmetricKey
+	symmetricEncrypterErr      error
+	symmetricEncrypterResult   types.SymmetricEncrypter
 }
 
 func (m *mockTPM) ActivateCredential(credentialBlob, encryptedSecret []byte) ([]byte, error) {
@@ -125,6 +135,7 @@ func (m *mockTPM) AKProfile() (pkgtpm2.AKProfile, error)                { return
 func (m *mockTPM) AlgID() tpm2.TPMAlgID                                 { return tpm2.TPMAlgSHA256 }
 func (m *mockTPM) CalculateName(algID tpm2.TPMAlgID, publicArea []byte) {}
 func (m *mockTPM) Clear(lockoutAuth []byte) error                       { return nil }
+func (m *mockTPM) ForceClear() error                                    { return nil }
 func (m *mockTPM) Close() error                                         { return m.closeErr }
 func (m *mockTPM) Config() *pkgtpm2.Config                              { return nil }
 func (m *mockTPM) CreateECDSA(keyAttrs *types.KeyAttributes, backend store.KeyBackend, overwrite bool) (*ecdsa.PublicKey, error) {
@@ -163,19 +174,21 @@ func (m *mockTPM) CreateTCG_CSR_IDEVID(ekCert *x509.Certificate, akAttrs *types.
 func (m *mockTPM) DeleteKey(keyAttrs *types.KeyAttributes, backend store.KeyBackend) error {
 	return m.deleteKeyErr
 }
-func (m *mockTPM) Device() string       { return "/dev/mock" }
-func (m *mockTPM) EK() crypto.PublicKey { return nil }
-func (m *mockTPM) EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic) {
-	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}
+func (m *mockTPM) Device() string                { return "/dev/mock" }
+func (m *mockTPM) EK() (crypto.PublicKey, error) { return nil, nil }
+func (m *mockTPM) EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
+	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, nil
 }
 func (m *mockTPM) EKAttributes() (*types.KeyAttributes, error)        { return nil, nil }
 func (m *mockTPM) EKCertificate() (*x509.Certificate, error)          { return nil, nil }
-func (m *mockTPM) EKECC() *ecdsa.PublicKey                            { return nil }
-func (m *mockTPM) EKRSA() *rsa.PublicKey                              { return nil }
+func (m *mockTPM) EKCertificateRSA() (*x509.Certificate, error)       { return nil, nil }
+func (m *mockTPM) EKCertificateEC() (*x509.Certificate, error)        { return nil, nil }
+func (m *mockTPM) EKECC() (*ecdsa.PublicKey, error)                   { return nil, nil }
+func (m *mockTPM) EKRSA() (*rsa.PublicKey, error)                     { return nil, nil }
 func (m *mockTPM) EventLog() ([]byte, error)                          { return nil, nil }
 func (m *mockTPM) FixedProperties() (*pkgtpm2.PropertiesFixed, error) { return nil, nil }
 func (m *mockTPM) Flush(handle tpm2.TPMHandle)                        {}
-func (m *mockTPM) GoldenMeasurements() []byte                         { return nil }
+func (m *mockTPM) GoldenMeasurements() ([]byte, error)                { return nil, nil }
 func (m *mockTPM) HMAC(auth []byte) tpm2.Session                      { return nil }
 func (m *mockTPM) HMACSaltedSession(handle tpm2.TPMHandle, pub tpm2.TPMTPublic, auth []byte) (tpm2.Session, func() error, error) {
 	return nil, func() error { return nil }, nil
@@ -183,15 +196,15 @@ func (m *mockTPM) HMACSaltedSession(handle tpm2.TPMHandle, pub tpm2.TPMTPublic, 
 func (m *mockTPM) HMACSession(auth []byte) (s tpm2.Session, close func() error, err error) {
 	return nil, func() error { return nil }, nil
 }
-func (m *mockTPM) IAK() crypto.PublicKey                                             { return nil }
+func (m *mockTPM) IAK() (crypto.PublicKey, error)                                    { return nil, nil }
 func (m *mockTPM) IAKAttributes() (*types.KeyAttributes, error)                      { return nil, nil }
-func (m *mockTPM) IDevID() crypto.PublicKey                                          { return nil }
+func (m *mockTPM) IDevID() (crypto.PublicKey, error)                                 { return nil, nil }
 func (m *mockTPM) IDevIDAttributes() (*types.KeyAttributes, error)                   { return nil, nil }
 func (m *mockTPM) Info() (string, error)                                             { return "", nil }
 func (m *mockTPM) IsFIPS140_2() (bool, error)                                        { return false, nil }
 func (m *mockTPM) IsPlatformPCRExtended() (bool, error)                              { return false, nil }
 func (m *mockTPM) ExtendPCR(pcrIndex int, hashAlg string, data []byte) error         { return nil }
-func (m *mockTPM) Install(soPIN types.Password) error                                { return nil }
+func (m *mockTPM) Install(soPIN types.Password, opts *pkgtpm2.InstallOptions) error  { return nil }
 func (m *mockTPM) KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, error) { return nil, nil }
 func (m *mockTPM) LoadKeyPair(keyAttrs *types.KeyAttributes, session *tpm2.Session, backend store.KeyBackend) (*tpm2.LoadResponse, error) {
 	if m.loadKeyPairErr != nil {
@@ -231,9 +244,9 @@ func (m *mockTPM) ParsePublicKey(tpm2BPublic []byte) (crypto.PublicKey, error) {
 	}
 	return m.parsePublicKeyValue, nil
 }
-func (m *mockTPM) PlatformPolicyDigestHash() ([]byte, error) { return nil, nil }
-func (m *mockTPM) PlatformPolicyDigest() tpm2.TPM2BDigest    { return tpm2.TPM2BDigest{} }
-func (m *mockTPM) PlatformPolicySession() (tpm2.Session, func() error, error) {
+func (m *mockTPM) PlatformPolicyDigestHash() ([]byte, error)       { return nil, nil }
+func (m *mockTPM) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) { return tpm2.TPM2BDigest{}, nil }
+func (m *mockTPM) PlatformPolicySession(auth []byte) (tpm2.Session, func() error, error) {
 	return nil, func() error { return nil }, nil
 }
 func (m *mockTPM) PlatformQuote(keyAttrs *types.KeyAttributes) (pkgtpm2.Quote, []byte, error) {
@@ -285,8 +298,8 @@ func (m *mockTPM) SetHierarchyAuth(oldSecret, newSecret types.Password, hierarch
 }
 func (m *mockTPM) SecretFromShares(shares []string) (string, error)        { return "", nil }
 func (m *mockTPM) ShareSecret(secret []byte, shares int) ([]string, error) { return nil, nil }
-func (m *mockTPM) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic) {
-	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}
+func (m *mockTPM) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
+	return tpm2.TPM2BName{}, tpm2.TPMTPublic{}, nil
 }
 func (m *mockTPM) SSRKAttributes() (*types.KeyAttributes, error) {
 	if m.ssrkAttrsErr != nil {
@@ -296,6 +309,9 @@ func (m *mockTPM) SSRKAttributes() (*types.KeyAttributes, error) {
 		return m.ssrkAttrsValue, nil
 	}
 	return &types.KeyAttributes{CN: "ssrk"}, nil
+}
+func (m *mockTPM) PlatformSRKAttributes() (*types.KeyAttributes, error) {
+	return &types.KeyAttributes{CN: "platform-srk"}, nil
 }
 func (m *mockTPM) Transport() transport.TPM {
 	if m.transport != nil {
@@ -309,14 +325,14 @@ func (m *mockTPM) Unseal(ctx context.Context, sealed *types.SealedData, opts *ty
 func (m *mockTPM) UnsealKey(keyAttrs *types.KeyAttributes, backend store.KeyBackend) ([]byte, error) {
 	return nil, nil
 }
-func (m *mockTPM) CanSeal() bool                                       { return true }
-func (m *mockTPM) WriteEKCert(ekCert []byte) error                     { return nil }
-func (m *mockTPM) ReadIDevIDCertificate() (*x509.Certificate, error)   { return nil, nil }
-func (m *mockTPM) WriteIDevIDCertificate(cert *x509.Certificate) error { return nil }
-func (m *mockTPM) DeleteIDevIDCertificate() error                      { return nil }
-func (m *mockTPM) ReadIAKCertificate() (*x509.Certificate, error)      { return nil, nil }
-func (m *mockTPM) WriteIAKCertificate(cert *x509.Certificate) error    { return nil }
-func (m *mockTPM) DeleteIAKCertificate() error                         { return nil }
+func (m *mockTPM) CanSeal() bool                                    { return true }
+func (m *mockTPM) WriteEKCert(ekCert []byte) error                  { return nil }
+func (m *mockTPM) IDevIDCertificate() (*x509.Certificate, error)    { return nil, nil }
+func (m *mockTPM) ProvisionIDevIDCert(cert *x509.Certificate) error { return nil }
+func (m *mockTPM) DeleteIDevIDCertificate() error                   { return nil }
+func (m *mockTPM) IAKCertificate() (*x509.Certificate, error)       { return nil, nil }
+func (m *mockTPM) ProvisionIAKCert(cert *x509.Certificate) error    { return nil }
+func (m *mockTPM) DeleteIAKCertificate() error                      { return nil }
 func (m *mockTPM) VerifyTCGCSR(csr *pkgtpm2.TCG_CSR_IDEVID, sigAlgo x509.SignatureAlgorithm) (*types.KeyAttributes, *pkgtpm2.UNPACKED_TCG_CSR_IDEVID, error) {
 	return nil, nil, nil
 }
@@ -335,6 +351,55 @@ func (m *mockTPM) HashSequence(keyAttrs *types.KeyAttributes, data []byte) ([]by
 func (m *mockTPM) Hash(keyAttrs *types.KeyAttributes, data []byte) ([]byte, []byte, error) {
 	return nil, nil, nil
 }
+func (m *mockTPM) ECDHZGen(keyAttrs *types.KeyAttributes, peerPublicKey *tpm2.TPMSECCPoint, backend store.KeyBackend) ([]byte, error) {
+	if m.ecdhZGenErr != nil {
+		return nil, m.ecdhZGenErr
+	}
+	if m.ecdhZGenValue != nil {
+		return m.ecdhZGenValue, nil
+	}
+	// Return a mock shared secret (32 bytes for P-256)
+	return make([]byte, 32), nil
+}
+func (m *mockTPM) CertifyKey(keyAttrs *types.KeyAttributes, nonce []byte, backend store.KeyBackend) (*pkgtpm2.CertifyResult, error) {
+	if m.certifyKeyErr != nil {
+		return nil, m.certifyKeyErr
+	}
+	return m.certifyKeyResult, nil
+}
+
+func (m *mockTPM) DictionaryAttackLockoutReset(lockoutAuth []byte) error { return nil }
+func (m *mockTPM) FactoryReset(ownerAuth []byte) error                   { return nil }
+func (m *mockTPM) FactoryResetWithClear(ownerAuth []byte) error          { return nil }
+func (m *mockTPM) ListNVIndexes() ([]pkgtpm2.NVIndexInfo, error)         { return nil, nil }
+func (m *mockTPM) ListPersistentHandles() ([]tpm2.TPMHandle, error)      { return nil, nil }
+func (m *mockTPM) ListTransientHandles() ([]tpm2.TPMHandle, error)       { return nil, nil }
+func (m *mockTPM) SupportedAlgorithms() ([]string, error)                { return nil, nil }
+func (m *mockTPM) SupportedCommands() ([]string, error)                  { return nil, nil }
+func (m *mockTPM) SupportedECCCurves() ([]string, error)                 { return nil, nil }
+func (m *mockTPM) SSRK() *pkgtpm2.SRKConfig                              { return nil }
+func (m *mockTPM) PlatformKeyStore() pkgtpm2.PlatformKeyStorer           { return nil }
+func (m *mockTPM) GenerateSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	if m.generateSymmetricKeyErr != nil {
+		return nil, m.generateSymmetricKeyErr
+	}
+	return m.generateSymmetricKeyResult, nil
+}
+func (m *mockTPM) GetSymmetricKey(attrs *types.KeyAttributes) (types.SymmetricKey, error) {
+	if m.getSymmetricKeyErr != nil {
+		return nil, m.getSymmetricKeyErr
+	}
+	return m.getSymmetricKeyResult, nil
+}
+func (m *mockTPM) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+	if m.symmetricEncrypterErr != nil {
+		return nil, m.symmetricEncrypterErr
+	}
+	return m.symmetricEncrypterResult, nil
+}
+
+func (m *mockTPM) VerifyAuth(handle tpm2.TPMHandle, authValue []byte) error            { return nil }
+func (m *mockTPM) ChangeAuth(handle tpm2.TPMHandle, currentAuth, newAuth []byte) error { return nil }
 
 var _ pkgtpm2.TrustedPlatformModule = (*mockTPM)(nil)
 
@@ -379,8 +444,8 @@ func TestConfig_Validate_DefaultValues(t *testing.T) {
 	if config.PlatformPCRBank != "SHA256" {
 		t.Errorf("PlatformPCRBank default: expected SHA256, got %q", config.PlatformPCRBank)
 	}
-	if config.CN != "keychain" {
-		t.Errorf("CN default: expected keychain, got %q", config.CN)
+	if config.CN != "xkms" {
+		t.Errorf("CN default: expected xkms, got %q", config.CN)
 	}
 }
 
@@ -1698,8 +1763,8 @@ func TestNewBackend_VerifyConfigDefaults(t *testing.T) {
 	if config.PlatformPCRBank != "SHA256" {
 		t.Errorf("PlatformPCRBank default: got %q, want %q", config.PlatformPCRBank, "SHA256")
 	}
-	if config.CN != "keychain" {
-		t.Errorf("CN default: got %q, want %q", config.CN, "keychain")
+	if config.CN != "xkms" {
+		t.Errorf("CN default: got %q, want %q", config.CN, "xkms")
 	}
 }
 
@@ -1784,5 +1849,242 @@ func TestConfig_ToTPMConfig_EKAndSSRKConfigs_RSADefaults(t *testing.T) {
 	}
 	if tpmConfig.SSRK.RSAConfig.KeySize != 2048 {
 		t.Errorf("SSRK.RSAConfig.KeySize: got %d, want 2048", tpmConfig.SSRK.RSAConfig.KeySize)
+	}
+}
+
+// =============================================================================
+// Mock types for symmetric key tests
+// =============================================================================
+
+type mockSymmetricKey struct {
+	algorithm string
+	keySize   int
+	rawBytes  []byte
+	rawErr    error
+}
+
+func (k *mockSymmetricKey) Algorithm() string    { return k.algorithm }
+func (k *mockSymmetricKey) KeySize() int         { return k.keySize }
+func (k *mockSymmetricKey) Raw() ([]byte, error) { return k.rawBytes, k.rawErr }
+
+var _ types.SymmetricKey = (*mockSymmetricKey)(nil)
+
+type mockSymmetricEncrypter struct{}
+
+func (e *mockSymmetricEncrypter) Encrypt(plaintext []byte, opts *types.EncryptOptions) (*types.EncryptedData, error) {
+	return nil, nil
+}
+func (e *mockSymmetricEncrypter) Decrypt(data *types.EncryptedData, opts *types.DecryptOptions) ([]byte, error) {
+	return nil, nil
+}
+
+var _ types.SymmetricEncrypter = (*mockSymmetricEncrypter)(nil)
+
+// =============================================================================
+// Symmetric key provider tests
+// =============================================================================
+
+func TestGenerateSymmetricKey_Success(t *testing.T) {
+	mockKey := &mockSymmetricKey{algorithm: "aes256-gcm", keySize: 256}
+	mockTpm := &mockTPM{generateSymmetricKeyResult: mockKey}
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
+
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	key, err := b.GenerateSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("GenerateSymmetricKey() error = %v", err)
+	}
+	if key == nil {
+		t.Fatal("Expected non-nil symmetric key")
+	}
+	if key.Algorithm() != "aes256-gcm" {
+		t.Errorf("Expected algorithm aes256-gcm, got %s", key.Algorithm())
+	}
+	if key.KeySize() != 256 {
+		t.Errorf("Expected key size 256, got %d", key.KeySize())
+	}
+	if attrs.StoreType != types.StoreTPM2 {
+		t.Errorf("Expected StoreType %v, got %v", types.StoreTPM2, attrs.StoreType)
+	}
+	if attrs.Parent != srkAttrs {
+		t.Error("Expected Parent to be set to SRK attributes")
+	}
+}
+
+func TestGenerateSymmetricKey_Closed(t *testing.T) {
+	b := &Backend{closed: true}
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	_, err := b.GenerateSymmetricKey(attrs)
+	if err != ErrNotInitialized {
+		t.Errorf("Expected ErrNotInitialized, got %v", err)
+	}
+}
+
+func TestGenerateSymmetricKey_NilAttrs(t *testing.T) {
+	b := &Backend{closed: false}
+	_, err := b.GenerateSymmetricKey(nil)
+	if err != ErrInvalidKeyAttributes {
+		t.Errorf("Expected ErrInvalidKeyAttributes, got %v", err)
+	}
+}
+
+func TestGenerateSymmetricKey_TPMError(t *testing.T) {
+	expectedErr := errors.New("tpm generate symmetric key error")
+	mockTpm := &mockTPM{generateSymmetricKeyErr: expectedErr}
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
+
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	_, err := b.GenerateSymmetricKey(attrs)
+	if err == nil {
+		t.Error("Expected error from TPM GenerateSymmetricKey")
+	}
+	if !errors.Is(err, expectedErr) {
+		t.Errorf("Expected wrapped TPM error, got %v", err)
+	}
+}
+
+func TestGenerateSymmetricKey_PreservesExistingParent(t *testing.T) {
+	mockKey := &mockSymmetricKey{algorithm: "aes128-gcm", keySize: 128}
+	mockTpm := &mockTPM{generateSymmetricKeyResult: mockKey}
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	existingParent := &types.KeyAttributes{CN: "existing-parent"}
+	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
+
+	attrs := &types.KeyAttributes{CN: "test-sym-key", Parent: existingParent}
+	_, err := b.GenerateSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("GenerateSymmetricKey() error = %v", err)
+	}
+	if attrs.Parent != existingParent {
+		t.Error("Expected existing Parent to be preserved")
+	}
+}
+
+func TestGetSymmetricKey_Success(t *testing.T) {
+	mockKey := &mockSymmetricKey{algorithm: "aes256-gcm", keySize: 256}
+	mockTpm := &mockTPM{getSymmetricKeyResult: mockKey}
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
+
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	key, err := b.GetSymmetricKey(attrs)
+	if err != nil {
+		t.Fatalf("GetSymmetricKey() error = %v", err)
+	}
+	if key == nil {
+		t.Fatal("Expected non-nil symmetric key")
+	}
+	if key.Algorithm() != "aes256-gcm" {
+		t.Errorf("Expected algorithm aes256-gcm, got %s", key.Algorithm())
+	}
+	if attrs.StoreType != types.StoreTPM2 {
+		t.Errorf("Expected StoreType %v, got %v", types.StoreTPM2, attrs.StoreType)
+	}
+}
+
+func TestGetSymmetricKey_Closed(t *testing.T) {
+	b := &Backend{closed: true}
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	_, err := b.GetSymmetricKey(attrs)
+	if err != ErrNotInitialized {
+		t.Errorf("Expected ErrNotInitialized, got %v", err)
+	}
+}
+
+func TestGetSymmetricKey_NilAttrs(t *testing.T) {
+	b := &Backend{closed: false}
+	_, err := b.GetSymmetricKey(nil)
+	if err != ErrInvalidKeyAttributes {
+		t.Errorf("Expected ErrInvalidKeyAttributes, got %v", err)
+	}
+}
+
+func TestGetSymmetricKey_TPMError(t *testing.T) {
+	expectedErr := errors.New("tpm get symmetric key error")
+	mockTpm := &mockTPM{getSymmetricKeyErr: expectedErr}
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
+
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	_, err := b.GetSymmetricKey(attrs)
+	if err == nil {
+		t.Error("Expected error from TPM GetSymmetricKey")
+	}
+	if !errors.Is(err, expectedErr) {
+		t.Errorf("Expected wrapped TPM error, got %v", err)
+	}
+}
+
+func TestSymmetricEncrypter_Success(t *testing.T) {
+	mockEnc := &mockSymmetricEncrypter{}
+	mockTpm := &mockTPM{symmetricEncrypterResult: mockEnc}
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
+
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	enc, err := b.SymmetricEncrypter(attrs)
+	if err != nil {
+		t.Fatalf("SymmetricEncrypter() error = %v", err)
+	}
+	if enc == nil {
+		t.Fatal("Expected non-nil symmetric encrypter")
+	}
+	if attrs.StoreType != types.StoreTPM2 {
+		t.Errorf("Expected StoreType %v, got %v", types.StoreTPM2, attrs.StoreType)
+	}
+	if attrs.Parent != srkAttrs {
+		t.Error("Expected Parent to be set to SRK attributes")
+	}
+}
+
+func TestSymmetricEncrypter_Closed(t *testing.T) {
+	b := &Backend{closed: true}
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	_, err := b.SymmetricEncrypter(attrs)
+	if err != ErrNotInitialized {
+		t.Errorf("Expected ErrNotInitialized, got %v", err)
+	}
+}
+
+func TestSymmetricEncrypter_NilAttrs(t *testing.T) {
+	b := &Backend{closed: false}
+	_, err := b.SymmetricEncrypter(nil)
+	if err != ErrInvalidKeyAttributes {
+		t.Errorf("Expected ErrInvalidKeyAttributes, got %v", err)
+	}
+}
+
+func TestSymmetricEncrypter_TPMError(t *testing.T) {
+	expectedErr := errors.New("tpm symmetric encrypter error")
+	mockTpm := &mockTPM{symmetricEncrypterErr: expectedErr}
+	srkAttrs := &types.KeyAttributes{CN: "test-srk"}
+	b := &Backend{closed: false, tpm: mockTpm, keyBackend: &mockKeyBackend{}, srkAttrs: srkAttrs}
+
+	attrs := &types.KeyAttributes{CN: "test-sym-key"}
+	_, err := b.SymmetricEncrypter(attrs)
+	if err == nil {
+		t.Error("Expected error from TPM SymmetricEncrypter")
+	}
+	if !errors.Is(err, expectedErr) {
+		t.Errorf("Expected wrapped TPM error, got %v", err)
+	}
+}
+
+func TestGetTracker_ReturnsTracker(t *testing.T) {
+	tracker := backend.NewMemoryAEADTracker()
+	b := &Backend{tracker: tracker}
+	result := b.GetTracker()
+	if result != tracker {
+		t.Error("Expected GetTracker() to return the backend's tracker")
+	}
+}
+
+func TestGetTracker_ReturnsNilWhenNoTracker(t *testing.T) {
+	b := &Backend{tracker: nil}
+	result := b.GetTracker()
+	if result != nil {
+		t.Error("Expected GetTracker() to return nil when no tracker is set")
 	}
 }

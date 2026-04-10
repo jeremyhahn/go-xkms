@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -14,6 +14,7 @@
 package certstore
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"sync"
@@ -104,7 +105,7 @@ func (cs *compositeCertStore) StoreCertificate(cert *x509.Certificate) error {
 		}
 	}
 
-	if err := cs.storage.SaveCert(cert.Subject.CommonName, cert); err != nil {
+	if err := cs.storage.SaveCert(context.Background(), cert.Subject.CommonName, cert); err != nil {
 		return fmt.Errorf("failed to store certificate: %w", err)
 	}
 
@@ -124,7 +125,7 @@ func (cs *compositeCertStore) GetCertificate(cn string) (*x509.Certificate, erro
 		return nil, ErrInvalidCN
 	}
 
-	cert, err := cs.storage.GetCert(cn)
+	cert, err := cs.storage.GetCert(context.Background(), cn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get certificate: %w", err)
 	}
@@ -145,7 +146,7 @@ func (cs *compositeCertStore) DeleteCertificate(cn string) error {
 		return ErrInvalidCN
 	}
 
-	if err := cs.storage.DeleteCert(cn); err != nil {
+	if err := cs.storage.DeleteCert(context.Background(), cn); err != nil {
 		return fmt.Errorf("failed to delete certificate: %w", err)
 	}
 
@@ -161,14 +162,14 @@ func (cs *compositeCertStore) ListCertificates() ([]*x509.Certificate, error) {
 		return nil, ErrStorageClosed
 	}
 
-	ids, err := cs.storage.ListCerts()
+	ids, err := cs.storage.ListCerts(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to list certificates: %w", err)
 	}
 
 	var certs []*x509.Certificate
 	for _, id := range ids {
-		cert, err := cs.storage.GetCert(id)
+		cert, err := cs.storage.GetCert(context.Background(), id)
 		if err != nil {
 			continue
 		}
@@ -212,7 +213,7 @@ func (cs *compositeCertStore) StoreCertificateChain(chain []*x509.Certificate) e
 		}
 	}
 
-	if err := cs.storage.SaveCertChain(cn, chain); err != nil {
+	if err := cs.storage.SaveCertChain(context.Background(), cn, chain); err != nil {
 		return fmt.Errorf("failed to store certificate chain: %w", err)
 	}
 
@@ -232,7 +233,7 @@ func (cs *compositeCertStore) GetCertificateChain(cn string) ([]*x509.Certificat
 		return nil, ErrInvalidCN
 	}
 
-	chain, err := cs.storage.GetCertChain(cn)
+	chain, err := cs.storage.GetCertChain(context.Background(), cn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get certificate chain: %w", err)
 	}
@@ -389,17 +390,8 @@ func (cs *compositeCertStore) isRevokedLocked(cert *x509.Certificate) (bool, err
 	}
 
 	// Check if certificate serial number is in the revoked list
-	for _, revokedCert := range crl.RevokedCertificateEntries {
-		if revokedCert.SerialNumber.Cmp(cert.SerialNumber) == 0 {
-			return true, nil
-		}
-	}
-
-	// Also check RevokedCertificates for Go versions before 1.21
-	// (Go 1.21+ uses RevokedCertificateEntries instead)
 	for _, entry := range crl.RevokedCertificateEntries {
-		revokedCert := entry.SerialNumber
-		if revokedCert.Cmp(cert.SerialNumber) == 0 {
+		if entry.SerialNumber.Cmp(cert.SerialNumber) == 0 {
 			return true, nil
 		}
 	}

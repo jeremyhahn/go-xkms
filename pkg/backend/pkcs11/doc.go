@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -25,7 +25,7 @@
 // - Hardware-backed key storage with PKCS#11 compatible HSMs
 // - Support for RSA, ECDSA, and Ed25519 key algorithms
 // - Ed25519 support requires PKCS#11 v3.0+ and HSM support (SoftHSM v2.6+)
-// - Context caching to prevent re-initialization overhead
+// - Channel-based session pool for efficient concurrent access
 // - Thread-safe operations with mutex protection
 // - SoftHSM support for testing and development
 //
@@ -101,8 +101,8 @@
 // # Thread Safety
 //
 // All operations are protected by read-write mutexes, making the backend safe
-// for concurrent use from multiple goroutines. Context caching ensures that
-// multiple backend instances using the same token share a single PKCS#11 session.
+// for concurrent use from multiple goroutines. The session pool provides
+// lock-free concurrent access to pre-opened PKCS#11 sessions.
 //
 // # Error Handling
 //

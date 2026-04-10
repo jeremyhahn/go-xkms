@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -25,11 +25,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/adapters/auth"
-	"github.com/jeremyhahn/go-keychain/pkg/health"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	keychainmocks "github.com/jeremyhahn/go-keychain/pkg/keychain/mocks"
-	"github.com/jeremyhahn/go-keychain/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/health"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
@@ -85,8 +85,8 @@ func testLogger() *slog.Logger {
 }
 
 // newMockKeyStore creates a new MockKeyStore for testing (wrapper for convenience)
-func newMockKeyStore() *keychainmocks.MockKeyStore {
-	return keychainmocks.NewMockKeyStore()
+func newMockKeyStore() *xkmsmocks.MockKeyStore {
+	return xkmsmocks.NewMockKeyStore()
 }
 
 // TestNewServer_NilConfig tests that NewServer returns error with nil config
@@ -101,7 +101,7 @@ func TestNewServer_NilConfig(t *testing.T) {
 func TestNewServer_NoBackends(t *testing.T) {
 	cfg := &Config{
 		Port:     8443,
-		Backends: map[string]keychain.KeyStore{},
+		Backends: map[string]xkms.Backend{},
 	}
 
 	server, err := NewServer(cfg)
@@ -115,7 +115,7 @@ func TestNewServer_Defaults(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 	}
@@ -134,7 +134,7 @@ func TestNewServer_CustomPort(t *testing.T) {
 
 	cfg := &Config{
 		Port: 9000,
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 	}
@@ -152,7 +152,7 @@ func TestNewServer_WithLogger(t *testing.T) {
 	log := testLogger()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: log,
@@ -170,7 +170,7 @@ func TestNewServer_WithAuthenticator(t *testing.T) {
 	authenticator := auth.NewNoOpAuthenticator()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Authenticator: authenticator,
@@ -187,7 +187,7 @@ func TestNewServer_WithWebAuthn(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -212,7 +212,7 @@ func TestNewServer_WithInvalidWebAuthn(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -233,7 +233,7 @@ func TestNewServer_WithTimeouts(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		ReadTimeout:  30 * time.Second,
@@ -254,7 +254,7 @@ func TestServer_SetHealthChecker(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 	}
@@ -273,7 +273,7 @@ func TestSetupRouter_HealthEndpoints(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -296,7 +296,7 @@ func TestSetupRouter_LivenessProbe(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -318,7 +318,7 @@ func TestSetupRouter_ReadinessProbe(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -340,7 +340,7 @@ func TestSetupRouter_StartupProbe(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -362,7 +362,7 @@ func TestSetupRouter_HealthHead(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -384,7 +384,7 @@ func TestSetupRouter_WebAuthnRoutes(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -434,7 +434,7 @@ func TestSetupRouter_WebAuthnNotMountedWithoutConfig(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -461,7 +461,7 @@ func TestSetupRouter_APIRoutes(t *testing.T) {
 	authenticator := &testAuthenticator{validToken: "valid-token"}
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Authenticator: authenticator,
@@ -496,7 +496,7 @@ func TestSetupRouter_CORSMiddleware(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -519,7 +519,7 @@ func TestSetupRouter_CorrelationMiddleware(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),
@@ -555,7 +555,7 @@ func TestWebAuthnStores_IntegrationWithServer(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -581,7 +581,7 @@ func TestWebAuthnRoutes_BeginRegistration(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -654,7 +654,7 @@ func TestWebAuthnRoutes_RegistrationStatus(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -702,7 +702,7 @@ func TestWebAuthnRoutes_BeginLogin(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -748,7 +748,7 @@ func TestWebAuthnRoutes_FinishRegistration(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -789,7 +789,7 @@ func TestWebAuthnRoutes_FinishLogin(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		WebAuthnConfig: &webauthn.Config{
@@ -830,7 +830,7 @@ func TestServer_Version(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Version: "2.0.0",
@@ -856,7 +856,7 @@ func TestServer_DefaultVersion(t *testing.T) {
 	ks := newMockKeyStore()
 
 	cfg := &Config{
-		Backends: map[string]keychain.KeyStore{
+		Backends: map[string]xkms.Backend{
 			"test": ks,
 		},
 		Logger: testLogger(),

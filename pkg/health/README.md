@@ -24,7 +24,7 @@ This package implements three types of health probes as defined by Kubernetes:
 ### Basic Setup
 
 ```go
-import "github.com/jeremyhahn/go-keychain/pkg/health"
+import "github.com/jeremyhahn/go-xkms/pkg/health"
 
 // Create a new health checker
 checker := health.NewChecker()
@@ -208,11 +208,11 @@ The REST API exposes three health endpoints:
 apiVersion: v1
 kind: Pod
 metadata:
-  name: keychain-server
+  name: xkms-server
 spec:
   containers:
-  - name: keychain
-    image: keychain-server:latest
+  - name: xkms
+    image: xkms-server:latest
     ports:
     - containerPort: 8443
 

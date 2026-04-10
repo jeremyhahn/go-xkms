@@ -1,6 +1,6 @@
 # Testing Documentation
 
-This directory contains documentation for testing go-keychain.
+This directory contains documentation for testing go-xkms.
 
 ## Test Types
 
@@ -42,7 +42,7 @@ View coverage for specific packages:
 make coverage
 
 # Coverage for specific package
-make coverage-keychain
+make coverage-xkms
 make coverage-backend
 make coverage-certstore
 ```

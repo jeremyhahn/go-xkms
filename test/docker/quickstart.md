@@ -101,8 +101,8 @@ Expected output:
 
 ```
 NAME                    IMAGE                         STATUS          PORTS
-go-keychain-swtpm       go-keychain-swtpm:latest     Up (healthy)    0.0.0.0:2321-2322->2321-2322/tcp
-go-keychain-softhsm     go-keychain-softhsm:latest   Up (healthy)
+go-xkms-swtpm       go-xkms-swtpm:latest     Up (healthy)    0.0.0.0:2321-2322->2321-2322/tcp
+go-xkms-softhsm     go-xkms-softhsm:latest   Up (healthy)
 ```
 
 ### Rebuild Specific Service
@@ -151,7 +151,7 @@ ports:
 
 ```bash
 # Check SWTPM health
-docker inspect go-keychain-swtpm --format='{{.State.Health.Status}}'
+docker inspect go-xkms-swtpm --format='{{.State.Health.Status}}'
 
 # Restart SWTPM
 docker compose restart swtpm
@@ -242,10 +242,10 @@ docker compose run --rm integration-test go test -v -short ./test/integration/..
 
 ## Next Steps
 
-1. Read full documentation: `/home/jhahn/sources/go-keychain/test/docker/README.md`
-2. Review test examples: `/home/jhahn/sources/go-keychain/test/integration/`
+1. Read full documentation: `/home/jhahn/sources/go-xkms/test/docker/README.md`
+2. Review test examples: `/home/jhahn/sources/go-xkms/test/integration/`
 3. Explore Makefile targets: `make help`
-4. Check project README: `/home/jhahn/sources/go-keychain/README.md`
+4. Check project README: `/home/jhahn/sources/go-xkms/README.md`
 
 ## Useful Commands
 
@@ -254,7 +254,7 @@ docker compose run --rm integration-test go test -v -short ./test/integration/..
 make help
 
 # View service resource usage
-docker stats go-keychain-swtpm go-keychain-softhsm
+docker stats go-xkms-swtpm go-xkms-softhsm
 
 # Execute command in running service
 docker compose exec swtpm nc -zv localhost 2321
@@ -264,7 +264,7 @@ docker compose exec softhsm softhsm2-util --show-slots
 docker compose cp softhsm:/tokens ./tokens-backup
 
 # View network details
-docker network inspect go-keychain_keychain-test
+docker network inspect go-xkms_xkms-test
 
 # Prune unused Docker resources
 docker system prune -a --volumes

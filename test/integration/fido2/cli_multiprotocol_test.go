@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -48,22 +48,23 @@ type MultiProtocolConfig struct {
 	QUICBaseURL    string
 	MCPAddr        string
 	DevicePath     string
-	TLSInsecure    bool
+	CAFile         string
 }
 
 // LoadMultiProtocolConfig loads multi-protocol configuration
 func LoadMultiProtocolConfig() *MultiProtocolConfig {
 	cfg := LoadCLITestConfig()
 
+	caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
 	return &MultiProtocolConfig{
 		CLIBinPath:     cfg.CLIBinPath,
-		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/keychain/keychain.sock"),
+		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/xkms/xkms.sock"),
 		RESTBaseURL:    getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
 		GRPCAddr:       getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
 		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:9445"),
 		MCPAddr:        getEnv("KEYSTORE_MCP_ADDR", "localhost:9444"),
 		DevicePath:     cfg.DevicePath,
-		TLSInsecure:    true,
+		CAFile:         caFile,
 	}
 }
 
@@ -96,13 +97,13 @@ func (cfg *MultiProtocolConfig) execCLIWithProtocol(t *testing.T, protocol Proto
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS
+	// Add CA file for protocols that use TLS
 	needsTLS := strings.HasPrefix(serverURL, "https://") ||
 		strings.HasPrefix(serverURL, "grpc://") ||
 		strings.HasPrefix(serverURL, "quic://")
 
-	if needsTLS && cfg.TLSInsecure {
-		prefixArgs = append(prefixArgs, "--tls-insecure")
+	if needsTLS && cfg.CAFile != "" {
+		prefixArgs = append(prefixArgs, "--tls-ca", cfg.CAFile)
 	}
 
 	args = append(prefixArgs, args...)
@@ -181,7 +182,7 @@ func TestMultiProtocolFIDO2Register(t *testing.T) {
 			args := []string{
 				"--output", "json",
 				"fido2", "register", username,
-				"--rp-id", "go-keychain-mp-test",
+				"--rp-id", "go-xkms-mp-test",
 				"--rp-name", fmt.Sprintf("Multi-Protocol %s Test", proto),
 				"--timeout", "30s",
 			}
@@ -274,6 +275,12 @@ func TestMultiProtocolFIDO2FullWorkflow(t *testing.T) {
 
 	t.Log("=== Multi-Protocol FIDO2 Full Workflow Test ===")
 
+	// Set up persistent virtual device storage for cross-invocation credential persistence
+	if fido2Cfg.UseVirtualDevice() {
+		stateDir := t.TempDir()
+		t.Setenv("FIDO2_VIRTUAL_STATE_DIR", stateDir)
+	}
+
 	// Test only a subset to avoid excessive user interaction
 	protocols := []ProtocolType{ProtocolUnix, ProtocolREST}
 
@@ -287,7 +294,7 @@ func TestMultiProtocolFIDO2FullWorkflow(t *testing.T) {
 			registerArgs := []string{
 				"--output", "json",
 				"fido2", "register", username,
-				"--rp-id", "go-keychain-workflow-test",
+				"--rp-id", "go-xkms-workflow-test",
 				"--rp-name", fmt.Sprintf("Workflow %s Test", proto),
 				"--timeout", "30s",
 			}
@@ -330,7 +337,7 @@ func TestMultiProtocolFIDO2FullWorkflow(t *testing.T) {
 				"fido2", "authenticate",
 				"--credential-id", credID,
 				"--salt", salt,
-				"--rp-id", "go-keychain-workflow-test",
+				"--rp-id", "go-xkms-workflow-test",
 				"--timeout", "30s",
 			}
 
@@ -375,13 +382,19 @@ func TestMultiProtocolFIDO2Consistency(t *testing.T) {
 
 	t.Log("=== Multi-Protocol FIDO2 Consistency Test ===")
 
+	// Set up persistent virtual device storage for cross-invocation credential persistence
+	if fido2Cfg.UseVirtualDevice() {
+		stateDir := t.TempDir()
+		t.Setenv("FIDO2_VIRTUAL_STATE_DIR", stateDir)
+	}
+
 	// Register once using Unix socket
 	username := GenerateUniqueUsername("consistency-user")
 
 	registerArgs := []string{
 		"--output", "json",
 		"fido2", "register", username,
-		"--rp-id", "go-keychain-consistency-test",
+		"--rp-id", "go-xkms-consistency-test",
 		"--rp-name", "Consistency Test",
 		"--timeout", "30s",
 	}
@@ -420,7 +433,7 @@ func TestMultiProtocolFIDO2Consistency(t *testing.T) {
 				"fido2", "authenticate",
 				"--credential-id", credID,
 				"--salt", salt,
-				"--rp-id", "go-keychain-consistency-test",
+				"--rp-id", "go-xkms-consistency-test",
 				"--timeout", "30s",
 			}
 
@@ -509,13 +522,19 @@ func TestMultiProtocolFIDO2AuthenticateWithBase64AndHex(t *testing.T) {
 
 	t.Log("=== Multi-Protocol FIDO2 Authenticate With Different Encodings Test ===")
 
+	// Set up persistent virtual device storage for cross-invocation credential persistence
+	if fido2Cfg.UseVirtualDevice() {
+		stateDir := t.TempDir()
+		t.Setenv("FIDO2_VIRTUAL_STATE_DIR", stateDir)
+	}
+
 	// First, register a credential using CLI (so it uses the same virtual device)
 	username := GenerateUniqueUsername("encoding-test")
 
 	registerArgs := []string{
 		"--output", "json",
 		"fido2", "register", username,
-		"--rp-id", "go-keychain-encoding-test",
+		"--rp-id", "go-xkms-encoding-test",
 		"--rp-name", "Encoding Test",
 		"--timeout", "30s",
 	}
@@ -551,7 +570,7 @@ func TestMultiProtocolFIDO2AuthenticateWithBase64AndHex(t *testing.T) {
 				"fido2", "authenticate",
 				"--credential-id", credIDBase64,
 				"--salt", saltBase64,
-				"--rp-id", "go-keychain-encoding-test",
+				"--rp-id", "go-xkms-encoding-test",
 				"--timeout", "30s",
 			}
 

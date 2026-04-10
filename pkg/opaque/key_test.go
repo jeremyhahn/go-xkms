@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -20,13 +20,14 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"io"
 	"testing"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // mockKeyStore implements a minimal KeyStorer for testing
@@ -422,7 +423,7 @@ func TestOpaqueDecrypt_RSA(t *testing.T) {
 	}
 
 	plaintext := []byte("secret message")
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, &privKey.PublicKey, plaintext)
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, &privKey.PublicKey, plaintext, nil)
 	if err != nil {
 		t.Fatalf("failed to encrypt test data: %v", err)
 	}
@@ -434,8 +435,8 @@ func TestOpaqueDecrypt_RSA(t *testing.T) {
 		errCheck func(error) bool
 	}{
 		{
-			name:    "nil opts",
-			opts:    nil,
+			name:    "OAEP opts",
+			opts:    &rsa.OAEPOptions{Hash: crypto.SHA256},
 			wantErr: false,
 		},
 		{

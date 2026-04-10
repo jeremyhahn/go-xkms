@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -22,19 +22,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"net"
 	"strings"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/encoding"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
-
-// ErrVersioningNotSupported is returned when key versioning operations are called
-// before the VersioningAdapter integration is complete.
-var ErrVersioningNotSupported = errors.New("key versioning is not yet supported - requires VersioningAdapter integration")
 
 // findKeyByCN searches for a key by its common name and returns the full attributes.
 // It uses ListKeys to find all keys and matches by CN.
@@ -55,7 +52,7 @@ func (s *Server) findKeyByCN(keyID string) (*types.KeyAttributes, error) {
 
 // findKeyInBackend searches for a key by CN in a specific backend
 func (s *Server) findKeyInBackend(keyID string, backendName string) (*types.KeyAttributes, error) {
-	ks, err := keychain.Backend(backendName)
+	ks, err := xkms.GetBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
 	}
@@ -81,8 +78,37 @@ func (s *Server) handleHealth(req *JSONRPCRequest) (interface{}, error) {
 
 // handleListBackends handles the listBackends method
 func (s *Server) handleListBackends(req *JSONRPCRequest) (interface{}, error) {
-	backends := keychain.Backends()
-	return ListBackendsResult{Backends: backends}, nil
+	backendNames := xkms.Backends()
+
+	backends := make([]BackendInfo, 0, len(backendNames))
+	for _, name := range backendNames {
+		ks, err := xkms.GetBackend(name)
+		if err != nil {
+			continue
+		}
+
+		provider := ks.KeyProvider()
+		caps := provider.Capabilities()
+
+		backends = append(backends, BackendInfo{
+			ID:             name,
+			Type:           string(provider.Type()),
+			HardwareBacked: caps.HardwareBacked,
+			Capabilities:   caps,
+		})
+	}
+
+	// Apply pagination if params are provided
+	var pr transport.PageRequest
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &pr)
+	}
+	paginatedBackends, pageResp := transport.ApplyPagination(backends, pr)
+
+	return ListBackendsResult{
+		Backends:   paginatedBackends,
+		Pagination: &pageResp,
+	}, nil
 }
 
 // handleGenerateKey handles the generateKey method
@@ -168,11 +194,11 @@ func (s *Server) handleGenerateKey(req *JSONRPCRequest) (interface{}, error) {
 		if backendName == "" {
 			backendName = "symmetric" // Default to symmetric backend
 		}
-		ks, ksErr := keychain.Backend(backendName)
+		ks, ksErr := xkms.GetBackend(backendName)
 		if ksErr != nil {
 			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
 		}
-		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
 			return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
 		}
@@ -328,7 +354,7 @@ func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
 	// Get the correct keystore
 	ks := s.keystore
 	if backendName != "" {
-		ks, err = keychain.Backend(backendName)
+		ks, err = xkms.GetBackend(backendName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
 		}
@@ -349,24 +375,92 @@ func (s *Server) handleDeleteKey(req *JSONRPCRequest) (interface{}, error) {
 	}, nil
 }
 
-// handleListKeys handles the listKeys method
+// handleListKeys handles the listKeys method.
+// When params include a backend name, only keys from that backend are returned.
+// When no backend is specified, keys from all registered backends are returned.
+// The response format matches the REST API's ListKeysHandler for cross-protocol parity.
 func (s *Server) handleListKeys(req *JSONRPCRequest) (interface{}, error) {
-	keyAttrs, err := s.keystore.ListKeys()
+	// Parse optional params for backend filtering
+	var params ListKeysParams
+	if len(req.Params) > 0 {
+		// Ignore parse errors - params are optional for backward compatibility
+		_ = json.Unmarshal(req.Params, &params)
+	}
+
+	// Collect keys from the requested backend(s)
+	var keys []KeyInfo
+
+	if params.Backend != "" {
+		// Single-backend listing
+		backendKeys, err := s.listKeysFromBackend(params.Backend)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list keys from backend %s: %w", params.Backend, err)
+		}
+		keys = backendKeys
+	} else {
+		// All-backends listing
+		keys = make([]KeyInfo, 0)
+		for _, backendName := range xkms.Backends() {
+			backendKeys, err := s.listKeysFromBackend(backendName)
+			if err != nil {
+				// Skip backends that fail to list keys (e.g., not initialized)
+				continue
+			}
+			keys = append(keys, backendKeys...)
+		}
+	}
+
+	// Apply pagination
+	var pr transport.PageRequest
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &pr)
+	}
+	paginatedKeys, pageResp := transport.ApplyPagination(keys, pr)
+
+	return ListKeysResult{
+		Keys:       paginatedKeys,
+		Pagination: &pageResp,
+	}, nil
+}
+
+// listKeysFromBackend lists keys from a single backend, converting each
+// KeyAttributes into the rich KeyInfo format that matches the REST API.
+func (s *Server) listKeysFromBackend(backendName string) ([]KeyInfo, error) {
+	ks, err := xkms.GetBackend(backendName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
+	}
+
+	keyAttrs, err := ks.ListKeys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 
-	// Convert to KeyInfo structs
 	keys := make([]KeyInfo, 0, len(keyAttrs))
 	for _, attr := range keyAttrs {
-		keys = append(keys, KeyInfo{
-			CN: attr.CN,
-		})
+		keyInfo := KeyInfo{
+			KeyID:     attr.CN,
+			KeyType:   attr.KeyType.String(),
+			Algorithm: getAlgorithmString(attr),
+			Backend:   backendName,
+		}
+
+		// Try to get the public key PEM for asymmetric keys
+		privKey, err := ks.GetKey(attr)
+		if err == nil {
+			pubKey := getPublicKey(privKey)
+			if pubKey != nil {
+				pubKeyPEM, err := encoding.EncodePublicKeyPEM(pubKey)
+				if err == nil {
+					keyInfo.PublicKeyPEM = string(pubKeyPEM)
+				}
+			}
+		}
+
+		keys = append(keys, keyInfo)
 	}
 
-	return ListKeysResult{
-		Keys: keys,
-	}, nil
+	return keys, nil
 }
 
 // handleSign handles the sign method
@@ -649,7 +743,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 		}
 	}
 
-	ks, ksErr := keychain.Backend(backendName)
+	ks, ksErr := xkms.GetBackend(backendName)
 	if ksErr != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
 	}
@@ -662,7 +756,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 	// Check if this is a symmetric key based on key attributes
 	if attrs.IsSymmetric() {
 		// Symmetric decryption
-		symBackend, ok := ks.Backend().(types.SymmetricBackend)
+		symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 		if !ok {
 			return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
 		}
@@ -698,7 +792,7 @@ func (s *Server) handleDecrypt(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("failed to get decrypter: %w", err)
 	}
 
-	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, nil)
+	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
@@ -735,7 +829,7 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("failed to find key: %w", err)
 	}
 
-	ks, ksErr := keychain.Backend(backendName)
+	ks, ksErr := xkms.GetBackend(backendName)
 	if ksErr != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, ksErr)
 	}
@@ -746,7 +840,7 @@ func (s *Server) handleEncrypt(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Get symmetric backend
-	symBackend, ok := ks.Backend().(types.SymmetricBackend)
+	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
 	if !ok {
 		return nil, fmt.Errorf("backend %s does not support symmetric operations", backendName)
 	}
@@ -876,8 +970,16 @@ func (s *Server) handleListCerts(req *JSONRPCRequest) (interface{}, error) {
 		return nil, fmt.Errorf("failed to list certificates: %w", err)
 	}
 
+	// Apply pagination if params are provided
+	var pr transport.PageRequest
+	if len(req.Params) > 0 {
+		_ = json.Unmarshal(req.Params, &pr)
+	}
+	paginatedIDs, pageResp := transport.ApplyPagination(keyIDs, pr)
+
 	return ListCertsResult{
-		KeyIDs: keyIDs,
+		KeyIDs:     paginatedIDs,
+		Pagination: &pageResp,
 	}, nil
 }
 
@@ -1073,7 +1175,7 @@ func (s *Server) handleGetImportParameters(req *JSONRPCRequest) (interface{}, er
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend does not support import/export operations")
 	}
@@ -1123,7 +1225,7 @@ func (s *Server) handleWrapKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend does not support import/export operations")
 	}
@@ -1178,7 +1280,7 @@ func (s *Server) handleUnwrapKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend does not support import/export operations")
 	}
@@ -1243,7 +1345,7 @@ func (s *Server) handleImportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := s.keystore.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := s.keystore.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend does not support import/export operations")
 	}
@@ -1301,13 +1403,13 @@ func (s *Server) handleExportKeyMaterial(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Get the correct keystore
-	ks, err := keychain.Backend(backendName)
+	ks, err := xkms.GetBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get backend %s: %w", backendName, err)
 	}
 
 	// Check if backend supports import/export
-	importExportBackend, ok := ks.Backend().(backend.ImportExportBackend)
+	importExportBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend does not support import/export operations")
 	}
@@ -1421,7 +1523,7 @@ func (s *Server) handleAsymmetricDecrypt(req *JSONRPCRequest) (interface{}, erro
 	}
 
 	// Decrypt the ciphertext
-	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, nil)
+	plaintext, err := decrypter.Decrypt(nil, params.Ciphertext, &rsa.OAEPOptions{Hash: crypto.SHA256})
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
@@ -1456,20 +1558,20 @@ func (s *Server) handleCopyKey(req *JSONRPCRequest) (interface{}, error) {
 	}
 
 	// Get source and destination backends
-	sourceKS, err := keychain.Backend(params.SourceBackend)
+	sourceKS, err := xkms.GetBackend(params.SourceBackend)
 	if err != nil {
 		return nil, fmt.Errorf("source backend not found: %w", err)
 	}
-	sourceBackend, ok := sourceKS.Backend().(backend.ImportExportBackend)
+	sourceBackend, ok := sourceKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("source backend does not support import/export operations")
 	}
 
-	destKS, err := keychain.Backend(params.DestBackend)
+	destKS, err := xkms.GetBackend(params.DestBackend)
 	if err != nil {
 		return nil, fmt.Errorf("destination backend not found: %w", err)
 	}
-	destBackend, ok := destKS.Backend().(backend.ImportExportBackend)
+	destBackend, ok := destKS.KeyProvider().(backend.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("destination backend does not support import/export operations")
 	}
@@ -1527,89 +1629,6 @@ func (s *Server) handleCopyKey(req *JSONRPCRequest) (interface{}, error) {
 	}, nil
 }
 
-// handleListKeyVersions handles the listKeyVersions method.
-// This is a stub that returns an error until VersioningAdapter integration is complete.
-func (s *Server) handleListKeyVersions(req *JSONRPCRequest) (interface{}, error) {
-	var params ListKeyVersionsParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
-	}
-
-	return nil, ErrVersioningNotSupported
-}
-
-// handleEnableKeyVersion handles the enableKeyVersion method.
-// This is a stub that returns an error until VersioningAdapter integration is complete.
-func (s *Server) handleEnableKeyVersion(req *JSONRPCRequest) (interface{}, error) {
-	var params EnableKeyVersionParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
-	}
-
-	if params.Version < 1 {
-		return nil, fmt.Errorf("version must be a positive integer")
-	}
-
-	return nil, ErrVersioningNotSupported
-}
-
-// handleDisableKeyVersion handles the disableKeyVersion method.
-// This is a stub that returns an error until VersioningAdapter integration is complete.
-func (s *Server) handleDisableKeyVersion(req *JSONRPCRequest) (interface{}, error) {
-	var params DisableKeyVersionParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
-	}
-
-	if params.Version < 1 {
-		return nil, fmt.Errorf("version must be a positive integer")
-	}
-
-	return nil, ErrVersioningNotSupported
-}
-
-// handleEnableAllKeyVersions handles the enableAllKeyVersions method.
-// This is a stub that returns an error until VersioningAdapter integration is complete.
-func (s *Server) handleEnableAllKeyVersions(req *JSONRPCRequest) (interface{}, error) {
-	var params EnableAllKeyVersionsParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
-	}
-
-	return nil, ErrVersioningNotSupported
-}
-
-// handleDisableAllKeyVersions handles the disableAllKeyVersions method.
-// This is a stub that returns an error until VersioningAdapter integration is complete.
-func (s *Server) handleDisableAllKeyVersions(req *JSONRPCRequest) (interface{}, error) {
-	var params DisableAllKeyVersionsParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	if params.KeyID == "" {
-		return nil, fmt.Errorf("key_id is required")
-	}
-
-	return nil, ErrVersioningNotSupported
-}
-
 // handleSeal handles the seal method for sealing data with a backend
 func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	var params SealParams
@@ -1632,7 +1651,7 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 	// If KeyID is provided, look up the key to get its actual attributes
 	if params.KeyID != "" {
 		// Get the backend to look up the key
-		ks, err := keychain.Backend(backendName)
+		ks, err := xkms.GetBackend(backendName)
 		if err != nil {
 			return nil, fmt.Errorf("backend not found: %w", err)
 		}
@@ -1658,8 +1677,8 @@ func (s *Server) handleSeal(ctx context.Context, req *JSONRPCRequest) (interface
 		opts.KeyAttributes = targetAttr
 	}
 
-	// Call the keychain service to seal the data
-	sealed, err := keychain.SealWithBackend(ctx, backendName, params.Data, opts)
+	// Call the xkms service to seal the data
+	sealed, err := xkms.SealWithBackend(ctx, backendName, params.Data, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to seal data: %w", err)
 	}
@@ -1699,14 +1718,14 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 	backendName := params.Backend
 
 	// Get backend to determine backend type for sealed data
-	ks, err := keychain.Backend(backendName)
+	ks, err := xkms.GetBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("backend not found: %w", err)
 	}
 
 	// Build sealed data structure
 	sealed := &types.SealedData{
-		Backend:    ks.Backend().Type(),
+		Backend:    ks.KeyProvider().Type(),
 		Ciphertext: params.Ciphertext,
 		Nonce:      params.Nonce,
 		Tag:        params.Tag,
@@ -1741,8 +1760,8 @@ func (s *Server) handleUnseal(ctx context.Context, req *JSONRPCRequest) (interfa
 		sealed.KeyID = targetAttr.ID() // Use storage format to match what Seal stores
 	}
 
-	// Call the keychain service to unseal the data
-	plaintext, err := keychain.UnsealWithBackend(ctx, backendName, sealed, opts)
+	// Call the xkms service to unseal the data
+	plaintext, err := xkms.UnsealWithBackend(ctx, backendName, sealed, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unseal data: %w", err)
 	}
@@ -1762,9 +1781,9 @@ func (s *Server) handleCanSeal(req *JSONRPCRequest) (interface{}, error) {
 	// Check sealing capability
 	var canSeal bool
 	if params.Backend != "" {
-		canSeal = keychain.CanSeal(params.Backend)
+		canSeal = xkms.CanSeal(params.Backend)
 	} else {
-		canSeal = keychain.CanSeal()
+		canSeal = xkms.CanSeal()
 	}
 
 	return CanSealResult{

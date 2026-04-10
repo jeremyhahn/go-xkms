@@ -2,7 +2,7 @@ services:
   # LocalStack - AWS KMS Emulator
   localstack:
     image: localstack/localstack:latest
-    container_name: go-keychain-localstack
+    container_name: go-xkms-localstack
     ports:
       - "4566:4566"
     environment:
@@ -19,12 +19,12 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      - keychain-test
+      - xkms-test
 
   # Azure Key Vault Emulator
   azure-keyvault:
     image: jamesgoulddev/azure-keyvault-emulator:latest
-    container_name: go-keychain-azure-kv
+    container_name: go-xkms-azure-kv
     ports:
       - "4997:4997"
     environment:
@@ -43,12 +43,12 @@ services:
       retries: 5
       start_period: 15s
     networks:
-      - keychain-test
+      - xkms-test
 
   # HashiCorp Vault
   vault:
     image: hashicorp/vault:latest
-    container_name: go-keychain-vault
+    container_name: go-xkms-vault
     ports:
       - "8200:8200"
     environment:
@@ -65,8 +65,8 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      - keychain-test
+      - xkms-test
 
 networks:
-  keychain-test:
+  xkms-test:
     driver: bridge

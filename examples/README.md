@@ -1,11 +1,11 @@
-# go-keychain Examples
+# go-xkms Examples
 
-This directory contains comprehensive examples demonstrating the features and capabilities of the go-keychain library.
+This directory contains comprehensive examples demonstrating the features and capabilities of the go-xkms library.
 
 ## Prerequisites
 
 - Go 1.21 or later
-- go-keychain library installed: `go get github.com/jeremyhahn/go-keychain`
+- go-xkms library installed: `go get github.com/jeremyhahn/go-xkms`
 
 ## Directory Structure
 
@@ -68,7 +68,7 @@ go run examples/basic/generate-keys/main.go
 ```
 
 **Key Concepts:**
-- Creating a keychain with PKCS#8 backend
+- Creating a xkms with PKCS#8 backend
 - Generating different key types
 - Using KeyAttributes to specify key parameters
 - Listing all generated keys
@@ -78,7 +78,7 @@ go run examples/basic/generate-keys/main.go
 #### 2. Store and Retrieve (`basic/store-retrieve/`)
 
 Shows how to store keys and retrieve them later:
-- Storing keys in the keychain
+- Storing keys in the xkms
 - Retrieving keys by attributes
 - Listing all stored keys
 - Deleting keys
@@ -128,7 +128,7 @@ go run examples/signing/sign-verify/main.go
 ```
 === Sign and Verify Examples ===
 
-Message to sign: Hello, go-keychain! This is a test message for signing.
+Message to sign: Hello, go-xkms! This is a test message for signing.
 
 1. RSA-2048 Signing...
    ✓ RSA signature created (256 bytes)
@@ -163,14 +163,14 @@ go run examples/signing/file-signing/main.go
 ```
 === File Signing Examples ===
 
-Created test file: /tmp/keychain-file-signing/test-document.txt (123 bytes)
+Created test file: /tmp/xkms-file-signing/test-document.txt (123 bytes)
 
 1. Generating ECDSA P-256 signing key...
    ✓ Signing key generated: file-signing-key
 
 2. Signing the file...
    ✓ File signed successfully
-   Signature file: /tmp/keychain-file-signing/test-document.txt.sig
+   Signature file: /tmp/xkms-file-signing/test-document.txt.sig
 
 [...]
 ```
@@ -311,7 +311,7 @@ go run examples/certificates/manage-chain/main.go
 
 #### 8. TLS Server (`tls/server/`)
 
-Creates a TLS server using keychain certificates:
+Creates a TLS server using xkms certificates:
 - Setting up TLS configuration
 - Creating HTTPS server
 - Configuring cipher suites
@@ -354,7 +354,7 @@ curl -k https://localhost:8443/cert-info
 - TLS configuration
 - Cipher suite selection
 - HTTPS server setup
-- Certificate loading from keychain
+- Certificate loading from xkms
 - HTTP handlers with TLS
 
 ---
@@ -383,7 +383,7 @@ go run examples/tls/client/main.go
 2. Creating client certificate...
    ✓ Client certificate created
 
-3. Loading TLS certificate from keychain...
+3. Loading TLS certificate from xkms...
    ✓ TLS certificate loaded
 
 [...]
@@ -501,7 +501,7 @@ Then open `https://localhost:8443` in your browser.
 
 Configuration:
   RP ID:      localhost
-  RP Name:    go-keychain Example
+  RP Name:    go-xkms Example
   RP Origins: [https://localhost:8443]
   Port:       8443
 
@@ -622,8 +622,8 @@ backend, err := pkcs8.NewBackend(keyStorage, &pkcs8.Config{
     PasswordPolicy: backend.PasswordPolicyOptional,
 })
 
-// Create keychain
-ks, err := keychain.New(&keychain.Config{
+// Create xkms
+ks, err := xkms.New(&xkms.Config{
     Backend:     backend,
     CertStorage: certStorage,
 })
@@ -738,10 +738,10 @@ err = ks.SaveCert("example.com", cert)
 
 ### 1. Resource Management
 
-Always close the keychain when done:
+Always close the xkms when done:
 
 ```go
-ks, err := keychain.New(config)
+ks, err := xkms.New(config)
 if err != nil {
     return err
 }
@@ -804,7 +804,7 @@ tlsConfig := &tls.Config{
 
 ### Common Issues
 
-**Issue: "Failed to create keychain"**
+**Issue: "Failed to create xkms"**
 - Ensure the storage directories exist and are writable
 - Check filesystem permissions
 

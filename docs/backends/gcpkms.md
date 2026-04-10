@@ -48,6 +48,75 @@ GCP KMS handles key generation, automatic rotation, and lifecycle management whi
 - Key usage audit trails
 - Integrated with Google Cloud services
 
+## Service Integration
+
+### Build Tag
+
+The GCP KMS backend requires the `gcpkms` build tag:
+
+```bash
+go build -tags gcpkms ./...
+```
+
+When compiled with this tag, the backend auto-registers with the xkms service registry via an `init()` function in `pkg/xkms/register_gcpkms.go`.
+
+### Checking Availability
+
+```go
+import "github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+if xkms.IsBackendSupported(xkms.BackendGCPKMS) {
+    fmt.Println("GCP KMS backend is available")
+}
+
+// List all compiled-in backends
+for _, b := range xkms.SupportedBackends() {
+    fmt.Println("Available:", b)
+}
+```
+
+### Using via Service API
+
+Once initialized, use the xkms service API to work with GCP KMS keys without managing backend instances directly:
+
+```go
+import (
+    "crypto/x509"
+
+    "github.com/jeremyhahn/go-xkms/pkg/types"
+    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+// Generate a key on GCP KMS
+key, err := xkms.GenerateKeyWithBackend("gcpkms", &types.KeyAttributes{
+    CN:           "my-gcp-key",
+    KeyAlgorithm: x509.ECDSA,
+    ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+})
+
+// Sign using key ID format: backend:type:algo:keyname
+sig, err := xkms.Sign("gcpkms:::my-gcp-key", data, nil)
+
+// Seal data with GCP KMS envelope encryption
+sealed, err := xkms.SealWithBackend(ctx, "gcpkms", secretData, opts)
+```
+
+### Auto-Initialize with Config
+
+```go
+err := xkms.AutoInitialize(&xkms.AutoConfig{
+    DefaultBackend: "gcpkms",
+    BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+        xkms.BackendGCPKMS: {
+            "project_id":   "my-project-123456",
+            "location_id":  "us-central1",
+            "key_ring_id":  "production-keys",
+        },
+    },
+})
+defer xkms.Close()
+```
+
 ## Resource Hierarchy
 
 GCP KMS uses a hierarchical resource structure:
@@ -319,8 +388,8 @@ import (
     "fmt"
     "log"
 
-    "github.com/jeremyhahn/go-keychain/pkg/backend"
-    "github.com/jeremyhahn/go-keychain/pkg/backend/gcpkms"
+    "github.com/jeremyhahn/go-xkms/pkg/backend"
+    "github.com/jeremyhahn/go-xkms/pkg/backend/gcpkms"
 )
 
 func main() {
@@ -1355,18 +1424,18 @@ Data residency options:
 
 ## Migration Guide
 
-### From PKCS#8 to GCP KMS
+### From Software to GCP KMS
 
 ```go
 func migrateTOGCPKMS() error {
     ctx := context.Background()
 
-    // Old PKCS#8 backend
-    pkcs8Config := &pkcs8.Config{
+    // Old software backend
+    softwareConfig := &software.Config{
         StoragePath: "./keys",
         Password:    os.Getenv("KEYSTORE_PASSWORD"),
     }
-    oldStore, err := pkcs8.NewBackend(pkcs8Config)
+    oldStore, err := software.NewBackend(softwareConfig)
     if err != nil {
         return err
     }
@@ -1396,7 +1465,7 @@ func migrateTOGCPKMS() error {
 
     // Update application configuration to use GCP KMS
     // Re-sign data with new keys
-    // Retire old PKCS#8 keys after transition
+    // Retire old software keys after transition
 
     return nil
 }
@@ -1425,4 +1494,4 @@ The GCP KMS backend has the following limitations:
 - Some operations require internet connectivity
 - HSM protection level cannot be changed after creation
 
-For on-premises HSM requirements, consider the PKCS#11 backend. For offline key storage, consider the PKCS#8 or TPM backends.
+For on-premises HSM requirements, consider the PKCS#11 backend. For offline key storage, consider the software or TPM backends.

@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -291,8 +291,33 @@ func TestWait(t *testing.T) {
 	clientID := "test-client"
 
 	// First wait should succeed immediately
-	if err := limiter.Wait(clientID); err != nil {
+	if err := limiter.Wait(context.Background(), clientID); err != nil {
 		t.Errorf("First wait should succeed: %v", err)
+	}
+}
+
+func TestWait_ContextCancelled(t *testing.T) {
+	config := &Config{
+		Enabled:           true,
+		RequestsPerMinute: 1,
+		Burst:             1,
+	}
+
+	limiter := New(config)
+	defer limiter.Stop()
+
+	// Exhaust the token
+	if !limiter.Allow("test-client") {
+		t.Fatal("First request should be allowed")
+	}
+
+	// Cancel the context before Wait can acquire a token
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := limiter.Wait(ctx, "test-client")
+	if err == nil {
+		t.Error("Wait should return error when context is cancelled")
 	}
 }
 
@@ -305,7 +330,7 @@ func TestWait_Disabled(t *testing.T) {
 	limiter := New(config)
 
 	// Should return nil when disabled
-	if err := limiter.Wait("test-client"); err != nil {
+	if err := limiter.Wait(context.Background(), "test-client"); err != nil {
 		t.Errorf("Wait should return nil when disabled: %v", err)
 	}
 }

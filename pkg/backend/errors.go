@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -76,4 +76,9 @@ var (
 	// ErrOperationNotSupported is returned when a specific operation is not supported by the backend.
 	// This is more specific than ErrNotSupported and indicates the operation exists but isn't implemented.
 	ErrOperationNotSupported = errors.New("backend: operation not supported by this backend")
+
+	// ErrAsymmetricKeyExportNotAllowed is returned when attempting to export raw key material
+	// for an asymmetric key. Exporting raw asymmetric private key material is a security risk
+	// and is not permitted. Use ExportKey with wrapping for secure key transport instead.
+	ErrAsymmetricKeyExportNotAllowed = errors.New("backend: raw key material export not allowed for asymmetric keys")
 )

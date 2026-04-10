@@ -1,6 +1,6 @@
 # Docker Integration Testing Guide
 
-This document describes how to use Docker for integration testing of go-keychain across all backends.
+This document describes how to use Docker for integration testing of go-xkms across all backends.
 
 ## Overview
 
@@ -22,9 +22,9 @@ test/integration/{backend}/
 ```
 
 Supported backends:
-- **pkcs8**: Software key storage
-- **pkcs11**: SoftHSM2 hardware simulation
+- **software**: Software key storage
 - **tpm2**: SWTPM simulator
+- **pkcs11**: SoftHSM2 hardware simulation
 - **awskms**: LocalStack AWS emulation
 - **gcpkms**: Mock GCP client
 - **azurekv**: Mock Azure client
@@ -40,9 +40,9 @@ make integration-test
 ```
 
 This sequentially runs integration tests for all backends:
-1. PKCS#8
-2. PKCS#11/SoftHSM
-3. TPM2/SWTPM
+1. Software
+2. TPM2/SWTPM
+3. PKCS#11/SoftHSM
 4. AWS KMS/LocalStack
 5. GCP KMS (mock)
 6. Azure Key Vault (mock)
@@ -51,14 +51,14 @@ This sequentially runs integration tests for all backends:
 ### Run Individual Backend Tests
 
 ```bash
-# PKCS#8
-make integration-test-pkcs8
-
-# PKCS#11/SoftHSM
-make integration-test-pkcs11
+# Software
+make integration-test-software
 
 # TPM2/SWTPM
 make integration-test-tpm2
+
+# PKCS#11/SoftHSM
+make integration-test-pkcs11
 
 # AWS KMS/LocalStack
 make integration-test-awskms
@@ -75,12 +75,12 @@ make integration-test-vault
 
 ## Backend-Specific Details
 
-### PKCS#8 (Software)
+### Software
 
 No special dependencies. Tests pure Go key operations.
 
 ```bash
-cd test/integration/pkcs8
+cd test/integration/software
 docker-compose run --rm test
 ```
 
@@ -304,7 +304,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        backend: [pkcs8, pkcs11, tpm2, awskms, gcpkms, azurekv, vault]
+        backend: [software, tpm2, pkcs11, awskms, gcpkms, azurekv, vault]
     steps:
       - uses: actions/checkout@v3
 
@@ -324,9 +324,9 @@ jobs:
 ### Test Execution Times
 
 Approximate times per backend:
-- **PKCS#8**: 30 seconds
-- **PKCS#11**: 45 seconds (SoftHSM initialization)
+- **Software**: 30 seconds
 - **TPM2**: 60 seconds (SWTPM startup)
+- **PKCS#11**: 45 seconds (SoftHSM initialization)
 - **AWS KMS**: 90 seconds (LocalStack startup)
 - **GCP KMS**: 30 seconds (mock)
 - **Azure KV**: 30 seconds (mock)

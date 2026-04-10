@@ -1,0 +1,148 @@
+services:
+  # xKMS server with REST + Noise bootstrap enabled
+  xkms-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../go-qrdb
+        go-quicraft: ../../../../go-quicraft
+      args:
+        - VERSION=${VERSION:-0.0.1-alpha}
+    image: go-xkms-bootstrap:latest
+    container_name: bootstrap-xkms-server
+    volumes:
+      - xkms-data:/data
+      - xkms-certs:/etc/xkms/certs
+      - ./scripts:/scripts:ro
+    environment:
+      - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
+      - XKMS_LOG_LEVEL=debug
+      - XKMS_DATA_DIR=/data
+      - XKMS_NOISE_ENABLED=true
+      - XKMS_NOISE_PORT=8445
+      - CERT_DIR=/etc/xkms/certs
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+    networks:
+      - bootstrap-net
+    user: root
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/xkms/certs /data
+        echo "Generating TLS certificates..."
+        /scripts/generate-test-certs.sh
+        echo "Starting xkms server..."
+        exec /app/xkmsd
+
+  # One-shot zone generator: reads server cert, computes TLSA, writes zone file
+  zone-generator:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      additional_contexts:
+        go-qrdb: ../../../../go-qrdb
+        go-quicraft: ../../../../go-quicraft
+    image: go-xkms-bootstrap:latest
+    container_name: bootstrap-zone-generator
+    user: root
+    volumes:
+      - xkms-certs:/etc/xkms/certs:ro
+      - zone-data:/etc/coredns/zones
+      - ./setup:/setup:ro
+    depends_on:
+      xkms-server:
+        condition: service_healthy
+    networks:
+      - bootstrap-net
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Generating TLSA zone file from server certificate..."
+        /setup/generate-zone.sh
+        echo "Zone file generated."
+
+  # CoreDNS serving TLSA records for bootstrap.test zone.
+  # Starts AFTER zone-generator writes the zone file. The CoreDNS container
+  # is scratch-based (no shell), so we cannot use a traditional health check.
+  # The zone-generator service_completed_successfully dependency guarantees
+  # the zone file exists before CoreDNS starts.
+  coredns:
+    image: coredns/coredns:latest
+    container_name: bootstrap-coredns
+    volumes:
+      - ./coredns/Corefile:/etc/coredns/Corefile:ro
+      - zone-data:/etc/coredns/zones:ro
+    command: ["-conf", "/etc/coredns/Corefile"]
+    depends_on:
+      zone-generator:
+        condition: service_completed_successfully
+    networks:
+      - bootstrap-net
+
+  # Integration test runner
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/bootstrap/Dockerfile.test
+    container_name: bootstrap-integration-tests
+    depends_on:
+      xkms-server:
+        condition: service_healthy
+      coredns:
+        condition: service_started
+    volumes:
+      - ../../..:/workspace
+      # Sibling module mounts (for go.mod replace directives)
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
+      - xkms-certs:/etc/xkms/certs:ro
+      - go-cache:/root/go
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      - CGO_ENABLED=1
+      - BOOTSTRAP_SERVER_URL=https://xkms-server:8443
+      - BOOTSTRAP_NOISE_ADDR=xkms-server:8445
+      - BOOTSTRAP_DNS_SERVER=coredns:1053
+      - BOOTSTRAP_HOSTNAME=bootstrap.test
+      - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
+    working_dir: /workspace
+    networks:
+      - bootstrap-net
+    command: >
+      sh -c "
+      echo 'Adding test CA to system trust store...' &&
+      cp /etc/xkms/certs/ca.crt /usr/local/share/ca-certificates/xkms-test-ca.crt &&
+      update-ca-certificates >/dev/null 2>&1 &&
+      echo 'Waiting for CoreDNS to initialize...' &&
+      sleep 5 &&
+      export BOOTSTRAP_NOISE_STATIC_KEY=$$(cat /etc/xkms/certs/noise.pub.hex) &&
+      export BOOTSTRAP_SPKI_PIN=$$(cat /etc/xkms/certs/spki.pin) &&
+      echo \"Noise public key: $${BOOTSTRAP_NOISE_STATIC_KEY}\" &&
+      echo \"SPKI pin: $${BOOTSTRAP_SPKI_PIN}\" &&
+      echo 'Running bootstrap integration tests...' &&
+      go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/bootstrap/... -timeout 10m
+      "
+
+volumes:
+  xkms-data:
+    driver: local
+  xkms-certs:
+    driver: local
+  zone-data:
+    driver: local
+  go-cache:
+    driver: local
+  go-build-cache:
+    driver: local
+
+networks:
+  bootstrap-net:
+    driver: bridge

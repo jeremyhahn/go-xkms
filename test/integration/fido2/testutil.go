@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,45 +23,45 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/fido2"
-	"github.com/jeremyhahn/go-keychain/pkg/fido2/authenticator/keybackend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 	"github.com/stretchr/testify/require"
 )
 
 // TestConfig holds FIDO2 integration test configuration
 type TestConfig struct {
 	DevicePath         string
-	CanoKeyQEMU        string
 	PIN                string
 	Timeout            time.Duration
 	WaitDeviceTimeout  time.Duration
 	RegistrationConfig *fido2.EnrollmentConfig
 	AuthConfig         *fido2.AuthenticationConfig
 	useVirtual         bool
-	virtualEnumerator  *NativeVirtualDeviceEnumerator
-	virtualDevice      *fido2.NativeVirtualDevice
+	virtualEnumerator  *virtualdevice.NativeVirtualDeviceEnumerator
+	virtualDevice      *virtualdevice.NativeVirtualDevice
 }
 
 // LoadFIDO2TestConfig loads test configuration from environment
 func LoadFIDO2TestConfig() *TestConfig {
 	cfg := &TestConfig{
 		DevicePath:        os.Getenv("FIDO2_DEVICE_PATH"),
-		CanoKeyQEMU:       os.Getenv("CANOKEY_QEMU"),
 		PIN:               os.Getenv("FIDO2_PIN"),
 		Timeout:           30 * time.Second,
 		WaitDeviceTimeout: 60 * time.Second,
 		useVirtual:        os.Getenv("FIDO2_USE_VIRTUAL") == "true",
 	}
 
-	// If using virtual device, skip physical device detection
+	// If using virtual device, skip physical device detection.
+	// Clear PIN: the client-side FIDO2 library doesn't implement the CTAP2
+	// PIN protocol exchange (GetPINToken, pinUvAuthParam), so
+	// RequireUserVerification must remain false for virtual devices.
+	// The FIDO2_PIN env var is intended for physical authenticators only.
 	if cfg.useVirtual {
+		cfg.PIN = ""
 		return cfg
 	}
 
-	// Use CanoKey QEMU device path if available and the device is valid
-	if cfg.CanoKeyQEMU != "" && isValidFIDO2Device(cfg.CanoKeyQEMU) {
-		cfg.DevicePath = cfg.CanoKeyQEMU
-	} else if cfg.DevicePath != "" && !isValidFIDO2Device(cfg.DevicePath) {
+	if cfg.DevicePath != "" && !isValidFIDO2Device(cfg.DevicePath) {
 		// FIDO2_DEVICE_PATH is set but device is not valid, clear it for auto-detection
 		cfg.DevicePath = ""
 	}
@@ -93,8 +93,7 @@ func isValidFIDO2Device(path string) bool {
 		return info.Mode()&os.ModeCharDevice != 0
 	}
 
-	// For socket paths (like CanoKey QEMU), try to actually open the device
-	// by using the enumerator's Open method directly
+	// For socket paths, try to actually open the device
 	if info.Mode()&os.ModeSocket != 0 {
 		enumerator := fido2.NewDefaultEnumerator()
 		device, err := enumerator.Open(path)
@@ -161,44 +160,47 @@ func (tc *TestConfig) CreateHandler(t *testing.T) *fido2.FIDO2Handler {
 	return handler
 }
 
-// CreateVirtualHandler creates a handler with a virtual FIDO2 device
+// CreateVirtualHandler creates a handler with a native virtual FIDO2 device.
+// Uses NativeVirtualDevice from the xkey module with full CTAP2 support.
 func (tc *TestConfig) CreateVirtualHandler(t *testing.T) *fido2.FIDO2Handler {
 	t.Helper()
 
 	// Create virtual device if not already created
 	if tc.virtualDevice == nil {
-		config := &fido2.NativeVirtualDeviceConfig{
-			SerialNumber:     "NFIDO-INT-TEST",
-			Manufacturer:     "go-keychain-test",
-			Product:          "VirtualFIDO Test",
-			EnablePIN:        true,
-			EnableHMACSecret: true,
-			KeyBackend:       software.NewSoftwareKeyBackend(),
+		config := &virtualdevice.NativeVirtualDeviceConfig{
+			SerialNumber:               "NFIDO-INT-TEST",
+			Manufacturer:               "go-xkms",
+			Product:                    "xKey Virtual Test",
+			EnablePIN:                  true,
+			EnableHMACSecret:           true,
+			EnableResidentKey:          true,
+			EnableCredentialManagement: true,
 		}
-
-		device, err := fido2.NewNativeVirtualDevice(config)
-		require.NoError(t, err, "Failed to create native virtual device")
+		device, err := virtualdevice.NewNativeVirtualDevice(config)
+		require.NoError(t, err, "Failed to create virtual FIDO2 device")
 		tc.virtualDevice = device
-		t.Logf("Virtual device created: path=%s, PIN=%v, HMAC-Secret=%v",
-			device.Path(), config.EnablePIN, config.EnableHMACSecret)
+		t.Logf("Virtual device created: path=%s", device.Path())
 	}
 
 	// Create enumerator if not already created
 	if tc.virtualEnumerator == nil {
-		tc.virtualEnumerator = NewNativeVirtualDeviceEnumerator()
+		tc.virtualEnumerator = virtualdevice.NewNativeVirtualDeviceEnumerator()
 		err := tc.virtualEnumerator.RegisterDevice(tc.virtualDevice)
 		require.NoError(t, err, "Failed to register virtual device")
 	}
 
 	cfg := tc.GetFIDO2Config()
+	// Clear DevicePath so selectDevice uses Enumerate() on the virtual enumerator
+	// instead of trying to open a physical device path like /dev/hidraw1
+	cfg.DevicePath = ""
 	handler, err := fido2.NewHandler(cfg, tc.virtualEnumerator)
 	require.NoError(t, err, "Failed to create FIDO2 handler with virtual device")
 
 	return handler
 }
 
-// GetVirtualEnumerator returns the virtual device enumerator for the test
-func (tc *TestConfig) GetVirtualEnumerator(t *testing.T) *NativeVirtualDeviceEnumerator {
+// GetVirtualEnumerator returns the virtual device enumerator for the test.
+func (tc *TestConfig) GetVirtualEnumerator(t *testing.T) *virtualdevice.NativeVirtualDeviceEnumerator {
 	t.Helper()
 
 	if tc.virtualEnumerator == nil {
@@ -235,8 +237,9 @@ func (tc *TestConfig) RequireDevice(t *testing.T) {
 	t.Helper()
 
 	if !tc.CheckDeviceAvailable(t) {
-		t.Log("No hardware FIDO2 device detected; falling back to native virtual device")
+		t.Log("No hardware FIDO2 device detected; falling back to virtual FIDO2 device")
 		tc.useVirtual = true
+		tc.PIN = "" // Virtual devices don't support client-side PIN protocol
 	}
 }
 
@@ -252,7 +255,7 @@ func (tc *TestConfig) WaitForDeviceWithTimeout(t *testing.T, timeout time.Durati
 
 	device, err := handler.WaitForDevice(ctx)
 	if err != nil {
-		t.Skipf("Failed to wait for FIDO2 device: %v. Set FIDO2_DEVICE_PATH or CANOKEY_QEMU.", err)
+		t.Fatalf("Failed to wait for FIDO2 device: %v. Set FIDO2_DEVICE_PATH.", err)
 	}
 
 	require.NotNil(t, device)
@@ -267,8 +270,8 @@ func (tc *TestConfig) EnrollTestCredential(t *testing.T, username string) (*fido
 
 	// Create enrollment config
 	enrollConfig := fido2.DefaultEnrollmentConfig(username)
-	enrollConfig.RelyingParty.ID = "go-keychain-test"
-	enrollConfig.RelyingParty.Name = "Go Keychain Integration Tests"
+	enrollConfig.RelyingParty.ID = "go-xkms-test"
+	enrollConfig.RelyingParty.Name = "Go xKMS Integration Tests"
 	enrollConfig.User.DisplayName = fmt.Sprintf("Test User %s", username)
 	enrollConfig.Timeout = tc.Timeout
 
@@ -358,16 +361,11 @@ func AssertEnrollmentResult(t *testing.T, result *fido2.EnrollmentResult) {
 		len(result.CredentialID), len(result.PublicKey), len(result.Salt))
 }
 
-// IsCanoKeyQEMU returns true if using CanoKey QEMU virtual device
-func (tc *TestConfig) IsCanoKeyQEMU() bool {
-	return tc.CanoKeyQEMU != ""
-}
-
 // GetDefaultRelyingParty returns default relying party for tests
 func GetDefaultRelyingParty() fido2.RelyingParty {
 	return fido2.RelyingParty{
-		ID:   "go-keychain-test",
-		Name: "Go Keychain Integration Tests",
+		ID:   "go-xkms-test",
+		Name: "Go xKMS Integration Tests",
 	}
 }
 

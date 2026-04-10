@@ -2,7 +2,7 @@
 
 ## Overview
 
-The go-keychain library provides a pluggable RBAC adapter for fine-grained permission management. This allows applications to control access to keys, certificates, and other resources based on user roles and permissions.
+The go-xkms library provides a pluggable RBAC adapter for fine-grained permission management. This allows applications to control access to keys, certificates, and other resources based on user roles and permissions.
 
 ## Architecture
 
@@ -14,7 +14,7 @@ The RBAC system consists of three main components:
 
 ## Interface
 
-Located in `pkg/adapters/rbac/rbac.go`:
+Located in `pkg/rbac/rbac.go`:
 
 ```go
 type RBACAdapter interface {
@@ -190,7 +190,7 @@ package main
 
 import (
     "context"
-    "github.com/jeremyhahn/go-keychain/pkg/adapters/rbac"
+    "github.com/jeremyhahn/go-xkms/pkg/rbac"
 )
 
 func main() {
@@ -309,8 +309,8 @@ When using WebAuthn authentication with users, sync the user role to RBAC:
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/user"
-    "github.com/jeremyhahn/go-keychain/pkg/adapters/rbac"
+    "github.com/jeremyhahn/go-xkms/pkg/user"
+    "github.com/jeremyhahn/go-xkms/pkg/rbac"
 )
 
 // After successful WebAuthn login
@@ -343,8 +343,8 @@ The `pkg/user` package provides a `UserRBACAdapter` that wraps the user store an
 
 ```go
 import (
-    "github.com/jeremyhahn/go-keychain/pkg/user"
-    "github.com/jeremyhahn/go-keychain/pkg/storage"
+    "github.com/jeremyhahn/go-xkms/pkg/user"
+    "github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // Create storage backend

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -200,7 +200,7 @@ func TestNonceSession(t *testing.T) {
 	t.Run("WithClearPassword", func(t *testing.T) {
 		// Note: NonceSession uses PolicySecret with Endorsement hierarchy
 		// The password must match the Endorsement hierarchy auth (empty by default)
-		password := types.NewClearPassword([]byte("")) // Empty password matches TPM default
+		password := types.NewPassword([]byte("")) // Empty password matches TPM default
 		session, closer, err := tpmInstance.NonceSession(password)
 		require.NoError(t, err)
 		require.NotNil(t, session)
@@ -241,7 +241,7 @@ func TestPlatformPolicySession(t *testing.T) {
 	defer cleanup()
 
 	t.Run("BasicCreation", func(t *testing.T) {
-		session, closer, err := tpmInstance.PlatformPolicySession()
+		session, closer, err := tpmInstance.PlatformPolicySession(nil)
 		require.NoError(t, err)
 		require.NotNil(t, session)
 		require.NotNil(t, closer)
@@ -255,7 +255,7 @@ func TestPlatformPolicySession(t *testing.T) {
 	})
 
 	t.Run("PolicyDigestSet", func(t *testing.T) {
-		session, closer, err := tpmInstance.PlatformPolicySession()
+		session, closer, err := tpmInstance.PlatformPolicySession(nil)
 		require.NoError(t, err)
 		require.NotNil(t, session)
 		defer func() {
@@ -263,14 +263,15 @@ func TestPlatformPolicySession(t *testing.T) {
 		}()
 
 		// Verify policy digest is set
-		policyDigest := tpmInstance.PlatformPolicyDigest()
+		policyDigest, pdErr := tpmInstance.PlatformPolicyDigest()
+		require.NoError(t, pdErr)
 		assert.NotNil(t, policyDigest.Buffer)
 		assert.NotEmpty(t, policyDigest.Buffer)
 	})
 
 	t.Run("MultipleSequential", func(t *testing.T) {
 		// Create and close first policy session
-		session1, closer1, err := tpmInstance.PlatformPolicySession()
+		session1, closer1, err := tpmInstance.PlatformPolicySession(nil)
 		require.NoError(t, err)
 		require.NotNil(t, session1)
 		handle1 := session1.Handle()
@@ -278,7 +279,7 @@ func TestPlatformPolicySession(t *testing.T) {
 		assert.NoError(t, closer1())
 
 		// Create and close second policy session
-		session2, closer2, err := tpmInstance.PlatformPolicySession()
+		session2, closer2, err := tpmInstance.PlatformPolicySession(nil)
 		require.NoError(t, err)
 		require.NotNil(t, session2)
 		handle2 := session2.Handle()
@@ -291,7 +292,7 @@ func TestPlatformPolicySession(t *testing.T) {
 
 	t.Run("ErrorHandlingCleanup", func(t *testing.T) {
 		// Create a session and verify cleanup happens even if we don't use it
-		session, closer, err := tpmInstance.PlatformPolicySession()
+		session, closer, err := tpmInstance.PlatformPolicySession(nil)
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
@@ -299,7 +300,7 @@ func TestPlatformPolicySession(t *testing.T) {
 		assert.NoError(t, closer())
 
 		// Should be able to create another session after cleanup
-		session2, closer2, err := tpmInstance.PlatformPolicySession()
+		session2, closer2, err := tpmInstance.PlatformPolicySession(nil)
 		require.NoError(t, err)
 		require.NotNil(t, session2)
 		defer func() {

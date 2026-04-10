@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -73,7 +73,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Backend operations
 		{
 			Name:   "listBackends",
-			Method: "keychain.listBackends",
+			Method: "xkms.listBackends",
 			Params: nil,
 			Validate: func(t *testing.T, result map[string]interface{}) {
 				backends, ok := result["backends"]
@@ -88,7 +88,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Key generation - RSA
 		{
 			Name:   "generateKey_RSA",
-			Method: "keychain.generateKey",
+			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
 				"key_id":   testKeyID,
 				"key_type": "rsa",
@@ -106,7 +106,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Key generation - ECDSA
 		{
 			Name:   "generateKey_ECDSA",
-			Method: "keychain.generateKey",
+			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
 				"key_id":   testKeyID + "-ecdsa",
 				"key_type": "ecdsa",
@@ -124,7 +124,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Key generation - Ed25519
 		{
 			Name:   "generateKey_Ed25519",
-			Method: "keychain.generateKey",
+			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
 				"key_id":   testKeyID + "-ed25519",
 				"key_type": "ed25519",
@@ -141,7 +141,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Key generation - AES (symmetric)
 		{
 			Name:   "generateKey_AES",
-			Method: "keychain.generateKey",
+			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
 				"key_id":    testAESKeyID,
 				"key_type":  "symmetric",
@@ -159,7 +159,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// List keys
 		{
 			Name:   "listKeys",
-			Method: "keychain.listKeys",
+			Method: "xkms.listKeys",
 			Params: map[string]interface{}{
 				"backend": "software",
 			},
@@ -176,7 +176,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Get key
 		{
 			Name:   "getKey",
-			Method: "keychain.getKey",
+			Method: "xkms.getKey",
 			Params: map[string]interface{}{
 				"key_id":  testKeyID,
 				"backend": "software",
@@ -192,7 +192,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Sign data
 		{
 			Name:   "sign",
-			Method: "keychain.sign",
+			Method: "xkms.sign",
 			Params: map[string]interface{}{
 				"key_id":  testKeyID,
 				"backend": "software",
@@ -211,10 +211,10 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Verify signature
 		{
 			Name:   "verify",
-			Method: "keychain.verify",
+			Method: "xkms.verify",
 			Setup: func(t *testing.T, client *MCPClient) map[string]interface{} {
 				// First sign some data
-				resp, err := client.Call("keychain.sign", map[string]interface{}{
+				resp, err := client.Call("xkms.sign", map[string]interface{}{
 					"key_id":  testKeyID,
 					"backend": "software",
 					"data":    base64.StdEncoding.EncodeToString([]byte("test data to verify")),
@@ -246,7 +246,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Rotate key
 		{
 			Name:   "rotateKey",
-			Method: "keychain.rotateKey",
+			Method: "xkms.rotateKey",
 			Params: map[string]interface{}{
 				"key_id":  testKeyID,
 				"backend": "software",
@@ -262,7 +262,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Symmetric encryption
 		{
 			Name:   "encrypt_symmetric",
-			Method: "keychain.encrypt",
+			Method: "xkms.encrypt",
 			Params: map[string]interface{}{
 				"key_id":    testAESKeyID,
 				"backend":   "software",
@@ -281,10 +281,10 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Symmetric decryption
 		{
 			Name:   "decrypt_symmetric",
-			Method: "keychain.decrypt",
+			Method: "xkms.decrypt",
 			Setup: func(t *testing.T, client *MCPClient) map[string]interface{} {
 				// First encrypt some data
-				resp, err := client.Call("keychain.encrypt", map[string]interface{}{
+				resp, err := client.Call("xkms.encrypt", map[string]interface{}{
 					"key_id":    testAESKeyID,
 					"backend":   "software",
 					"plaintext": base64.StdEncoding.EncodeToString([]byte("test plaintext for decryption")),
@@ -314,7 +314,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Asymmetric encryption (RSA)
 		{
 			Name:   "asymmetricEncrypt",
-			Method: "keychain.asymmetricEncrypt",
+			Method: "xkms.asymmetricEncrypt",
 			Params: map[string]interface{}{
 				"key_id":    testKeyID,
 				"backend":   "software",
@@ -334,10 +334,10 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Asymmetric decryption (RSA)
 		{
 			Name:   "asymmetricDecrypt",
-			Method: "keychain.asymmetricDecrypt",
+			Method: "xkms.asymmetricDecrypt",
 			Setup: func(t *testing.T, client *MCPClient) map[string]interface{} {
 				// First encrypt some data
-				resp, err := client.Call("keychain.asymmetricEncrypt", map[string]interface{}{
+				resp, err := client.Call("xkms.asymmetricEncrypt", map[string]interface{}{
 					"key_id":    testKeyID,
 					"backend":   "software",
 					"plaintext": base64.StdEncoding.EncodeToString([]byte("test for RSA decrypt")),
@@ -369,7 +369,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Certificate operations - generate key for cert first
 		{
 			Name:   "generateKey_forCert",
-			Method: "keychain.generateKey",
+			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
 				"key_id":   testCertKeyID,
 				"key_type": "rsa",
@@ -385,7 +385,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Save certificate
 		{
 			Name:   "saveCert",
-			Method: "keychain.saveCert",
+			Method: "xkms.saveCert",
 			Params: map[string]interface{}{
 				"key_id":   testCertKeyID,
 				"cert_pem": testCertPEM,
@@ -401,7 +401,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Get certificate
 		{
 			Name:   "getCert",
-			Method: "keychain.getCert",
+			Method: "xkms.getCert",
 			Params: map[string]interface{}{
 				"key_id": testCertKeyID,
 			},
@@ -420,7 +420,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Certificate exists
 		{
 			Name:   "certExists",
-			Method: "keychain.certExists",
+			Method: "xkms.certExists",
 			Params: map[string]interface{}{
 				"key_id": testCertKeyID,
 			},
@@ -433,7 +433,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// List certificates
 		{
 			Name:   "listCerts",
-			Method: "keychain.listCerts",
+			Method: "xkms.listCerts",
 			Params: nil,
 			Validate: func(t *testing.T, result map[string]interface{}) {
 				certs, ok := result["certificates"]
@@ -447,7 +447,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Save certificate chain
 		{
 			Name:   "saveCertChain",
-			Method: "keychain.saveCertChain",
+			Method: "xkms.saveCertChain",
 			Params: map[string]interface{}{
 				"key_id":         testCertKeyID,
 				"cert_chain_pem": []string{testCertPEM},
@@ -461,7 +461,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Get certificate chain
 		{
 			Name:   "getCertChain",
-			Method: "keychain.getCertChain",
+			Method: "xkms.getCertChain",
 			Params: map[string]interface{}{
 				"key_id": testCertKeyID,
 			},
@@ -478,7 +478,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Get TLS certificate
 		{
 			Name:   "getTLSCertificate",
-			Method: "keychain.getTLSCertificate",
+			Method: "xkms.getTLSCertificate",
 			Params: map[string]interface{}{
 				"key_id":  testCertKeyID,
 				"backend": "software",
@@ -496,7 +496,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Get import parameters
 		{
 			Name:   "getImportParameters",
-			Method: "keychain.getImportParameters",
+			Method: "xkms.getImportParameters",
 			Params: map[string]interface{}{
 				"key_id":             "import-test-key",
 				"backend":            "software",
@@ -517,10 +517,10 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Wrap key
 		{
 			Name:   "wrapKey",
-			Method: "keychain.wrapKey",
+			Method: "xkms.wrapKey",
 			Setup: func(t *testing.T, client *MCPClient) map[string]interface{} {
 				// Get import parameters first
-				resp, err := client.Call("keychain.getImportParameters", map[string]interface{}{
+				resp, err := client.Call("xkms.getImportParameters", map[string]interface{}{
 					"key_id":             "wrap-test-key",
 					"backend":            "software",
 					"key_type":           "rsa",
@@ -552,7 +552,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Export key
 		{
 			Name:   "exportKey",
-			Method: "keychain.exportKey",
+			Method: "xkms.exportKey",
 			Params: map[string]interface{}{
 				"key_id":             testKeyID,
 				"backend":            "software",
@@ -571,7 +571,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Copy key
 		{
 			Name:   "copyKey",
-			Method: "keychain.copyKey",
+			Method: "xkms.copyKey",
 			Params: map[string]interface{}{
 				"source_backend":     "software",
 				"source_key_id":      testKeyID,
@@ -588,7 +588,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Subscribe to events
 		{
 			Name:   "subscribe",
-			Method: "keychain.subscribe",
+			Method: "xkms.subscribe",
 			Params: map[string]interface{}{
 				"events": []string{"key.created", "key.deleted"},
 			},
@@ -605,7 +605,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Delete certificate (cleanup)
 		{
 			Name:   "deleteCert",
-			Method: "keychain.deleteCert",
+			Method: "xkms.deleteCert",
 			Params: map[string]interface{}{
 				"key_id": testCertKeyID,
 			},
@@ -618,7 +618,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		// Delete keys (cleanup)
 		{
 			Name:   "deleteKey_RSA",
-			Method: "keychain.deleteKey",
+			Method: "xkms.deleteKey",
 			Params: map[string]interface{}{
 				"key_id":  testKeyID,
 				"backend": "software",
@@ -630,7 +630,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		},
 		{
 			Name:   "deleteKey_ECDSA",
-			Method: "keychain.deleteKey",
+			Method: "xkms.deleteKey",
 			Params: map[string]interface{}{
 				"key_id":  testKeyID + "-ecdsa",
 				"backend": "software",
@@ -641,7 +641,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		},
 		{
 			Name:   "deleteKey_Ed25519",
-			Method: "keychain.deleteKey",
+			Method: "xkms.deleteKey",
 			Params: map[string]interface{}{
 				"key_id":  testKeyID + "-ed25519",
 				"backend": "software",
@@ -652,7 +652,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		},
 		{
 			Name:   "deleteKey_AES",
-			Method: "keychain.deleteKey",
+			Method: "xkms.deleteKey",
 			Params: map[string]interface{}{
 				"key_id":  testAESKeyID,
 				"backend": "software",
@@ -663,7 +663,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		},
 		{
 			Name:   "deleteKey_forCert",
-			Method: "keychain.deleteKey",
+			Method: "xkms.deleteKey",
 			Params: map[string]interface{}{
 				"key_id":  testCertKeyID,
 				"backend": "software",
@@ -674,7 +674,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 		},
 		{
 			Name:   "deleteKey_copy",
-			Method: "keychain.deleteKey",
+			Method: "xkms.deleteKey",
 			Params: map[string]interface{}{
 				"key_id":  testKeyID + "-copy",
 				"backend": "software",
@@ -702,7 +702,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 			var setupData map[string]interface{}
 			if op.Setup != nil {
 				setupData = op.Setup(t, client)
-				if setupData == nil && op.Method != "keychain.decrypt" && op.Method != "keychain.asymmetricDecrypt" && op.Method != "keychain.wrapKey" {
+				if setupData == nil && op.Method != "xkms.decrypt" && op.Method != "xkms.asymmetricDecrypt" && op.Method != "xkms.wrapKey" {
 					// Setup failed but continue for non-dependent operations
 				}
 			}
@@ -803,7 +803,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 					params["algorithm"] = kt.algorithm
 				}
 
-				resp, err := client.Call("keychain.generateKey", params)
+				resp, err := client.Call("xkms.generateKey", params)
 				if err != nil {
 					// AES/symmetric key generation may not be supported by MCP backend
 					if kt.canEncryptSym {
@@ -819,7 +819,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 			// Sign (if supported)
 			if kt.canSign {
 				t.Run("sign", func(t *testing.T) {
-					resp, err := client.Call("keychain.sign", map[string]interface{}{
+					resp, err := client.Call("xkms.sign", map[string]interface{}{
 						"key_id":  keyID,
 						"backend": "software",
 						"data":    base64.StdEncoding.EncodeToString([]byte("test data")),
@@ -838,7 +838,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 			// Asymmetric encrypt (if supported)
 			if kt.canEncryptAsym {
 				t.Run("asymmetric_encrypt", func(t *testing.T) {
-					resp, err := client.Call("keychain.asymmetricEncrypt", map[string]interface{}{
+					resp, err := client.Call("xkms.asymmetricEncrypt", map[string]interface{}{
 						"key_id":    keyID,
 						"backend":   "software",
 						"plaintext": base64.StdEncoding.EncodeToString([]byte("test data")),
@@ -856,7 +856,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 			// Symmetric encrypt (if supported)
 			if kt.canEncryptSym {
 				t.Run("symmetric_encrypt", func(t *testing.T) {
-					resp, err := client.Call("keychain.encrypt", map[string]interface{}{
+					resp, err := client.Call("xkms.encrypt", map[string]interface{}{
 						"key_id":    keyID,
 						"backend":   "software",
 						"plaintext": base64.StdEncoding.EncodeToString([]byte("test data")),
@@ -872,7 +872,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 
 			// Delete key
 			t.Run("delete", func(t *testing.T) {
-				_, err := client.Call("keychain.deleteKey", map[string]interface{}{
+				_, err := client.Call("xkms.deleteKey", map[string]interface{}{
 					"key_id":  keyID,
 					"backend": "software",
 				})
@@ -899,37 +899,37 @@ func TestMCPErrorScenarios(t *testing.T) {
 	}{
 		{
 			name:        "invalid_method",
-			method:      "keychain.invalidMethod",
+			method:      "xkms.invalidMethod",
 			params:      nil,
 			expectError: true,
 		},
 		{
 			name:        "missing_key_id",
-			method:      "keychain.getKey",
+			method:      "xkms.getKey",
 			params:      map[string]interface{}{"backend": "software"},
 			expectError: true,
 		},
 		{
 			name:        "nonexistent_key",
-			method:      "keychain.getKey",
+			method:      "xkms.getKey",
 			params:      map[string]interface{}{"key_id": "nonexistent-key-12345", "backend": "software"},
 			expectError: true,
 		},
 		{
 			name:        "invalid_backend",
-			method:      "keychain.generateKey",
+			method:      "xkms.generateKey",
 			params:      map[string]interface{}{"key_id": "test-invalid-backend", "key_type": "rsa", "backend": "invalid-backend"},
 			expectError: true,
 		},
 		{
 			name:        "invalid_key_type",
-			method:      "keychain.generateKey",
+			method:      "xkms.generateKey",
 			params:      map[string]interface{}{"key_id": "test", "key_type": "invalid", "backend": "software"},
 			expectError: true,
 		},
 		{
 			name:        "missing_required_param",
-			method:      "keychain.sign",
+			method:      "xkms.sign",
 			params:      map[string]interface{}{"key_id": "test"},
 			expectError: true,
 		},

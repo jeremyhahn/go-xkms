@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -321,6 +321,8 @@ func TestConfig_ToWebAuthnConfig(t *testing.T) {
 			check: func(t *testing.T, cfg *Config) {
 				wc := cfg.ToWebAuthnConfig()
 				assert.Equal(t, protocol.ResidentKeyRequirementRequired, wc.AuthenticatorSelection.ResidentKey)
+				require.NotNil(t, wc.AuthenticatorSelection.RequireResidentKey, "RequireResidentKey must be set for browser compatibility")
+				assert.True(t, *wc.AuthenticatorSelection.RequireResidentKey)
 			},
 		},
 		{
@@ -334,6 +336,8 @@ func TestConfig_ToWebAuthnConfig(t *testing.T) {
 			check: func(t *testing.T, cfg *Config) {
 				wc := cfg.ToWebAuthnConfig()
 				assert.Equal(t, protocol.ResidentKeyRequirementPreferred, wc.AuthenticatorSelection.ResidentKey)
+				require.NotNil(t, wc.AuthenticatorSelection.RequireResidentKey, "RequireResidentKey must be set for browser compatibility")
+				assert.False(t, *wc.AuthenticatorSelection.RequireResidentKey)
 			},
 		},
 		{
@@ -347,6 +351,8 @@ func TestConfig_ToWebAuthnConfig(t *testing.T) {
 			check: func(t *testing.T, cfg *Config) {
 				wc := cfg.ToWebAuthnConfig()
 				assert.Equal(t, protocol.ResidentKeyRequirementDiscouraged, wc.AuthenticatorSelection.ResidentKey)
+				require.NotNil(t, wc.AuthenticatorSelection.RequireResidentKey, "RequireResidentKey must be set for browser compatibility")
+				assert.False(t, *wc.AuthenticatorSelection.RequireResidentKey)
 			},
 		},
 		{

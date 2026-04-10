@@ -1,9 +1,9 @@
 // Copyright (c) 2025 Jeremy Hahn
 // Copyright (c) 2025 Automate The Things, LLC
 //
-// This file is part of go-keychain.
+// This file is part of go-xkms.
 //
-// go-keychain is dual-licensed:
+// go-xkms is dual-licensed:
 //
 // 1. GNU Affero General Public License v3.0 (AGPL-3.0)
 //    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
@@ -23,33 +23,33 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-keychain/pkg/keychain"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInitialize_WithNilConfig(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	// Should auto-detect and initialize with defaults
 	err := Initialize(nil)
 	assert.NoError(t, err)
-	assert.True(t, keychain.IsInitialized())
+	assert.True(t, xkms.IsInitialized())
 
-	backends := keychain.Backends()
+	backends := xkms.Backends()
 	assert.NotEmpty(t, backends)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_WithPKCS8Backend(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "pkcs8",
+		DefaultBackend: "software",
 		Backends: []BackendConfig{
 			{
 				Name:    "pkcs8",
@@ -59,23 +59,29 @@ func TestInitialize_WithPKCS8Backend(t *testing.T) {
 					"key_dir": tempDir + "/keys",
 				},
 			},
+			{
+				Name:    "software",
+				Type:    "software",
+				Enabled: true,
+				Config:  map[string]interface{}{"key_dir": tempDir + "/software"},
+			},
 		},
 	}
 
 	err := Initialize(config)
 	assert.NoError(t, err)
-	assert.True(t, keychain.IsInitialized())
+	assert.True(t, xkms.IsInitialized())
 
-	// Verify backend is available
-	ks, err := keychain.Backend("pkcs8")
+	// Verify key provider is available
+	ks, err := xkms.GetKeyProvider("pkcs8")
 	assert.NoError(t, err)
 	assert.NotNil(t, ks)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_WithSoftwareBackend(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
@@ -96,20 +102,20 @@ func TestInitialize_WithSoftwareBackend(t *testing.T) {
 	err := Initialize(config)
 	assert.NoError(t, err)
 
-	ks, err := keychain.Backend("software")
+	ks, err := xkms.GetBackend("software")
 	assert.NoError(t, err)
 	assert.NotNil(t, ks)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_WithSymmetricBackend(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "symmetric",
+		DefaultBackend: "software",
 		Backends: []BackendConfig{
 			{
 				Name:    "symmetric",
@@ -120,26 +126,32 @@ func TestInitialize_WithSymmetricBackend(t *testing.T) {
 					"password": "test-password-123",
 				},
 			},
+			{
+				Name:    "software",
+				Type:    "software",
+				Enabled: true,
+				Config:  map[string]interface{}{"key_dir": tempDir + "/software"},
+			},
 		},
 	}
 
 	err := Initialize(config)
 	assert.NoError(t, err)
 
-	ks, err := keychain.Backend("symmetric")
+	ks, err := xkms.GetKeyProvider("symmetric")
 	assert.NoError(t, err)
 	assert.NotNil(t, ks)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_WithMultipleBackends(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "pkcs8",
+		DefaultBackend: "software",
 		Backends: []BackendConfig{
 			{
 				Name:    "pkcs8",
@@ -163,41 +175,44 @@ func TestInitialize_WithMultipleBackends(t *testing.T) {
 	err := Initialize(config)
 	assert.NoError(t, err)
 
-	backends := keychain.Backends()
-	assert.Len(t, backends, 2)
-	assert.Contains(t, backends, "pkcs8")
+	// pkcs8 is a key provider, software is a full-service backend
+	backends := xkms.Backends()
+	assert.Len(t, backends, 1)
 	assert.Contains(t, backends, "software")
 
+	keyProviders := xkms.KeyProviders()
+	assert.Contains(t, keyProviders, "pkcs8")
+
 	// Verify default backend
-	defaultKS, err := keychain.DefaultBackend()
+	defaultKS, err := xkms.DefaultBackend()
 	assert.NoError(t, err)
 	assert.NotNil(t, defaultKS)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_DisabledBackend(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "pkcs8",
+		DefaultBackend: "software",
 		Backends: []BackendConfig{
-			{
-				Name:    "pkcs8",
-				Type:    "pkcs8",
-				Enabled: true,
-				Config: map[string]interface{}{
-					"key_dir": tempDir + "/pkcs8",
-				},
-			},
 			{
 				Name:    "software",
 				Type:    "software",
-				Enabled: false, // Disabled
+				Enabled: true,
 				Config: map[string]interface{}{
 					"key_dir": tempDir + "/software",
+				},
+			},
+			{
+				Name:    "software-disabled",
+				Type:    "software",
+				Enabled: false, // Disabled
+				Config: map[string]interface{}{
+					"key_dir": tempDir + "/software-disabled",
 				},
 			},
 		},
@@ -206,19 +221,19 @@ func TestInitialize_DisabledBackend(t *testing.T) {
 	err := Initialize(config)
 	assert.NoError(t, err)
 
-	backends := keychain.Backends()
+	backends := xkms.Backends()
 	assert.Len(t, backends, 1)
-	assert.Contains(t, backends, "pkcs8")
-	assert.NotContains(t, backends, "software")
+	assert.Contains(t, backends, "software")
+	assert.NotContains(t, backends, "software-disabled")
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_NoBackendsEnabled(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "pkcs8",
+		DefaultBackend: "software",
 		Backends: []BackendConfig{
 			{
 				Name:    "pkcs8",
@@ -232,11 +247,11 @@ func TestInitialize_NoBackendsEnabled(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no backends available")
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_InvalidBackendType(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
@@ -258,11 +273,11 @@ func TestInitialize_InvalidBackendType(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no backends available")
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestInitialize_DefaultToFirstAvailable(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
@@ -270,11 +285,11 @@ func TestInitialize_DefaultToFirstAvailable(t *testing.T) {
 		DefaultBackend: "nonexistent", // Invalid default
 		Backends: []BackendConfig{
 			{
-				Name:    "pkcs8",
-				Type:    "pkcs8",
+				Name:    "software",
+				Type:    "software",
 				Enabled: true,
 				Config: map[string]interface{}{
-					"key_dir": tempDir + "/keys",
+					"key_dir": tempDir + "/software",
 				},
 			},
 		},
@@ -284,11 +299,11 @@ func TestInitialize_DefaultToFirstAvailable(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Should fall back to first available backend
-	defaultKS, err := keychain.DefaultBackend()
+	defaultKS, err := xkms.DefaultBackend()
 	assert.NoError(t, err)
 	assert.NotNil(t, defaultKS)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestCreateKeyStorage_FileBackend(t *testing.T) {
@@ -411,13 +426,13 @@ func TestGetDefaultBackendConfigs(t *testing.T) {
 }
 
 func TestBackendFactory_Integration(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
 	// Initialize with multiple backends
 	config := &BackendFactoryConfig{
-		DefaultBackend: "pkcs8",
+		DefaultBackend: "software",
 		Backends: []BackendConfig{
 			{
 				Name:    "pkcs8",
@@ -442,10 +457,10 @@ func TestBackendFactory_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test creating keys in different backends
-	pkcs8KS, err := keychain.Backend("pkcs8")
+	pkcs8KS, err := xkms.GetKeyProvider("pkcs8")
 	require.NoError(t, err)
 
-	softwareKS, err := keychain.Backend("software")
+	softwareKS, err := xkms.GetBackend("software")
 	require.NoError(t, err)
 
 	// Generate keys
@@ -480,25 +495,26 @@ func TestBackendFactory_Integration(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, key2)
 
-	// List all keys
-	allKeys, err := keychain.ListKeys()
+	// List keys from full-service backends (key providers are not included
+	// in ListKeys since they are partial implementations)
+	allKeys, err := xkms.ListKeys()
 	assert.NoError(t, err)
-	assert.GreaterOrEqual(t, len(allKeys), 2, "should have at least 2 keys")
+	assert.GreaterOrEqual(t, len(allKeys), 1, "should have at least 1 key from full-service backend")
 
 	// Clean up
-	err = keychain.Close()
+	err = xkms.Close()
 	assert.NoError(t, err)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 func TestBackendFactory_SharedCertStorage(t *testing.T) {
-	keychain.Reset()
+	xkms.Reset()
 
 	tempDir := t.TempDir()
 
 	config := &BackendFactoryConfig{
-		DefaultBackend: "pkcs8",
+		DefaultBackend: "software",
 		Backends: []BackendConfig{
 			{
 				Name:    "pkcs8",
@@ -522,21 +538,23 @@ func TestBackendFactory_SharedCertStorage(t *testing.T) {
 	err := Initialize(config)
 	require.NoError(t, err)
 
-	// Both backends should share the same cert storage
-	pkcs8KS, _ := keychain.Backend("pkcs8")
-	softwareKS, _ := keychain.Backend("software")
+	// pkcs8 is a key provider, software is a full-service backend
+	pkcs8KS, err := xkms.GetKeyProvider("pkcs8")
+	require.NoError(t, err)
+	softwareKS, err := xkms.GetBackend("software")
+	require.NoError(t, err)
 
-	// Save cert via one backend
+	// Save cert via key provider
 	cert := createTestCert(t)
 	err = pkcs8KS.SaveCert("test-cert", cert)
 	require.NoError(t, err)
 
-	// Retrieve via another backend (shared storage)
+	// Retrieve via full-service backend (shared storage)
 	retrievedCert, err := softwareKS.GetCert("test-cert")
 	assert.NoError(t, err)
 	assert.Equal(t, cert.Subject.CommonName, retrievedCert.Subject.CommonName)
 
-	keychain.Reset()
+	xkms.Reset()
 }
 
 // Helper for creating test certificates
