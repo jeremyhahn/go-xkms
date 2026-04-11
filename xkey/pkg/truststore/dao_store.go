@@ -21,8 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // DAOStore implements trust certificate persistence using a go-qrdb GenericDAO
@@ -31,24 +30,24 @@ import (
 // certificates are public CA certs, no barrier encryption is needed.
 type DAOStore struct {
 	closed atomic.Bool
-	dao    dao.GenericDAO[*TrustCertEntity]
-	idGen  *dao.FieldHashGenerator
+	dao    qrdbsdk.GenericDAO[*TrustCertEntity]
+	idGen  *qrdbsdk.FieldHashGenerator
 }
 
 // NewDAOStore creates a new DAOStore using the given kvstore.KVStore.
 // The entity type namespace is "trust_certs".
-func NewDAOStore(kvStore kvstore.KVStore) (*DAOStore, error) {
+func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilKVStore
 	}
 
-	idGen := dao.NewFieldHashGenerator("Fingerprint")
+	idGen := qrdbsdk.NewFieldHashGenerator("Fingerprint")
 
-	trustDAO, err := dao.New[*TrustCertEntity](
+	trustDAO, err := qrdbsdk.NewDAO[*TrustCertEntity](
 		kvStore,
 		"trust_certs",
 		func() *TrustCertEntity { return &TrustCertEntity{} },
-		dao.WithIDGenerator(idGen),
+		qrdbsdk.WithIDGenerator(idGen),
 	)
 	if err != nil {
 		return nil, ErrDAOCreation{Cause: err}
@@ -120,7 +119,7 @@ func (s *DAOStore) Get(ctx context.Context, fingerprint string) (*x509.Certifica
 
 	entity, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return nil, nil, ErrCertificateNotFound
 		}
 		return nil, nil, err
@@ -144,7 +143,7 @@ func (s *DAOStore) GetByPurpose(ctx context.Context, purpose CertPurpose) ([]*x5
 
 	var certs []*x509.Certificate
 
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*TrustCertEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*TrustCertEntity]) error {
 		for _, entity := range result.Entities {
 			if entity.Purpose == string(purpose) {
 				cert, parseErr := parsePEMBytes([]byte(entity.PEM))
@@ -171,7 +170,7 @@ func (s *DAOStore) List(ctx context.Context) ([]*x509.Certificate, []*CertMetada
 
 	var entities []*TrustCertEntity
 
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*TrustCertEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*TrustCertEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})
@@ -212,7 +211,7 @@ func (s *DAOStore) Delete(ctx context.Context, fingerprint string) error {
 
 	_, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrCertificateNotFound
 		}
 		return err
@@ -224,9 +223,9 @@ func (s *DAOStore) Delete(ctx context.Context, fingerprint string) error {
 }
 
 // Page retrieves a paginated set of trust certificate entities.
-func (s *DAOStore) Page(ctx context.Context, query dao.PageQuery) (dao.PageResult[*TrustCertEntity], error) {
+func (s *DAOStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.PageResult[*TrustCertEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*TrustCertEntity]{}, ErrStoreClosed
+		return qrdbsdk.PageResult[*TrustCertEntity]{}, ErrStoreClosed
 	}
 	return s.dao.Page(ctx, query)
 }

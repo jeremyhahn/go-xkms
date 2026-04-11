@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -29,7 +29,7 @@ import (
 type ThresholdSigner struct {
 	backend *ThresholdBackend
 	attrs   *types.KeyAttributes
-	share   *shamir.Share
+	share   *qrdbsdk.ShamirShare
 }
 
 // Public returns the public key corresponding to the threshold key.
@@ -101,7 +101,7 @@ func (s *ThresholdSigner) reconstructKey() (crypto.PrivateKey, error) {
 	threshold := s.attrs.ThresholdAttributes.Threshold
 
 	// Collect M shares from storage
-	shares := make([]*shamir.Share, 0, threshold)
+	shares := make([]*qrdbsdk.ShamirShare, 0, threshold)
 
 	// Start with our own share
 	shares = append(shares, s.share)
@@ -119,7 +119,7 @@ func (s *ThresholdSigner) reconstructKey() (crypto.PrivateKey, error) {
 			continue // Share not available, try next one
 		}
 
-		var share shamir.Share
+		var share qrdbsdk.ShamirShare
 		if err := json.Unmarshal(data, &share); err != nil {
 			continue // Corrupted share, try next one
 		}
@@ -140,7 +140,7 @@ func (s *ThresholdSigner) reconstructKey() (crypto.PrivateKey, error) {
 	}
 
 	// Combine shares to reconstruct key
-	keyBytes, err := shamir.Combine(shares)
+	keyBytes, err := qrdbsdk.ShamirCombine(shares)
 	if err != nil {
 		return nil, fmt.Errorf("failed to combine shares: %w", err)
 	}

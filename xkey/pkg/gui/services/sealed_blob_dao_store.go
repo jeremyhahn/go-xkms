@@ -21,8 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Sealed blob DAO store errors.
@@ -63,24 +62,24 @@ func (e ErrSealDAOCreation) Unwrap() error {
 // SealedBlobEntity with a deterministic ID derived from the label.
 type SealedBlobDAOStore struct {
 	closed atomic.Bool
-	dao    dao.GenericDAO[*SealedBlobEntity]
-	idGen  *dao.FieldHashGenerator
+	dao    qrdbsdk.GenericDAO[*SealedBlobEntity]
+	idGen  *qrdbsdk.FieldHashGenerator
 }
 
 // NewSealedBlobDAOStore creates a new SealedBlobDAOStore using the given
 // kvstore.KVStore. The entity type namespace is "sealed_blobs".
-func NewSealedBlobDAOStore(kvStore kvstore.KVStore) (*SealedBlobDAOStore, error) {
+func NewSealedBlobDAOStore(kvStore qrdbsdk.KVStore) (*SealedBlobDAOStore, error) {
 	if kvStore == nil {
 		return nil, ErrSealDAONilKVStore
 	}
 
-	idGen := dao.NewFieldHashGenerator("Label")
+	idGen := qrdbsdk.NewFieldHashGenerator("Label")
 
-	blobDAO, err := dao.New[*SealedBlobEntity](
+	blobDAO, err := qrdbsdk.NewDAO[*SealedBlobEntity](
 		kvStore,
 		"sealed_blobs",
 		func() *SealedBlobEntity { return &SealedBlobEntity{} },
-		dao.WithIDGenerator(idGen),
+		qrdbsdk.WithIDGenerator(idGen),
 	)
 	if err != nil {
 		return nil, ErrSealDAOCreation{Cause: err}
@@ -136,7 +135,7 @@ func (s *SealedBlobDAOStore) Load(ctx context.Context, label string) (*SealedBlo
 	entityID := s.computeID(label)
 	entity, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return nil, ErrSealDAONotFound
 		}
 		return nil, err
@@ -160,7 +159,7 @@ func (s *SealedBlobDAOStore) Delete(ctx context.Context, label string) error {
 	// Verify the entity exists before deleting.
 	_, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrSealDAONotFound
 		}
 		return err
@@ -178,7 +177,7 @@ func (s *SealedBlobDAOStore) List(ctx context.Context) ([]*SealedBlobEntity, err
 	}
 
 	var entities []*SealedBlobEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*SealedBlobEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*SealedBlobEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})
@@ -194,9 +193,9 @@ func (s *SealedBlobDAOStore) List(ctx context.Context) ([]*SealedBlobEntity, err
 }
 
 // Page retrieves a paginated set of sealed blob entities.
-func (s *SealedBlobDAOStore) Page(ctx context.Context, query dao.PageQuery) (dao.PageResult[*SealedBlobEntity], error) {
+func (s *SealedBlobDAOStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.PageResult[*SealedBlobEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*SealedBlobEntity]{}, ErrSealDAOStoreClosed
+		return qrdbsdk.PageResult[*SealedBlobEntity]{}, ErrSealDAOStoreClosed
 	}
 	return s.dao.Page(ctx, query)
 }

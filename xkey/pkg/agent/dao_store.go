@@ -17,8 +17,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // DAOStore errors.
@@ -35,7 +34,7 @@ var (
 // between AgentEntity and AgentInfo domain types. Thread-safe via
 // the underlying DAO implementation.
 type DAOStore struct {
-	dao dao.GenericDAO[*AgentEntity]
+	dao qrdbsdk.GenericDAO[*AgentEntity]
 }
 
 // Compile-time interface check.
@@ -44,12 +43,12 @@ var _ EnrollmentStore = (*DAOStore)(nil)
 // NewDAOStore creates a new DAOStore backed by the given KVStore.
 // The DAO uses the "agents" entity type namespace and registers the
 // DeviceID unique index for efficient lookups.
-func NewDAOStore(kvStore kvstore.KVStore) (*DAOStore, error) {
+func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilKVStore
 	}
 
-	agentDAO, err := dao.New[*AgentEntity](
+	agentDAO, err := qrdbsdk.NewDAO[*AgentEntity](
 		kvStore,
 		"agents",
 		func() *AgentEntity { return &AgentEntity{} },
@@ -110,7 +109,7 @@ func (s *DAOStore) GetAgent(id string) (*AgentInfo, error) {
 func (s *DAOStore) ListAgents() ([]*AgentInfo, error) {
 	ctx := context.Background()
 
-	result, err := s.dao.Page(ctx, dao.PageQuery{
+	result, err := s.dao.Page(ctx, qrdbsdk.PageQuery{
 		Page:     1,
 		PageSize: 10000,
 	})
@@ -147,7 +146,7 @@ func (s *DAOStore) DeleteAgent(id string) error {
 }
 
 // Page returns a paginated result set of agent entities.
-func (s *DAOStore) Page(ctx context.Context, q dao.PageQuery) (dao.PageResult[*AgentEntity], error) {
+func (s *DAOStore) Page(ctx context.Context, q qrdbsdk.PageQuery) (qrdbsdk.PageResult[*AgentEntity], error) {
 	return s.dao.Page(ctx, q)
 }
 
@@ -164,12 +163,12 @@ func (s *DAOStore) findByDeviceID(ctx context.Context, deviceID string) (*AgentE
 
 	// If the error is not "not found", it may be an index miss from a
 	// KVStore that doesn't support indexes. Fall back to scan.
-	if !dao.IsNotFound(err) {
+	if !qrdbsdk.IsDAONotFound(err) {
 		// Unexpected error from index query; still try scan fallback.
 	}
 
 	// Scan fallback: iterate all entities and match by DeviceID.
-	result, scanErr := s.dao.Page(ctx, dao.PageQuery{
+	result, scanErr := s.dao.Page(ctx, qrdbsdk.PageQuery{
 		Page:     1,
 		PageSize: 10000,
 	})

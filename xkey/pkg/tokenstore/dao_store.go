@@ -18,8 +18,7 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // DAOStore implements TokenStore using a go-qrdb GenericDAO backed by
@@ -27,8 +26,8 @@ import (
 // a deterministic ID derived from the normalized server URL.
 type DAOStore struct {
 	closed atomic.Bool
-	dao    dao.GenericDAO[*TokenEntity]
-	idGen  *dao.FieldHashGenerator
+	dao    qrdbsdk.GenericDAO[*TokenEntity]
+	idGen  *qrdbsdk.FieldHashGenerator
 }
 
 // Compile-time interface compliance check.
@@ -36,18 +35,18 @@ var _ TokenStore = (*DAOStore)(nil)
 
 // NewDAOStore creates a new DAOStore using the given kvstore.KVStore.
 // The entity type namespace is "tokens".
-func NewDAOStore(kvStore kvstore.KVStore) (*DAOStore, error) {
+func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilBackend
 	}
 
-	idGen := dao.NewFieldHashGenerator("ServerURL")
+	idGen := qrdbsdk.NewFieldHashGenerator("ServerURL")
 
-	tokenDAO, err := dao.New[*TokenEntity](
+	tokenDAO, err := qrdbsdk.NewDAO[*TokenEntity](
 		kvStore,
 		"tokens",
 		func() *TokenEntity { return &TokenEntity{} },
-		dao.WithIDGenerator(idGen),
+		qrdbsdk.WithIDGenerator(idGen),
 	)
 	if err != nil {
 		return nil, ErrDAOCreation{Cause: err}
@@ -104,7 +103,7 @@ func (s *DAOStore) Load(ctx context.Context, serverURL string) (*TokenEntry, err
 
 	entity, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return nil, ErrTokenNotFound
 		}
 		return nil, err
@@ -129,7 +128,7 @@ func (s *DAOStore) Delete(ctx context.Context, serverURL string) error {
 	// Verify the entry exists before deleting.
 	_, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrTokenNotFound
 		}
 		return err
@@ -147,7 +146,7 @@ func (s *DAOStore) List(ctx context.Context) ([]*TokenEntry, error) {
 	}
 
 	var entities []*TokenEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*TokenEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*TokenEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})
@@ -168,9 +167,9 @@ func (s *DAOStore) List(ctx context.Context) ([]*TokenEntry, error) {
 }
 
 // Page retrieves a paginated set of token entities.
-func (s *DAOStore) Page(ctx context.Context, query dao.PageQuery) (dao.PageResult[*TokenEntity], error) {
+func (s *DAOStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.PageResult[*TokenEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*TokenEntity]{}, ErrStoreClosed
+		return qrdbsdk.PageResult[*TokenEntity]{}, ErrStoreClosed
 	}
 	return s.dao.Page(ctx, query)
 }

@@ -20,8 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 const (
@@ -61,7 +60,7 @@ func WithLogger(logger *slog.Logger) Option {
 type DAOAuditStore struct {
 	mu      sync.RWMutex
 	slog    *SlogLogger
-	dao     dao.GenericDAO[*AuditEntryEntity]
+	dao     qrdbsdk.GenericDAO[*AuditEntryEntity]
 	cache   []Entry
 	maxSize int
 	seq     atomic.Uint64
@@ -73,7 +72,7 @@ var _ Store = (*DAOAuditStore)(nil)
 
 // NewDAOAuditStore creates a new DAO-backed audit store. Existing entries
 // are loaded from the DAO into the in-memory ring buffer cache on creation.
-func NewDAOAuditStore(kvStore kvstore.KVStore, opts ...Option) (*DAOAuditStore, error) {
+func NewDAOAuditStore(kvStore qrdbsdk.KVStore, opts ...Option) (*DAOAuditStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilKVStore
 	}
@@ -85,7 +84,7 @@ func NewDAOAuditStore(kvStore kvstore.KVStore, opts ...Option) (*DAOAuditStore, 
 		opt(cfg)
 	}
 
-	auditDAO, err := dao.New[*AuditEntryEntity](
+	auditDAO, err := qrdbsdk.NewDAO[*AuditEntryEntity](
 		kvStore,
 		daoEntityType,
 		func() *AuditEntryEntity { return &AuditEntryEntity{} },
@@ -316,9 +315,9 @@ func (s *DAOAuditStore) Count() int {
 }
 
 // Page retrieves a paginated set of audit entry entities from the DAO.
-func (s *DAOAuditStore) Page(ctx context.Context, q dao.PageQuery) (dao.PageResult[*AuditEntryEntity], error) {
+func (s *DAOAuditStore) Page(ctx context.Context, q qrdbsdk.PageQuery) (qrdbsdk.PageResult[*AuditEntryEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*AuditEntryEntity]{}, ErrStoreClosed
+		return qrdbsdk.PageResult[*AuditEntryEntity]{}, ErrStoreClosed
 	}
 	return s.dao.Page(ctx, q)
 }
@@ -337,7 +336,7 @@ func (s *DAOAuditStore) loadFromDAO() error {
 	ctx := context.Background()
 
 	var entities []*AuditEntryEntity
-	loadErr := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*AuditEntryEntity]) error {
+	loadErr := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*AuditEntryEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})

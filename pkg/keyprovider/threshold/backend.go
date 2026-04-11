@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -38,7 +38,7 @@ type ThresholdBackend struct {
 	mu     sync.RWMutex
 
 	// Cache of loaded shares for this node
-	shareCache map[string]*shamir.Share // key: keyID
+	shareCache map[string]*qrdbsdk.ShamirShare // key: keyID
 	cacheMu    sync.RWMutex
 }
 
@@ -67,7 +67,7 @@ func NewBackend(config *Config) (*ThresholdBackend, error) {
 
 	return &ThresholdBackend{
 		config:     config,
-		shareCache: make(map[string]*shamir.Share),
+		shareCache: make(map[string]*qrdbsdk.ShamirShare),
 	}, nil
 }
 
@@ -250,7 +250,7 @@ func (b *ThresholdBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, er
 	b.mu.RUnlock()
 
 	// Try to load this node's configured share first
-	var share *shamir.Share
+	var share *qrdbsdk.ShamirShare
 	var err error
 
 	if b.config.LocalShareID > 0 {
@@ -310,7 +310,7 @@ func (b *ThresholdBackend) Close() error {
 
 	// Clear share cache
 	b.cacheMu.Lock()
-	b.shareCache = make(map[string]*shamir.Share)
+	b.shareCache = make(map[string]*qrdbsdk.ShamirShare)
 	b.cacheMu.Unlock()
 
 	return nil
@@ -365,7 +365,7 @@ func (b *ThresholdBackend) splitAndStoreKey(attrs *types.KeyAttributes, privateK
 	threshold := attrs.ThresholdAttributes.Threshold
 	total := attrs.ThresholdAttributes.Total
 
-	shares, err := shamir.Split(keyBytes, threshold, total)
+	shares, err := qrdbsdk.ShamirSplit(keyBytes, threshold, total)
 	if err != nil {
 		return fmt.Errorf("failed to split key: %w", err)
 	}
@@ -414,7 +414,7 @@ func (b *ThresholdBackend) splitAndStoreKey(attrs *types.KeyAttributes, privateK
 }
 
 // loadShare loads a specific share from storage.
-func (b *ThresholdBackend) loadShare(attrs *types.KeyAttributes, shareID int) (*shamir.Share, error) {
+func (b *ThresholdBackend) loadShare(attrs *types.KeyAttributes, shareID int) (*qrdbsdk.ShamirShare, error) {
 	keyID := b.getKeyID(attrs)
 
 	// Check cache first
@@ -432,7 +432,7 @@ func (b *ThresholdBackend) loadShare(attrs *types.KeyAttributes, shareID int) (*
 		return nil, &ShareNotFoundError{KeyID: keyID, ShareID: shareID}
 	}
 
-	var share shamir.Share
+	var share qrdbsdk.ShamirShare
 	if err := json.Unmarshal(data, &share); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal share: %w", err)
 	}
@@ -452,7 +452,7 @@ func (b *ThresholdBackend) loadShare(attrs *types.KeyAttributes, shareID int) (*
 
 // loadAnyShare tries to load any available share from storage.
 // This is useful when the local share isn't available but we still need to reconstruct the key.
-func (b *ThresholdBackend) loadAnyShare(attrs *types.KeyAttributes) (*shamir.Share, error) {
+func (b *ThresholdBackend) loadAnyShare(attrs *types.KeyAttributes) (*qrdbsdk.ShamirShare, error) {
 	if attrs.ThresholdAttributes == nil {
 		return nil, fmt.Errorf("threshold attributes required")
 	}
@@ -467,7 +467,7 @@ func (b *ThresholdBackend) loadAnyShare(attrs *types.KeyAttributes) (*shamir.Sha
 			continue // This share doesn't exist, try next one
 		}
 
-		var share shamir.Share
+		var share qrdbsdk.ShamirShare
 		if err := json.Unmarshal(data, &share); err != nil {
 			continue // Corrupted share, try next one
 		}

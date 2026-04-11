@@ -21,8 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // ErrDAOCreation is returned when the DAO layer fails to initialize.
@@ -54,7 +53,7 @@ func (e ErrNilKVStore) Error() string {
 // by name, issuer, and backend ID.
 type DAOStore struct {
 	closed atomic.Bool
-	dao    dao.GenericDAO[*OATHCredentialEntity]
+	dao    qrdbsdk.GenericDAO[*OATHCredentialEntity]
 }
 
 // Compile-time interface compliance check.
@@ -62,12 +61,12 @@ var _ Store = (*DAOStore)(nil)
 
 // NewDAOStore creates a new DAOStore using the given kvstore.KVStore.
 // The entity type namespace is "oath_credentials".
-func NewDAOStore(kvStore kvstore.KVStore) (*DAOStore, error) {
+func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilKVStore{}
 	}
 
-	credDAO, err := dao.New[*OATHCredentialEntity](
+	credDAO, err := qrdbsdk.NewDAO[*OATHCredentialEntity](
 		kvStore,
 		"oath_credentials",
 		func() *OATHCredentialEntity { return &OATHCredentialEntity{} },
@@ -206,9 +205,9 @@ func (s *DAOStore) Delete(idOrName string) error {
 }
 
 // Page retrieves a paginated set of credential entities.
-func (s *DAOStore) Page(ctx context.Context, query dao.PageQuery) (dao.PageResult[*OATHCredentialEntity], error) {
+func (s *DAOStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.PageResult[*OATHCredentialEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*OATHCredentialEntity]{}, ErrStoreClosed
+		return qrdbsdk.PageResult[*OATHCredentialEntity]{}, ErrStoreClosed
 	}
 	return s.dao.Page(ctx, query)
 }
@@ -223,7 +222,7 @@ func (s *DAOStore) Close() error {
 // allEntities retrieves all entities using pagination.
 func (s *DAOStore) allEntities(ctx context.Context) ([]*OATHCredentialEntity, error) {
 	var entities []*OATHCredentialEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*OATHCredentialEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*OATHCredentialEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})
@@ -237,7 +236,7 @@ func (s *DAOStore) findEntityByName(ctx context.Context, name string) (*OATHCred
 	lower := strings.ToLower(name)
 
 	var found *OATHCredentialEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 500}, func(result dao.PageResult[*OATHCredentialEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 500}, func(result qrdbsdk.PageResult[*OATHCredentialEntity]) error {
 		for _, entity := range result.Entities {
 			if strings.ToLower(entity.Name) == lower {
 				found = entity
@@ -272,7 +271,7 @@ func (s *DAOStore) findEntityByCredentialID(ctx context.Context, credID string) 
 	lower := strings.ToLower(credID)
 
 	var found *OATHCredentialEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 500}, func(result dao.PageResult[*OATHCredentialEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 500}, func(result qrdbsdk.PageResult[*OATHCredentialEntity]) error {
 		for _, entity := range result.Entities {
 			if strings.ToLower(entity.Name) == lower {
 				found = entity

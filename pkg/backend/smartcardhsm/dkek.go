@@ -19,7 +19,7 @@ import (
 	"crypto/rand"
 	"fmt"
 
-	"github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // DKEKStatus represents the current DKEK initialization status.
@@ -73,7 +73,7 @@ func GenerateDKEKShares(n, m int) ([]DKEKShare, error) {
 	}
 
 	// Split using Shamir's Secret Sharing
-	shares, err := shamir.Split(dkek, n, m)
+	shares, err := qrdbsdk.ShamirSplit(dkek, n, m)
 	if err != nil {
 		return nil, fmt.Errorf("smartcardhsm: failed to split DKEK: %w", err)
 	}
@@ -97,16 +97,16 @@ func ReconstructDKEK(shares []DKEKShare, threshold int) ([]byte, error) {
 	}
 
 	// Convert to shamir shares
-	shamirShares := make([]shamir.Share, len(shares))
+	shamirShares := make([]qrdbsdk.ShamirShare, len(shares))
 	for i, share := range shares {
-		shamirShares[i] = shamir.Share{
+		shamirShares[i] = qrdbsdk.ShamirShare{
 			Index: share.Index,
 			Value: share.Data,
 		}
 	}
 
 	// Reconstruct
-	dkek, err := shamir.Combine(shamirShares)
+	dkek, err := qrdbsdk.ShamirCombine(shamirShares)
 	if err != nil {
 		return nil, fmt.Errorf("smartcardhsm: failed to reconstruct DKEK: %w", err)
 	}

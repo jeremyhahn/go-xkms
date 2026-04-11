@@ -20,7 +20,7 @@ import (
 	"encoding/pem"
 	"io"
 
-	"github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aesgcm"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/mem"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/rand"
@@ -28,12 +28,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
-// Shamir secret sharing types and functions re-exported from go-quicraft/pkg/crypto/shamir.
+// Shamir secret sharing types and functions re-exported via go-qrdb/sdk/go.
 // These allow SDK consumers to split and reconstruct secrets without importing
 // the internal shamir package directly.
 type (
 	// ShamirShare represents a single share in a Shamir secret sharing scheme.
-	ShamirShare = shamir.Share
+	ShamirShare = qrdbsdk.ShamirShare
 )
 
 // Shamir secret sharing functions.
@@ -44,13 +44,13 @@ var (
 	//   - secret: The secret data to split
 	//   - threshold: Minimum number of shares needed to reconstruct (M)
 	//   - total: Total number of shares to create (N)
-	ShamirSplit = shamir.Split
+	ShamirSplit = qrdbsdk.ShamirSplit
 
 	// ShamirCombine reconstructs the original secret from M or more shares.
-	ShamirCombine = shamir.Combine
+	ShamirCombine = qrdbsdk.ShamirCombine
 
 	// ShamirVerifyShare checks if a share is valid and consistent with other shares.
-	ShamirVerifyShare = shamir.VerifyShare
+	ShamirVerifyShare = qrdbsdk.ShamirVerifyShare
 )
 
 // Signing types re-exported from pkg/signing.

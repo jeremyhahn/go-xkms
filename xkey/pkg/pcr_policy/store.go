@@ -19,8 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // validBanks is the set of supported PCR hash algorithm banks.
@@ -35,7 +34,7 @@ type PolicyStore interface {
 	Create(ctx context.Context, name, bank string, pcrs map[uint][]byte) (*PCRPolicyEntity, error)
 	Get(ctx context.Context, name string) (*PCRPolicyEntity, error)
 	List(ctx context.Context) ([]*PCRPolicyEntity, error)
-	Page(ctx context.Context, q dao.PageQuery) (dao.PageResult[*PCRPolicyEntity], error)
+	Page(ctx context.Context, q qrdbsdk.PageQuery) (qrdbsdk.PageResult[*PCRPolicyEntity], error)
 	Delete(ctx context.Context, name string) error
 	SetAutoUnseal(ctx context.Context, name string) error
 	ClearAutoUnseal(ctx context.Context) error
@@ -48,8 +47,8 @@ type PolicyStore interface {
 // a deterministic ID derived from the policy name.
 type DAOStore struct {
 	closed atomic.Bool
-	dao    dao.GenericDAO[*PCRPolicyEntity]
-	idGen  *dao.FieldHashGenerator
+	dao    qrdbsdk.GenericDAO[*PCRPolicyEntity]
+	idGen  *qrdbsdk.FieldHashGenerator
 }
 
 // Compile-time interface compliance check.
@@ -57,18 +56,18 @@ var _ PolicyStore = (*DAOStore)(nil)
 
 // NewDAOStore creates a new DAOStore using the given kvstore.KVStore.
 // The entity type namespace is "pcr_policies".
-func NewDAOStore(kvStore kvstore.KVStore) (*DAOStore, error) {
+func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilKVStore
 	}
 
-	idGen := dao.NewFieldHashGenerator("Name")
+	idGen := qrdbsdk.NewFieldHashGenerator("Name")
 
-	policyDAO, err := dao.New[*PCRPolicyEntity](
+	policyDAO, err := qrdbsdk.NewDAO[*PCRPolicyEntity](
 		kvStore,
 		"pcr_policies",
 		func() *PCRPolicyEntity { return &PCRPolicyEntity{} },
-		dao.WithIDGenerator(idGen),
+		qrdbsdk.WithIDGenerator(idGen),
 	)
 	if err != nil {
 		return nil, ErrDAOCreation{Cause: err}
@@ -134,7 +133,7 @@ func (s *DAOStore) Get(ctx context.Context, name string) (*PCRPolicyEntity, erro
 	entityID := s.computeID(name)
 	entity, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return nil, ErrPolicyNotFound
 		}
 		return nil, err
@@ -150,7 +149,7 @@ func (s *DAOStore) List(ctx context.Context) ([]*PCRPolicyEntity, error) {
 	}
 
 	var entities []*PCRPolicyEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*PCRPolicyEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*PCRPolicyEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})
@@ -166,9 +165,9 @@ func (s *DAOStore) List(ctx context.Context) ([]*PCRPolicyEntity, error) {
 }
 
 // Page retrieves a paginated set of policy entities.
-func (s *DAOStore) Page(ctx context.Context, q dao.PageQuery) (dao.PageResult[*PCRPolicyEntity], error) {
+func (s *DAOStore) Page(ctx context.Context, q qrdbsdk.PageQuery) (qrdbsdk.PageResult[*PCRPolicyEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*PCRPolicyEntity]{}, ErrStoreClosed
+		return qrdbsdk.PageResult[*PCRPolicyEntity]{}, ErrStoreClosed
 	}
 	return s.dao.Page(ctx, q)
 }
@@ -188,7 +187,7 @@ func (s *DAOStore) Delete(ctx context.Context, name string) error {
 
 	entity, err := s.dao.Get(ctx, entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrPolicyNotFound
 		}
 		return err
@@ -218,7 +217,7 @@ func (s *DAOStore) SetAutoUnseal(ctx context.Context, name string) error {
 	targetID := s.computeID(name)
 	target, err := s.dao.Get(ctx, targetID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrPolicyNotFound
 		}
 		return err
@@ -249,7 +248,7 @@ func (s *DAOStore) ClearAutoUnseal(ctx context.Context) error {
 // whose entity ID is not equal to exceptID. Pass 0 to clear all.
 func (s *DAOStore) clearAutoUnsealExcept(ctx context.Context, exceptID uint64) error {
 	var toUpdate []*PCRPolicyEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*PCRPolicyEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*PCRPolicyEntity]) error {
 		for _, e := range result.Entities {
 			if e.AutoUnseal && e.EntityID() != exceptID {
 				e.AutoUnseal = false
@@ -280,7 +279,7 @@ func (s *DAOStore) GetAutoUnsealPolicy(ctx context.Context) (*PCRPolicyEntity, e
 	}
 
 	var found *PCRPolicyEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*PCRPolicyEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*PCRPolicyEntity]) error {
 		for _, e := range result.Entities {
 			if e.AutoUnseal {
 				found = e

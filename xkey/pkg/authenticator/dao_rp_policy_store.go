@@ -19,8 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 const (
@@ -36,8 +35,8 @@ const (
 // the DAO's internal concurrency guarantees.
 type DAORPPolicyStore struct {
 	closed atomic.Bool
-	dao    dao.GenericDAO[*RPPolicyEntity]
-	idGen  *dao.FieldHashGenerator
+	dao    qrdbsdk.GenericDAO[*RPPolicyEntity]
+	idGen  *qrdbsdk.FieldHashGenerator
 }
 
 // Compile-time interface compliance check.
@@ -45,18 +44,18 @@ var _ RPPolicyStore = (*DAORPPolicyStore)(nil)
 
 // NewDAORPPolicyStore creates a new DAORPPolicyStore using the given
 // kvstore.KVStore. The DAO uses RPID as the deterministic entity ID field.
-func NewDAORPPolicyStore(kvStore kvstore.KVStore) (*DAORPPolicyStore, error) {
+func NewDAORPPolicyStore(kvStore qrdbsdk.KVStore) (*DAORPPolicyStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilStorage
 	}
 
-	idGen := dao.NewFieldHashGenerator("RPID")
+	idGen := qrdbsdk.NewFieldHashGenerator("RPID")
 
-	policyDAO, err := dao.New[*RPPolicyEntity](
+	policyDAO, err := qrdbsdk.NewDAO[*RPPolicyEntity](
 		kvStore,
 		daoRPPolicyEntityType,
 		func() *RPPolicyEntity { return &RPPolicyEntity{} },
-		dao.WithIDGenerator(idGen),
+		qrdbsdk.WithIDGenerator(idGen),
 	)
 	if err != nil {
 		return nil, ErrDAOCreation{Cause: err}
@@ -131,7 +130,7 @@ func (s *DAORPPolicyStore) GetPolicy(rpID string) (*RPPolicy, error) {
 
 	entity, err := s.dao.Get(context.Background(), entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return nil, ErrRPPolicyNotFound
 		}
 		return nil, wrapStorageError(err)
@@ -158,7 +157,7 @@ func (s *DAORPPolicyStore) DeletePolicy(rpID string) error {
 	// Verify existence before delete.
 	_, err := s.dao.Get(context.Background(), entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrRPPolicyNotFound
 		}
 		return wrapStorageError(err)
@@ -181,7 +180,7 @@ func (s *DAORPPolicyStore) ListPolicies() ([]*RPPolicy, error) {
 	}
 
 	var entities []*RPPolicyEntity
-	err := s.dao.ForEachPage(context.Background(), dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*RPPolicyEntity]) error {
+	err := s.dao.ForEachPage(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*RPPolicyEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})
@@ -202,9 +201,9 @@ func (s *DAORPPolicyStore) ListPolicies() ([]*RPPolicy, error) {
 }
 
 // Page retrieves a paginated set of RP policy entities.
-func (s *DAORPPolicyStore) Page(ctx context.Context, query dao.PageQuery) (dao.PageResult[*RPPolicyEntity], error) {
+func (s *DAORPPolicyStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.PageResult[*RPPolicyEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*RPPolicyEntity]{}, ErrRPPolicyStoreClosed
+		return qrdbsdk.PageResult[*RPPolicyEntity]{}, ErrRPPolicyStoreClosed
 	}
 	return s.dao.Page(ctx, query)
 }

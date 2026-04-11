@@ -14,7 +14,7 @@
 package cmd
 
 import (
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
@@ -28,6 +28,6 @@ func newFileStorageBackend(path string) (storage.Backend, error) {
 
 // newKVAdapter wraps a storage.Backend with the kvadapter to produce
 // a kvstore.KVStore suitable for the DAO layer.
-func newKVAdapter(backend storage.Backend) (kvstore.KVStore, error) {
+func newKVAdapter(backend storage.Backend) (qrdbsdk.KVStore, error) {
 	return kvadapter.New(backend)
 }

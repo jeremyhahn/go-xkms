@@ -17,7 +17,7 @@ import (
 	"context"
 	"errors"
 
-	quicraftseal "github.com/jeremyhahn/go-quicraft/pkg/seal"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // Compile-time interface check.
@@ -31,7 +31,7 @@ var _ SealingStrategy = (*SoftwareStrategy)(nil)
 // go-quicraft's DeferredSoftwareStrategy and translates ErrDecryptionFailed
 // to ErrInvalidCredentials for consistent error semantics in go-xkms.
 type SoftwareStrategy struct {
-	inner *quicraftseal.SoftwareStrategy
+	inner *qrdbsdk.SoftwareStrategy
 }
 
 // NewSoftwareStrategy creates a SoftwareStrategy for password-based root key
@@ -39,7 +39,7 @@ type SoftwareStrategy struct {
 // provided via Credentials.Secret during Initialize/Unseal operations.
 func NewSoftwareStrategy() *SoftwareStrategy {
 	return &SoftwareStrategy{
-		inner: quicraftseal.NewDeferredSoftwareStrategy(),
+		inner: qrdbsdk.NewDeferredSoftwareStrategy(),
 	}
 }
 
@@ -76,7 +76,7 @@ func (s *SoftwareStrategy) UnsealRootKey(
 	rootKey, err := s.inner.UnsealRootKey(ctx, sealed, creds)
 	if err != nil {
 		// A decryption failure during unseal means the passphrase was wrong.
-		if errors.Is(err, quicraftseal.ErrDecryptionFailed) {
+		if errors.Is(err, qrdbsdk.ErrDecryptionFailed) {
 			return nil, ErrInvalidCredentials
 		}
 		return nil, err

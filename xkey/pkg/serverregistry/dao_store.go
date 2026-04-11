@@ -19,8 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // DAOStore implements ServerRegistry using a go-qrdb GenericDAO backed by a
@@ -29,8 +28,8 @@ import (
 // URL without depending on secondary index support in the underlying store.
 type DAOStore struct {
 	closed atomic.Bool
-	dao    dao.GenericDAO[*ServerEntity]
-	idGen  *dao.FieldHashGenerator
+	dao    qrdbsdk.GenericDAO[*ServerEntity]
+	idGen  *qrdbsdk.FieldHashGenerator
 }
 
 // Compile-time interface compliance check.
@@ -39,18 +38,18 @@ var _ ServerRegistry = (*DAOStore)(nil)
 // NewDAOStore creates a new DAOStore using the given kvstore.KVStore.
 // The DAO uses "servers" as the entity type namespace and generates
 // deterministic IDs by hashing the URL field.
-func NewDAOStore(kvStore kvstore.KVStore) (*DAOStore, error) {
+func NewDAOStore(kvStore qrdbsdk.KVStore) (*DAOStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilKVStore
 	}
 
-	idGen := dao.NewFieldHashGenerator("URL")
+	idGen := qrdbsdk.NewFieldHashGenerator("URL")
 
-	serverDAO, err := dao.New[*ServerEntity](
+	serverDAO, err := qrdbsdk.NewDAO[*ServerEntity](
 		kvStore,
 		"servers",
 		func() *ServerEntity { return &ServerEntity{} },
-		dao.WithIDGenerator(idGen),
+		qrdbsdk.WithIDGenerator(idGen),
 	)
 	if err != nil {
 		return nil, ErrDAOCreation{Cause: err}
@@ -88,7 +87,7 @@ func (s *DAOStore) Register(ctx context.Context, entry *ServerEntry) error {
 	if err == nil {
 		return ErrServerExists
 	}
-	if !dao.IsNotFound(err) {
+	if !qrdbsdk.IsDAONotFound(err) {
 		return err
 	}
 
@@ -112,7 +111,7 @@ func (s *DAOStore) Lookup(ctx context.Context, url string) (*ServerEntry, error)
 	entryID := s.computeID(url)
 	entity, err := s.dao.Get(ctx, entryID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return nil, ErrServerNotFound
 		}
 		return nil, err
@@ -140,7 +139,7 @@ func (s *DAOStore) Update(ctx context.Context, entry *ServerEntry) error {
 	entryID := s.computeID(entry.URL)
 	existing, err := s.dao.Get(ctx, entryID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrServerNotFound
 		}
 		return err
@@ -162,7 +161,7 @@ func (s *DAOStore) List(ctx context.Context) ([]*ServerEntry, error) {
 	}
 
 	var entities []*ServerEntity
-	err := s.dao.ForEachPage(ctx, dao.PageQuery{Page: 1, PageSize: 1000}, func(result dao.PageResult[*ServerEntity]) error {
+	err := s.dao.ForEachPage(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 1000}, func(result qrdbsdk.PageResult[*ServerEntity]) error {
 		entities = append(entities, result.Entities...)
 		return nil
 	})
@@ -197,7 +196,7 @@ func (s *DAOStore) Delete(ctx context.Context, url string) error {
 	// Verify the entry exists before deleting.
 	_, err := s.dao.Get(ctx, entryID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrServerNotFound
 		}
 		return err
@@ -209,9 +208,9 @@ func (s *DAOStore) Delete(ctx context.Context, url string) error {
 }
 
 // Page retrieves a page of server entities using the DAO pagination.
-func (s *DAOStore) Page(ctx context.Context, query dao.PageQuery) (dao.PageResult[*ServerEntity], error) {
+func (s *DAOStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.PageResult[*ServerEntity], error) {
 	if s.closed.Load() {
-		return dao.NewPageResult[*ServerEntity](), ErrStoreClosed
+		return qrdbsdk.PageResult[*ServerEntity]{}, ErrStoreClosed
 	}
 
 	return s.dao.Page(ctx, query)

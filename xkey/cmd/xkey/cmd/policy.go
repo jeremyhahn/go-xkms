@@ -23,7 +23,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/spf13/cobra"
 
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
@@ -398,7 +398,7 @@ func runPolicyList(cmd *cobra.Command, args []string) error {
 func runPolicyListPaginated(cmd *cobra.Command, store pcrpolicy.PolicyStore, ctx context.Context, page, pageSize int) error {
 	out := cmd.OutOrStdout()
 
-	result, err := store.Page(ctx, dao.PageQuery{
+	result, err := store.Page(ctx, qrdbsdk.PageQuery{
 		Page:     page,
 		PageSize: pageSize,
 	})

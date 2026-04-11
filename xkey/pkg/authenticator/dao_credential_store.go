@@ -21,8 +21,7 @@ import (
 	"errors"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
@@ -44,9 +43,9 @@ const (
 // the DAO's internal concurrency guarantees.
 type DAOCredentialStore struct {
 	closed  atomic.Bool
-	kvStore kvstore.KVStore
-	dao     dao.GenericDAO[*FIDO2CredentialEntity]
-	idGen   *dao.FieldHashGenerator
+	kvStore qrdbsdk.KVStore
+	dao     qrdbsdk.GenericDAO[*FIDO2CredentialEntity]
+	idGen   *qrdbsdk.FieldHashGenerator
 }
 
 // Compile-time interface compliance checks.
@@ -61,18 +60,18 @@ var (
 // NewDAOCredentialStore creates a new DAOCredentialStore using the given
 // kvstore.KVStore. The DAO uses CredentialIDHex as the deterministic
 // entity ID field for deduplication.
-func NewDAOCredentialStore(kvStore kvstore.KVStore) (*DAOCredentialStore, error) {
+func NewDAOCredentialStore(kvStore qrdbsdk.KVStore) (*DAOCredentialStore, error) {
 	if kvStore == nil {
 		return nil, ErrNilStorage
 	}
 
-	idGen := dao.NewFieldHashGenerator("CredentialIDHex")
+	idGen := qrdbsdk.NewFieldHashGenerator("CredentialIDHex")
 
-	credDAO, err := dao.New[*FIDO2CredentialEntity](
+	credDAO, err := qrdbsdk.NewDAO[*FIDO2CredentialEntity](
 		kvStore,
 		daoCredentialEntityType,
 		func() *FIDO2CredentialEntity { return &FIDO2CredentialEntity{} },
-		dao.WithIDGenerator(idGen),
+		qrdbsdk.WithIDGenerator(idGen),
 	)
 	if err != nil {
 		return nil, ErrDAOCreation{Cause: err}
@@ -132,7 +131,7 @@ func (s *DAOCredentialStore) Load(credentialID []byte) (*StoredCredential, error
 
 	entity, err := s.dao.Get(context.Background(), entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return nil, ErrCredentialNotFound
 		}
 		return nil, wrapStorageError(err)
@@ -175,7 +174,7 @@ func (s *DAOCredentialStore) LoadByRPID(rpID string) ([]*StoredCredential, error
 // loadByRPIDScan does a full scan and filters by RPID.
 func (s *DAOCredentialStore) loadByRPIDScan(rpID string) ([]*StoredCredential, error) {
 	var result []*StoredCredential
-	err := s.dao.ForEachPage(context.Background(), dao.PageQuery{Page: 1, PageSize: 100}, func(page dao.PageResult[*FIDO2CredentialEntity]) error {
+	err := s.dao.ForEachPage(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 100}, func(page qrdbsdk.PageResult[*FIDO2CredentialEntity]) error {
 		for _, entity := range page.Entities {
 			if entity.RPID == rpID {
 				cred, convErr := entityToCredential(entity)
@@ -227,7 +226,7 @@ func (s *DAOCredentialStore) Delete(credentialID []byte) error {
 	// Verify existence before delete (DAO Delete is idempotent).
 	_, err := s.dao.Get(context.Background(), entityID)
 	if err != nil {
-		if dao.IsNotFound(err) {
+		if qrdbsdk.IsDAONotFound(err) {
 			return ErrCredentialNotFound
 		}
 		return wrapStorageError(err)
@@ -265,7 +264,7 @@ func (s *DAOCredentialStore) CountDiscoverable() (int, error) {
 	}
 
 	count := 0
-	err := s.dao.ForEachPage(context.Background(), dao.PageQuery{Page: 1, PageSize: 100}, func(result dao.PageResult[*FIDO2CredentialEntity]) error {
+	err := s.dao.ForEachPage(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 100}, func(result qrdbsdk.PageResult[*FIDO2CredentialEntity]) error {
 		for _, entity := range result.Entities {
 			if entity.Discoverable {
 				count++
@@ -289,7 +288,7 @@ func (s *DAOCredentialStore) EnumerateDiscoverable() ([]*StoredCredential, error
 	}
 
 	var result []*StoredCredential
-	err := s.dao.ForEachPage(context.Background(), dao.PageQuery{Page: 1, PageSize: 100}, func(page dao.PageResult[*FIDO2CredentialEntity]) error {
+	err := s.dao.ForEachPage(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 100}, func(page qrdbsdk.PageResult[*FIDO2CredentialEntity]) error {
 		for _, entity := range page.Entities {
 			if entity.Discoverable {
 				cred, err := entityToCredential(entity)
@@ -384,7 +383,7 @@ func (s *DAOCredentialStore) Clear() error {
 		return ErrStorageClosed
 	}
 
-	return s.dao.ForEachPage(context.Background(), dao.PageQuery{Page: 1, PageSize: 100}, func(page dao.PageResult[*FIDO2CredentialEntity]) error {
+	return s.dao.ForEachPage(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 100}, func(page qrdbsdk.PageResult[*FIDO2CredentialEntity]) error {
 		for _, entity := range page.Entities {
 			if err := s.dao.Delete(context.Background(), entity); err != nil {
 				continue
@@ -403,7 +402,7 @@ func (s *DAOCredentialStore) ListAll() ([][]byte, error) {
 	}
 
 	var result [][]byte
-	err := s.dao.ForEachPage(context.Background(), dao.PageQuery{Page: 1, PageSize: 100}, func(page dao.PageResult[*FIDO2CredentialEntity]) error {
+	err := s.dao.ForEachPage(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 100}, func(page qrdbsdk.PageResult[*FIDO2CredentialEntity]) error {
 		for _, entity := range page.Entities {
 			credID, err := hex.DecodeString(entity.CredentialIDHex)
 			if err != nil {
@@ -421,9 +420,9 @@ func (s *DAOCredentialStore) ListAll() ([][]byte, error) {
 }
 
 // Page retrieves a paginated set of credential entities.
-func (s *DAOCredentialStore) Page(ctx context.Context, query dao.PageQuery) (dao.PageResult[*FIDO2CredentialEntity], error) {
+func (s *DAOCredentialStore) Page(ctx context.Context, query qrdbsdk.PageQuery) (qrdbsdk.PageResult[*FIDO2CredentialEntity], error) {
 	if s.closed.Load() {
-		return dao.PageResult[*FIDO2CredentialEntity]{}, ErrStorageClosed
+		return qrdbsdk.PageResult[*FIDO2CredentialEntity]{}, ErrStorageClosed
 	}
 	return s.dao.Page(ctx, query)
 }

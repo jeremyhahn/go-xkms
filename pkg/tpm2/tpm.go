@@ -31,7 +31,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
-	"github.com/jeremyhahn/go-quicraft/pkg/crypto/shamir"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -1891,7 +1891,7 @@ func (tpm *TPM2) ShareSecret(secret []byte, shares int) ([]string, error) {
 	}
 
 	// Split the secret using Shamir's Secret Sharing
-	shareObjs, err := shamir.Split(secret, threshold, shares)
+	shareObjs, err := qrdbsdk.ShamirSplit(secret, threshold, shares)
 	if err != nil {
 		return nil, fmt.Errorf("failed to split secret: %w", err)
 	}
@@ -1917,9 +1917,9 @@ func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
 	}
 
 	// Convert JSON strings back to Share objects
-	shareObjs := make([]*shamir.Share, len(shares))
+	shareObjs := make([]*qrdbsdk.ShamirShare, len(shares))
 	for i, shareStr := range shares {
-		var share shamir.Share
+		var share qrdbsdk.ShamirShare
 		if err := json.Unmarshal([]byte(shareStr), &share); err != nil {
 			return "", fmt.Errorf("failed to unmarshal share %d: %w", i, err)
 		}
@@ -1927,7 +1927,7 @@ func (tpm *TPM2) SecretFromShares(shares []string) (string, error) {
 	}
 
 	// Combine the shares to reconstruct the secret
-	secret, err := shamir.Combine(shareObjs)
+	secret, err := qrdbsdk.ShamirCombine(shareObjs)
 	if err != nil {
 		return "", fmt.Errorf("failed to combine shares: %w", err)
 	}
