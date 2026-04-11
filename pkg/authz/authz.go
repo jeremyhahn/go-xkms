@@ -14,7 +14,7 @@
 // Package authz provides the authorization interface for xkmsd.
 //
 // Standalone xkmsd uses built-in RBAC via RBACAuthorizer. Applications such
-// as go-dragondb can replace the Authorizer with a custom implementation (e.g.,
+// as go-qrdb can replace the Authorizer with a custom implementation (e.g.,
 // HybridProvider) to integrate external policy engines or attribute-based
 // access control.
 package authz
@@ -22,7 +22,7 @@ package authz
 import "context"
 
 // Authorizer defines the authorization interface for xkmsd.
-// Standalone xkmsd uses built-in RBAC. go-dragondb replaces with HybridProvider.
+// Standalone xkmsd uses built-in RBAC. go-qrdb replaces with HybridProvider.
 type Authorizer interface {
 	Authorize(ctx context.Context, req *AuthorizationRequest) (*AuthorizationDecision, error)
 }

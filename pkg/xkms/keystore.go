@@ -210,7 +210,7 @@ type BackendConfig struct {
 // Example (PKCS#11 with Raft storage):
 //
 //	pkcs11Backend := pkcs11.NewBackend(...)
-//	raftCertStorage := dragondb.NewRaftCertStorage(nodeHost)
+//	raftCertStorage := qrdb.NewRaftCertStorage(nodeHost)
 //	backend := xkms.New(&xkms.BackendConfig{
 //	    Backend:     pkcs11Backend,
 //	    CertStorage: raftCertStorage,  // Certs in Raft, keys in HSM

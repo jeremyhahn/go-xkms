@@ -19,7 +19,7 @@ import (
 )
 
 // Logger defines the audit logging interface for xkmsd.
-// Standalone xkmsd uses file-based logging. go-dragondb replaces
+// Standalone xkmsd uses file-based logging. go-qrdb replaces
 // with HMAC-signed, SIEM-integrated audit logging.
 type Logger interface {
 	// Log records an audit event.

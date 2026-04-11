@@ -233,7 +233,7 @@ func signatureAlgorithmToName(algo x509.SignatureAlgorithm) types.SignatureAlgor
 
 // caConfigToMultiIdentity converts a flat CAConfig to a MultiIdentityCAConfig
 // with a single identity. This allows callers using the flat CAConfig (e.g.,
-// go-dragondb) to work with the internal multi-identity CA implementation.
+// go-qrdb) to work with the internal multi-identity CA implementation.
 func caConfigToMultiIdentity(cfg *CAConfig, keyAttrs *types.KeyAttributes) *MultiIdentityCAConfig {
 	// Determine the CN
 	cn := cfg.Identity

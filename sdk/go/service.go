@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // This file re-exports the XKMS service facade from pkg/xkms so that
-// consumers (e.g., go-dragondb, go-trusted-ca) can initialize and manage
+// consumers (e.g., go-qrdb, go-trusted-ca) can initialize and manage
 // the XKMS service through the SDK instead of importing internal packages.
 
 package xkms

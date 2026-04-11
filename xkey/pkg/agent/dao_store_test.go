@@ -50,7 +50,7 @@ func (m *testKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	defer m.mu.RUnlock()
 	v, ok := m.data[key]
 	if !ok {
-		return nil, &dberrors.DragonError{Code: dberrors.ErrNotFound, Op: "kv.get"}
+		return nil, &dberrors.QRDBError{Code: dberrors.ErrNotFound, Op: "kv.get"}
 	}
 	cp := make([]byte, len(v))
 	copy(cp, v)

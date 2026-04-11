@@ -460,7 +460,7 @@ const (
 
 // QRDB structured error types.
 type (
-	QRDBDragonError          = qrdb.DragonError
+	QRDBError                = qrdb.QRDBError
 	QRDBQuotaExceededError   = qrdb.QuotaExceededError
 	QRDBMessageError         = qrdb.MessageError
 	QRDBWrappedMessageError  = qrdb.WrappedMessageError

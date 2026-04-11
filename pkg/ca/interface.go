@@ -14,7 +14,7 @@
 // Package ca provides a XKMSCA implementation for certificate authority operations.
 //
 // XKMSCA is the foundation library that go-trusted-ca embeds for ACME/TCG operations,
-// and that go-dragondb uses for certificate management. It provides a complete
+// and that go-qrdb uses for certificate management. It provides a complete
 // certificate authority implementation with support for:
 //
 //   - Certificate signing request (CSR) handling
@@ -399,7 +399,7 @@ type XKMSCA interface {
 }
 
 // BasicCA is an alias for XKMSCA for backward compatibility.
-// go-dragondb and other consumers reference BasicCA.
+// go-qrdb and other consumers reference BasicCA.
 type BasicCA = XKMSCA
 
 // ProfileProvider defines the interface for certificate profile providers.

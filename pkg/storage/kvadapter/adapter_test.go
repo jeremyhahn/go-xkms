@@ -130,7 +130,7 @@ func TestGet_Success(t *testing.T) {
 	assert.Equal(t, []byte("value1"), data)
 }
 
-func TestGet_NotFound_ReturnsDragonDBError(t *testing.T) {
+func TestGet_NotFound_ReturnsQRDBError(t *testing.T) {
 	backend := storage.NewMemory()
 	adapter, err := New(backend)
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestGet_NotFound_ReturnsDragonDBError(t *testing.T) {
 	assert.Error(t, getErr)
 	assert.Nil(t, data)
 
-	// Verify it's a DragonDB NotFound error (required by DAO layer).
+	// Verify it's a QRDB NotFound error (required by DAO layer).
 	assert.True(t, dberrors.IsNotFound(getErr))
 }
 
@@ -178,7 +178,7 @@ func TestDelete_Success(t *testing.T) {
 	err = adapter.Delete(ctx, "key1")
 	assert.NoError(t, err)
 
-	// Verify key is gone via Get returning DragonDB NotFound error.
+	// Verify key is gone via Get returning QRDB NotFound error.
 	data, getErr := adapter.Get(ctx, "key1")
 	assert.Error(t, getErr)
 	assert.Nil(t, data)
@@ -621,7 +621,7 @@ func TestKVStoreAdapter_RoundTrip(t *testing.T) {
 	err = adapter.Delete(ctx, "entity/1")
 	assert.NoError(t, err)
 
-	// Verify deleted - Get should return DragonDB NotFound error.
+	// Verify deleted - Get should return QRDB NotFound error.
 	data, getErr = adapter.Get(ctx, "entity/1")
 	assert.Error(t, getErr)
 	assert.Nil(t, data)

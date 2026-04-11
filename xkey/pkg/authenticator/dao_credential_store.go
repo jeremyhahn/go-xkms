@@ -348,7 +348,7 @@ func (s *DAOCredentialStore) LoadState() (*AuthenticatorState, error) {
 
 	data, err := s.kvStore.Get(context.Background(), daoStateKey)
 	if err != nil {
-		// The KVStore adapter wraps storage.ErrNotFound in a DragonError.
+		// The KVStore adapter wraps storage.ErrNotFound in a QRDBError.
 		// Check the full error chain for the sentinel.
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, ErrStateNotFound

@@ -15,7 +15,7 @@
 // interface. This enables go-xkms to use go-qrdb's DAO layer for typed
 // entity persistence on top of any storage.Backend implementation.
 //
-// The adapter translates storage.Backend errors to go-qrdb DragonError
+// The adapter translates storage.Backend errors to go-qrdb QRDBError
 // types so that the DAO layer can correctly identify not-found conditions
 // and other error classes.
 package kvadapter
@@ -58,13 +58,13 @@ func (a *KVStoreAdapter) Put(ctx context.Context, key string, value []byte) erro
 }
 
 // Get retrieves a value by key. When the key does not exist, returns a
-// DragonDB NotFound error so the DAO layer can correctly identify the
+// QRDBError NotFound error so the DAO layer can correctly identify the
 // not-found condition via errors.As.
 func (a *KVStoreAdapter) Get(ctx context.Context, key string) ([]byte, error) {
 	data, err := a.backend.Get(ctx, key)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
-			return nil, &qrdbsdk.DragonError{
+			return nil, &qrdbsdk.QRDBError{
 				Code: qrdbsdk.ErrNotFound,
 				Op:   "kvadapter.Get",
 				Err:  err,
