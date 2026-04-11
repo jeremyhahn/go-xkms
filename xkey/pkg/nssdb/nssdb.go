@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver
@@ -388,9 +389,26 @@ func encodeBool(v bool) []byte {
 	return []byte{0x00}
 }
 
-// generateObjectID returns a time-based object ID masked to 30 bits.
+// objectIDCounter provides unique object IDs by combining a time-based
+// seed with an atomic counter to avoid collisions when adding multiple
+// certificates in rapid succession.
+var objectIDCounter atomic.Int64
+
+// generateObjectID returns a unique object ID. The first call in a given
+// second uses the time-based value; subsequent calls within the same
+// second increment from there.
 func generateObjectID() int64 {
-	return time.Now().Unix() & 0x3FFFFFFF
+	timeBase := time.Now().Unix() & 0x3FFFFFFF
+	for {
+		current := objectIDCounter.Load()
+		next := current + 2 // reserve 2 IDs (cert + trust)
+		if next < timeBase {
+			next = timeBase
+		}
+		if objectIDCounter.CompareAndSwap(current, next) {
+			return next
+		}
+	}
 }
 
 // marshalSerial encodes a certificate serial number as a full ASN.1 INTEGER TLV.

@@ -219,7 +219,7 @@ type mockTPMForPKS struct {
 	config                     *Config
 }
 
-func (m *mockTPMForPKS) Install(soPIN types.Password) error {
+func (m *mockTPMForPKS) Install(soPIN types.Password, opts *InstallOptions) error {
 	m.installCalled.Store(true)
 	return m.installErr
 }
@@ -272,6 +272,8 @@ func (m *mockTPMForPKS) CalculateName(_ tpm2.TPMAlgID, _ []byte) {}
 func (m *mockTPMForPKS) Clear(_ []byte) error                    { return nil }
 func (m *mockTPMForPKS) Close() error                            { return nil }
 func (m *mockTPMForPKS) FactoryReset(_ []byte) error             { return nil }
+func (m *mockTPMForPKS) FactoryResetWithClear(_ []byte) error    { return nil }
+func (m *mockTPMForPKS) ForceClear() error                       { return nil }
 func (m *mockTPMForPKS) CreateECDSA(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*ecdsa.PublicKey, error) {
 	return nil, nil
 }

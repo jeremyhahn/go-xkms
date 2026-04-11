@@ -1134,3 +1134,66 @@ func TestGetBrowserBundleStatus_NilStore(t *testing.T) {
 	assert.False(t, status.Exists, "Exists must be false with nil store and no file")
 	assert.Equal(t, bundlePath, status.BundlePath, "BundlePath must be set")
 }
+
+func TestImportFromTrustStrap_NilStore(t *testing.T) {
+	svc := NewTrustService(nil)
+
+	_, err := svc.ImportFromTrustStrap(TrustStrapImportRequest{
+		Method: "direct",
+		Server: "https://kms.example.com:8443",
+	})
+	require.ErrorIs(t, err, ErrNilTrustStore)
+}
+
+func TestImportFromTrustStrap_EmptyServer(t *testing.T) {
+	svc := NewTrustService(newTestFileStore(t))
+
+	_, err := svc.ImportFromTrustStrap(TrustStrapImportRequest{
+		Method: "direct",
+		Server: "   ",
+	})
+	require.ErrorIs(t, err, ErrTrustStrapEmptyServer)
+}
+
+func TestImportFromTrustStrap_UnsupportedMethod(t *testing.T) {
+	svc := NewTrustService(newTestFileStore(t))
+
+	_, err := svc.ImportFromTrustStrap(TrustStrapImportRequest{
+		Method: "bogus",
+		Server: "https://kms.example.com:8443",
+	})
+	require.ErrorIs(t, err, ErrTrustStrapUnsupportedMethod)
+}
+
+func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
+	// Exercise the constructor for each supported method and confirm the
+	// dispatch chooses the right factory. The underlying bootstrappers
+	// validate their configs at construction, so we feed them the minimum
+	// required fields per method and just confirm the unsupported-method
+	// branch is the only way to hit ErrTrustStrapUnsupportedMethod.
+	svc := NewTrustService(newTestFileStore(t))
+
+	cases := []TrustStrapImportRequest{
+		{Method: "dane", Server: "https://kms.example.com:8443"},
+		{
+			Method:          "noise",
+			Server:          "kms.example.com:8445",
+			ServerStaticKey: strings.Repeat("ab", 32),
+		},
+		{
+			Method:        "spki",
+			Server:        "https://kms.example.com:8443",
+			SPKIPinSHA256: strings.Repeat("cd", 32),
+		},
+		{Method: "direct", Server: "https://kms.example.com:8443"},
+	}
+	for _, req := range cases {
+		req := req
+		t.Run(req.Method, func(t *testing.T) {
+			boot, err := svc.newTrustStrapBootstrapper(req)
+			require.NoError(t, err, "method %q must construct a bootstrapper", req.Method)
+			require.NotNil(t, boot)
+			_ = boot.Close()
+		})
+	}
+}

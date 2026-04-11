@@ -186,7 +186,7 @@
   let yukDetected = false;
   let yukDetectError = '';
   let yukUserPin = '';
-  let yukMgmtKey = '';
+  let yukMgmtKey = '010203040506070801020304050607080102030405060708';
   let yukSlotId = 0;
   let yukAvailableSlots: { slotId: number; label: string; initialized: boolean }[] = [];
   let yukProbingSlots = false;
@@ -343,7 +343,7 @@
     yukDetected = false;
     yukDetectError = '';
     yukUserPin = '';
-    yukMgmtKey = '';
+    yukMgmtKey = '010203040506070801020304050607080102030405060708';
     yukSlotId = 0;
     yukAvailableSlots = [];
     yukProbingSlots = false;
@@ -382,7 +382,7 @@
     yukDetected = false;
     yukDetectError = '';
     yukUserPin = '';
-    yukMgmtKey = '';
+    yukMgmtKey = '010203040506070801020304050607080102030405060708';
     yukSlotId = 0;
     yukAvailableSlots = [];
     yukProbingSlots = false;
@@ -688,7 +688,7 @@
           // Connect to the token on the specified slot
           const connectOk = await callBackendVoid(
             'PKCS11Service', 'Connect',
-            moduleId, pkcs11SlotId, pkcs11UserPin, ''
+            moduleId, pkcs11SlotId, pkcs11UserPin, pkcs11SoPin
           );
 
           if (connectOk) {
@@ -1055,7 +1055,7 @@
                   placeholder="Enter management key (hex)"
                   bind:value={yukMgmtKey}
                 />
-                <span class="field-hint text-body-small">Required for FIDO2 key generation. Default: 010203040506070801020304050607080102030405060708</span>
+                <span class="field-hint text-body-small">Required for key generation (SO login). Pre-filled with YubiKey factory default.</span>
               </div>
             {:else}
               <div class="detection-status detection-error">

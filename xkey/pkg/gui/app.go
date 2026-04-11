@@ -1621,7 +1621,8 @@ func NewApp(cfg *GUIConfig) *App {
 		browserSvc, _ = services.NewBrowserService(browserConfigPath, log)
 	}
 
-	browsersDir := filepath.Join(dir, "browsers")
+	home, _ := os.UserHomeDir()
+	browsersDir := filepath.Join(home, ".xkey", "browsers")
 	secureBrowserSvc := services.NewSecureBrowserService(
 		browsersDir, browserSvc, trustSvc, log)
 	trustSvc.SetOnMutate(func() {

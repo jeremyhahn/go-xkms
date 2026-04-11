@@ -108,7 +108,9 @@ func NewBrowserService(configPath string, logger *slog.Logger) (*BrowserService,
 		logger:      logger.With("service", "browser"),
 		execCommand: exec.CommandContext,
 		config: BrowserConfig{
-			DefaultBrowser: BrowserSystem,
+			DefaultBrowser:     BrowserSystem,
+			ChromeProfileMode:  ProfileModeIsolated,
+			FirefoxProfileMode: ProfileModeIsolated,
 		},
 	}
 
@@ -342,6 +344,15 @@ func (s *BrowserService) loadConfig() error {
 	var config BrowserConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return err
+	}
+
+	// Backfill profile mode defaults for legacy configs persisted before
+	// these fields existed.
+	if config.ChromeProfileMode == "" {
+		config.ChromeProfileMode = ProfileModeIsolated
+	}
+	if config.FirefoxProfileMode == "" {
+		config.FirefoxProfileMode = ProfileModeIsolated
 	}
 
 	s.mu.Lock()

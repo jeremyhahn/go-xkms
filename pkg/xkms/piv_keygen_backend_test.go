@@ -559,6 +559,56 @@ func TestBackendPIVKeyGenerator_GetSignerError(t *testing.T) {
 	assert.ErrorIs(t, err, signerErr)
 }
 
+// TestBackendPIVKeyGenerator_SetsPIVSlot verifies that GeneratePIVKey
+// populates attrs.PIVSlot with the string representation of the slot.
+// This is critical for PKCS#11 backends where resolveKeyID uses PIVSlotToCKAID
+// instead of falling through to createKeyID (which causes CKR_ATTRIBUTE_VALUE_INVALID).
+func TestBackendPIVKeyGenerator_SetsPIVSlot(t *testing.T) {
+	signer := newTestECDSASigner(t)
+
+	mock := &mockXKMSBackend{
+		generateECDSAFunc: func(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+			return nil, nil
+		},
+		signerFunc: func(_ *types.KeyAttributes) (crypto.Signer, error) {
+			return signer, nil
+		},
+	}
+
+	gen := newBackendPIVKeyGenerator(mock, types.StoreSoftware)
+	result, err := gen.GeneratePIVKey(pivcert.PIVSlot("9d"), "ecdsap256", "Test CN")
+	require.NoError(t, err)
+	assert.Equal(t, signer, result)
+
+	require.Len(t, mock.generateCalls, 1)
+	assert.Equal(t, "9d", mock.generateCalls[0].PIVSlot,
+		"PIVSlot must be set so resolveKeyID routes to PIVSlotToCKAID")
+}
+
+// TestBackendPIVKeyGenerator_SetsPIVSlotForRSA verifies that GeneratePIVKey
+// populates attrs.PIVSlot for the RSA code path as well.
+func TestBackendPIVKeyGenerator_SetsPIVSlotForRSA(t *testing.T) {
+	signer := newTestECDSASigner(t)
+
+	mock := &mockXKMSBackend{
+		generateRSAFunc: func(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+			return nil, nil
+		},
+		signerFunc: func(_ *types.KeyAttributes) (crypto.Signer, error) {
+			return signer, nil
+		},
+	}
+
+	gen := newBackendPIVKeyGenerator(mock, types.StoreSoftware)
+	result, err := gen.GeneratePIVKey(pivcert.PIVSlot("9a"), "rsa2048", "RSA Test")
+	require.NoError(t, err)
+	assert.Equal(t, signer, result)
+
+	require.Len(t, mock.generateCalls, 1)
+	assert.Equal(t, "9a", mock.generateCalls[0].PIVSlot,
+		"PIVSlot must be set so resolveKeyID routes to PIVSlotToCKAID")
+}
+
 // TestBackendPIVKeyGenerator_UnsupportedKeyAlgorithm verifies the defensive
 // default branch in the key algorithm switch statement. This guards against
 // a new algorithm being added to pivAlgorithmDispatch without a corresponding

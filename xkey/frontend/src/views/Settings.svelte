@@ -175,6 +175,8 @@
     default_browser: string;
     custom_command: string;
     include_trust_bundle: boolean;
+    chrome_profile_mode: string;
+    firefox_profile_mode: string;
   }
   interface BrowserInfo {
     name: string;
@@ -187,13 +189,33 @@
     last_generated: string;
     bundle_path: string;
   }
-  let browserConfig: BrowserConfig = { default_browser: 'system', custom_command: '', include_trust_bundle: false };
+  interface SecureBrowserLaunchResult {
+    browser: string;
+    family: string;
+    mode: string;
+    cert_count: number;
+    pid: number;
+  }
+  let browserConfig: BrowserConfig = {
+    default_browser: 'system',
+    custom_command: '',
+    include_trust_bundle: false,
+    chrome_profile_mode: 'isolated',
+    firefox_profile_mode: 'isolated',
+  };
   let detectedBrowsers: BrowserInfo[] = [{ name: 'System Default', path: 'system' }];
   let browserLoading = false;
   let browserConfigLoaded = false;
   let bundleStatus: BrowserBundleStatus | null = null;
   let bundleStatusLoading = false;
   let bundleRegenerating = false;
+
+  // Secure browser launch state (go-truststrap cert injection).
+  let secureBrowsers: BrowserInfo[] = [];
+  let secureBrowserPath = '';
+  let secureBrowserURL = 'about:blank';
+  let secureBrowserLaunching = false;
+  let secureBrowserCertCount = 0;
 
   // Extension pairing state
   interface ExtensionPairingStatus {
@@ -794,11 +816,64 @@
     }
   }
 
+  async function loadSecureBrowserData(): Promise<void> {
+    const browsers = await callBackend<BrowserInfo[]>('SecureBrowserService', 'DetectBrowsers');
+    if (browsers) {
+      secureBrowsers = browsers;
+      if (!secureBrowserPath && browsers.length > 0) {
+        secureBrowserPath = browsers[0].path;
+      }
+    }
+    const count = await callBackend<number>('TrustService', 'CertificateCount');
+    if (count !== null) {
+      secureBrowserCertCount = count;
+    }
+  }
+
+  function secureBrowserFamily(browserPath: string): 'chrome' | 'firefox' | '' {
+    const base = (browserPath.split('/').pop() ?? browserPath).toLowerCase();
+    if (/chrome|chromium|brave|edge|opera|vivaldi/.test(base)) return 'chrome';
+    if (/firefox|librewolf|waterfox/.test(base)) return 'firefox';
+    return '';
+  }
+
+  async function handleLaunchSecureBrowser(): Promise<void> {
+    if (!secureBrowserPath) {
+      addNotification('error', 'Select a browser to launch');
+      return;
+    }
+    if (!secureBrowserURL.trim()) {
+      addNotification('error', 'URL is required');
+      return;
+    }
+    secureBrowserLaunching = true;
+    const { result, error } = await callBackendWithError<SecureBrowserLaunchResult>(
+      'SecureBrowserService',
+      'LaunchBrowser',
+      secureBrowserPath,
+      secureBrowserURL.trim(),
+    );
+    secureBrowserLaunching = false;
+    if (error) {
+      addNotification('error', `Secure browser launch failed: ${error}`);
+      return;
+    }
+    if (result) {
+      addNotification('success',
+        `Launched ${result.family} (${result.mode}) with ${result.cert_count} certificate${result.cert_count !== 1 ? 's' : ''}`);
+    }
+  }
+
   async function loadBrowserConfig(): Promise<void> {
     browserLoading = true;
     const config = await callBackend<BrowserConfig>('BrowserService', 'GetConfig');
     if (config) {
-      browserConfig = config;
+      // Normalize profile mode defaults for legacy configs missing these fields.
+      browserConfig = {
+        ...config,
+        chrome_profile_mode: config.chrome_profile_mode || 'isolated',
+        firefox_profile_mode: config.firefox_profile_mode || 'isolated',
+      };
     }
     const browsers = await callBackend<BrowserInfo[]>('BrowserService', 'DetectBrowsers');
     if (browsers && browsers.length > 0) {
@@ -807,6 +882,7 @@
     browserLoading = false;
     browserConfigLoaded = true;
     loadBundleStatus();
+    loadSecureBrowserData();
   }
 
   async function loadBundleStatus(): Promise<void> {
@@ -2106,6 +2182,144 @@
             </div>
           </Card>
 
+          <!-- Secure Browser Launch (CA injection via truststrap) -->
+          <Card variant="outlined">
+            <div class="settings-section" data-testid="secure-browser-card">
+              <h2 class="text-title-medium section-heading">
+                <span class="section-heading-with-icon">
+                  <Icon path={mdiShieldCheck} size={20} />
+                  Secure Browser Launch
+                </span>
+              </h2>
+
+              <p class="text-body-small secure-browser-desc">
+                Launch a browser with CA certificates from your trust store pre-injected via
+                enterprise policy (Firefox) or NSS database (Chrome family). No manual import
+                needed &mdash; certificates are synchronized automatically whenever the trust
+                store changes.
+              </p>
+
+              {#if secureBrowsers.length === 0}
+                <div class="bundle-stale-hint" data-testid="secure-browser-no-browsers">
+                  <Icon path={mdiAlert} size={18} color="var(--color-security-warning)" />
+                  <span class="text-body-small">
+                    No Chrome or Firefox family browsers detected on this system.
+                  </span>
+                </div>
+              {:else}
+                <div class="setting-row">
+                  <div class="setting-info">
+                    <span class="text-title-small">Browser</span>
+                    <span class="text-body-small setting-desc">
+                      Only Chrome and Firefox family browsers are supported
+                    </span>
+                  </div>
+                  <select
+                    class="form-select"
+                    bind:value={secureBrowserPath}
+                    data-testid="secure-browser-select"
+                  >
+                    {#each secureBrowsers as browser}
+                      <option value={browser.path}>{browser.name}</option>
+                    {/each}
+                  </select>
+                </div>
+
+                <div class="setting-row">
+                  <div class="setting-info">
+                    <span class="text-title-small">Chrome profile mode</span>
+                    <span class="text-body-small setting-desc">
+                      <strong>Isolated</strong> uses a clean separate profile.
+                      <strong>Shared</strong> syncs certificates to <code>~/.pki/nssdb</code>
+                      so they apply to your normal Chrome profile.
+                    </span>
+                  </div>
+                  <select
+                    class="form-select"
+                    bind:value={browserConfig.chrome_profile_mode}
+                    data-testid="chrome-profile-mode"
+                    on:change={browserAutoSave}
+                  >
+                    <option value="isolated">Isolated</option>
+                    <option value="shared">Shared</option>
+                  </select>
+                </div>
+
+                <div class="setting-row">
+                  <div class="setting-info">
+                    <span class="text-title-small">Firefox profile mode</span>
+                    <span class="text-body-small setting-desc">
+                      <strong>Isolated</strong> uses a clean separate profile.
+                      <strong>Shared</strong> overlays an enterprise policy on your normal
+                      Firefox profile.
+                    </span>
+                  </div>
+                  <select
+                    class="form-select"
+                    bind:value={browserConfig.firefox_profile_mode}
+                    data-testid="firefox-profile-mode"
+                    on:change={browserAutoSave}
+                  >
+                    <option value="isolated">Isolated</option>
+                    <option value="shared">Shared</option>
+                  </select>
+                </div>
+
+                <div class="setting-row">
+                  <div class="setting-info">
+                    <span class="text-title-small">URL</span>
+                    <span class="text-body-small setting-desc">Initial page to open</span>
+                  </div>
+                  <div class="compact-input">
+                    <input
+                      type="text"
+                      class="custom-command-input"
+                      placeholder="https://example.com"
+                      bind:value={secureBrowserURL}
+                      data-testid="secure-browser-url"
+                    />
+                  </div>
+                </div>
+
+                <div class="bundle-status-grid">
+                  <div class="storage-status-item">
+                    <span class="text-label-small field-label">Certificates to inject</span>
+                    <span class="text-body-medium">{secureBrowserCertCount}</span>
+                  </div>
+                  {#if secureBrowserPath}
+                    <div class="storage-status-item">
+                      <span class="text-label-small field-label">Detected family</span>
+                      <span class="text-body-medium">
+                        {secureBrowserFamily(secureBrowserPath) || 'unknown'}
+                      </span>
+                    </div>
+                  {/if}
+                </div>
+
+                <div class="storage-actions">
+                  <div class="storage-action-row">
+                    <div class="setting-info">
+                      <span class="text-title-small">Launch secure browser</span>
+                      <span class="text-body-small setting-desc">
+                        Synchronizes certificates then launches the selected browser
+                      </span>
+                    </div>
+                    <Button
+                      variant="primary"
+                      icon={mdiShieldCheck}
+                      loading={secureBrowserLaunching}
+                      on:click={handleLaunchSecureBrowser}
+                      disabled={secureBrowserCertCount === 0 || !secureBrowserPath}
+                      data-testid="secure-browser-launch-btn"
+                    >
+                      Launch Secure Browser
+                    </Button>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </Card>
+
           <Card variant="outlined">
             <div class="settings-section">
               <h2 class="text-title-medium section-heading">Actions</h2>
@@ -3031,6 +3245,12 @@
     background-color: var(--color-security-warning-container);
     border-radius: var(--radius-sm);
     color: var(--color-on-security-warning-container);
+  }
+
+  .secure-browser-desc {
+    margin: 0 0 8px 0;
+    color: var(--color-on-surface-variant);
+    line-height: 1.5;
   }
 
   .auth-pin-form {

@@ -29,6 +29,7 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -55,6 +56,22 @@ var (
 
 	// ErrImportCancelled indicates the user cancelled the import file dialog.
 	ErrImportCancelled = errors.New("trust: import cancelled by user")
+
+	// ErrTrustStrapUnsupportedMethod indicates the requested truststrap
+	// bootstrap method is not recognized.
+	ErrTrustStrapUnsupportedMethod = errors.New("trust: unsupported truststrap method")
+
+	// ErrTrustStrapEmptyServer indicates the truststrap request was missing
+	// the required server URL or address.
+	ErrTrustStrapEmptyServer = errors.New("trust: truststrap server required")
+
+	// ErrTrustStrapFetch indicates the truststrap bootstrapper failed to
+	// retrieve a CA bundle from the remote server.
+	ErrTrustStrapFetch = errors.New("trust: truststrap fetch failed")
+
+	// ErrTrustStrapEmptyBundle indicates the bootstrapper returned a
+	// successful response but the bundle was empty.
+	ErrTrustStrapEmptyBundle = errors.New("trust: truststrap returned empty bundle")
 )
 
 // TrustCertInfo is a JSON-friendly certificate representation for the frontend.
@@ -309,6 +326,113 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 	}
 	s.notifyMutate()
 	return 1, nil
+}
+
+// TrustStrapImportRequest specifies the parameters for importing CA
+// certificates via the go-truststrap bootstrap mechanisms. Only the fields
+// relevant to the selected Method are consumed.
+type TrustStrapImportRequest struct {
+	// Method selects the bootstrap mechanism. One of: "dane", "noise",
+	// "spki", or "direct".
+	Method string `json:"method"`
+
+	// Server is the server URL or address. For DANE, SPKI, and Direct this
+	// must be a full URL (e.g. "https://kms.example.com:8443"). For Noise
+	// this is a TCP host:port pair (e.g. "kms.example.com:8445").
+	Server string `json:"server"`
+
+	// BundlePath overrides the REST path for the CA bundle endpoint when
+	// using DANE, SPKI, or Direct. Defaults to truststrap's built-in path
+	// when empty.
+	BundlePath string `json:"bundle_path"`
+
+	// DNSServer overrides the system resolver for TLSA lookups. DANE only.
+	DNSServer string `json:"dns_server"`
+
+	// DNSOverTLS enables DNS-over-TLS when querying TLSA records. DANE only.
+	DNSOverTLS bool `json:"dns_over_tls"`
+
+	// ServerStaticKey is the hex-encoded 32-byte Curve25519 server public
+	// key used by the Noise_NK handshake. Noise only.
+	ServerStaticKey string `json:"server_static_key"`
+
+	// SPKIPinSHA256 is the hex-encoded SHA-256 SPKI pin used to verify the
+	// server certificate. SPKI only.
+	SPKIPinSHA256 string `json:"spki_pin_sha256"`
+}
+
+// ImportFromTrustStrap fetches a CA bundle via the chosen go-truststrap
+// bootstrap mechanism and imports the resulting certificates into the
+// trust store. Returns the number of certificates added.
+func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, error) {
+	if s.store == nil {
+		return 0, ErrNilTrustStore
+	}
+	if strings.TrimSpace(req.Server) == "" {
+		return 0, ErrTrustStrapEmptyServer
+	}
+
+	bootstrapper, err := s.newTrustStrapBootstrapper(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = bootstrapper.Close() }()
+
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	resp, err := bootstrapper.FetchCABundle(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrTrustStrapFetch, err)
+	}
+	if resp == nil || len(resp.BundlePEM) == 0 {
+		return 0, ErrTrustStrapEmptyBundle
+	}
+
+	n, err := s.store.AddPEM(resp.BundlePEM)
+	if err == nil && n > 0 {
+		s.notifyMutate()
+	}
+	return n, err
+}
+
+// newTrustStrapBootstrapper constructs the appropriate truststrap
+// Bootstrapper for the requested Method. Bootstrapper-specific validation
+// (key length, URL format, etc.) is delegated to the truststrap package.
+func (s *TrustService) newTrustStrapBootstrapper(req TrustStrapImportRequest) (truststrap.Bootstrapper, error) {
+	switch strings.ToLower(strings.TrimSpace(req.Method)) {
+	case "dane":
+		return truststrap.NewDANEBootstrapper(&truststrap.DANEConfig{
+			ServerURL:  req.Server,
+			BundlePath: req.BundlePath,
+			DNSServer:  req.DNSServer,
+			DNSOverTLS: req.DNSOverTLS,
+			Logger:     s.log,
+		})
+	case "noise":
+		return truststrap.NewNoiseBootstrapper(&truststrap.NoiseConfig{
+			ServerAddr:      req.Server,
+			ServerStaticKey: req.ServerStaticKey,
+			Logger:          s.log,
+		})
+	case "spki":
+		return truststrap.NewSPKIBootstrapper(&truststrap.SPKIConfig{
+			ServerURL:     req.Server,
+			SPKIPinSHA256: req.SPKIPinSHA256,
+			BundlePath:    req.BundlePath,
+			Logger:        s.log,
+		})
+	case "direct":
+		return truststrap.NewDirectBootstrapper(&truststrap.DirectConfig{
+			ServerURL:  req.Server,
+			BundlePath: req.BundlePath,
+			Logger:     s.log,
+		})
+	default:
+		return nil, fmt.Errorf("%w: %q", ErrTrustStrapUnsupportedMethod, req.Method)
+	}
 }
 
 // ExportCertificatePEM returns the PEM-encoded certificate matching the

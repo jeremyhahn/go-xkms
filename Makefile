@@ -127,10 +127,44 @@ DOCKER_CONTAINER := $(PROJECT_NAME)-container
 BUILDER_IMAGE := $(PROJECT_NAME)-builder:latest
 XKEY_BUILDER_IMAGE := $(PROJECT_NAME)-xkey-builder:latest
 
-# Sibling module mounts (for go.mod replace directives referencing ../go-qrdb, ../go-quicraft)
+# Sibling module mounts for Docker builds (mirrors ~/sources/go.work)
 PARENT_DIR := $(dir $(CURDIR))
-SIBLING_MOUNTS := -v $(PARENT_DIR)go-qrdb:/go-qrdb:cached \
-                  -v $(PARENT_DIR)go-quicraft:/go-quicraft:cached
+SIBLING_MOUNTS := -v $(PARENT_DIR)go-codec:/go-codec:cached \
+                  -v $(PARENT_DIR)go-frost:/go-frost:cached \
+                  -v $(PARENT_DIR)go-qrdb:/go-qrdb:cached \
+                  -v $(PARENT_DIR)go-quicraft:/go-quicraft:cached \
+                  -v $(PARENT_DIR)go-truststrap:/go-truststrap:cached
+
+# go.work generation for Docker containers (creates workspace in /tmp to avoid polluting mounted volume)
+define GOWORK_CONTENT
+go 1.26.1
+
+use (
+	/workspace
+	/workspace/sdk/go
+	/workspace/xkey
+	/go-codec
+	/go-frost
+	/go-qrdb
+	/go-qrdb/sdk/go
+	/go-quicraft
+	/go-truststrap
+)
+
+replace (
+	github.com/jeremyhahn/go-codec => /go-codec
+	github.com/jeremyhahn/go-frost => /go-frost
+	github.com/jeremyhahn/go-qrdb => /go-qrdb
+	github.com/jeremyhahn/go-qrdb/sdk/go => /go-qrdb/sdk/go
+	github.com/jeremyhahn/go-quicraft => /go-quicraft
+	github.com/jeremyhahn/go-truststrap => /go-truststrap
+	github.com/jeremyhahn/go-xkms => /workspace
+	github.com/jeremyhahn/go-xkms/sdk/go => /workspace/sdk/go
+	github.com/jeremyhahn/go-xkms/xkey => /workspace/xkey
+)
+endef
+export GOWORK_CONTENT
+GOWORK_INIT := printf '%s\n' "$$GOWORK_CONTENT" > /tmp/go.work && export GOWORK=/tmp/go.work &&
 
 # ==============================================================================
 # PKCS#11 Module Configuration
@@ -239,7 +273,7 @@ build-server: builder-image
 		$(SIBLING_MOUNTS) \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
-		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
+		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
 	@echo "$(GREEN)✓ Unified server binary built: $(BIN_DIR)/xkmsd$(RESET)"
 
 .PHONY: build-servers
@@ -273,7 +307,7 @@ build-xkey:
 		$(SIBLING_MOUNTS) \
 		-w /workspace/xkey \
 		$(XKEY_BUILDER_IMAGE) \
-		bash -c "CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
+		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
 	@echo "$(GREEN)✓ xkey binary built: $(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  GUI mode:  ./$(BIN_DIR)/xkey$(RESET)"
 	@echo "$(GREEN)  CLI mode:  ./$(BIN_DIR)/xkey --no-gui$(RESET)"
@@ -506,7 +540,7 @@ lib: builder-image
 		$(SIBLING_MOUNTS) \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
-		bash -c "CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
+		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
 	@echo "$(GREEN)✓ Shared library built: $(SHARED_LIB)$(RESET)"
 	@rm -f $(SHARED_LIB_LINK)
 	@cd $(LIB_DIR) && ln -s libxkms-$(VERSION).so libxkms.so

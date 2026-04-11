@@ -14,7 +14,7 @@
     mdiImport, mdiRefresh, mdiDownload, mdiUpload, mdiFilter, mdiWeb
   } from '$lib/utils/icons';
   import { addNotification } from '$lib/stores/notifications';
-  import { isWailsAvailable, callBackend, callBackendVoid } from '$lib/api/backend';
+  import { isWailsAvailable, callBackend, callBackendVoid, callBackendWithError } from '$lib/api/backend';
   import type { TrustCertInfo } from '$lib/api/backend';
 
   type PurposeFilter = 'all' | 'tpm-manufacturer' | 'idevid-issuer' | 'user-ca' | 'bootstrap-ca' | 'android-hardware' | 'general';
@@ -52,9 +52,45 @@
   let showImportDialog = false;
   let importPemData = '';
   let importing = false;
-  type ImportTab = 'paste' | 'file';
+  type ImportTab = 'paste' | 'file' | 'dane' | 'noise' | 'spki' | 'direct';
   let importTab: ImportTab = 'paste';
   let importingFile = false;
+
+  // Truststrap import form state. The Server field is shared across all
+  // four truststrap tabs; method-specific fields are conditionally rendered.
+  let truststrapServer = '';
+  let truststrapBundlePath = '';
+  let truststrapDNSServer = '';
+  let truststrapDNSOverTLS = false;
+  let truststrapServerStaticKey = '';
+  let truststrapSPKIPin = '';
+  let truststrapImporting = false;
+
+  const truststrapTabs: { value: ImportTab; label: string }[] = [
+    { value: 'paste',  label: 'Paste PEM' },
+    { value: 'file',   label: 'Browse File' },
+    { value: 'dane',   label: 'DANE' },
+    { value: 'noise',  label: 'Noise' },
+    { value: 'spki',   label: 'SPKI' },
+    { value: 'direct', label: 'Direct' },
+  ];
+
+  function isTruststrapTab(tab: ImportTab): boolean {
+    return tab === 'dane' || tab === 'noise' || tab === 'spki' || tab === 'direct';
+  }
+
+  function truststrapServerPlaceholder(tab: ImportTab): string {
+    return tab === 'noise' ? 'kms.example.com:8445' : 'https://kms.example.com:8443';
+  }
+
+  function resetTruststrapForm(): void {
+    truststrapServer = '';
+    truststrapBundlePath = '';
+    truststrapDNSServer = '';
+    truststrapDNSOverTLS = false;
+    truststrapServerStaticKey = '';
+    truststrapSPKIPin = '';
+  }
 
   // Remove confirmation state
   let showRemoveConfirm = false;
@@ -159,6 +195,55 @@
       addNotification('warning', 'No new certificates were added (may already exist or file was cancelled)');
     } else {
       addNotification('error', 'Failed to import certificate file');
+    }
+  }
+
+  async function handleTrustStrapImport(): Promise<void> {
+    if (!isTruststrapTab(importTab)) return;
+    const method = importTab;
+
+    if (!truststrapServer.trim()) {
+      addNotification('error', 'Server is required');
+      return;
+    }
+    if (method === 'noise' && !truststrapServerStaticKey.trim()) {
+      addNotification('error', 'Server static key is required for Noise');
+      return;
+    }
+    if (method === 'spki' && !truststrapSPKIPin.trim()) {
+      addNotification('error', 'SPKI pin is required for SPKI');
+      return;
+    }
+
+    truststrapImporting = true;
+    const { result, error } = await callBackendWithError<number>(
+      'TrustService',
+      'ImportFromTrustStrap',
+      {
+        method,
+        server: truststrapServer.trim(),
+        bundle_path: truststrapBundlePath.trim(),
+        dns_server: truststrapDNSServer.trim(),
+        dns_over_tls: truststrapDNSOverTLS,
+        server_static_key: truststrapServerStaticKey.trim(),
+        spki_pin_sha256: truststrapSPKIPin.trim(),
+      },
+    );
+    truststrapImporting = false;
+
+    if (error) {
+      addNotification('error', `Import via ${method.toUpperCase()} failed: ${error}`);
+      return;
+    }
+    const added = result ?? 0;
+    if (added > 0) {
+      addNotification('success',
+        `Imported ${added} certificate${added > 1 ? 's' : ''} via ${method.toUpperCase()}`);
+      resetTruststrapForm();
+      showImportDialog = false;
+      await loadData();
+    } else {
+      addNotification('warning', 'No new certificates were added (may already exist)');
     }
   }
 
@@ -268,7 +353,7 @@
     <span class="cert-count-badge">{certCount}</span>
     <div class="toolbar-spacer" />
     <Button variant="outline" size="sm" icon={mdiRefresh} on:click={loadData}>Refresh</Button>
-    <Button variant="primary" icon={mdiImport} on:click={() => { importPemData = ''; importTab = 'paste'; showImportDialog = true; }}>
+    <Button variant="primary" icon={mdiImport} data-testid="truststore-import-btn" on:click={() => { importPemData = ''; importTab = 'paste'; resetTruststrapForm(); showImportDialog = true; }}>
       Import
     </Button>
   </ViewToolbar>
@@ -383,15 +468,19 @@
   </div>
 
   <!-- Import Certificates Modal -->
-  <Modal bind:open={showImportDialog} title="Import Certificates" maxWidth="560px">
+  <Modal bind:open={showImportDialog} title="Import Certificates" maxWidth="640px">
     <div class="import-form">
-      <div class="import-tabs">
-        <button class="import-tab" class:active={importTab === 'paste'} on:click={() => importTab = 'paste'}>
-          Paste PEM
-        </button>
-        <button class="import-tab" class:active={importTab === 'file'} on:click={() => importTab = 'file'}>
-          Browse File
-        </button>
+      <div class="import-tabs" data-testid="import-tabs">
+        {#each truststrapTabs as tab}
+          <button
+            class="import-tab"
+            class:active={importTab === tab.value}
+            on:click={() => (importTab = tab.value)}
+            data-testid="import-tab-{tab.value}"
+          >
+            {tab.label}
+          </button>
+        {/each}
       </div>
 
       {#if importTab === 'paste'}
@@ -409,7 +498,7 @@
             bind:value={importPemData}
           ></textarea>
         </div>
-      {:else}
+      {:else if importTab === 'file'}
         <p class="text-body-medium import-hint">
           Select a certificate file to import. Supports PEM (.pem, .crt) and DER (.der, .cer) formats.
         </p>
@@ -423,10 +512,113 @@
             Browse File...
           </Button>
         </div>
+      {:else}
+        <!-- Shared truststrap header: Server input is common to all four methods. -->
+        <p class="text-body-medium import-hint">
+          Retrieve a CA certificate bundle from a remote go-xkms server using the
+          go-truststrap bootstrap mechanism. All certificates returned by the server
+          will be added to this trust store.
+        </p>
+
+        <div class="form-field">
+          <label class="text-label-large" for="truststrap-server">
+            {importTab === 'noise' ? 'Server Address' : 'Server URL'}
+          </label>
+          <input
+            id="truststrap-server"
+            type="text"
+            class="form-input"
+            placeholder={truststrapServerPlaceholder(importTab)}
+            bind:value={truststrapServer}
+            data-testid="truststrap-server-input"
+          />
+        </div>
+
+        {#if importTab !== 'noise'}
+          <div class="form-field">
+            <label class="text-label-large" for="truststrap-bundle-path">Bundle Path (optional)</label>
+            <input
+              id="truststrap-bundle-path"
+              type="text"
+              class="form-input"
+              placeholder="/v1/ca/bootstrap"
+              bind:value={truststrapBundlePath}
+            />
+          </div>
+        {/if}
+
+        {#if importTab === 'dane'}
+          <div class="form-field">
+            <label class="text-label-large" for="truststrap-dns">DNS Server (optional)</label>
+            <input
+              id="truststrap-dns"
+              type="text"
+              class="form-input"
+              placeholder="8.8.8.8:53"
+              bind:value={truststrapDNSServer}
+            />
+          </div>
+          <label class="truststrap-checkbox">
+            <input type="checkbox" bind:checked={truststrapDNSOverTLS} />
+            <span class="text-body-medium">Use DNS-over-TLS (DoT)</span>
+          </label>
+          <p class="text-body-small import-hint">
+            DANE uses DNSSEC-validated TLSA records to verify the server's CA bundle.
+            DNSSEC is always enforced.
+          </p>
+        {:else if importTab === 'noise'}
+          <div class="form-field">
+            <label class="text-label-large" for="truststrap-noise-key">Server Static Key</label>
+            <input
+              id="truststrap-noise-key"
+              type="text"
+              class="form-input font-mono"
+              placeholder="64 hex characters (32-byte Curve25519 public key)"
+              bind:value={truststrapServerStaticKey}
+              autocomplete="off"
+              spellcheck="false"
+              data-testid="truststrap-noise-key-input"
+            />
+          </div>
+          <p class="text-body-small import-hint">
+            The Noise_NK protocol authenticates the server using its pre-shared
+            public key distributed out-of-band (QR code, provisioning config).
+          </p>
+        {:else if importTab === 'spki'}
+          <div class="form-field">
+            <label class="text-label-large" for="truststrap-spki-pin">SPKI Pin (SHA-256)</label>
+            <input
+              id="truststrap-spki-pin"
+              type="text"
+              class="form-input font-mono"
+              placeholder="64 hex characters (SHA-256 of server SPKI)"
+              bind:value={truststrapSPKIPin}
+              autocomplete="off"
+              spellcheck="false"
+              data-testid="truststrap-spki-pin-input"
+            />
+          </div>
+          <p class="text-body-small import-hint">
+            SPKI pinning verifies the server certificate against a pre-shared
+            SHA-256 hash of its Subject Public Key Info.
+          </p>
+        {:else}
+          <p class="text-body-small import-hint">
+            Direct HTTPS uses the operating system's trust store to validate the server.
+            This is the least secure option and should only be used when you already
+            trust the system root CAs.
+          </p>
+        {/if}
       {/if}
     </div>
     <svelte:fragment slot="actions">
-      <Button variant="text" on:click={() => (showImportDialog = false)} disabled={importing || importingFile}>Cancel</Button>
+      <Button
+        variant="text"
+        on:click={() => (showImportDialog = false)}
+        disabled={importing || importingFile || truststrapImporting}
+      >
+        Cancel
+      </Button>
       {#if importTab === 'paste'}
         <Button
           variant="primary"
@@ -435,6 +627,19 @@
           disabled={!importPemData.trim()}
         >
           Import
+        </Button>
+      {:else if isTruststrapTab(importTab)}
+        <Button
+          variant="primary"
+          icon={mdiImport}
+          loading={truststrapImporting}
+          on:click={handleTrustStrapImport}
+          disabled={!truststrapServer.trim()
+            || (importTab === 'noise' && !truststrapServerStaticKey.trim())
+            || (importTab === 'spki' && !truststrapSPKIPin.trim())}
+          data-testid="truststrap-fetch-btn"
+        >
+          Fetch & Import
         </Button>
       {/if}
     </svelte:fragment>
@@ -697,14 +902,16 @@
 
   .import-tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 0;
     border-bottom: 2px solid var(--color-outline-variant);
     margin-bottom: 16px;
   }
 
   .import-tab {
-    flex: 1;
-    padding: 10px 16px;
+    flex: 1 1 auto;
+    min-width: 88px;
+    padding: 10px 14px;
     border: none;
     background: transparent;
     color: var(--color-on-surface-variant);
@@ -775,6 +982,42 @@
 
   .form-textarea:focus {
     border-color: var(--color-primary);
+  }
+
+  .form-input {
+    padding: 10px 12px;
+    border: 1px solid var(--color-outline-variant);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    outline: none;
+    transition: border-color var(--transition-fast);
+  }
+
+  .form-input.font-mono {
+    font-family: var(--font-mono, monospace);
+    font-size: 13px;
+  }
+
+  .form-input:focus {
+    border-color: var(--color-primary);
+  }
+
+  .truststrap-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: var(--color-on-surface-variant);
+  }
+
+  .truststrap-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--color-primary);
   }
 
   /* Remove Confirmation Modal */
