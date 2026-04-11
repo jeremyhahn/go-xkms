@@ -46,7 +46,7 @@ func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (*tr
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil sign request"}
 	}
 
-	b, _, err := s.resolveBackendWithName(req.Backend)
+	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil verify request"}
 	}
 
-	b, _, err := s.resolveBackendWithName(req.Backend)
+	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +169,7 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt request"}
 	}
 
-	b, _, err := s.resolveBackendWithName(req.Backend)
+	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil decrypt request"}
 	}
 
-	b, _, err := s.resolveBackendWithName(req.Backend)
+	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +261,7 @@ func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsy
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt-asym request"}
 	}
 
-	b, _, err := s.resolveBackendWithName(req.Backend)
+	b, _, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
 	if err != nil {
 		return nil, err
 	}

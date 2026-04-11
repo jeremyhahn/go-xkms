@@ -2901,6 +2901,15 @@ integration-test-bootstrap:
 	@cd test/integration/bootstrap && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
+.PHONY: integration-test-truststrap
+## integration-test-truststrap: Run xkey TrustService truststrap integration tests (Direct, SPKI, Noise)
+integration-test-truststrap:
+	@echo "$(CYAN)$(BOLD)→ Running xkey TrustService truststrap integration tests...$(RESET)"
+	@cd test/integration/bootstrap && docker compose --profile xkey down -v >/dev/null 2>&1 || true
+	@cd test/integration/bootstrap && docker compose --profile xkey build xkey-truststrap-test
+	@cd test/integration/bootstrap && (docker compose --profile xkey run --rm xkey-truststrap-test; EXIT_CODE=$$?; docker compose --profile xkey down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ xkey TrustService truststrap integration tests complete$(RESET)"
+
 .PHONY: show-backends
 ## show-backends: Display enabled backends for current build configuration
 show-backends:

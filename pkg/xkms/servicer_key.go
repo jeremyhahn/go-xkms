@@ -46,7 +46,7 @@ func (s *XKMSService) GenerateKey(ctx context.Context, req *transport.GenerateKe
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (s *XKMSService) ImportKey(ctx context.Context, req *transport.ImportKeyReq
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +255,7 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyReq
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +336,7 @@ func (s *XKMSService) GetImportParameters(ctx context.Context, req *transport.Ge
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -397,11 +397,11 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		destBackend = s.defaultBackendName()
 	}
 
-	srcB, err := s.resolveBackend(sourceBackend)
+	srcB, err := s.resolveTenantBackend(sourceBackend, req.TenantID)
 	if err != nil {
 		return nil, &ErrCopyKeyBackend{Role: "source", Err: err}
 	}
-	dstB, err := s.resolveBackend(destBackend)
+	dstB, err := s.resolveTenantBackend(destBackend, req.TenantID)
 	if err != nil {
 		return nil, &ErrCopyKeyBackend{Role: "destination", Err: err}
 	}
@@ -478,7 +478,7 @@ func (s *XKMSService) WrapKey(ctx context.Context, req *transport.WrapKeyRequest
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +526,7 @@ func (s *XKMSService) UnwrapKey(ctx context.Context, req *transport.UnwrapKeyReq
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveBackend(backendName)
+	b, err := s.resolveTenantBackend(backendName, req.TenantID)
 	if err != nil {
 		return nil, err
 	}

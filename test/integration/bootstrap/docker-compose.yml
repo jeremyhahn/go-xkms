@@ -131,6 +131,44 @@ services:
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/bootstrap/... -timeout 10m
       "
 
+  # TrustService facade integration runner — exercises
+  # xkey/pkg/gui/services.TrustService.ImportFromTrustStrap end-to-end
+  # against the same xkms-server + CoreDNS stack, verifying the
+  # upper-most GUI facade (per xkey integration test conventions).
+  # Runs inside the xkey Go module so cross-module imports resolve
+  # naturally without workspace or replace-directive gymnastics.
+  xkey-truststrap-test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/bootstrap/Dockerfile.test
+    container_name: bootstrap-xkey-truststrap-tests
+    depends_on:
+      xkms-server:
+        condition: service_healthy
+      coredns:
+        condition: service_started
+    volumes:
+      - ../../..:/workspace
+      - ../../../../go-qrdb:/go-qrdb:cached
+      - ../../../../go-quicraft:/go-quicraft:cached
+      - xkms-certs:/etc/xkms/certs:ro
+      - go-cache:/root/go
+      - go-build-cache:/root/.cache/go-build
+      - ./scripts:/scripts:ro
+    environment:
+      - CGO_ENABLED=1
+      - BOOTSTRAP_SERVER_URL=https://xkms-server:8443
+      - BOOTSTRAP_NOISE_ADDR=xkms-server:8445
+      - BOOTSTRAP_DNS_SERVER=coredns:1053
+      - BOOTSTRAP_HOSTNAME=bootstrap.test
+      - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
+    working_dir: /workspace/xkey
+    networks:
+      - bootstrap-net
+    profiles:
+      - xkey
+    command: ["/scripts/run-xkey-truststrap-tests.sh"]
+
 volumes:
   xkms-data:
     driver: local

@@ -22,6 +22,7 @@ import (
 	"encoding/pem"
 	"fmt"
 
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -46,6 +47,39 @@ func (s *XKMSService) resolveBackendWithName(backendName string) (Backend, strin
 		return nil, "", err
 	}
 	return b, backendName, nil
+}
+
+// resolveTenantBackend returns a Backend scoped to tenantID when tenantID is
+// non-empty. When tenantID is empty it falls back to the existing resolveBackend
+// behaviour, preserving full backward compatibility.
+func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, error) {
+	if tenantID == "" {
+		return s.resolveBackend(name)
+	}
+	if err := storage.ValidateTenantID(tenantID); err != nil {
+		return nil, &ErrValidation{Sentinel: ErrTenantIDRequired, Detail: err.Error()}
+	}
+	base, err := s.resolveBackend(name)
+	if err != nil {
+		return nil, err
+	}
+	return NewTenantScopedBackend(base, tenantID), nil
+}
+
+// resolveTenantBackendWithName returns the Backend, its resolved name, and an error.
+// When tenantID is non-empty the returned Backend is tenant-scoped.
+func (s *XKMSService) resolveTenantBackendWithName(name, tenantID string) (Backend, string, error) {
+	if tenantID == "" {
+		return s.resolveBackendWithName(name)
+	}
+	if err := storage.ValidateTenantID(tenantID); err != nil {
+		return nil, "", &ErrValidation{Sentinel: ErrTenantIDRequired, Detail: err.Error()}
+	}
+	base, resolvedName, err := s.resolveBackendWithName(name)
+	if err != nil {
+		return nil, "", err
+	}
+	return NewTenantScopedBackend(base, tenantID), resolvedName, nil
 }
 
 // defaultBackendName returns the name of the default backend.
