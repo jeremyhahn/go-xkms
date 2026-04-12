@@ -347,6 +347,68 @@ type XKMSCA interface {
 	// Thread-safe: Yes
 	TLSConfig(attrs *types.KeyAttributes) (*tls.Config, error)
 
+	// QuantumSafeTLSConfig creates a TLS configuration optimized for post-quantum
+	// cryptographic algorithms. This configuration enables hybrid key exchange
+	// using both classical and post-quantum algorithms where supported.
+	//
+	// Currently clears CurvePreferences to allow the TLS runtime to negotiate
+	// the best available option. When Go's crypto/tls natively supports hybrid
+	// key exchange (X25519Kyber768), this method will enable it automatically.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrTLSConfigFailed if the configuration cannot be created.
+	//
+	// Thread-safe: Yes
+	QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, error)
+
+	// ========================================================================
+	// Trust Pool Builders
+	// ========================================================================
+
+	// TrustedRootCertPool returns a certificate pool containing the root CA
+	// certificate that anchors the given certificate's trust chain.
+	//
+	// This is useful when constructing tls.Config.RootCAs or ClientCAs pools
+	// scoped to a specific root rather than the full CA bundle.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrRootNotFound if the root certificate cannot be determined.
+	//
+	// Thread-safe: Yes
+	TrustedRootCertPool(cert *x509.Certificate) (*x509.CertPool, error)
+
+	// TrustedIntermediateCertPool returns a certificate pool containing the
+	// intermediate CA certificate(s) for the given leaf certificate's chain.
+	// Returns an empty pool when the certificate is directly issued by the root.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	//
+	// Thread-safe: Yes
+	TrustedIntermediateCertPool(cert *x509.Certificate) (*x509.CertPool, error)
+
+	// CABundleCertPool returns a certificate pool populated from the CA bundle.
+	//
+	// The pool contains all CA certificates in the trust chain (root and
+	// intermediate). This is the standard pool for most TLS configurations.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrInvalidCertificateChain if the bundle cannot be built.
+	//
+	// Thread-safe: Yes
+	CABundleCertPool() (*x509.CertPool, error)
+
+	// OSTrustStore returns the operating system's trusted certificate pool.
+	//
+	// The returned pool includes all certificates in the platform trust store:
+	//   - Linux: /etc/ssl/certs, /etc/pki/tls/certs, etc.
+	//   - macOS: Keychain Access (System Roots)
+	//   - Windows: Certificate Store (Trusted Root Certification Authorities)
+	//
+	// Returns an error if the OS trust store is inaccessible.
+	//
+	// Thread-safe: Yes
+	OSTrustStore() (*x509.CertPool, error)
+
 	// ========================================================================
 	// Storage Access
 	// ========================================================================
@@ -593,4 +655,44 @@ type TCGCA interface {
 	//
 	// Thread-safe: Yes
 	SetTPM(tpm tpm2.TrustedPlatformModule)
+
+	// VerifyQuote verifies a TPM quote signature and validates the nonce.
+	//
+	// This is the primary method for remote attestation verification per TCG
+	// specifications. The verification process:
+	//  1. Validates that the returned nonce matches the expected nonce
+	//  2. Computes a SHA-256 digest of the quoted data
+	//  3. Verifies the signature using the AK's public key
+	//
+	// The AK public key is resolved from attrs.TPMAttributes.PublicKeyBytes when
+	// present, falling back to the certificate stored in the certificate store.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrInvalidRequest if attrs or quote is nil.
+	// Returns ErrInvalidNonce if the nonce does not match.
+	// Returns ErrInvalidSignature if the quote signature verification fails.
+	//
+	// Thread-safe: Yes
+	VerifyQuote(attrs *types.KeyAttributes, quote *tpm2.Quote, nonce []byte) error
+
+	// ImportEndorsementKeyCertificate imports a manufacturer-provided EK certificate
+	// into the CA's certificate store. The certificate is validated for the presence
+	// of the TCG EK OID extension; an absent OID generates a warning but is not
+	// treated as an error to accommodate non-standard manufacturer certificates.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrInvalidCertificate if cert is nil.
+	// Returns ErrStorageError if the certificate cannot be stored.
+	//
+	// Thread-safe: Yes
+	ImportEndorsementKeyCertificate(cert *x509.Certificate) error
+
+	// EndorsementKeyCertificate retrieves an EK certificate from the certificate
+	// store by Common Name.
+	//
+	// Returns ErrNotInitialized if the CA has not been initialized.
+	// Returns ErrCertificateNotFound if no certificate with the given CN exists.
+	//
+	// Thread-safe: Yes
+	EndorsementKeyCertificate(cn string) (*x509.Certificate, error)
 }

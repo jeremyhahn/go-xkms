@@ -14,17 +14,21 @@
 package ca
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
 // Compile-time interface compliance check for TCGCA.
@@ -543,4 +547,148 @@ func buildIDevIDExtensions(unpacked *tpm2.UNPACKED_TCG_CSR_IDEVID, issuerKeyStor
 	}
 
 	return extensions
+}
+
+// VerifyQuote verifies a TPM quote signature and validates that the nonce matches.
+//
+// This is the primary method for remote attestation verification per TCG
+// specifications. The verification process:
+//  1. Validates that the returned nonce matches the expected nonce
+//  2. Computes a SHA-256 digest of the quoted data
+//  3. Verifies the signature using the AK's public key
+//
+// The AK public key is resolved from attrs.TPMAttributes.PublicKeyBytes when
+// present, falling back to the certificate stored in the certificate store.
+func (ca *CA) VerifyQuote(attrs *types.KeyAttributes, quote *tpm2.Quote, nonce []byte) error {
+	if !ca.initialized.Load() {
+		return ErrNotInitialized
+	}
+	if attrs == nil || quote == nil {
+		return fmt.Errorf("%w: attrs and quote must not be nil", ErrInvalidCSR)
+	}
+
+	// Verify the nonce matches.
+	if !bytes.Equal(quote.Nonce, nonce) {
+		return fmt.Errorf("%w: nonce mismatch", ErrInvalidSignature)
+	}
+
+	// Compute digest of quoted data.
+	digest := sha256.Sum256(quote.Quoted)
+
+	// Resolve the AK public key.
+	var pubKey crypto.PublicKey
+	var err error
+
+	if attrs.TPMAttributes != nil && len(attrs.TPMAttributes.PublicKeyBytes) > 0 {
+		pubKey, err = x509.ParsePKIXPublicKey(attrs.TPMAttributes.PublicKeyBytes)
+		if err != nil {
+			return fmt.Errorf("%w: failed to parse AK public key from TPM attributes: %v",
+				ErrInvalidSignature, err)
+		}
+	} else {
+		// Fall back to the certificate store.
+		cert, err := ca.certStore.GetCertificate(attrs.CN)
+		if err != nil {
+			return fmt.Errorf("%w: AK certificate not found for CN %q: %v",
+				ErrCertificateNotFound, attrs.CN, err)
+		}
+		pubKey = cert.PublicKey
+	}
+
+	// Verify the signature based on key type.
+	switch key := pubKey.(type) {
+	case *rsa.PublicKey:
+		// Try RSA-PSS first (preferred for TPM), then fall back to PKCS1v15.
+		pssOpts := &rsa.PSSOptions{
+			SaltLength: rsa.PSSSaltLengthEqualsHash,
+			Hash:       crypto.SHA256,
+		}
+		if err = rsa.VerifyPSS(key, crypto.SHA256, digest[:], quote.Signature, pssOpts); err != nil {
+			err = rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], quote.Signature)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: RSA quote signature verification failed", ErrInvalidSignature)
+		}
+
+	case *ecdsa.PublicKey:
+		if !ecdsa.VerifyASN1(key, digest[:], quote.Signature) {
+			return fmt.Errorf("%w: ECDSA quote signature verification failed", ErrInvalidSignature)
+		}
+
+	case ed25519.PublicKey:
+		if !ed25519.Verify(key, digest[:], quote.Signature) {
+			return fmt.Errorf("%w: Ed25519 quote signature verification failed", ErrInvalidSignature)
+		}
+
+	default:
+		return fmt.Errorf("%w: unsupported AK key type %T", ErrInvalidSignature, pubKey)
+	}
+
+	return nil
+}
+
+// ImportEndorsementKeyCertificate imports a manufacturer-provided EK certificate
+// into the CA's certificate store.
+//
+// The certificate is validated for the presence of the TCG EK OID extension
+// (OIDTCGEKCertificate). An absent OID logs a warning but is not treated as
+// an error, to accommodate non-standard manufacturer certificates.
+func (ca *CA) ImportEndorsementKeyCertificate(cert *x509.Certificate) error {
+	if !ca.initialized.Load() {
+		return ErrNotInitialized
+	}
+	if cert == nil {
+		return fmt.Errorf("%w: nil EK certificate", ErrInvalidCertificate)
+	}
+
+	// Warn when the TCG EK OID is absent; some manufacturer certs omit it.
+	hasEKOID := false
+	for _, ext := range cert.Extensions {
+		if ext.Id.Equal(OIDTCGEKCertificate) {
+			hasEKOID = true
+			break
+		}
+	}
+	if !hasEKOID {
+		slog.Warn("ca: importing EK certificate without TCG EK OID extension",
+			"cn", cert.Subject.CommonName)
+	}
+
+	if err := ca.certStore.StoreCertificate(cert); err != nil {
+		return fmt.Errorf("%w: failed to store EK certificate: %v", ErrStorageError, err)
+	}
+
+	return nil
+}
+
+// EndorsementKeyCertificate retrieves an EK certificate from the certificate
+// store by Common Name.
+//
+// Logs a warning when the retrieved certificate does not carry the TCG EK OID
+// extension, consistent with ImportEndorsementKeyCertificate behaviour.
+func (ca *CA) EndorsementKeyCertificate(cn string) (*x509.Certificate, error) {
+	if !ca.initialized.Load() {
+		return nil, ErrNotInitialized
+	}
+
+	cert, err := ca.certStore.GetCertificate(cn)
+	if err != nil {
+		return nil, fmt.Errorf("%w: EK certificate not found for CN %q: %v",
+			ErrCertificateNotFound, cn, err)
+	}
+
+	// Warn when the TCG EK OID is absent.
+	hasEKOID := false
+	for _, ext := range cert.Extensions {
+		if ext.Id.Equal(OIDTCGEKCertificate) {
+			hasEKOID = true
+			break
+		}
+	}
+	if !hasEKOID {
+		slog.Warn("ca: retrieved EK certificate without TCG EK OID extension",
+			"cn", cn)
+	}
+
+	return cert, nil
 }

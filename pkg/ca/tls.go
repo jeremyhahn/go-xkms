@@ -410,6 +410,34 @@ func (ca *CA) ClientTLSConfig(attrs *types.KeyAttributes, serverName string) (*t
 	return ca.TLSConfigWithOptions(attrs, opts)
 }
 
+// QuantumSafeTLSConfig creates a TLS configuration optimized for post-quantum
+// cryptographic algorithms.
+//
+// This method starts from the standard TLSConfig and clears CurvePreferences
+// so the TLS runtime can negotiate the best available option, including hybrid
+// post-quantum key exchange when available. When Go's crypto/tls natively
+// supports X25519Kyber768, this method will enable it automatically.
+//
+// Parameters:
+//   - attrs: Key attributes identifying the certificate and key to use
+//
+// Returns:
+//   - ErrNotInitialized if the CA has not been initialized
+//   - ErrTLSConfigFailed if the TLS configuration cannot be created
+//
+// Thread-safe: Yes
+func (ca *CA) QuantumSafeTLSConfig(attrs *types.KeyAttributes) (*tls.Config, error) {
+	tlsConfig, err := ca.TLSConfig(attrs)
+	if err != nil {
+		return nil, err
+	}
+	// TODO: When Go's crypto/tls supports hybrid key exchange (X25519Kyber768),
+	// enable it here. For now, clear CurvePreferences to allow the TLS runtime
+	// to negotiate the best available option.
+	tlsConfig.CurvePreferences = nil
+	return tlsConfig, nil
+}
+
 // MutualTLSConfig returns a TLS configuration for mutual TLS.
 //
 // This is a convenience method that creates a TLS configuration
