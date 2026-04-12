@@ -207,6 +207,18 @@ func (m *mockCA) TLSCertificate(_ *types.KeyAttributes) (tls.Certificate, error)
 	return tls.Certificate{}, nil
 }
 func (m *mockCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) { return nil, nil }
+func (m *mockCA) QuantumSafeTLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+	return nil, nil
+}
+
+// --- Trust pool builders ---
+
+func (m *mockCA) CABundleCertPool() (*x509.CertPool, error)                              { return nil, nil }
+func (m *mockCA) TrustedRootCertPool(_ *x509.Certificate) (*x509.CertPool, error)        { return nil, nil }
+func (m *mockCA) TrustedIntermediateCertPool(_ *x509.Certificate) (*x509.CertPool, error) {
+	return nil, nil
+}
+func (m *mockCA) OSTrustStore() (*x509.CertPool, error) { return nil, nil }
 
 // ---------------------------------------------------------------------------
 // errorCA wraps mockCA but returns errors for selected operations.

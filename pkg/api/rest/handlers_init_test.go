@@ -187,6 +187,13 @@ func (m *initTestMockCA) IssueCertificate(req *ca.CertificateRequest) (*ca.Issue
 func (m *initTestMockCA) IssueCertificateWithProfile(req *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
 	return m.IssueCertificate(req)
 }
+func (m *initTestMockCA) QuantumSafeTLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+	return nil, nil
+}
+func (m *initTestMockCA) CABundleCertPool() (*x509.CertPool, error)                               { return nil, nil }
+func (m *initTestMockCA) TrustedRootCertPool(_ *x509.Certificate) (*x509.CertPool, error)         { return nil, nil }
+func (m *initTestMockCA) TrustedIntermediateCertPool(_ *x509.Certificate) (*x509.CertPool, error) { return nil, nil }
+func (m *initTestMockCA) OSTrustStore() (*x509.CertPool, error)                                   { return nil, nil }
 
 // ---------------------------------------------------------------------------
 // Test helpers

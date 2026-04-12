@@ -90,6 +90,13 @@ func (m *mockXKMSCA) IsRevoked(_ *big.Int) (bool, error) { return false, nil }
 func (m *mockXKMSCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
+func (m *mockXKMSCA) QuantumSafeTLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+	return nil, nil
+}
+func (m *mockXKMSCA) CABundleCertPool() (*x509.CertPool, error)                               { return nil, nil }
+func (m *mockXKMSCA) TrustedRootCertPool(_ *x509.Certificate) (*x509.CertPool, error)         { return nil, nil }
+func (m *mockXKMSCA) TrustedIntermediateCertPool(_ *x509.Certificate) (*x509.CertPool, error) { return nil, nil }
+func (m *mockXKMSCA) OSTrustStore() (*x509.CertPool, error)                                   { return nil, nil }
 func (m *mockXKMSCA) KeyStore() xkms.Backend         { return nil }
 func (m *mockXKMSCA) CertStore() certstore.CertStore { return nil }
 func (m *mockXKMSCA) Config() *ca.Identity           { return nil }
