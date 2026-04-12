@@ -68,7 +68,7 @@ type XKMSService struct {
 	// ErrNotConfigured) until wired by the server or application.
 	barrier           *seal.Barrier
 	barrierRegistry   *seal.BarrierRegistry
-	pinManager        pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	pinManager        pin.PINBackend
 	userStore         user.Store
 	passwordStore     *staticpw.BackendStore
 	platformStore     seal.PlatformStore
@@ -124,8 +124,8 @@ func Get() (*XKMSService, error) {
 // SetBarrier sets the barrier subsystem for seal/unseal operations.
 func (s *XKMSService) SetBarrier(b *seal.Barrier) { s.barrier = b }
 
-// SetPINManager sets the PIN management subsystem.
-func (s *XKMSService) SetPINManager(p pin.PINManager) { s.pinManager = p } //nolint:staticcheck // TODO: migrate to PINBackend
+// SetPINManager sets the PIN backend subsystem.
+func (s *XKMSService) SetPINManager(p pin.PINBackend) { s.pinManager = p }
 
 // SetUserStore sets the user management subsystem.
 func (s *XKMSService) SetUserStore(u user.Store) { s.userStore = u }

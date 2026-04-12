@@ -36,11 +36,11 @@ const (
 // inner EncryptedStore without PIN verification.
 type PINAccessStore struct {
 	inner      *EncryptedStore
-	pinManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	pinManager pin.PINBackend
 }
 
 // NewPINAccessStore creates a PINAccessStore. Both inner and pinManager must be non-nil.
-func NewPINAccessStore(inner *EncryptedStore, pinManager pin.PINManager) (*PINAccessStore, error) { //nolint:staticcheck // TODO: migrate to PINBackend
+func NewPINAccessStore(inner *EncryptedStore, pinManager pin.PINBackend) (*PINAccessStore, error) {
 	if inner == nil {
 		return nil, ErrNilInnerStore
 	}
@@ -133,13 +133,13 @@ func (s *PINAccessStore) Close() error {
 // unlocked, decryption operations succeed until Lock is called.
 type SessionStore struct {
 	inner      *EncryptedStore
-	pinManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	pinManager pin.PINBackend
 	unlocked   atomic.Bool
 }
 
 // NewSessionStore creates a SessionStore. Both inner and pinManager must be non-nil.
 // The store starts in the locked state.
-func NewSessionStore(inner *EncryptedStore, pinManager pin.PINManager) (*SessionStore, error) { //nolint:staticcheck // TODO: migrate to PINBackend
+func NewSessionStore(inner *EncryptedStore, pinManager pin.PINBackend) (*SessionStore, error) {
 	if inner == nil {
 		return nil, ErrNilInnerStore
 	}

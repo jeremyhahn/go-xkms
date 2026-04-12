@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockPINManager implements pin.PINManager for testing.
+// mockPINManager implements pin.PINBackend for testing.
 type mockPINManager struct {
 	userPIN string
 	soPIN   string
@@ -37,7 +37,6 @@ func (m *mockPINManager) ChangeSOPIN(_, _ string) error        { return nil }
 func (m *mockPINManager) ChangeUserPIN(_, _ string) error      { return nil }
 func (m *mockPINManager) GetLockoutStatus() *pin.LockoutStatus { return &pin.LockoutStatus{} }
 func (m *mockPINManager) ResetLockout(_ string) error          { return nil }
-func (m *mockPINManager) SetMaxAttempts(_ int)                 {}
 func (m *mockPINManager) IsInitialized() bool                  { return true }
 func (m *mockPINManager) SOPINSet() bool                       { return m.soPIN != "" }
 func (m *mockPINManager) UserPINSet() bool                     { return m.userPIN != "" }

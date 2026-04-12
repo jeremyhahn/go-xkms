@@ -81,11 +81,11 @@ var pinErrorToGRPC = map[error]codes.Code{
 	pin.ErrStrategyNotSet:    codes.FailedPrecondition,
 }
 
-// Package-level barrier and PIN manager references, set via their
+// Package-level barrier and PIN backend references, set via their
 // respective setter functions.
 var (
 	barrier    *seal.Barrier
-	pinManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	pinManager pin.PINBackend
 )
 
 // SetBarrier configures the barrier for the gRPC service.
@@ -99,14 +99,14 @@ func GetBarrier() *seal.Barrier {
 	return barrier
 }
 
-// SetPINManager configures the PIN manager for the gRPC service.
+// SetPINManager configures the PIN backend for the gRPC service.
 // This must be called before any PIN RPCs can be used.
-func SetPINManager(pm pin.PINManager) { //nolint:staticcheck // TODO: migrate to PINBackend
+func SetPINManager(pm pin.PINBackend) {
 	pinManager = pm
 }
 
-// GetPINManager returns the configured PIN manager, or nil if not set.
-func GetPINManager() pin.PINManager { //nolint:staticcheck // TODO: migrate to PINBackend
+// GetPINManager returns the configured PIN backend, or nil if not set.
+func GetPINManager() pin.PINBackend {
 	return pinManager
 }
 

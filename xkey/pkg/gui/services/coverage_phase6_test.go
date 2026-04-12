@@ -44,7 +44,7 @@ import (
 // Mock prefix: p6b (phase 6 batch)
 // ---------------------------------------------------------------------------
 
-// p6bMockPINManager implements pin.PINManager for testing panic recovery
+// p6bMockPINManager implements pin.PINBackend for testing panic recovery
 // and coordinator notification paths.
 type p6bMockPINManager struct {
 	strategy    pin.StrategyID
@@ -73,8 +73,7 @@ func (m *p6bMockPINManager) ChangeSOPIN(_, _ string) error        { return m.cha
 func (m *p6bMockPINManager) ChangeUserPIN(_, _ string) error      { return m.changeUserErr }
 func (m *p6bMockPINManager) VerifySOPIN(_ string) error           { return m.verifySOErr }
 func (m *p6bMockPINManager) VerifyUserPIN(_ string) error         { return m.verifyUserErr }
-func (m *p6bMockPINManager) ResetLockout(_ string) error          { return m.resetLockoutErr }
-func (m *p6bMockPINManager) SetMaxAttempts(_ int)                 {}
+func (m *p6bMockPINManager) ResetLockout(_ string) error { return m.resetLockoutErr }
 
 // p6bMockSealer implements types.Sealer for seal service testing.
 type p6bMockSealer struct {

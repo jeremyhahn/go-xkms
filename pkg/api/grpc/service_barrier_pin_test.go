@@ -57,18 +57,17 @@ func setupBarrier(t *testing.T) *seal.Barrier {
 	return b
 }
 
-// setupPINManager creates an in-memory PIN manager for testing
+// setupPINManager creates an in-memory PIN backend for testing
 // and registers it with the package-level variable.
-func setupPINManager(t *testing.T) pin.PINManager { //nolint:staticcheck // TODO: migrate to PINBackend
+func setupPINManager(t *testing.T) pin.PINBackend {
 	t.Helper()
 
 	backend, err := pin.NewSoftwareBackend(nil, pin.DefaultHashConfig())
 	require.NoError(t, err)
 
-	pm := &pin.PINManagerAdapter{PINBackend: backend} //nolint:staticcheck // TODO: migrate to PINBackend
-	SetPINManager(pm)
+	SetPINManager(backend)
 	t.Cleanup(func() { SetPINManager(nil) })
-	return pm
+	return backend
 }
 
 // newTestService returns a Service with no-op authz and audit.

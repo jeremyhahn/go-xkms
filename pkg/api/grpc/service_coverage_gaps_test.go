@@ -812,9 +812,9 @@ func TestResetLockout_NotConfiguredPath(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, st.Code())
 }
 
-// mockPINBackendWithLockout implements PINManager with active lockout tracking.
+// mockPINBackendWithLockout implements PINBackend with active lockout tracking.
 type mockPINBackendWithLockout struct {
-	pin.PINManager
+	pin.PINBackend
 }
 
 func (m *mockPINBackendWithLockout) GetLockoutStatus() *pin.LockoutStatus {

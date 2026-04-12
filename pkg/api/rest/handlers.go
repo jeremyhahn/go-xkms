@@ -45,8 +45,8 @@ type HandlerContext struct {
 	HealthChecker HealthChecker
 	// Barrier is the optional barrier for seal/unseal lifecycle management
 	Barrier *seal.Barrier
-	// PINManager is the optional PIN manager for SO/User PIN operations
-	PINManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	// PINManager is the optional PIN backend for SO/User PIN operations
+	PINManager pin.PINBackend
 }
 
 // HealthChecker defines the interface for health checking.
@@ -74,8 +74,8 @@ func (h *HandlerContext) SetBarrier(barrier *seal.Barrier) {
 	h.Barrier = barrier
 }
 
-// SetPINManager sets the PIN manager for the handler context.
-func (h *HandlerContext) SetPINManager(manager pin.PINManager) { //nolint:staticcheck // TODO: migrate to PINBackend
+// SetPINManager sets the PIN backend for the handler context.
+func (h *HandlerContext) SetPINManager(manager pin.PINBackend) {
 	h.PINManager = manager
 }
 

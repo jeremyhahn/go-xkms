@@ -73,7 +73,7 @@ func TestServer_PINManager_NilByDefault(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.Nil(t, server.PINManager())
+	assert.Nil(t, server.PINBackend())
 }
 
 func TestServer_PasswordStore_NotNil(t *testing.T) {
@@ -327,7 +327,7 @@ func TestServer_InitializePINManager_Enabled(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.NotNil(t, server.PINManager())
+	assert.NotNil(t, server.PINBackend())
 }
 
 func TestServer_InitializePINManager_DefaultStrategy(t *testing.T) {
@@ -342,7 +342,7 @@ func TestServer_InitializePINManager_DefaultStrategy(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.NotNil(t, server.PINManager())
+	assert.NotNil(t, server.PINBackend())
 }
 
 func TestServer_InitializePINManager_UnknownStrategy(t *testing.T) {

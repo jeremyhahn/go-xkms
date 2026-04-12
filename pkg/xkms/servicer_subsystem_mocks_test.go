@@ -75,7 +75,7 @@ func setupServiceWithProviders(t *testing.T) (*XKMSService, *mockKeyStore, *mock
 	return svc, software, pkcs11Mock
 }
 
-// mockPINManager implements pin.PINManager for testing.
+// mockPINManager implements pin.PINBackend for testing.
 type mockPINManager struct {
 	soPin      string
 	userPin    string
@@ -145,10 +145,9 @@ func (m *mockPINManager) ResetLockout(soPin string) error {
 	return nil
 }
 
-func (m *mockPINManager) SetMaxAttempts(_ int) {}
-func (m *mockPINManager) IsInitialized() bool  { return m.soPin != "" }
-func (m *mockPINManager) SOPINSet() bool       { return m.soPin != "" }
-func (m *mockPINManager) UserPINSet() bool     { return m.userPin != "" }
+func (m *mockPINManager) IsInitialized() bool { return m.soPin != "" }
+func (m *mockPINManager) SOPINSet() bool      { return m.soPin != "" }
+func (m *mockPINManager) UserPINSet() bool    { return m.userPin != "" }
 
 // mockUserStore implements user.Store for testing.
 type mockUserStore struct {

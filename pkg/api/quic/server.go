@@ -57,7 +57,7 @@ type Server struct {
 	logger          *slog.Logger
 	rateLimiter     *ratelimit.Limiter
 	barrier         *seal.Barrier
-	pinManager      pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	pinManager      pin.PINBackend
 	passwordStore   staticpw.Store
 	passwordManager *staticpw.TenantPasswordStoreManager
 	server          *http3.Server
@@ -78,7 +78,7 @@ type Config struct {
 	Logger          *slog.Logger
 	RateLimiter     *ratelimit.Limiter
 	Barrier         *seal.Barrier
-	PINManager      pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	PINManager      pin.PINBackend
 	PasswordStore   staticpw.Store
 	PasswordManager *staticpw.TenantPasswordStoreManager
 }
@@ -242,9 +242,9 @@ func (s *Server) SetBarrier(barrier *seal.Barrier) {
 	s.barrier = barrier
 }
 
-// SetPINManager sets the PIN manager on the server. This allows the PIN
-// manager to be configured after server creation.
-func (s *Server) SetPINManager(manager pin.PINManager) { //nolint:staticcheck // TODO: migrate to PINBackend
+// SetPINManager sets the PIN backend on the server. This allows the PIN
+// backend to be configured after server creation.
+func (s *Server) SetPINManager(manager pin.PINBackend) {
 	s.pinManager = manager
 }
 

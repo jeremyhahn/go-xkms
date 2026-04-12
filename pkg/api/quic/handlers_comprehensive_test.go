@@ -45,7 +45,7 @@ func createBarrierTestServer(t *testing.T) *Server {
 	return server
 }
 
-// mockPINManager implements pin.PINManager for testing.
+// mockPINManager implements pin.PINBackend for testing.
 type mockPINManager struct {
 	soPINSet      bool
 	userPINSet    bool
@@ -59,11 +59,10 @@ type mockPINManager struct {
 	resetErr      error
 }
 
-func (m *mockPINManager) Strategy() pin.StrategyID         { return "mock" }
-func (m *mockPINManager) IsInitialized() bool              { return m.initialized }
-func (m *mockPINManager) SOPINSet() bool                   { return m.soPINSet }
-func (m *mockPINManager) UserPINSet() bool                 { return m.userPINSet }
-func (m *mockPINManager) SetMaxAttempts(n int)             {}
+func (m *mockPINManager) Strategy() pin.StrategyID { return "mock" }
+func (m *mockPINManager) IsInitialized() bool      { return m.initialized }
+func (m *mockPINManager) SOPINSet() bool            { return m.soPINSet }
+func (m *mockPINManager) UserPINSet() bool          { return m.userPINSet }
 func (m *mockPINManager) SetSOPIN(cur, new string) error   { return m.setSOPINErr }
 func (m *mockPINManager) SetUserPIN(so, new string) error  { return m.setUserPINErr }
 func (m *mockPINManager) ChangeSOPIN(cur, new string) error { return m.changeSOErr }

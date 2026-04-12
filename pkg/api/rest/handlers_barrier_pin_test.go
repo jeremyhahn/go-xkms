@@ -30,7 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockPINManager implements pin.PINManager for testing.
+// mockPINManager implements pin.PINBackend for testing.
 type mockPINManager struct {
 	strategy       pin.StrategyID
 	setSOPINErr    error
@@ -46,19 +46,18 @@ type mockPINManager struct {
 	userPINSet     bool
 }
 
-func (m *mockPINManager) Strategy() pin.StrategyID            { return m.strategy }
-func (m *mockPINManager) SetSOPIN(_, _ string) error          { return m.setSOPINErr }
-func (m *mockPINManager) SetUserPIN(_, _ string) error        { return m.setUserPINErr }
-func (m *mockPINManager) ChangeSOPIN(_, _ string) error       { return m.changeSOPINErr }
-func (m *mockPINManager) ChangeUserPIN(_, _ string) error     { return m.changeUserErr }
-func (m *mockPINManager) VerifySOPIN(_ string) error          { return m.verifySOPINErr }
-func (m *mockPINManager) VerifyUserPIN(_ string) error        { return m.verifyUserErr }
+func (m *mockPINManager) Strategy() pin.StrategyID             { return m.strategy }
+func (m *mockPINManager) SetSOPIN(_, _ string) error           { return m.setSOPINErr }
+func (m *mockPINManager) SetUserPIN(_, _ string) error         { return m.setUserPINErr }
+func (m *mockPINManager) ChangeSOPIN(_, _ string) error        { return m.changeSOPINErr }
+func (m *mockPINManager) ChangeUserPIN(_, _ string) error      { return m.changeUserErr }
+func (m *mockPINManager) VerifySOPIN(_ string) error           { return m.verifySOPINErr }
+func (m *mockPINManager) VerifyUserPIN(_ string) error         { return m.verifyUserErr }
 func (m *mockPINManager) GetLockoutStatus() *pin.LockoutStatus { return m.lockoutStatus }
-func (m *mockPINManager) ResetLockout(_ string) error         { return m.resetErr }
-func (m *mockPINManager) SetMaxAttempts(_ int)                {}
-func (m *mockPINManager) IsInitialized() bool                 { return m.initialized }
-func (m *mockPINManager) SOPINSet() bool                      { return m.soPINSet }
-func (m *mockPINManager) UserPINSet() bool                    { return m.userPINSet }
+func (m *mockPINManager) ResetLockout(_ string) error          { return m.resetErr }
+func (m *mockPINManager) IsInitialized() bool                  { return m.initialized }
+func (m *mockPINManager) SOPINSet() bool                       { return m.soPINSet }
+func (m *mockPINManager) UserPINSet() bool                     { return m.userPINSet }
 
 // newTestBarrierHandler creates a HandlerContext with a real barrier backed by memory storage.
 func newTestBarrierHandler(t *testing.T) (*HandlerContext, *seal.Barrier) {

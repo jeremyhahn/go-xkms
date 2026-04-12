@@ -112,8 +112,8 @@ type Server struct {
 	// Bootstrap service (server initialization)
 	bootstrapService *bootstrap.Service
 
-	// PIN manager
-	pinManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	// PIN backend
+	pinManager pin.PINBackend
 
 	// Password store
 	passwordStore *staticpw.BackendStore
@@ -954,7 +954,7 @@ func (s *Server) initializePINManager() error {
 		if err != nil {
 			return &ErrServiceInit{Service: "software PIN manager", Err: err}
 		}
-		s.pinManager = &pin.PINManagerAdapter{PINBackend: backend} //nolint:staticcheck // TODO: migrate to PINBackend
+		s.pinManager = backend
 	default:
 		return &ErrUnknownPINStrategy{Strategy: strategy}
 	}
@@ -1035,8 +1035,8 @@ func (s *Server) BootstrapService() *bootstrap.Service {
 	return s.bootstrapService
 }
 
-// PINManager returns the PIN manager instance.
-func (s *Server) PINManager() pin.PINManager { //nolint:staticcheck // TODO: migrate to PINBackend
+// PINBackend returns the PIN backend instance.
+func (s *Server) PINBackend() pin.PINBackend {
 	return s.pinManager
 }
 

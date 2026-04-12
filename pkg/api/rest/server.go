@@ -132,8 +132,8 @@ type Config struct {
 	// Barrier is the optional barrier for seal/unseal lifecycle management
 	Barrier *seal.Barrier
 
-	// PINManager is the optional PIN manager for SO/User PIN operations
-	PINManager pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+	// PINManager is the optional PIN backend for SO/User PIN operations
+	PINManager pin.PINBackend
 
 	// PasswordStore is the optional static password store
 	PasswordStore *staticpw.BackendStore
