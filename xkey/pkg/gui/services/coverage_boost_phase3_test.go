@@ -1111,7 +1111,10 @@ func TestCoverageBoostPhase3_AppLockService_Unlock_BarrierSealed_Failure(t *test
 }
 
 func TestCoverageBoostPhase3_AppLockService_Unlock_NoPINService(t *testing.T) {
-	// Barrier configured but not initialized = falls to PIN path.
+	// Barrier configured but not initialized + no PIN service = setup
+	// incomplete. The error must be ErrAppLockSetupIncomplete so the
+	// frontend surfaces a "re-run wizard" prompt instead of a misleading
+	// "incorrect PIN" message.
 	barrier := &mockBarrierService{
 		initialized: false,
 		sealed:      true,
@@ -1121,7 +1124,7 @@ func TestCoverageBoostPhase3_AppLockService_Unlock_NoPINService(t *testing.T) {
 	svc.LockForStartup()
 
 	err := svc.Unlock("1234")
-	assert.ErrorIs(t, err, ErrAppLockPINInvalid) // No PIN service
+	assert.ErrorIs(t, err, ErrAppLockSetupIncomplete)
 }
 
 func TestCoverageBoostPhase3_AppLockService_Unlock_BarrierConfigured_NotInitialized(t *testing.T) {

@@ -71,7 +71,7 @@
   }
 </script>
 
-<Modal bind:open title="Factory Reset TPM" maxWidth="480px">
+<Modal bind:open title="Factory Reset TPM" maxWidth="480px" persistent={true}>
   {#if step === 'input'}
     <div class="reset-form">
       <div class="step-indicator">

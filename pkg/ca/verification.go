@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package ca provides certificate verification operations for XKMSCA.
+// Package ca provides certificate verification operations for TrustedCA.
 //
 // This file implements comprehensive X.509 certificate verification including:
 //   - Chain verification against trust anchors

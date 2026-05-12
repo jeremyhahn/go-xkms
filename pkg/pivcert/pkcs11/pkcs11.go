@@ -145,7 +145,12 @@ func New(config *pivcert.PKCS11StorageConfig) (*PKCS11CertStorage, error) {
 			fmt.Errorf("pkcs11: session pool: %w", err))
 	}
 
-	hw, err := hardware.NewPKCS11CertStorage(pool, config.TokenLabel)
+	var hw hardware.HardwareCertStorage
+	if config.RequireSO {
+		hw, err = hardware.NewPKCS11CertStorageWithSO(pool, config.TokenLabel, config.SOPIN, config.PIN, true)
+	} else {
+		hw, err = hardware.NewPKCS11CertStorage(pool, config.TokenLabel)
+	}
 	if err != nil {
 		pool.Close()
 		ctx.Finalize()
@@ -181,6 +186,28 @@ func NewFromSession(ctx *p11.Ctx, session p11.SessionHandle, slotID uint) (*PKCS
 	hw, err := hardware.NewPKCS11CertStorage(provider, "")
 	if err != nil {
 		return nil, pivcert.NewStorageTypeError("NewFromSession", pivcert.StorageTypePKCS11, err)
+	}
+	return &PKCS11CertStorage{hw: hw}, nil
+}
+
+// NewFromSessionWithSO creates a PKCS#11 PIV certificate storage that reuses
+// an existing context and session, with SO (Security Officer) session elevation
+// for write/delete operations. Required for YubiKey PIV tokens where
+// C_CreateObject and C_DestroyObject are rejected under CKU_USER.
+func NewFromSessionWithSO(ctx *p11.Ctx, session p11.SessionHandle, slotID uint, soPin, userPin string) (*PKCS11CertStorage, error) {
+	if ctx == nil {
+		return nil, pivcert.NewStorageTypeError("NewFromSessionWithSO", pivcert.StorageTypePKCS11, pivcert.ErrInvalidConfig)
+	}
+	provider := &singleSessionProvider{
+		ctx:     ctx,
+		session: session,
+		slotID:  slotID,
+		soPin:   soPin,
+		userPin: userPin,
+	}
+	hw, err := hardware.NewPKCS11CertStorageWithSO(provider, "", soPin, userPin, true)
+	if err != nil {
+		return nil, pivcert.NewStorageTypeError("NewFromSessionWithSO", pivcert.StorageTypePKCS11, err)
 	}
 	return &PKCS11CertStorage{hw: hw}, nil
 }
@@ -255,7 +282,7 @@ func (s *PKCS11CertStorage) Delete(slot pivcert.PIVSlot) error {
 		return pivcert.NewStorageError("Delete", slot, err)
 	}
 	if err := s.hw.DeleteCert(id); err != nil {
-		return pivcert.NewStorageError("Delete", slot, pivcert.ErrCertificateNotFound)
+		return pivcert.NewStorageError("Delete", slot, err)
 	}
 	return nil
 }
@@ -353,11 +380,14 @@ func (s *PKCS11CertStorage) Type() pivcert.PIVStorageType {
 
 // singleSessionProvider wraps a raw ctx+session for backward compatibility
 // with NewFromSession. It does NOT pool sessions — each WithSession call
-// reuses the same session handle.
+// reuses the same session handle. When soPin is set, it also implements
+// PKCS11SOSessionProvider for YubiKey PIV SO login elevation.
 type singleSessionProvider struct {
 	ctx     *p11.Ctx
 	session p11.SessionHandle
 	slotID  uint
+	soPin   string
+	userPin string
 }
 
 func (p *singleSessionProvider) WithSession(fn func(p11.SessionHandle) error) error {
@@ -365,6 +395,30 @@ func (p *singleSessionProvider) WithSession(fn func(p11.SessionHandle) error) er
 }
 func (p *singleSessionProvider) Ctx() *p11.Ctx { return p.ctx }
 func (p *singleSessionProvider) SlotID() uint  { return p.slotID }
+
+// WithSOSession switches the session login from CKU_USER to CKU_SO,
+// executes fn, then restores CKU_USER login.
+func (p *singleSessionProvider) WithSOSession(soPin, userPin string, fn func(p11.SessionHandle) error) error {
+	_ = p.ctx.Logout(p.session)
+	if err := p.ctx.Login(p.session, p11.CKU_SO, soPin); err != nil {
+		if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
+			_ = p.ctx.Login(p.session, p11.CKU_USER, userPin)
+			return fmt.Errorf("pkcs11: SO login: %w", err)
+		}
+	}
+
+	fnErr := fn(p.session)
+
+	_ = p.ctx.Logout(p.session)
+	if userPin != "" {
+		if err := p.ctx.Login(p.session, p11.CKU_USER, userPin); err != nil {
+			if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
+				return fmt.Errorf("pkcs11: user login restore: %w (original: %v)", err, fnErr)
+			}
+		}
+	}
+	return fnErr
+}
 
 // newSessionPool creates a minimal session pool for standalone use.
 // It satisfies hardware.PKCS11SessionProvider.
@@ -408,6 +462,34 @@ func (p *standalonePool) WithSession(fn func(p11.SessionHandle) error) error {
 }
 func (p *standalonePool) Ctx() *p11.Ctx { return p.ctx }
 func (p *standalonePool) SlotID() uint  { return p.slotID }
+
+// WithSOSession switches the session login from CKU_USER to CKU_SO,
+// executes fn, then restores CKU_USER login.
+func (p *standalonePool) WithSOSession(soPin, userPin string, fn func(p11.SessionHandle) error) error {
+	sess := <-p.ch
+	defer func() { p.ch <- sess }()
+
+	_ = p.ctx.Logout(sess)
+	if err := p.ctx.Login(sess, p11.CKU_SO, soPin); err != nil {
+		if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
+			_ = p.ctx.Login(sess, p11.CKU_USER, userPin)
+			return fmt.Errorf("pkcs11: SO login: %w", err)
+		}
+	}
+
+	fnErr := fn(sess)
+
+	_ = p.ctx.Logout(sess)
+	if userPin != "" {
+		if err := p.ctx.Login(sess, p11.CKU_USER, userPin); err != nil {
+			if !isPKCS11Error(err, p11.CKR_USER_ALREADY_LOGGED_IN) {
+				return fmt.Errorf("pkcs11: user login restore: %w (original: %v)", err, fnErr)
+			}
+		}
+	}
+	return fnErr
+}
+
 func (p *standalonePool) Close() {
 	for {
 		select {

@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package ca provides a XKMSCA implementation for certificate authority operations.
+// Package ca provides a TrustedCA implementation for certificate authority operations.
 //
-// XKMSCA is the foundation library that go-trusted-ca embeds for ACME/TCG operations,
+// TrustedCA is the foundation library that go-trusted-ca embeds for ACME/TCG operations,
 // and that go-qrdb uses for certificate management. It provides a complete
 // certificate authority implementation with support for:
 //
@@ -26,13 +26,13 @@
 //
 // # Thread Safety
 //
-// All XKMSCA implementations must be thread-safe. Concurrent certificate issuance,
+// All TrustedCA implementations must be thread-safe. Concurrent certificate issuance,
 // signing, and revocation operations are supported. The underlying keystore and
 // certificate store handle their own synchronization.
 //
 // # Key Storage
 //
-// XKMSCA delegates all key storage operations to go-xkms's KeyStore interface,
+// TrustedCA delegates all key storage operations to go-xkms's KeyStore interface,
 // enabling support for multiple backend types:
 //
 //   - Software (PKCS#8): File-based encrypted keys
@@ -60,16 +60,16 @@
 //	    KeyStore:  keystore,
 //	    CertStore: certStore,
 //	}
-//	basicCA, err := ca.New(params)
+//	trustedCA, err := ca.New(params)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //
-//	if err := basicCA.Init(); err != nil {
+//	if err := trustedCA.Init(); err != nil {
 //	    log.Fatal(err)
 //	}
 //
-//	issued, err := basicCA.IssueCertificate(&ca.CertificateRequest{
+//	issued, err := trustedCA.IssueCertificate(&ca.CertificateRequest{
 //	    Subject: ca.Subject{CommonName: "server.example.com"},
 //	})
 package ca
@@ -86,16 +86,16 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-// XKMSCA defines the interface for a Certificate Authority.
+// TrustedCA defines the interface for a Certificate Authority.
 //
-// XKMSCA embeds crypto.Signer to provide direct signing operations using the
+// TrustedCA embeds crypto.Signer to provide direct signing operations using the
 // CA's private key. This allows the CA to be used directly in contexts that
 // require a crypto.Signer, such as certificate signing or TLS configuration.
 //
 // All methods are thread-safe and can be called concurrently from multiple
 // goroutines. The implementation uses the underlying keystore's synchronization
 // mechanisms to ensure safe concurrent access.
-type XKMSCA interface {
+type TrustedCA interface {
 	crypto.Signer
 
 	// ========================================================================
@@ -261,8 +261,13 @@ type XKMSCA interface {
 	// Returns ErrCertificateRevoked if the certificate has been revoked.
 	// Returns ErrInvalidCertificateChain if chain validation fails.
 	//
+	// When an optional cross-signing crypto.Signer is provided, Verify
+	// augments the root and intermediate pools with the cross-signed
+	// chain so certificates anchored by a cross-signed root are accepted.
+	// Passing no xsigner preserves the standard single-root behaviour.
+	//
 	// Thread-safe: Yes
-	Verify(cert *x509.Certificate) ([][]*x509.Certificate, error)
+	Verify(cert *x509.Certificate, xsigner ...crypto.Signer) ([][]*x509.Certificate, error)
 
 	// ========================================================================
 	// Revocation Operations
@@ -341,11 +346,39 @@ type XKMSCA interface {
 	//   - Secure cipher suites and TLS versions enabled
 	//   - Optional client authentication based on configuration
 	//
+	// Note: TLSConfig defaults to client semantics (IsServer:false). For
+	// listener configurations, use ServerTLSConfig to make the intent
+	// explicit and avoid the SNI-not-set client-config WARN.
+	//
 	// Returns ErrTLSConfigFailed if the configuration cannot be created.
 	// Returns ErrCertificateNotFound if the certificate does not exist.
 	//
 	// Thread-safe: Yes
 	TLSConfig(attrs *types.KeyAttributes) (*tls.Config, error)
+
+	// ServerTLSConfig returns a TLS configuration suitable for server
+	// listeners. requireClientCert=true enables mutual TLS.
+	//
+	// Use this in preference to bare TLSConfig for tls.Listen / http.Server
+	// callers — it makes server intent explicit, builds a config with
+	// IsServer:true, and avoids the "ServerName not specified for client
+	// connection" WARN that bare TLSConfig emits at startup.
+	//
+	// Returns ErrTLSConfigFailed if the configuration cannot be created.
+	// Returns ErrCertificateNotFound if the certificate does not exist.
+	//
+	// Thread-safe: Yes
+	ServerTLSConfig(attrs *types.KeyAttributes, requireClientCert bool) (*tls.Config, error)
+
+	// ClientTLSConfig returns a TLS configuration suitable for clients
+	// dialing TLS endpoints. serverName is required for proper SNI and
+	// certificate verification.
+	//
+	// Returns ErrTLSConfigFailed if the configuration cannot be created.
+	// Returns ErrCertificateNotFound if the certificate does not exist.
+	//
+	// Thread-safe: Yes
+	ClientTLSConfig(attrs *types.KeyAttributes, serverName string) (*tls.Config, error)
 
 	// QuantumSafeTLSConfig creates a TLS configuration optimized for post-quantum
 	// cryptographic algorithms. This configuration enables hybrid key exchange
@@ -416,7 +449,7 @@ type XKMSCA interface {
 	// KeyStore returns the underlying keystore.
 	//
 	// This provides direct access to the keystore for advanced operations
-	// not exposed through the XKMSCA interface, such as key rotation,
+	// not exposed through the TrustedCA interface, such as key rotation,
 	// backend-specific features, or direct key management.
 	//
 	// The returned KeyStore should not be closed directly; use the CA's
@@ -458,11 +491,211 @@ type XKMSCA interface {
 	//
 	// Thread-safe: Yes
 	Identity() string
-}
 
-// BasicCA is an alias for XKMSCA for backward compatibility.
-// go-qrdb and other consumers reference BasicCA.
-type BasicCA = XKMSCA
+	// ========================================================================
+	// Signing Identity Accessors
+	// ========================================================================
+
+	// Signer returns a crypto.Signer backed by the CA's issuing identity key.
+	Signer() (crypto.Signer, error)
+
+	// PrivateKey retrieves a private key handle from the CA's keystore.
+	// Hardware-bound keys are returned as opaque crypto.PrivateKey values.
+	PrivateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error)
+
+	// PubKey returns the public key half of the key identified by attrs.
+	PubKey(attrs *types.KeyAttributes) (crypto.PublicKey, error)
+
+	// SignedBlob signs arbitrary data using the CA's signing key.
+	SignedBlob(data []byte) ([]byte, error)
+
+	// ========================================================================
+	// Certificate Retrieval & Import
+	// ========================================================================
+
+	// Issued reports whether a certificate for the given CN has been issued.
+	Issued(cn string) (bool, error)
+
+	// Exists reports whether a certificate for cn exists with the specified
+	// public-key algorithm.
+	Exists(cn string, algo x509.PublicKeyAlgorithm) (bool, error)
+
+	// Certificate retrieves a certificate using its KeyAttributes.
+	Certificate(attrs *types.KeyAttributes) (*x509.Certificate, error)
+
+	// CertificatePEM returns the certificate identified by cn in PEM form.
+	CertificatePEM(cn string) ([]byte, error)
+
+	// ImportCertificate stores an externally-issued certificate in the CA.
+	ImportCertificate(cert *x509.Certificate) error
+
+	// ImportCertificatePEM parses a PEM-encoded certificate and imports it.
+	ImportCertificatePEM(cn string, pemBytes []byte) error
+
+	// PEM is a KeyAttributes-keyed alias for CertificatePEM.
+	PEM(attrs *types.KeyAttributes) ([]byte, error)
+
+	// ========================================================================
+	// Object Store Helpers
+	// ========================================================================
+
+	// Blob returns raw blob data stored in the CA's object store.
+	Blob(key []byte) ([]byte, error)
+
+	// ImportBlob stores raw blob data in the CA's object store.
+	ImportBlob(key, data []byte) error
+
+	// ========================================================================
+	// Trust Chain Extensions
+	// ========================================================================
+
+	// TrustedRoot returns the root CA certificate.
+	TrustedRoot() (*x509.Certificate, error)
+
+	// TrustedIntermediate returns the intermediate CA certificate, if any.
+	TrustedIntermediate() (*x509.Certificate, error)
+
+	// ImportDistributionCRLs downloads and imports CRLs listed in the
+	// certificate's CRLDistributionPoints extension.
+	ImportDistributionCRLs(cert *x509.Certificate) error
+
+	// ImportIssuingCAs recursively imports issuing CA certificates from the
+	// certificate's AuthorityInformationAccess (AIA) extension.
+	ImportIssuingCAs(cert *x509.Certificate) error
+
+	// ParseBundle parses a PEM-encoded certificate bundle.
+	ParseBundle(bundle []byte) ([]*x509.Certificate, error)
+
+	// RootCertificate walks the chain from childCert to find the root CA.
+	RootCertificate(childCert *x509.Certificate) (*x509.Certificate, error)
+
+	// TrustedRootCertPoolWithXSigner is the cross-sign-aware variant of
+	// TrustedRootCertPool.
+	TrustedRootCertPoolWithXSigner(cert *x509.Certificate, xsigner crypto.Signer) (*x509.CertPool, error)
+
+	// TrustedIntermediateCertPoolWithXSigner is the cross-sign-aware variant
+	// of TrustedIntermediateCertPool.
+	TrustedIntermediateCertPoolWithXSigner(cert *x509.Certificate, xsigner crypto.Signer) (*x509.CertPool, error)
+
+	// ========================================================================
+	// Cross-Signing
+	// ========================================================================
+
+	// ImportXSignedCertificate persists a cross-signed certificate.
+	ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) error
+
+	// XSignedCertificate retrieves a cross-signed certificate.
+	XSignedCertificate(issuerCN string, attrs *types.KeyAttributes) (*x509.Certificate, error)
+
+	// XSignedRootCertificate walks the cross-signed chain to the root.
+	XSignedRootCertificate(issuerCN string, cert *x509.Certificate) (*x509.Certificate, error)
+
+	// XSignedIntermediateCertificates returns intermediates in the
+	// cross-signed chain.
+	XSignedIntermediateCertificates(issuerCN string, cert *x509.Certificate) ([]*x509.Certificate, error)
+
+	// CrossSignedPEM returns every cross-signed certificate found for the
+	// subject identified by attrs.CN.
+	CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error)
+
+	// ========================================================================
+	// Attestation (TPM)
+	// ========================================================================
+
+	// ImportAttestation stores a TPM attestation blob (quote/event log/PCRs)
+	// together with a CA-produced signature.
+	ImportAttestation(akAttrs *types.KeyAttributes, blobType string, data []byte) error
+
+	// ImportAttestationKeyCertificate stores a DER-encoded AK certificate.
+	ImportAttestationKeyCertificate(attrs *types.KeyAttributes, akDER []byte) error
+
+	// ImportAttestationEventLog stores a TPM event log blob.
+	ImportAttestationEventLog(akAttrs *types.KeyAttributes, eventLog []byte) error
+
+	// ImportAttestationPCRs stores a TPM PCR snapshot blob.
+	ImportAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error
+
+	// ImportAttestationQuote stores a TPM quote blob.
+	ImportAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error
+
+	// ImportLocalAttestation imports a complete local attestation.
+	ImportLocalAttestation(akAttrs *types.KeyAttributes, quote *tpm2.Quote) error
+
+	// VerifyAttestationQuote checks a previously-stored quote blob.
+	VerifyAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error
+
+	// VerifyAttestationEventLog checks a previously-stored event log blob.
+	VerifyAttestationEventLog(akAttrs *types.KeyAttributes, eventLog []byte) error
+
+	// VerifyAttestationPCRs checks a previously-stored PCR snapshot blob.
+	VerifyAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error
+
+	// ========================================================================
+	// TCG Enrollment Verification
+	// ========================================================================
+
+	// VerifyTCG_CSR_IDevIDBytes verifies a packed TCG-CSR-IDEVID and returns
+	// the MakeCredential challenge components for ActivateCredential.
+	VerifyTCG_CSR_IDevIDBytes(packedCSR []byte, sigAlg x509.SignatureAlgorithm) (blob []byte, secret []byte, plain []byte, err error)
+
+	// ========================================================================
+	// TLS Extensions
+	// ========================================================================
+
+	// TLSBundle returns a PEM bundle (chain + private key).
+	TLSBundle(attrs *types.KeyAttributes) ([]byte, error)
+
+	// TLSBundleWithCrossSigner prepends cross-signed certificates.
+	TLSBundleWithCrossSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) ([]byte, error)
+
+	// TLSConfigWithXSigner augments RootCAs with cross-signed certificates.
+	TLSConfigWithXSigner(attrs *types.KeyAttributes, xsigner crypto.Signer) (*tls.Config, error)
+
+	// ========================================================================
+	// Configuration & Metadata
+	// ========================================================================
+
+	// CAKeyAttributes returns the KeyAttributes for the CA's signing key.
+	CAKeyAttributes(storeType types.StoreType) (*types.KeyAttributes, error)
+
+	// CASigner returns a crypto.Signer filtered by storeType/algorithm.
+	CASigner(storeType types.StoreType, algo x509.PublicKeyAlgorithm) (crypto.Signer, error)
+
+	// CAConfig returns the flat CAConfig supplied at construction time.
+	CAConfig() CAConfig
+
+	// DefaultKeyAlgorithm returns the CA's default public-key algorithm.
+	DefaultKeyAlgorithm() x509.PublicKeyAlgorithm
+
+	// DefaultSignatureAlgorithm returns the CA's default signature algorithm.
+	DefaultSignatureAlgorithm() x509.SignatureAlgorithm
+
+	// DefaultValidityPeriod returns the default validity in days.
+	DefaultValidityPeriod() int
+
+	// Hash returns the CA's signing hash function.
+	Hash() crypto.Hash
+
+	// IssuingIdentity returns a value copy of the Identity this CA uses
+	// to sign certificates (the intermediate identity when configured,
+	// otherwise the root identity). Returns a zero-value Identity when
+	// no identity has been configured so callers can safely read fields
+	// such as Keys without a nil check.
+	IssuingIdentity() Identity
+
+	// IsAutoImportingIssuerCAs reports whether AIA auto-import is enabled.
+	IsAutoImportingIssuerCAs() bool
+
+	// ========================================================================
+	// Extended Revocation & Filtered Bundle
+	// ========================================================================
+
+	// CABundleFiltered returns a CA bundle filtered by store type and algorithm.
+	CABundleFiltered(storeType types.StoreType, keyAlgorithm x509.PublicKeyAlgorithm) ([]byte, error)
+
+	// RevokeCert revokes a certificate and optionally deletes its signing key.
+	RevokeCert(cert *x509.Certificate, opts RevokeOptions) error
+}
 
 // ProfileProvider defines the interface for certificate profile providers.
 //
@@ -568,11 +801,11 @@ type ProfileRegistry interface {
 	List() []string
 }
 
-// TCGCA extends XKMSCA with TCG Trusted Computing certificate operations
+// TCGCA extends TrustedCA with TCG Trusted Computing certificate operations
 // for TPM device identity (IDevID), attestation key (AK), and endorsement
 // key (EK) per TCG TPM 2.0 Keys for Device Identity and Attestation.
 //
-// TCGCA embeds XKMSCA and adds methods for issuing TCG-compliant certificates
+// TCGCA embeds TrustedCA and adds methods for issuing TCG-compliant certificates
 // and performing device enrollment using the TPM 2.0 credential activation
 // protocol (MakeCredential/ActivateCredential).
 //
@@ -583,11 +816,11 @@ type ProfileRegistry interface {
 // # Usage
 //
 //	// Create a CA that supports TCG operations
-//	basicCA, _ := ca.New(params)
-//	basicCA.Init()
+//	trustedCA, _ := ca.New(params)
+//	trustedCA.Init()
 //
 //	// Cast to TCGCA for TCG operations
-//	tcgCA := basicCA.(ca.TCGCA)
+//	tcgCA := trustedCA.(ca.TCGCA)
 //	tcgCA.SetTPM(tpmInstance)
 //
 //	// Enroll a device
@@ -595,7 +828,7 @@ type ProfileRegistry interface {
 //	    Subject: ca.Subject{CommonName: "device-001"},
 //	})
 type TCGCA interface {
-	XKMSCA
+	TrustedCA
 
 	// IssueEKCertificate issues an Endorsement Key certificate per TCG EK
 	// Credential Profile. EK certs use indefinite validity (99991231235959Z)

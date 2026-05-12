@@ -24,12 +24,8 @@ import (
 
 // fakeSOProvider is a minimal PKCS11SessionProvider + PKCS11SOSessionProvider
 // that records which session-acquisition path was taken. It does not invoke
-// any real PKCS#11 library — the *pkcs11.Ctx is nil because the tests only
+// any real PKCS#11 library -- the *pkcs11.Ctx is nil because the tests only
 // exercise the routing and post-destroy verification logic that wraps it.
-//
-// The tests inject behavior by setting destroyFn (called for DestroyObject)
-// and stillPresent (controls whether the post-delete find reports the object
-// as surviving).
 type fakeSOProvider struct {
 	withSessionCalls   int
 	withSOSessionCalls int
@@ -53,25 +49,40 @@ func (f *fakeSOProvider) WithSOSession(soPin, userPin string, fn func(session pk
 func (f *fakeSOProvider) Ctx() *pkcs11.Ctx { return nil }
 func (f *fakeSOProvider) SlotID() uint     { return 0 }
 
-// TestPKCS11CertStorage_DeleteCert_UsesSOSession_WhenRequireSO verifies the
-// routing logic: when requireSO=true and the provider supports
-// WithSOSession, the delete runs under the SO path. Otherwise it uses
-// WithSession.
-//
-// We deliberately pass an invalid session operation: since Ctx() is nil,
-// the delete function will panic/error on the first PKCS#11 call. We
-// recover via a defer because all we care about is which entry point was
-// called.
-func TestPKCS11CertStorage_DeleteCert_UsesSOSession_WhenRequireSO(t *testing.T) {
+// fakeUserOnlyProvider implements PKCS11SessionProvider but NOT
+// PKCS11SOSessionProvider. Used to verify that requireSO=true against a
+// provider that cannot elevate returns ErrSOSessionRequired rather than
+// silently falling through to a user session that the token would reject.
+type fakeUserOnlyProvider struct {
+	withSessionCalls int
+}
+
+func (f *fakeUserOnlyProvider) WithSession(fn func(session pkcs11.SessionHandle) error) error {
+	f.withSessionCalls++
+	return fn(pkcs11.SessionHandle(1))
+}
+
+func (f *fakeUserOnlyProvider) Ctx() *pkcs11.Ctx { return nil }
+func (f *fakeUserOnlyProvider) SlotID() uint     { return 0 }
+
+// TestPKCS11CertStorage_RunWrite_Routing verifies the write-path routing
+// logic now enforced by runWrite. When requireSO=true and a valid SO PIN is
+// supplied, operations go through WithSOSession. When requireSO=false, they
+// go through WithSession. When requireSO=true but soPin is empty, the call
+// MUST return ErrSOSessionRequired instead of silently falling through to a
+// CKU_USER session that the token (e.g. YubiKey PIV) would reject with
+// CKR_USER_TYPE_INVALID.
+func TestPKCS11CertStorage_RunWrite_Routing(t *testing.T) {
 	tests := []struct {
-		name           string
-		requireSO      bool
-		soPin          string
-		wantSOCalls    int
-		wantUserCalls  int
+		name          string
+		requireSO     bool
+		soPin         string
+		wantErr       error
+		wantSOCalls   int
+		wantUserCalls int
 	}{
 		{
-			name:          "requireSO true uses WithSOSession",
+			name:          "requireSO true with SO pin uses WithSOSession",
 			requireSO:     true,
 			soPin:         "010203",
 			wantSOCalls:   1,
@@ -85,11 +96,12 @@ func TestPKCS11CertStorage_DeleteCert_UsesSOSession_WhenRequireSO(t *testing.T) 
 			wantUserCalls: 1,
 		},
 		{
-			name:          "requireSO true but empty soPin falls back to WithSession",
+			name:          "requireSO true but empty soPin returns ErrSOSessionRequired",
 			requireSO:     true,
 			soPin:         "",
+			wantErr:       ErrSOSessionRequired,
 			wantSOCalls:   0,
-			wantUserCalls: 1,
+			wantUserCalls: 0,
 		},
 	}
 
@@ -103,11 +115,17 @@ func TestPKCS11CertStorage_DeleteCert_UsesSOSession_WhenRequireSO(t *testing.T) 
 				requireSO: tc.requireSO,
 			}
 
-			// runDelete is the routing layer under test. We pass a no-op
-			// fn so we don't depend on a real pkcs11.Ctx.
-			_ = p.runDelete(func(session pkcs11.SessionHandle) error {
+			err := p.runWrite(func(session pkcs11.SessionHandle) error {
 				return nil
 			})
+
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("runWrite err = %v, want %v", err, tc.wantErr)
+				}
+			} else if err != nil {
+				t.Fatalf("runWrite err = %v, want nil", err)
+			}
 
 			if prov.withSOSessionCalls != tc.wantSOCalls {
 				t.Errorf("WithSOSession calls = %d, want %d", prov.withSOSessionCalls, tc.wantSOCalls)
@@ -124,6 +142,60 @@ func TestPKCS11CertStorage_DeleteCert_UsesSOSession_WhenRequireSO(t *testing.T) 
 				}
 			}
 		})
+	}
+}
+
+// TestPKCS11CertStorage_RunWrite_RequireSOWithoutSOProvider verifies that
+// requireSO=true against a provider that does not implement
+// PKCS11SOSessionProvider returns ErrSOSessionRequired instead of falling
+// through to the user session.
+func TestPKCS11CertStorage_RunWrite_RequireSOWithoutSOProvider(t *testing.T) {
+	prov := &fakeUserOnlyProvider{}
+	p := &PKCS11CertStorage{
+		pool:      prov,
+		soPin:     "010203",
+		userPin:   "123456",
+		requireSO: true,
+	}
+
+	err := p.runWrite(func(session pkcs11.SessionHandle) error {
+		return nil
+	})
+
+	if !errors.Is(err, ErrSOSessionRequired) {
+		t.Fatalf("runWrite err = %v, want ErrSOSessionRequired", err)
+	}
+	if prov.withSessionCalls != 0 {
+		t.Errorf("WithSession must not be called when SO is required but unavailable; got %d", prov.withSessionCalls)
+	}
+}
+
+// TestPKCS11CertStorage_SaveCert_ReturnsErrSOSessionRequired verifies the
+// typed error surfaces from the public SaveCert API when the storage is
+// configured with requireSO=true but no SO PIN was supplied. This prevents
+// the YubiKey PIV failure mode where C_DestroyObject under CKU_USER returns
+// CKR_USER_TYPE_INVALID.
+func TestPKCS11CertStorage_SaveCert_ReturnsErrSOSessionRequired(t *testing.T) {
+	prov := &fakeSOProvider{}
+	p := &PKCS11CertStorage{
+		pool:      prov,
+		soPin:     "",
+		userPin:   "123456",
+		requireSO: true,
+	}
+
+	cert, err := generateTestCertificate("test")
+	if err != nil {
+		t.Fatalf("generateTestCertificate: %v", err)
+	}
+
+	err = p.SaveCert("slot-9a", cert)
+	if !errors.Is(err, ErrSOSessionRequired) {
+		t.Fatalf("SaveCert err = %v, want ErrSOSessionRequired", err)
+	}
+	if prov.withSessionCalls != 0 || prov.withSOSessionCalls != 0 {
+		t.Errorf("no session should have been opened; withSession=%d withSOSession=%d",
+			prov.withSessionCalls, prov.withSOSessionCalls)
 	}
 }
 

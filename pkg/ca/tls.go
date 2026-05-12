@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package ca provides TLS helper functions for configuring secure TLS connections
-// using certificates and keys managed by the XKMSCA certificate authority.
+// using certificates and keys managed by the TrustedCA certificate authority.
 //
 // # TLS Configuration
 //

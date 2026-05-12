@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package ca provides OpenSSL configuration utilities for the XKMSCA package.
+// Package ca provides OpenSSL configuration utilities for the TrustedCA package.
 //
 // This file provides Subject-specific helpers that build on go-qrdb's OpenSSL
 // configuration parser. The raw parsing of openssl.cnf files is delegated to

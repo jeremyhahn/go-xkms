@@ -233,7 +233,7 @@ type mockCAInstance struct {
 	certErr   error
 }
 
-func (m *mockCAInstance) CABundle() ([]byte, error)                  { return m.bundlePEM, m.bundleErr }
+func (m *mockCAInstance) CABundle() ([]byte, error)                 { return m.bundlePEM, m.bundleErr }
 func (m *mockCAInstance) CACertificate() (*x509.Certificate, error) { return m.cert, m.certErr }
 
 func TestNewCAInstanceBundler_Success(t *testing.T) {

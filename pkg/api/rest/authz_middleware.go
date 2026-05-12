@@ -20,7 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 )
 
 var (
@@ -34,16 +34,16 @@ var (
 )
 
 // AuthzMiddleware provides authorization checking for HTTP handlers.
-// It delegates authorization decisions to an authz.Authorizer implementation
+// It delegates authorization decisions to an keyauthz.Authorizer implementation
 // and records audit events through an audit.Logger.
 type AuthzMiddleware struct {
-	authorizer  authz.Authorizer
+	authorizer  keyauthz.Authorizer
 	auditLogger audit.Logger
 }
 
 // NewAuthzMiddleware creates a new authorization middleware with the given
 // authorizer and audit logger.
-func NewAuthzMiddleware(authorizer authz.Authorizer, auditLogger audit.Logger) *AuthzMiddleware {
+func NewAuthzMiddleware(authorizer keyauthz.Authorizer, auditLogger audit.Logger) *AuthzMiddleware {
 	return &AuthzMiddleware{
 		authorizer:  authorizer,
 		auditLogger: auditLogger,
@@ -67,7 +67,7 @@ func (m *AuthzMiddleware) Wrap(resource, action string, next http.HandlerFunc) h
 		}
 
 		// Build authorization request
-		authzReq := &authz.AuthorizationRequest{
+		authzReq := &keyauthz.AuthorizationRequest{
 			Subject:  subject,
 			Role:     role,
 			Resource: resource,
@@ -124,32 +124,9 @@ func (m *AuthzMiddleware) Wrap(resource, action string, next http.HandlerFunc) h
 	}
 }
 
-// extractRole extracts the first role from an identity's claims.
-// It handles roles stored as []string, []interface{}, or string.
+// extractRole returns the first role on an identity, or "" if none. It is a
+// thin wrapper over auth.FirstRole kept package-local for audit-event symmetry
+// with the other transports (REST/gRPC).
 func extractRole(identity *auth.Identity) string {
-	if identity == nil || identity.Claims == nil {
-		return ""
-	}
-
-	roles, ok := identity.Claims["roles"]
-	if !ok {
-		return ""
-	}
-
-	switch r := roles.(type) {
-	case []string:
-		if len(r) > 0 {
-			return r[0]
-		}
-	case []interface{}:
-		if len(r) > 0 {
-			if s, ok := r[0].(string); ok {
-				return s
-			}
-		}
-	case string:
-		return r
-	}
-
-	return ""
+	return auth.FirstRole(identity)
 }

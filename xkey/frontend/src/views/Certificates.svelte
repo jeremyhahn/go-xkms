@@ -87,7 +87,9 @@
 <div class="certificates-view">
   <GradientHeader title="Certificates" subtitle="X.509 certificate management" />
   <ViewToolbar>
-    <span class="cert-count-badge">{certificates.length}</span>
+    {#if certificates.length > 0}
+      <span class="cert-count-badge">{certificates.length}</span>
+    {/if}
     <div class="toolbar-spacer" />
     <Button variant="outline" size="sm" icon={mdiRefresh} on:click={loadData}>Refresh</Button>
   </ViewToolbar>

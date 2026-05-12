@@ -23,9 +23,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 var (
@@ -41,6 +43,17 @@ var subcommands = map[string]func([]string){
 }
 
 func main() {
+	// Wire the process signal handler so SIGINT/SIGTERM purge all
+	// mlocked memory before exit, and arrange for a graceful Purge on
+	// any orderly shutdown path. Mirrors the qrdbd pattern exactly.
+	// See pkg/secure/interrupt.go in go-qrdb.
+	secure.CatchInterrupt()
+	defer func() {
+		if err := secure.Purge(); err != nil {
+			fmt.Fprintf(os.Stderr, "xkmsd: secure.Purge: %v\n", err)
+		}
+	}()
+
 	// Check for subcommands before parsing global flags.
 	if len(os.Args) > 1 {
 		if handler, ok := subcommands[os.Args[1]]; ok {
@@ -148,10 +161,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Start the optional ACME server. When acme.enabled is false this is a
+	// no-op and returns (nil, nil).
+	acme, err := startACMEServer(srv, cfg, logger)
+	if err != nil {
+		logger.Error("Failed to start ACME server", slog.Any("error", err))
+		if shutdownErr := srv.Shutdown(); shutdownErr != nil {
+			logger.Error("Error during shutdown after ACME failure", slog.Any("error", shutdownErr))
+		}
+		os.Exit(1)
+	}
+
 	// Wait for shutdown signal
 	<-shutdownCtx.Done()
 
 	logger.Info("Shutting down server...")
+
+	// Gracefully shutdown the ACME server first so it stops accepting new
+	// requests before the primary backends are torn down.
+	acmeShutdownCtx, acmeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := acme.Shutdown(acmeShutdownCtx); err != nil {
+		logger.Error("Error during ACME shutdown", slog.Any("error", err))
+	}
+	acmeCancel()
 
 	// Gracefully shutdown
 	if err := srv.Shutdown(); err != nil {

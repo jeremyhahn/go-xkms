@@ -36,11 +36,11 @@ func (f *fakeServerStream) Context() context.Context {
 	return f.ctx
 }
 
-func (f *fakeServerStream) SendMsg(interface{}) error  { return nil }
-func (f *fakeServerStream) RecvMsg(interface{}) error   { return nil }
-func (f *fakeServerStream) SetHeader(grpcmetadata.MD) error { return nil }
+func (f *fakeServerStream) SendMsg(interface{}) error        { return nil }
+func (f *fakeServerStream) RecvMsg(interface{}) error        { return nil }
+func (f *fakeServerStream) SetHeader(grpcmetadata.MD) error  { return nil }
 func (f *fakeServerStream) SendHeader(grpcmetadata.MD) error { return nil }
-func (f *fakeServerStream) SetTrailer(grpcmetadata.MD)      {}
+func (f *fakeServerStream) SetTrailer(grpcmetadata.MD)       {}
 
 // passthroughStreamHandler is a stream handler that returns nil.
 func passthroughStreamHandler(_ interface{}, _ grpc.ServerStream) error {
@@ -103,7 +103,7 @@ func TestTenantStreamInterceptor_SORolePassesThrough(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "so-admin",
 			TenantID: "any-tenant",
-			Claims:   map[string]interface{}{"roles": []string{"so"}},
+			Roles:    []string{"so"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 		stream := &fakeServerStream{ctx: ctx}

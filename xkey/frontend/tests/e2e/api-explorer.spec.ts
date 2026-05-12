@@ -121,4 +121,29 @@ test.describe('API Explorer', () => {
     const historyList = page.locator('[data-testid="history-list"]');
     await expect(historyList).toContainText('No requests yet');
   });
+
+  test.describe('Token picker dropdown dismissal', () => {
+    test('closes on Escape key', async ({ page }) => {
+      await page.locator('[data-testid="token-picker-button"]').click();
+      await expect(page.locator('[data-testid="token-picker-dropdown"]')).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-testid="token-picker-dropdown"]')).toBeHidden();
+    });
+
+    test('closes when clicking outside the wrapper', async ({ page }) => {
+      await page.locator('[data-testid="token-picker-button"]').click();
+      await expect(page.locator('[data-testid="token-picker-dropdown"]')).toBeVisible();
+      await page.locator('body').click({ position: { x: 10, y: 10 } });
+      await expect(page.locator('[data-testid="token-picker-dropdown"]')).toBeHidden();
+    });
+
+    test('toggle button still opens and closes the dropdown', async ({ page }) => {
+      const button = page.locator('[data-testid="token-picker-button"]');
+      const dropdown = page.locator('[data-testid="token-picker-dropdown"]');
+      await button.click();
+      await expect(dropdown).toBeVisible();
+      await button.click();
+      await expect(dropdown).toBeHidden();
+    });
+  });
 });

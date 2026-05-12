@@ -59,17 +59,17 @@ type mockPINManager struct {
 	resetErr      error
 }
 
-func (m *mockPINManager) Strategy() pin.StrategyID { return "mock" }
-func (m *mockPINManager) IsInitialized() bool      { return m.initialized }
-func (m *mockPINManager) SOPINSet() bool            { return m.soPINSet }
-func (m *mockPINManager) UserPINSet() bool          { return m.userPINSet }
-func (m *mockPINManager) SetSOPIN(cur, new string) error   { return m.setSOPINErr }
-func (m *mockPINManager) SetUserPIN(so, new string) error  { return m.setUserPINErr }
-func (m *mockPINManager) ChangeSOPIN(cur, new string) error { return m.changeSOErr }
+func (m *mockPINManager) Strategy() pin.StrategyID            { return "mock" }
+func (m *mockPINManager) IsInitialized() bool                 { return m.initialized }
+func (m *mockPINManager) SOPINSet() bool                      { return m.soPINSet }
+func (m *mockPINManager) UserPINSet() bool                    { return m.userPINSet }
+func (m *mockPINManager) SetSOPIN(cur, new string) error      { return m.setSOPINErr }
+func (m *mockPINManager) SetUserPIN(so, new string) error     { return m.setUserPINErr }
+func (m *mockPINManager) ChangeSOPIN(cur, new string) error   { return m.changeSOErr }
 func (m *mockPINManager) ChangeUserPIN(cur, new string) error { return m.changeUserErr }
-func (m *mockPINManager) VerifySOPIN(p string) error       { return m.verifySOErr }
-func (m *mockPINManager) VerifyUserPIN(p string) error     { return m.verifyUserErr }
-func (m *mockPINManager) ResetLockout(so string) error     { return m.resetErr }
+func (m *mockPINManager) VerifySOPIN(p string) error          { return m.verifySOErr }
+func (m *mockPINManager) VerifyUserPIN(p string) error        { return m.verifyUserErr }
+func (m *mockPINManager) ResetLockout(so string) error        { return m.resetErr }
 func (m *mockPINManager) GetLockoutStatus() *pin.LockoutStatus {
 	return &pin.LockoutStatus{
 		FailedAttempts:  0,
@@ -733,7 +733,7 @@ func TestCAHandlers(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/v1/ca/bundle"},
 		{http.MethodGet, "/api/v1/ca/certificate"},
-		
+
 		{http.MethodGet, "/api/v1/ca/revoked/123"},
 	}
 

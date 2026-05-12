@@ -24,7 +24,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-
 )
 
 // errorKeystoreServer returns errors for all calls, exercising error branches.
@@ -235,7 +234,6 @@ func (s *errorKeystoreServer) BarrierRecoverWithKeys(_ context.Context, _ *pb.Ba
 func (s *errorKeystoreServer) BarrierDeleteRecoveryKeys(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "barrier delete recovery failed")
 }
-
 
 func (s *errorKeystoreServer) BarrierGenerateRootToken(_ context.Context, _ *pb.BarrierGenerateRootTokenRequest) (*pb.BarrierRootTokenResponse, error) {
 	return nil, status.Error(codes.Internal, "barrier gen root token failed")
@@ -448,7 +446,6 @@ func (s *errorKeystoreServer) PasswordStoreStatus(_ context.Context, _ *pb.Passw
 func (s *errorKeystoreServer) PasswordGenerate(_ context.Context, _ *pb.PasswordGenerateRequest) (*pb.PasswordGenerateResponse, error) {
 	return nil, status.Error(codes.Internal, "password generate failed")
 }
-
 
 func (s *errorKeystoreServer) ListKeyVersions(_ context.Context, _ *pb.ListKeyVersionsRequest) (*pb.ListKeyVersionsResponse, error) {
 	return nil, status.Error(codes.Internal, "list key versions failed")
@@ -864,9 +861,6 @@ func TestCertificateExists_ServerError(t *testing.T) {
 	assert.False(t, exists)
 }
 
-
-
-
 func TestListCertificates_ServerError(t *testing.T) {
 	tr, cleanup := newErrorBufconnTransport(t)
 	defer cleanup()
@@ -1050,7 +1044,6 @@ func TestBarrierDeleteRecoveryKeys_ServerError(t *testing.T) {
 	err := tr.BarrierDeleteRecoveryKeys(context.Background())
 	require.Error(t, err)
 }
-
 
 func TestBarrierGenerateRootToken_ServerError(t *testing.T) {
 	tr, cleanup := newErrorBufconnTransport(t)
@@ -1476,7 +1469,6 @@ func TestPasswordGenerate_ServerError(t *testing.T) {
 	require.Error(t, err)
 }
 
-
 // --- Close error path ---
 
 func TestClose_NilConnPath(t *testing.T) {
@@ -1510,4 +1502,3 @@ func TestConfig_ReturnsConfig(t *testing.T) {
 
 	assert.NotNil(t, tr.Config())
 }
-

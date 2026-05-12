@@ -48,6 +48,7 @@ type Config struct {
 	InitBootstrap InitBootstrapConfig       `yaml:"init_bootstrap"`
 	Credentials   CredentialsConfig         `yaml:"credentials"`
 	CA            *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
+	ACME          *ACMEConfig               `yaml:"acme,omitempty"`
 }
 
 // BarrierConfig configures the barrier (seal/unseal) subsystem.
@@ -939,6 +940,11 @@ func (c *Config) Validate() error {
 
 	if !hasEnabledBackend {
 		return fmt.Errorf("at least one backend must be enabled")
+	}
+
+	// Validate ACME configuration (no-op unless acme.enabled is true).
+	if err := c.ACME.Validate(); err != nil {
+		return err
 	}
 
 	return nil

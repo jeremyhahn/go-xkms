@@ -85,4 +85,10 @@ var (
 
 	// ErrSessionPoolLogin is returned when the pool fails to log in.
 	ErrSessionPoolLogin = errors.New("pkcs11: session pool login failed")
+
+	// ErrSOPINRequired is returned when an operation requires the Security
+	// Officer PIN (e.g., key generation or object deletion on YubiKey PIV)
+	// but no SO PIN was supplied. This surfaces the underlying PKCS#11
+	// CKR_USER_TYPE_INVALID error with actionable context for the caller.
+	ErrSOPINRequired = errors.New("pkcs11: SO PIN required for this operation on YubiKey PIV (provide management key)")
 )

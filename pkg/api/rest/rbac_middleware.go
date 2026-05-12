@@ -19,13 +19,13 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/rbac"
+	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
 )
 
 // RBACConfig holds configuration for RBAC middleware.
 type RBACConfig struct {
 	// Adapter is the RBAC adapter to use for permission checks.
-	Adapter rbac.RBACAdapter
+	Adapter keyrbac.RBACAdapter
 
 	// Logger is the logging adapter.
 	Logger *slog.Logger
@@ -38,7 +38,7 @@ type RBACConfig struct {
 // It checks if the authenticated user has the required permission for the
 // requested resource and action.
 type RBACMiddleware struct {
-	adapter   rbac.RBACAdapter
+	adapter   keyrbac.RBACAdapter
 	logger    *slog.Logger
 	skipPaths map[string]bool
 }
@@ -59,7 +59,7 @@ func NewRBACMiddleware(cfg *RBACConfig) *RBACMiddleware {
 // RequirePermission returns middleware that requires a specific permission.
 // This is the most flexible approach - explicitly declare the required permission.
 func (m *RBACMiddleware) RequirePermission(resource, action string) func(http.Handler) http.Handler {
-	permission := rbac.NewPermission(resource, action)
+	permission := keyrbac.NewPermission(resource, action)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -239,29 +239,29 @@ func GetUserRole(ctx context.Context) string {
 
 // Common permission shortcuts for key operations
 var (
-	PermissionKeysCreate  = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionCreate)
-	PermissionKeysRead    = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionRead)
-	PermissionKeysList    = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionList)
-	PermissionKeysDelete  = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionDelete)
-	PermissionKeysSign    = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionSign)
-	PermissionKeysVerify  = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionVerify)
-	PermissionKeysEncrypt = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionEncrypt)
-	PermissionKeysDecrypt = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionDecrypt)
-	PermissionKeysRotate  = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionRotate)
-	PermissionKeysImport  = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionImport)
-	PermissionKeysExport  = rbac.NewPermission(rbac.ResourceKeys, rbac.ActionExport)
+	PermissionKeysCreate  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionCreate)
+	PermissionKeysRead    = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionRead)
+	PermissionKeysList    = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionList)
+	PermissionKeysDelete  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionDelete)
+	PermissionKeysSign    = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionSign)
+	PermissionKeysVerify  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionVerify)
+	PermissionKeysEncrypt = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionEncrypt)
+	PermissionKeysDecrypt = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionDecrypt)
+	PermissionKeysRotate  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionRotate)
+	PermissionKeysImport  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionImport)
+	PermissionKeysExport  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionExport)
 
-	PermissionCertsCreate = rbac.NewPermission(rbac.ResourceCertificates, rbac.ActionCreate)
-	PermissionCertsRead   = rbac.NewPermission(rbac.ResourceCertificates, rbac.ActionRead)
-	PermissionCertsList   = rbac.NewPermission(rbac.ResourceCertificates, rbac.ActionList)
-	PermissionCertsDelete = rbac.NewPermission(rbac.ResourceCertificates, rbac.ActionDelete)
+	PermissionCertsCreate = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionCreate)
+	PermissionCertsRead   = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionRead)
+	PermissionCertsList   = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionList)
+	PermissionCertsDelete = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionDelete)
 
-	PermissionUsersCreate = rbac.NewPermission(rbac.ResourceUsers, rbac.ActionCreate)
-	PermissionUsersRead   = rbac.NewPermission(rbac.ResourceUsers, rbac.ActionRead)
-	PermissionUsersList   = rbac.NewPermission(rbac.ResourceUsers, rbac.ActionList)
-	PermissionUsersUpdate = rbac.NewPermission(rbac.ResourceUsers, rbac.ActionUpdate)
-	PermissionUsersDelete = rbac.NewPermission(rbac.ResourceUsers, rbac.ActionDelete)
+	PermissionUsersCreate = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionCreate)
+	PermissionUsersRead   = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionRead)
+	PermissionUsersList   = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionList)
+	PermissionUsersUpdate = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionUpdate)
+	PermissionUsersDelete = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionDelete)
 
-	PermissionBackendsList = rbac.NewPermission(rbac.ResourceBackends, rbac.ActionList)
-	PermissionBackendsRead = rbac.NewPermission(rbac.ResourceBackends, rbac.ActionRead)
+	PermissionBackendsList = keyrbac.NewPermission(keyrbac.ResourceBackends, keyrbac.ActionList)
+	PermissionBackendsRead = keyrbac.NewPermission(keyrbac.ResourceBackends, keyrbac.ActionRead)
 )

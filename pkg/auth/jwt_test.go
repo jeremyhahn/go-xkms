@@ -438,8 +438,8 @@ func TestJWTAuthenticator_AuthenticateHTTP(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, identity)
 			assert.Equal(t, tt.wantSubject, identity.Subject)
-			assert.Equal(t, "jwt", identity.Attributes["auth_method"])
-			assert.NotEmpty(t, identity.Attributes["remote_addr"])
+			assert.Equal(t, "jwt", identity.Metadata["auth_method"])
+			assert.NotEmpty(t, identity.Metadata["remote_addr"])
 		})
 	}
 }
@@ -570,7 +570,7 @@ func TestJWTAuthenticator_AuthenticateGRPC(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, identity)
 			assert.Equal(t, tt.wantSubject, identity.Subject)
-			assert.Equal(t, "jwt", identity.Attributes["auth_method"])
+			assert.Equal(t, "jwt", identity.Metadata["auth_method"])
 		})
 	}
 }
@@ -586,7 +586,7 @@ func TestJWTAuthenticator_Name(t *testing.T) {
 	assert.Equal(t, "jwt", auth.Name())
 }
 
-func TestJWTAuthenticator_IdentityAttributes(t *testing.T) {
+func TestJWTAuthenticator_IdentityFields(t *testing.T) {
 	privateKey, publicKey := generateTestKeyPair(t)
 
 	auth, err := NewJWTAuthenticator(&JWTConfig{
@@ -612,19 +612,14 @@ func TestJWTAuthenticator_IdentityAttributes(t *testing.T) {
 	// Check subject
 	assert.Equal(t, "user123", identity.Subject)
 
-	// Check role is converted to roles array
-	roles, ok := identity.Claims["roles"].([]string)
-	require.True(t, ok)
-	assert.Equal(t, []string{"admin"}, roles)
+	// Check role is mapped onto Identity.Roles
+	assert.Equal(t, []string{"admin"}, identity.Roles)
 
-	// Check username attribute
-	assert.Equal(t, "johndoe", identity.Attributes["username"])
+	// Check username metadata
+	assert.Equal(t, "johndoe", identity.Metadata["username"])
 
-	// Check display name attribute
-	assert.Equal(t, "John Doe", identity.Attributes["display_name"])
-
-	// Check custom claim is preserved
-	assert.Equal(t, "value", identity.Claims["custom"])
+	// Check display name metadata
+	assert.Equal(t, "John Doe", identity.Metadata["display_name"])
 }
 
 func TestJWTAuthenticator_WrongSigningKey(t *testing.T) {
@@ -708,7 +703,7 @@ func TestJWTAuthenticator_TenantID(t *testing.T) {
 	require.NotNil(t, identity)
 	assert.Equal(t, "user123", identity.Subject)
 	assert.Equal(t, "tenant-xyz", identity.TenantID)
-	assert.False(t, identity.IsCrossTenant())
+	assert.False(t, IsCrossTenant(identity))
 }
 
 func TestJWTAuthenticator_NoTenantID(t *testing.T) {
@@ -732,5 +727,5 @@ func TestJWTAuthenticator_NoTenantID(t *testing.T) {
 	require.NotNil(t, identity)
 	assert.Equal(t, "user123", identity.Subject)
 	assert.Empty(t, identity.TenantID)
-	assert.True(t, identity.IsCrossTenant())
+	assert.True(t, IsCrossTenant(identity))
 }

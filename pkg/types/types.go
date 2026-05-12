@@ -32,6 +32,8 @@ import (
 	"strings"
 
 	"github.com/google/go-tpm/tpm2"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // =============================================================================
@@ -741,52 +743,92 @@ type Password interface {
 	Clear()
 }
 
-// ClearPassword is a simple in-memory implementation of the Password interface
-// that stores the password in clear text. This implementation should only be
-// used in development or testing environments, or where the security model
-// explicitly accepts storing passwords in memory.
+// ClearPassword implements Password by holding the UserAuth bytes inside
+// a memguard-backed *secure.Buffer. The plaintext never sits on the
+// ordinary Go heap; callers receive defensive copies from Bytes/String
+// and MUST invoke Clear when the password is no longer needed.
+//
+// A zero-length password (NewPassword(nil) or "") keeps buf == nil —
+// TPM2 treats an empty UserAuth as "no authentication", so we avoid
+// allocating an enclave for that case.
 type ClearPassword struct {
-	password []byte
+	buf *secure.Buffer
 }
 
-// NewPassword creates a new clear text password stored in memory.
-// The password is copied to prevent external modification.
+// NewPassword creates a new password for TPM key authentication.
+// The input bytes are copied into a memguard enclave; the caller's
+// slice is NOT wiped by this constructor.
 //
 // Use this for key authentication values that will be passed to TPM
-// operations as UserAuth. For sealed arbitrary data, use NewSealData instead.
+// operations as UserAuth. For sealed arbitrary data, use NewSealData.
+// An empty or nil input returns a ClearPassword with no enclave backing
+// (empty UserAuth).
 func NewPassword(password []byte) Password {
-	p := make([]byte, len(password))
-	copy(p, password)
-	return &ClearPassword{password: p}
-}
-
-// NewPasswordFromString creates a new clear text password from a string.
-// The string is converted to bytes and stored in memory.
-func NewPasswordFromString(password string) Password {
-	return &ClearPassword{password: []byte(password)}
-}
-
-// String returns the password as a string.
-func (p *ClearPassword) String() (string, error) {
-	return string(p.password), nil
-}
-
-// Bytes returns the password as a byte slice.
-// A copy is returned to prevent external modification of the internal password.
-func (p *ClearPassword) Bytes() []byte {
-	// Return a copy to prevent external modification
-	b := make([]byte, len(p.password))
-	copy(b, p.password)
-	return b
-}
-
-// Clear overwrites the password memory with zeros.
-// This should be called when the password is no longer needed to minimize
-// the time sensitive data remains in memory.
-func (p *ClearPassword) Clear() {
-	for i := range p.password {
-		p.password[i] = 0
+	if len(password) == 0 {
+		return &ClearPassword{}
 	}
+	buf, err := secure.NewBuffer(len(password))
+	if err != nil {
+		// Only occurs if memguard cannot allocate an mlocked region.
+		// Fall back to an empty ClearPassword so the factory always
+		// returns a non-nil Password; downstream TPM calls will fail
+		// explicitly on an empty-when-required auth check.
+		_ = err
+		return &ClearPassword{}
+	}
+	copy(buf.Bytes(), password)
+	return &ClearPassword{buf: buf}
+}
+
+// NewPasswordFromString creates a new password from a string literal.
+// The string bytes are copied into an enclave. Note: the input string
+// itself lives on the Go heap until GC reclaims it; prefer NewPassword
+// for sources the caller can wipe.
+func NewPasswordFromString(password string) Password {
+	if len(password) == 0 {
+		return &ClearPassword{}
+	}
+	buf, err := secure.NewBuffer(len(password))
+	if err != nil {
+		_ = err
+		return &ClearPassword{}
+	}
+	copy(buf.Bytes(), []byte(password))
+	return &ClearPassword{buf: buf}
+}
+
+// String returns the password as a Go string. Returns "" for an
+// empty or cleared password (never an error — the interface allows
+// an error only to accommodate alternate implementations such as
+// PlatformPassword that unseal from hardware).
+func (p *ClearPassword) String() (string, error) {
+	if p == nil || p.buf == nil {
+		return "", nil
+	}
+	return string(p.buf.Bytes()), nil
+}
+
+// Bytes returns a defensive copy of the password bytes. Callers treat
+// the returned slice as read-only; mutating it has no effect on the
+// enclaved original. Returns nil for an empty or cleared password.
+func (p *ClearPassword) Bytes() []byte {
+	if p == nil || p.buf == nil {
+		return nil
+	}
+	src := p.buf.Bytes()
+	out := make([]byte, len(src))
+	copy(out, src)
+	return out
+}
+
+// Clear destroys the enclave. Safe on a zero-value receiver and
+// idempotent. After Clear, Bytes returns nil and String returns "".
+func (p *ClearPassword) Clear() {
+	if p == nil || p.buf == nil {
+		return
+	}
+	p.buf.Destroy()
+	p.buf = nil
 }
 
 // SealData provides access to arbitrary data for sealing operations.

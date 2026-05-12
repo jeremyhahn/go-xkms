@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -772,4 +773,254 @@ func TestParseSerialHex_Empty(t *testing.T) {
 	assert.Nil(t, serial)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
+}
+
+// ========================================================================
+// SignCSR RBAC Tests
+// ========================================================================
+
+func TestSignCSR_RBAC_AdminRole(t *testing.T) {
+	signedCert := createSelfSignedCert(t)
+	caCert := createSelfSignedCert(t)
+
+	ca := &mockCA{
+		signCSRCert: signedCert,
+		cert:        caCert,
+	}
+	svc := setupServiceWithCA(t, ca)
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "admin-user",
+		Roles:  []string{"admin"},
+	})
+
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM:  []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+		Profile: "server",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.CertificatePEM)
+}
+
+func TestSignCSR_RBAC_UserRole(t *testing.T) {
+	signedCert := createSelfSignedCert(t)
+	caCert := createSelfSignedCert(t)
+
+	ca := &mockCA{
+		signCSRCert: signedCert,
+		cert:        caCert,
+	}
+	svc := setupServiceWithCA(t, ca)
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "regular-user",
+		Roles:  []string{"user"},
+	})
+
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM: []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.CertificatePEM)
+}
+
+func TestSignCSR_RBAC_DeniedRole(t *testing.T) {
+	ca := &mockCA{}
+	svc := setupServiceWithCA(t, ca)
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "viewer-user",
+		Roles:  []string{"viewer"},
+	})
+
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM: []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+	})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrCSRSigningDenied)
+}
+
+func TestSignCSR_RBAC_LocalCallAllowed(t *testing.T) {
+	signedCert := createSelfSignedCert(t)
+	caCert := createSelfSignedCert(t)
+
+	ca := &mockCA{
+		signCSRCert: signedCert,
+		cert:        caCert,
+	}
+	svc := setupServiceWithCA(t, ca)
+
+	// No identity in context (nil) - local call should be allowed.
+	ctx := context.Background()
+
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM: []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.CertificatePEM)
+}
+
+// ========================================================================
+// SignCSR Attestation Tests
+// ========================================================================
+
+func TestSignCSR_Attestation_Skipped(t *testing.T) {
+	signedCert := createSelfSignedCert(t)
+	caCert := createSelfSignedCert(t)
+
+	ca := &mockCA{
+		signCSRCert: signedCert,
+		cert:        caCert,
+	}
+	svc := setupServiceWithCA(t, ca)
+	ctx := context.Background()
+
+	// Empty AttestationFormat - attestation verification should be skipped.
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+		AttestationFormat: "",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.CertificatePEM)
+}
+
+func TestSignCSR_Attestation_EmptyChain(t *testing.T) {
+	ca := &mockCA{}
+	svc := setupServiceWithCA(t, ca)
+	ctx := context.Background()
+
+	// Set AttestationFormat but leave chain empty.
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+		AttestationFormat: "yubikey-piv",
+		AttestationChain:  [][]byte{},
+	})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+}
+
+func TestSignCSR_Attestation_InvalidCert(t *testing.T) {
+	ca := &mockCA{}
+	svc := setupServiceWithCA(t, ca)
+	ctx := context.Background()
+
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+		AttestationFormat: "yubikey-piv",
+		AttestationChain:  [][]byte{[]byte("not-valid-der")},
+	})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
+}
+
+// createAttestationChain generates a 2-cert chain: leaf signed by root.
+// Returns (leafDER, rootDER) suitable for AttestationChain.
+func createAttestationChain(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+
+	// Generate root CA key and self-signed cert.
+	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	rootTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(200),
+		Subject:               pkix.Name{CommonName: "Attestation Root CA"},
+		IsCA:                  true,
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, &rootKey.PublicKey, rootKey)
+	require.NoError(t, err)
+	rootCert, err := x509.ParseCertificate(rootDER)
+	require.NoError(t, err)
+
+	// Generate leaf key and cert signed by root.
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(201),
+		Subject:      pkix.Name{CommonName: "Attestation Leaf"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, rootCert, &leafKey.PublicKey, rootKey)
+	require.NoError(t, err)
+
+	return leafDER, rootDER
+}
+
+func TestSignCSR_Attestation_ValidChain(t *testing.T) {
+	signedCert := createSelfSignedCert(t)
+	caCert := createSelfSignedCert(t)
+
+	ca := &mockCA{
+		signCSRCert: signedCert,
+		cert:        caCert,
+	}
+	svc := setupServiceWithCA(t, ca)
+	ctx := context.Background()
+
+	leafDER, rootDER := createAttestationChain(t)
+
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+		AttestationFormat: "yubikey-piv",
+		AttestationChain:  [][]byte{leafDER, rootDER},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.NotEmpty(t, resp.CertificatePEM)
+}
+
+func TestSignCSR_Attestation_BrokenChain(t *testing.T) {
+	ca := &mockCA{}
+	svc := setupServiceWithCA(t, ca)
+	ctx := context.Background()
+
+	// Create two independent self-signed certs (leaf is NOT signed by root).
+	key1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	leaf1Template := &x509.Certificate{
+		SerialNumber: big.NewInt(300),
+		Subject:      pkix.Name{CommonName: "Unrelated Leaf"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	leaf1DER, err := x509.CreateCertificate(rand.Reader, leaf1Template, leaf1Template, &key1.PublicKey, key1)
+	require.NoError(t, err)
+
+	key2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	root2Template := &x509.Certificate{
+		SerialNumber:          big.NewInt(301),
+		Subject:               pkix.Name{CommonName: "Unrelated Root"},
+		IsCA:                  true,
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	root2DER, err := x509.CreateCertificate(rand.Reader, root2Template, root2Template, &key2.PublicKey, key2)
+	require.NoError(t, err)
+
+	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
+		CSRPEM:            []byte("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----"),
+		AttestationFormat: "yubikey-piv",
+		AttestationChain:  [][]byte{leaf1DER, root2DER},
+	})
+	assert.Nil(t, resp)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrAttestationVerificationFailed)
 }

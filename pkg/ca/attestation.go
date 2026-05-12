@@ -1,0 +1,345 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package ca provides TPM attestation import and verification operations
+// for the TrustedCA certificate authority. These methods persist quotes,
+// event logs and PCR snapshots to the object store along with a CA-produced
+// signature that can be re-checked by VerifyAttestationQuote,
+// VerifyAttestationEventLog and VerifyAttestationPCRs.
+//
+// # Storage Layout
+//
+// Attestation blobs live under the object store prefix "attestation/{cn}/{type}"
+// with three sibling entries per blob:
+//
+//   - "<prefix>/data"      raw blob bytes as presented
+//   - "<prefix>/digest"    SHA-256 digest of the blob
+//   - "<prefix>/signature" CA signature over the digest
+//
+// The AK certificate itself is persisted under
+// "attestation/{cn}/ak-cert.der" and its digest/signature alongside.
+package ca
+
+import (
+	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+)
+
+// Attestation blob-type identifiers.
+const (
+	AttestBlobQuote    = "quote"
+	AttestBlobEventLog = "eventlog"
+	AttestBlobPCRs     = "pcrs"
+	AttestBlobRoot     = "attestation"
+)
+
+// Attestation errors that supplement the base revocation/certificate errors.
+var (
+	// ErrInvalidAttestationBlobType indicates an unrecognised blob type
+	// identifier was supplied to ImportAttestation or VerifyAttestation*.
+	ErrInvalidAttestationBlobType = fmt.Errorf("ca: invalid attestation blob type")
+
+	// ErrInvalidNonce indicates the nonce supplied to VerifyQuote did not
+	// match the nonce returned by the TPM.
+	ErrInvalidNonce = fmt.Errorf("ca: invalid nonce in quote")
+
+	// ErrInvalidRequest indicates required parameters (KeyAttributes, data,
+	// etc.) were missing or empty on an attestation call.
+	ErrInvalidRequest = fmt.Errorf("ca: invalid request")
+)
+
+// ImportAttestation stores a TPM attestation blob (quote, event log or PCRs)
+// together with a CA-produced signature that VerifyAttestation* can use to
+// detect tampering. The blob type must be one of the AttestBlob* constants.
+//
+// Requires the object store to be configured.
+//
+// Thread-safe: Yes
+func (ca *CA) ImportAttestation(akAttrs *types.KeyAttributes, blobType string, data []byte) error {
+	if akAttrs == nil {
+		return ErrInvalidRequest
+	}
+	if len(data) == 0 {
+		return ErrInvalidRequest
+	}
+	if ca.objectStore == nil {
+		return ErrObjectStoreRequired
+	}
+
+	blobKey, err := ca.attestationBlobKey(akAttrs.CN, blobType)
+	if err != nil {
+		return err
+	}
+
+	digest := sha256.Sum256(data)
+
+	signer, err := ca.Signer()
+	if err != nil {
+		return fmt.Errorf("%w: failed to get CA signer: %v", ErrSigningFailed, err)
+	}
+	hashFunc := ca.getSigningHashFunc()
+	signature, err := signer.Sign(nil, digest[:], hashFunc)
+	if err != nil {
+		return fmt.Errorf("%w: failed to sign attestation data: %v", ErrSigningFailed, err)
+	}
+
+	dataKey := fmt.Sprintf("%s/%s/data", AttestBlobRoot, blobKey)
+	sigKey := fmt.Sprintf("%s/%s/signature", AttestBlobRoot, blobKey)
+	digestKey := fmt.Sprintf("%s/%s/digest", AttestBlobRoot, blobKey)
+
+	if err := ca.objectStore.Put(dataKey, bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("%w: failed to store attestation data: %v", ErrStorageError, err)
+	}
+	if err := ca.objectStore.Put(sigKey, bytes.NewReader(signature)); err != nil {
+		return fmt.Errorf("%w: failed to store attestation signature: %v", ErrStorageError, err)
+	}
+	if err := ca.objectStore.Put(digestKey, bytes.NewReader(digest[:])); err != nil {
+		return fmt.Errorf("%w: failed to store attestation digest: %v", ErrStorageError, err)
+	}
+	return nil
+}
+
+// ImportAttestationKeyCertificate stores a DER-encoded Attestation Key
+// certificate in the object store and also imports it into the standard
+// certificate store so it participates in chain building operations.
+//
+// Thread-safe: Yes
+func (ca *CA) ImportAttestationKeyCertificate(attrs *types.KeyAttributes, akDER []byte) error {
+	if attrs == nil {
+		return ErrInvalidRequest
+	}
+	if len(akDER) == 0 {
+		return ErrInvalidCertificate
+	}
+	if ca.objectStore == nil {
+		return ErrObjectStoreRequired
+	}
+
+	cert, err := x509.ParseCertificate(akDER)
+	if err != nil {
+		return fmt.Errorf("%w: failed to parse AK certificate: %v", ErrInvalidCertificate, err)
+	}
+
+	certKey := fmt.Sprintf("%s/%s/ak-cert.der", AttestBlobRoot, attrs.CN)
+	if err := ca.objectStore.Put(certKey, bytes.NewReader(akDER)); err != nil {
+		return fmt.Errorf("%w: failed to store AK certificate: %v", ErrStorageError, err)
+	}
+
+	digest := sha256.Sum256(akDER)
+	digestKey := fmt.Sprintf("%s/%s/ak-cert.digest", AttestBlobRoot, attrs.CN)
+	if err := ca.objectStore.Put(digestKey, bytes.NewReader(digest[:])); err != nil {
+		return fmt.Errorf("%w: failed to store AK certificate digest: %v", ErrStorageError, err)
+	}
+
+	signer, err := ca.Signer()
+	if err != nil {
+		return fmt.Errorf("%w: failed to get CA signer: %v", ErrSigningFailed, err)
+	}
+	hashFunc := ca.getSigningHashFunc()
+	signature, err := signer.Sign(nil, digest[:], hashFunc)
+	if err != nil {
+		return fmt.Errorf("%w: failed to sign AK certificate: %v", ErrSigningFailed, err)
+	}
+	sigKey := fmt.Sprintf("%s/%s/ak-cert.sig", AttestBlobRoot, attrs.CN)
+	if err := ca.objectStore.Put(sigKey, bytes.NewReader(signature)); err != nil {
+		return fmt.Errorf("%w: failed to store AK certificate signature: %v", ErrStorageError, err)
+	}
+
+	return ca.ImportCertificate(cert)
+}
+
+// ImportAttestationEventLog is a convenience wrapper around ImportAttestation
+// for event-log blobs.
+func (ca *CA) ImportAttestationEventLog(akAttrs *types.KeyAttributes, eventLog []byte) error {
+	return ca.ImportAttestation(akAttrs, AttestBlobEventLog, eventLog)
+}
+
+// ImportAttestationPCRs is a convenience wrapper around ImportAttestation
+// for PCR-snapshot blobs.
+func (ca *CA) ImportAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error {
+	return ca.ImportAttestation(akAttrs, AttestBlobPCRs, pcrs)
+}
+
+// ImportAttestationQuote is a convenience wrapper around ImportAttestation
+// for quote blobs.
+func (ca *CA) ImportAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error {
+	return ca.ImportAttestation(akAttrs, AttestBlobQuote, quote)
+}
+
+// ImportLocalAttestation imports every component of a complete TPM quote
+// (quote, optional event log, PCRs) in a single call. Missing event logs are
+// accepted gracefully because some platforms (QEMU/OVMF + swtpm) do not
+// surface a valid event log to the kernel.
+//
+// Thread-safe: Yes
+func (ca *CA) ImportLocalAttestation(akAttrs *types.KeyAttributes, quote *tpm2.Quote) error {
+	if quote == nil {
+		return ErrInvalidRequest
+	}
+	if err := ca.ImportAttestationQuote(akAttrs, quote.Quoted); err != nil {
+		return fmt.Errorf("failed to import quote: %w", err)
+	}
+	if len(quote.EventLog) > 0 {
+		if err := ca.ImportAttestationEventLog(akAttrs, quote.EventLog); err != nil {
+			return fmt.Errorf("failed to import event log: %w", err)
+		}
+	}
+	if err := ca.ImportAttestationPCRs(akAttrs, quote.PCRs); err != nil {
+		return fmt.Errorf("failed to import PCRs: %w", err)
+	}
+	return nil
+}
+
+// VerifyAttestationQuote verifies a previously imported quote blob by
+// recomputing its digest, comparing against the stored digest, and
+// re-verifying the CA's signature over that digest.
+//
+// Thread-safe: Yes
+func (ca *CA) VerifyAttestationQuote(akAttrs *types.KeyAttributes, quote []byte) error {
+	return ca.verifyStoredAttestation(akAttrs, AttestBlobQuote, quote)
+}
+
+// VerifyAttestationEventLog verifies a previously imported event log blob.
+// See VerifyAttestationQuote for the verification semantics.
+func (ca *CA) VerifyAttestationEventLog(akAttrs *types.KeyAttributes, eventLog []byte) error {
+	return ca.verifyStoredAttestation(akAttrs, AttestBlobEventLog, eventLog)
+}
+
+// VerifyAttestationPCRs verifies a previously imported PCR snapshot.
+// See VerifyAttestationQuote for the verification semantics.
+func (ca *CA) VerifyAttestationPCRs(akAttrs *types.KeyAttributes, pcrs []byte) error {
+	return ca.verifyStoredAttestation(akAttrs, AttestBlobPCRs, pcrs)
+}
+
+// verifyStoredAttestation is the shared engine behind the three
+// VerifyAttestation* methods.
+func (ca *CA) verifyStoredAttestation(akAttrs *types.KeyAttributes, blobType string, data []byte) error {
+	if akAttrs == nil {
+		return ErrInvalidRequest
+	}
+	if ca.objectStore == nil {
+		return ErrObjectStoreRequired
+	}
+
+	blobKey, err := ca.attestationBlobKey(akAttrs.CN, blobType)
+	if err != nil {
+		return err
+	}
+
+	digestKey := fmt.Sprintf("%s/%s/digest", AttestBlobRoot, blobKey)
+	storedDigest, err := ca.readBlobData(digestKey)
+	if err != nil {
+		return fmt.Errorf("%w: attestation digest not found: %v", ErrCertificateNotFound, err)
+	}
+
+	newDigest := sha256.Sum256(data)
+	if !bytes.Equal(storedDigest, newDigest[:]) {
+		return fmt.Errorf("%w: attestation data mismatch", ErrInvalidSignature)
+	}
+
+	sigKey := fmt.Sprintf("%s/%s/signature", AttestBlobRoot, blobKey)
+	storedSig, err := ca.readBlobData(sigKey)
+	if err != nil {
+		return fmt.Errorf("%w: attestation signature not found: %v", ErrCertificateNotFound, err)
+	}
+
+	caPublic := ca.Public()
+	return verifyCASignature(caPublic, newDigest[:], storedSig)
+}
+
+// verifyCASignature applies the correct signature-verification algorithm
+// based on the CA's public-key type.
+func verifyCASignature(pub crypto.PublicKey, digest, signature []byte) error {
+	switch key := pub.(type) {
+	case *rsa.PublicKey:
+		// Prefer RSA-PSS (the default used by ImportAttestation's signer.Sign
+		// path); fall back to PKCS1v15 to remain compatible with historical
+		// entries.
+		pssOpts := &rsa.PSSOptions{
+			SaltLength: rsa.PSSSaltLengthEqualsHash,
+			Hash:       crypto.SHA256,
+		}
+		if err := rsa.VerifyPSS(key, crypto.SHA256, digest, signature, pssOpts); err == nil {
+			return nil
+		}
+		if err := rsa.VerifyPKCS1v15(key, crypto.SHA256, digest, signature); err != nil {
+			return ErrInvalidSignature
+		}
+		return nil
+	case *ecdsa.PublicKey:
+		if !ecdsa.VerifyASN1(key, digest, signature) {
+			return ErrInvalidSignature
+		}
+		return nil
+	case ed25519.PublicKey:
+		if !ed25519.Verify(key, digest, signature) {
+			return ErrInvalidSignature
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported CA key type %T", ErrInvalidSignature, pub)
+	}
+}
+
+// getSigningHashFunc returns the appropriate hash algorithm to use when
+// signing attestation digests given the CA's current key type. Ed25519
+// signs unhashed messages so hash==0 is returned.
+func (ca *CA) getSigningHashFunc() crypto.Hash {
+	switch ca.Public().(type) {
+	case ed25519.PublicKey:
+		return crypto.Hash(0)
+	default:
+		return crypto.SHA256
+	}
+}
+
+// attestationBlobKey constructs the path component used under
+// "attestation/" for the given CN and blob type.
+func (ca *CA) attestationBlobKey(cn, blobType string) (string, error) {
+	switch blobType {
+	case AttestBlobQuote, AttestBlobEventLog, AttestBlobPCRs:
+		// ok
+	default:
+		return "", ErrInvalidAttestationBlobType
+	}
+
+	safeCN := strings.ReplaceAll(cn, " ", "-")
+	safeCN = strings.ReplaceAll(safeCN, "/", "-")
+	if safeCN == "" {
+		h := sha256.Sum256([]byte("default-attestation-key"))
+		safeCN = hex.EncodeToString(h[:8])
+	}
+	return fmt.Sprintf("%s/%s", safeCN, blobType), nil
+}
+
+// readBlobData returns the raw bytes stored under key in the object store.
+func (ca *CA) readBlobData(key string) ([]byte, error) {
+	reader, err := ca.objectStore.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = reader.Close() }()
+	return io.ReadAll(reader)
+}

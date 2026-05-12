@@ -21,14 +21,11 @@ import (
 // Interface aliases
 // ---------------------------------------------------------------------------
 
-// XKMSCA is the core Certificate Authority interface that provides certificate
+// TrustedCA is the core Certificate Authority interface that provides certificate
 // issuance, signing, revocation, and management operations.
-type XKMSCA = pkgca.XKMSCA
+type TrustedCA = pkgca.TrustedCA
 
-// BasicCA is an alias for XKMSCA for backward compatibility.
-type BasicCA = pkgca.BasicCA
-
-// TCGCA extends XKMSCA with TCG Trusted Computing certificate operations
+// TCGCA extends TrustedCA with TCG Trusted Computing certificate operations
 // for TPM device identity (IDevID), attestation key (AK), and endorsement
 // key (EK) per TCG TPM 2.0 Keys for Device Identity and Attestation.
 type TCGCA = pkgca.TCGCA
@@ -49,47 +46,47 @@ type CertificateProvider = pkgca.CertificateProvider
 // Struct and concrete type aliases
 // ---------------------------------------------------------------------------
 
-// XKMSCAParams holds the parameters for creating a new XKMSCA instance.
-type XKMSCAParams = pkgca.Params
+// TrustedCAParams holds the parameters for creating a new TrustedCA instance.
+type TrustedCAParams = pkgca.Params
 
-// XKMSCAMultiIdentityParams holds parameters for creating a CA from
+// TrustedCAMultiIdentityParams holds parameters for creating a CA from
 // a MultiIdentityCAConfig.
-type XKMSCAMultiIdentityParams = pkgca.MultiIdentityParams
+type TrustedCAMultiIdentityParams = pkgca.MultiIdentityParams
 
-// XKMSCAConfig configures a single CA identity with flat configuration.
-type XKMSCAConfig = pkgca.CAConfig
+// TrustedCAConfig configures a single CA identity with flat configuration.
+type TrustedCAConfig = pkgca.CAConfig
 
-// XKMSCAMultiIdentityConfig configures a CA with one or more identity
+// TrustedCAMultiIdentityConfig configures a CA with one or more identity
 // configurations for different certificate purposes (root and intermediate CAs).
-type XKMSCAMultiIdentityConfig = pkgca.MultiIdentityCAConfig
+type TrustedCAMultiIdentityConfig = pkgca.MultiIdentityCAConfig
 
-// XKMSCAIdentity represents a certificate identity configuration including
+// TrustedCAIdentity represents a certificate identity configuration including
 // subject, SANs, validity, and key algorithm settings.
-type XKMSCAIdentity = pkgca.Identity
+type TrustedCAIdentity = pkgca.Identity
 
-// XKMSCASubject represents an X.509 certificate subject with standard fields.
-type XKMSCASubject = pkgca.Subject
+// TrustedCASubject represents an X.509 certificate subject with standard fields.
+type TrustedCASubject = pkgca.Subject
 
-// XKMSCASubjectAlternativeNames holds Subject Alternative Name extensions.
-type XKMSCASubjectAlternativeNames = pkgca.SubjectAlternativeNames
+// TrustedCASubjectAlternativeNames holds Subject Alternative Name extensions.
+type TrustedCASubjectAlternativeNames = pkgca.SubjectAlternativeNames
 
-// XKMSCAHardwareModuleInfo holds hardware module identification for TPM/HSM
+// TrustedCAHardwareModuleInfo holds hardware module identification for TPM/HSM
 // certificate SAN extensions per RFC 4108.
-type XKMSCAHardwareModuleInfo = pkgca.HardwareModuleInfo
+type TrustedCAHardwareModuleInfo = pkgca.HardwareModuleInfo
 
-// XKMSCACertificateRequest contains parameters for requesting a certificate
+// TrustedCACertificateRequest contains parameters for requesting a certificate
 // from the CA, including subject, SANs, validity, key usage, and TCG fields.
-type XKMSCACertificateRequest = pkgca.CertificateRequest
+type TrustedCACertificateRequest = pkgca.CertificateRequest
 
-// XKMSCAIssuedCertificate contains the result of a successful certificate
+// TrustedCAIssuedCertificate contains the result of a successful certificate
 // issuance including the certificate, private key, and chain information.
-type XKMSCAIssuedCertificate = pkgca.IssuedCertificate
+type TrustedCAIssuedCertificate = pkgca.IssuedCertificate
 
-// XKMSCASignOptions contains optional parameters for certificate signing.
-type XKMSCASignOptions = pkgca.SignOptions
+// TrustedCASignOptions contains optional parameters for certificate signing.
+type TrustedCASignOptions = pkgca.SignOptions
 
-// XKMSCARevocationInfo contains information about a revoked certificate.
-type XKMSCARevocationInfo = pkgca.RevocationInfo
+// TrustedCARevocationInfo contains information about a revoked certificate.
+type TrustedCARevocationInfo = pkgca.RevocationInfo
 
 // DefaultCABundler is the default CA bundle implementation.
 type DefaultCABundler = pkgca.DefaultCABundler
@@ -178,13 +175,37 @@ type TCGAttribute = pkgca.TCGAttribute
 // Constructor function re-exports
 // ---------------------------------------------------------------------------
 
-// NewXKMSCA creates a new XKMSCA instance with the given parameters.
-var NewXKMSCA = pkgca.New
+// NewTrustedCA creates a new TrustedCA instance with the given parameters.
+var NewTrustedCA = pkgca.New
 
-// NewXKMSCAFromMultiIdentityConfig creates a new XKMSCA instance from a
+// NewTrustedCAFromMultiIdentityConfig creates a new TrustedCA instance from a
 // MultiIdentityCAConfig. This derives the flat CAConfig and KeyAttributes
 // from the issuing identity in the multi-identity configuration.
-var NewXKMSCAFromMultiIdentityConfig = pkgca.NewFromMultiIdentityConfig
+var NewTrustedCAFromMultiIdentityConfig = pkgca.NewFromMultiIdentityConfig
+
+// NewCA builds a root+intermediate TrustedCA pair from a Params carrying one
+// or two Identity entries. Identity[0] is the root; Identity[1] (if present)
+// is the intermediate, signed by the root. When only one identity is
+// provided, the intermediate return value is nil.
+var NewCA = pkgca.NewCA
+
+// NewParentCA creates only the root TrustedCA from Params.Identity[0]. The
+// returned CA is not initialized; callers invoke Init() or Load().
+var NewParentCA = pkgca.NewParentCA
+
+// NewIntermediateCA creates the intermediate TrustedCA from
+// Params.Identity[1] signed by the given parent. The parent must be
+// initialized.
+var NewIntermediateCA = pkgca.NewIntermediateCA
+
+// TrustedCAKeyStoreFactoryFunc resolves a KeyStore per-CA CN.
+type TrustedCAKeyStoreFactoryFunc = pkgca.KeyStoreFactoryFunc
+
+// TrustedCACertStoreFactoryFunc resolves a CertStore per-CA CN.
+type TrustedCACertStoreFactoryFunc = pkgca.CertStoreFactoryFunc
+
+// TrustedCAObjectStoreFactoryFunc resolves an object store per-CA CN.
+type TrustedCAObjectStoreFactoryFunc = pkgca.ObjectStoreFactoryFunc
 
 // ---------------------------------------------------------------------------
 // TCG OID extension builder function re-exports

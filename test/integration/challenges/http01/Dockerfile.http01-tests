@@ -1,0 +1,48 @@
+# Dockerfile for HTTP-01 E2E Integration Tests
+FROM golang:1.26.1-alpine
+
+# Install required packages
+RUN apk add --no-cache git wget curl openssl bash
+
+# Create non-root user for security
+RUN addgroup -g 1000 tester && \
+    adduser -u 1000 -G tester -s /bin/sh -D tester
+
+# Create directories
+RUN mkdir -p /workspace /test-results /var/log/tests /challenges /nginx-certs /tmp/go-cache
+
+WORKDIR /workspace
+
+# Copy all local projects that have replace directives in go.mod
+COPY go-trusted-ca/ /workspace/go-trusted-ca/
+COPY go-xkms/ /workspace/go-xkms/
+COPY go-quicraft/ /workspace/go-quicraft/
+COPY go-qrdb/ /workspace/go-qrdb/
+
+# Set workdir to project
+WORKDIR /workspace/go-trusted-ca
+
+# Update go.mod replace directives for Docker build context paths
+RUN sed -i 's|/home/jhahn/sources/go-xkms|/workspace/go-xkms|g' go.mod && \
+    sed -i 's|/home/jhahn/sources/go-quicraft|/workspace/go-quicraft|g' go.mod && \
+    sed -i 's|/home/jhahn/sources/go-qrdb|/workspace/go-qrdb|g' go.mod
+
+# Download dependencies (go-objstore, go-codec are upstream)
+RUN rm -f go.sum
+ENV GOSUMDB=off
+ENV GONOSUMDB=*
+RUN go mod download && go mod tidy
+
+# Set ownership for non-root user
+RUN chown -R tester:tester /workspace /test-results /var/log/tests /challenges /nginx-certs /tmp/go-cache
+
+# Set build environment
+ENV CGO_ENABLED=0
+ENV GOTOOLCHAIN=auto
+ENV GOCACHE=/tmp/go-cache
+
+# Switch to non-root user
+USER tester
+
+# Default test command
+CMD ["sh", "-c", "go test -tags=http01_e2e -v -timeout 5m -run 'TestHTTP01E2E_' ./test/integration/http01/..."]

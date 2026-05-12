@@ -8,6 +8,7 @@ export interface PIVSlot {
   label: string;
   purpose: string;
   loaded: boolean;
+  hasKey: boolean;
   algorithm: string | null;
   subject: string | null;
   issuer: string | null;

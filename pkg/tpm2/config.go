@@ -254,7 +254,11 @@ func EKAttributesFromConfig(config EKConfig, policyDigest *tpm2.TPM2BDigest, ide
 
 	if config.CN == "" {
 		if idevidConfig != nil {
-			config.CN = fmt.Sprintf("ek-%s-%s", idevidConfig.Model, idevidConfig.Serial)
+			// Sanitize Model — SMBIOS vendor strings often contain spaces
+			// ("SuperMicro X10") which break downstream objectstorage path
+			// validators that require no-whitespace, no-control identifiers.
+			model := strings.ReplaceAll(idevidConfig.Model, " ", "_")
+			config.CN = fmt.Sprintf("ek-%s-%s", model, idevidConfig.Serial)
 		} else {
 			config.CN = "ek"
 		}

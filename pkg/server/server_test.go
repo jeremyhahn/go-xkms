@@ -642,7 +642,7 @@ func TestServer_BuildTLSConfig_InvalidCA(t *testing.T) {
 
 	_, err = server.buildTLSConfig()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read CA certificate")
+	assert.Contains(t, err.Error(), "/nonexistent/ca.pem")
 }
 
 func TestServer_BuildTLSConfig_ClientAuthModes(t *testing.T) {
@@ -751,7 +751,7 @@ func TestServer_BuildTLSConfig_InvalidClientCA(t *testing.T) {
 
 	_, err = server.buildTLSConfig()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to read additional client CA certificate")
+	assert.Contains(t, err.Error(), "/nonexistent/client-ca.pem")
 }
 
 // Test authentication configuration

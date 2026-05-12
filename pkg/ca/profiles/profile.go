@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package profiles provides certificate profile management for the XKMSCA.
+// Package profiles provides certificate profile management for the TrustedCA.
 //
 // Certificate profiles encapsulate standard configurations for different certificate
 // types, defining key usage, extended key usage, validity periods, and other X.509

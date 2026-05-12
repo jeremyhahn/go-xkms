@@ -11,11 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package ca provides a XKMSCA implementation for certificate authority operations.
+// Package ca provides a TrustedCA implementation for certificate authority operations.
 //
 // # CA Lifecycle
 //
-// The CA struct implements the XKMSCA interface and follows a three-phase lifecycle:
+// The CA struct implements the TrustedCA interface and follows a three-phase lifecycle:
 //
 //  1. Construction (New): Creates a CA instance with provided configuration, keystore,
 //     and certificate store. The CA is not operational at this point.
@@ -49,18 +49,18 @@
 //	    KeyStore:  keystore,
 //	    CertStore: certStore,
 //	}
-//	basicCA, err := ca.New(params)
+//	trustedCA, err := ca.New(params)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //
 //	// Initialize new CA (or use Load() for existing CA)
-//	if err := basicCA.Init(); err != nil {
+//	if err := trustedCA.Init(); err != nil {
 //	    log.Fatal(err)
 //	}
 //
 //	// CA is now ready for operations
-//	cert, err := basicCA.IssueCertificate(&ca.CertificateRequest{...})
+//	cert, err := trustedCA.IssueCertificate(&ca.CertificateRequest{...})
 package ca
 
 import (
@@ -83,6 +83,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+
+	objstore "github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 // Params contains the parameters for creating a new CA instance.
@@ -121,6 +123,37 @@ type Params struct {
 	// If nil, default profiles (server, client, etc.) are registered.
 	// Optional.
 	Profiles ProfileRegistry
+
+	// ObjectStore provides blob storage for CA-adjacent artifacts that don't
+	// fit the CertStore's CN-keyed model: cross-signed certificates, AIA
+	// trust-chain cache, CRL snapshots, attestation evidence, TCG-CSR-IDEVID
+	// blobs. Consumed by trust_chain.go, cross_signing.go, attestation.go
+	// and tpm_enrollment.go. If nil, features that require an object store
+	// return ErrObjectStoreRequired when invoked.
+	// Optional.
+	ObjectStore objstore.Storage
+
+	// Identity carries one or two CA identities for the multi-identity
+	// constructors NewCA, NewParentCA, and NewIntermediateCA. Identity[0]
+	// is the root; Identity[1] (if present) is the intermediate. Leave empty
+	// when calling the single-identity New constructor via Config /
+	// KeyAttributes. Optional.
+	Identity []Identity
+
+	// KeyStoreFactory resolves a KeyStore per-CA, keyed on the CA's
+	// subject CN. When set, NewCA / NewParentCA / NewIntermediateCA invoke
+	// the factory for each identity instead of using the shared KeyStore
+	// field. Optional.
+	KeyStoreFactory KeyStoreFactoryFunc
+
+	// CertStoreFactory resolves a CertStore per-CA CN. See
+	// KeyStoreFactory for semantics. Optional.
+	CertStoreFactory CertStoreFactoryFunc
+
+	// ObjectStoreFactory resolves an object store per-CA CN. Factories
+	// may return (nil, nil) to indicate the CA has no object store.
+	// Optional.
+	ObjectStoreFactory ObjectStoreFactoryFunc
 }
 
 // Validate checks that all required parameters are present.
@@ -143,7 +176,7 @@ func (p *Params) Validate() error {
 	return nil
 }
 
-// CA implements the XKMSCA interface for certificate authority operations.
+// CA implements the TrustedCA interface for certificate authority operations.
 //
 // CA is designed to be embedded by higher-level CA implementations such as
 // ACME servers or enterprise PKI systems. It provides all core CA functionality
@@ -157,6 +190,13 @@ type CA struct {
 	// caConfig is the flat per-CA configuration provided via Params.
 	caConfig *CAConfig
 
+	// inputIdentity preserves the full Identity (including its multi-key
+	// configuration) as passed to NewParentCA / NewIntermediateCA / NewCA.
+	// When non-nil, IssuingIdentity() returns a copy of it verbatim so that
+	// the caller's multi-key slice is not lost by the flat-CAConfig round
+	// trip. nil when the CA is constructed via New(*Params) directly.
+	inputIdentity *Identity
+
 	// keyAttrs holds the runtime key attributes for the CA's key pair.
 	keyAttrs *types.KeyAttributes
 
@@ -164,6 +204,11 @@ type CA struct {
 	// keyStore backend used for CA operations
 	keyStore  xkms.Backend
 	certStore certstore.CertStore
+
+	// objectStore is the optional blob store for cross-signed certs, AIA
+	// trust-chain cache, CRL snapshots, and attestation evidence. May be nil;
+	// features that require it return ErrObjectStoreRequired in that case.
+	objectStore objstore.Storage
 
 	// Serial number generator
 	serialGen SerialGenerator
@@ -188,7 +233,7 @@ type CA struct {
 }
 
 // Compile-time interface compliance check
-var _ XKMSCA = (*CA)(nil)
+var _ TrustedCA = (*CA)(nil)
 
 // signatureAlgorithmToName converts an x509.SignatureAlgorithm to a
 // types.SignatureAlgorithmName for use in KeyConfig serialization.
@@ -328,7 +373,7 @@ func caConfigToMultiIdentity(cfg *CAConfig, keyAttrs *types.KeyAttributes) *Mult
 //   - Configuration validation fails (ErrInvalidConfig)
 //
 // Thread-safe: Yes
-func New(params *Params) (XKMSCA, error) {
+func New(params *Params) (TrustedCA, error) {
 	if params == nil {
 		return nil, ErrInvalidConfig
 	}
@@ -346,6 +391,7 @@ func New(params *Params) (XKMSCA, error) {
 		keyAttrs:    params.KeyAttributes,
 		keyStore:    params.KeyStore,
 		certStore:   params.CertStore,
+		objectStore: params.ObjectStore,
 		revocations: make(map[string]*RevocationInfo),
 	}
 
@@ -390,6 +436,11 @@ type MultiIdentityParams struct {
 	// Profiles provides certificate profile management.
 	// Optional. If nil, default profiles are registered.
 	Profiles ProfileRegistry
+
+	// ObjectStore provides blob storage for cross-signed certificates, AIA
+	// trust-chain cache, CRL snapshots, and attestation evidence.
+	// Optional. If nil, features that require it return ErrObjectStoreRequired.
+	ObjectStore objstore.Storage
 }
 
 // NewFromMultiIdentityConfig creates a new CA from a MultiIdentityCAConfig.
@@ -400,7 +451,7 @@ type MultiIdentityParams struct {
 // that work with the multi-identity configuration model.
 //
 // Thread-safe: Yes
-func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (XKMSCA, error) {
+func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 	if mp == nil {
 		return nil, ErrInvalidConfig
 	}
@@ -449,7 +500,16 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (XKMSCA, error) {
 		CertStore:     mp.CertStore,
 		SerialGen:     mp.SerialGen,
 		Profiles:      mp.Profiles,
+		ObjectStore:   mp.ObjectStore,
 	})
+}
+
+// ObjectStore returns the configured object store, or nil if none.
+// Used by CA-adjacent features (cross-signing, AIA cache, attestation
+// evidence, CRL snapshots) that need blob storage beyond the CN-keyed
+// CertStore. Callers should check for nil and surface ErrObjectStoreRequired.
+func (ca *CA) ObjectStore() objstore.Storage {
+	return ca.objectStore
 }
 
 // Init initializes a new Certificate Authority by generating the root
@@ -557,6 +617,13 @@ func (ca *CA) Load() error {
 		}
 	}
 
+	// Replay any revocation records persisted to the object store. Missing
+	// or corrupt records are logged and skipped — a malformed record should
+	// not prevent the CA from loading.
+	if err := ca.loadPersistedRevocations(); err != nil {
+		return err
+	}
+
 	ca.initialized.Store(true)
 	return nil
 }
@@ -638,7 +705,7 @@ func (ca *CA) Sign(randReader io.Reader, digest []byte, opts crypto.SignerOpts) 
 // KeyStore returns the underlying keystore.
 //
 // This provides direct access to the keystore for advanced operations
-// not exposed through the XKMSCA interface, such as key rotation,
+// not exposed through the TrustedCA interface, such as key rotation,
 // backend-specific features, or direct key management.
 //
 // The returned Backend should not be closed directly; the CA manages
@@ -1160,18 +1227,37 @@ func (ca *CA) SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, erro
 		return nil, fmt.Errorf("%w: invalid CSR signature: %v", ErrInvalidCSR, err)
 	}
 
-	// Get issuing CA certificate and signer
-	ca.mu.RLock()
-	issuingCert := ca.getIssuingCertificate()
-	ca.mu.RUnlock()
+	// Determine the signing key and issuer certificate. When the caller
+	// supplies an external Signer on SignOptions, we use it instead of the
+	// CA's own key — this is the multi-tenant signing path where a tenant's
+	// key issues under an umbrella CA's trust chain. An IssuerCert must also
+	// be provided when Signer is non-nil; otherwise the caller's configuration
+	// is invalid because x509.CreateCertificate needs a concrete issuer
+	// whose SubjectKeyId populates the AuthorityKeyIdentifier extension.
+	var (
+		signer      crypto.Signer
+		issuingCert *x509.Certificate
+	)
+	if opts != nil && opts.Signer != nil {
+		if opts.IssuerCert == nil {
+			return nil, ErrInvalidIssuer
+		}
+		signer = opts.Signer
+		issuingCert = opts.IssuerCert
+	} else {
+		ca.mu.RLock()
+		issuingCert = ca.getIssuingCertificate()
+		ca.mu.RUnlock()
 
-	if issuingCert == nil {
-		return nil, ErrCertificateNotFound
-	}
+		if issuingCert == nil {
+			return nil, ErrCertificateNotFound
+		}
 
-	signer, err := ca.getSigner()
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		var err error
+		signer, err = ca.getSigner()
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		}
 	}
 
 	// Generate serial number
@@ -1381,8 +1467,13 @@ func (ca *CA) IssueCertificateWithProfile(request *CertificateRequest, profile s
 //   - ErrCertificateRevoked if the certificate has been revoked
 //   - ErrInvalidCertificateChain if chain validation fails
 //
+// When an optional cross-signing crypto.Signer is provided as the second
+// argument, Verify routes through the cross-sign-aware pool builders so
+// certificates anchored by a cross-signed root can be validated. Passing
+// no xsigner (or a nil one) preserves the original single-root behaviour.
+//
 // Thread-safe: Yes
-func (ca *CA) Verify(cert *x509.Certificate) ([][]*x509.Certificate, error) {
+func (ca *CA) Verify(cert *x509.Certificate, xsigner ...crypto.Signer) ([][]*x509.Certificate, error) {
 	if !ca.initialized.Load() {
 		return nil, ErrNotInitialized
 	}
@@ -1391,7 +1482,8 @@ func (ca *CA) Verify(cert *x509.Certificate) ([][]*x509.Certificate, error) {
 		return nil, ErrInvalidCertificate
 	}
 
-	// Check if revoked
+	// Check if revoked. Applies to both the native path and the
+	// cross-sign-aware path so a revoked cert is never accepted.
 	revoked, err := ca.IsRevoked(cert.SerialNumber)
 	if err != nil {
 		return nil, err
@@ -1400,7 +1492,29 @@ func (ca *CA) Verify(cert *x509.Certificate) ([][]*x509.Certificate, error) {
 		return nil, ErrCertificateRevoked
 	}
 
-	// Build verification options
+	// Route to the cross-sign-aware path when a non-nil signer is provided.
+	// The variadic slot is optional: zero elements or a single nil element
+	// falls through to the native verify below.
+	if len(xsigner) > 0 && xsigner[0] != nil {
+		roots, err := ca.TrustedRootCertPoolWithXSigner(cert, xsigner[0])
+		if err != nil {
+			return nil, err
+		}
+		intermediates, err := ca.TrustedIntermediateCertPoolWithXSigner(cert, xsigner[0])
+		if err != nil {
+			return nil, err
+		}
+		chains, err := cert.Verify(x509.VerifyOptions{
+			Roots:         roots,
+			Intermediates: intermediates,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidCertificateChain, err)
+		}
+		return chains, nil
+	}
+
+	// Native path: verify against the CA's own root/intermediate pools.
 	ca.mu.RLock()
 	roots := x509.NewCertPool()
 	if ca.rootCert != nil {
@@ -1449,26 +1563,10 @@ func (ca *CA) Revoke(serial *big.Int, reason int) error {
 		return ErrNotInitialized
 	}
 
-	if serial == nil {
-		return ErrInvalidCertificate
-	}
-
-	key := serial.Text(10)
-
-	ca.revocationsMutex.Lock()
-	defer ca.revocationsMutex.Unlock()
-
-	if _, exists := ca.revocations[key]; exists {
-		return ErrAlreadyRevoked
-	}
-
-	ca.revocations[key] = &RevocationInfo{
-		SerialNumber:   serial,
-		RevocationTime: time.Now(),
-		Reason:         reason,
-	}
-
-	return nil
+	// recordRevocation performs the serial-nil guard, the already-revoked
+	// check, the in-memory insertion, and object-store persistence so
+	// Revoke/RevokeCert remain consistent.
+	return ca.recordRevocation(serial, reason, false)
 }
 
 // GenerateCRL generates a Certificate Revocation List.

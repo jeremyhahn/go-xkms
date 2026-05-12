@@ -236,11 +236,18 @@ func (s *SecureBrowserService) Rebuild() error {
 
 // syncIfChanged checks the trust hash and rebuilds browser cert stores
 // for both families if the trust store contents have changed.
+//
+// In addition to the hash check we verify that the on-disk artifacts
+// (Chrome's NSS DB, Firefox's certs dir) actually exist. A previous
+// session may have populated them, recorded the hash, then had the
+// profile directory wiped externally — without this existence check
+// the next launch silently skips the sync and Chrome rejects all
+// platform certificates as untrusted.
 func (s *SecureBrowserService) syncIfChanged(family nativemsg.Browser, certs []*x509.Certificate) error {
 	currentHash := computeTrustHash(certs)
 	storedHash, _ := s.readTrustHash()
 
-	if currentHash == storedHash {
+	if currentHash == storedHash && s.browserStoresPresent(family) {
 		return nil
 	}
 
@@ -304,7 +311,22 @@ func (s *SecureBrowserService) syncChrome(certs []*x509.Certificate) error {
 	return nil
 }
 
-// syncFirefox exports PEM certificate files and generates policies.json.
+// syncFirefox writes the trust store CA certificates directly into the
+// Firefox profile's NSS database (cert9.db).
+//
+// Firefox enterprise policies (policies.json) are NOT used because Mozilla
+// only loads policies.json from system-protected paths
+// (/etc/firefox/policies/, <install>/distribution/) — there is no env var
+// or per-user override that Firefox honors. NSS DB injection is the only
+// mechanism that works reliably for an unprivileged per-profile launcher.
+//
+// PEM exports + policies.json are still written alongside the NSS DB for
+// operator inspection and for shared-profile fallback (where a system
+// administrator can copy them into the supported policies path), but the
+// NSS DB is the load-bearing artifact.
+//
+// Each cert is added with the same xkey- label prefix used for Chrome so
+// stale entries can be removed cleanly on re-sync.
 func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 	certsDir := s.firefoxCertsDir()
 	if err := os.MkdirAll(certsDir, 0o700); err != nil {
@@ -319,7 +341,7 @@ func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 		}
 	}
 
-	// Write each cert as an individual PEM file.
+	// Write each cert as an individual PEM file (operator/audit aid).
 	var certPaths []string
 	for _, cert := range certs {
 		fingerprint := certFingerprint(cert)
@@ -336,8 +358,54 @@ func (s *SecureBrowserService) syncFirefox(certs []*x509.Certificate) error {
 		certPaths = append(certPaths, pemPath)
 	}
 
-	// Generate policies.json.
-	return s.writeFirefoxPolicies(certPaths)
+	// Persist policies.json for operators who deploy it system-wide.
+	if err := s.writeFirefoxPolicies(certPaths); err != nil {
+		return err
+	}
+
+	// Inject certs directly into the Firefox profile's NSS DB. This is
+	// what Firefox actually reads at startup. For shared profile mode we
+	// skip injection (the user's own profile must not be mutated by us).
+	if s.profileMode(nativemsg.BrowserFirefox) != ProfileModeIsolated {
+		return nil
+	}
+	return s.injectFirefoxNSSDB(certs)
+}
+
+// injectFirefoxNSSDB writes the given CA certificates to the isolated
+// Firefox profile's NSS database, replacing any prior xkey-managed
+// entries. The profile directory is created if it does not yet exist;
+// Firefox accepts a pre-seeded NSS DB and merges its own runtime entries.
+func (s *SecureBrowserService) injectFirefoxNSSDB(certs []*x509.Certificate) error {
+	nssdbDir := s.firefoxNSSDBDir()
+	if err := os.MkdirAll(nssdbDir, 0o700); err != nil {
+		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+	}
+	if err := nssdb.InitDir(nssdbDir); err != nil {
+		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+	}
+
+	writer, err := nssdb.NewWriter(nssdbDir)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrSecureBrowserNSSDB, err)
+	}
+	defer writer.Close()
+
+	if removeErr := writer.RemoveByPrefix(nssdbCertLabelPrefix); removeErr != nil {
+		s.log.Warn("failed to remove existing xkey certs from firefox nssdb", "error", removeErr)
+	}
+
+	for _, cert := range certs {
+		fingerprint := certFingerprint(cert)
+		label := nssdbCertLabelPrefix + fingerprint[:16]
+		if addErr := writer.AddTrustedCA(cert, label); addErr != nil {
+			s.log.Warn("failed to add cert to firefox nssdb",
+				"label", label,
+				"error", addErr,
+			)
+		}
+	}
+	return nil
 }
 
 // writeFirefoxPolicies generates and writes the Firefox enterprise policies
@@ -384,13 +452,87 @@ func (s *SecureBrowserService) buildLaunchArgs(
 		if mode == ProfileModeIsolated {
 			profileDir := filepath.Join(s.baseDir, "chrome", "profile")
 			args = append(args, "--user-data-dir="+profileDir)
+			// Chrome on Linux reads its NSS trust database from
+			// $HOME/.pki/nssdb regardless of --user-data-dir. Redirect
+			// HOME to the isolated profile directory so the in-profile
+			// NSS DB at profileDir/.pki/nssdb is what Chrome reads.
+			env = []string{"HOME=" + profileDir}
+
+			// Suppress Chrome's first-run experience for the isolated
+			// profile. Without this, every launch into a fresh
+			// user-data-dir prompts for default browser, metrics
+			// opt-in, welcome wizard, search-engine selection, and
+			// signin. The combination needed:
+			//   1. `--no-first-run` skips the welcome dialog.
+			//   2. `--no-default-browser-check` skips the "make
+			//      Chrome default" prompt.
+			//   3. `--disable-features=...` disables the post-launch
+			//      modal dialogs that show on first profile use.
+			//   4. A `First Run` sentinel file in the user-data-dir
+			//      makes Chrome treat the profile as already-bootstrapped.
+			//   5. A `Default/Preferences` file with first-run keys set
+			//      to false suppresses opt-in prompts.
+			if mkErr := os.MkdirAll(filepath.Join(profileDir, "Default"), 0o700); mkErr != nil {
+				err = fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, mkErr)
+				return
+			}
+			// Sentinel file — empty, presence is the signal.
+			sentinelPath := filepath.Join(profileDir, "First Run")
+			if _, statErr := os.Stat(sentinelPath); os.IsNotExist(statErr) {
+				if writeErr := os.WriteFile(sentinelPath, []byte{}, 0o600); writeErr != nil {
+					err = fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, writeErr)
+					return
+				}
+			}
+			// Master Preferences (read once on first launch). Sets the
+			// keys Chrome checks before showing welcome/metrics/default-
+			// browser dialogs. Only written if the file doesn't already
+			// exist so existing user preferences aren't clobbered.
+			masterPrefsPath := filepath.Join(profileDir, "Default", "Preferences")
+			if _, statErr := os.Stat(masterPrefsPath); os.IsNotExist(statErr) {
+				masterPrefs := []byte(`{` +
+					`"browser":{"has_seen_welcome_page":true,"check_default_browser":false,"show_home_button":false},` +
+					`"distribution":{"import_bookmarks":false,"import_history":false,"import_search_engine":false,` +
+					`"make_chrome_default":false,"make_chrome_default_for_user":false,"skip_first_run_ui":true,` +
+					`"do_not_create_any_shortcuts":true,"do_not_create_desktop_shortcut":true,` +
+					`"do_not_create_quick_launch_shortcut":true,"do_not_create_taskbar_shortcut":true,` +
+					`"do_not_launch_chrome":false,"do_not_register_for_update_launch":true,` +
+					`"suppress_first_run_default_browser_prompt":true,"suppress_first_run_bubble":true,` +
+					`"verbose_logging":false,"welcome_page_on_os_upgrade_enabled":false},` +
+					`"first_run_tabs":[],` +
+					`"profile":{"default_content_setting_values":{"notifications":2}},` +
+					`"sync_promo":{"show_on_first_run_allowed":false,"user_skipped":true},` +
+					`"signin":{"allowed":false,"allowed_on_next_startup":false},` +
+					`"metrics_reporting_enabled":false}`)
+				if writeErr := os.WriteFile(masterPrefsPath, masterPrefs, 0o600); writeErr != nil {
+					err = fmt.Errorf("%w: %w", ErrSecureBrowserLaunchFailed, writeErr)
+					return
+				}
+			}
+
+			args = append(args,
+				"--no-first-run",
+				"--no-default-browser-check",
+				"--disable-features=ChromeWhatsNewUI,PrivacySandboxSettings4,SyncPromoAfterSigninIntercept",
+				"--disable-search-engine-choice-screen",
+				"--disable-sync",
+				"--ash-no-nudges",
+				"--no-service-autorun",
+				"--password-store=basic",
+				"--use-mock-keychain",
+				"--disable-background-mode",
+			)
+			// Hostname resolution belongs on the host's resolver — the
+			// operator points systemd-resolved (or local dnsmasq) at the
+			// platform CP's DNS service. We don't paper over that here.
 		}
 		args = append(args, url)
 
 	case nativemsg.BrowserFirefox:
 		args = []string{browserPath}
-		policiesPath := s.firefoxPoliciesPath()
-		env = []string{"MOZ_POLICIES_FILE=" + policiesPath}
+		// Firefox loads its trust roots from the profile's cert9.db.
+		// syncFirefox seeds that NSS DB with xkey-managed CAs so no
+		// launch-time env var or argument is required.
 		if mode == ProfileModeIsolated {
 			profileDir := filepath.Join(s.baseDir, "firefox", "profile")
 			if mkErr := os.MkdirAll(profileDir, 0o700); mkErr != nil {
@@ -426,8 +568,11 @@ func (s *SecureBrowserService) profileMode(family nativemsg.Browser) string {
 }
 
 // chromeNSSDBDir returns the NSS database directory for isolated Chrome profiles.
+// The path uses the standard NSS dotfile layout (.pki/nssdb) so that when the
+// browser is launched with HOME pointed at the profile directory Chrome's
+// built-in lookup of $HOME/.pki/nssdb resolves to this database.
 func (s *SecureBrowserService) chromeNSSDBDir() string {
-	return filepath.Join(s.baseDir, "chrome", "profile", "pki", "nssdb")
+	return filepath.Join(s.baseDir, "chrome", "profile", ".pki", "nssdb")
 }
 
 // firefoxCertsDir returns the directory for Firefox PEM certificate files.
@@ -438,6 +583,34 @@ func (s *SecureBrowserService) firefoxCertsDir() string {
 // firefoxPoliciesPath returns the path to the Firefox policies.json file.
 func (s *SecureBrowserService) firefoxPoliciesPath() string {
 	return filepath.Join(s.baseDir, "firefox", firefoxPoliciesFile)
+}
+
+// firefoxNSSDBDir returns the NSS database directory inside the isolated
+// Firefox profile. Firefox reads its trust roots from cert9.db located
+// directly in the profile directory (no .pki/nssdb subpath).
+func (s *SecureBrowserService) firefoxNSSDBDir() string {
+	return filepath.Join(s.baseDir, "firefox", "profile")
+}
+
+// browserStoresPresent verifies the on-disk artifacts that syncChrome
+// and syncFirefox produce actually exist. Used as a guard so the
+// hash-only short-circuit in syncIfChanged doesn't skip work when the
+// browser profile or cert directory has been wiped between launches.
+//
+// The probe targets the load-bearing artifact for each browser:
+// cert9.db (the NSS database both Chrome and Firefox actually read at
+// startup). Verifying policies.json for Firefox would not catch a wiped
+// NSS DB, leaving Firefox launching without any xkey-managed CAs.
+func (s *SecureBrowserService) browserStoresPresent(family nativemsg.Browser) bool {
+	switch family {
+	case nativemsg.BrowserChrome:
+		_, err := os.Stat(filepath.Join(s.chromeNSSDBDir(), "cert9.db"))
+		return err == nil
+	case nativemsg.BrowserFirefox:
+		_, err := os.Stat(filepath.Join(s.firefoxNSSDBDir(), "cert9.db"))
+		return err == nil
+	}
+	return false
 }
 
 // readTrustHash reads the stored trust hash from disk.
@@ -484,15 +657,24 @@ func classifyBrowser(browserPath string) nativemsg.Browser {
 	return ""
 }
 
-// computeTrustHash computes a deterministic SHA-256 hash over all certificate
-// fingerprints in sorted order. This serves as a change detection mechanism.
+// trustHashImplVersion is mixed into computeTrustHash so that on-disk
+// hashes from prior xkey versions are invalidated when the sync logic
+// itself changes. Bump this whenever the set of files written by
+// syncChrome/syncFirefox changes in a way that requires a rebuild for
+// previously-synced profiles. v2: Firefox now writes its NSS DB
+// directly (the policies.json env-var path was non-functional).
+const trustHashImplVersion = "v2"
+
+// computeTrustHash computes a deterministic SHA-256 hash over the
+// implementation version and all certificate fingerprints in sorted
+// order. This serves as a change detection mechanism.
 func computeTrustHash(certs []*x509.Certificate) string {
 	fingerprints := make([]string, len(certs))
 	for i, cert := range certs {
 		fingerprints[i] = certFingerprint(cert)
 	}
 	sort.Strings(fingerprints)
-	h := sha256.Sum256([]byte(strings.Join(fingerprints, "")))
+	h := sha256.Sum256([]byte(trustHashImplVersion + "|" + strings.Join(fingerprints, "")))
 	return hex.EncodeToString(h[:])
 }
 

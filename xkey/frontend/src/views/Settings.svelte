@@ -19,8 +19,10 @@
     mdiDeleteSweep, mdiPlus,
     mdiBellOutline, mdiTestTube, mdiChip, mdiShieldLockOutline,
     mdiFormTextboxPassword, mdiLockAlert, mdiCheck, mdiClose, mdiLockReset,
-    mdiWeb, mdiRefresh, mdiShieldCheck, mdiCertificate, mdiConsoleLine
+    mdiWeb, mdiRefresh, mdiShieldCheck, mdiCertificate, mdiConsoleLine,
+    mdiAccount
   } from '$lib/utils/icons';
+  import SettingsIdentity from './SettingsIdentity.svelte';
   import { formatBytes } from '$lib/utils/format';
   import { theme, setTheme } from '$lib/stores/theme';
   import { addNotification } from '$lib/stores/notifications';
@@ -32,7 +34,7 @@
   import { extensionPairingChanged } from '$lib/stores/events';
   import { setDevToolsEnabled, devToolsEnabled as devToolsStore } from '$lib/stores/app';
 
-  type SettingsCategory = 'general' | 'appearance' | 'server' | 'phone' | 'security' | 'pin' | 'storage' | 'notifications' | 'browser' | 'api-explorer' | 'advanced';
+  type SettingsCategory = 'general' | 'appearance' | 'server' | 'phone' | 'security' | 'pin' | 'storage' | 'notifications' | 'browser' | 'api-explorer' | 'advanced' | 'identity';
 
   /** Response shape from StorageService.GetStatus */
   interface StorageStatus {
@@ -48,6 +50,7 @@
 
   const categories = [
     { id: 'general' as SettingsCategory, label: 'General', icon: mdiCog },
+    { id: 'identity' as SettingsCategory, label: 'Identity', icon: mdiAccount },
     { id: 'appearance' as SettingsCategory, label: 'Appearance', icon: mdiWeatherSunny },
     { id: 'browser' as SettingsCategory, label: 'Browser', icon: mdiWeb },
     { id: 'api-explorer' as SettingsCategory, label: 'API Explorer', icon: mdiConsoleLine },
@@ -189,13 +192,6 @@
     last_generated: string;
     bundle_path: string;
   }
-  interface SecureBrowserLaunchResult {
-    browser: string;
-    family: string;
-    mode: string;
-    cert_count: number;
-    pid: number;
-  }
   let browserConfig: BrowserConfig = {
     default_browser: 'system',
     custom_command: '',
@@ -209,13 +205,6 @@
   let bundleStatus: BrowserBundleStatus | null = null;
   let bundleStatusLoading = false;
   let bundleRegenerating = false;
-
-  // Secure browser launch state (go-truststrap cert injection).
-  let secureBrowsers: BrowserInfo[] = [];
-  let secureBrowserPath = '';
-  let secureBrowserURL = 'about:blank';
-  let secureBrowserLaunching = false;
-  let secureBrowserCertCount = 0;
 
   // Extension pairing state
   interface ExtensionPairingStatus {
@@ -241,7 +230,6 @@
   let extensionUnpairing = false;
   let extensionEnabled = true;
   let requireAutofillAuth = true;
-  let manifestInstalling: string | null = null;
 
   // Storage state
   let storageStatus: StorageStatus | null = null;
@@ -792,78 +780,6 @@
     }
   }
 
-  async function handleInstallManifest(browser: string): Promise<void> {
-    manifestInstalling = browser;
-    const { error } = await callBackendWithError<void>('PairingService', 'InstallManifest', browser);
-    manifestInstalling = null;
-    if (error) {
-      addNotification('error', `Failed to install ${browser} manifest: ${error}`);
-    } else {
-      addNotification('success', `Native messaging manifest installed for ${browser}`);
-      await loadExtensionPairingStatus();
-    }
-  }
-
-  async function handleUninstallManifest(browser: string): Promise<void> {
-    manifestInstalling = browser;
-    const { error } = await callBackendWithError<void>('PairingService', 'UninstallManifest', browser);
-    manifestInstalling = null;
-    if (error) {
-      addNotification('error', `Failed to uninstall ${browser} manifest: ${error}`);
-    } else {
-      addNotification('success', `Native messaging manifest uninstalled for ${browser}`);
-      await loadExtensionPairingStatus();
-    }
-  }
-
-  async function loadSecureBrowserData(): Promise<void> {
-    const browsers = await callBackend<BrowserInfo[]>('SecureBrowserService', 'DetectBrowsers');
-    if (browsers) {
-      secureBrowsers = browsers;
-      if (!secureBrowserPath && browsers.length > 0) {
-        secureBrowserPath = browsers[0].path;
-      }
-    }
-    const count = await callBackend<number>('TrustService', 'CertificateCount');
-    if (count !== null) {
-      secureBrowserCertCount = count;
-    }
-  }
-
-  function secureBrowserFamily(browserPath: string): 'chrome' | 'firefox' | '' {
-    const base = (browserPath.split('/').pop() ?? browserPath).toLowerCase();
-    if (/chrome|chromium|brave|edge|opera|vivaldi/.test(base)) return 'chrome';
-    if (/firefox|librewolf|waterfox/.test(base)) return 'firefox';
-    return '';
-  }
-
-  async function handleLaunchSecureBrowser(): Promise<void> {
-    if (!secureBrowserPath) {
-      addNotification('error', 'Select a browser to launch');
-      return;
-    }
-    if (!secureBrowserURL.trim()) {
-      addNotification('error', 'URL is required');
-      return;
-    }
-    secureBrowserLaunching = true;
-    const { result, error } = await callBackendWithError<SecureBrowserLaunchResult>(
-      'SecureBrowserService',
-      'LaunchBrowser',
-      secureBrowserPath,
-      secureBrowserURL.trim(),
-    );
-    secureBrowserLaunching = false;
-    if (error) {
-      addNotification('error', `Secure browser launch failed: ${error}`);
-      return;
-    }
-    if (result) {
-      addNotification('success',
-        `Launched ${result.family} (${result.mode}) with ${result.cert_count} certificate${result.cert_count !== 1 ? 's' : ''}`);
-    }
-  }
-
   async function loadBrowserConfig(): Promise<void> {
     browserLoading = true;
     const config = await callBackend<BrowserConfig>('BrowserService', 'GetConfig');
@@ -882,7 +798,6 @@
     browserLoading = false;
     browserConfigLoaded = true;
     loadBundleStatus();
-    loadSecureBrowserData();
   }
 
   async function loadBundleStatus(): Promise<void> {
@@ -2182,144 +2097,6 @@
             </div>
           </Card>
 
-          <!-- Secure Browser Launch (CA injection via truststrap) -->
-          <Card variant="outlined">
-            <div class="settings-section" data-testid="secure-browser-card">
-              <h2 class="text-title-medium section-heading">
-                <span class="section-heading-with-icon">
-                  <Icon path={mdiShieldCheck} size={20} />
-                  Secure Browser Launch
-                </span>
-              </h2>
-
-              <p class="text-body-small secure-browser-desc">
-                Launch a browser with CA certificates from your trust store pre-injected via
-                enterprise policy (Firefox) or NSS database (Chrome family). No manual import
-                needed &mdash; certificates are synchronized automatically whenever the trust
-                store changes.
-              </p>
-
-              {#if secureBrowsers.length === 0}
-                <div class="bundle-stale-hint" data-testid="secure-browser-no-browsers">
-                  <Icon path={mdiAlert} size={18} color="var(--color-security-warning)" />
-                  <span class="text-body-small">
-                    No Chrome or Firefox family browsers detected on this system.
-                  </span>
-                </div>
-              {:else}
-                <div class="setting-row">
-                  <div class="setting-info">
-                    <span class="text-title-small">Browser</span>
-                    <span class="text-body-small setting-desc">
-                      Only Chrome and Firefox family browsers are supported
-                    </span>
-                  </div>
-                  <select
-                    class="form-select"
-                    bind:value={secureBrowserPath}
-                    data-testid="secure-browser-select"
-                  >
-                    {#each secureBrowsers as browser}
-                      <option value={browser.path}>{browser.name}</option>
-                    {/each}
-                  </select>
-                </div>
-
-                <div class="setting-row">
-                  <div class="setting-info">
-                    <span class="text-title-small">Chrome profile mode</span>
-                    <span class="text-body-small setting-desc">
-                      <strong>Isolated</strong> uses a clean separate profile.
-                      <strong>Shared</strong> syncs certificates to <code>~/.pki/nssdb</code>
-                      so they apply to your normal Chrome profile.
-                    </span>
-                  </div>
-                  <select
-                    class="form-select"
-                    bind:value={browserConfig.chrome_profile_mode}
-                    data-testid="chrome-profile-mode"
-                    on:change={browserAutoSave}
-                  >
-                    <option value="isolated">Isolated</option>
-                    <option value="shared">Shared</option>
-                  </select>
-                </div>
-
-                <div class="setting-row">
-                  <div class="setting-info">
-                    <span class="text-title-small">Firefox profile mode</span>
-                    <span class="text-body-small setting-desc">
-                      <strong>Isolated</strong> uses a clean separate profile.
-                      <strong>Shared</strong> overlays an enterprise policy on your normal
-                      Firefox profile.
-                    </span>
-                  </div>
-                  <select
-                    class="form-select"
-                    bind:value={browserConfig.firefox_profile_mode}
-                    data-testid="firefox-profile-mode"
-                    on:change={browserAutoSave}
-                  >
-                    <option value="isolated">Isolated</option>
-                    <option value="shared">Shared</option>
-                  </select>
-                </div>
-
-                <div class="setting-row">
-                  <div class="setting-info">
-                    <span class="text-title-small">URL</span>
-                    <span class="text-body-small setting-desc">Initial page to open</span>
-                  </div>
-                  <div class="compact-input">
-                    <input
-                      type="text"
-                      class="custom-command-input"
-                      placeholder="https://example.com"
-                      bind:value={secureBrowserURL}
-                      data-testid="secure-browser-url"
-                    />
-                  </div>
-                </div>
-
-                <div class="bundle-status-grid">
-                  <div class="storage-status-item">
-                    <span class="text-label-small field-label">Certificates to inject</span>
-                    <span class="text-body-medium">{secureBrowserCertCount}</span>
-                  </div>
-                  {#if secureBrowserPath}
-                    <div class="storage-status-item">
-                      <span class="text-label-small field-label">Detected family</span>
-                      <span class="text-body-medium">
-                        {secureBrowserFamily(secureBrowserPath) || 'unknown'}
-                      </span>
-                    </div>
-                  {/if}
-                </div>
-
-                <div class="storage-actions">
-                  <div class="storage-action-row">
-                    <div class="setting-info">
-                      <span class="text-title-small">Launch secure browser</span>
-                      <span class="text-body-small setting-desc">
-                        Synchronizes certificates then launches the selected browser
-                      </span>
-                    </div>
-                    <Button
-                      variant="primary"
-                      icon={mdiShieldCheck}
-                      loading={secureBrowserLaunching}
-                      on:click={handleLaunchSecureBrowser}
-                      disabled={secureBrowserCertCount === 0 || !secureBrowserPath}
-                      data-testid="secure-browser-launch-btn"
-                    >
-                      Launch Secure Browser
-                    </Button>
-                  </div>
-                </div>
-              {/if}
-            </div>
-          </Card>
-
           <Card variant="outlined">
             <div class="settings-section">
               <h2 class="text-title-medium section-heading">Actions</h2>
@@ -2373,64 +2150,7 @@
                   {/if}
                 </div>
 
-                <!-- Native Messaging Manifests -->
-                {#if extensionFullStatus?.manifests}
-                  <div class="setting-row manifest-section">
-                    <div class="setting-info" style="width: 100%;">
-                      <span class="text-title-small">Native messaging</span>
-                      <div class="manifest-list">
-                        {#each extensionFullStatus.manifests as manifest}
-                          <div class="manifest-browser-row">
-                            <span class="manifest-browser-label">
-                              <span class="extension-manifest-row">{manifest.name || manifest.browser}</span>
-                              {#if manifest.installed}
-                                <StatusBadge status="verified" label="Installed" />
-                              {:else}
-                                <StatusBadge status="warning" label="Not installed" />
-                              {/if}
-                            </span>
-                            <span class="manifest-browser-action">
-                              {#if manifest.installed}
-                                <Button
-                                  variant="outlined"
-                                  size="small"
-                                  icon={mdiClose}
-                                  on:click={() => handleUninstallManifest(manifest.browser)}
-                                  disabled={manifestInstalling !== null}
-                                >
-                                  {manifestInstalling === manifest.browser ? 'Removing...' : 'Uninstall'}
-                                </Button>
-                              {:else}
-                                <Button
-                                  variant="primary"
-                                  size="small"
-                                  icon={mdiPlus}
-                                  on:click={() => handleInstallManifest(manifest.browser)}
-                                  disabled={manifestInstalling !== null}
-                                >
-                                  {manifestInstalling === manifest.browser ? 'Installing...' : 'Install'}
-                                </Button>
-                              {/if}
-                            </span>
-                          </div>
-                        {/each}
-                      </div>
-                      {#if extensionFullStatus.manifests.some(m => !m.installed)}
-                        <div class="manifest-install-all">
-                          <Button
-                            variant="primary"
-                            size="small"
-                            icon={mdiPlus}
-                            on:click={() => handleInstallManifest('all')}
-                            disabled={manifestInstalling !== null}
-                          >
-                            {manifestInstalling === 'all' ? 'Installing...' : 'Install All'}
-                          </Button>
-                        </div>
-                      {/if}
-                    </div>
-                  </div>
-                {/if}
+                <!-- Per-browser manifest install lives in Applications → Browser. -->
 
                 <!-- Extension Enabled Toggle -->
                 <div class="setting-row">
@@ -2600,6 +2320,8 @@
             </div>
           </div>
         </Card>
+      {:else if activeCategory === 'identity'}
+        <SettingsIdentity />
       {/if}
     </div>
   </div>
@@ -2788,7 +2510,7 @@
   </Modal>
 
   <!-- PIN verification dialog for disabling security toggles -->
-  <Modal bind:open={showAuthPINDialog} title="Verify PIN" maxWidth="400px">
+  <Modal bind:open={showAuthPINDialog} title="Verify PIN" maxWidth="400px" persistent={true}>
     <div class="auth-pin-form">
       <p class="text-body-medium">Enter your User PIN to disable this security setting.</p>
       <Input
@@ -3247,12 +2969,6 @@
     color: var(--color-on-security-warning-container);
   }
 
-  .secure-browser-desc {
-    margin: 0 0 8px 0;
-    color: var(--color-on-surface-variant);
-    line-height: 1.5;
-  }
-
   .auth-pin-form {
     display: flex;
     flex-direction: column;
@@ -3282,43 +2998,5 @@
     font-style: italic;
   }
 
-  .extension-manifest-row {
-    display: inline;
-    text-transform: capitalize;
-  }
 
-  .manifest-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .manifest-browser-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 0;
-  }
-
-  .manifest-browser-label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .manifest-browser-action {
-    flex-shrink: 0;
-  }
-
-  .manifest-install-all {
-    margin-top: 8px;
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .manifest-section {
-    flex-direction: column;
-    align-items: stretch;
-  }
 </style>

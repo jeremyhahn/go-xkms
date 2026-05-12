@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -477,7 +480,30 @@ func (tpm *TPM2) Provision(soPIN types.Password) error {
 	if err := tpm.Clear(nil); err != nil {
 		tpm.logger.Warn("tpm: failed to clear TPM hierarchies")
 		tpm.logger.Error("tpm clear failed", slog.String("error", err.Error()))
-		// Continue anyway - the TPM might already be in the expected state
+		// When the clear fails because the TPM is in DA lockout (prior
+		// install left hierarchy auth set + accumulated bad-auth counter),
+		// neither TPM2_Clear nor TPM2_HierarchyChangeAuth can recover
+		// locally. Schedule a UEFI PPI ForceClear and reboot — firmware
+		// runs the clear during POST with physical presence asserted,
+		// bypassing DA. If the caller has already set up the PPI path
+		// and rebooted once, we won't land here a second time because
+		// the TPM will be clean. Returning the original error lets the
+		// caller's downstream provisioning see a clean failure instead
+		// of a cryptic TPM_RC_LOCKOUT later during SetHierarchyAuth.
+		errStr := err.Error()
+		if strings.Contains(errStr, "TPM_RC_LOCKOUT") || strings.Contains(errStr, "TPM_RC_AUTH_FAIL") {
+			tpm.logger.Warn("tpm: clear blocked by DA lockout — scheduling UEFI PPI ForceClear and rebooting",
+				slog.String("original_error", errStr))
+			if fcErr := tpm.ForceClear(); fcErr != nil {
+				tpm.logger.Error("tpm: PPI ForceClear failed", slog.String("error", fcErr.Error()))
+				return err
+			}
+			tpm.logger.Warn("tpm: PPI ForceClear scheduled — issuing warm reset via SysRq-b so firmware services the clear at next POST")
+			hardResetViaSysRq(tpm.logger)
+			return err
+		}
+		// Non-lockout clear failure: continue anyway, the TPM might
+		// already be in the expected state.
 	}
 
 	tpm.logger.Info("Setting new Lockout, Endorsement and Owner Hierarchy Authorizations")
@@ -920,4 +946,46 @@ func (tpm *TPM2) BackupEKCertificates() {
 				slog.String("subject", cert.Subject.String()))
 		}
 	}
+}
+
+// hardResetViaSysRq forces an immediate warm reboot of the system.
+// Used after scheduling a UEFI PPI TPM ForceClear so firmware services
+// the clear request during the next POST.
+//
+// On some platforms (Supermicro X10 observed) the userspace `reboot -f`
+// is translated by firmware into an ACPI S5 shutdown rather than a warm
+// reset, which leaves the system off and the PPI request unserviced
+// until manual power-on. The Linux kernel's SysRq interface lets us
+// issue the CPU reset vector directly, bypassing init, shutdown
+// scripts, and ACPI entirely.
+//
+// Order: SysRq 'b' (reboot) first, then SysRq 'c' (crash — triggers
+// panic-on-oops reset on most kernels), then busybox `reboot -f` as a
+// final fallback. The function does not return on success; the CPU
+// resets before the later fallbacks run.
+func hardResetViaSysRq(logger *slog.Logger) {
+	// Flush in-flight writes.
+	_ = exec.Command("sync").Run()
+	time.Sleep(100 * time.Millisecond)
+
+	// Ensure SysRq mask allows reboot + crash (1 = all enabled).
+	_ = os.WriteFile("/proc/sys/kernel/sysrq", []byte("1"), 0o644)
+
+	// SysRq 'b' — immediate CPU reset, skips init/ACPI entirely.
+	if err := os.WriteFile("/proc/sysrq-trigger", []byte("b"), 0o200); err != nil {
+		if logger != nil {
+			logger.Warn("hardReset: SysRq-b write failed", slog.String("error", err.Error()))
+		}
+	}
+	time.Sleep(2 * time.Second)
+
+	// SysRq 'c' — crash → panic → reset (panic=1 cmdline or default).
+	_ = os.WriteFile("/proc/sysrq-trigger", []byte("c"), 0o200)
+	time.Sleep(2 * time.Second)
+
+	// Final fallback: busybox/openrc reboot. Some platforms translate
+	// this to ACPI S5, which is why SysRq was tried first.
+	_ = exec.Command("reboot", "-f").Run()
+	time.Sleep(2 * time.Second)
+	_ = exec.Command("reboot").Run()
 }

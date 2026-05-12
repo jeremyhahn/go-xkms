@@ -1,0 +1,413 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-trusted-ca.
+//
+// go-trusted-ca is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package audit
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+)
+
+// HTTPMiddleware creates HTTP middleware that automatically audits requests
+func HTTPMiddleware(logger AuditLogger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !logger.Enabled() {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			start := time.Now()
+
+			// Extract request context
+			ctx := r.Context()
+			sourceIP := extractClientIP(r)
+			userAgent := r.UserAgent()
+
+			// Generate request ID if not present
+			requestID := r.Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = generateRequestID()
+			}
+
+			// Add context values
+			ctx = ContextWithRequestID(ctx, requestID)
+			ctx = ContextWithSourceIP(ctx, sourceIP)
+			ctx = ContextWithUserAgent(ctx, userAgent)
+
+			// Create response writer wrapper to capture status code
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+			// Process request
+			next.ServeHTTP(rw, r.WithContext(ctx))
+
+			// Log the request
+			duration := time.Since(start).Milliseconds()
+			result := ResultSuccess
+			if rw.statusCode >= 400 {
+				result = ResultFailure
+			}
+
+			event := NewEventBuilder(EventType("HTTP_REQUEST")).
+				WithActor(extractActorFromRequest(r)).
+				WithResource(r.URL.Path).
+				WithAction(r.Method).
+				WithResult(result).
+				WithRequestID(requestID).
+				WithSourceIP(sourceIP).
+				WithUserAgent(userAgent).
+				WithDuration(duration).
+				WithDetail("method", r.Method).
+				WithDetail("path", r.URL.Path).
+				WithDetail("status_code", rw.statusCode).
+				Build()
+
+			if err := logger.Log(ctx, event); err != nil {
+				// Log error but don't fail the request
+				fmt.Printf("audit: failed to log HTTP request: %v\n", err)
+			}
+		})
+	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture the status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// extractClientIP extracts the client IP from the request
+func extractClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return xff
+	}
+
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fall back to RemoteAddr
+	return r.RemoteAddr
+}
+
+// extractActorFromRequest extracts the actor (account ID or system) from request
+func extractActorFromRequest(r *http.Request) string {
+	// Try to get account ID from context or headers
+	if accountID := r.Header.Get("X-Account-ID"); accountID != "" {
+		return fmt.Sprintf("account:%s", accountID)
+	}
+
+	return "system"
+}
+
+// generateRequestID generates a unique request ID
+func generateRequestID() string {
+	// Use timestamp + random component for uniqueness
+	return fmt.Sprintf("req-%d", time.Now().UnixNano())
+}
+
+// AuditableOperation wraps a function with audit logging
+func AuditableOperation(
+	ctx context.Context,
+	logger AuditLogger,
+	eventType EventType,
+	actor, resource, action string,
+	details map[string]interface{},
+	operation func() error) error {
+
+	if !logger.Enabled() {
+		return operation()
+	}
+
+	start := time.Now()
+	err := operation()
+	duration := time.Since(start).Milliseconds()
+
+	result := ResultSuccess
+	builder := NewEventBuilder(eventType).
+		WithActor(actor).
+		WithResource(resource).
+		WithAction(action).
+		WithDuration(duration).
+		WithDetails(details)
+
+	if err != nil {
+		result = ResultFailure
+		builder.WithError(err)
+	}
+
+	event := builder.WithResult(result).Build()
+
+	if logErr := logger.Log(ctx, event); logErr != nil {
+		// Log error but don't fail the operation
+		fmt.Printf("audit: failed to log operation: %v\n", logErr)
+	}
+
+	return err
+}
+
+// LogCertificateIssued logs a certificate issuance event
+func LogCertificateIssued(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID, orderID, commonName string,
+	validityDays int,
+	serialNumber string) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"common_name":   commonName,
+		"validity_days": validityDays,
+		"serial_number": serialNumber,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventCertificateIssued,
+		fmt.Sprintf("account:%s", accountID),
+		fmt.Sprintf("order:%s", orderID),
+		"issue",
+		ResultSuccess,
+		details,
+	)
+}
+
+// LogCertificateRevoked logs a certificate revocation event
+func LogCertificateRevoked(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID, serialNumber string,
+	reason int) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"serial_number": serialNumber,
+		"reason_code":   reason,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventCertificateRevoked,
+		fmt.Sprintf("account:%s", accountID),
+		fmt.Sprintf("certificate:%s", serialNumber),
+		"revoke",
+		ResultSuccess,
+		details,
+	)
+}
+
+// LogAccountCreated logs an account creation event
+func LogAccountCreated(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID string,
+	contact []string,
+	externalAccount bool) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"contact":          contact,
+		"external_account": externalAccount,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventAccountCreated,
+		"system",
+		fmt.Sprintf("account:%s", accountID),
+		"create",
+		ResultSuccess,
+		details,
+	)
+}
+
+// LogOrderCreated logs an order creation event
+func LogOrderCreated(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID, orderID string,
+	identifiers []string) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"identifiers": identifiers,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventOrderCreated,
+		fmt.Sprintf("account:%s", accountID),
+		fmt.Sprintf("order:%s", orderID),
+		"create",
+		ResultSuccess,
+		details,
+	)
+}
+
+// LogOrderFinalized logs an order finalization event
+func LogOrderFinalized(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID, orderID string,
+	certificateURL string) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"certificate_url": certificateURL,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventOrderFinalized,
+		fmt.Sprintf("account:%s", accountID),
+		fmt.Sprintf("order:%s", orderID),
+		"finalize",
+		ResultSuccess,
+		details,
+	)
+}
+
+// LogChallengeCompleted logs a challenge completion event
+func LogChallengeCompleted(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID, challengeID, challengeType string,
+	success bool) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	result := ResultSuccess
+	if !success {
+		result = ResultFailure
+	}
+
+	details := map[string]interface{}{
+		"challenge_type": challengeType,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventChallengeCompleted,
+		fmt.Sprintf("account:%s", accountID),
+		fmt.Sprintf("challenge:%s", challengeID),
+		"validate",
+		result,
+		details,
+	)
+}
+
+// LogKeyChange logs an account key change event
+func LogKeyChange(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID string,
+	oldKeyFingerprint, newKeyFingerprint string) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"old_key_fingerprint": oldKeyFingerprint,
+		"new_key_fingerprint": newKeyFingerprint,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventAccountKeyChanged,
+		fmt.Sprintf("account:%s", accountID),
+		fmt.Sprintf("account:%s", accountID),
+		"key_rollover",
+		ResultSuccess,
+		details,
+	)
+}
+
+// LogAuthenticationFailed logs an authentication failure
+func LogAuthenticationFailed(
+	ctx context.Context,
+	logger AuditLogger,
+	reason string) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"reason": reason,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventAuthenticationFailed,
+		"unknown",
+		"authentication",
+		"authenticate",
+		ResultFailure,
+		details,
+	)
+}
+
+// LogTPMEnrollment logs a TPM enrollment event
+func LogTPMEnrollment(
+	ctx context.Context,
+	logger AuditLogger,
+	accountID, deviceID string,
+	ekCert, akCert string) error {
+
+	if !logger.Enabled() {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"device_id": deviceID,
+		"ek_cert":   ekCert,
+		"ak_cert":   akCert,
+	}
+
+	return logger.LogWithContext(
+		ctx,
+		EventTPMEnrollment,
+		fmt.Sprintf("account:%s", accountID),
+		fmt.Sprintf("device:%s", deviceID),
+		"enroll",
+		ResultSuccess,
+		details,
+	)
+}

@@ -141,10 +141,14 @@ func init() {
 	rootCmd.AddCommand(bootstrapCmd)
 	rootCmd.AddCommand(pivCmd)
 	rootCmd.AddCommand(barrierCmd)
-	rootCmd.AddCommand(initCmd)
+	// initCmd is registered in init.go's init() function; do not re-add.
 	rootCmd.AddCommand(credentialCmd)
 	rootCmd.AddCommand(caCmd)
 	rootCmd.AddCommand(pkcs11Cmd)
+
+	// Wire the locked canonical CLI surface per
+	// docs/08-bootstrap-auth-architecture.md §6.
+	configureCanonicalSurface()
 }
 
 // getConfig returns the global configuration

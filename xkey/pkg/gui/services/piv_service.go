@@ -48,6 +48,7 @@ type PIVSlot struct {
 	Name               string `json:"name"`
 	Description        string `json:"description"`
 	HasCert            bool   `json:"has_cert"`
+	HasKey             bool   `json:"has_key"`
 	Subject            string `json:"subject,omitempty"`
 	Issuer             string `json:"issuer,omitempty"`
 	Algorithm          string `json:"algorithm,omitempty"`
@@ -90,6 +91,32 @@ type CSRSubject struct {
 	Country            string `json:"country"`
 	State              string `json:"state"`
 	Locality           string `json:"locality"`
+}
+
+// PIVGenerateOptions holds the parameters for advanced PIV key generation.
+type PIVGenerateOptions struct {
+	Slot         string `json:"slot"`
+	Algorithm    string `json:"algorithm"`
+	Subject      string `json:"subject"`
+	Organization string `json:"organization"`
+	Country      string `json:"country"`
+	OutputFormat string `json:"output_format"` // "self-signed", "public-key", "csr", "ca-signed"
+	ValidityDays int    `json:"validity_days"`
+	CASource     string `json:"ca_source"` // "local" or "remote"
+}
+
+// PIVGenerateAdvancedResult holds the result of an advanced PIV key generation.
+type PIVGenerateAdvancedResult struct {
+	Slot         string `json:"slot"`
+	Algorithm    string `json:"algorithm"`
+	KeySize      int    `json:"key_size"`
+	Subject      string `json:"subject"`
+	Message      string `json:"message"`
+	OutputFormat string `json:"output_format"`
+	CertPEM      string `json:"cert_pem,omitempty"`
+	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	CSRPEM       string `json:"csr_pem,omitempty"`
+	ChainPEM     string `json:"chain_pem,omitempty"`
 }
 
 // pivSlotMeta is a static table for the primary PIV slots.
@@ -142,14 +169,15 @@ type CCIDBackendNotifier func(backend string)
 // server. Otherwise, operations fall back to the local PIV manager backed
 // by file-based certificate storage.
 type PIVService struct {
-	ctx           context.Context
-	client        transport.Client
-	backend       string
-	localBackend  string
-	localEnabled  bool
-	ccidNotifier  CCIDBackendNotifier
-	registry      backendregistry.Registry
-	backendTypeFn func(id string) string // resolves backend ID to xkms type (e.g., "softhsm" → "pkcs11")
+	ctx              context.Context
+	client           transport.Client
+	backend          string
+	localBackend     string
+	localEnabled     bool
+	localCAAvailable bool
+	ccidNotifier     CCIDBackendNotifier
+	registry         backendregistry.Registry
+	backendTypeFn    func(id string) string // resolves backend ID to xkms type (e.g., "softhsm" -> "pkcs11")
 }
 
 // NewPIVService creates a new PIVService. The client parameter may be nil,
@@ -203,6 +231,11 @@ func (s *PIVService) SetBackendTypeFn(fn func(id string) string) {
 	s.backendTypeFn = fn
 }
 
+// SetLocalCAAvailable sets whether a local CA is available for certificate signing.
+func (s *PIVService) SetLocalCAAvailable(available bool) {
+	s.localCAAvailable = available
+}
+
 // SetBackend switches the backend used for PIV operations at runtime.
 // This updates both the remote and local backend names, allowing the
 // frontend to change the active backend before performing operations.
@@ -226,6 +259,14 @@ func (s *PIVService) GetBackend() string {
 // either through a remote transport client or via local storage.
 func (s *PIVService) IsConnected() bool {
 	return s.client != nil || s.localEnabled
+}
+
+// GetCAAvailability returns which CA sources are available for certificate signing.
+func (s *PIVService) GetCAAvailability() map[string]bool {
+	return map[string]bool{
+		"local":  s.localEnabled && s.localCAAvailable,
+		"remote": s.client != nil,
+	}
 }
 
 // GetSlots returns all primary PIV slots with their current certificate status.
@@ -276,6 +317,100 @@ func (s *PIVService) GenerateKey(slot string, algorithm string) (*PIVGenerateKey
 	return nil, ErrPIVClientNotSet
 }
 
+// GenerateKeyAdvanced generates a PIV key with full control over output format,
+// subject fields, validity, and CA source. This is the enhanced version of
+// GenerateKey that supports all four output formats.
+func (s *PIVService) GenerateKeyAdvanced(opts PIVGenerateOptions) (*PIVGenerateAdvancedResult, error) {
+	if opts.Slot == "" {
+		return nil, ErrPIVInvalidSlot
+	}
+	opts.Slot = strings.ToLower(opts.Slot)
+
+	if _, ok := validAlgorithms[opts.Algorithm]; !ok {
+		return nil, ErrPIVInvalidAlgorithm
+	}
+
+	// Map GUI algorithm to xkms name.
+	localAlg, ok := algorithmToLocalName[opts.Algorithm]
+	if !ok {
+		return nil, ErrPIVInvalidAlgorithm
+	}
+
+	// Build the transport request.
+	req := &transport.GeneratePIVKeyRequest{
+		Slot:         opts.Slot,
+		Algorithm:    localAlg,
+		Subject:      opts.Subject,
+		Organization: opts.Organization,
+		Country:      opts.Country,
+		OutputFormat: opts.OutputFormat,
+		ValidityDays: opts.ValidityDays,
+	}
+
+	var resp *transport.GeneratePIVKeyResponse
+	var err error
+
+	if s.client != nil && opts.CASource == "remote" {
+		// Remote mode: send to server, server handles everything.
+		req.Backend = s.backend
+		resp, err = s.client.GeneratePIVKey(s.ctx, req)
+	} else if s.localEnabled {
+		// Local mode: use xkms in-process.
+		req.Backend = s.resolveXKMSBackendName(s.localBackend)
+		req.Algorithm = localAlg
+		resp, err = xkms.GeneratePIVKey(s.ctx, req)
+	} else {
+		return nil, ErrPIVClientNotSet
+	}
+
+	if err != nil {
+		slog.Error("PIV generate key failed", "slot", opts.Slot, "algorithm", opts.Algorithm, "error", err)
+		if strings.Contains(err.Error(), "CKR_DEVICE_ERROR") {
+			return nil, fmt.Errorf("YubiKey device busy — close Yubico Authenticator or other apps using the YubiKey, then retry: %w", err)
+		}
+		return nil, err
+	}
+
+	// Build result from response.
+	result := &PIVGenerateAdvancedResult{
+		Slot:         opts.Slot,
+		Algorithm:    opts.Algorithm,
+		OutputFormat: opts.OutputFormat,
+		CertPEM:      string(resp.Certificate),
+		PublicKeyPEM: string(resp.PublicKey),
+		CSRPEM:       string(resp.CSR),
+		ChainPEM:     string(resp.ChainPEM),
+	}
+
+	// Extract metadata from certificate if present.
+	if len(resp.Certificate) > 0 {
+		if block, _ := pem.Decode(resp.Certificate); block != nil {
+			if cert, parseErr := x509.ParseCertificate(block.Bytes); parseErr == nil {
+				result.KeySize = certKeySize(cert)
+				result.Subject = cert.Subject.String()
+			}
+		}
+	}
+
+	// Build user-friendly message.
+	slotName, _ := pivSlotNameMap[opts.Slot]
+	if slotName == "" {
+		slotName = "PIV Key " + opts.Slot
+	}
+	switch opts.OutputFormat {
+	case "public-key":
+		result.Message = fmt.Sprintf("Public key generated for slot %s (%s)", opts.Slot, slotName)
+	case "csr":
+		result.Message = fmt.Sprintf("CSR generated for slot %s (%s)", opts.Slot, slotName)
+	case "ca-signed":
+		result.Message = fmt.Sprintf("CA-signed certificate generated in slot %s (%s)", opts.Slot, slotName)
+	default:
+		result.Message = fmt.Sprintf("Key generated in slot %s using %s", opts.Slot, opts.Algorithm)
+	}
+
+	return result, nil
+}
+
 // ImportCertificate imports a PEM-encoded certificate into the specified slot.
 func (s *PIVService) ImportCertificate(slot string, certPEM []byte) error {
 	if slot == "" {
@@ -306,9 +441,11 @@ func (s *PIVService) ImportCertificate(slot string, certPEM []byte) error {
 }
 
 // ExportCertificate exports the PEM-encoded certificate from the specified slot.
-func (s *PIVService) ExportCertificate(slot string) ([]byte, error) {
+// ExportCertificate returns the PEM-encoded certificate as a string so that
+// Wails serializes it as plain text rather than base64-encoding a []byte.
+func (s *PIVService) ExportCertificate(slot string) (string, error) {
 	if slot == "" {
-		return nil, ErrPIVInvalidSlot
+		return "", ErrPIVInvalidSlot
 	}
 	slot = strings.ToLower(slot)
 
@@ -319,9 +456,9 @@ func (s *PIVService) ExportCertificate(slot string) ([]byte, error) {
 			Format:  "pem",
 		})
 		if err != nil {
-			return nil, ErrPIVNoCertificate
+			return "", ErrPIVNoCertificate
 		}
-		return resp.Certificate, nil
+		return string(resp.Certificate), nil
 	}
 	if s.localEnabled {
 		resp, err := xkms.ExportPIVCertificate(s.ctx, &transport.GetPIVCertificateRequest{
@@ -330,49 +467,106 @@ func (s *PIVService) ExportCertificate(slot string) ([]byte, error) {
 			Format:  "pem",
 		})
 		if err != nil {
-			return nil, ErrPIVNoCertificate
+			return "", ErrPIVNoCertificate
 		}
-		return resp.Certificate, nil
+		return string(resp.Certificate), nil
 	}
-	return nil, ErrPIVClientNotSet
+	return "", ErrPIVClientNotSet
+}
+
+// ExportPublicKey returns the PEM-encoded public key for a PIV slot as a
+// string (so Wails serializes it as plain text, not a base64-encoded []byte).
+// Unlike ExportCertificate, this works for slots that have a key but no
+// certificate (e.g., public-key-only or CSR-only generation output).
+func (s *PIVService) ExportPublicKey(slot string) (string, error) {
+	if slot == "" {
+		return "", ErrPIVInvalidSlot
+	}
+	slot = strings.ToLower(slot)
+
+	if s.localEnabled {
+		backend := s.resolveXKMSBackendName(s.localBackend)
+		// Match by PIVSlot first (works for YubiKey PKCS#11 where the CKA_ID is
+		// the slot byte and the user-chosen subject CN cannot be predicted).
+		// Fall back to the software-backend "piv-<slot>" CN convention when the
+		// backend does not populate PIVSlot on listed keys.
+		cn := "piv-" + slot
+		keys, err := xkms.ListKeys(backend)
+		if err != nil {
+			slog.Error("PIV export public key: list keys failed", "slot", slot, "backend", backend, "error", err)
+			return "", fmt.Errorf("pivcert: export public key for slot %s: %w", slot, err)
+		}
+		for _, ka := range keys {
+			if !strings.EqualFold(ka.PIVSlot, slot) && ka.CN != cn {
+				continue
+			}
+			signer, sErr := xkms.Signer(ka)
+			if sErr != nil {
+				slog.Error("PIV export public key: signer lookup failed", "slot", slot, "cn", ka.CN, "error", sErr)
+				return "", fmt.Errorf("pivcert: export public key for slot %s: %w", slot, sErr)
+			}
+			pubDER, mErr := x509.MarshalPKIXPublicKey(signer.Public())
+			if mErr != nil {
+				return "", fmt.Errorf("pivcert: marshal public key: %w", mErr)
+			}
+			return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})), nil
+		}
+		return "", fmt.Errorf("pivcert: no key found in slot %s", slot)
+	}
+	return "", ErrPIVClientNotSet
 }
 
 // GenerateCSR creates a Certificate Signing Request for the specified slot.
-func (s *PIVService) GenerateCSR(slot string, subject *CSRSubject) ([]byte, error) {
+// GenerateCSR returns the PEM-encoded CSR as a string (Wails would base64-encode
+// a []byte return, which breaks clipboard paste into standard PEM parsers).
+func (s *PIVService) GenerateCSR(slot string, subject *CSRSubject) (string, error) {
 	if slot == "" {
-		return nil, ErrPIVInvalidSlot
+		return "", ErrPIVInvalidSlot
 	}
 	slot = strings.ToLower(slot)
 	if subject == nil || subject.CommonName == "" {
-		return nil, ErrPIVInvalidSubject
+		return "", ErrPIVInvalidSubject
 	}
 
 	if s.client != nil {
 		resp, err := s.client.GeneratePIVCSR(s.ctx, &transport.GeneratePIVCSRRequest{
-			Backend: s.backend,
-			Slot:    slot,
-			Subject: subject.CommonName,
+			Backend:            s.backend,
+			Slot:               slot,
+			Subject:            subject.CommonName,
+			Organization:       subject.Organization,
+			OrganizationalUnit: subject.OrganizationalUnit,
+			Country:            subject.Country,
+			State:              subject.State,
+			Locality:           subject.Locality,
 		})
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		return resp.CSR, nil
+		return string(resp.CSR), nil
 	}
 	if s.localEnabled {
 		resp, err := xkms.GeneratePIVCSR(s.ctx, &transport.GeneratePIVCSRRequest{
-			Backend: s.resolveXKMSBackendName(s.localBackend),
-			Slot:    slot,
-			Subject: subject.CommonName,
+			Backend:            s.resolveXKMSBackendName(s.localBackend),
+			Slot:               slot,
+			Subject:            subject.CommonName,
+			Organization:       subject.Organization,
+			OrganizationalUnit: subject.OrganizationalUnit,
+			Country:            subject.Country,
+			State:              subject.State,
+			Locality:           subject.Locality,
 		})
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		return resp.CSR, nil
+		return string(resp.CSR), nil
 	}
-	return nil, ErrPIVClientNotSet
+	return "", ErrPIVClientNotSet
 }
 
-// DeleteCertificate removes the certificate from the specified slot.
+// DeleteCertificate removes BOTH the certificate (if present) and the key
+// material from the specified PIV slot. For key-only slots (created via the
+// public-key or CSR output formats), the certificate deletion is a no-op
+// but the underlying key is still removed so the slot becomes fully empty.
 func (s *PIVService) DeleteCertificate(slot string) error {
 	if slot == "" {
 		return ErrPIVInvalidSlot
@@ -385,21 +579,78 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 			Slot:    slot,
 		})
 		if err != nil {
-			return ErrPIVNoCertificate
+			slog.Error("PIV delete certificate failed", "slot", slot, "backend", s.backend, "error", err)
+			return fmt.Errorf("pivcert: delete slot %s: %w", slot, err)
 		}
 		return nil
 	}
 	if s.localEnabled {
-		err := xkms.DeletePIVCertificate(s.ctx, &transport.DeletePIVCertificateRequest{
-			Backend: s.resolveXKMSBackendName(s.localBackend),
+		backend := s.resolveXKMSBackendName(s.localBackend)
+		certErr := xkms.DeletePIVCertificate(s.ctx, &transport.DeletePIVCertificateRequest{
+			Backend: backend,
 			Slot:    slot,
 		})
-		if err != nil {
-			return ErrPIVNoCertificate
+		// A "certificate not found" error is expected for key-only slots and
+		// must not block key deletion. Any other error is a real failure.
+		certNotFound := certErr != nil && strings.Contains(certErr.Error(), "not found")
+		if certErr != nil && !certNotFound {
+			slog.Error("PIV delete certificate failed", "slot", slot, "backend", backend, "error", certErr)
+			return fmt.Errorf("pivcert: delete slot %s: %w", slot, certErr)
+		}
+
+		// Now delete the underlying key from the key backend.
+		cn := "piv-" + slot
+		keys, listErr := xkms.ListKeys(backend)
+		if listErr != nil {
+			slog.Error("PIV delete: list keys failed", "slot", slot, "backend", backend, "error", listErr)
+			// If the cert was deleted but we cannot list keys, surface partial success.
+			if certNotFound {
+				return fmt.Errorf("pivcert: delete slot %s: %w", slot, listErr)
+			}
+			return nil
+		}
+		keyDeleted := false
+		for _, ka := range keys {
+			// Match by PIVSlot (PKCS#11 YubiKey) or the software-backend CN
+			// convention. See ExportPublicKey for the same logic.
+			if !strings.EqualFold(ka.PIVSlot, slot) && ka.CN != cn {
+				continue
+			}
+			if err := xkms.DeleteKey(ka); err != nil {
+				slog.Error("PIV delete key failed", "slot", slot, "cn", ka.CN, "error", err)
+				return fmt.Errorf("pivcert: delete key for slot %s: %w", slot, err)
+			}
+			keyDeleted = true
+			slog.Info("audit", "component", "audit",
+				"operation", "piv_key_deleted", "success", true,
+				"timestamp", time.Now().Format(time.RFC3339),
+				"slot", slot, "backend", backend)
+			break
+		}
+		// Nothing in the slot at all — report not found only when both cert
+		// and key were absent.
+		if certNotFound && !keyDeleted {
+			return fmt.Errorf("pivcert: slot %s has neither certificate nor key", slot)
 		}
 		return nil
 	}
 	return ErrPIVClientNotSet
+}
+
+// SelfSignExistingKey creates and stores a self-signed certificate using the
+// existing key in the given PIV slot. Use this after a public-key-only or
+// CSR-only generation to "graduate" the slot into a key+certificate state
+// without regenerating the underlying key material.
+func (s *PIVService) SelfSignExistingKey(slot, commonName string, validityDays int) (string, error) {
+	if slot == "" {
+		return "", ErrPIVInvalidSlot
+	}
+	slot = strings.ToLower(slot)
+	if !s.localEnabled {
+		return "", ErrPIVClientNotSet
+	}
+	backend := s.resolveXKMSBackendName(s.localBackend)
+	return xkms.SelfSignExistingPIVKey(backend, slot, commonName, validityDays)
 }
 
 // --- Remote operation methods ---
@@ -500,6 +751,10 @@ func (s *PIVService) generateLocalKey(slot, algorithm string) (*PIVGenerateKeyRe
 		Subject:   slotName,
 	})
 	if err != nil {
+		slog.Error("PIV generate local key failed", "slot", slot, "algorithm", algorithm, "error", err)
+		if strings.Contains(err.Error(), "CKR_DEVICE_ERROR") {
+			return nil, fmt.Errorf("YubiKey device busy — close Yubico Authenticator or other apps using the YubiKey, then retry: %w", err)
+		}
 		return nil, err
 	}
 	return buildKeyResult(slot, algorithm, resp.Certificate), nil
@@ -542,6 +797,7 @@ func (s *PIVService) mapTransportSlots(resp *transport.ListPIVSlotsResponse) []P
 
 		if status, ok := slotStatusMap[meta.Slot]; ok {
 			slot.HasCert = status.HasCert
+			slot.HasKey = status.HasCert || status.Algorithm != ""
 			slot.Subject = status.Subject
 			slot.Issuer = status.Issuer
 			slot.Algorithm = status.Algorithm

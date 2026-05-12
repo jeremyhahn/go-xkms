@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package ca provides certificate revocation and CRL operations for XKMSCA.
+// Package ca provides certificate revocation and CRL operations for TrustedCA.
 //
 // This file implements RFC 5280 compliant certificate revocation list (CRL)
 // generation and certificate revocation operations. All operations are

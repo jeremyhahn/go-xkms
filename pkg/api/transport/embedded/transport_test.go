@@ -1248,7 +1248,10 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"BarrierUnseal", func() error { return tr.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{}) }},
 		{"BarrierSeal", func() error { return tr.BarrierSeal(ctx) }},
 		{"BarrierStatus", func() error { _, e := tr.BarrierStatus(ctx); return e }},
-		{"BarrierInitializeShamir", func() error { _, e := tr.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{}); return e }},
+		{"BarrierInitializeShamir", func() error {
+			_, e := tr.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{})
+			return e
+		}},
 		{"BarrierUnsealWithShare", func() error { _, e := tr.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{}); return e }},
 		{"BarrierUnsealWithShares", func() error { return tr.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{}) }},
 		{"BarrierShamirListShares", func() error { _, e := tr.BarrierShamirListShares(ctx); return e }},
@@ -1263,7 +1266,10 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"BarrierRecoverWithKeys", func() error { return tr.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{}) }},
 		{"BarrierDeleteRecoveryKeys", func() error { return tr.BarrierDeleteRecoveryKeys(ctx) }},
 		{"BarrierHasRecoveryKeys", func() error { _, e := tr.BarrierHasRecoveryKeys(ctx); return e }},
-		{"BarrierGenerateRootToken", func() error { _, e := tr.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{}); return e }},
+		{"BarrierGenerateRootToken", func() error {
+			_, e := tr.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{})
+			return e
+		}},
 		{"SetSOPIN", func() error { return tr.SetSOPIN(ctx, &transport.SetSOPINRequest{}) }},
 		{"SetUserPIN", func() error { return tr.SetUserPIN(ctx, &transport.SetUserPINRequest{}) }},
 		{"ChangeSOPIN", func() error { return tr.ChangeSOPIN(ctx, &transport.ChangeSOPINRequest{}) }},
@@ -1280,7 +1286,9 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"PasswordStoreUnlock", func() error { return tr.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{}) }},
 		{"PasswordStoreLock", func() error { return tr.PasswordStoreLock(ctx) }},
 		{"PasswordStoreStatus", func() error { _, e := tr.PasswordStoreStatus(ctx); return e }},
-		{"PasswordStoreSetAccessMode", func() error { return tr.PasswordStoreSetAccessMode(ctx, &transport.PasswordStoreSetAccessModeRequest{}) }},
+		{"PasswordStoreSetAccessMode", func() error {
+			return tr.PasswordStoreSetAccessMode(ctx, &transport.PasswordStoreSetAccessModeRequest{})
+		}},
 		{"PasswordGenerate", func() error { _, e := tr.PasswordGenerate(ctx, &transport.PasswordGenerateRequest{}); return e }},
 		{"SealStorePut", func() error { return tr.SealStorePut(ctx, &transport.SealStorePutRequest{}) }},
 		{"SealStoreGet", func() error { _, e := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{}); return e }},
@@ -1403,7 +1411,10 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"BarrierUnseal", func() error { return tr.BarrierUnseal(ctx, &transport.BarrierUnsealRequest{}) }},
 		{"BarrierSeal", func() error { return tr.BarrierSeal(ctx) }},
 		{"BarrierStatus", func() error { _, e := tr.BarrierStatus(ctx); return e }},
-		{"BarrierInitializeShamir", func() error { _, e := tr.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{}); return e }},
+		{"BarrierInitializeShamir", func() error {
+			_, e := tr.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{})
+			return e
+		}},
 		{"BarrierUnsealWithShare", func() error { _, e := tr.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{}); return e }},
 		{"BarrierUnsealWithShares", func() error { return tr.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{}) }},
 		{"BarrierShamirListShares", func() error { _, e := tr.BarrierShamirListShares(ctx); return e }},
@@ -1411,11 +1422,17 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"BarrierShamirDeleteAllShares", func() error { return tr.BarrierShamirDeleteAllShares(ctx) }},
 		{"BarrierShamirVerify", func() error { return tr.BarrierShamirVerify(ctx) }},
 		{"BarrierRekey", func() error { _, e := tr.BarrierRekey(ctx, &transport.BarrierRekeyRequest{}); return e }},
-		{"BarrierGenerateRecoveryKeys", func() error { _, e := tr.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{}); return e }},
+		{"BarrierGenerateRecoveryKeys", func() error {
+			_, e := tr.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{})
+			return e
+		}},
 		{"BarrierRecoverWithKeys", func() error { return tr.BarrierRecoverWithKeys(ctx, &transport.BarrierRecoverWithKeysRequest{}) }},
 		{"BarrierDeleteRecoveryKeys", func() error { return tr.BarrierDeleteRecoveryKeys(ctx) }},
 		{"BarrierHasRecoveryKeys", func() error { _, e := tr.BarrierHasRecoveryKeys(ctx); return e }},
-		{"BarrierGenerateRootToken", func() error { _, e := tr.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{}); return e }},
+		{"BarrierGenerateRootToken", func() error {
+			_, e := tr.BarrierGenerateRootToken(ctx, &transport.BarrierGenerateRootTokenRequest{})
+			return e
+		}},
 		{"SetSOPIN", func() error { return tr.SetSOPIN(ctx, &transport.SetSOPINRequest{}) }},
 		{"SetUserPIN", func() error { return tr.SetUserPIN(ctx, &transport.SetUserPINRequest{}) }},
 		{"ChangeSOPIN", func() error { return tr.ChangeSOPIN(ctx, &transport.ChangeSOPINRequest{}) }},
@@ -1432,7 +1449,9 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"PasswordStoreUnlock", func() error { return tr.PasswordStoreUnlock(ctx, &transport.PasswordStoreUnlockRequest{}) }},
 		{"PasswordStoreLock", func() error { return tr.PasswordStoreLock(ctx) }},
 		{"PasswordStoreStatus", func() error { _, e := tr.PasswordStoreStatus(ctx); return e }},
-		{"PasswordStoreSetAccessMode", func() error { return tr.PasswordStoreSetAccessMode(ctx, &transport.PasswordStoreSetAccessModeRequest{}) }},
+		{"PasswordStoreSetAccessMode", func() error {
+			return tr.PasswordStoreSetAccessMode(ctx, &transport.PasswordStoreSetAccessModeRequest{})
+		}},
 		{"PasswordGenerate", func() error { _, e := tr.PasswordGenerate(ctx, &transport.PasswordGenerateRequest{}); return e }},
 		{"SealStorePut", func() error { return tr.SealStorePut(ctx, &transport.SealStorePutRequest{}) }},
 		{"SealStoreGet", func() error { _, e := tr.SealStoreGet(ctx, &transport.SealStoreGetRequest{}); return e }},

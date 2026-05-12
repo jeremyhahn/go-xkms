@@ -3,19 +3,22 @@ import {
   navigateTo,
   waitForAppReady,
   ensureSidebarExpanded,
-  navigateToSettingsCategory,
 } from './helpers';
 
 /**
- * Playwright coverage for the Secure Browser Launch card in Settings →
- * Browser. The tests install a mocked Wails backend via addInitScript
- * before navigating so that SecureBrowserService returns a deterministic
- * set of browsers and LaunchBrowser call arguments can be captured.
+ * Playwright coverage for the Browser application view (Applications →
+ * Browser). The view renders a summary card plus one card per detected
+ * Chrome/Firefox family browser. Each card exposes a secure launch pane
+ * (URL + profile mode + Launch) and an extension pane (manifest
+ * install/uninstall). The tests install a mocked Wails backend via
+ * addInitScript before navigating so the exposed services are
+ * deterministic and launch/manifest calls can be captured.
  */
 
-interface SecureBrowserTestBackend {
+interface BrowserViewTestBackend {
   browsers: Array<{ name: string; path: string }>;
   certCount: number;
+  manifests: Array<{ browser: string; installed: boolean }>;
   config: {
     default_browser: string;
     custom_command: string;
@@ -33,22 +36,26 @@ interface SecureBrowserTestBackend {
   launchError?: string;
 }
 
-async function installSecureBrowserMock(
+async function installBrowserViewMock(
   page: Page,
-  backend: SecureBrowserTestBackend,
+  backend: BrowserViewTestBackend,
 ): Promise<void> {
   const payload = JSON.stringify(backend);
 
   await page.addInitScript((serialized: string) => {
     const data = JSON.parse(serialized);
     const launchCalls: Array<{ browserPath: string; url: string }> = [];
-    (window as any).__secureBrowserLaunchCalls = launchCalls;
-    (window as any).__secureBrowserConfig = { ...data.config };
+    const manifestCalls: Array<{ action: 'install' | 'uninstall'; browser: string }> = [];
+    (window as any).__browserViewLaunchCalls = launchCalls;
+    (window as any).__browserViewManifestCalls = manifestCalls;
+    (window as any).__browserViewConfig = { ...data.config };
+    (window as any).__browserViewManifests = data.manifests.map(
+      (m: { browser: string; installed: boolean }) => ({ ...m }),
+    );
 
     (window as any).go = {
       main: {},
       services: {
-        // Setup wizard gate — keep the app out of the wizard flow.
         SetupWizardService: {
           GetStartupState: async () => ({
             setup_complete: true,
@@ -56,29 +63,9 @@ async function installSecureBrowserMock(
           }),
           GetPolicy: async () => ({}),
         },
-        AuthService: {
-          SetModeUser: async () => {},
-        },
+        AuthService: { SetModeUser: async () => {} },
         TPMService: {
           GetStatus: async () => ({ available: false, device_exists: false }),
-        },
-        // Extension/autofill — required so the Browser category reactive
-        // block terminates. Without these the reactive statement that
-        // triggers loadExtensionPairingStatus() loops indefinitely because
-        // extensionFullStatus stays null while extensionLoading flips.
-        PairingService: {
-          GetExtensionFullStatus: async () => ({
-            ipc_running: true,
-            ipc_socket_path: '/tmp/xkey.sock',
-            paired_extensions: [],
-            manifests: [],
-          }),
-          InstallManifest: async () => {},
-          UninstallManifest: async () => {},
-        },
-        AutoFillService: {
-          IsEnabled: async () => false,
-          GetRequireAuthentication: async () => false,
         },
         AppService: {
           GetConfig: async () => ({
@@ -104,26 +91,45 @@ async function installSecureBrowserMock(
             browser_extension_enabled: false,
           }),
         },
-        BrowserService: {
-          GetConfig: async () => ({ ...((window as any).__secureBrowserConfig) }),
-          SetConfig: async (cfg: any) => {
-            (window as any).__secureBrowserConfig = { ...cfg };
+        AppLockService: { RecordActivity: async () => {} },
+        PairingService: {
+          GetExtensionFullStatus: async () => ({
+            ipc_running: true,
+            ipc_socket_path: '/tmp/xkey.sock',
+            paired_extensions: [],
+            manifests: (window as any).__browserViewManifests.map(
+              (m: { browser: string; installed: boolean }) => ({
+                browser: m.browser,
+                name: m.browser,
+                installed: m.installed,
+                path: `/tmp/${m.browser}.json`,
+              }),
+            ),
+          }),
+          InstallManifest: async (browser: string) => {
+            manifestCalls.push({ action: 'install', browser });
+            const list = (window as any).__browserViewManifests;
+            const entry = list.find(
+              (m: { browser: string; installed: boolean }) => m.browser === browser,
+            );
+            if (entry) entry.installed = true;
           },
-          DetectBrowsers: async () => [
-            { name: 'System Default', path: 'system' },
-            ...data.browsers,
-          ],
-          GetTrustBundlePath: async () => '/tmp/bundle.pem',
-          OpenURL: async (_url: string) => {},
+          UninstallManifest: async (browser: string) => {
+            manifestCalls.push({ action: 'uninstall', browser });
+            const list = (window as any).__browserViewManifests;
+            const entry = list.find(
+              (m: { browser: string; installed: boolean }) => m.browser === browser,
+            );
+            if (entry) entry.installed = false;
+          },
+        },
+        BrowserService: {
+          GetConfig: async () => ({ ...((window as any).__browserViewConfig) }),
+          SetConfig: async (cfg: any) => {
+            (window as any).__browserViewConfig = { ...cfg };
+          },
         },
         TrustService: {
-          GetBrowserBundleStatus: async () => ({
-            exists: false,
-            stale: false,
-            cert_count: 0,
-            last_generated: '',
-            bundle_path: '/tmp/bundle.pem',
-          }),
           CertificateCount: async () => data.certCount,
         },
         SecureBrowserService: {
@@ -133,13 +139,15 @@ async function installSecureBrowserMock(
             if (data.launchError) {
               throw new Error(data.launchError);
             }
-            return data.launchResult ?? {
-              browser: browserPath,
-              family: 'chrome',
-              mode: 'isolated',
-              cert_count: data.certCount,
-              pid: 12345,
-            };
+            return (
+              data.launchResult ?? {
+                browser: browserPath,
+                family: browserPath.includes('chrome') ? 'chrome' : 'firefox',
+                mode: 'isolated',
+                cert_count: data.certCount,
+                pid: 12345,
+              }
+            );
           },
         },
       },
@@ -147,12 +155,16 @@ async function installSecureBrowserMock(
   }, payload);
 }
 
-const defaultBackend: SecureBrowserTestBackend = {
+const defaultBackend: BrowserViewTestBackend = {
   browsers: [
     { name: 'Firefox', path: '/usr/bin/firefox' },
     { name: 'Google Chrome', path: '/usr/bin/google-chrome' },
   ],
   certCount: 3,
+  manifests: [
+    { browser: 'chrome', installed: false },
+    { browser: 'firefox', installed: true },
+  ],
   config: {
     default_browser: 'system',
     custom_command: '',
@@ -162,122 +174,134 @@ const defaultBackend: SecureBrowserTestBackend = {
   },
 };
 
-async function gotoBrowserSettings(
+async function gotoBrowserView(
   page: Page,
-  backend: SecureBrowserTestBackend = defaultBackend,
+  backend: BrowserViewTestBackend = defaultBackend,
 ): Promise<void> {
-  await installSecureBrowserMock(page, backend);
+  await installBrowserViewMock(page, backend);
   await page.goto('/');
   await waitForAppReady(page);
   await ensureSidebarExpanded(page);
-  await navigateTo(page, 'settings');
-  await navigateToSettingsCategory(page, 'Browser');
-  // Wait for async loadBrowserConfig / loadSecureBrowserData to resolve.
-  await page.waitForSelector('[data-testid="secure-browser-card"]', { timeout: 5_000 });
+  await navigateTo(page, 'browser');
 }
 
-test.describe('Secure Browser Launch card', () => {
-  test('renders the card with its heading', async ({ page }) => {
-    await gotoBrowserSettings(page);
+test.describe('Browser view — navigation', () => {
+  test('Browser nav item appears under Applications', async ({ page }) => {
+    await installBrowserViewMock(page, defaultBackend);
+    await page.goto('/');
+    await waitForAppReady(page);
+    await ensureSidebarExpanded(page);
 
-    const card = page.locator('[data-testid="secure-browser-card"]');
-    await expect(card).toBeVisible();
-    await expect(card.getByText('Secure Browser Launch')).toBeVisible();
+    const nav = page.locator('nav.sidebar button.nav-item', {
+      has: page.locator('span.nav-label:text-is("Browser")'),
+    });
+    await expect(nav).toBeVisible();
   });
 
-  test('populates the browser dropdown from SecureBrowserService.DetectBrowsers', async ({
+  test('clicking Browser nav renders the view', async ({ page }) => {
+    await gotoBrowserView(page);
+    await expect(page.getByRole('heading', { name: 'Browser', level: 1 })).toBeVisible();
+  });
+});
+
+test.describe('Browser view — summary card', () => {
+  test('displays trust store cert count and detected browser count', async ({
     page,
   }) => {
-    await gotoBrowserSettings(page);
-
-    const select = page.locator('[data-testid="secure-browser-select"]');
-    await expect(select).toBeVisible();
-
-    const options = await select.locator('option').allTextContents();
-    expect(options).toEqual(['Firefox', 'Google Chrome']);
+    await gotoBrowserView(page, { ...defaultBackend, certCount: 7 });
+    // Wait for mocked data to populate.
+    await expect(page.getByText('7 certificates', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^2$/, { exact: true }).first()).toBeVisible();
   });
 
-  test('renders the warning banner when no Chrome/Firefox family browsers are detected', async ({
+  test('singular certificate label when count is 1', async ({ page }) => {
+    await gotoBrowserView(page, { ...defaultBackend, certCount: 1 });
+    await expect(page.getByText('1 certificate', { exact: true })).toBeVisible();
+  });
+
+  test('Refresh button re-queries detection and manifest status', async ({
     page,
   }) => {
-    await gotoBrowserSettings(page, {
-      ...defaultBackend,
-      browsers: [],
+    await gotoBrowserView(page);
+
+    // Flip Chrome manifest state, then refresh — view should reflect install.
+    await page.evaluate(() => {
+      const list = (window as any).__browserViewManifests;
+      const entry = list.find(
+        (m: { browser: string; installed: boolean }) => m.browser === 'chrome',
+      );
+      if (entry) entry.installed = true;
     });
 
-    await expect(
-      page.locator('[data-testid="secure-browser-no-browsers"]'),
-    ).toBeVisible();
-    await expect(
-      page.locator('[data-testid="secure-browser-select"]'),
-    ).toHaveCount(0);
-    await expect(
-      page.locator('[data-testid="secure-browser-launch-btn"]'),
-    ).toHaveCount(0);
+    await page.getByRole('button', { name: 'Refresh' }).click();
+
+    const chromeCard = page.locator('[data-testid="browser-card-chrome"]');
+    await expect(chromeCard.getByRole('button', { name: 'Uninstall manifest' })).toBeVisible();
   });
+});
 
-  test('profile mode selects render with isolated default', async ({ page }) => {
-    await gotoBrowserSettings(page);
-
-    const chromeMode = page.locator('[data-testid="chrome-profile-mode"]');
-    const firefoxMode = page.locator('[data-testid="firefox-profile-mode"]');
-
-    await expect(chromeMode).toBeVisible();
-    await expect(firefoxMode).toBeVisible();
-    await expect(chromeMode).toHaveValue('isolated');
-    await expect(firefoxMode).toHaveValue('isolated');
-  });
-
-  test('cert count is displayed from TrustService.CertificateCount', async ({
+test.describe('Browser view — empty state', () => {
+  test('shows "No supported browsers" when detection returns none', async ({
     page,
   }) => {
-    await gotoBrowserSettings(page, { ...defaultBackend, certCount: 7 });
+    await gotoBrowserView(page, { ...defaultBackend, browsers: [] });
 
-    const card = page.locator('[data-testid="secure-browser-card"]');
-    await expect(card.getByText('Certificates to inject')).toBeVisible();
-    await expect(card.getByText('7', { exact: true })).toBeVisible();
+    await expect(page.locator('[data-testid="browser-empty"]')).toBeVisible();
+    await expect(page.locator('[data-testid="browser-card-chrome"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="browser-card-firefox"]')).toHaveCount(0);
   });
+});
 
-  test('launch button is disabled when cert count is zero', async ({ page }) => {
-    await gotoBrowserSettings(page, { ...defaultBackend, certCount: 0 });
-
-    const btn = page.locator('[data-testid="secure-browser-launch-btn"]');
-    await expect(btn).toBeVisible();
-    await expect(btn).toBeDisabled();
-  });
-
-  test('launch button enabled when cert count > 0 and browser selected', async ({
+test.describe('Browser view — per-browser cards', () => {
+  test('renders one card per detected Chrome/Firefox browser', async ({
     page,
   }) => {
-    await gotoBrowserSettings(page);
+    await gotoBrowserView(page);
 
-    const btn = page.locator('[data-testid="secure-browser-launch-btn"]');
-    await expect(btn).toBeEnabled();
+    await expect(page.locator('[data-testid="browser-card-firefox"]')).toBeVisible();
+    await expect(page.locator('[data-testid="browser-card-chrome"]')).toBeVisible();
   });
 
-  test('clicking Launch calls SecureBrowserService.LaunchBrowser with the selected browser and URL', async ({
+  test('card shows the browser name, binary path, and family badge', async ({
     page,
   }) => {
-    await gotoBrowserSettings(page);
+    await gotoBrowserView(page);
 
-    // Select Google Chrome from the dropdown.
-    await page
-      .locator('[data-testid="secure-browser-select"]')
-      .selectOption('/usr/bin/google-chrome');
+    const firefox = page.locator('[data-testid="browser-card-firefox"]');
+    await expect(firefox.getByText('Firefox', { exact: true })).toBeVisible();
+    await expect(firefox.getByText('/usr/bin/firefox')).toBeVisible();
+    await expect(firefox.getByText('firefox', { exact: true })).toBeVisible();
 
-    // Set the URL input.
-    const urlInput = page.locator('[data-testid="secure-browser-url"]');
+    const chrome = page.locator('[data-testid="browser-card-chrome"]');
+    await expect(chrome.getByText('Google Chrome')).toBeVisible();
+    await expect(chrome.getByText('/usr/bin/google-chrome')).toBeVisible();
+    await expect(chrome.getByText('chrome', { exact: true })).toBeVisible();
+  });
+});
+
+test.describe('Browser view — launch', () => {
+  test('Launch button calls SecureBrowserService.LaunchBrowser with card URL', async ({
+    page,
+  }) => {
+    await gotoBrowserView(page);
+
+    const chromeCard = page.locator('[data-testid="browser-card-chrome"]');
+    const urlInput = chromeCard.locator('input[type="text"]');
     await urlInput.fill('https://example.org');
 
-    await page.locator('[data-testid="secure-browser-launch-btn"]').click();
+    await chromeCard.getByRole('button', { name: 'Launch secure browser' }).click();
 
     await page.waitForFunction(
-      () => ((window as any).__secureBrowserLaunchCalls ?? []).length > 0,
+      () => ((window as any).__browserViewLaunchCalls ?? []).length > 0,
       { timeout: 5_000 },
     );
 
     const calls = await page.evaluate(
-      () => (window as any).__secureBrowserLaunchCalls as Array<{ browserPath: string; url: string }>,
+      () =>
+        (window as any).__browserViewLaunchCalls as Array<{
+          browserPath: string;
+          url: string;
+        }>,
     );
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
@@ -286,57 +310,224 @@ test.describe('Secure Browser Launch card', () => {
     });
   });
 
-  test('detected family label updates when the browser selection changes', async ({
-    page,
-  }) => {
-    await gotoBrowserSettings(page);
+  test('empty URL falls back to about:blank', async ({ page }) => {
+    await gotoBrowserView(page);
 
-    const card = page.locator('[data-testid="secure-browser-card"]');
+    const firefoxCard = page.locator('[data-testid="browser-card-firefox"]');
+    await firefoxCard.locator('input[type="text"]').fill('');
 
-    // First browser is Firefox by default.
-    await page
-      .locator('[data-testid="secure-browser-select"]')
-      .selectOption('/usr/bin/firefox');
-    await expect(card.getByText('firefox', { exact: true })).toBeVisible();
+    await firefoxCard
+      .getByRole('button', { name: 'Launch secure browser' })
+      .click();
 
-    await page
-      .locator('[data-testid="secure-browser-select"]')
-      .selectOption('/usr/bin/google-chrome');
-    await expect(card.getByText('chrome', { exact: true })).toBeVisible();
+    await page.waitForFunction(
+      () => ((window as any).__browserViewLaunchCalls ?? []).length > 0,
+      { timeout: 5_000 },
+    );
+
+    const calls = await page.evaluate(
+      () =>
+        (window as any).__browserViewLaunchCalls as Array<{
+          browserPath: string;
+          url: string;
+        }>,
+    );
+    expect(calls[0]).toEqual({
+      browserPath: '/usr/bin/firefox',
+      url: 'about:blank',
+    });
   });
 
-  test('chrome_profile_mode change is persisted via BrowserService.SetConfig', async ({
+  test('Launch button is disabled when trust store is empty', async ({
     page,
   }) => {
-    await gotoBrowserSettings(page);
+    await gotoBrowserView(page, { ...defaultBackend, certCount: 0 });
 
-    await page
-      .locator('[data-testid="chrome-profile-mode"]')
-      .selectOption('shared');
-
-    // The autosave debounces at 300ms.
-    await page.waitForTimeout(500);
-
-    const saved = await page.evaluate(
-      () => (window as any).__secureBrowserConfig?.chrome_profile_mode,
-    );
-    expect(saved).toBe('shared');
+    const card = page.locator('[data-testid="browser-card-chrome"]');
+    const btn = card.getByRole('button', { name: 'Launch secure browser' });
+    await expect(btn).toBeDisabled();
   });
 
-  test('firefox_profile_mode change is persisted via BrowserService.SetConfig', async ({
+  test('each card launches only its own browser', async ({ page }) => {
+    await gotoBrowserView(page);
+
+    const firefox = page.locator('[data-testid="browser-card-firefox"]');
+    await firefox.locator('input[type="text"]').fill('https://mozilla.org');
+    await firefox.getByRole('button', { name: 'Launch secure browser' }).click();
+
+    await page.waitForFunction(
+      () => ((window as any).__browserViewLaunchCalls ?? []).length === 1,
+    );
+
+    const chrome = page.locator('[data-testid="browser-card-chrome"]');
+    await chrome.locator('input[type="text"]').fill('https://google.com');
+    await chrome.getByRole('button', { name: 'Launch secure browser' }).click();
+
+    await page.waitForFunction(
+      () => ((window as any).__browserViewLaunchCalls ?? []).length === 2,
+    );
+
+    const calls = await page.evaluate(
+      () =>
+        (window as any).__browserViewLaunchCalls as Array<{
+          browserPath: string;
+          url: string;
+        }>,
+    );
+    expect(calls).toEqual([
+      { browserPath: '/usr/bin/firefox', url: 'https://mozilla.org' },
+      { browserPath: '/usr/bin/google-chrome', url: 'https://google.com' },
+    ]);
+  });
+});
+
+test.describe('Browser view — profile mode', () => {
+  test('profile mode defaults to isolated from BrowserService.GetConfig', async ({
     page,
   }) => {
-    await gotoBrowserSettings(page);
+    await gotoBrowserView(page);
+
+    const chromeCard = page.locator('[data-testid="browser-card-chrome"]');
+    const select = chromeCard.locator('select');
+    await expect(select).toHaveValue('isolated');
+  });
+
+  test('changing chrome profile mode is persisted via BrowserService.SetConfig', async ({
+    page,
+  }) => {
+    await gotoBrowserView(page);
 
     await page
-      .locator('[data-testid="firefox-profile-mode"]')
+      .locator('[data-testid="browser-card-chrome"] select')
       .selectOption('shared');
 
-    await page.waitForTimeout(500);
-
-    const saved = await page.evaluate(
-      () => (window as any).__secureBrowserConfig?.firefox_profile_mode,
+    await page.waitForFunction(
+      () => (window as any).__browserViewConfig?.chrome_profile_mode === 'shared',
+      { timeout: 5_000 },
     );
-    expect(saved).toBe('shared');
+  });
+
+  test('changing firefox profile mode is persisted via BrowserService.SetConfig', async ({
+    page,
+  }) => {
+    await gotoBrowserView(page);
+
+    await page
+      .locator('[data-testid="browser-card-firefox"] select')
+      .selectOption('shared');
+
+    await page.waitForFunction(
+      () => (window as any).__browserViewConfig?.firefox_profile_mode === 'shared',
+      { timeout: 5_000 },
+    );
+  });
+
+  test('firefox mode change does not clobber chrome mode', async ({ page }) => {
+    await gotoBrowserView(page);
+
+    await page
+      .locator('[data-testid="browser-card-firefox"] select')
+      .selectOption('shared');
+
+    await page.waitForFunction(
+      () => (window as any).__browserViewConfig?.firefox_profile_mode === 'shared',
+      { timeout: 5_000 },
+    );
+
+    const chromeMode = await page.evaluate(
+      () => (window as any).__browserViewConfig?.chrome_profile_mode,
+    );
+    expect(chromeMode).toBe('isolated');
+  });
+});
+
+test.describe('Browser view — extension manifest management', () => {
+  test('card reflects current manifest install state per family', async ({
+    page,
+  }) => {
+    await gotoBrowserView(page);
+
+    const firefox = page.locator('[data-testid="browser-card-firefox"]');
+    await expect(
+      firefox.getByRole('button', { name: 'Uninstall manifest' }),
+    ).toBeVisible();
+
+    const chrome = page.locator('[data-testid="browser-card-chrome"]');
+    await expect(
+      chrome.getByRole('button', { name: 'Install manifest' }),
+    ).toBeVisible();
+  });
+
+  test('Install manifest calls PairingService.InstallManifest with family name', async ({
+    page,
+  }) => {
+    await gotoBrowserView(page);
+
+    const chrome = page.locator('[data-testid="browser-card-chrome"]');
+    await chrome.getByRole('button', { name: 'Install manifest' }).click();
+
+    await page.waitForFunction(
+      () => ((window as any).__browserViewManifestCalls ?? []).length > 0,
+      { timeout: 5_000 },
+    );
+
+    const calls = await page.evaluate(
+      () =>
+        (window as any).__browserViewManifestCalls as Array<{
+          action: string;
+          browser: string;
+        }>,
+    );
+    expect(calls[0]).toEqual({ action: 'install', browser: 'chrome' });
+
+    // After successful install the card should show Uninstall.
+    await expect(
+      chrome.getByRole('button', { name: 'Uninstall manifest' }),
+    ).toBeVisible();
+  });
+
+  test('Uninstall manifest calls PairingService.UninstallManifest with family name', async ({
+    page,
+  }) => {
+    await gotoBrowserView(page);
+
+    const firefox = page.locator('[data-testid="browser-card-firefox"]');
+    await firefox.getByRole('button', { name: 'Uninstall manifest' }).click();
+
+    await page.waitForFunction(
+      () => ((window as any).__browserViewManifestCalls ?? []).length > 0,
+      { timeout: 5_000 },
+    );
+
+    const calls = await page.evaluate(
+      () =>
+        (window as any).__browserViewManifestCalls as Array<{
+          action: string;
+          browser: string;
+        }>,
+    );
+    expect(calls[0]).toEqual({ action: 'uninstall', browser: 'firefox' });
+
+    await expect(
+      firefox.getByRole('button', { name: 'Install manifest' }),
+    ).toBeVisible();
+  });
+
+  test('chrome install does not touch firefox manifest state', async ({
+    page,
+  }) => {
+    await gotoBrowserView(page);
+
+    const chrome = page.locator('[data-testid="browser-card-chrome"]');
+    await chrome.getByRole('button', { name: 'Install manifest' }).click();
+
+    await page.waitForFunction(
+      () => ((window as any).__browserViewManifestCalls ?? []).length > 0,
+    );
+
+    const firefox = page.locator('[data-testid="browser-card-firefox"]');
+    await expect(
+      firefox.getByRole('button', { name: 'Uninstall manifest' }),
+    ).toBeVisible();
   });
 });

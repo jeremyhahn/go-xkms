@@ -36,7 +36,7 @@ type failingAuditLogger struct {
 }
 
 func (f *failingAuditLogger) Log(_ context.Context, _ *audit.Event) error { return f.logErr }
-func (f *failingAuditLogger) Close() error                               { return f.closeErr }
+func (f *failingAuditLogger) Close() error                                { return f.closeErr }
 
 func TestAuditLoggerFromXKMS_NilReturnsNil(t *testing.T) {
 	result := AuditLoggerFromXKMS(nil)

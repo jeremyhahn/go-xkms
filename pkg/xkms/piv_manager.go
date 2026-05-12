@@ -55,7 +55,25 @@ var (
 
 	// ErrPIVSignerNotAvailable is returned when no signer is available for the slot.
 	ErrPIVSignerNotAvailable = errors.New("piv: signer not available for slot")
+
+	// ErrPIVInvalidOutputFormat is returned when an unsupported output format is specified.
+	ErrPIVInvalidOutputFormat = errors.New("piv: invalid output format (must be self-signed, public-key, csr, or ca-signed)")
+
+	// ErrPIVCASignFuncNotSet is returned when ca-signed output is requested but no CA signing function is configured.
+	ErrPIVCASignFuncNotSet = errors.New("piv: CA signing not available (no CA configured)")
 )
+
+// PIV output format constants.
+const (
+	PIVOutputSelfSigned = "self-signed"
+	PIVOutputPublicKey  = "public-key"
+	PIVOutputCSR        = "csr"
+	PIVOutputCASigned   = "ca-signed"
+)
+
+// PIVCASignFunc signs a CSR using a CA. The profile maps to a CA certificate
+// profile (e.g., "piv-authentication" for slot 9a). Set via SetPIVCASignFunc.
+type PIVCASignFunc func(ctx context.Context, csrPEM []byte, profile string, validityDays int) (certPEM, chainPEM []byte, err error)
 
 // PIVKeyGenerator generates cryptographic keys for PIV slots.
 type PIVKeyGenerator interface {
@@ -116,6 +134,7 @@ type PIVStoreFactory func(backendName string) (pivcert.PIVCertificateStorage, er
 type PIVManager struct {
 	stores            map[string]pivcert.PIVCertificateStorage // keyed by backend name
 	backendResolver   PIVBackendResolver
+	caSignFunc        PIVCASignFunc   // optional CA signing for ca-signed output
 	softwareGenerator PIVKeyGenerator // cached fallback generator
 	storeFactory      PIVStoreFactory // lazy store creation for unknown backends
 	mu                sync.RWMutex
@@ -187,6 +206,28 @@ func SetPIVBackendResolver(resolver PIVBackendResolver) error {
 
 	pivManager.backendResolver = resolver
 	return nil
+}
+
+// SetPIVCASignFunc configures the CA signing function used when
+// GeneratePIVKey is called with OutputFormat "ca-signed".
+func SetPIVCASignFunc(fn PIVCASignFunc) error {
+	if pivManager == nil {
+		return ErrPIVNotInitialized
+	}
+
+	pivManager.mu.Lock()
+	defer pivManager.mu.Unlock()
+
+	pivManager.caSignFunc = fn
+	return nil
+}
+
+// pivSlotToCAProfile maps a PIV slot to its CA certificate profile name.
+var pivSlotToCAProfile = map[string]string{
+	"9a": "piv-authentication",
+	"9c": "piv-signature",
+	"9d": "piv-key-management",
+	"9e": "piv-card-auth",
 }
 
 // pivBackend resolves a PIVKeyGenerator for the given backend name.
@@ -281,13 +322,34 @@ func ListPIVSlots(_ context.Context, req *transport.ListPIVSlotsRequest) (*trans
 		return nil, err
 	}
 
-	// Build a set of occupied slots
+	// Build a set of occupied slots from certificate store.
 	occupied := make(map[string]pivcert.PIVSlotInfo, len(slotInfos))
 	for _, info := range slotInfos {
 		occupied[info.Slot.String()] = info
 	}
 
-	// Return all slots with their status
+	// Build a set of key-only slots by querying the key backend.
+	// Keys generated with "public-key" or "csr" output format have no
+	// certificate but are stored with CN like "piv-9d".
+	keyOnlySlots := make(map[string]string) // slot -> algorithm string
+	keys, keyErr := ListKeys(req.Backend)
+	if keyErr != nil {
+		slog.Debug("ListPIVSlots: unable to query key backend, showing cert-only data",
+			"backend", req.Backend, "error", keyErr)
+	} else {
+		for _, ka := range keys {
+			if len(ka.CN) < 4 || ka.CN[:4] != "piv-" {
+				continue
+			}
+			slotID := ka.CN[4:] // e.g. "9d" from "piv-9d"
+			if _, hasCert := occupied[slotID]; hasCert {
+				continue
+			}
+			keyOnlySlots[slotID] = ka.KeyAlgorithm.String()
+		}
+	}
+
+	// Return all slots with their status.
 	allSlots := pivcert.AllSlots()
 	result := make([]transport.PIVSlotStatus, 0, len(allSlots))
 	for _, slot := range allSlots {
@@ -300,18 +362,23 @@ func ListPIVSlots(_ context.Context, req *transport.ListPIVSlotsRequest) (*trans
 
 		if info, ok := occupied[slot.String()]; ok {
 			status.HasCert = true
+			status.HasKey = true
 			status.Subject = info.Subject
 			status.Issuer = info.Issuer
 			status.Algorithm = info.Algorithm
 			status.KeySize = info.KeySize
 			status.NotAfter = info.NotAfter
 			status.Fingerprint = info.Fingerprint
+		} else if algo, ok := keyOnlySlots[slot.String()]; ok {
+			status.HasKey = true
+			status.Algorithm = algo
 		}
 
 		result = append(result, status)
 	}
 
-	slog.Debug("ListPIVSlots result", "slots", len(slotInfos), "occupied", len(occupied))
+	slog.Debug("ListPIVSlots result",
+		"slots", len(slotInfos), "occupied", len(occupied), "key_only", len(keyOnlySlots))
 
 	return &transport.ListPIVSlotsResponse{Slots: result}, nil
 }
@@ -362,7 +429,17 @@ func StorePIVCertificate(_ context.Context, req *transport.StorePIVCertificateRe
 		return ErrPIVInvalidFormat
 	}
 
-	return store.Import(slot, req.Certificate, format)
+	if err := store.Import(slot, req.Certificate, format); err != nil {
+		slog.Error("PIV import certificate failed",
+			"slot", req.Slot, "backend", req.Backend, "error", err)
+		return err
+	}
+
+	slog.Info("audit", "component", "audit", "operation", "piv_cert_imported", "success", true,
+		"timestamp", time.Now().Format(time.RFC3339),
+		"slot", req.Slot, "backend", req.Backend)
+
+	return nil
 }
 
 // DeletePIVCertificate removes a certificate from a PIV slot.
@@ -377,57 +454,275 @@ func DeletePIVCertificate(_ context.Context, req *transport.DeletePIVCertificate
 		return ErrPIVInvalidSlot
 	}
 
-	return store.Delete(slot)
-}
-
-// GeneratePIVKey generates a new key pair in a PIV slot with a self-signed certificate.
-func GeneratePIVKey(_ context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error) {
-	store, err := pivStore(req.Backend)
-	if err != nil {
-		return nil, err
+	if err := store.Delete(slot); err != nil {
+		slog.Error("PIV delete certificate failed",
+			"slot", req.Slot, "backend", req.Backend, "error", err)
+		return err
 	}
 
+	slog.Info("audit", "component", "audit", "operation", "piv_cert_deleted", "success", true,
+		"timestamp", time.Now().Format(time.RFC3339),
+		"slot", req.Slot, "backend", req.Backend)
+
+	return nil
+}
+
+// GeneratePIVKey generates a new key pair in a PIV slot. The output depends
+// on req.OutputFormat:
+//   - "" or "self-signed": generate key + self-signed certificate (default)
+//   - "public-key": generate key, return public key PEM only
+//   - "csr": generate key + CSR, return CSR PEM
+//   - "ca-signed": generate key + CSR, sign with CA, store CA-signed cert
+func GeneratePIVKey(ctx context.Context, req *transport.GeneratePIVKeyRequest) (*transport.GeneratePIVKeyResponse, error) {
 	slot, err := pivcert.ParseSlot(req.Slot)
 	if err != nil {
 		return nil, ErrPIVInvalidSlot
 	}
 
-	// Resolve PIVKeyGenerator for the requested backend
+	// Validate output format early.
+	format := req.OutputFormat
+	if format == "" {
+		format = PIVOutputSelfSigned
+	}
+	switch format {
+	case PIVOutputSelfSigned, PIVOutputPublicKey, PIVOutputCSR, PIVOutputCASigned:
+	default:
+		return nil, ErrPIVInvalidOutputFormat
+	}
+
+	// Resolve key generator for the backend.
 	generator, err := pivBackend(req.Backend)
 	if err != nil {
 		return nil, err
 	}
 
+	// Generate the key pair.
 	cn := PivSlotCN(slot)
 	signer, err := generator.GeneratePIVKey(slot, req.Algorithm, cn)
+	if err != nil {
+		slog.Error("PIV generate key failed",
+			"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend,
+			"output_format", format, "error", err)
+		return nil, err
+	}
+
+	// Encode public key.
+	pubKeyDER, err := x509.MarshalPKIXPublicKey(signer.Public())
+	if err != nil {
+		return nil, err
+	}
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubKeyDER})
+
+	// Public key only — no certificate, no storage.
+	if format == PIVOutputPublicKey {
+		slog.Info("audit", "component", "audit", "operation", "piv_key_generated", "success", true,
+			"timestamp", time.Now().Format(time.RFC3339),
+			"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend, "output_format", format)
+		return &transport.GeneratePIVKeyResponse{
+			Slot:      req.Slot,
+			PublicKey: pubKeyPEM,
+		}, nil
+	}
+
+	// Build the X.509 subject from request fields.
+	subject := buildPIVSubject(req, slot)
+
+	// CSR and CA-signed both need a CSR.
+	if format == PIVOutputCSR || format == PIVOutputCASigned {
+		csrPEM, csrErr := buildPIVCSR(signer, subject)
+		if csrErr != nil {
+			return nil, csrErr
+		}
+
+		// CSR only — return CSR PEM, no storage.
+		if format == PIVOutputCSR {
+			slog.Info("audit", "component", "audit", "operation", "piv_key_generated", "success", true,
+				"timestamp", time.Now().Format(time.RFC3339),
+				"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend, "output_format", format)
+			return &transport.GeneratePIVKeyResponse{
+				Slot:      req.Slot,
+				PublicKey: pubKeyPEM,
+				CSR:       csrPEM,
+			}, nil
+		}
+
+		// CA-signed — sign CSR with CA, store the cert.
+		resp, caErr := pivGenerateCASigned(ctx, req, slot, signer, pubKeyPEM, csrPEM)
+		if caErr != nil {
+			slog.Error("PIV generate key failed",
+				"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend,
+				"output_format", format, "error", caErr)
+			return nil, caErr
+		}
+		slog.Info("audit", "component", "audit", "operation", "piv_key_generated", "success", true,
+			"timestamp", time.Now().Format(time.RFC3339),
+			"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend, "output_format", format)
+		return resp, nil
+	}
+
+	// Self-signed — create cert and store it.
+	resp, ssErr := pivGenerateSelfSigned(req, slot, signer, pubKeyPEM, subject)
+	if ssErr != nil {
+		slog.Error("PIV generate key failed",
+			"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend,
+			"output_format", format, "error", ssErr)
+		return nil, ssErr
+	}
+	slog.Info("audit", "component", "audit", "operation", "piv_key_generated", "success", true,
+		"timestamp", time.Now().Format(time.RFC3339),
+		"slot", req.Slot, "algorithm", req.Algorithm, "backend", req.Backend, "output_format", format)
+	return resp, nil
+}
+
+// buildPIVSubject constructs a pkix.Name from the request fields.
+func buildPIVSubject(req *transport.GeneratePIVKeyRequest, slot pivcert.PIVSlot) pkix.Name {
+	cn := req.Subject
+	if cn == "" {
+		cn = pivcert.SlotName(slot)
+	}
+	name := pkix.Name{CommonName: cn}
+	if req.Organization != "" {
+		name.Organization = []string{req.Organization}
+	}
+	if req.Country != "" {
+		name.Country = []string{req.Country}
+	}
+	return name
+}
+
+// buildPIVCSR creates a PKCS#10 CSR signed by the given signer.
+func buildPIVCSR(signer crypto.Signer, subject pkix.Name) ([]byte, error) {
+	csrTemplate := &x509.CertificateRequest{Subject: subject}
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, signer)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER}), nil
+}
+
+// pivGenerateSelfSigned creates a self-signed certificate and stores it.
+// SelfSignExistingPIVKey builds and stores a self-signed certificate for a
+// PIV slot whose key was previously generated (e.g., via public-key-only or
+// CSR output). It does NOT generate a new key — the existing key in the
+// backend is used to sign the certificate. Returns the PEM-encoded cert.
+func SelfSignExistingPIVKey(backend, slotStr, commonName string, validityDays int) (string, error) {
+	slot, err := pivcert.ParseSlot(slotStr)
+	if err != nil {
+		return "", ErrPIVInvalidSlot
+	}
+
+	// Locate the existing key by CN.
+	cn := PivSlotCN(slot)
+	keys, err := ListKeys(backend)
+	if err != nil {
+		slog.Error("SelfSignExistingPIVKey: list keys failed", "backend", backend, "error", err)
+		return "", err
+	}
+	var attrs *types.KeyAttributes
+	for _, ka := range keys {
+		if ka.CN == cn {
+			attrs = ka
+			break
+		}
+	}
+	if attrs == nil {
+		return "", ErrPIVNotInitialized
+	}
+
+	signer, err := Signer(attrs)
+	if err != nil {
+		return "", err
+	}
+
+	subject := pkix.Name{CommonName: commonName}
+	if commonName == "" {
+		subject.CommonName = pivcert.SlotName(slot)
+	}
+
+	return buildAndStoreSelfSigned(backend, slot, signer, subject, validityDays)
+}
+
+// buildAndStoreSelfSigned factors the cert-template + CreateCertificate +
+// store logic out of pivGenerateSelfSigned so it can be shared with the
+// "self-sign existing key" path.
+func buildAndStoreSelfSigned(backend string, slot pivcert.PIVSlot, signer crypto.Signer, subject pkix.Name, validityDays int) (string, error) {
+	store, err := pivStore(backend)
+	if err != nil {
+		return "", err
+	}
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", err
+	}
+	meta, err := pivcert.DefaultSlotMetadata(slot)
+	if err != nil {
+		return "", err
+	}
+	validity := 10 * 365 * 24 * time.Hour
+	if validityDays > 0 {
+		validity = time.Duration(validityDays) * 24 * time.Hour
+	}
+	template := &x509.Certificate{
+		SerialNumber:          serialNumber,
+		Subject:               subject,
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(validity),
+		KeyUsage:              meta.KeyUsage,
+		ExtKeyUsage:           meta.ExtKeyUsage,
+		BasicConstraintsValid: true,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, signer.Public(), signer)
+	if err != nil {
+		return "", err
+	}
+	cert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return "", err
+	}
+	if err := store.Store(slot, cert); err != nil {
+		return "", err
+	}
+	slog.Info("audit", "component", "audit",
+		"operation", "piv_self_signed_cert_issued", "success", true,
+		"timestamp", time.Now().Format(time.RFC3339),
+		"slot", slot.String(), "backend", backend,
+		"subject", subject.CommonName)
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})), nil
+}
+
+func pivGenerateSelfSigned(
+	req *transport.GeneratePIVKeyRequest,
+	slot pivcert.PIVSlot,
+	signer crypto.Signer,
+	pubKeyPEM []byte,
+	subject pkix.Name,
+) (*transport.GeneratePIVKeyResponse, error) {
+
+	store, err := pivStore(req.Backend)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create self-signed certificate
 	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return nil, err
 	}
 
-	subject := req.Subject
-	if subject == "" {
-		subject = "PIV Slot " + slot.String()
-	}
-
-	// Get slot metadata for key usage
 	meta, err := pivcert.DefaultSlotMetadata(slot)
 	if err != nil {
 		return nil, err
 	}
 
+	validity := 10 * 365 * 24 * time.Hour // 10 years default
+	if req.ValidityDays > 0 {
+		validity = time.Duration(req.ValidityDays) * 24 * time.Hour
+	}
+
 	template := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName: subject,
-		},
+		SerialNumber:          serialNumber,
+		Subject:               subject,
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour), // 10 years
+		NotAfter:              time.Now().Add(validity),
 		KeyUsage:              meta.KeyUsage,
 		ExtKeyUsage:           meta.ExtKeyUsage,
 		BasicConstraintsValid: true,
@@ -443,31 +738,79 @@ func GeneratePIVKey(_ context.Context, req *transport.GeneratePIVKeyRequest) (*t
 		return nil, err
 	}
 
-	// Store certificate
 	if err := store.Store(slot, cert); err != nil {
 		return nil, err
 	}
 
-	// Encode certificate as PEM
-	certPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certDER,
-	})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	return &transport.GeneratePIVKeyResponse{
+		Slot:        req.Slot,
+		Certificate: certPEM,
+		PublicKey:   pubKeyPEM,
+	}, nil
+}
 
-	// Encode public key as PEM
-	pubKeyDER, err := x509.MarshalPKIXPublicKey(signer.Public())
+// pivGenerateCASigned signs a CSR with the configured CA and stores the cert.
+func pivGenerateCASigned(
+	ctx context.Context,
+	req *transport.GeneratePIVKeyRequest,
+	slot pivcert.PIVSlot,
+	signer crypto.Signer,
+	pubKeyPEM, csrPEM []byte,
+) (*transport.GeneratePIVKeyResponse, error) {
+
+	if pivManager == nil {
+		return nil, ErrPIVNotInitialized
+	}
+
+	pivManager.mu.RLock()
+	caSign := pivManager.caSignFunc
+	pivManager.mu.RUnlock()
+
+	if caSign == nil {
+		return nil, ErrPIVCASignFuncNotSet
+	}
+
+	// Map slot to CA profile.
+	profile, ok := pivSlotToCAProfile[req.Slot]
+	if !ok {
+		profile = "piv-authentication" // safe default
+	}
+
+	validityDays := req.ValidityDays
+	if validityDays == 0 {
+		validityDays = 1095 // 3 years default for CA-signed
+	}
+
+	certPEM, chainPEM, err := caSign(ctx, csrPEM, profile, validityDays)
 	if err != nil {
 		return nil, err
 	}
-	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: pubKeyDER,
-	})
+
+	// Parse and store the CA-signed certificate.
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, errors.New("piv: CA returned invalid certificate PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	store, err := pivStore(req.Backend)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Store(slot, cert); err != nil {
+		return nil, err
+	}
 
 	return &transport.GeneratePIVKeyResponse{
 		Slot:        req.Slot,
 		Certificate: certPEM,
 		PublicKey:   pubKeyPEM,
+		CSR:         csrPEM,
+		ChainPEM:    chainPEM,
 	}, nil
 }
 
@@ -510,11 +853,27 @@ func GeneratePIVCSR(_ context.Context, req *transport.GeneratePIVCSRRequest) (*t
 		subject = "PIV Slot " + slot.String()
 	}
 
-	csrTemplate := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: subject,
-		},
+	// Build a complete Distinguished Name from the request fields. Empty
+	// fields are simply omitted from the resulting DN so callers that only
+	// supply a CN (pre-DN-field clients) continue to work unchanged.
+	name := pkix.Name{CommonName: subject}
+	if req.Organization != "" {
+		name.Organization = []string{req.Organization}
 	}
+	if req.OrganizationalUnit != "" {
+		name.OrganizationalUnit = []string{req.OrganizationalUnit}
+	}
+	if req.Country != "" {
+		name.Country = []string{req.Country}
+	}
+	if req.State != "" {
+		name.Province = []string{req.State}
+	}
+	if req.Locality != "" {
+		name.Locality = []string{req.Locality}
+	}
+
+	csrTemplate := &x509.CertificateRequest{Subject: name}
 
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, csrTemplate, signer)
 	if err != nil {

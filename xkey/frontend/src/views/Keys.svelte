@@ -21,6 +21,7 @@
   } from '$lib/utils/encoding';
   import { addNotification } from '$lib/stores/notifications';
   import { isWailsAvailable, callBackend, callBackendVoid } from '$lib/api/backend';
+  import { clickOutside } from '$lib/actions/clickOutside';
   import type {
     RemoteKeyInfo, RemoteBackendInfo, GenerateKeyParams,
     GenerateKeyResult, AttestKeyResult, BackendCapabilities
@@ -264,12 +265,9 @@
     openMenuKeyId = null;
   }
 
-  function handleWindowClick(e: MouseEvent): void {
-    if (openMenuKeyId) {
-      const target = e.target as HTMLElement;
-      if (!target.closest('.menu-wrapper')) {
-        openMenuKeyId = null;
-      }
+  function handleWindowKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape' && openMenuKeyId) {
+      openMenuKeyId = null;
     }
   }
 
@@ -750,7 +748,7 @@
   });
 </script>
 
-<svelte:window on:click={handleWindowClick} />
+<svelte:window on:keydown={handleWindowKeydown} />
 
 <div class="keys-view">
   <GradientHeader
@@ -852,7 +850,7 @@
           {/if}
         </svelte:fragment>
         <svelte:fragment slot="actions" let:row>
-          <div class="menu-wrapper">
+          <div class="menu-wrapper" use:clickOutside on:clickoutside={() => { if (openMenuKeyId === row.key_id) openMenuKeyId = null; }}>
             <button class="action-btn" on:click|stopPropagation={() => toggleKeyMenu(row.key_id)} title="Actions">
               <Icon path={mdiDotsVertical} size={18} />
             </button>

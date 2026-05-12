@@ -132,7 +132,7 @@ func TestTenantUnaryInterceptor_SORolePassesThrough(t *testing.T) {
 		srv := &Server{logger: discardLogger()}
 		info := &grpc.UnaryServerInfo{FullMethod: "/test/Method"}
 
-		identity := &auth.Identity{Subject: "so-admin", TenantID: "any-tenant", Claims: map[string]interface{}{"roles": []string{"so"}}}
+		identity := &auth.Identity{Subject: "so-admin", TenantID: "any-tenant", Roles: []string{"so"}}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
 		resp, err := srv.tenantUnaryInterceptor(ctx, "req", info, passthroughUnaryHandler)

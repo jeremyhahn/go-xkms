@@ -28,9 +28,9 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/miekg/pkcs11"
 )
@@ -88,8 +88,8 @@ type Backend struct {
 	pool          *SessionPool
 	ownsP11ctx    bool // tracks if this backend owns the PKCS#11 context (should Finalize/Destroy)
 	tracker       types.AEADSafetyTracker
-	supportsMLDSA bool // dynamically detected ML-DSA mechanism support
-	supportsMLKEM bool // dynamically detected ML-KEM mechanism support
+	supportsMLDSA bool              // dynamically detected ML-DSA mechanism support
+	supportsMLKEM bool              // dynamically detected ML-KEM mechanism support
 	slotModel     pivcert.SlotModel // nil for generic (non-PIV) tokens
 	mu            sync.RWMutex
 	types.KeyProvider

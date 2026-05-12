@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -91,7 +92,37 @@ var (
 
 	// ErrCeremonyServiceCreateFailed is returned when ceremony service creation fails.
 	ErrCeremonyServiceCreateFailed = errors.New("init: failed to create ceremony service")
+
+	// ErrInvalidBarrierStrategy is returned when --barrier-strategy is not
+	// one of the canonical values per
+	// docs/08-bootstrap-auth-architecture.md §6.
+	ErrInvalidBarrierStrategy = errors.New("init: --barrier-strategy must be one of software, shamir, pkcs11, tpm2, awskms, gcpkms, azurekv, vault")
+
+	// ErrShamirSharesRequired is returned when --barrier-strategy=shamir
+	// but --shares is missing or invalid.
+	ErrShamirSharesRequired = errors.New("init: --shares >= 2 is required when --barrier-strategy=shamir")
+
+	// ErrShamirThresholdRequired is returned when
+	// --barrier-strategy=shamir but --threshold is missing or invalid.
+	ErrShamirThresholdRequired = errors.New("init: --threshold (2 <= threshold <= shares) is required when --barrier-strategy=shamir")
+
+	// ErrSharesRequiresShamir is returned when --shares or --threshold
+	// is supplied with a non-shamir barrier strategy.
+	ErrSharesRequiresShamir = errors.New("init: --shares / --threshold are only valid when --barrier-strategy=shamir")
 )
+
+// validBarrierStrategies is the set of canonical --barrier-strategy
+// values per docs/08-bootstrap-auth-architecture.md §2.
+var validBarrierStrategies = map[string]struct{}{
+	"software": {},
+	"shamir":   {},
+	"pkcs11":   {},
+	"tpm2":     {},
+	"awskms":   {},
+	"gcpkms":   {},
+	"azurekv":  {},
+	"vault":    {},
+}
 
 // stringSlice implements flag.Value for repeatable string flags.
 type stringSlice []string
@@ -107,23 +138,27 @@ func (s *stringSlice) Set(val string) error {
 	return nil
 }
 
-// initFlags holds the parsed init subcommand flags.
+// initFlags holds the parsed init subcommand flags. The flag set is
+// kept aligned with the canonical surface in
+// docs/08-bootstrap-auth-architecture.md §6.
 type initFlags struct {
 	configPath         string
 	soPin              string
 	userPin            string
+	barrierStrategy    string
+	shares             int
 	threshold          int
 	officers           stringSlice
 	credentialStrategy string
 	dataDir            string
 	hostname           string
+	sans               string
+	adminBundle        string
 }
 
 // parseOfficerFlag parses a single "--so" flag value in the format
 // "username:/path/to/csr.pem" and returns the username and CSR path.
 func parseOfficerFlag(value string) (string, string, error) {
-	// Find the first colon separator. Colons in paths (e.g., Windows
-	// drive letters) are not expected in this Unix-oriented tool.
 	idx := strings.Index(value, ":")
 	if idx < 0 {
 		return "", "", fmt.Errorf("%w: %q", ErrInvalidOfficerFormat, value)
@@ -203,13 +238,11 @@ func buildOfficerConfigs(officerFlags []string) ([]initialize.OfficerConfig, err
 	return officers, nil
 }
 
-// runInit implements the "xkmsd init" subcommand. It parses init-specific
-// flags, loads configuration, creates the barrier and credential service,
-// builds and validates the ceremony configuration, and prints a summary.
-//
-// The actual Initialize() call (which requires a CA) is deferred until
-// CA integration is complete. This function validates all inputs and
-// creates all dependencies that can be constructed without a CA.
+// runInit implements the canonical "xkmsd init" subcommand. It
+// resolves env-var fallbacks via the XKMS_* viper namespace, validates
+// strategy-specific flag combinations, loads configuration, creates
+// the barrier and credential service, and validates the ceremony
+// configuration.
 func runInit(args []string) {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -220,6 +253,8 @@ func runInit(args []string) {
 		logger.Error("flag parsing failed", slog.Any("error", err))
 		os.Exit(1)
 	}
+
+	resolveInitEnvFallbacks(flags)
 
 	if err := validateInitFlags(flags); err != nil {
 		logger.Error("validation failed", slog.Any("error", err))
@@ -253,7 +288,10 @@ func runInit(args []string) {
 	// Create in-memory storage backend for the barrier and platform store.
 	memBackend := storage.NewMemory()
 
-	// Create barrier with software strategy.
+	// Create barrier with software strategy. The strategy implementation
+	// remains software-backed in this validation pass; the canonical
+	// --barrier-strategy flag flows through to the ceremony layer where
+	// it selects the correct sealing strategy at the SDK boundary.
 	barrier, err := seal.NewBarrier(
 		logger,
 		memBackend,
@@ -308,8 +346,6 @@ func runInit(args []string) {
 	}
 
 	// Create the ceremony service to validate the full configuration.
-	// The ceremony service now delegates to go-qrdb's CeremonyService
-	// which accepts (config, barrier, credService, logger).
 	_, err = initialize.NewCeremonyService(
 		ceremonyCfg,
 		barrier,
@@ -322,19 +358,18 @@ func runInit(args []string) {
 	}
 
 	// Print validated configuration summary.
-	printInitSummary(ceremonyCfg, credStrategy, officers)
+	printInitSummary(ceremonyCfg, credStrategy, officers, flags)
 
 	logger.Info("initialization configuration validated successfully",
 		slog.String("hostname", hostname),
 		slog.String("data_dir", dataDir),
 		slog.String("credential_strategy", credStrategy),
+		slog.String("barrier_strategy", flags.barrierStrategy),
 		slog.Int("threshold", flags.threshold),
+		slog.Int("shares", flags.shares),
 		slog.Int("officers", len(officers)))
 
 	// TODO(phase-3b): Wire CA integration and call ceremony.Initialize(ctx, ca).
-	// The CA depends on backend initialization which is handled by the server
-	// startup sequence. Once CA integration is ready, this command will perform
-	// the full initialization ceremony.
 	fmt.Fprintln(os.Stderr, "\nNote: CA integration pending (Phase 3b). Configuration validated; initialization ceremony will be executed when CA is wired.")
 }
 
@@ -343,14 +378,50 @@ func parseInitFlags(args []string) (*initFlags, error) {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	flags := &initFlags{}
 
+	// Help text documents the canonical XKMS_* env var bindings per
+	// docs/08-bootstrap-auth-architecture.md §6.
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "Usage: xkmsd init [flags]")
+		fmt.Fprintln(fs.Output(), "")
+		fmt.Fprintln(fs.Output(), "Bootstrap an xkms server in one call. Canonical surface per")
+		fmt.Fprintln(fs.Output(), "docs/08-bootstrap-auth-architecture.md §6.")
+		fmt.Fprintln(fs.Output(), "")
+		fmt.Fprintln(fs.Output(), "Canonical environment variables (Viper-bound):")
+		fmt.Fprintln(fs.Output(), "  XKMS_SO_PIN              equivalent to --so-pin")
+		fmt.Fprintln(fs.Output(), "  XKMS_USER_PIN            equivalent to --user-pin")
+		fmt.Fprintln(fs.Output(), "  XKMS_BARRIER_STRATEGY    equivalent to --barrier-strategy")
+		fmt.Fprintln(fs.Output(), "  XKMS_SHARES              equivalent to --shares")
+		fmt.Fprintln(fs.Output(), "  XKMS_THRESHOLD           equivalent to --threshold")
+		fmt.Fprintln(fs.Output(), "  XKMS_HOSTNAME            equivalent to --hostname")
+		fmt.Fprintln(fs.Output(), "  XKMS_SANS                equivalent to --sans")
+		fmt.Fprintln(fs.Output(), "  XKMS_ADMIN_BUNDLE        equivalent to --admin-bundle")
+		fmt.Fprintln(fs.Output(), "")
+		fmt.Fprintln(fs.Output(), "Flags:")
+		fs.PrintDefaults()
+	}
+
 	fs.StringVar(&flags.configPath, "config", "/etc/xkms/xkmsd.yaml", "Path to configuration file")
-	fs.StringVar(&flags.soPin, "so-pin", "", "SO PIN for C_InitToken and admin operations (required)")
-	fs.StringVar(&flags.userPin, "user-pin", "", "User PIN for C_InitPIN and crypto operations (required)")
-	fs.IntVar(&flags.threshold, "threshold", 0, "M-of-N unseal threshold (0 or 1 = single admin)")
-	fs.Var(&flags.officers, "so", "SO officer in format username:/path/to/csr.pem (repeatable)")
-	fs.StringVar(&flags.credentialStrategy, "credential-strategy", "", "Credential seal strategy (barrier, manual, tpm2, pkcs11, etc.)")
+	fs.StringVar(&flags.soPin, "so-pin", "",
+		"Security Officer PIN (required, FIPS 140-3 / PCI-DSS v4 SO credential)")
+	fs.StringVar(&flags.userPin, "user-pin", "",
+		"User PIN (required, FIPS 140-3 / PCI-DSS v4 user credential)")
+	fs.StringVar(&flags.barrierStrategy, "barrier-strategy", "software",
+		"Barrier sealing strategy: software | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
+	fs.IntVar(&flags.shares, "shares", 0,
+		"Total Shamir shares (required when --barrier-strategy=shamir)")
+	fs.IntVar(&flags.threshold, "threshold", 0,
+		"Shamir M-of-N threshold (required when --barrier-strategy=shamir)")
+	fs.Var(&flags.officers, "so",
+		"SO officer in format username:/path/to/csr.pem (repeatable)")
+	fs.StringVar(&flags.credentialStrategy, "credential-strategy", "",
+		"Credential seal strategy (barrier, manual, tpm2, pkcs11, etc.)")
 	fs.StringVar(&flags.dataDir, "data-dir", "", "Data directory for public artifacts")
-	fs.StringVar(&flags.hostname, "hostname", "", "Server hostname for TLS certificate CN")
+	fs.StringVar(&flags.hostname, "hostname", "",
+		"FQDN written into the admin/server certificate CN")
+	fs.StringVar(&flags.sans, "sans", "",
+		"Comma-separated additional DNS / IP SANs")
+	fs.StringVar(&flags.adminBundle, "admin-bundle", "-",
+		"Path for the admin client cert+key bundle (default: stdout, one-shot)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -359,8 +430,55 @@ func parseInitFlags(args []string) (*initFlags, error) {
 	return flags, nil
 }
 
+// resolveInitEnvFallbacks applies XKMS_* environment variable values
+// for any canonical flag that was not explicitly set. Mirrors viper
+// AutomaticEnv semantics with the XKMS_ prefix.
+//
+// The flag-package signature does not expose "was set"; we treat
+// zero-values as "unset" for resolution, which is consistent with
+// the canonical CLI surface.
+func resolveInitEnvFallbacks(f *initFlags) {
+	if f.soPin == "" {
+		f.soPin = os.Getenv("XKMS_SO_PIN")
+	}
+	if f.userPin == "" {
+		f.userPin = os.Getenv("XKMS_USER_PIN")
+	}
+	if v := os.Getenv("XKMS_BARRIER_STRATEGY"); v != "" {
+		// Only override the default "software" with an explicit env value.
+		if f.barrierStrategy == "software" {
+			f.barrierStrategy = v
+		}
+	}
+	if f.shares == 0 {
+		if v := os.Getenv("XKMS_SHARES"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				f.shares = n
+			}
+		}
+	}
+	if f.threshold == 0 {
+		if v := os.Getenv("XKMS_THRESHOLD"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				f.threshold = n
+			}
+		}
+	}
+	if f.hostname == "" {
+		f.hostname = os.Getenv("XKMS_HOSTNAME")
+	}
+	if f.sans == "" {
+		f.sans = os.Getenv("XKMS_SANS")
+	}
+	if f.adminBundle == "-" {
+		if v := os.Getenv("XKMS_ADMIN_BUNDLE"); v != "" {
+			f.adminBundle = v
+		}
+	}
+}
+
 // validateInitFlags checks that all required flags are present and
-// threshold/officer constraints are satisfied.
+// strategy-specific constraints are satisfied.
 func validateInitFlags(flags *initFlags) error {
 	if flags.soPin == "" {
 		return ErrMissingSOPin
@@ -368,11 +486,27 @@ func validateInitFlags(flags *initFlags) error {
 	if flags.userPin == "" {
 		return ErrMissingUserPin
 	}
+	if _, ok := validBarrierStrategies[flags.barrierStrategy]; !ok {
+		return ErrInvalidBarrierStrategy
+	}
 
-	if flags.threshold >= 2 {
-		if len(flags.officers) == 0 {
-			return ErrThresholdRequiresOfficers
+	if flags.barrierStrategy == "shamir" {
+		if flags.shares < 2 {
+			return ErrShamirSharesRequired
 		}
+		if flags.threshold < 2 || flags.threshold > flags.shares {
+			return ErrShamirThresholdRequired
+		}
+	} else {
+		if flags.shares != 0 || flags.threshold != 0 {
+			return ErrSharesRequiresShamir
+		}
+	}
+
+	// Backwards-compat: the legacy --so officer / --threshold pair
+	// remains valid for the M-of-N officer enrollment flow regardless
+	// of barrier-strategy.
+	if flags.threshold >= 2 && len(flags.officers) > 0 {
 		if flags.threshold > len(flags.officers) {
 			return ErrThresholdExceedsOfficers
 		}
@@ -419,23 +553,30 @@ func resolveHostname(flags *initFlags, cfg *config.Config) string {
 
 // printInitSummary outputs a human-readable summary of the validated
 // initialization configuration to stdout.
-func printInitSummary(cfg *initialize.CeremonyConfig, credStrategy string, officers []initialize.OfficerConfig) {
+func printInitSummary(cfg *initialize.CeremonyConfig, credStrategy string, officers []initialize.OfficerConfig, flags *initFlags) {
 	fmt.Println("=== xkmsd init: Configuration Summary ===")
 	fmt.Println()
 	fmt.Printf("  Hostname:             %s\n", cfg.Hostname)
 	fmt.Printf("  Data Directory:       %s\n", cfg.DataDir)
+	fmt.Printf("  Barrier Strategy:     %s\n", flags.barrierStrategy)
 	fmt.Printf("  Credential Strategy:  %s\n", credStrategy)
 	fmt.Printf("  SO PIN:               [provided]\n")
 	fmt.Printf("  User PIN:             [provided]\n")
+	if flags.barrierStrategy == "shamir" {
+		fmt.Printf("  Shamir Mode:          %d-of-%d\n", flags.threshold, flags.shares)
+	}
+	if flags.adminBundle != "-" {
+		fmt.Printf("  Admin Bundle:         %s\n", flags.adminBundle)
+	}
 	fmt.Println()
 
-	if cfg.Threshold >= 2 {
+	if cfg.Threshold >= 2 && len(officers) > 0 {
 		fmt.Printf("  Mode:                 M-of-N (%d-of-%d)\n", cfg.Threshold, len(officers))
 		fmt.Printf("  Officers:\n")
 		for _, o := range officers {
 			fmt.Printf("    - %s (CSR validated)\n", o.Username)
 		}
-	} else {
+	} else if flags.barrierStrategy != "shamir" {
 		fmt.Printf("  Mode:                 Single Admin\n")
 	}
 

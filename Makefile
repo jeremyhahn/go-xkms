@@ -314,12 +314,10 @@ build-xkey:
 
 .PHONY: build-xkey-local
 ## build-xkey-local: Build xkey locally without Docker (requires dev packages)
-## Delegates to xkey/Makefile and copies the binary to $(BIN_DIR)/xkey.
+## xkey/Makefile writes directly to this project's $(BIN_DIR) — no copy.
 build-xkey-local:
 	@$(MAKE) -C xkey build-local
-	@mkdir -p $(BIN_DIR)
-	@cp xkey/build/bin/xkey $(BIN_DIR)/xkey
-	@echo "$(GREEN)✓ xkey binary copied to: $(BIN_DIR)/xkey$(RESET)"
+	@echo "$(GREEN)✓ xkey binary built at: $(BIN_DIR)/xkey$(RESET)"
 
 # ==============================================================================
 # PKCS#11 Module Targets
@@ -2909,6 +2907,65 @@ integration-test-truststrap:
 	@cd test/integration/bootstrap && docker compose --profile xkey build xkey-truststrap-test
 	@cd test/integration/bootstrap && (docker compose --profile xkey run --rm xkey-truststrap-test; EXIT_CODE=$$?; docker compose --profile xkey down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ xkey TrustService truststrap integration tests complete$(RESET)"
+
+# ------------------------------------------------------------------
+# Developer backend server (xkms-server reachable from host)
+# ------------------------------------------------------------------
+
+.PHONY: dev-server-up
+## dev-server-up: Start a live xkms-server on localhost:8443 for interactive GUI testing
+dev-server-up:
+	@echo "$(CYAN)$(BOLD)→ Starting xkms-server dev instance...$(RESET)"
+	@cd test/integration/bootstrap && docker compose up -d xkms-server
+	@echo "$(CYAN)→ Waiting for health check...$(RESET)"
+	@for i in $$(seq 1 30); do \
+		if docker inspect --format='{{.State.Health.Status}}' bootstrap-xkms-server 2>/dev/null | grep -q healthy; then \
+			break; \
+		fi; \
+		sleep 1; \
+	done
+	@bash test/integration/bootstrap/scripts/print-dev-server-info.sh
+
+.PHONY: dev-server-down
+## dev-server-down: Stop the dev xkms-server
+dev-server-down:
+	@echo "$(CYAN)$(BOLD)→ Stopping xkms-server dev instance...$(RESET)"
+	@cd test/integration/bootstrap && docker compose down -v
+	@rm -f /tmp/xkms-dev-ca.crt
+	@echo "$(GREEN)✓ Dev server stopped$(RESET)"
+
+.PHONY: dev-server-info
+## dev-server-info: Print connection info + credentials for the running dev xkms-server
+dev-server-info:
+	@bash test/integration/bootstrap/scripts/print-dev-server-info.sh
+
+.PHONY: dev-server-logs
+## dev-server-logs: Tail logs from the running dev xkms-server
+dev-server-logs:
+	@docker logs -f bootstrap-xkms-server
+
+.PHONY: test-e2e-live
+## test-e2e-live: Run live-backend Playwright tests (requires dev-server-up + xkey dev-browser)
+test-e2e-live:
+	@echo "$(CYAN)$(BOLD)→ Running live-backend Playwright tests...$(RESET)"
+	@if ! docker inspect bootstrap-xkms-server >/dev/null 2>&1; then \
+		echo "$(RED)ERROR: xkms-server not running. Run 'make dev-server-up' first.$(RESET)"; \
+		exit 1; \
+	fi
+	@if ! curl --silent --fail http://localhost:34115/ >/dev/null 2>&1; then \
+		echo "$(RED)ERROR: xkey dev server not reachable at http://localhost:34115.$(RESET)"; \
+		echo "  Run 'cd xkey && make dev-browser' in a separate terminal, then rerun."; \
+		exit 1; \
+	fi
+	@HOST_REST_PORT=$$(docker port bootstrap-xkms-server 8443/tcp | head -1 | awk -F: '{print $$NF}'); \
+	HOST_NOISE_PORT=$$(docker port bootstrap-xkms-server 8445/tcp | head -1 | awk -F: '{print $$NF}'); \
+	export LIVE_XKMS_REST_URL=https://localhost:$${HOST_REST_PORT}; \
+	export LIVE_XKMS_NOISE_ADDR=localhost:$${HOST_NOISE_PORT}; \
+	export LIVE_XKMS_SPKI_PIN=$$(docker exec bootstrap-xkms-server cat /etc/xkms/certs/spki.pin); \
+	export LIVE_XKMS_NOISE_KEY=$$(docker exec bootstrap-xkms-server cat /etc/xkms/certs/noise.pub.hex); \
+	export LIVE_XKMS_CA_PEM=/tmp/xkms-dev-ca.crt; \
+	docker exec bootstrap-xkms-server cat /etc/xkms/certs/ca.crt > $${LIVE_XKMS_CA_PEM}; \
+	cd xkey/frontend && BASE_URL=http://localhost:34115 npx playwright test tests/e2e/live/ --reporter=list
 
 .PHONY: show-backends
 ## show-backends: Display enabled backends for current build configuration

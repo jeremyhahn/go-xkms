@@ -106,7 +106,7 @@ func (h *UserHandlers) ListUsersHandler(w http.ResponseWriter, r *http.Request) 
 	var users []*user.User
 	var err error
 
-	if identity != nil && !identity.IsCrossTenant() {
+	if identity != nil && !auth.IsCrossTenant(identity) {
 		users, err = h.userStore.ListByTenant(ctx, identity.TenantID)
 	} else {
 		users, err = h.userStore.List(ctx)
@@ -413,7 +413,7 @@ func (h *UserHandlers) DeleteUserHandler(w http.ResponseWriter, r *http.Request)
 // to enforce tenant isolation without revealing that a resource exists
 // in another tenant (return 404, not 403).
 func isCrossTenantAccess(identity *auth.Identity, targetTenantID string) bool {
-	if identity == nil || identity.IsCrossTenant() {
+	if identity == nil || auth.IsCrossTenant(identity) {
 		return false // system-level or no auth -- allow
 	}
 	if targetTenantID == "" {

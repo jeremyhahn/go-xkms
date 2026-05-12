@@ -273,6 +273,17 @@ func IsInitialized() bool {
 }
 
 // GetBackend returns a specific backend by name
+// UnregisterBackend removes a backend from the service. This is used when
+// a backend needs to be replaced (e.g., after a PKCS#11 token reconnection).
+func UnregisterBackend(name string) {
+	if !IsInitialized() {
+		return
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	delete(service.backends, name)
+}
+
 func GetBackend(name string) (Backend, error) {
 	// Validate backend name to prevent injection attacks
 	if err := validation.ValidateBackendName(name); err != nil {

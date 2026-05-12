@@ -143,9 +143,11 @@ func TestBarrierService_Initialize_Seal_GetSealInfo_WithDataDir(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAppLockService_Unlock_InitializesBarrier_WhenNotInitialized(t *testing.T) {
-	// When barrier is configured but NOT initialized, Unlock must NOT
-	// auto-initialize (which would lose old encrypted data). Instead it
-	// falls back to PIN verification.
+	// When barrier is configured but NOT initialized, Unlock first verifies
+	// the PIN against PINService, then initializes the barrier with the
+	// verified PIN. This is the recovery flow when the wizard's barrier
+	// init failed but the User PIN was persisted to the software PIN
+	// backend. The PIN verify acts as the auth check before initializing.
 	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
 
 	pinSvc := NewPINService()
@@ -173,14 +175,13 @@ func TestAppLockService_Unlock_InitializesBarrier_WhenNotInitialized(t *testing.
 	assert.False(t, barrierSvc.IsInitialized(),
 		"barrier should not be initialized before Unlock")
 
-	// Unlock with a PIN. Since barrier is not initialized, this falls
-	// back to PIN verification instead of calling Initialize.
+	// Unlock with a PIN. PIN verifies, then barrier is initialized.
 	err := svc.Unlock("test-pin")
 	require.NoError(t, err)
 
 	assert.False(t, svc.IsLocked(), "app should be unlocked after Unlock")
-	assert.False(t, barrierSvc.IsInitialized(),
-		"barrier must NOT be auto-initialized by Unlock")
+	assert.True(t, barrierSvc.IsInitialized(),
+		"barrier should be initialized after PIN verify recovery path")
 }
 
 // ---------------------------------------------------------------------------
@@ -353,15 +354,16 @@ func TestBarrierService_SetLastStrategy_ReflectedInGetSealInfo(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestAppLockService_Unlock_UninitializedBarrier_InitializesAndFiresHook
-// verifies that when the barrier is not initialized, Unlock falls back to
-// PIN verification. The barrier must NOT be auto-initialized (which would
-// create a new empty barrier and lose previously encrypted data).
+// verifies that when the barrier is not initialized, Unlock first verifies
+// the PIN against PINService, then initializes the barrier with the verified
+// PIN and fires the post-unseal hook. This is the recovery path when the
+// wizard's barrier init failed but the User PIN was persisted.
 func TestAppLockService_Unlock_UninitializedBarrier_InitializesAndFiresHook(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 	svc.SetContext(context.Background())
 
-	// Track hook invocation - should NOT be called since we don't initialize.
+	// Track hook invocation - should fire after barrier is initialized.
 	hookCalled := false
 	svc.SetPostUnsealHook(func() error {
 		hookCalled = true
@@ -373,7 +375,7 @@ func TestAppLockService_Unlock_UninitializedBarrier_InitializesAndFiresHook(t *t
 	require.False(t, info.Initialized)
 
 	// Create PINService with a configured PIN backend so PIN verification
-	// succeeds as a fallback.
+	// succeeds and the recovery init path runs.
 	pinSvc := NewPINService()
 	pinSvc.SetContext(context.Background())
 	backend := &mockPINBackend{
@@ -392,16 +394,16 @@ func TestAppLockService_Unlock_UninitializedBarrier_InitializesAndFiresHook(t *t
 	appLock.SetContext(context.Background())
 	appLock.LockForStartup()
 
-	// Unlock should fall back to PIN verification (not initialize barrier).
+	// Unlock verifies the PIN, then initializes the barrier with the PIN.
 	err := appLock.Unlock("my-secret-pin")
 	require.NoError(t, err)
 
-	// Barrier must NOT have been initialized.
+	// Barrier should now be initialized.
 	info = svc.GetSealInfo()
-	assert.False(t, info.Initialized, "barrier must NOT be auto-initialized by Unlock")
+	assert.True(t, info.Initialized, "barrier must be initialized after PIN verify recovery path")
 
-	// Post-unseal hook must NOT have been called.
-	assert.False(t, hookCalled, "post-unseal hook must not fire when barrier is not initialized")
+	// Post-unseal hook should have fired during Initialize.
+	assert.True(t, hookCalled, "post-unseal hook must fire when barrier is initialized via recovery path")
 
 	// Verify app is unlocked.
 	status := appLock.GetStatus()

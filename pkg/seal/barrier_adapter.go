@@ -108,7 +108,7 @@ func (r *BarrierRegistry) RegisterTenantWithConfig(
 		AuditLogger:     AuditLoggerFromXKMS(config.AuditLogger),
 		Shamir:          config.Shamir,
 	}
-	return r.inner.RegisterTenant(tenantID, base, qrdbConfig, strategies...)
+	return r.inner.RegisterTenant(context.Background(), tenantID, base, qrdbConfig, strategies...)
 }
 
 // GetTenant looks up a registered tenant barrier by ID.

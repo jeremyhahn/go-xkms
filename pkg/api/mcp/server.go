@@ -247,8 +247,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 				cert := state.PeerCertificates[0]
 				identity := &auth.Identity{
 					Subject: cert.Subject.CommonName,
-					Claims:  make(map[string]interface{}),
-					Attributes: map[string]string{
+					Metadata: map[string]string{
 						"auth_method": "mtls",
 						"subject_dn":  cert.Subject.String(),
 					},

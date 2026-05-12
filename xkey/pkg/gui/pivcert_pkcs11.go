@@ -34,7 +34,11 @@ func newPKCS11PIVCertStorage(config *pivcert.PKCS11StorageConfig) (pivcert.PIVCe
 // that reuses the already-initialized context and session from the PKCS#11
 // module manager. This avoids CKR_CRYPTOKI_ALREADY_INITIALIZED errors and
 // never touches token initialization.
-func newPKCS11PIVCertStorageFromConnection(conn *manager.Connection) (pivcert.PIVCertificateStorage, error) {
+//
+// When soPin is non-empty (e.g., YubiKey PIV management key), the storage
+// uses SO session elevation for write/delete operations to avoid
+// CKR_USER_TYPE_INVALID errors on tokens that reject those ops under CKU_USER.
+func newPKCS11PIVCertStorageFromConnection(conn *manager.Connection, soPin, userPin string) (pivcert.PIVCertificateStorage, error) {
 	if conn == nil || conn.P11Ctx == nil {
 		return nil, pivcert.NewStorageTypeError("newPKCS11PIVCertStorageFromConnection",
 			pivcert.StorageTypePKCS11, pivcert.ErrPKCS11NotAvailable)
@@ -46,5 +50,8 @@ func newPKCS11PIVCertStorageFromConnection(conn *manager.Connection) (pivcert.PI
 			pivcert.StorageTypePKCS11, pivcert.ErrPKCS11NotAvailable)
 	}
 
+	if soPin != "" {
+		return pivpkcs11.NewFromSessionWithSO(p11ctx, pkcs11.SessionHandle(conn.SessionHandle), conn.SlotID, soPin, userPin)
+	}
 	return pivpkcs11.NewFromSession(p11ctx, pkcs11.SessionHandle(conn.SessionHandle), conn.SlotID)
 }

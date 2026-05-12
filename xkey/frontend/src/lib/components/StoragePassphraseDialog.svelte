@@ -97,7 +97,7 @@
   }
 </script>
 
-<Modal bind:open title={dialogTitle} maxWidth="480px">
+<Modal bind:open title={dialogTitle} maxWidth="480px" persistent={true}>
   <div class="storage-form">
     <p class="text-body-medium form-desc">
       {#if mode === 'create'}

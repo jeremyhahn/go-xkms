@@ -12,6 +12,7 @@
   import PairBLEDialog from '$lib/components/PairBLEDialog.svelte';
   import PairAgentDialog from '$lib/components/PairAgentDialog.svelte';
   import { mdiPlus, mdiLanConnect, mdiCellphone, mdiPuzzleOutline, mdiDotsVertical } from '$lib/utils/icons';
+  import { clickOutside } from '$lib/actions/clickOutside';
   import { navigateTo, appState } from '$lib/stores/app';
   import { pairedDevices, setDevices, updateDeviceConnection, updateDeviceAttestation, updateDeviceBackend, removeDevice } from '$lib/stores/pairing';
   import type { PairedDevice, DeviceAttestation, PairedDeviceType } from '$lib/stores/pairing';
@@ -252,7 +253,7 @@
   }
 </script>
 
-<svelte:window on:click={closeMenu} />
+<svelte:window on:keydown={(e) => { if (e.key === 'Escape') closeMenu(); }} />
 
 <div class="pairing-view">
   <GradientHeader title="Pairing" subtitle="Manage paired devices, extensions, and remote agents" />
@@ -304,7 +305,7 @@
       </svelte:fragment>
 
       <svelte:fragment slot="actions" let:row>
-        <div class="row-actions">
+        <div class="row-actions" use:clickOutside on:clickoutside={() => { if (openMenuAddress === row.id) openMenuAddress = null; }}>
           <button class="kebab-btn" on:click|stopPropagation={(e) => toggleMenu(row.id, e)} aria-label="Actions">
             <Icon path={mdiDotsVertical} size={18} />
           </button>

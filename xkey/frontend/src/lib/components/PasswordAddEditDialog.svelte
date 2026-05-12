@@ -4,7 +4,7 @@
   import Icon from './Icon.svelte';
   import CollapsibleSection from './CollapsibleSection.svelte';
   import { mdiRefresh, mdiEye, mdiEyeOff } from '$lib/utils/icons';
-  import { callBackend } from '$lib/api/backend';
+  import { callBackend, isWailsAvailable, notifyBackendUnavailable } from '$lib/api/backend';
   import type { StaticPasswordEntry, AddPasswordParams, UpdatePasswordParams } from '$lib/api/backend';
 
   export let open: boolean = false;
@@ -70,6 +70,10 @@
   }
 
   async function generatePassword(): Promise<void> {
+    if (!isWailsAvailable()) {
+      notifyBackendUnavailable('Password generation');
+      return;
+    }
     const result = await callBackend<string>('StaticPasswordService', 'GeneratePassword', genLength, genCharset);
     if (result) {
       password = result;

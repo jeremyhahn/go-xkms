@@ -1,0 +1,163 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+//  1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//     See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+//  2. Commercial License
+//     Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package secureio provides JSON request helpers that land sensitive
+// values directly into memguard-backed enclaves, bypassing the Go
+// string heap that json.Decoder would otherwise use.
+//
+// The centerpiece is PasswordField — a JSON field type whose
+// UnmarshalJSON base64-decodes the quoted JSON token directly into a
+// *secure.Buffer. Handlers use it like any other DTO field and MUST
+// call Destroy() (typically via defer) once the request completes.
+package secureio
+
+import (
+	"encoding/base64"
+	"errors"
+
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
+)
+
+// BadBodyError is returned by PasswordField.UnmarshalJSON when the
+// JSON token is missing, not a string, or not valid base64.
+type BadBodyError struct {
+	// Err is the underlying cause (base64 decode error, quote check
+	// failure, etc.). May be nil for pure structural errors; when
+	// present it satisfies Unwrap so errors.Is / errors.As reach it.
+	Err error
+}
+
+// Error returns a stable human-readable description.
+func (e *BadBodyError) Error() string {
+	if e == nil {
+		return "secureio: bad body"
+	}
+	if e.Err == nil {
+		return "secureio: bad body"
+	}
+	return "secureio: bad body: " + e.Err.Error()
+}
+
+// Unwrap exposes the inner cause for errors.Is/As chains.
+func (e *BadBodyError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// PasswordField is a JSON field whose UnmarshalJSON decodes a base64
+// string directly into a memguard-backed *secure.Buffer. The
+// plaintext password bytes NEVER become a Go string at any point
+// along the unmarshal path:
+//
+//  1. json.Unmarshal invokes UnmarshalJSON with the raw JSON token
+//     (including the surrounding quotes).
+//  2. The method validates the quotes against the []byte directly —
+//     no string conversion.
+//  3. base64.StdEncoding.Decode writes decoded bytes into the
+//     mlocked Buffer's Bytes() slice in place.
+//  4. A right-size pass allocates a fresh Buffer of the exact
+//     decoded length when the padding-computed maximum overshoots,
+//     and destroys the oversized Buffer.
+//
+// Callers MUST invoke Destroy when finished with the field. The
+// canonical pattern is `defer req.Password.Destroy()` immediately
+// after json.Decode returns; Destroy is idempotent and safe on a
+// zero value.
+type PasswordField struct {
+	buf *secure.Buffer
+}
+
+// Buffer returns the underlying *secure.Buffer. The returned pointer
+// is owned by the PasswordField; do not Destroy it directly — call
+// PasswordField.Destroy so the field's internal state resets. May
+// return nil when the field was absent or explicitly null in the
+// JSON body.
+func (f *PasswordField) Buffer() *secure.Buffer {
+	if f == nil {
+		return nil
+	}
+	return f.buf
+}
+
+// Size returns the length of the decoded password in bytes. Returns
+// 0 for an absent, null, or destroyed field.
+func (f *PasswordField) Size() int {
+	if f == nil || f.buf == nil {
+		return 0
+	}
+	return f.buf.Size()
+}
+
+// UnmarshalJSON decodes a JSON-quoted base64 string directly into an
+// mlocked Buffer. A JSON null is a no-op (leaves f.buf == nil), an
+// empty string yields an empty (zero-length) field, and any other
+// malformed input returns *BadBodyError.
+func (f *PasswordField) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	// An explicit JSON null is a no-op.
+	if len(data) == 4 && data[0] == 'n' && data[1] == 'u' && data[2] == 'l' && data[3] == 'l' {
+		return nil
+	}
+	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
+		return &BadBodyError{Err: errors.New("password_b64 must be a JSON string")}
+	}
+	encoded := data[1 : len(data)-1]
+	if len(encoded) == 0 {
+		return nil
+	}
+	maxLen := base64.StdEncoding.DecodedLen(len(encoded))
+	if maxLen <= 0 {
+		return &BadBodyError{Err: errors.New("password_b64 empty after decode")}
+	}
+	raw, err := secure.NewBuffer(maxLen)
+	if err != nil {
+		return err
+	}
+	n, err := base64.StdEncoding.Decode(raw.Bytes(), encoded)
+	if err != nil {
+		raw.Destroy()
+		return &BadBodyError{Err: err}
+	}
+	if n == maxLen {
+		f.buf = raw
+		return nil
+	}
+	// Right-size: allocate a fresh Buffer of exactly n bytes and
+	// destroy the oversized one.
+	trimmed, err := secure.NewBuffer(n)
+	if err != nil {
+		raw.Destroy()
+		return err
+	}
+	copy(trimmed.Bytes(), raw.Bytes()[:n])
+	raw.Destroy()
+	f.buf = trimmed
+	return nil
+}
+
+// Destroy wipes the underlying Buffer. Safe on a zero value and
+// idempotent — memguard.Destroy is itself idempotent. Subsequent
+// calls to Buffer return nil and Size returns 0.
+func (f *PasswordField) Destroy() {
+	if f == nil {
+		return
+	}
+	if f.buf != nil {
+		f.buf.Destroy()
+		f.buf = nil
+	}
+}

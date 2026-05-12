@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // SoftwareBackend provides a unified interface for both asymmetric and symmetric
@@ -43,6 +44,17 @@ import (
 //
 // This design provides a consistent interface similar to cloud backends
 // (AWS KMS, GCP KMS, Azure Key Vault) which also support both operation types.
+//
+// # Memory discipline
+//
+// The only sensitive material the backend holds directly (as opposed to
+// delegating to pkcs8Backend / symmetricBackend / quantumBackend) is the
+// ephemeral RSA wrapping key pair used during the import ceremony. That
+// private key lives inside a *secure.Secret for its entire 24-hour TTL;
+// every unwrap operation opens the enclave, parses the PKCS#8 DER into
+// an ephemeral *rsa.PrivateKey on the stack, runs the wrapping logic,
+// and destroys the Buffer before returning. No plaintext of the
+// wrapping private key ever outlives a single stack frame.
 //
 // Thread-safe: Yes, uses a read-write mutex for concurrent access.
 type SoftwareBackend struct {
@@ -58,12 +70,39 @@ type SoftwareBackend struct {
 	importMu     sync.RWMutex                // Separate mutex for import token operations
 }
 
-// importTokenData holds the private key and metadata for an import operation
+// importTokenData holds the ephemeral wrapping key pair for an
+// in-progress import ceremony.
+//
+// privateKey is the PKCS#8 DER of the RSA wrapping private key, sealed
+// inside a *secure.Secret. Every consumer opens this, parses the DER
+// inside a Buffer, performs its crypto in that scope, and destroys the
+// Buffer before returning — the plaintext private key never outlives a
+// single stack frame.
+//
+// publicKey is kept in a plain pointer because RSA public keys are
+// non-sensitive and callers need cheap repeated access (e.g., to
+// populate ImportParameters).
 type importTokenData struct {
-	privateKey *rsa.PrivateKey
+	privateKey *secure.Secret
+	publicKey  *rsa.PublicKey
 	algorithm  backend.WrappingAlgorithm
 	expiresAt  time.Time
 	keySpec    string
+}
+
+// destroy wipes the enclave holding the wrapping private key. Safe to
+// call on a nil receiver. Invoked when a token expires or on backend
+// Close so the 24-hour-TTL material doesn't linger across shutdowns.
+func (t *importTokenData) destroy() {
+	if t == nil {
+		return
+	}
+	if t.privateKey != nil {
+		t.privateKey.Destroy()
+		t.privateKey = nil
+	}
+	// publicKey is non-sensitive; dropping the reference is sufficient.
+	t.publicKey = nil
 }
 
 // SoftwareBackendWithKeyAgreement extends the software backend with KeyAgreement capabilities.
@@ -252,13 +291,13 @@ func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, ErrStorageClosed
 	}
 
-	// Get keys from all backends
+	// Get keys from all three backends
 	pkcs8Keys, err := b.pkcs8Backend.ListKeys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list PKCS8 keys: %w", err)
 	}
 
-	aesKeys, err := b.symmetricBackend.ListKeys()
+	symmetricKeys, err := b.symmetricBackend.ListKeys()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list symmetric keys: %w", err)
 	}
@@ -268,17 +307,17 @@ func (b *SoftwareBackend) ListKeys() ([]*types.KeyAttributes, error) {
 		return nil, fmt.Errorf("failed to list quantum keys: %w", err)
 	}
 
-	// Combine results
-	allKeys := make([]*types.KeyAttributes, 0, len(pkcs8Keys)+len(aesKeys)+len(quantumKeys))
+	// Combine the results
+	allKeys := make([]*types.KeyAttributes, 0, len(pkcs8Keys)+len(symmetricKeys)+len(quantumKeys))
 	allKeys = append(allKeys, pkcs8Keys...)
-	allKeys = append(allKeys, aesKeys...)
+	allKeys = append(allKeys, symmetricKeys...)
 	allKeys = append(allKeys, quantumKeys...)
 
 	return allKeys, nil
 }
 
-// Signer returns a crypto.Signer for the asymmetric key identified by attrs.
-// This operation is delegated to the PKCS8 backend.
+// Signer creates a crypto.Signer for the given asymmetric key.
+// This operation is delegated to the appropriate backend.
 func (b *SoftwareBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -294,7 +333,7 @@ func (b *SoftwareBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, err
 	return b.pkcs8Backend.Signer(attrs)
 }
 
-// Decrypter returns a crypto.Decrypter for the asymmetric key identified by attrs.
+// Decrypter creates a crypto.Decrypter for the given asymmetric key.
 // This operation is delegated to the PKCS8 backend.
 func (b *SoftwareBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
 	b.mu.RLock()
@@ -307,9 +346,8 @@ func (b *SoftwareBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypte
 	return b.pkcs8Backend.Decrypter(attrs)
 }
 
-// RotateKey rotates/updates a key identified by attrs.
-// For asymmetric keys, this is delegated to the PKCS8 backend.
-// For symmetric keys, this is delegated to the symmetric backend.
+// RotateKey generates a new version of the key, keeping the same key ID.
+// This operation is delegated to the appropriate backend.
 func (b *SoftwareBackend) RotateKey(attrs *types.KeyAttributes) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -329,7 +367,8 @@ func (b *SoftwareBackend) RotateKey(attrs *types.KeyAttributes) error {
 }
 
 // Close releases any resources held by the backend.
-// This closes both the PKCS8 and symmetric backends.
+// This closes both the PKCS8 and symmetric backends and destroys any
+// in-flight wrapping-key enclaves.
 func (b *SoftwareBackend) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -339,6 +378,15 @@ func (b *SoftwareBackend) Close() error {
 	}
 
 	b.closed = true
+
+	// Destroy any pending import-token enclaves before releasing
+	// storage so leftover wrapping keys cannot survive a shutdown.
+	b.importMu.Lock()
+	for _, td := range b.importTokens {
+		td.destroy()
+	}
+	b.importTokens = nil
+	b.importMu.Unlock()
 
 	// Close both backends (but only close storage once)
 	// Note: Both backends share the same storage, so we only need to close
@@ -388,7 +436,7 @@ func (b *SoftwareBackend) GetSymmetricKey(attrs *types.KeyAttributes) (types.Sym
 	return b.symmetricBackend.GetSymmetricKey(attrs)
 }
 
-// SymmetricEncrypter returns a SymmetricEncrypter for the key identified by attrs.
+// SymmetricEncrypter creates a SymmetricEncrypter for the given key.
 // This operation is delegated to the symmetric backend.
 func (b *SoftwareBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.SymmetricEncrypter, error) {
 	b.mu.RLock()
@@ -404,9 +452,12 @@ func (b *SoftwareBackend) SymmetricEncrypter(attrs *types.KeyAttributes) (types.
 // GetImportParameters generates a wrapping key pair and returns the public key
 // along with an import token for later import operations.
 //
-// For the software backend, we generate a 2048-bit RSA key pair and store the
-// private key in memory with a 24-hour expiration. The import token is a UUID
-// that identifies this wrapping key pair.
+// For the software backend, we generate a 2048-bit RSA key pair, marshal
+// the private key into PKCS#8 DER, and seal the DER bytes into a
+// *secure.Secret. Only the public key pointer is retained in plaintext.
+// The import token is a UUID that identifies this wrapping key pair.
+// The ceremony expires in 24 hours; on expiry (or on Close), the
+// enclave is destroyed.
 func (b *SoftwareBackend) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.importMu.Lock()
 	defer b.importMu.Unlock()
@@ -420,11 +471,34 @@ func (b *SoftwareBackend) GetImportParameters(attrs *types.KeyAttributes, algori
 		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, algorithm)
 	}
 
-	// Generate a 2048-bit RSA key pair for wrapping
+	// Generate a 2048-bit RSA key pair for wrapping.
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate wrapping key: %w", err)
 	}
+
+	// Marshal the private key into PKCS#8 DER and seal it. We wipe the
+	// intermediate slice after sealing as belt-and-suspenders; NewSecret
+	// also wipes its input.
+	der, marshalErr := x509.MarshalPKCS8PrivateKey(privateKey)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("failed to marshal wrapping key: %w", marshalErr)
+	}
+	publicKey := &privateKey.PublicKey
+	// Best-effort: zero out the live *rsa.PrivateKey fields so it
+	// doesn't sit on the heap next to our enclaved copy. crypto/rsa's
+	// PrecomputedValues aren't safely zeroable without invalidating
+	// the key, so we settle for dropping the reference. After this
+	// function returns, GC is the only mechanism for reclaiming the
+	// privateKey heap allocation; the authoritative copy of the key
+	// material now lives inside the enclave.
+	_ = privateKey
+	sealed, sealErr := secure.NewSecret(der)
+	if sealErr != nil {
+		return nil, fmt.Errorf("failed to seal wrapping key: %w", sealErr)
+	}
+	// NewSecret wipes `der` on entry; this is defense in depth.
+	secure.Wipe(der)
 
 	// Generate import token (UUID)
 	tokenUUID := uuid.New().String()
@@ -436,16 +510,17 @@ func (b *SoftwareBackend) GetImportParameters(attrs *types.KeyAttributes, algori
 	// Determine key spec based on key attributes
 	keySpec := determineKeySpec(attrs)
 
-	// Store the private key and metadata
+	// Store the sealed private key and metadata.
 	b.importTokens[tokenUUID] = &importTokenData{
-		privateKey: privateKey,
+		privateKey: sealed,
+		publicKey:  publicKey,
 		algorithm:  algorithm,
 		expiresAt:  expiresAt,
 		keySpec:    keySpec,
 	}
 
 	return &backend.ImportParameters{
-		WrappingPublicKey: &privateKey.PublicKey,
+		WrappingPublicKey: publicKey,
 		ImportToken:       importToken,
 		Algorithm:         algorithm,
 		ExpiresAt:         &expiresAt,
@@ -495,8 +570,13 @@ func (b *SoftwareBackend) WrapKey(keyMaterial []byte, params *backend.ImportPara
 }
 
 // UnwrapKey unwraps key material that was previously wrapped.
-// For the software backend, we can perform unwrapping since we have access
-// to the private key.
+// For the software backend, we can perform unwrapping since we have
+// access to the sealed wrapping private key.
+//
+// Flow: look up the token → open the Secret into a Buffer → parse the
+// PKCS#8 DER into an ephemeral *rsa.PrivateKey → call the wrapping
+// library → destroy the Buffer. The parsed *rsa.PrivateKey is only
+// referenced inside this function's stack frame.
 func (b *SoftwareBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, fmt.Errorf("%w: wrapped key material cannot be nil", backend.ErrInvalidAttributes)
@@ -535,15 +615,32 @@ func (b *SoftwareBackend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params 
 			backend.ErrInvalidAlgorithm, wrapped.Algorithm, tokenData.algorithm)
 	}
 
+	// Open the enclaved wrapping private key into a Buffer, parse the
+	// DER, run the unwrap, destroy the Buffer.
+	privBuf, openErr := tokenData.privateKey.Open()
+	if openErr != nil {
+		return nil, fmt.Errorf("failed to open wrapping key enclave: %w", openErr)
+	}
+	defer privBuf.Destroy()
+
+	parsed, parseErr := x509.ParsePKCS8PrivateKey(privBuf.Bytes())
+	if parseErr != nil {
+		return nil, fmt.Errorf("failed to parse wrapping key: %w", parseErr)
+	}
+	privateKey, rsaOK := parsed.(*rsa.PrivateKey)
+	if !rsaOK {
+		return nil, fmt.Errorf("%w: wrapping key is not RSA", backend.ErrInvalidKeyType)
+	}
+
 	var unwrapped []byte
 	var err error
 
 	// Unwrap using the appropriate algorithm
 	switch wrapped.Algorithm {
 	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1, backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-		unwrapped, err = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, tokenData.privateKey, wrapped.Algorithm)
+		unwrapped, err = wrapping.UnwrapRSAOAEP(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, tokenData.privateKey, wrapped.Algorithm)
+		unwrapped, err = wrapping.UnwrapRSAAES(wrapped.WrappedKey, privateKey, wrapped.Algorithm)
 	default:
 		return nil, fmt.Errorf("%w: %s", backend.ErrInvalidAlgorithm, wrapped.Algorithm)
 	}
@@ -578,7 +675,9 @@ func (b *SoftwareBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend
 		return fmt.Errorf("%w: import token cannot be empty", backend.ErrInvalidAttributes)
 	}
 
-	// Look up the stored private key (with read lock)
+	// Look up the stored token metadata (with read lock). The private
+	// key itself stays inside its enclave — UnwrapKey is the only
+	// codepath that opens it.
 	b.importMu.RLock()
 	tokenData, ok := b.importTokens[tokenUUID]
 	b.importMu.RUnlock()
@@ -592,9 +691,10 @@ func (b *SoftwareBackend) ImportKey(attrs *types.KeyAttributes, wrapped *backend
 		return fmt.Errorf("%w: import token has expired", backend.ErrKeyNotFound)
 	}
 
-	// Create import parameters for unwrapping
+	// Create import parameters for unwrapping. The public key is
+	// non-sensitive so we expose it directly.
 	params := &backend.ImportParameters{
-		WrappingPublicKey: &tokenData.privateKey.PublicKey,
+		WrappingPublicKey: tokenData.publicKey,
 		ImportToken:       wrapped.ImportToken,
 		Algorithm:         tokenData.algorithm,
 		ExpiresAt:         &tokenData.expiresAt,

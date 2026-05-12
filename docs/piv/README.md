@@ -181,12 +181,20 @@ for _, slot := range resp.Slots {
 
 ### Generating a Key in a Slot
 
+PIV key generation supports multiple output formats: self-signed certificate, public key only, CSR, or CA-signed certificate.
+
+**Self-Signed Certificate (Default)**
+
 ```go
 resp, err := client.GeneratePIVKey(ctx, &xkms.GeneratePIVKeyRequest{
-    Backend:   "tpm2",
-    Slot:      "9a",
-    Algorithm: "ecdsap256",
-    Subject:   "CN=alice@example.com",
+    Backend:      "tpm2",
+    Slot:         "9a",
+    Algorithm:    "ecdsap256",
+    Subject:      "CN=alice@example.com",
+    Organization: "ACME Corp",
+    Country:      "US",
+    OutputFormat: "self-signed",
+    ValidityDays: 3650,
 })
 if err != nil {
     log.Fatal(err)
@@ -194,7 +202,63 @@ if err != nil {
 
 fmt.Printf("Generated key in slot %s\n", resp.Slot)
 fmt.Printf("Self-signed certificate:\n%s\n", resp.Certificate)
+```
+
+**Public Key Only (No Certificate)**
+
+```go
+resp, err := client.GeneratePIVKey(ctx, &xkms.GeneratePIVKeyRequest{
+    Backend:      "software",
+    Slot:         "9c",
+    Algorithm:    "ecdsap256",
+    OutputFormat: "public-key",
+})
+if err != nil {
+    log.Fatal(err)
+}
+
 fmt.Printf("Public key:\n%s\n", resp.PublicKey)
+```
+
+**CSR for CA Signing**
+
+```go
+resp, err := client.GeneratePIVKey(ctx, &xkms.GeneratePIVKeyRequest{
+    Backend:      "tpm2",
+    Slot:         "9c",
+    Algorithm:    "ecdsap256",
+    Subject:      "CN=alice@example.com,O=ACME Corp,C=US",
+    OutputFormat: "csr",
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("CSR:\n%s\n", resp.CSR)
+```
+
+**CA-Signed Certificate**
+
+```go
+resp, err := client.GeneratePIVKey(ctx, &xkms.GeneratePIVKeyRequest{
+    Backend:      "tpm2",
+    Slot:         "9d",
+    Algorithm:    "ecdsap256",
+    Subject:      "CN=alice@example.com",
+    Organization: "ACME Corp",
+    Country:      "US",
+    OutputFormat: "ca-signed",
+    ValidityDays: 1095,
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("Generated CA-signed certificate in slot %s\n", resp.Slot)
+fmt.Printf("Certificate:\n%s\n", resp.Certificate)
+if len(resp.ChainPEM) > 0 {
+    fmt.Printf("CA Chain:\n%s\n", resp.ChainPEM)
+}
 ```
 
 ### Importing a Certificate
@@ -252,6 +316,224 @@ err := client.DeletePIVCertificate(ctx, &xkms.DeletePIVCertificateRequest{
 })
 ```
 
+## CLI Usage
+
+The `xkey piv generate` command supports all key generation output formats with X.509 subject configuration.
+
+### Self-Signed Certificate (Default)
+
+```bash
+xkey piv generate 9a --algorithm ECCP256 --subject "CN=alice@example.com" \
+  --organization "ACME Corp" --country "US"
+```
+
+Output:
+```
+Key generated in slot 9a (PIV Authentication)
+Algorithm: ECCP256
+PIN Policy: once
+Touch Policy: never
+Public Key:
+-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE...
+-----END PUBLIC KEY-----
+```
+
+Self-signed certificate is automatically stored in the slot.
+
+### Public Key Only
+
+```bash
+xkey piv generate 9c --algorithm ECCP256 --output-format public-key -o public.pem
+```
+
+Output:
+```
+Public key generated for slot 9c (Digital Signature)
+Public key written to public.pem
+```
+
+No certificate is stored; the private key remains in the slot for future CSR generation.
+
+### Certificate Signing Request (CSR)
+
+```bash
+xkey piv generate 9c --algorithm ECCP256 --output-format csr \
+  --subject "CN=alice@example.com,O=ACME Corp,C=US" -o alice.csr
+```
+
+Output:
+```
+CSR generated for slot 9c (Digital Signature)
+CSR written to alice.csr
+```
+
+The CSR can then be submitted to a CA for signing:
+
+```bash
+# Submit CSR to local CA
+xkmsctl ca sign-csr --in alice.csr --out alice.pem --profile piv-signature
+
+# Or to a remote xkms CA via API
+curl -X POST https://xkms.example.com/api/v1/ca/sign-csr \
+  -H "Content-Type: application/pkcs10" \
+  --data-binary @alice.csr > alice.pem
+```
+
+### CA-Signed Certificate
+
+```bash
+xkey piv generate 9d --algorithm ECCP256 --output-format ca-signed \
+  --subject "CN=alice@example.com" --organization "ACME Corp" \
+  --country "US" --validity-days 1095
+```
+
+Output:
+```
+CA-signed certificate generated in slot 9d (Key Management)
+Algorithm: ECCP256
+Subject: CN=alice@example.com
+Certificate:
+-----BEGIN CERTIFICATE-----
+MIICxzCCAa+gAwIBAgIUXxW...
+-----END CERTIFICATE-----
+CA Chain:
+-----BEGIN CERTIFICATE-----
+MIIDXTCCAkWgAwIBAgIUI...
+-----END CERTIFICATE-----
+```
+
+The certificate and CA chain are stored, and the private key is securely held in the slot.
+
+### X.509 Subject Configuration
+
+All generation formats support customizable X.509 subject fields:
+
+```bash
+xkey piv generate 9a \
+  --subject "CN=alice@example.com" \
+  --organization "ACME Corp" \
+  --country "US"
+```
+
+Supported flags:
+- `--subject` -- Common Name (CN) for the certificate
+- `--organization` -- Organization (O) field
+- `--country` -- Country code (C, 2-letter ISO code)
+- `--validity-days` -- Certificate validity period (days, 0 = default)
+
+### PIN and Touch Policies
+
+Control access policies for the generated key:
+
+```bash
+# Require PIN for every operation
+xkey piv generate 9c --algorithm ECCP256 --pin-policy always
+
+# Cache touch for 15 seconds
+xkey piv generate 9d --algorithm ECCP256 --touch-policy cached
+
+# No PIN, always require touch
+xkey piv generate 9e --algorithm ECCP256 --pin-policy never --touch-policy always
+```
+
+PIN policies: `never`, `once` (default), `always`
+Touch policies: `never` (default), `cached`, `always`
+
+### Algorithm Selection
+
+```bash
+# ECDSA P-256 (default, recommended)
+xkey piv generate 9a --algorithm ECCP256
+
+# ECDSA P-384
+xkey piv generate 9a --algorithm ECCP384
+
+# RSA 2048-bit
+xkey piv generate 9c --algorithm RSA2048
+
+# RSA 4096-bit
+xkey piv generate 9d --algorithm RSA4096
+
+# Ed25519 (signature only)
+xkey piv generate 9e --algorithm ED25519
+```
+
+### Overwriting Existing Keys
+
+By default, `xkey piv generate` will prompt for confirmation if the slot already contains a key. Use `--force` to skip confirmation:
+
+```bash
+xkey piv generate 9a --algorithm ECCP256 --force
+```
+
+## CA Integration
+
+When generating CA-signed certificates, the system automatically signs the CSR using a configured CA profile. Two CA sources are supported:
+
+### Local Embedded CA
+
+The embedded User CA (stored in the trust store) is used for local signing:
+
+```bash
+xkey piv generate 9a --output-format ca-signed \
+  --subject "CN=alice@example.com"
+```
+
+CA profiles for PIV slots:
+- `piv-authentication` (9a) -- TLS client authentication, SSH
+- `piv-signature` (9c) -- Document/code signing, extended key usage for signatures
+- `piv-key-management` (9d) -- Data encryption and key agreement
+- `piv-card-auth` (9e) -- Physical access, contactless authentication
+
+### Remote xkms CA Server
+
+Configure a remote CA server for distributed signing:
+
+```bash
+xkey piv generate 9a --ca-server https://ca.example.com \
+  --spki-pin sha256/4U8EWZmYKQvb+DYJMJZvT+M3s+9TbxYq5i8E...
+```
+
+The remote server verifies the CSR and issues a certificate with the specified profile.
+
+## Attestation for Hardware Keys
+
+When generating keys in hardware backends (TPM2, PKCS#11), the key generation is attested. When signing a CSR with a hardware key, the attestation can be included to prove the key is hardware-backed:
+
+```bash
+xkmsctl ca sign-csr --in alice.csr \
+  --attestation-format tpm2 \
+  --attestation-credential /path/to/ek-cert.pem
+```
+
+Supported attestation formats:
+- `tpm2` -- TPM 2.0 attestation with EK (Endorsement Key) credential
+- `yubikey-piv` -- YubiKey PIV attestation certificate
+
+The server validates the attestation chain before signing. RBAC controls which roles can submit attested CSRs:
+- `admin` -- Can sign any CSR
+- `operator` -- Can sign CSRs with valid hardware attestation
+- `user` -- Can only sign their own CSRs
+
+## Settings: Identity Configuration
+
+Global default X.509 subject fields can be configured in Settings → Identity. These defaults pre-populate certificate generation dialogs:
+
+- **Common Name (CN)** -- Subject identifier
+- **Organization (O)** -- Company or organization name
+- **Organizational Unit (OU)** -- Department or team
+- **Country (C)** -- 2-letter ISO country code
+- **State/Province (ST)** -- State or province
+- **Locality (L)** -- City or locality
+
+When generating a certificate, these defaults are merged with command-line overrides. Example:
+
+```bash
+# Uses defaults for O, C from Settings, overrides CN
+xkey piv generate 9a --subject "CN=alice@example.com"
+```
+
 ## REST API
 
 All PIV endpoints live under `/api/v1/piv/`. When RBAC is enabled, each endpoint requires the appropriate `piv` resource permission.
@@ -267,9 +549,101 @@ All PIV endpoints live under `/api/v1/piv/`. When RBAC is enabled, each endpoint
 | `GET`    | `/api/v1/piv/slots/{slot}/export`      | export     | Export certificate from slot   |
 | `POST`   | `/api/v1/piv/slots/{slot}/csr`         | create     | Generate CSR for slot key      |
 
+### Generate Key Request
+
+```bash
+POST /api/v1/piv/slots/{slot}/generate?backend={id}
+
+{
+  "algorithm": "ecdsap256",
+  "subject": "CN=alice@example.com",
+  "organization": "ACME Corp",
+  "country": "US",
+  "output_format": "self-signed",
+  "validity_days": 3650
+}
+```
+
+Response (self-signed):
+```json
+{
+  "slot": "9a",
+  "algorithm": "ecdsap256",
+  "certificate": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+  "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n"
+}
+```
+
+Response (public-key):
+```json
+{
+  "slot": "9a",
+  "algorithm": "ecdsap256",
+  "public_key": "-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----\n"
+}
+```
+
+Response (csr):
+```json
+{
+  "slot": "9c",
+  "algorithm": "ecdsap256",
+  "csr": "-----BEGIN CERTIFICATE REQUEST-----\n...\n-----END CERTIFICATE REQUEST-----\n"
+}
+```
+
+Response (ca-signed):
+```json
+{
+  "slot": "9d",
+  "algorithm": "ecdsap256",
+  "certificate": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+  "chain_pem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n"
+}
+```
+
+### Request Parameters
+
+| Parameter       | Type    | Description                                            |
+|-----------------|---------|--------------------------------------------------------|
+| `algorithm`     | string  | Key algorithm: `ecdsap256`, `ecdsap384`, `rsa2048`, `rsa4096`, `ed25519` (default: `ecdsap256`) |
+| `subject`       | string  | Certificate subject CN (default: slot name)            |
+| `organization`  | string  | X.509 Organization (O) field                           |
+| `country`       | string  | X.509 Country (C) field, 2-letter ISO code            |
+| `output_format` | string  | Output format: `self-signed`, `public-key`, `csr`, `ca-signed` (default: `self-signed`) |
+| `validity_days` | integer | Certificate validity (days, 0 = default)              |
+
 Query parameters common to all endpoints:
 - `backend` -- backend identifier (required)
 - `format` -- certificate format, `pem` or `der` (where applicable, defaults to `pem`)
+
+## GUI Features
+
+### PIV Key Generation Dialog
+
+The enhanced PIV key generation dialog in xkey supports all output formats and subject configuration:
+
+1. **Slot Selection** -- Choose from 9a, 9c, 9d, 9e
+2. **Algorithm** -- Select ECCP256 (recommended), ECCP384, RSA2048, RSA4096, or Ed25519
+3. **Output Format** -- Self-signed certificate, public key only, CSR, or CA-signed
+4. **Subject Fields** -- CN, Organization, Organizational Unit, Country, State/Province, Locality
+5. **Validity** -- Certificate validity period in days
+6. **Advanced Options** -- PIN policy, touch policy, force overwrite
+
+Subject fields are pre-populated from Settings → Identity defaults. The dialog validates inputs and prevents invalid combinations (e.g., Ed25519 with key management slots).
+
+### Settings Identity Configuration
+
+Settings → Identity tab allows configuration of global X.509 subject defaults:
+
+- **Common Name** -- Default subject CN
+- **Organization** -- Default O field
+- **Organizational Unit** -- Default OU field
+- **Country** -- Default C field (2-letter ISO code)
+- **State/Province** -- Default ST field
+- **Locality** -- Default L field
+
+These defaults are merged with overrides in the key generation dialog, allowing quick certificate creation with consistent subject information.
 
 ## PKCS #11 Integration
 
@@ -283,12 +657,40 @@ All three objects share the same `CKA_ID`, computed as SHA-256 of `RawSubjectPub
 
 This mapping allows standard PKCS #11 tools (pkcs11-tool, OpenSSL, SSH) to discover and use PIV credentials transparently. See [PKCS #11 PIV Integration](../pkcs11/module/piv.md) for the full object mapping and configuration details.
 
+## Key Generation Output Formats
+
+| Format       | Output             | Certificate Stored | Use Case                    |
+|--------------|-------------------|--------------------|-----------------------------|
+| Self-Signed  | Cert + public key | Yes (self-signed)  | Quick testing, development  |
+| Public-Key   | Public key only   | No                 | Share public key, keep private |
+| CSR          | PKCS#10 CSR       | No (until signed)  | Submit to CA for signing    |
+| CA-Signed    | Cert + chain      | Yes (CA-signed)    | Production certificates    |
+
+## Default Certificate Validity
+
+- **Self-Signed** -- 10 years (3650 days)
+- **CA-Signed** -- 3 years (1095 days)
+- **Custom** -- Configurable via `--validity-days` flag
+
+## Supported Algorithms by Slot
+
+| Slot | Authentication | Signature | Encryption | Card Auth |
+|------|---|---|---|---|
+| 9a   | Yes | Yes | No  | No  |
+| 9c   | No  | Yes | No  | No  |
+| 9d   | No  | No  | Yes | No  |
+| 9e   | Yes | Yes | No  | Yes |
+
+All algorithms (ECCP256, ECCP384, RSA2048, RSA4096, Ed25519) can be used for any slot, but key usage extensions in the certificate reflect the slot's intended purpose.
+
 ## References
 
 - [NIST SP 800-73-4](https://csrc.nist.gov/publications/detail/sp/800-73/4/final) -- Interfaces for Personal Identity Verification
 - [NIST SP 800-76-2](https://csrc.nist.gov/publications/detail/sp/800-76/2/final) -- Biometric Specifications for PIV
 - [Certificate Storage Architecture](certificate-storage-architecture.md) -- Detailed storage design
 - [PKCS #11 PIV Integration](../pkcs11/module/piv.md) -- PKCS #11 object mapping
+- [CA Integration Guide](../ca/README.md) -- Certificate authority operations
+- [Attestation Guide](../attestation/README.md) -- Hardware key attestation
 
 ## License
 

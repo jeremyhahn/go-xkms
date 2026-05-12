@@ -20,38 +20,37 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// NoOpAuthenticator is an authenticator that allows all requests
-// Use this for development or when authentication is handled externally
+// NoOpAuthenticator is an authenticator that allows all requests.
+// Use this for development or when authentication is handled externally.
 type NoOpAuthenticator struct{}
 
-// NewNoOpAuthenticator creates a new no-op authenticator
+// NewNoOpAuthenticator creates a new no-op authenticator.
 func NewNoOpAuthenticator() *NoOpAuthenticator {
 	return &NoOpAuthenticator{}
 }
 
-// AuthenticateHTTP always returns an anonymous identity
+// anonymousIdentity returns a fresh identity describing an unauthenticated
+// caller. Each call produces a new map so callers can mutate freely.
+func anonymousIdentity() *Identity {
+	return &Identity{
+		Subject: "anonymous",
+		Metadata: map[string]string{
+			"auth_method": "none",
+		},
+	}
+}
+
+// AuthenticateHTTP always returns an anonymous identity.
 func (a *NoOpAuthenticator) AuthenticateHTTP(r *http.Request) (*Identity, error) {
-	return &Identity{
-		Subject: "anonymous",
-		Claims:  make(map[string]interface{}),
-		Attributes: map[string]string{
-			"auth_method": "none",
-		},
-	}, nil
+	return anonymousIdentity(), nil
 }
 
-// AuthenticateGRPC always returns an anonymous identity
+// AuthenticateGRPC always returns an anonymous identity.
 func (a *NoOpAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*Identity, error) {
-	return &Identity{
-		Subject: "anonymous",
-		Claims:  make(map[string]interface{}),
-		Attributes: map[string]string{
-			"auth_method": "none",
-		},
-	}, nil
+	return anonymousIdentity(), nil
 }
 
-// Name returns the authenticator name
+// Name returns the authenticator name.
 func (a *NoOpAuthenticator) Name() string {
 	return "noop"
 }

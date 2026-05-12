@@ -5,7 +5,7 @@
   export let open: boolean = false;
   export let title: string = '';
   export let maxWidth: string = '480px';
-  export let persistent: boolean = true;
+  export let persistent: boolean = false;
 
   function handleBackdrop(): void {
     if (!persistent) {

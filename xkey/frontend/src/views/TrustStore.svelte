@@ -184,17 +184,27 @@
 
   async function handleImportFile(): Promise<void> {
     importingFile = true;
-    const added = await callBackend<number>('TrustService', 'ImportCertificateFile');
+    const { result, error } = await callBackendWithError<number>(
+      'TrustService',
+      'ImportCertificateFile',
+    );
     importingFile = false;
 
-    if (added !== null && added > 0) {
+    if (error) {
+      // Surface the real backend error so dialog / file-system / parse
+      // failures are distinguishable from a benign cancellation.
+      addNotification('error', `Failed to import certificate file: ${error}`);
+      return;
+    }
+
+    const added = result ?? 0;
+    if (added > 0) {
       addNotification('success', `Imported ${added} certificate${added > 1 ? 's' : ''} from file`);
       showImportDialog = false;
       await loadData();
-    } else if (added === 0) {
-      addNotification('warning', 'No new certificates were added (may already exist or file was cancelled)');
     } else {
-      addNotification('error', 'Failed to import certificate file');
+      // added === 0 means the user cancelled the native dialog (not an error).
+      addNotification('info', 'Import cancelled');
     }
   }
 
@@ -202,8 +212,23 @@
     if (!isTruststrapTab(importTab)) return;
     const method = importTab;
 
-    if (!truststrapServer.trim()) {
+    const server = truststrapServer.trim();
+    if (!server) {
       addNotification('error', 'Server is required');
+      return;
+    }
+    // Noise expects a TCP host:port address, not a URL. DANE/SPKI/Direct
+    // expect a full HTTPS URL. Validate up front so the user gets a clear
+    // message instead of a cryptic bootstrapper error.
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(server);
+    if (method === 'noise' && hasScheme) {
+      addNotification('error',
+        'Noise server address must be host:port only (no https:// scheme)');
+      return;
+    }
+    if (method !== 'noise' && !hasScheme) {
+      addNotification('error',
+        `${method.toUpperCase()} requires a full URL including https://`);
       return;
     }
     if (method === 'noise' && !truststrapServerStaticKey.trim()) {
@@ -221,7 +246,7 @@
       'ImportFromTrustStrap',
       {
         method,
-        server: truststrapServer.trim(),
+        server,
         bundle_path: truststrapBundlePath.trim(),
         dns_server: truststrapDNSServer.trim(),
         dns_over_tls: truststrapDNSOverTLS,
@@ -350,7 +375,9 @@
 <div class="trust-store-view">
   <GradientHeader title="Trust Store" subtitle="Trusted root certificates" />
   <ViewToolbar>
-    <span class="cert-count-badge">{certCount}</span>
+    {#if certCount > 0}
+      <span class="cert-count-badge">{certCount}</span>
+    {/if}
     <div class="toolbar-spacer" />
     <Button variant="outline" size="sm" icon={mdiRefresh} on:click={loadData}>Refresh</Button>
     <Button variant="primary" icon={mdiImport} data-testid="truststore-import-btn" on:click={() => { importPemData = ''; importTab = 'paste'; resetTruststrapForm(); showImportDialog = true; }}>

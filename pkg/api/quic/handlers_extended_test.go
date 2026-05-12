@@ -476,7 +476,7 @@ func TestHandleCertExtended(t *testing.T) {
 
 	t.Run("save cert chain", func(t *testing.T) {
 		body, _ := json.Marshal(CertChainRequest{
-			
+
 			ChainPEMs: []string{certPEM},
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/certs/chain-cert/chain", bytes.NewReader(body))
@@ -525,9 +525,9 @@ func TestHandleSignVerifyExtended(t *testing.T) {
 
 		// Verify
 		verifyBody, _ := json.Marshal(VerifyRequest{
-			Data: data,
+			Data:      data,
 			Signature: signResp.Signature.(string),
-			Hash: "SHA256",
+			Hash:      "SHA256",
 		})
 		verifyReq := httptest.NewRequest(http.MethodPost, "/api/v1/keys/sign-key/verify?backend=software", bytes.NewReader(verifyBody))
 		verifyW := httptest.NewRecorder()
@@ -542,9 +542,9 @@ func TestHandleSignVerifyExtended(t *testing.T) {
 
 	t.Run("verify with invalid signature", func(t *testing.T) {
 		verifyBody, _ := json.Marshal(VerifyRequest{
-			Data: []byte("data"),
+			Data:      []byte("data"),
 			Signature: []byte("bad-sig"),
-			Hash: "SHA256",
+			Hash:      "SHA256",
 		})
 		verifyReq := httptest.NewRequest(http.MethodPost, "/api/v1/keys/sign-key/verify?backend=software", bytes.NewReader(verifyBody))
 		verifyW := httptest.NewRecorder()

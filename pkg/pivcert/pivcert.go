@@ -493,6 +493,16 @@ type PKCS11StorageConfig struct {
 
 	// ReadOnly opens the session in read-only mode when true.
 	ReadOnly bool
+
+	// SOPIN is the Security Officer PIN for the token.
+	// Required for YubiKey PIV tokens where certificate deletion
+	// and key generation need CKU_SO login.
+	SOPIN string
+
+	// RequireSO indicates this token requires SO login for destructive operations.
+	// When true, certificate saves skip pre-delete (relies on overwrite behavior)
+	// and explicit deletes use the SO session.
+	RequireSO bool
 }
 
 // Validate checks if the PKCS#11 storage configuration is valid.

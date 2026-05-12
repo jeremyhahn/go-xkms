@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // Ensure Backend implements backend.ImportExportBackend interface
@@ -171,8 +172,10 @@ func (b *Backend) WrapKey(keyMaterial []byte, params *backend.ImportParameters) 
 // For Azure Key Vault, we perform unwrapping locally using the temporary private key
 // that was generated during GetImportParameters.
 //
-// This is different from AWS KMS, which performs unwrapping in the HSM.
-// Azure Key Vault expects plaintext (or wrapped) key material during import.
+// The returned byte slice contains plaintext key material; callers MUST
+// move it into a *secure.Buffer immediately and wipe the returned slice
+// once the data has been copied out. See importKeyMaterial for the
+// canonical handling pattern.
 func (b *Backend) UnwrapKey(wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters) ([]byte, error) {
 	if wrapped == nil {
 		return nil, fmt.Errorf("wrapped key material cannot be nil")
@@ -243,7 +246,11 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 		return err
 	}
 
-	// Unwrap the key material
+	// Unwrap the key material into an ordinary slice (provided by the
+	// shared wrapping library), then immediately stage the plaintext
+	// into a memguard-backed Buffer and wipe the original slice. The
+	// Buffer is destroyed by the deferred cleanup in importRSAKey /
+	// importECDSAKey before those functions return.
 	params := &backend.ImportParameters{
 		ImportToken: wrapped.ImportToken,
 		Algorithm:   wrapped.Algorithm,
@@ -252,21 +259,44 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 	if err != nil {
 		return fmt.Errorf("failed to unwrap key material: %w", err)
 	}
+	if len(keyMaterial) == 0 {
+		return fmt.Errorf("unwrapped key material is empty")
+	}
+	keyBuf, err := secure.NewBuffer(len(keyMaterial))
+	if err != nil {
+		secure.Wipe(keyMaterial)
+		return fmt.Errorf("failed to allocate secure buffer: %w", err)
+	}
+	copy(keyBuf.Bytes(), keyMaterial)
+	secure.Wipe(keyMaterial)
 
-	// Import the key based on its type
+	// Import the key based on its type. The callee owns keyBuf and
+	// MUST destroy it before returning; no plaintext leaves this
+	// scope on the ordinary heap.
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		return b.importRSAKey(ctx, attrs, keyMaterial)
+		return b.importRSAKey(ctx, attrs, keyBuf)
 	case x509.ECDSA:
-		return b.importECDSAKey(ctx, attrs, keyMaterial)
+		return b.importECDSAKey(ctx, attrs, keyBuf)
 	default:
+		keyBuf.Destroy()
 		return fmt.Errorf("%w: cannot import keys of type %s", backend.ErrNotSupported, attrs.KeyAlgorithm)
 	}
 }
 
-// importRSAKey imports an RSA private key into Azure Key Vault
-func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, keyMaterial []byte) error {
-	// Parse the RSA private key
+// importRSAKey imports an RSA private key into Azure Key Vault. The
+// keyBuf argument holds the plaintext private key bytes inside a
+// memguard enclave; the buffer is destroyed before this function
+// returns so the plaintext never outlives the call.
+func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, keyBuf *secure.Buffer) error {
+	defer keyBuf.Destroy()
+
+	// Parse the RSA private key directly from the enclaved bytes. The
+	// crypto/x509 parser copies the material it needs into a
+	// freshly-allocated *rsa.PrivateKey; that key still lives on the
+	// ordinary heap but is unavoidable — Azure Key Vault's JWK import
+	// path consumes a standard crypto/rsa type.
+	keyMaterial := keyBuf.Bytes()
 	privateKey, err := x509.ParsePKCS8PrivateKey(keyMaterial)
 	if err != nil {
 		// Try PKCS#1 format
@@ -349,9 +379,14 @@ func (b *Backend) importRSAKey(ctx context.Context, attrs *types.KeyAttributes, 
 	return nil
 }
 
-// importECDSAKey imports an ECDSA private key into Azure Key Vault
-func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes, keyMaterial []byte) error {
-	// Parse the ECDSA private key
+// importECDSAKey imports an ECDSA private key into Azure Key Vault.
+// The keyBuf argument holds the plaintext private key bytes inside a
+// memguard enclave; the buffer is destroyed before this function
+// returns so the plaintext never outlives the call.
+func (b *Backend) importECDSAKey(ctx context.Context, attrs *types.KeyAttributes, keyBuf *secure.Buffer) error {
+	defer keyBuf.Destroy()
+
+	keyMaterial := keyBuf.Bytes()
 	privateKey, err := x509.ParsePKCS8PrivateKey(keyMaterial)
 	if err != nil {
 		// Try EC private key format

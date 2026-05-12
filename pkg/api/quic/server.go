@@ -25,7 +25,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
 	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
@@ -52,7 +52,7 @@ type Server struct {
 	keystore        xkms.Backend // Default keystore for backward compatibility
 	tlsConfig       *tls.Config
 	authenticator   auth.Authenticator
-	authorizer      authz.Authorizer
+	authorizer      keyauthz.Authorizer
 	auditLogger     audit.Logger
 	logger          *slog.Logger
 	rateLimiter     *ratelimit.Limiter
@@ -73,7 +73,7 @@ type Config struct {
 	Version         string
 	TLSConfig       *tls.Config
 	Authenticator   auth.Authenticator
-	Authorizer      authz.Authorizer
+	Authorizer      keyauthz.Authorizer
 	AuditLogger     audit.Logger
 	Logger          *slog.Logger
 	RateLimiter     *ratelimit.Limiter
@@ -103,7 +103,7 @@ func NewServer(config *Config) (*Server, error) {
 	// Set up authorizer (default to NoOp if not provided)
 	authorizer := config.Authorizer
 	if authorizer == nil {
-		authorizer = &authz.NoOpAuthorizer{}
+		authorizer = &keyauthz.NoOpAuthorizer{}
 	}
 
 	// Set up audit logger (default to NoOp if not provided)
@@ -302,7 +302,7 @@ func (s *Server) Stop() error {
 
 // authorize checks whether the current request is authorized to perform the
 // given action on the specified resource. It extracts the caller identity from
-// the request context, delegates to the configured authz.Authorizer, and
+// the request context, delegates to the configured keyauthz.Authorizer, and
 // records an audit event. Returns true when the request is allowed to proceed.
 // On denial or error the appropriate HTTP status is written to w.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, resource, action string) bool {
@@ -315,7 +315,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, resource, act
 		role = extractRole(identity)
 	}
 
-	authzReq := &authz.AuthorizationRequest{
+	authzReq := &keyauthz.AuthorizationRequest{
 		Subject:  subject,
 		Role:     role,
 		Resource: resource,
@@ -369,34 +369,11 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, resource, act
 	return true
 }
 
-// extractRole extracts the first role from an identity's claims.
-// It handles roles stored as []string, []interface{}, or string.
+// extractRole returns the first role on an identity, or "" if none. It is a
+// thin wrapper over auth.FirstRole kept package-local for audit-event symmetry
+// with the other transports (REST/gRPC).
 func extractRole(identity *auth.Identity) string {
-	if identity == nil || identity.Claims == nil {
-		return ""
-	}
-
-	roles, ok := identity.Claims["roles"]
-	if !ok {
-		return ""
-	}
-
-	switch r := roles.(type) {
-	case []string:
-		if len(r) > 0 {
-			return r[0]
-		}
-	case []interface{}:
-		if len(r) > 0 {
-			if s, ok := r[0].(string); ok {
-				return s
-			}
-		}
-	case string:
-		return r
-	}
-
-	return ""
+	return auth.FirstRole(identity)
 }
 
 // Middleware

@@ -637,3 +637,84 @@ func TestBackendPIVKeyGenerator_UnsupportedKeyAlgorithm(t *testing.T) {
 	assert.ErrorIs(t, err, ErrPIVInvalidAlgorithm)
 	assert.Empty(t, mock.generateCalls, "no backend generate method should have been called")
 }
+
+// TestBackendPIVKeyGenerator_GetPIVSigner_SetsPIVSlot is a regression test
+// for the bug where YubiKey PIV CSR generation and public-key export failed
+// with "no key found". Before the fix, GetPIVSigner built attrs with only
+// CN populated. The PKCS#11 backend's resolveKeyID prefers PIVSlot over CN
+// when set, so keys were unlocatable on YubiKey devices where the user-chosen
+// subject CN does not match the "piv-<slot>" software convention.
+func TestBackendPIVKeyGenerator_GetPIVSigner_SetsPIVSlot(t *testing.T) {
+	signer := newTestECDSASigner(t)
+
+	var captured *types.KeyAttributes
+	mock := &mockXKMSBackend{
+		signerFunc: func(attrs *types.KeyAttributes) (crypto.Signer, error) {
+			cp := *attrs
+			captured = &cp
+			return signer, nil
+		},
+	}
+
+	gen := newBackendPIVKeyGenerator(mock, types.StoreSoftware)
+	result, err := gen.GetPIVSigner(pivcert.PIVSlotAuthentication, "any-user-chosen-cn")
+	require.NoError(t, err)
+	assert.Equal(t, signer, result)
+
+	require.NotNil(t, captured, "Signer must have been invoked")
+	assert.Equal(t, "9a", captured.PIVSlot,
+		"PIVSlot must be set so slot-constrained backends (e.g. YubiKey PKCS#11) locate the key by CKA_ID")
+	assert.Equal(t, "any-user-chosen-cn", captured.CN,
+		"CN must pass through unchanged for software backends that still key off CN")
+}
+
+// TestBackendPIVKeyGenerator_GetPIVSigner_AllSlots covers every primary PIV
+// slot so no slot can regress back to CN-only routing.
+func TestBackendPIVKeyGenerator_GetPIVSigner_AllSlots(t *testing.T) {
+	slots := []pivcert.PIVSlot{
+		pivcert.PIVSlotAuthentication,
+		pivcert.PIVSlotDigitalSignature,
+		pivcert.PIVSlotKeyManagement,
+		pivcert.PIVSlotCardAuthentication,
+	}
+	for _, slot := range slots {
+		t.Run(string(slot), func(t *testing.T) {
+			signer := newTestECDSASigner(t)
+			var captured *types.KeyAttributes
+			mock := &mockXKMSBackend{
+				signerFunc: func(attrs *types.KeyAttributes) (crypto.Signer, error) {
+					cp := *attrs
+					captured = &cp
+					return signer, nil
+				},
+			}
+
+			gen := newBackendPIVKeyGenerator(mock, types.StoreSoftware)
+			_, err := gen.GetPIVSigner(slot, "piv-"+string(slot))
+			require.NoError(t, err)
+			require.NotNil(t, captured)
+			assert.Equal(t, string(slot), captured.PIVSlot,
+				"attrs.PIVSlot must match the requested slot identifier")
+		})
+	}
+}
+
+// TestBackendPIVKeyGenerator_GetPIVSigner_PropagatesError verifies that a
+// backend Signer error propagates unchanged out of GetPIVSigner so callers
+// can inspect the original error via errors.Is.
+func TestBackendPIVKeyGenerator_GetPIVSigner_PropagatesError(t *testing.T) {
+	sentinel := errors.New("backend: key not found by PIVSlot")
+
+	mock := &mockXKMSBackend{
+		signerFunc: func(_ *types.KeyAttributes) (crypto.Signer, error) {
+			return nil, sentinel
+		},
+	}
+
+	gen := newBackendPIVKeyGenerator(mock, types.StoreSoftware)
+	result, err := gen.GetPIVSigner(pivcert.PIVSlotDigitalSignature, "some-cn")
+	assert.Nil(t, result)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sentinel,
+		"errors from backend.Signer must propagate so PKCS#11 CKR_* codes reach the caller")
+}

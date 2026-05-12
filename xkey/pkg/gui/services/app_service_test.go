@@ -404,3 +404,65 @@ func TestAppService_ToggleFIDO2_WithFunc(t *testing.T) {
 	assert.NoError(t, err)
 	assert.False(t, toggledTo)
 }
+
+// ---------------------------------------------------------------------------
+// Identity configuration
+// ---------------------------------------------------------------------------
+
+func TestAppService_GetIdentity_Default(t *testing.T) {
+	svc := NewAppService(defaultTestConfig())
+	identity := svc.GetIdentity()
+	assert.Equal(t, IdentityConfig{}, identity)
+}
+
+func TestAppService_UpdateIdentity(t *testing.T) {
+	svc := NewAppService(defaultTestConfig())
+
+	identity := IdentityConfig{
+		CommonName:         "Alice Smith",
+		Organization:       "Acme Corp",
+		OrganizationalUnit: "Engineering",
+		Country:            "US",
+		Province:           "California",
+		Locality:           "San Francisco",
+	}
+
+	err := svc.UpdateIdentity(identity)
+	require.NoError(t, err)
+
+	got := svc.GetIdentity()
+	assert.Equal(t, identity, got)
+}
+
+func TestAppService_UpdateIdentity_PersistsViaConfig(t *testing.T) {
+	svc := NewAppService(defaultTestConfig())
+
+	identity := IdentityConfig{
+		CommonName:   "Bob Jones",
+		Organization: "WidgetCo",
+		Country:      "GB",
+	}
+
+	err := svc.UpdateIdentity(identity)
+	require.NoError(t, err)
+
+	cfg := svc.GetConfig()
+	require.NotNil(t, cfg)
+	assert.Equal(t, identity, cfg.Identity)
+}
+
+func TestAppService_ConfigChangedFields_Identity(t *testing.T) {
+	base := defaultTestConfig()
+	updated := defaultTestConfig()
+	updated.Identity = IdentityConfig{
+		CommonName:   "Changed",
+		Organization: "NewOrg",
+	}
+
+	fields := configChangedFields(base, updated)
+	assert.Contains(t, fields, "identity")
+
+	// No change should not include identity.
+	fields = configChangedFields(base, defaultTestConfig())
+	assert.NotContains(t, fields, "identity")
+}

@@ -87,32 +87,6 @@ var (
 	Digest                             = types.Digest
 )
 
-// testPassword wraps a xkms.Password to implement types.Password interface
-type testPassword struct {
-	pw Password
-}
-
-func (tp *testPassword) Bytes() []byte {
-	b, _ := tp.pw.Bytes()
-	return b
-}
-
-func (tp *testPassword) String() (string, error) {
-	return tp.pw.String()
-}
-
-func (tp *testPassword) Clear() {
-	// No-op for test password
-}
-
-// wrapPassword converts xkms.Password to types.Password for tests
-func wrapPassword(pw Password) types.Password {
-	if pw == nil {
-		return nil
-	}
-	return &testPassword{pw: pw}
-}
-
 func TestStoreType_String(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -256,7 +230,7 @@ func TestKeyAttributes_String(t *testing.T) {
 				KeyType:            KeyTypeEncryption,
 				SignatureAlgorithm: x509.SHA256WithRSA,
 				StoreType:          StoreSoftware,
-				Password:           wrapPassword(NewPassword([]byte("test-password"))),
+				Password:           types.NewPassword([]byte("test-password")),
 				SealData:           NewSealData([]byte("test-seal-data")),
 				TPMAttributes:      &TPMAttributes{},
 				RSAAttributes: &RSAAttributes{

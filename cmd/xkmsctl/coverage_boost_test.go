@@ -962,8 +962,8 @@ func TestPrintImportParameters_TextWithWrappingKey(t *testing.T) {
 	require.NoError(t, err)
 
 	params := &client.ImportParameters{
-		Algorithm:        "RSA_OAEP_SHA256",
-		KeySpec:          "AES_256",
+		Algorithm:         "RSA_OAEP_SHA256",
+		KeySpec:           "AES_256",
 		WrappingPublicKey: &privKey.PublicKey,
 	}
 

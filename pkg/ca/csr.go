@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package ca provides CSR (Certificate Signing Request) generation operations
-// for the XKMSCA certificate authority.
+// for the TrustedCA certificate authority.
 //
 // # CSR Generation
 //

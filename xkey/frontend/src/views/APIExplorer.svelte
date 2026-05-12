@@ -12,6 +12,7 @@
   import { isWailsAvailable, callBackend, callBackendWithError, callBackendVoid } from '$lib/api/backend';
   import type { AvailableToken, GUIConfig } from '$lib/api/backend';
   import { isEnterpriseMode, enterprisePolicy } from '$lib/stores/auth';
+  import { clickOutside } from '$lib/actions/clickOutside';
 
   /** Request shape matching Go ExplorerRequest. */
   interface ExplorerRequest {
@@ -269,7 +270,15 @@
     };
     return colors[method] || 'method-default';
   }
+
+  function handleWindowKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Escape' && showTokenPicker) {
+      showTokenPicker = false;
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleWindowKeydown} />
 
 <div class="api-explorer-view" data-testid="api-explorer-view">
   <GradientHeader title="API Explorer" subtitle="Send HTTP requests and inspect responses" />
@@ -317,7 +326,7 @@
             <div class="headers-header">
               <span class="text-label-large">Headers</span>
               <div class="headers-actions">
-                <div class="token-picker-wrapper">
+                <div class="token-picker-wrapper" use:clickOutside on:clickoutside={() => showTokenPicker = false}>
                   <button
                     class="token-picker-btn"
                     on:click={toggleTokenPicker}

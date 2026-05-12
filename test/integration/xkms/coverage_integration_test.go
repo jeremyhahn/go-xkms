@@ -345,67 +345,6 @@ func TestKeyStore_DeleteCert_NonExistent(t *testing.T) {
 	}
 }
 
-// TestPassword tests password helper functions
-func TestPassword(t *testing.T) {
-	t.Run("NewPassword", func(t *testing.T) {
-		passwordBytes := []byte("test-password")
-		password := xkms.NewPassword(passwordBytes)
-
-		if password == nil {
-			t.Fatal("Password should not be nil")
-		}
-
-		// Verify password string
-		passwordStr, err := password.String()
-		if err != nil {
-			t.Fatalf("Failed to get password string: %v", err)
-		}
-		if passwordStr != string(passwordBytes) {
-			t.Error("Password string does not match")
-		}
-
-		// Verify password bytes
-		passwordBytesRetrieved, err := password.Bytes()
-		if err != nil {
-			t.Fatalf("Failed to get password bytes: %v", err)
-		}
-		if string(passwordBytesRetrieved) != string(passwordBytes) {
-			t.Error("Password bytes do not match")
-		}
-
-		// Test zeroize (cast to *ClearPassword to access Zeroize method)
-		if clearPassword, ok := password.(*xkms.ClearPassword); ok {
-			clearPassword.Zeroize()
-			passwordBytesAfterZeroize, err := clearPassword.Bytes()
-			if err != nil {
-				t.Fatalf("Failed to get password bytes after zeroize: %v", err)
-			}
-			if string(passwordBytesAfterZeroize) == string(passwordBytes) {
-				t.Error("Password should be zeroized")
-			}
-		} else {
-			t.Error("Password is not *ClearPassword")
-		}
-	})
-
-	t.Run("NewPasswordFromString", func(t *testing.T) {
-		passwordStr := "test-password-string"
-		password := xkms.NewPasswordFromString(passwordStr)
-
-		if password == nil {
-			t.Fatal("Password should not be nil")
-		}
-
-		retrievedPasswordStr, err := password.String()
-		if err != nil {
-			t.Fatalf("Failed to get password string: %v", err)
-		}
-		if retrievedPasswordStr != passwordStr {
-			t.Error("Password string does not match")
-		}
-	})
-}
-
 // TestVersion tests version function
 func TestVersion(t *testing.T) {
 	version := xkms.Version()

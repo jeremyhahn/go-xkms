@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package profiles provides certificate profile implementations for the XKMSCA.
+// Package profiles provides certificate profile implementations for the TrustedCA.
 //
 // # Mutual TLS (mTLS) Certificate Profiles
 //

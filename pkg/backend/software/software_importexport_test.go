@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // TestGetImportParameters tests generating import parameters
@@ -918,8 +919,11 @@ func TestUnwrapKey_ExpiredToken(t *testing.T) {
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tokenUUID := "expired-token-uuid"
 	swBe.importMu.Lock()
+	der, _ := x509.MarshalPKCS8PrivateKey(rsaKey)
+	sealed, _ := secure.NewSecret(der)
 	swBe.importTokens[tokenUUID] = &importTokenData{
-		privateKey: rsaKey,
+		privateKey: sealed,
+		publicKey:  &rsaKey.PublicKey,
 		algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 		expiresAt:  time.Now().Add(-1 * time.Hour), // Already expired
 		keySpec:    "RSA_2048",
@@ -1004,8 +1008,11 @@ func TestImportKey_ExpiredToken(t *testing.T) {
 	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	tokenUUID := "expired-import-token"
 	swBe.importMu.Lock()
+	der, _ := x509.MarshalPKCS8PrivateKey(rsaKey)
+	sealed, _ := secure.NewSecret(der)
 	swBe.importTokens[tokenUUID] = &importTokenData{
-		privateKey: rsaKey,
+		privateKey: sealed,
+		publicKey:  &rsaKey.PublicKey,
 		algorithm:  backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
 		expiresAt:  time.Now().Add(-1 * time.Hour), // Already expired
 		keySpec:    "AES_256",

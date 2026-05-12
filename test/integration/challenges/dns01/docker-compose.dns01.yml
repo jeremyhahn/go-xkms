@@ -1,0 +1,90 @@
+# Docker Compose configuration for DNS-01 E2E integration testing
+# Tests the complete DNS-01 challenge flow:
+# 1. Client requests certificate from ACME server
+# 2. Client sets TXT record via mock DNS server API
+# 3. ACME server validates DNS-01 challenge by querying mock DNS server
+# 4. Certificate is issued
+
+services:
+  # ACME Server
+  acme-server:
+    build:
+      context: ../../../..
+      dockerfile: go-trusted-ca/test/Dockerfile.server
+    container_name: dns01-acme-server
+    networks:
+      dns01-network:
+        aliases:
+          - acme-server
+    environment:
+      ACME_LOG_LEVEL: "debug"
+      ACME_EXTERNAL_URL: "http://acme-server:8080"
+      GO_ENV: "test"
+      # Configure ACME server to use our mock DNS server
+      DNS_RESOLVER: "dns-server:53"
+    ports:
+      - "8580:8080"  # Map to 8580 on host to avoid conflicts
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/acme/directory"]
+      interval: 3s
+      timeout: 2s
+      retries: 30
+      start_period: 10s
+    volumes:
+      - acme-data:/app/data
+    depends_on:
+      dns-server:
+        condition: service_healthy
+
+  # Mock DNS Server - responds to TXT queries for _acme-challenge.<domain>
+  dns-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.dns-responder
+    container_name: dns01-dns-server
+    networks:
+      dns01-network:
+        aliases:
+          - dns-server
+          - ns1.example.com
+    ports:
+      - "53:53/udp"
+      - "8053:8053"
+    environment:
+      DNS_PORT: "53"
+      HTTP_PORT: "8053"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8053/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+
+  # E2E Test Runner
+  dns01-e2e-tests:
+    build:
+      context: ../../../..
+      dockerfile: go-trusted-ca/test/integration/dns01/Dockerfile.dns01-tests
+    container_name: dns01-e2e-tests
+    networks:
+      - dns01-network
+    depends_on:
+      acme-server:
+        condition: service_healthy
+      dns-server:
+        condition: service_healthy
+    environment:
+      ACME_SERVER_URL: "http://acme-server:8080"
+      DNS_API_URL: "http://dns-server:8053"
+      DNS_SERVER: "dns-server:53"
+      TEST_DOMAIN: "test.example.com"
+      GO_TEST_FLAGS: "-v -timeout 5m -run 'TestDNS01E2E_'"
+
+networks:
+  dns01-network:
+    driver: bridge
+    name: dns01-network
+
+volumes:
+  acme-data:
+    name: dns01-acme-data

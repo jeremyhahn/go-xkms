@@ -1,0 +1,22 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "acme-client",
+  "outputfilename": "acme-client",
+  "frontend:install": "cd ../../pkg/acme/web && npm install",
+  "frontend:build": "cd ../../pkg/acme/web && npm run build:client",
+  "frontend:dev:watcher": "cd ../../pkg/acme/web && npm run dev:client",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Jeremy Hahn",
+    "email": "licensing@automatethethings.com"
+  },
+  "info": {
+    "companyName": "Automate The Things, LLC",
+    "productName": "XKMS ACME Client",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2025 Automate The Things, LLC",
+    "comments": "ACME RFC-8555 compliant client with TPM-based device enrollment"
+  },
+  "wailsjsdir": "../../pkg/acme/web/packages/client",
+  "assetdir": "../../pkg/acme/web/packages/client/dist"
+}

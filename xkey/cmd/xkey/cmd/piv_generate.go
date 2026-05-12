@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
@@ -231,6 +232,12 @@ func init() {
 	pivGenerateCmd.Flags().String("pin-policy", "once", "PIN policy (never, once, always)")
 	pivGenerateCmd.Flags().String("touch-policy", "never", "Touch policy (never, cached, always)")
 	pivGenerateCmd.Flags().BoolP("force", "f", false, "Overwrite existing key without confirmation")
+	pivGenerateCmd.Flags().String("output-format", "self-signed", "Output format: self-signed, public-key, csr, ca-signed")
+	pivGenerateCmd.Flags().String("subject", "", "Certificate subject CN (default: slot name)")
+	pivGenerateCmd.Flags().String("organization", "", "X.509 Organization for certificate subject")
+	pivGenerateCmd.Flags().String("country", "", "X.509 Country (2-letter ISO code) for certificate subject")
+	pivGenerateCmd.Flags().Int("validity-days", 0, "Certificate validity in days (0 = default)")
+	pivGenerateCmd.Flags().StringP("output", "o", "", "Output file for CSR or public key (default: stdout)")
 }
 
 // runPivGenerate executes the piv generate command.
@@ -249,6 +256,12 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 	pinPolicyStr, _ := cmd.Flags().GetString("pin-policy")
 	touchPolicyStr, _ := cmd.Flags().GetString("touch-policy")
 	force, _ := cmd.Flags().GetBool("force")
+	outputFormat, _ := cmd.Flags().GetString("output-format")
+	subjectCN, _ := cmd.Flags().GetString("subject")
+	organization, _ := cmd.Flags().GetString("organization")
+	country, _ := cmd.Flags().GetString("country")
+	validityDays, _ := cmd.Flags().GetInt("validity-days")
+	outputFile, _ := cmd.Flags().GetString("output")
 
 	// Parse algorithm
 	algorithm, err := parseAlgorithm(algorithmStr)
@@ -288,10 +301,16 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 		return ErrPIVInvalidAlgorithm
 	}
 
+	// Default subject to slot name.
+	if subjectCN == "" {
+		subjectCN = pivcert.SlotName(slot)
+	}
+
 	logger.Info("generating PIV key",
 		slog.String("slot", string(slot)),
 		slog.String("algorithm", string(algorithm)),
 		slog.String("xkms_algorithm", xkmsAlgorithm),
+		slog.String("output_format", outputFormat),
 		slog.String("pin_policy", string(pinPolicy)),
 		slog.String("touch_policy", string(touchPolicy)),
 		slog.String("backend", string(pivCfg.Backend)),
@@ -305,24 +324,64 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 	// Generate key via xkms package-level function.
 	ctx := cmd.Context()
 	resp, err := xkms.GeneratePIVKey(ctx, &transport.GeneratePIVKeyRequest{
-		Backend:   string(pivCfg.Backend),
-		Slot:      string(slot),
-		Algorithm: xkmsAlgorithm,
-		Subject:   pivcert.SlotName(slot),
+		Backend:      string(pivCfg.Backend),
+		Slot:         string(slot),
+		Algorithm:    xkmsAlgorithm,
+		Subject:      subjectCN,
+		Organization: organization,
+		Country:      country,
+		OutputFormat: outputFormat,
+		ValidityDays: validityDays,
 	})
 	if err != nil {
 		return err
 	}
 
-	// Display the result using the response public key PEM.
+	// Handle output based on format.
 	slotName := pivcert.SlotName(slot)
-	fmt.Printf("Key generated in slot %s (%s)\n", slot, slotName)
-	fmt.Printf("Algorithm: %s\n", algorithm)
-	fmt.Printf("PIN Policy: %s\n", pinPolicy)
-	fmt.Printf("Touch Policy: %s\n", touchPolicy)
-	fmt.Printf("Public Key:\n%s", string(resp.PublicKey))
+
+	switch outputFormat {
+	case "public-key":
+		return writePIVOutput(outputFile, resp.PublicKey, "Public key",
+			fmt.Sprintf("Public key generated for slot %s (%s)", slot, slotName))
+
+	case "csr":
+		return writePIVOutput(outputFile, resp.CSR, "CSR",
+			fmt.Sprintf("CSR generated for slot %s (%s)", slot, slotName))
+
+	case "ca-signed":
+		fmt.Printf("CA-signed certificate generated in slot %s (%s)\n", slot, slotName)
+		fmt.Printf("Algorithm: %s\n", algorithm)
+		fmt.Printf("Subject: %s\n", subjectCN)
+		if len(resp.Certificate) > 0 {
+			fmt.Printf("Certificate:\n%s", string(resp.Certificate))
+		}
+		if len(resp.ChainPEM) > 0 {
+			fmt.Printf("CA Chain:\n%s", string(resp.ChainPEM))
+		}
+
+	default: // self-signed
+		fmt.Printf("Key generated in slot %s (%s)\n", slot, slotName)
+		fmt.Printf("Algorithm: %s\n", algorithm)
+		fmt.Printf("PIN Policy: %s\n", pinPolicy)
+		fmt.Printf("Touch Policy: %s\n", touchPolicy)
+		fmt.Printf("Public Key:\n%s", string(resp.PublicKey))
+	}
 
 	return nil
+}
+
+// writePIVOutput writes PEM data to a file or stdout.
+func writePIVOutput(outputFile string, data []byte, label, successMsg string) error {
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, data, 0600); err != nil {
+			return fmt.Errorf("piv: failed to write %s to %s: %w", label, outputFile, err)
+		}
+		fmt.Printf("%s written to %s\n", successMsg, outputFile)
+		return nil
+	}
+	_, err := os.Stdout.Write(data)
+	return err
 }
 
 // ensurePIVInitialized initializes the xkms PIV manager and registers the
@@ -345,7 +404,19 @@ func ensurePIVInitialized(pivCfg *PIVConfig, logger *slog.Logger) error {
 
 	// Register the store for the backend (handles the case where PIV was
 	// already initialized but this backend was not yet registered).
-	return xkms.RegisterPIVStore(string(pivCfg.Backend), storage)
+	if err := xkms.RegisterPIVStore(string(pivCfg.Backend), storage); err != nil {
+		return err
+	}
+
+	// For PKCS#11 backend, also initialize the xkms PKCS#11 key backend
+	// and set up the PIV backend resolver for hardware key generation.
+	if pivCfg.Backend == PIVBackendPKCS11 {
+		if err := ensurePKCS11Backend(pivCfg, logger); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // parsePIVSlot parses a slot string into a PIVSlot.

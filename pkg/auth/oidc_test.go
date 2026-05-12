@@ -457,7 +457,7 @@ func TestOIDCAuthenticator_AuthenticateHTTP(t *testing.T) {
 
 			// Check attributes if specified
 			for key, want := range tt.checkAttrs {
-				if got := identity.Attributes[key]; got != want {
+				if got := identity.Metadata[key]; got != want {
 					t.Errorf("Attribute[%s] = %v, want %v", key, got, want)
 				}
 			}
@@ -551,8 +551,8 @@ func TestOIDCAuthenticator_AuthenticateGRPC(t *testing.T) {
 			if identity.Subject != tt.wantSubject {
 				t.Errorf("Subject = %v, want %v", identity.Subject, tt.wantSubject)
 			}
-			if identity.Attributes["auth_method"] != "oidc" {
-				t.Errorf("auth_method = %v, want oidc", identity.Attributes["auth_method"])
+			if identity.Metadata["auth_method"] != "oidc" {
+				t.Errorf("auth_method = %v, want oidc", identity.Metadata["auth_method"])
 			}
 		})
 	}
@@ -723,11 +723,8 @@ func TestOIDCAuthenticator_RoleExtraction(t *testing.T) {
 				t.Fatalf("AuthenticateHTTP() error = %v", err)
 			}
 
-			// Check roles
-			roles, ok := identity.Claims["roles"].([]string)
-			if !ok {
-				t.Fatalf("roles not found or wrong type")
-			}
+			// Check roles map onto Identity.Roles
+			roles := identity.Roles
 
 			if len(roles) != len(tt.wantRoles) {
 				t.Errorf("roles count = %d, want %d", len(roles), len(tt.wantRoles))

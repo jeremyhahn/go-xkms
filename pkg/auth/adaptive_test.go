@@ -185,9 +185,9 @@ func TestAdaptiveAuthenticator_AuthenticateHTTP_NoUsers(t *testing.T) {
 func TestAdaptiveAuthenticator_AuthenticateHTTP_WithUsers(t *testing.T) {
 	userChecker := &mockUserChecker{hasUsers: true}
 	requiredIdentity := &Identity{
-		Subject:    "authenticated-user",
-		Claims:     map[string]interface{}{"role": "admin"},
-		Attributes: map[string]string{},
+		Subject:  "authenticated-user",
+		Roles:    []string{"admin"},
+		Metadata: map[string]string{},
 	}
 	requiredAuth := &mockAuthenticator{
 		name:     "required",
@@ -275,9 +275,9 @@ func TestAdaptiveAuthenticator_AuthenticateGRPC_NoUsers(t *testing.T) {
 func TestAdaptiveAuthenticator_AuthenticateGRPC_WithUsers(t *testing.T) {
 	userChecker := &mockUserChecker{hasUsers: true}
 	requiredIdentity := &Identity{
-		Subject:    "authenticated-user",
-		Claims:     map[string]interface{}{"role": "admin"},
-		Attributes: map[string]string{},
+		Subject:  "authenticated-user",
+		Roles:    []string{"admin"},
+		Metadata: map[string]string{},
 	}
 	requiredAuth := &mockAuthenticator{
 		name:     "required",

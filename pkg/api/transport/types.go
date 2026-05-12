@@ -905,6 +905,14 @@ type SignCSRRequest struct {
 	ValidityDays int    `json:"validity_days,omitempty"` // Override default validity
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
+	// Attestation fields (optional). When present, the server verifies the
+	// attestation proof before signing. This proves the CSR's private key
+	// is stored in hardware (YubiKey PIV, TPM2, etc.).
+	AttestationFormat string   `json:"attestation_format,omitempty"` // "tpm2", "yubikey-piv"
+	AttestationChain  [][]byte `json:"attestation_chain,omitempty"`  // DER-encoded attestation cert chain
+	AttestationData   []byte   `json:"attestation_data,omitempty"`   // Format-specific attestation evidence
+	AttestationSig    []byte   `json:"attestation_sig,omitempty"`    // Signature over attestation data
+	AttestationNonce  []byte   `json:"attestation_nonce,omitempty"`  // Freshness nonce
 }
 
 // SignCSRResponse contains the signed certificate.
@@ -1056,6 +1064,7 @@ type PIVSlotStatus struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	HasCert     bool   `json:"has_cert"`
+	HasKey      bool   `json:"has_key"`
 	Subject     string `json:"subject,omitempty"`
 	Issuer      string `json:"issuer,omitempty"`
 	Algorithm   string `json:"algorithm,omitempty"`
@@ -1111,6 +1120,16 @@ type GeneratePIVKeyRequest struct {
 	Slot      string `json:"slot"`
 	Algorithm string `json:"algorithm"` // "rsa2048", "rsa4096", "ecdsap256", "ecdsap384", "ed25519"
 	Subject   string `json:"subject"`
+	// Organization is the X.509 Organization (O) field for the certificate subject.
+	Organization string `json:"organization,omitempty"`
+	// Country is the X.509 Country (C) field for the certificate subject.
+	Country string `json:"country,omitempty"`
+	// OutputFormat controls what is produced: "self-signed" (default), "public-key",
+	// "csr", or "ca-signed". Empty string is treated as "self-signed".
+	OutputFormat string `json:"output_format,omitempty"`
+	// ValidityDays overrides the default certificate validity period. Zero uses
+	// the profile default (3 years for CA-signed, 10 years for self-signed).
+	ValidityDays int `json:"validity_days,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }
@@ -1118,15 +1137,26 @@ type GeneratePIVKeyRequest struct {
 // GeneratePIVKeyResponse contains the result of PIV key generation.
 type GeneratePIVKeyResponse struct {
 	Slot        string `json:"slot"`
-	Certificate []byte `json:"certificate"` // Self-signed cert PEM
-	PublicKey   []byte `json:"public_key"`
+	Certificate []byte `json:"certificate"`         // Cert PEM (self-signed or CA-signed)
+	PublicKey   []byte `json:"public_key"`          // Public key PEM
+	CSR         []byte `json:"csr,omitempty"`       // CSR PEM (populated when OutputFormat is "csr")
+	ChainPEM    []byte `json:"chain_pem,omitempty"` // CA chain PEM (populated when OutputFormat is "ca-signed")
 }
 
 // GeneratePIVCSRRequest contains parameters for generating a PIV CSR.
+// Subject holds the Common Name (CN) for backwards compatibility. Additional
+// DN fields (Organization, OrganizationalUnit, Country, State, Locality) are
+// optional and populated when the caller supplies them; all empty values
+// simply produce an RFC 5280 DN without that attribute.
 type GeneratePIVCSRRequest struct {
-	Backend string `json:"backend"`
-	Slot    string `json:"slot"`
-	Subject string `json:"subject"`
+	Backend            string `json:"backend"`
+	Slot               string `json:"slot"`
+	Subject            string `json:"subject"`
+	Organization       string `json:"organization,omitempty"`
+	OrganizationalUnit string `json:"organizational_unit,omitempty"`
+	Country            string `json:"country,omitempty"`
+	State              string `json:"state,omitempty"`
+	Locality           string `json:"locality,omitempty"`
 	// TenantID optionally scopes this operation to a specific tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 }

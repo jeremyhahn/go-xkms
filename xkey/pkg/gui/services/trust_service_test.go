@@ -691,6 +691,22 @@ func TestTrustService_ImportCertificateFile_NilStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilTrustStore)
 }
 
+// Regression: if the Wails context was never attached (SetContext not
+// called), the file dialog cannot be opened. The error must be
+// distinguishable from a nil-store error so the frontend can surface it.
+func TestTrustService_ImportCertificateFile_NoContext(t *testing.T) {
+	svc := NewTrustService(newTestFileStore(t))
+	// Do not call SetContext — simulate a mis-wired service.
+
+	count, err := svc.ImportCertificateFile()
+	assert.Equal(t, 0, count)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Wails context",
+		"error must identify the missing Wails context")
+	assert.NotErrorIs(t, err, ErrNilTrustStore,
+		"nil-context is a distinct failure from nil-store")
+}
+
 // ---------------------------------------------------------------------------
 // ExportCertificatePEM nil store
 // ---------------------------------------------------------------------------

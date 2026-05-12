@@ -12,14 +12,14 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package ca provides an embedded CA service that bridges the SDK transport
-// CA operations to the go-xkms XKMSCA implementation for standalone mode.
+// CA operations to the go-xkms TrustedCA implementation for standalone mode.
 package ca
 
 import "errors"
 
 // Configuration errors indicate issues with service setup.
 var (
-	// ErrNilCA is returned when a nil XKMSCA is provided to the service.
+	// ErrNilCA is returned when a nil TrustedCA is provided to the service.
 	ErrNilCA = errors.New("xkey/ca: certificate authority is required")
 
 	// ErrNilConfig is returned when a nil configuration is provided.

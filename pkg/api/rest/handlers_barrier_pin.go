@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest/secureio"
 	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
@@ -38,14 +39,27 @@ var (
 
 // --- Barrier request/response types ---
 
-// BarrierInitializeRequest represents the request to initialize the barrier.
+// BarrierInitializeRequest represents the request to initialize the
+// barrier. Password carries the secret inside a memguard enclave and
+// is preferred when non-empty; Secret is retained for backward
+// compatibility with clients that cannot yet produce a base64
+// field.
+//
+// Wire format note: clients using the enclaved path MUST submit the
+// secret in the password_b64 field (standard base64, no padding
+// stripped). The server destroys the Buffer via defer as soon as the
+// barrier call returns.
 type BarrierInitializeRequest struct {
-	Secret string `json:"secret"`
+	Secret   string                 `json:"secret,omitempty"`
+	Password secureio.PasswordField `json:"password_b64,omitempty"`
 }
 
 // BarrierUnsealRequest represents the request to unseal the barrier.
+// Password is preferred when non-empty; Secret remains for backward
+// compatibility. See BarrierInitializeRequest for wire-format notes.
 type BarrierUnsealRequest struct {
-	Secret string `json:"secret"`
+	Secret   string                 `json:"secret,omitempty"`
+	Password secureio.PasswordField `json:"password_b64,omitempty"`
 }
 
 // BarrierStatusResponse represents the barrier status response.
@@ -116,13 +130,13 @@ func (h *HandlerContext) BarrierInitializeHandler(w http.ResponseWriter, r *http
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
 	}
+	defer req.Password.Destroy()
 
-	if req.Secret == "" {
+	creds, ok := barrierCredentialsFromRequest(req.Password, req.Secret)
+	if !ok {
 		writeError(w, ErrMissingSecret, http.StatusBadRequest)
 		return
 	}
-
-	creds := seal.Credentials{Secret: req.Secret}
 	if err := h.Barrier.Initialize(r.Context(), creds); err != nil {
 		handleBarrierError(w, err)
 		return
@@ -147,13 +161,13 @@ func (h *HandlerContext) BarrierUnsealHandler(w http.ResponseWriter, r *http.Req
 		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
 		return
 	}
+	defer req.Password.Destroy()
 
-	if req.Secret == "" {
+	creds, ok := barrierCredentialsFromRequest(req.Password, req.Secret)
+	if !ok {
 		writeError(w, ErrMissingSecret, http.StatusBadRequest)
 		return
 	}
-
-	creds := seal.Credentials{Secret: req.Secret}
 	if err := h.Barrier.Unseal(r.Context(), creds); err != nil {
 		handleBarrierError(w, err)
 		return
@@ -525,4 +539,23 @@ func handlePINError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, err, http.StatusInternalServerError)
 	}
+}
+
+// barrierCredentialsFromRequest prefers the enclaved password buffer
+// when present and non-empty; otherwise it falls back to the legacy
+// plaintext Secret string. Returns ok=false only when both sources
+// are empty — callers respond with ErrMissingSecret in that case.
+//
+// The resulting seal.Credentials carries a Go string because the
+// upstream quicraft seal API defines Secret as a string; the final
+// string conversion happens exactly once, at this boundary, and is
+// bounded by the handler's lifetime.
+func barrierCredentialsFromRequest(pw secureio.PasswordField, fallback string) (seal.Credentials, bool) {
+	if buf := pw.Buffer(); buf != nil && buf.Size() > 0 {
+		return seal.Credentials{Secret: string(buf.Bytes())}, true
+	}
+	if fallback == "" {
+		return seal.Credentials{}, false
+	}
+	return seal.Credentials{Secret: fallback}, true
 }

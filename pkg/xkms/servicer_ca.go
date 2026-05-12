@@ -15,13 +15,32 @@ package xkms
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
+)
+
+// CA attestation errors.
+var (
+	// ErrAttestationRequired is returned when the server requires attestation
+	// but the client did not provide it.
+	ErrAttestationRequired = errors.New("ca: attestation required for CSR signing")
+
+	// ErrAttestationVerificationFailed is returned when the attestation proof
+	// fails verification.
+	ErrAttestationVerificationFailed = errors.New("ca: attestation verification failed")
+
+	// ErrCSRSigningDenied is returned when the caller does not have permission
+	// to sign CSRs.
+	ErrCSRSigningDenied = errors.New("ca: CSR signing denied (insufficient permissions)")
 )
 
 // getCA returns the typed CA provider. Returns ErrNotConfigured if no CA is wired.
@@ -102,6 +121,24 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 		return nil, ErrNilData
 	}
 
+	// RBAC: check that the caller has permission to sign CSRs.
+	// Local calls (no identity in context) are allowed — they come from
+	// the GUI or CLI running on the same machine.
+	if identity := auth.GetIdentity(ctx); identity != nil {
+		if !identity.HasRole("admin") && !identity.HasRole("user") && !identity.HasRole("operator") {
+			slog.Warn("CSR signing denied", "subject", identity.Subject)
+			return nil, ErrCSRSigningDenied
+		}
+	}
+
+	// Verify attestation if provided. When the server requires attestation
+	// (future config flag), missing attestation will be rejected.
+	if req.AttestationFormat != "" {
+		if err := s.verifyCSRAttestation(req); err != nil {
+			return nil, err
+		}
+	}
+
 	ca, err := s.getCA()
 	if err != nil {
 		return nil, err
@@ -131,6 +168,59 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 		ChainPEM:       chainPEM,
 		SerialNumber:   cert.SerialNumber.Text(16),
 	}, nil
+}
+
+// verifyCSRAttestation verifies the attestation proof included in a CSR
+// signing request. This proves the CSR's private key is stored in hardware.
+func (s *XKMSService) verifyCSRAttestation(req *transport.SignCSRRequest) error {
+	if len(req.AttestationChain) == 0 {
+		return fmt.Errorf("%w: empty attestation chain", ErrAttestationVerificationFailed)
+	}
+
+	// Parse the attestation certificate chain.
+	certs := make([]*x509.Certificate, 0, len(req.AttestationChain))
+	for i, der := range req.AttestationChain {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return fmt.Errorf("%w: invalid certificate at index %d: %v",
+				ErrAttestationVerificationFailed, i, err)
+		}
+		certs = append(certs, cert)
+	}
+
+	// Verify the attestation chain. The first certificate should be the
+	// attestation cert for the generated key, signed by the device's
+	// attestation CA (e.g., YubiKey PIV f9 cert, which chains to Yubico Root CA).
+	//
+	// For YubiKey PIV attestation format:
+	//   certs[0] = slot attestation cert (signed by f9)
+	//   certs[1] = f9 attestation cert (signed by Yubico PIV Root CA)
+	//
+	// For TPM2 attestation format:
+	//   certs[0] = IAK cert
+	//   certs[1] = EK cert (signed by TPM manufacturer CA)
+	//
+	// Full chain verification against trusted roots is deferred to the
+	// attestation verifier when it is wired. For now, we verify the chain
+	// is internally consistent (each cert signed by the next).
+	for i := 0; i < len(certs)-1; i++ {
+		if err := certs[i].CheckSignatureFrom(certs[i+1]); err != nil {
+			slog.Warn("attestation chain verification failed",
+				"index", i,
+				"subject", certs[i].Subject,
+				"issuer", certs[i].Issuer,
+				"error", err)
+			return fmt.Errorf("%w: chain link %d → %d: %v",
+				ErrAttestationVerificationFailed, i, i+1, err)
+		}
+	}
+
+	slog.Info("attestation verified",
+		"format", req.AttestationFormat,
+		"chain_length", len(certs),
+		"leaf_subject", certs[0].Subject)
+
+	return nil
 }
 
 // IssueCertificate issues a new certificate from the CA.

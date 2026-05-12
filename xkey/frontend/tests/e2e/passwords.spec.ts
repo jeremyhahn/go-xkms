@@ -1175,6 +1175,79 @@ test.describe('Passwords View', () => {
   });
 });
 
+// ── Standalone (Vite) mode: Wails-unavailable feedback ────────────────────
+// These tests run without a Wails backend and verify that every user-initiated
+// action that requires the desktop app produces a visible error toast instead
+// of silently no-oping.
+
+test.describe('Standalone Mode - Wails-required notifications', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await waitForAppReady(page);
+    await ensureSidebarExpanded(page);
+    await navigateTo(page, 'passwords');
+    await page.waitForTimeout(300);
+  });
+
+  test('clicking Generate password in Add dialog shows desktop-app toast', async ({ page }) => {
+    const wails = await isWailsMode(page);
+    test.skip(wails, 'Only relevant in standalone Vite mode');
+
+    const lockOverlay = page.locator('.lock-overlay');
+    const isLocked = await lockOverlay.isVisible().catch(() => false);
+    if (isLocked) return;
+
+    // Open the Add Password dialog.
+    await page.getByRole('button', { name: 'Add Password' }).click();
+    await page.waitForTimeout(300);
+
+    // Click the generate button.
+    await page.locator('button.generate-btn').click();
+
+    // A toast containing "desktop app" must appear.
+    await expect(page.locator('.toast-container')).toContainText(/no backend connection/i, { timeout: 5000 });
+  });
+
+  test('clicking Import button shows desktop-app toast', async ({ page }) => {
+    const wails = await isWailsMode(page);
+    test.skip(wails, 'Only relevant in standalone Vite mode');
+
+    const lockOverlay = page.locator('.lock-overlay');
+    const isLocked = await lockOverlay.isVisible().catch(() => false);
+    if (isLocked) return;
+
+    await page.getByRole('button', { name: 'Import' }).click();
+
+    await expect(page.locator('.toast-container')).toContainText(/no backend connection/i, { timeout: 5000 });
+  });
+
+  test('clicking Restore button shows desktop-app toast', async ({ page }) => {
+    const wails = await isWailsMode(page);
+    test.skip(wails, 'Only relevant in standalone Vite mode');
+
+    const lockOverlay = page.locator('.lock-overlay');
+    const isLocked = await lockOverlay.isVisible().catch(() => false);
+    if (isLocked) return;
+
+    await page.getByRole('button', { name: 'Restore' }).click();
+
+    await expect(page.locator('.toast-container')).toContainText(/no backend connection/i, { timeout: 5000 });
+  });
+
+  test('clicking Backup button shows desktop-app toast', async ({ page }) => {
+    const wails = await isWailsMode(page);
+    test.skip(wails, 'Only relevant in standalone Vite mode');
+
+    const lockOverlay = page.locator('.lock-overlay');
+    const isLocked = await lockOverlay.isVisible().catch(() => false);
+    if (isLocked) return;
+
+    await page.getByRole('button', { name: 'Backup' }).click();
+
+    await expect(page.locator('.toast-container')).toContainText(/no backend connection/i, { timeout: 5000 });
+  });
+});
+
 // ── PIN Gate and Auto-Unlock Regression Tests ─────────────────────────────
 // These tests inject mock backends to verify the fix where PIN verification
 // automatically unlocks the password store (no double prompt).

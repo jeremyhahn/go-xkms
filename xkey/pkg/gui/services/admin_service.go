@@ -266,6 +266,12 @@ func (s *AdminService) dynamicBackends() []BackendInfo {
 	var backends []BackendInfo
 	hasTPM := false
 	hasPhone := false
+	// seenIDs prevents duplicate entries when the same backend shows up in
+	// both the registry and an auxiliary auto-detection source (e.g., a
+	// PKCS#11 module that is persisted in the registry AND reported by the
+	// pkcs11Tester module list). Without this, users see two rows per
+	// YubiKey in the Admin backend table.
+	seenIDs := make(map[string]bool)
 
 	// Query registry if available.
 	if s.registry != nil {
@@ -292,6 +298,7 @@ func (s *AdminService) dynamicBackends() []BackendInfo {
 				hasPhone = true
 			}
 
+			seenIDs[backend.ID] = true
 			backends = append(backends, backend)
 		}
 	}
@@ -380,6 +387,12 @@ func (s *AdminService) dynamicBackends() []BackendInfo {
 
 		// Add each module with connection status
 		for _, mod := range modules {
+			// Skip if this module is already represented by a registry entry.
+			// The registry carries persisted config (enabled state, metadata);
+			// the tester only knows what's currently loaded. Registry wins.
+			if seenIDs[mod.ID] {
+				continue
+			}
 			// Check if any slot in this module is connected
 			connected := false
 			var connectedSlot string

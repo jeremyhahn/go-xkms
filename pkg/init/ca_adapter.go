@@ -23,15 +23,15 @@ import (
 // Compile-time interface check.
 var _ qrdbsdk.CeremonyCA = (*CAAdapter)(nil)
 
-// CAAdapter implements go-qrdb CeremonyCA using go-xkms ca.XKMSCA.
+// CAAdapter implements go-qrdb CeremonyCA using go-xkms ca.TrustedCA.
 // This bridges the go-xkms CA interface to the go-qrdb ceremony's expected
 // CA interface, translating types at the boundary.
 type CAAdapter struct {
-	ca ca.XKMSCA
+	ca ca.TrustedCA
 }
 
-// NewCAAdapter creates a new CAAdapter wrapping the given XKMSCA instance.
-func NewCAAdapter(xkmsCA ca.XKMSCA) *CAAdapter {
+// NewCAAdapter creates a new CAAdapter wrapping the given TrustedCA instance.
+func NewCAAdapter(xkmsCA ca.TrustedCA) *CAAdapter {
 	return &CAAdapter{ca: xkmsCA}
 }
 

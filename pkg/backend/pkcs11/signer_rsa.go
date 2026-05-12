@@ -344,7 +344,10 @@ func generateRSAKeyPair(pool *SessionPool, id, label []byte, keySize int, isYubi
 		return err
 	}
 	var err error
-	if isYubiKeyPIV && soPIN != "" {
+	if isYubiKeyPIV {
+		if soPIN == "" {
+			return nil, fmt.Errorf("pkcs11: generate RSA key pair: %w", ErrSOPINRequired)
+		}
 		err = pool.WithSOSession(soPIN, userPIN, genFn)
 	} else {
 		err = pool.WithSession(genFn)

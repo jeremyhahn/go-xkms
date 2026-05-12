@@ -1,0 +1,98 @@
+# Local development xkmsd config (no Docker)
+# Data dir: /tmp/xkms-local (outside repo, NOT the xkms-data/ default)
+
+server:
+  host: "127.0.0.1"
+  rest_port: 8443
+  grpc_port: 9443
+  quic_port: 8444
+  mcp_port: 8445
+  noise_port: 8447
+
+protocols:
+  unix: true
+  rest: true
+  grpc: false
+  quic: false
+  mcp: false
+  noise: true
+
+unix:
+  enabled: true
+  socket_path: "/tmp/xkms-local/xkms.sock"
+  socket_mode: "0660"
+  protocol: "grpc"
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: true
+  server_cn: "localhost"
+
+auth:
+  enabled: false
+  type: "noop"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+  path: "/metrics"
+  port: 9090
+
+health:
+  enabled: true
+  path: "/health"
+
+storage:
+  backend: "file"
+  path: "/tmp/xkms-local/storage"
+
+rng:
+  mode: "software"
+  fallback_mode: "software"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "/tmp/xkms-local/keys/software"
+
+# Auto-initialized self-signed root CA on first start (ECDSA P-256, software)
+ca:
+  identity:
+    - subject:
+        cn: "xkms Local Dev Root CA"
+        organization: "go-xkms Local"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc_curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key_type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "/tmp/xkms-local/ca"
+
+# Bootstrap: Noise_NK on :8447 + SPKI-pinned TLS (pin derived at runtime)
+bootstrap:
+  noise:
+    enabled: true
+    static_key_file: "/tmp/xkms-local/noise.key"
+    max_connections: 100
+    read_timeout: "10s"
+    write_timeout: "10s"
+  spki:
+    enabled: true
+    # pin_sha256 intentionally empty -- computed at runtime from the REST TLS cert

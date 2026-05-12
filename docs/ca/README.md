@@ -1,849 +1,429 @@
-# Certificate Authority (CA) Package Documentation
+# Certificate Authority Module
 
-The CA package in go-xkms provides a complete certificate authority implementation with certificate lifecycle management including CSR signing, certificate issuance, revocation, CRL generation, and TLS configuration helpers.
+RFC 5280 compliant Certificate Authority with multi-backend key storage, TPM attestation, and ACME server integration.
 
-## Architecture
+## Overview
+
+The CA module provides enterprise-grade certificate lifecycle management with hardware security integration. It implements the core X.509 PKI operations required by the ACME server while leveraging go-xkms for secure key storage across multiple backends.
+
+## Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **X.509 Certificate Issuance** | RFC 5280 compliant certificate signing with configurable validity |
+| **CA Hierarchy** | Root and Intermediate CA support with automatic chain building |
+| **Multi-Backend Key Storage** | TPM2, PKCS#11/HSM, and software (PKCS#8) via go-xkms |
+| **TPM 2.0 Attestation** | TCG-CSR-IDEVID support for device identity enrollment |
+| **Certificate Revocation** | CRL generation (RFC 5280) and OCSP responder (RFC 6960) |
+| **Cross-Signing** | Multiple trust anchor support for chain migration |
+| **TLS Integration** | Ready-to-use tls.Config and certificate bundles |
+| **Post-Quantum Cryptography** | ML-DSA/ML-KEM (FIPS 203/204) via quantum backend |
+| **Multi-Tenant Support** | Per-tenant intermediate CAs with isolated key material |
+| **QRDB Integration** | Blob storage via QRDB objstore adapter |
+
+## Supported Key Algorithms
+
+| Algorithm | Key Sizes/Curves | TPM Support | Use Case |
+|-----------|-----------------|-------------|----------|
+| RSA | 2048, 3072, 4096 bits | Yes | Legacy compatibility, broad support |
+| ECDSA | P-256, P-384, P-521 | Yes (P-256, P-384) | Modern deployments, smaller keys |
+| Ed25519 | Curve25519 | Software only | High-performance signing |
+
+### Post-Quantum Algorithms
+
+The CA supports NIST-standardized post-quantum cryptographic algorithms via go-xkms's quantum backend. Build with `-tags quantum_safe` to enable quantum certificate extensions.
+
+| Algorithm | Variants | Type | Standard | Use Case |
+|-----------|----------|------|----------|----------|
+| ML-DSA (Dilithium) | 44, 65, 87 | Signature | FIPS 204 | Quantum-resistant signing |
+| ML-KEM (Kyber) | 512, 768, 1024 | KEM | FIPS 203 | Quantum-resistant key encapsulation |
+
+**ML-DSA Security Levels:**
+- ML-DSA-44: ~128-bit security (Level 2)
+- ML-DSA-65: ~192-bit security (Level 3)
+- ML-KEM-87: ~256-bit security (Level 5)
+
+**ML-KEM Security Levels:**
+- ML-KEM-512: ~128-bit security (Level 1)
+- ML-KEM-768: ~192-bit security (Level 3)
+- ML-KEM-1024: ~256-bit security (Level 5)
+
+## Storage Integration
+
+The CA uses three storage abstractions from the go-xkms and go-objstore ecosystems:
 
 ```
-+------------------+     +------------------+     +------------------+
-|   go-trusted-ca  |     |   go-dragondb    |     |   Application    |
-|   (ACME Server)  |     | (Distributed DB) |     |     (Custom)     |
-+--------+---------+     +--------+---------+     +--------+---------+
-         |                        |                        |
-         +------------------------+------------------------+
-                                  |
-                          +-------v-------+
-                          |      CA       |
-                          | (Certificate  |
-                          |   Authority)  |
-                          +-------+-------+
-                                  |
-              +-------------------+-------------------+
-              |                                       |
-      +-------v-------+                       +-------v-------+
-      |   KeyStore    |                       |   CertStore   |
-      | (go-xkms) |                       | (go-xkms) |
-      +-------+-------+                       +-------+-------+
-              |                                       |
-    +---------+---------+                   +---------+---------+
-    |    |    |    |    |                   |    |    |    |    |
-  +--+ +--+ +--+ +--+ +--+                +--+ +--+ +--+ +--+ +--+
-  |SW| |TPM| |PIV| |HSM| |KMS|            |File| |S3| |DB| |Raft|
-  +--+ +--+ +--+ +--+ +--+                +--+ +--+ +--+ +--+
++-----------------+     +------------------+     +------------------+
+|   KeyStore      |     |    CertStore     |     |   ObjectStore    |
+| (go-xkms)      |     |  (go-xkms)       |     |  (go-objstore)   |
++-----------------+     +------------------+     +------------------+
+| Private Keys    |     | X.509 Certs      |     | Revocation Data  |
+| Signers         |     | Cert Chains      |     | Cross-Signed     |
+| Key Generation  |     | Trust Stores     |     | Attestation      |
++-----------------+     +------------------+     +------------------+
+        |                       |                        |
+        v                       v                        v
++---------------------------------------------------------------+
+|                     Storage Backends                           |
+| TPM2 | PKCS#11 | PKCS#8 | File | S3 | Azure | GCP | QRDB    |
++---------------------------------------------------------------+
 ```
 
-**Key Features:**
-- CSR signing and certificate issuance with configurable profiles
-- Certificate revocation and CRL generation
-- Trust chain management and verification
-- TLS configuration helpers for server/client/mTLS
-- Thread-safe operations with atomic state management
-- Multiple keystore backend support (Software, TPM, PKCS#11, Cloud KMS)
-- Multiple certificate storage backends via go-objstore
+### QRDB Object Storage
+
+The CA can use QRDB as a backend for blob storage via the objstore adapter (`pkg/qrdb/objstore/adapter.go`). This adapter implements the go-objstore `Storage` interface, providing:
+
+- **Attestation storage**: TPM quotes, endorsement credentials, device manifests
+- **Signature storage**: Detached signatures, signing metadata
+- **Certificate bundles**: CA chains, cross-signed certificates
+- **Revocation data**: CRL snapshots, OCSP response caches
+
+```go
+import (
+    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb"
+    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb/objstore"
+)
+
+// Create QRDB-backed object store
+kvClient := qrdbService.KV()
+blobStore := objstore.NewAdapter(kvClient)
+
+// Use with CA
+authority, err := ca.New(config, certStore, blobStore)
+```
+
+The adapter stores blobs with entity type prefixes (`blob/`, `blob_meta/`) and supports:
+- Full CRUD operations with context support
+- Metadata management (ETag, size, timestamps)
+- Prefix-based listing with pagination
+- Lifecycle policy management
+- Archive operations
+
+## Storage and Service Integration
+
+### Current Integration
+
+| Component | Backend | Description |
+|-----------|---------|-------------|
+| **KV Storage** | QRDB | ACME entities, certificates, configuration |
+| **Object Store Adapter** | QRDB | Blob storage for attestations and signatures |
+| **Key Management** | go-xkms | TPM2, PKCS#11, PKCS#8 key storage |
+| **IAM/RBAC** | QRDB | Policy-based access control |
+| **Auth** | QRDB Auth | JWT token validation and sessions |
+| **Seal/Unseal** | QRDB | Shamir's Secret Sharing for master key |
+
+## Multi-Tenancy
+
+The CA supports multi-tenant deployments where each tenant has isolated data, dedicated CA hierarchy, and independent configuration.
+
+### Per-Tenant Intermediate CAs
+
+Each tenant can have their own intermediate CA(s) under a global or tenant-specific root:
+
+```
+Global Root CA (managed by super-admin)
++-- Tenant A Intermediate CA
+|   +-- General Purpose (default)
+|   +-- TPM Endorsement
++-- Tenant B Intermediate CA
++-- Tenant C Intermediate CA
+    +-- Server Auth
+    +-- Client Auth
+```
+
+### Multi-Tenant Architecture
+
+```
++-------------------------------------------+
+|              ACME Server                   |
+|         (tenant-aware routing)            |
++-------------------------------------------+
+                    |
+                    v
++-------------------------------------------+
+|        Certificate Authority (CA)          |
+|  - Per-tenant intermediate CAs             |
+|  - Tenant-scoped certificate issuance      |
+|  - Isolated revocation lists               |
++-------------------------------------------+
+          |                    |
+          v                    v
++------------------+  +------------------+
+|    KeyStore      |  |   ObjectStore    |
+|  (go-xkms)      |  |  (QRDB/other)    |
++------------------+  +------------------+
+          |                    |
+          v                    v
++-------------------------------------------+
+|              QRDB (Embedded KV)           |
+|  - Tenant data isolation (key prefixes)    |
+|  - Blob storage for attestations           |
++-------------------------------------------+
+|           QRDB (RBAC + Auth)              |
+|  - RBAC policy enforcement                 |
+|  - JWT token validation                    |
++-------------------------------------------+
+```
+
+### Tenant CA Configuration
+
+```go
+// Create tenant-specific intermediate CA
+tenantCA := &ca.TenantIntermediateCA{
+    TenantID:     "acme-corp",
+    CommonName:   "ACME Corp Intermediate CA",
+    KeyAlgorithm: "EC-P384",
+    ValidityYears: 10,
+    Purpose:      "general",
+}
+
+// Sign certificate using tenant's CA
+cert, err := authority.SignCSRForTenant(tenantID, csrPEM, &ca.CertificateRequest{
+    Subject: ca.Subject{
+        CommonName: "app.acme-corp.example.com",
+    },
+    Valid: 365,
+})
+```
+
+### Tenant Storage Isolation
+
+Data is stored with tenant-prefixed keys:
+
+```
+tenants/{tenant_id}/ca/intermediate/{ca_id}
+tenants/{tenant_id}/ca/certificates/{serial}
+tenants/{tenant_id}/ca/crl/{crl_number}
+tenants/{tenant_id}/ca/ocsp/{serial}
+```
+
+See [Multi-Tenancy Documentation](../multi-tenancy.md) for complete details.
 
 ## Quick Start
 
-### Installation
-
-```bash
-go get github.com/jeremyhahn/go-xkms/pkg/ca
-```
-
-### Basic Usage
-
 ```go
-package main
-
 import (
-    "log"
-
-    "github.com/jeremyhahn/go-xkms/pkg/ca"
-    "github.com/jeremyhahn/go-xkms/pkg/certstore"
-    "github.com/jeremyhahn/go-xkms/pkg/xkms"
+    xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+    "github.com/jeremyhahn/go-trusted-ca/pkg/ca"
 )
 
-func main() {
-    // 1. Set up keystore and certificate store
-    ks, _ := xkms.New(&xkms.Config{
-        StoreType: "software",
-        HomeDir:   "/var/lib/ca",
-    })
-    cs := certstore.New(certstore.Config{
-        Backend: "file",
-        Path:    "/var/lib/ca/certs",
-    })
+// Initialize xkms backends (see go-xkms documentation)
+xkmssdk.ServiceInitialize(xkmsConfig)
+defer xkmssdk.ServiceClose()
 
-    // 2. Create CA configuration
-    config := ca.DefaultCAConfigWithIntermediate()
-    config.Identity[0].Subject.CommonName = "My Root CA"
-    config.Identity[1].Subject.CommonName = "My Intermediate CA"
-
-    // 3. Initialize the CA
-    params := &ca.Params{
-        Config:    config,
-        KeyStore:  ks,
-        CertStore: cs,
-    }
-    caInstance, err := ca.New(params)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    // 4. Initialize (generates root and intermediate certificates)
-    if err := caInstance.Init(); err != nil {
-        log.Fatal(err)
-    }
-
-    // 5. Issue a certificate
-    issued, err := caInstance.IssueCertificate(&ca.CertificateRequest{
-        Subject: ca.Subject{
-            CommonName:   "server.example.com",
-            Organization: "Example Corp",
-        },
-        SANS: &ca.SubjectAlternativeNames{
-            DNS: []string{"server.example.com", "www.example.com"},
-            IPs: []string{"192.168.1.100"},
-        },
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    log.Printf("Issued certificate: %s (expires: %s)",
-        issued.Certificate.Subject.CommonName,
-        issued.NotAfter)
+// Create CA with default configuration
+config := ca.DefaultConfig()
+authority, err := ca.New(config, certStore, objectStore)
+if err != nil {
+    log.Fatal(err)
 }
-```
 
-### Creating a CSR
-
-```go
-// Create a CSR for an existing key
-csrPEM, err := caInstance.CreateCSR(&ca.CertificateRequest{
+// Sign a CSR
+cert, err := authority.SignCSR(csrPEM, &ca.CertificateRequest{
     Subject: ca.Subject{
-        CommonName:   "client.example.com",
-        Organization: "Example Corp",
+        CommonName:   "example.com",
+        Organization: "Example Inc",
     },
+    Valid: 365,
     SANS: &ca.SubjectAlternativeNames{
-        Email: []string{"admin@example.com"},
+        DNS: []string{"example.com", "www.example.com"},
     },
 })
 
-// Or with an external signer (PIV card, HSM)
-csrPEM, err := ca.CreateCSRWithKey(request, pivCardSigner)
+// Get CA bundle for client trust
+bundle, err := authority.CABundle(types.StoreTypeSoftware, x509.ECDSA)
 ```
 
-### Signing a CSR
+### With QRDB Backend
 
 ```go
-cert, err := caInstance.SignCSR(csrPEM, &ca.SignOptions{
-    Profile:      "server",
-    ValidityDays: 365,
-})
-```
-
-## Configuration
-
-### CAConfig
-
-The primary configuration structure supports hierarchical CA deployments:
-
-```go
-type CAConfig struct {
-    // Identity contains all CA identities (root and intermediates)
-    // Index 0 must be the root CA (IsRoot=true)
-    Identity []Identity
-
-    // SelectedCA specifies which identity to use for issuing certificates
-    // 0 = root CA, 1+ = intermediate CAs
-    SelectedCA int
-
-    // DefaultValidityDays for issued certificates (default: 365)
-    DefaultValidityDays int
-
-    // IncludeLocalhostSANS adds localhost and 127.0.0.1 to all certificates
-    IncludeLocalhostSANS bool
-
-    // HomeDir is the base directory for CA storage
-    HomeDir string
-}
-```
-
-### Identity Configuration
-
-```go
-type Identity struct {
-    // Subject contains X.509 distinguished name fields
-    Subject Subject
-
-    // Valid specifies certificate validity in years
-    Valid int
-
-    // Keys contains key configurations (algorithm, curve/size)
-    Keys []*types.KeyConfig
-
-    // KeystoreType: "software", "tpm2", "pkcs11"
-    KeystoreType string
-
-    // SANS for this CA identity
-    SANS *SubjectAlternativeNames
-
-    // IsRoot indicates this is a root CA (self-signed)
-    IsRoot bool
-
-    // ParentCA specifies the parent CA's CN for intermediates
-    ParentCA string
-}
-```
-
-### Environment Variable Overrides
-
-| Variable | Description |
-|----------|-------------|
-| `CA_SUBJECT_CN` | Override Common Name |
-| `CA_SUBJECT_O` | Override Organization |
-| `CA_SUBJECT_OU` | Override Organizational Unit |
-| `CA_SUBJECT_C` | Override Country |
-| `CA_SUBJECT_ST` | Override State/Province |
-| `CA_SUBJECT_L` | Override Locality |
-
-### Example YAML Configuration
-
-```yaml
-identity:
-  - subject:
-      cn: "Example Root CA"
-      organization: "Example Corp"
-      country: "US"
-    valid: 10
-    keys:
-      - algorithm: "ECDSA"
-        ecc-curve: "P-384"
-        hash: "SHA-384"
-    keystore-type: "software"
-    is-root: true
-
-  - subject:
-      cn: "Example Intermediate CA"
-      organization: "Example Corp"
-      country: "US"
-    valid: 5
-    keys:
-      - algorithm: "ECDSA"
-        ecc-curve: "P-256"
-        hash: "SHA-256"
-    keystore-type: "software"
-    is-root: false
-    parent-ca: "Example Root CA"
-
-selected-ca: 1
-default-validity-days: 365
-include-localhost-sans: false
-```
-
-### ConfigBuilder Pattern
-
-```go
-config, err := ca.NewConfigBuilder().
-    WithRootCA(
-        ca.Subject{CommonName: "Root CA", Organization: "Org"},
-        10, // validity years
-        nil, // use default keys
-        "software",
-    ).
-    WithIntermediateCA(
-        ca.Subject{CommonName: "Intermediate CA", Organization: "Org"},
-        5,
-        nil,
-        "tpm2",
-        "Root CA",
-    ).
-    WithSelectedCA(1).
-    WithDefaultValidityDays(365).
-    Build()
-```
-
-## Certificate Profiles
-
-Profiles define standard configurations for different certificate types.
-
-### Built-in Profiles
-
-| Profile | Key Usage | Extended Key Usage | Default Validity |
-|---------|-----------|-------------------|------------------|
-| `server` | DigitalSignature, KeyEncipherment | ServerAuth | 365 days |
-| `client` | DigitalSignature, KeyEncipherment | ClientAuth | 365 days |
-| `code-signing` | DigitalSignature | CodeSigning | 365 days |
-| `email` | DigitalSignature, ContentCommitment, KeyEncipherment | EmailProtection | 365 days |
-| `ocsp-responder` | DigitalSignature | OCSPSigning | 90 days |
-| `timestamping` | DigitalSignature, ContentCommitment | TimeStamping | 365 days |
-| `ca` | DigitalSignature, CertSign, CRLSign | - | 1825 days |
-
-### PIV Profiles (NIST SP 800-73-4)
-
-| Profile | Slot | Purpose | Key Usage |
-|---------|------|---------|-----------|
-| `piv-authentication` | 9A | User authentication | DigitalSignature |
-| `piv-signature` | 9C | Document signing | DigitalSignature, ContentCommitment |
-| `piv-key-management` | 9D | Encryption/key agreement | KeyEncipherment, KeyAgreement |
-| `piv-card-auth` | 9E | Card authentication | DigitalSignature |
-
-```go
-import "github.com/jeremyhahn/go-xkms/pkg/ca/profiles"
-
-// Get profile for a specific slot
-profile, err := profiles.PIVProfileForSlot(profiles.SlotAuthentication)
-
-// Register all PIV profiles
-profiles.RegisterPIVProfiles(registry)
-```
-
-### mTLS Profiles
-
-| Profile | Purpose | Extended Key Usage |
-|---------|---------|-------------------|
-| `mtls-client` | Client authentication | ClientAuth |
-| `mtls-server` | Server authentication | ServerAuth |
-| `mtls-dual` | Bidirectional auth | ClientAuth, ServerAuth |
-
-```go
-import "github.com/jeremyhahn/go-xkms/pkg/ca/profiles"
-
-// Issue mTLS certificate
-cert, err := caInstance.IssueCertificateWithProfile(request, "mtls-dual")
-
-// Register mTLS profiles
-profiles.RegisterMTLSProfiles(registry)
-```
-
-### TCG Profiles (Trusted Computing Group)
-
-TCG profiles are used for TPM device identity and attestation certificates per TCG TPM 2.0 Keys for Device Identity and Attestation. All TCG certificates use indefinite validity (`99991231235959Z` NotAfter).
-
-| Profile | Key Usage | Extended Key Usage | Validity |
-|---------|-----------|-------------------|----------|
-| `tcg-ek` | KeyEncipherment | ClientAuth, ServerAuth | Indefinite |
-| `tcg-ak` | DigitalSignature | ClientAuth, ServerAuth | Indefinite |
-| `tcg-idevid` | DigitalSignature, KeyEncipherment | ClientAuth, ServerAuth | Indefinite |
-
-```go
-import "github.com/jeremyhahn/go-xkms/pkg/ca/profiles"
-
-// Register all TCG profiles
-profiles.RegisterTCGProfiles(registry)
-
-// Or create individual profiles
-ekProfile := profiles.NewTCGEKProfile()
-akProfile := profiles.NewTCGAKProfile()
-idevidProfile := profiles.NewTCGIDevIDProfile()
-```
-
-### Creating Custom Profiles
-
-```go
-import "github.com/jeremyhahn/go-xkms/pkg/ca/profiles"
-
-profile := profiles.NewBaseProfile("api-gateway",
-    profiles.WithDescription("API Gateway mTLS certificate"),
-    profiles.WithKeyUsage(x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment),
-    profiles.WithExtKeyUsage(x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth),
-    profiles.WithValidity(180),
+import (
+    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb"
+    "github.com/jeremyhahn/go-trusted-ca/pkg/qrdb/objstore"
+    "github.com/jeremyhahn/go-trusted-ca/pkg/ca"
 )
 
-registry := profiles.NewRegistry()
-registry.Register(profile)
-```
-
-## TCG Trusted Computing Certificates
-
-The CA supports issuing TCG-compliant certificates for TPM device identity and attestation per the TCG TPM 2.0 Keys for Device Identity and Attestation specification. This is exposed through the `TCGCA` interface, which extends `XKMSCA`.
-
-### Layer Model
-
-```
-Layer 3: Transport Bindings (go-trusted-ca)
-  ACME enroll-01 / endorse-01 / device-attest-01
-  |
-Layer 2: TCG Enrollment Protocol (go-xkms)
-  pkg/ca/tcg_enrollment.go - EnrollDevice()
-  |
-Layer 1: Cryptographic Primitives (go-xkms)
-  pkg/tpm2/ - MakeCredentialWithExternalEK, ActivateCredential
-  pkg/ca/  - XKMSCA (SignCSR, IssueCertificate, etc.)
-```
-
-### TCGCA Interface
-
-```go
-type TCGCA interface {
-    XKMSCA  // Embeds all standard CA operations
-
-    // Issue an EK certificate per TCG EK Credential Profile
-    IssueEKCertificate(request *CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error)
-
-    // Issue an Attestation Key certificate
-    IssueAKCertificate(request *CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error)
-
-    // Verify and sign a TCG-CSR-IDEVID, returning IAK and IDevID certs (DER)
-    SignTCGCSRIDevID(tcgCSR *tpm2.TCG_CSR_IDEVID, request *CertificateRequest) (iakDER, idevidDER []byte, err error)
-
-    // Complete enrollment: verify CSR, MakeCredential challenge, issue certs
-    EnrollDevice(packedCSR []byte, request *CertificateRequest) (*TCGEnrollmentResult, error)
-
-    // Configure TPM for enrollment operations
-    SetTPM(tpm tpm2.TrustedPlatformModule)
+// Initialize QRDB
+dbConfig := &qrdb.Config{
+    Mode:    qrdb.ModeStandalone,
+    DataDir: "/var/lib/trusted-ca/data",
 }
-```
-
-### CertificateRequest TCG Fields
-
-The `CertificateRequest` includes fields specific to TCG certificate operations:
-
-```go
-type CertificateRequest struct {
-    // ... standard fields ...
-
-    ProdModel          string  // TPM product model for TCG extensions
-    ProdSerial         string  // TPM product serial for TCG extensions
-    PermanentID        string  // Optional permanent identifier (RFC 4043)
-    IssuerKeyStoreType string  // CA keystore type ("TPM2", "PKCS8", "PKCS11")
+db, err := qrdb.New(dbConfig)
+if err != nil {
+    log.Fatal(err)
 }
+
+// Create QRDB-backed object store for attestations
+blobStore := objstore.NewAdapter(db.KV())
+
+// Create CA with QRDB storage
+authority, err := ca.New(config, certStore, blobStore)
 ```
 
-### Issuing an EK Certificate
+## TPM Device Enrollment
 
 ```go
-// Cast to TCGCA for TCG operations
-tcgCA := caInstance.(ca.TCGCA)
-
-ekCert, err := tcgCA.IssueEKCertificate(&ca.CertificateRequest{
+// Sign TCG-CSR-IDEVID for TPM-based device identity
+iakDER, idevidDER, err := authority.SignTCGCSRIDevID(tcgCSR, &ca.CertificateRequest{
     Subject: ca.Subject{
-        CommonName:   "Device-EK-001",
-        Organization: "Example Corp",
+        CommonName: "device-12345",
+    },
+})
+
+// Issue EK certificate
+ekCert, err := authority.IssueEKCertificate(&ca.CertificateRequest{
+    Subject: ca.Subject{
+        CommonName: "device-ek",
     },
     ProdModel:  "TPM-Model-X",
-    ProdSerial: "SN-12345",
+    ProdSerial: "SN12345",
 }, ekPublicKey)
-```
 
-The issued EK certificate includes:
-- `tcg-kp-EKCertificate` (2.23.133.8.1) marker extension
-- TPM specification extension (Family 2.0)
-- TPM model and version extensions (when ProdModel/ProdSerial are set)
-- `tp-keyStore: TPM2` extension
-- Indefinite validity (`99991231235959Z`)
-- KeyEncipherment key usage
-
-### Issuing an AK Certificate
-
-```go
-akCert, err := tcgCA.IssueAKCertificate(&ca.CertificateRequest{
+// Issue AK certificate
+akCert, err := authority.IssueAKCertificate(&ca.CertificateRequest{
     Subject: ca.Subject{
-        CommonName:   "Device-AK-001",
-        Organization: "Example Corp",
+        CommonName: "device-ak",
     },
 }, akPublicKey)
 ```
 
-The issued AK certificate includes:
-- `tcg-kp-AIKCertificate` (2.23.133.8.3) marker extension
-- TCG policy OIDs for TPM residency and fixed attributes
-- DigitalSignature key usage (attestation, quotes)
-- Indefinite validity
+## Post-Quantum Cryptography
 
-### TCG Device Enrollment Protocol
+The CA supports quantum-resistant cryptography through go-xkms's quantum backend. ML-DSA keys can be used for CA signing operations, and ML-KEM keys for secure key encapsulation.
 
-The enrollment flow implements TCG TPM 2.0 Keys for Device Identity and Attestation Section 6.2.2:
+### Hybrid Certificates
 
-```
-Device                           CA (EnrollDevice)
-  |                                |
-  |-- TCG-CSR-IDEVID (packed) --> |
-  |                                | 1. Unmarshal CSR
-  |                                | 2. Parse EK cert from CSR
-  |                                | 3. MakeCredentialWithExternalEK
-  |                                | 4. Sign CSR -> IAK + IDevID certs
-  |                                |
-  | <-- CredentialBlob ---------- |
-  | <-- EncryptedSecret --------- |
-  |                                |
-  | TPM2_ActivateCredential        |
-  |                                |
-  |-- Decrypted Secret ---------> |
-  |                                | Compare with PlainSecret
-  |                                |
-  | <-- IAK Certificate ----------|
-  | <-- IDevID Certificate -------|
-```
+When the CA signer is an ML-DSA key, certificates are automatically created as **hybrid certificates** containing:
+
+1. **Classical signature** (ECDSA/RSA) in the standard X.509 signature field for backward compatibility
+2. **Quantum signature** (ML-DSA) as a certificate extension for post-quantum security
+
+This hybrid approach ensures:
+- **Backward compatibility**: Classical verifiers can validate certificates normally
+- **Quantum resistance**: Quantum-aware verifiers can validate the ML-DSA signature
+- **Automatic detection**: No code changes required - quantum signing is automatic when using ML-DSA CA keys
+
+The quantum signature is stored in certificate extensions:
+- `OIDQuantumAlgorithm` (1.3.6.1.4.1.29377.101.10) - Algorithm identifier
+- `OIDQuantumSignature` (1.3.6.1.4.1.29377.101.11) - Signature bytes
+
+Build with `-tags quantum_safe` to enable quantum certificate extensions.
+
+### Usage Examples
 
 ```go
-tcgCA := caInstance.(ca.TCGCA)
-tcgCA.SetTPM(tpmInstance)
+import xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-// Step 1: Enroll device (server-side)
-result, err := tcgCA.EnrollDevice(packedCSR, &ca.CertificateRequest{
-    Subject: ca.Subject{
-        CommonName:   "device-001.factory.example.com",
-        Organization: "Example Corp",
-    },
+// Create quantum-safe TLS configuration
+tlsConfig, err := authority.QuantumSafeTLSConfig(&xkmssdk.KeyAttributes{
+    CN:        "quantum-server",
+    StoreType: xkmssdk.StoreQuantum,
 })
 
-// Step 2: Send challenge to device
-// Send result.CredentialBlob and result.EncryptedSecret to device
-
-// Step 3: Device calls TPM2_ActivateCredential, returns decrypted secret
-
-// Step 4: Verify secret and deliver certificates
-if bytes.Equal(deviceSecret, result.PlainSecret) {
-    // Deliver result.IAKCertDER and result.IDevIDCertDER to device
-}
-```
-
-### TCGEnrollmentResult
-
-```go
-type TCGEnrollmentResult struct {
-    IAKCertDER      []byte  // DER-encoded IAK certificate
-    IDevIDCertDER   []byte  // DER-encoded IDevID certificate
-    CredentialBlob  []byte  // TPM2B_ID_OBJECT for ActivateCredential
-    EncryptedSecret []byte  // TPM2B_ENCRYPTED_SECRET for ActivateCredential
-    PlainSecret     []byte  // Original secret for verification
-}
-```
-
-### Multi-Tenant Signing
-
-TCG certificate operations support multi-tenant mode by providing an external signer and issuer certificate in the request:
-
-```go
-ekCert, err := tcgCA.IssueEKCertificate(&ca.CertificateRequest{
-    Subject: ca.Subject{CommonName: "Tenant-Device-EK"},
-    Signer:     tenantCASigner,    // External crypto.Signer
-    IssuerCert: tenantCACert,      // Issuing CA certificate
-}, ekPublicKey)
-```
-
-### TCG OIDs
-
-TCG-specific OIDs used in certificate extensions:
-
-| OID | Name | Purpose |
-|-----|------|---------|
-| 2.23.133.8.1 | `tcg-kp-EKCertificate` | EK certificate policy marker |
-| 2.23.133.8.3 | `tcg-kp-AIKCertificate` | AIK/AK certificate policy marker |
-| 2.23.133.2.16 | `tcg-at-tpmSpecification` | TPM specification version |
-| 2.23.133.11.1.1 | `tcg-vt-tpmResidency` | Key resides in TPM |
-| 2.23.133.11.1.2 | `tcg-vt-tpmFixed` | Key is non-migratable |
-| 1.3.6.1.5.5.7.8.4 | `id-on-hardwareModuleName` | Hardware module SAN (RFC 4108) |
-| 1.3.6.1.5.5.7.8.3 | `id-on-permanentIdentifier` | Permanent identifier (RFC 4043) |
-
-**Trusted Platform extensions** (Private Enterprise 29377):
-
-| OID | Name | Purpose |
-|-----|------|---------|
-| 1.3.6.1.4.1.29377.101.1 | `tp-issuerKeyStore` | CA keystore backend type |
-| 1.3.6.1.4.1.29377.101.2 | `tp-keyStore` | Subject keystore backend type |
-| 1.3.6.1.4.1.29377.101.20 | `tp-tenantID` | Multi-tenant binding |
-
-### TCG Extension Helpers
-
-Functions for creating and parsing TCG certificate extensions:
-
-```go
-import "github.com/jeremyhahn/go-xkms/pkg/ca"
-
-// Create extensions
-ext, err := ca.CreateTPMSpecificationExtension(ca.TCGTPMSpecification{
-    Family: "2.0", Level: 0, Revision: 0,
-})
-ext, err = ca.CreateHardwareModuleNameExtension(hwTypeOID, serialBytes)
-ext, err = ca.CreatePermanentIdentifierExtension("device-001", assignerOID)
-ext, err = ca.CreateTenantIDExtension("tenant-abc")
-
-// Parse extensions from a certificate
-for _, ext := range cert.Extensions {
-    if ext.Id.Equal(ca.OIDTCGAttributeTPMSpecification) {
-        spec, err := ca.ParseTPMSpecificationExtension(ext.Value)
-    }
-    if ext.Id.Equal(ca.OIDHardwareModuleName) {
-        hwName, err := ca.ParseHardwareModuleNameExtension(ext.Value)
-    }
-    if ext.Id.Equal(ca.OIDPermanentIdentifier) {
-        permID, err := ca.ParsePermanentIdentifierExtension(ext.Value)
-    }
-}
-```
-
-## API Reference
-
-### CA Interface
-
-```go
-type CA interface {
-    crypto.Signer  // Implements Sign(rand, digest, opts)
-
-    // Lifecycle
-    Init() error
-    Load() error
-    IsInitialized() bool
-
-    // CSR Operations
-    CreateCSR(request *CertificateRequest) ([]byte, error)
-    SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, error)
-
-    // Certificate Issuance
-    IssueCertificate(request *CertificateRequest) (*IssuedCertificate, error)
-    IssueCertificateWithProfile(request *CertificateRequest, profile string) (*IssuedCertificate, error)
-
-    // Trust Chain
-    CACertificate() (*x509.Certificate, error)
-    CABundle() ([]byte, error)
-    Verify(cert *x509.Certificate) ([][]*x509.Certificate, error)
-
-    // Revocation
-    Revoke(serial *big.Int, reason int) error
-    GenerateCRL() ([]byte, error)
-    IsRevoked(serial *big.Int) (bool, error)
-
-    // TLS Helpers
-    TLSCertificate(attrs *types.KeyAttributes) (tls.Certificate, error)
-    TLSConfig(attrs *types.KeyAttributes) (*tls.Config, error)
-
-    // Storage Access
-    XKMS() xkms.KeyStore
-    CertStore() certstore.CertStore
-    Config() *Identity
-    Identity() string
-}
-```
-
-### ProfileProvider Interface
-
-```go
-type ProfileProvider interface {
-    Name() string
-    Apply(template *x509.Certificate, request *CertificateRequest) error
-    KeyUsage() x509.KeyUsage
-    ExtKeyUsage() []x509.ExtKeyUsage
-    DefaultValidity() int
-}
-```
-
-### Key Types
-
-**CertificateRequest:**
-```go
-type CertificateRequest struct {
-    Subject       Subject
-    SANS          *SubjectAlternativeNames
-    Valid         int  // validity in days
-    KeyUsage      x509.KeyUsage
-    ExtKeyUsage   []x509.ExtKeyUsage
-    IsCA          bool
-    MaxPathLen    int
-    KeyAttributes *types.KeyAttributes
-    Signer        crypto.Signer  // external signer
-}
-```
-
-**SignOptions:**
-```go
-type SignOptions struct {
-    Profile      string
-    ValidityDays int
-    NotBefore    time.Time
-    KeyUsage     x509.KeyUsage
-    ExtKeyUsage  []x509.ExtKeyUsage
-    Subject      *Subject
-    SANS         *SubjectAlternativeNames
-}
-```
-
-**IssuedCertificate:**
-```go
-type IssuedCertificate struct {
-    Certificate      *x509.Certificate
-    CertificatePEM   []byte
-    PrivateKey       crypto.PrivateKey
-    PrivateKeyPEM    []byte
-    CACertificatePEM []byte
-    ChainPEM         []byte
-    SerialNumber     *big.Int
-    NotBefore        time.Time
-    NotAfter         time.Time
-}
-```
-
-## Integration Examples
-
-### Using with go-dragondb
-
-```go
-// go-dragondb uses the CA for node-to-node mTLS
-import (
-    "github.com/jeremyhahn/go-xkms/pkg/ca"
-    "github.com/jeremyhahn/go-dragondb/pkg/cluster"
-)
-
-// Issue node certificate
-cert, err := caInstance.IssueCertificateWithProfile(
-    &ca.CertificateRequest{
-        Subject: ca.Subject{CommonName: "node-1.cluster.local"},
-        SANS: &ca.SubjectAlternativeNames{
-            DNS: []string{"node-1.cluster.local"},
-            IPs: []string{"10.0.0.1"},
-        },
+// Generate ML-DSA signing key via xkms
+attrs := &xkmssdk.KeyAttributes{
+    CN:        "quantum-ca-key",
+    KeyType:   xkmssdk.KeyTypeCA,
+    StoreType: xkmssdk.StoreQuantum,
+    QuantumAttributes: &xkmssdk.QuantumAttributes{
+        Algorithm: xkmssdk.QuantumAlgorithmMLDSA65,
     },
-    "mtls-dual",
-)
+}
+privateKey, err := xkms.GenerateKey(attrs)
 
-// Configure cluster TLS
-tlsConfig, err := caInstance.MutualTLSConfig(nodeKeyAttrs)
-```
-
-### Using with go-trusted-ca (ACME)
-
-```go
-// go-trusted-ca embeds the CA for ACME certificate operations
-import "github.com/jeremyhahn/go-trusted-ca/pkg/acme"
-
-// The CA handles the underlying certificate operations
-// ACME layer provides RFC 8555 protocol handling
-acmeCA := acme.NewCA(acme.Config{
-    CA:      caInstance,
-    Domains: []string{"example.com"},
+// Issue certificate - quantum signature automatically added
+// when CA uses an ML-DSA key
+cert, err := authority.IssueCertificate(&ca.CertificateRequest{
+    Subject: ca.Subject{CommonName: "example.com"},
+    Valid:   365,
 })
-```
 
-### xKey PIV Commands
-
-```go
-// Generate key in PIV slot
-xkey piv generate --slot 9a --algorithm ECCP256 --pin-policy once
-
-// Create CSR for PIV key
-csrPEM, err := ca.CreateCSRWithKey(
-    &ca.CertificateRequest{
-        Subject: ca.Subject{CommonName: "user@example.com"},
+// Generate ML-KEM key for encapsulation
+kemAttrs := &types.KeyAttributes{
+    CN:        "quantum-kem-key",
+    KeyType:   types.KeyTypeEncryption,
+    StoreType: types.StoreQuantum,
+    QuantumAttributes: &types.QuantumAttributes{
+        Algorithm: types.QuantumAlgorithmMLKEM768,
     },
-    pivSigner,
-)
+}
+kemKey, err := xkms.GenerateKey(kemAttrs)
 
-// Import signed certificate to PIV slot
-xkey piv import --slot 9a --cert certificate.pem
+// Encapsulate a shared secret
+ciphertext, sharedSecret, err := kemKey.Encapsulate(recipientPublicKey)
+
+// Decapsulate to recover the shared secret
+recoveredSecret, err := kemKey.Decapsulate(ciphertext)
 ```
+
+## Architecture
+
+The CA follows a layered architecture with clear separation of concerns:
+
+```
++-------------------------------------------+
+|              ACME Server                   |
++-------------------------------------------+
+                    |
+                    v
++-------------------------------------------+
+|        Certificate Authority (CA)          |
+|  - CSR Signing      - TPM Enrollment       |
+|  - Revocation       - OCSP Responder       |
+|  - Chain Building   - Cross-Signing        |
+|  - Multi-Tenancy    - Per-Tenant CAs       |
++-------------------------------------------+
+          |                    |
+          v                    v
++------------------+  +------------------+
+|    KeyStore      |  |   ObjectStore    |
+|  (go-xkms)      |  |  (go-objstore)   |
++------------------+  +------------------+
+          |                    |
+          v                    v
++-------------------------------------------+
+|              Backend Layer                 |
+|  TPM 2.0 | PKCS#11/HSM | Software | QRDB |
++-------------------------------------------+
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](architecture.md) | CA hierarchy, key storage design, certificate lifecycle |
+| [Configuration](configuration.md) | Complete configuration reference with examples |
+| [Certificate Types](certificate-types.md) | Root, Intermediate, End-Entity, and TPM certificates |
+| [API Reference](api-reference.md) | Go API documentation for all CA operations |
 
 ## Security Considerations
 
-### Serial Number Generation (RFC 5280)
+- **Root CA Protection**: Root CA keys should be stored in hardware (TPM/HSM) and used only for intermediate CA signing
+- **Key Algorithm Selection**: Use ECDSA P-256 or RSA-2048 minimum; Ed25519 for high-performance scenarios
+- **Quantum-Safe Migration**: For long-lived secrets, consider ML-KEM-768 or higher; ML-DSA-65 provides balanced security/performance
+- **Certificate Validity**: Follow CA/Browser Forum guidelines (398 days for end-entity, longer for CA certificates)
+- **Revocation**: Always configure CRL distribution points and OCSP responders for production deployments
+- **Serial Numbers**: 128-bit cryptographically random serial numbers per RFC 5280
+- **Tenant Isolation**: Use per-tenant intermediate CAs and DEKs for cryptographic isolation
+- **QRDB Seal**: Enable Shamir's Secret Sharing for master key protection in production
 
-The CA generates 128-bit serial numbers using `crypto/rand`:
+## Standards Compliance
 
-- Complies with RFC 5280 Section 4.1.2.2 (20-octet maximum)
-- Exceeds CAB Forum requirement of 64 bits of entropy
-- MSB cleared to ensure positive integer encoding
-- Collision detection with persistent storage
-
-```go
-// Custom persistent storage for production
-type PersistentStorage struct {
-    db *sql.DB
-}
-
-func (s *PersistentStorage) SerialExists(serial *big.Int) (bool, error) {
-    // Query database
-}
-
-func (s *PersistentStorage) StoreSerial(serial *big.Int) error {
-    // Insert into database
-}
-
-generator := ca.NewSerialGenerator(&PersistentStorage{db: db})
-```
-
-### Key Storage Backend Selection
-
-| Backend | Use Case | Security Level |
-|---------|----------|----------------|
-| Software (PKCS#8) | Development, testing | Medium |
-| TPM 2.0 | Production servers | High (hardware-bound) |
-| PKCS#11 (HSM) | Enterprise/compliance | Very High |
-| Cloud KMS | Cloud-native | High (managed) |
-
-### CRL Generation and Distribution
-
-```go
-// Generate CRL
-crlDER, err := caInstance.GenerateCRL()
-
-// CRL validity and distribution points configured per Identity
-config := ca.DefaultCAConfig()
-config.Identity[0].CRLValidityDays = 7
-config.Identity[0].CRLDistributionPoints = []string{
-    "http://crl.example.com/ca.crl",
-}
-```
-
-### TLS Configuration Best Practices
-
-```go
-// Secure TLS defaults provided
-tlsConfig, err := caInstance.TLSConfigWithOptions(keyAttrs, &ca.TLSConfigOptions{
-    IsServer:                 true,
-    RequireClientCert:        true,
-    MinVersion:               tls.VersionTLS12,
-    MaxVersion:               tls.VersionTLS13,
-    PreferServerCipherSuites: true,
-})
-
-// Custom peer verification with revocation checking
-tlsConfig.VerifyPeerCertificate = caInstance.VerifyPeerCertificate
-
-// Secure cipher suites
-cipherSuites := ca.SecureCipherSuites()
-// Returns: TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-//          TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-//          TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, ...
-```
-
-## Error Handling
-
-The CA uses typed errors for consistent error handling:
-
-```go
-import "errors"
-
-// Check specific error types
-if errors.Is(err, ca.ErrNotInitialized) {
-    // CA needs Init() or Load()
-}
-
-if errors.Is(err, ca.ErrCertificateRevoked) {
-    // Certificate has been revoked
-}
-
-if errors.Is(err, ca.ErrProfileNotFound) {
-    // Unknown profile name
-}
-```
-
-Error categories:
-- **Lifecycle:** `ErrNotInitialized`, `ErrAlreadyInitialized`
-- **CSR:** `ErrInvalidCSR`, `ErrCSRGenerationFailed`
-- **Certificate:** `ErrCertificateNotFound`, `ErrCertificateExpired`, `ErrCertificateRevoked`
-- **Signing:** `ErrSigningFailed`, `ErrInvalidSignature`
-- **Config:** `ErrInvalidConfig`, `ErrInvalidKeyAlgorithm`
-- **Storage:** `ErrKeyStoreRequired`, `ErrCertStoreRequired`
-- **TLS:** `ErrTLSConfigFailed`, `ErrKeyCertMismatch`
-- **TCG Enrollment:** `ErrTPMNotConfigured`, `ErrTCGCSRVerificationFailed`, `ErrTCGMakeCredentialFailed`, `ErrTCGMissingEKCert`, `ErrTCGInvalidEKCert`, `ErrTCGInvalidPublicKey`, `ErrTCGInvalidIssuer`, `ErrTCGCertIssuanceFailed`, `ErrTCGIAKKeyExtraction`, `ErrTCGCSRUnmarshalFailed`
-- **TCG Extensions:** `ErrTCGExtensionEncoding`, `ErrTCGExtensionParsing`, `ErrTCGTenantIDEmpty`
+| Standard | Description |
+|----------|-------------|
+| RFC 5280 | Internet X.509 PKI Certificate and CRL Profile |
+| RFC 6960 | Online Certificate Status Protocol (OCSP) |
+| RFC 8555 | Automatic Certificate Management Environment (ACME) |
+| TCG TPM 2.0 | Keys for Device Identity and Attestation |
+| TCG EK Credential Profile | Endorsement Key Certificate Requirements |
+| NIST FIPS 203 | ML-KEM (Kyber) Key Encapsulation Mechanism |
+| NIST FIPS 204 | ML-DSA (Dilithium) Digital Signature Algorithm |
 
 ## Related Documentation
 
-- [Full-Stack Protocol Parity](./protocol-parity.md)
-- [CA CLI Reference](../usage/cli/ca.md)
-- [Secure CA Bundle Bootstrap](./bootstrap.md)
-- [go-xkms Backends](../backends/)
-- [PIV Smart Card Support](../piv/)
-- [PKCS#11 Integration](../pkcs11/)
-- [FIDO2/WebAuthn](../fido2/)
+- [ACME Server Documentation](../acme/README.md)
+- [QRDB Documentation](../qrdb/README.md)
+- [Multi-Tenancy](../multi-tenancy.md)
+- [go-xkms Documentation](https://github.com/jeremyhahn/go-xkms)
+- [go-objstore Documentation](https://github.com/jeremyhahn/go-objstore)
+- [go-trusted-platform TPM Documentation](https://github.com/jeremyhahn/go-trusted-platform/tree/main/docs)

@@ -92,6 +92,31 @@ func NewPKCS11CertStorageWithSO(
 	}, nil
 }
 
+// runWrite runs fn under the correct session type for a write operation.
+//
+// When requireSO is true:
+//   - soPin must be non-empty, otherwise ErrSOSessionRequired is returned.
+//     This prevents a silent fallthrough to a CKU_USER session that the token
+//     would reject with CKR_USER_TYPE_INVALID (e.g. YubiKey PIV).
+//   - the pool must implement PKCS11SOSessionProvider; if not, the same
+//     typed error is returned because the configured SO requirement cannot
+//     be satisfied.
+//
+// When requireSO is false the normal user session is used.
+func (p *PKCS11CertStorage) runWrite(fn func(session pkcs11.SessionHandle) error) error {
+	if p.requireSO {
+		if p.soPin == "" {
+			return ErrSOSessionRequired
+		}
+		sp, ok := p.pool.(PKCS11SOSessionProvider)
+		if !ok {
+			return ErrSOSessionRequired
+		}
+		return sp.WithSOSession(p.soPin, p.userPin, fn)
+	}
+	return p.pool.WithSession(fn)
+}
+
 // SaveCert stores a certificate as a CKO_CERTIFICATE object.
 // If a certificate with the same ID exists, it will be overwritten.
 func (p *PKCS11CertStorage) SaveCert(id string, cert *x509.Certificate) error {
@@ -107,8 +132,11 @@ func (p *PKCS11CertStorage) SaveCert(id string, cert *x509.Certificate) error {
 		return storage.ErrInvalidData
 	}
 
-	return p.pool.WithSession(func(session pkcs11.SessionHandle) error {
-		// Check if certificate already exists and delete it first
+	saveFn := func(session pkcs11.SessionHandle) error {
+		// Delete any existing certificate with the same CKA_ID before creating
+		// the new one. When requireSO is true, this callback runs under CKU_SO
+		// via WithSOSession, so DestroyObject succeeds on YubiKey PIV tokens
+		// that reject it under CKU_USER.
 		existingHandle, err := p.findCertificateHandle(session, id)
 		if err == nil && existingHandle != 0 {
 			if err := p.pool.Ctx().DestroyObject(session, existingHandle); err != nil {
@@ -128,17 +156,19 @@ func (p *PKCS11CertStorage) SaveCert(id string, cert *x509.Certificate) error {
 			pkcs11.NewAttribute(pkcs11.CKA_VALUE, cert.Raw),
 		}
 
-		_, err = p.pool.Ctx().CreateObject(session, template)
-		if err != nil {
-			if err == pkcs11.Error(pkcs11.CKR_DEVICE_MEMORY) ||
-				err == pkcs11.Error(pkcs11.CKR_TOKEN_WRITE_PROTECTED) {
+		_, createErr := p.pool.Ctx().CreateObject(session, template)
+		if createErr != nil {
+			if createErr == pkcs11.Error(pkcs11.CKR_DEVICE_MEMORY) ||
+				createErr == pkcs11.Error(pkcs11.CKR_TOKEN_WRITE_PROTECTED) {
 				return ErrTokenFull
 			}
-			return NewOperationError("create certificate object", err)
+			return NewOperationError("create certificate object", createErr)
 		}
 
 		return nil
-	})
+	}
+
+	return p.runWrite(saveFn)
 }
 
 // GetCert retrieves a certificate by ID using CKA_ID attribute search.
@@ -184,17 +214,6 @@ func (p *PKCS11CertStorage) GetCert(id string) (*x509.Certificate, error) {
 	return cert, err
 }
 
-// runDelete runs fn with either a CKU_SO elevated session (when requireSO is
-// set and the pool supports it) or a normal user session.
-func (p *PKCS11CertStorage) runDelete(fn func(session pkcs11.SessionHandle) error) error {
-	if p.requireSO && p.soPin != "" {
-		if sp, ok := p.pool.(PKCS11SOSessionProvider); ok {
-			return sp.WithSOSession(p.soPin, p.userPin, fn)
-		}
-	}
-	return p.pool.WithSession(fn)
-}
-
 // DeleteCert removes a certificate object from the token.
 //
 // After C_DestroyObject returns success, we re-search for the CKA_ID: some
@@ -211,7 +230,7 @@ func (p *PKCS11CertStorage) DeleteCert(id string) error {
 		return storage.ErrInvalidID
 	}
 
-	return p.runDelete(func(session pkcs11.SessionHandle) error {
+	return p.runWrite(func(session pkcs11.SessionHandle) error {
 		deleted := false
 
 		handle, err := p.findCertificateHandle(session, id)
@@ -288,7 +307,7 @@ func (p *PKCS11CertStorage) SaveCertChain(id string, chain []*x509.Certificate) 
 		}
 	}
 
-	return p.pool.WithSession(func(session pkcs11.SessionHandle) error {
+	return p.runWrite(func(session pkcs11.SessionHandle) error {
 		chainID := p.chainID(id)
 		existingHandles, _ := p.findAllCertificatesWithPrefix(session, chainID)
 		for _, h := range existingHandles {

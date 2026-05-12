@@ -134,7 +134,7 @@
   }
 </script>
 
-<Modal title="Import Passwords" bind:open persistent={false} maxWidth="560px">
+<Modal title="Import Passwords" bind:open maxWidth="560px">
   <!-- Step 1: Select file -->
   {#if step === 'select'}
     <div class="import-body">

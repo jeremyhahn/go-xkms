@@ -46,7 +46,7 @@ func TestNewMTLSAuthenticator_NilConfig(t *testing.T) {
 	auth := NewMTLSAuthenticator(nil)
 
 	require.NotNil(t, auth)
-	assert.NotNil(t, auth.extractClaims)
+	assert.NotNil(t, auth.extractMetadata)
 	assert.NotNil(t, auth.extractSubject)
 }
 
@@ -72,28 +72,27 @@ func TestNewMTLSAuthenticator_CustomExtractSubject(t *testing.T) {
 	assert.Equal(t, "custom-subject", subject)
 }
 
-func TestNewMTLSAuthenticator_CustomExtractClaims(t *testing.T) {
-	customClaims := func(cert *x509.Certificate) map[string]interface{} {
-		return map[string]interface{}{
-			"custom": "claim",
+func TestNewMTLSAuthenticator_CustomExtractMetadata(t *testing.T) {
+	customMetadata := func(cert *x509.Certificate) CertMetadata {
+		return CertMetadata{
+			CommonName: "custom-cn",
 		}
 	}
 
 	auth := NewMTLSAuthenticator(&MTLSConfig{
-		ExtractClaims: customClaims,
+		ExtractMetadata: customMetadata,
 	})
 
 	require.NotNil(t, auth)
 
-	// Test that custom function is used
 	ca, err := testutil.GenerateTestCA()
 	require.NoError(t, err)
 
 	clientCert, err := testutil.GenerateTestClientCert(ca, "test-client")
 	require.NoError(t, err)
 
-	claims := auth.extractClaims(clientCert.Cert)
-	assert.Equal(t, "claim", claims["custom"])
+	cm := auth.extractMetadata(clientCert.Cert)
+	assert.Equal(t, "custom-cn", cm.CommonName)
 }
 
 func TestMTLSAuthenticator_AuthenticateHTTP_ValidCert(t *testing.T) {
@@ -117,10 +116,10 @@ func TestMTLSAuthenticator_AuthenticateHTTP_ValidCert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, identity)
 	assert.Equal(t, "test-client", identity.Subject)
-	assert.Equal(t, "mtls", identity.Attributes["auth_method"])
-	assert.NotEmpty(t, identity.Attributes["cert_serial"])
-	assert.NotEmpty(t, identity.Attributes["cert_issuer"])
-	assert.Equal(t, "192.168.1.1:12345", identity.Attributes["remote_addr"])
+	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
+	assert.NotEmpty(t, identity.Metadata["cert_serial"])
+	assert.NotEmpty(t, identity.Metadata["cert_issuer"])
+	assert.Equal(t, "192.168.1.1:12345", identity.Metadata["remote_addr"])
 }
 
 func TestMTLSAuthenticator_AuthenticateHTTP_NoTLS(t *testing.T) {
@@ -185,9 +184,9 @@ func TestMTLSAuthenticator_AuthenticateGRPC_ValidCert(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, identity)
 	assert.Equal(t, "grpc-client", identity.Subject)
-	assert.Equal(t, "mtls", identity.Attributes["auth_method"])
-	assert.NotEmpty(t, identity.Attributes["cert_serial"])
-	assert.NotEmpty(t, identity.Attributes["peer_addr"])
+	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
+	assert.NotEmpty(t, identity.Metadata["cert_serial"])
+	assert.NotEmpty(t, identity.Metadata["peer_addr"])
 }
 
 func TestMTLSAuthenticator_AuthenticateGRPC_NoPeerInfo(t *testing.T) {
@@ -306,39 +305,25 @@ func TestDefaultExtractSubject(t *testing.T) {
 	}
 }
 
-func TestDefaultExtractClaims(t *testing.T) {
+func TestDefaultExtractCertMetadata(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
 	require.NoError(t, err)
 
 	clientCert, err := testutil.GenerateTestClientCert(ca, "test-client")
 	require.NoError(t, err)
 
-	claims := defaultExtractClaims(clientCert.Cert)
+	cm := defaultExtractCertMetadata(clientCert.Cert)
 
-	require.NotNil(t, claims)
-	assert.Equal(t, "test-client", claims["common_name"])
+	assert.Equal(t, "test-client", cm.CommonName)
 
-	// Check that organization is present
-	if org, ok := claims["organization"]; ok {
-		if orgSlice, ok := org.([]string); ok {
-			if len(orgSlice) == 1 {
-				assert.Equal(t, "Test Client", orgSlice[0])
-			}
-		}
+	// Organization should be the comma-joined cert organization list.
+	if cm.Organization != "" {
+		assert.Contains(t, cm.Organization, "Test Client")
 	}
 
-	// Check permissions are set based on ExtKeyUsage
-	if perms, ok := claims["permissions"]; ok {
-		if permSlice, ok := perms.([]string); ok {
-			found := false
-			for _, p := range permSlice {
-				if p == "client_auth" {
-					found = true
-					break
-				}
-			}
-			assert.True(t, found, "permissions should contain 'client_auth'")
-		}
+	// Extended key usages should include the certificate's client_auth usage.
+	if cm.ExtKeyUsage != "" {
+		assert.Contains(t, cm.ExtKeyUsage, "client_auth")
 	}
 }
 
@@ -399,13 +384,11 @@ func TestMTLSAuthenticator_WithUserStore_HTTP_Success(t *testing.T) {
 
 	assert.Equal(t, "alice", identity.Subject)
 
-	roles, ok := identity.Claims["roles"].([]string)
-	require.True(t, ok)
-	assert.Equal(t, []string{"admin"}, roles)
-	assert.Equal(t, "Alice Smith", identity.Claims["display_name"])
-	assert.Equal(t, "mtls", identity.Attributes["auth_method"])
-	assert.NotEmpty(t, identity.Attributes["cert_fingerprint"])
-	assert.Equal(t, "10.0.0.1:443", identity.Attributes["remote_addr"])
+	assert.Equal(t, []string{"admin"}, identity.Roles)
+	assert.Equal(t, "Alice Smith", identity.Metadata["display_name"])
+	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
+	assert.NotEmpty(t, identity.Metadata["cert_fingerprint"])
+	assert.Equal(t, "10.0.0.1:443", identity.Metadata["remote_addr"])
 }
 
 func TestMTLSAuthenticator_WithUserStore_GRPC_Success(t *testing.T) {
@@ -448,10 +431,8 @@ func TestMTLSAuthenticator_WithUserStore_GRPC_Success(t *testing.T) {
 
 	assert.Equal(t, "bob", identity.Subject)
 
-	roles, ok := identity.Claims["roles"].([]string)
-	require.True(t, ok)
-	assert.Equal(t, []string{"operator"}, roles)
-	assert.NotEmpty(t, identity.Attributes["peer_addr"])
+	assert.Equal(t, []string{"operator"}, identity.Roles)
+	assert.NotEmpty(t, identity.Metadata["peer_addr"])
 }
 
 func TestMTLSAuthenticator_WithUserStore_DisabledUser(t *testing.T) {
@@ -514,10 +495,10 @@ func TestMTLSAuthenticator_WithUserStore_NotFound_FallsBack(t *testing.T) {
 
 	// Should fall back to certificate CN
 	assert.Equal(t, "unknown-client", identity.Subject)
-	assert.Equal(t, "mtls", identity.Attributes["auth_method"])
+	assert.Equal(t, "mtls", identity.Metadata["auth_method"])
 
 	// Should NOT have cert_fingerprint attribute when falling back
-	_, ok := identity.Attributes["cert_fingerprint"]
+	_, ok := identity.Metadata["cert_fingerprint"]
 	assert.False(t, ok, "cert_fingerprint should not be set when falling back to cert extraction")
 }
 
@@ -553,9 +534,8 @@ func TestMTLSAuthenticator_WithUserStore_NoRole(t *testing.T) {
 
 	assert.Equal(t, "norole-user", identity.Subject)
 
-	// Should NOT have roles claim when role is empty
-	_, ok := identity.Claims["roles"]
-	assert.False(t, ok, "roles claim should not be set when user has no role")
+	// Should NOT have roles when user has no role
+	assert.Empty(t, identity.Roles, "Roles should be empty when user has no role")
 }
 
 func TestComputeCertFingerprint(t *testing.T) {
@@ -683,7 +663,7 @@ func TestMTLSAuthenticator_TenantID_FromUserStore(t *testing.T) {
 
 	assert.Equal(t, "tenant-user", identity.Subject)
 	assert.Equal(t, "tenant-123", identity.TenantID)
-	assert.False(t, identity.IsCrossTenant())
+	assert.False(t, IsCrossTenant(identity))
 }
 
 func TestMTLSAuthenticator_TenantID_FromOU(t *testing.T) {
@@ -713,7 +693,7 @@ func TestMTLSAuthenticator_TenantID_FromOU(t *testing.T) {
 
 	assert.Equal(t, "ou-client", identity.Subject)
 	assert.Equal(t, "tenant-from-ou", identity.TenantID)
-	assert.False(t, identity.IsCrossTenant())
+	assert.False(t, IsCrossTenant(identity))
 }
 
 func TestMTLSAuthenticator_TenantID_NoOU(t *testing.T) {
@@ -743,5 +723,5 @@ func TestMTLSAuthenticator_TenantID_NoOU(t *testing.T) {
 
 	assert.Equal(t, "no-ou-client", identity.Subject)
 	assert.Empty(t, identity.TenantID)
-	assert.True(t, identity.IsCrossTenant())
+	assert.True(t, IsCrossTenant(identity))
 }

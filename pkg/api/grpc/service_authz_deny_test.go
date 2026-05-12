@@ -18,21 +18,21 @@ import (
 	"testing"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // denyingAuthorizer always denies every request.
 type denyingAuthorizer struct{}
 
-func (d *denyingAuthorizer) Authorize(_ context.Context, _ *authz.AuthorizationRequest) (*authz.AuthorizationDecision, error) {
-	return &authz.AuthorizationDecision{Allowed: false, Reason: "denied by test"}, nil
+func (d *denyingAuthorizer) Authorize(_ context.Context, _ *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
+	return &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied by test"}, nil
 }
 
 // newDeniedService creates a Service with a denying authorizer for testing
@@ -45,7 +45,7 @@ func newDeniedService() *Service {
 // service methods that call s.authorize(). This covers the common pattern
 // of returning a PermissionDenied error when authorization fails.
 func TestAuthzDeny_ServiceMethods(t *testing.T) {
-	// Need xkms initialized for methods that check backend before authz.
+	// Need xkms initialized for methods that check backend before keyauthz.
 	xkms.Reset()
 	setupXKMSForTest(t)
 	defer xkms.Reset()

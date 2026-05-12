@@ -5,12 +5,31 @@
 //
 // go-xkms is dual-licensed:
 //
-// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
-//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//  1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//     See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
 //
-// 2. Commercial License
-//    Contact licensing@automatethethings.com for commercial licensing options.
+//  2. Commercial License
+//     Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package wrapping implements the RSA-OAEP and hybrid RSA+AES-KWP key
+// wrapping algorithms used by xkms backends during the key-import and
+// key-export ceremonies.
+//
+// # Memory discipline
+//
+// Every sensitive intermediate produced during wrap / unwrap — the
+// ephemeral AES wrapping key, the padded plaintext, the unwrapped
+// material — lives in a *secure.Buffer with an immediate deferred
+// Destroy(). Only at the boundary of this package (the public
+// []byte-returning signatures) is the material copied out into a
+// plain slice, and that slice is the caller's responsibility to move
+// into its own *secure.Buffer or *secure.Secret as soon as possible.
+//
+// The public signatures remain []byte-in / []byte-out for drop-in
+// compatibility with the HSM / cloud backends (awskms, azurekv,
+// gcpkms, pkcs11) that are migrated in a later phase; the internal
+// hardening still bounces the secret off the Go heap for the duration
+// of the arithmetic.
 package wrapping
 
 import (
@@ -21,385 +40,370 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
-	"fmt"
 	"hash"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
-// WrapRSAOAEP wraps key material using RSA-OAEP encryption.
-// The algorithm parameter specifies which hash function to use (SHA-1 or SHA-256).
-// This method is suitable for wrapping small amounts of key material (up to the RSA key size minus overhead).
-// For larger key material, use WrapRSAAES which employs a hybrid approach.
+// hashFuncForAlgorithm resolves the hash.Hash to use for a given
+// wrapping algorithm. Returns *UnsupportedAlgorithmError for algorithms
+// this package does not implement.
+func hashFuncForAlgorithm(algorithm backend.WrappingAlgorithm) (hash.Hash, error) {
+	switch algorithm {
+	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
+		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1:
+		return sha1.New(), nil
+	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256,
+		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
+		return sha256.New(), nil
+	default:
+		return nil, &UnsupportedAlgorithmError{Algorithm: string(algorithm)}
+	}
+}
+
+// WrapRSAOAEP wraps key material using RSA-OAEP encryption. Suitable
+// only for small material (up to RSA key size minus OAEP overhead);
+// for larger material use WrapRSAAES.
 //
 // Parameters:
-//   - keyMaterial: The plaintext key material to wrap (must fit within RSA key size limits)
-//   - publicKey: The RSA public key to use for wrapping
-//   - algorithm: Must be WrappingAlgorithmRSAES_OAEP_SHA_1 or WrappingAlgorithmRSAES_OAEP_SHA_256
-//
-// Returns:
-//   - The wrapped (encrypted) key material
-//   - An error if wrapping fails or parameters are invalid
+//   - keyMaterial: plaintext to wrap. Callers should hold this in a
+//     *secure.Buffer and pass the Bytes() slice, then Destroy their
+//     Buffer after this function returns — the slice is read-only
+//     here.
+//   - publicKey: the RSA public key to encrypt with.
+//   - algorithm: one of the RSAES_OAEP_* values.
 func WrapRSAOAEP(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
 	if len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("key material cannot be nil or empty")
+		return nil, &EmptyInputError{Field: "keyMaterial"}
 	}
 	if publicKey == nil {
-		return nil, fmt.Errorf("public key cannot be nil")
+		return nil, &NilInputError{Field: "publicKey"}
 	}
-
-	var hashFunc hash.Hash
-	switch algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1:
-		hashFunc = sha1.New()
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-		hashFunc = sha256.New()
-	default:
-		return nil, fmt.Errorf("unsupported wrapping algorithm: %s", algorithm)
-	}
-
-	// Encrypt the key material with RSA-OAEP
-	wrapped, err := rsa.EncryptOAEP(hashFunc, rand.Reader, publicKey, keyMaterial, nil)
+	h, err := hashFuncForAlgorithm(algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material with RSA-OAEP: %w", err)
+		return nil, err
 	}
-
+	wrapped, encErr := rsa.EncryptOAEP(h, rand.Reader, publicKey, keyMaterial, nil)
+	if encErr != nil {
+		return nil, &CryptoError{Op: "rsa.EncryptOAEP", Err: encErr}
+	}
 	return wrapped, nil
 }
 
-// UnwrapRSAOAEP unwraps key material that was encrypted using RSA-OAEP.
-// The algorithm parameter must match the algorithm used during wrapping.
-//
-// Parameters:
-//   - wrappedKey: The encrypted key material to unwrap
-//   - privateKey: The RSA private key corresponding to the public key used for wrapping
-//   - algorithm: Must be WrappingAlgorithmRSAES_OAEP_SHA_1 or WrappingAlgorithmRSAES_OAEP_SHA_256
-//
-// Returns:
-//   - The unwrapped (plaintext) key material
-//   - An error if unwrapping fails or parameters are invalid
+// UnwrapRSAOAEP unwraps key material that was encrypted with
+// WrapRSAOAEP. The returned plaintext is a fresh heap-allocated slice;
+// callers MUST move it into a *secure.Buffer / *secure.Secret
+// immediately and wipe the returned slice. This package does its own
+// internal wipes but cannot reach into the caller's stack frame.
 func UnwrapRSAOAEP(wrappedKey []byte, privateKey *rsa.PrivateKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
 	if len(wrappedKey) == 0 {
-		return nil, fmt.Errorf("wrapped key cannot be nil or empty")
+		return nil, &EmptyInputError{Field: "wrappedKey"}
 	}
 	if privateKey == nil {
-		return nil, fmt.Errorf("private key cannot be nil")
+		return nil, &NilInputError{Field: "privateKey"}
 	}
-
-	var hashFunc hash.Hash
-	switch algorithm {
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1:
-		hashFunc = sha1.New()
-	case backend.WrappingAlgorithmRSAES_OAEP_SHA_256:
-		hashFunc = sha256.New()
-	default:
-		return nil, fmt.Errorf("unsupported wrapping algorithm: %s", algorithm)
-	}
-
-	// Decrypt the key material with RSA-OAEP
-	unwrapped, err := rsa.DecryptOAEP(hashFunc, rand.Reader, privateKey, wrappedKey, nil)
+	h, err := hashFuncForAlgorithm(algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap key material with RSA-OAEP: %w", err)
+		return nil, err
 	}
-
-	return unwrapped, nil
+	// rsa.DecryptOAEP allocates the output slice. It is sensitive —
+	// move it into a Buffer, copy out for the return value, destroy
+	// the Buffer.
+	raw, decErr := rsa.DecryptOAEP(h, rand.Reader, privateKey, wrappedKey, nil)
+	if decErr != nil {
+		return nil, &CryptoError{Op: "rsa.DecryptOAEP", Err: decErr}
+	}
+	return encloseAndCopy(raw)
 }
 
-// WrapRSAAES wraps key material using a hybrid RSA + AES-KWP algorithm.
-// This is required for wrapping large key material (e.g., RSA private keys) that exceed
-// the size limits of direct RSA encryption.
+// WrapRSAAES wraps key material using the hybrid RSA-OAEP + AES-KWP
+// construction (AWS KMS "RSA_AES_KEY_WRAP_SHA_*" scheme). Flow:
 //
-// The wrapping process:
-//  1. Generate a random 256-bit AES key
-//  2. Wrap the AES key using RSA-OAEP with the specified hash function
-//  3. Wrap the target key material using AES Key Wrap with Padding (RFC 5649)
-//  4. Return: [4-byte length][wrapped AES key][wrapped key material]
+//  1. Generate a random 256-bit AES wrapping key (secure.Buffer).
+//  2. Wrap the AES key with RSA-OAEP using the caller's public key.
+//  3. Wrap keyMaterial with AES-KWP (RFC 5649).
+//  4. Emit [4-byte wrappedAESKey length][wrappedAESKey][AES-wrapped].
 //
-// The 4-byte length prefix allows proper parsing during unwrapping.
-//
-// Parameters:
-//   - keyMaterial: The plaintext key material to wrap (can be any size)
-//   - publicKey: The RSA public key to use for wrapping the AES key
-//   - algorithm: Must be WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1 or WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256
-//
-// Returns:
-//   - The wrapped key material (length prefix + wrapped AES key + AES-wrapped data)
-//   - An error if wrapping fails or parameters are invalid
+// All intermediate sensitive buffers are held in *secure.Buffer for
+// the duration of this call and destroyed before returning.
 func WrapRSAAES(keyMaterial []byte, publicKey *rsa.PublicKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
 	if len(keyMaterial) == 0 {
-		return nil, fmt.Errorf("key material cannot be nil or empty")
+		return nil, &EmptyInputError{Field: "keyMaterial"}
 	}
 	if publicKey == nil {
-		return nil, fmt.Errorf("public key cannot be nil")
+		return nil, &NilInputError{Field: "publicKey"}
 	}
-
-	var hashFunc hash.Hash
-	switch algorithm {
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1:
-		hashFunc = sha1.New()
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-		hashFunc = sha256.New()
-	default:
-		return nil, fmt.Errorf("unsupported wrapping algorithm: %s", algorithm)
-	}
-
-	// Step 1: Generate a random 256-bit AES key
-	aesKey := make([]byte, 32) // 256 bits
-	if _, err := rand.Read(aesKey); err != nil {
-		return nil, fmt.Errorf("failed to generate random AES key: %w", err)
-	}
-
-	// Step 2: Wrap the AES key with RSA-OAEP
-	wrappedAESKey, err := rsa.EncryptOAEP(hashFunc, rand.Reader, publicKey, aesKey, nil)
+	h, err := hashFuncForAlgorithm(algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap AES key with RSA-OAEP: %w", err)
+		return nil, err
 	}
 
-	// Step 3: Wrap the key material with AES-KWP (RFC 5649)
-	wrappedKeyMaterial, err := wrapKeyWithAESKWP(keyMaterial, aesKey)
+	// Step 1: Random 256-bit AES wrapping key, into a Buffer.
+	aesKeyBuf, err := secure.NewBuffer(32)
 	if err != nil {
-		return nil, fmt.Errorf("failed to wrap key material with AES-KWP: %w", err)
+		return nil, &CryptoError{Op: "alloc aes key buffer", Err: err}
+	}
+	defer aesKeyBuf.Destroy()
+	if _, rerr := rand.Read(aesKeyBuf.Bytes()); rerr != nil {
+		return nil, &CryptoError{Op: "read random aes key", Err: rerr}
 	}
 
-	// Step 4: Concatenate with length prefix
-	// Format: [4-byte wrapped AES key length][wrapped AES key][wrapped key material]
-	wrappedAESKeyLen := uint32(len(wrappedAESKey))
-	result := make([]byte, 4+len(wrappedAESKey)+len(wrappedKeyMaterial))
-	binary.BigEndian.PutUint32(result[0:4], wrappedAESKeyLen)
-	copy(result[4:4+len(wrappedAESKey)], wrappedAESKey)
-	copy(result[4+len(wrappedAESKey):], wrappedKeyMaterial)
+	// Step 2: Wrap the AES key with RSA-OAEP. The AES key plaintext is
+	// provided from the Buffer; the wrapped output is non-sensitive.
+	wrappedAESKey, encErr := rsa.EncryptOAEP(h, rand.Reader, publicKey, aesKeyBuf.Bytes(), nil)
+	if encErr != nil {
+		return nil, &CryptoError{Op: "rsa.EncryptOAEP (aes key)", Err: encErr}
+	}
 
-	return result, nil
+	// Step 3: Wrap keyMaterial with AES-KWP. wrapKeyWithAESKWP reads
+	// the AES key and plaintext; its own internal intermediates use
+	// secure.Buffer.
+	wrappedMaterial, kwpErr := wrapKeyWithAESKWP(keyMaterial, aesKeyBuf.Bytes())
+	if kwpErr != nil {
+		return nil, kwpErr
+	}
+
+	// Step 4: Concatenate with length prefix.
+	aesKeyLen := uint32(len(wrappedAESKey))
+	out := make([]byte, 4+len(wrappedAESKey)+len(wrappedMaterial))
+	binary.BigEndian.PutUint32(out[0:4], aesKeyLen)
+	copy(out[4:4+len(wrappedAESKey)], wrappedAESKey)
+	copy(out[4+len(wrappedAESKey):], wrappedMaterial)
+	return out, nil
 }
 
-// UnwrapRSAAES unwraps key material that was encrypted using the hybrid RSA + AES-KWP algorithm.
-// The algorithm parameter must match the algorithm used during wrapping.
-//
-// The unwrapping process:
-//  1. Parse the length prefix to determine where the wrapped AES key ends
-//  2. Unwrap the AES key using RSA-OAEP with the specified hash function
-//  3. Unwrap the target key material using AES Key Wrap with Padding (RFC 5649)
-//
-// Parameters:
-//   - wrappedKey: The wrapped key material (length prefix + wrapped AES key + AES-wrapped data)
-//   - privateKey: The RSA private key corresponding to the public key used for wrapping
-//   - algorithm: Must be WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1 or WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256
-//
-// Returns:
-//   - The unwrapped (plaintext) key material
-//   - An error if unwrapping fails or parameters are invalid
+// UnwrapRSAAES inverts WrapRSAAES. Like UnwrapRSAOAEP, the returned
+// plaintext is caller-owned and sensitive; callers must immediately
+// move it into a Buffer / Secret and wipe.
 func UnwrapRSAAES(wrappedKey []byte, privateKey *rsa.PrivateKey, algorithm backend.WrappingAlgorithm) ([]byte, error) {
 	if len(wrappedKey) < 4 {
-		return nil, fmt.Errorf("wrapped key is too short or nil")
+		return nil, &MalformedWrappedKeyError{Reason: "too short"}
 	}
 	if privateKey == nil {
-		return nil, fmt.Errorf("private key cannot be nil")
+		return nil, &NilInputError{Field: "privateKey"}
 	}
-
-	var hashFunc hash.Hash
-	switch algorithm {
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_1:
-		hashFunc = sha1.New()
-	case backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
-		hashFunc = sha256.New()
-	default:
-		return nil, fmt.Errorf("unsupported wrapping algorithm: %s", algorithm)
-	}
-
-	// Step 1: Parse the length prefix
-	wrappedAESKeyLen := binary.BigEndian.Uint32(wrappedKey[0:4])
-
-	// Check for overflow and validate length
-	if wrappedAESKeyLen > uint32(len(wrappedKey)-4) {
-		return nil, fmt.Errorf("wrapped key is corrupted: invalid AES key length %d, max allowed %d",
-			wrappedAESKeyLen, len(wrappedKey)-4)
-	}
-
-	if len(wrappedKey) < int(4+wrappedAESKeyLen) {
-		return nil, fmt.Errorf("wrapped key is corrupted: insufficient data for wrapped AES key")
-	}
-
-	// Step 2: Extract wrapped AES key and wrapped key material
-	wrappedAESKey := wrappedKey[4 : 4+wrappedAESKeyLen]
-	wrappedKeyMaterial := wrappedKey[4+wrappedAESKeyLen:]
-
-	// Step 3: Unwrap the AES key with RSA-OAEP
-	aesKey, err := rsa.DecryptOAEP(hashFunc, rand.Reader, privateKey, wrappedAESKey, nil)
+	h, err := hashFuncForAlgorithm(algorithm)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap AES key with RSA-OAEP: %w", err)
+		return nil, err
 	}
 
-	// Step 4: Unwrap the key material with AES-KWP
-	keyMaterial, err := unwrapKeyWithAESKWP(wrappedKeyMaterial, aesKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap key material with AES-KWP: %w", err)
+	aesKeyLen := binary.BigEndian.Uint32(wrappedKey[0:4])
+	if aesKeyLen > uint32(len(wrappedKey)-4) {
+		return nil, &MalformedWrappedKeyError{Reason: "aes key length overflow"}
 	}
+	if len(wrappedKey) < int(4+aesKeyLen) {
+		return nil, &MalformedWrappedKeyError{Reason: "truncated"}
+	}
+	wrappedAESKey := wrappedKey[4 : 4+aesKeyLen]
+	wrappedMaterial := wrappedKey[4+aesKeyLen:]
 
-	return keyMaterial, nil
+	// Unwrap the AES key straight into a Buffer. rsa.DecryptOAEP
+	// returns a fresh slice; we move it into a Buffer (which wipes
+	// the source) and destroy on return.
+	rawAES, decErr := rsa.DecryptOAEP(h, rand.Reader, privateKey, wrappedAESKey, nil)
+	if decErr != nil {
+		return nil, &CryptoError{Op: "rsa.DecryptOAEP (aes key)", Err: decErr}
+	}
+	aesBuf, bufErr := secure.NewBufferFromBytes(rawAES)
+	if bufErr != nil {
+		// NewBufferFromBytes wipes rawAES even on error paths for
+		// non-empty input; the len==0 case here would imply the RSA
+		// ciphertext decrypted to nothing, which is a malformed
+		// input.
+		return nil, &MalformedWrappedKeyError{Reason: "empty aes key after unwrap"}
+	}
+	defer aesBuf.Destroy()
+
+	// Unwrap the material using the AES key inside the Buffer. The
+	// returned plaintext is sensitive — hand it off to the caller.
+	plaintext, kwpErr := unwrapKeyWithAESKWP(wrappedMaterial, aesBuf.Bytes())
+	if kwpErr != nil {
+		return nil, kwpErr
+	}
+	return plaintext, nil
 }
 
-// wrapKeyWithAESKWP wraps key material using AES Key Wrap with Padding (RFC 5649).
-// This is also known as AES-KWP and provides authenticated encryption for key material.
-//
-// RFC 5649 extends RFC 3394 to handle plaintext of any length (not just multiples of 8 bytes).
+// wrapKeyWithAESKWP implements AES-KWP (RFC 5649). Intermediate state
+// (padded plaintext, register buffer) lives in *secure.Buffer.
 func wrapKeyWithAESKWP(plaintext, key []byte) ([]byte, error) {
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return nil, fmt.Errorf("AES key must be 16, 24, or 32 bytes")
+		return nil, &InvalidKeySizeError{Algorithm: "aes-kwp", Size: len(key)}
 	}
-
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, &CryptoError{Op: "aes.NewCipher (wrap)", Err: err}
 	}
 
-	// RFC 5649 Alternative Initial Value (AIV)
-	// AIV = 0xA65959A6 || MLI
-	// where MLI is the 32-bit message length in big-endian
-	aiv := make([]byte, 8)
+	// RFC 5649 Alternative Initial Value.
+	aiv := [8]byte{}
 	binary.BigEndian.PutUint32(aiv[0:4], 0xA65959A6)
 	binary.BigEndian.PutUint32(aiv[4:8], uint32(len(plaintext)))
 
-	// Pad plaintext to multiple of 8 bytes
+	// Pad plaintext to an 8-byte multiple inside a Buffer.
 	padLen := (8 - (len(plaintext) % 8)) % 8
-	paddedPlaintext := make([]byte, len(plaintext)+padLen)
-	copy(paddedPlaintext, plaintext)
+	padded, pErr := secure.NewBuffer(len(plaintext) + padLen)
+	if pErr != nil {
+		return nil, &CryptoError{Op: "alloc padded plaintext", Err: pErr}
+	}
+	defer padded.Destroy()
+	copy(padded.Bytes(), plaintext)
+	paddedBytes := padded.Bytes()
 
-	// If plaintext is 8 bytes or less, use special case
-	if len(paddedPlaintext) == 8 {
+	// Special case: total padded length == 8.
+	if len(paddedBytes) == 8 {
 		// C[0] = E(K, A || P[1])
-		input := make([]byte, 16)
-		copy(input[0:8], aiv)
-		copy(input[8:16], paddedPlaintext)
-		output := make([]byte, 16)
-		block.Encrypt(output, input)
-		return output, nil
+		in := [16]byte{}
+		copy(in[0:8], aiv[:])
+		copy(in[8:16], paddedBytes)
+		out := make([]byte, 16)
+		block.Encrypt(out, in[:])
+		return out, nil
 	}
 
-	// For larger plaintexts, use the standard key wrap algorithm
-	n := len(paddedPlaintext) / 8 // number of 64-bit blocks
-
-	// Initialize with AIV and plaintext blocks
-	r := make([][]byte, n+1)
-	r[0] = aiv
-	for i := 0; i < n; i++ {
-		r[i+1] = paddedPlaintext[i*8 : (i+1)*8]
+	// General case: n * 8-byte blocks plus AIV.
+	n := len(paddedBytes) / 8
+	regLen := (n + 1) * 8
+	registers, rerr := secure.NewBuffer(regLen)
+	if rerr != nil {
+		return nil, &CryptoError{Op: "alloc register buffer", Err: rerr}
 	}
+	defer registers.Destroy()
+	rb := registers.Bytes()
+	copy(rb[0:8], aiv[:])
+	copy(rb[8:], paddedBytes)
 
-	// Perform 6*n rounds of wrapping
+	// Perform 6*n rounds. The register buffer is sliced into 8-byte
+	// windows R[0..n]; we keep a scratch buffer for B = E(K, A || R[i]).
+	// B itself is not sensitive per-iteration (ciphertext), but we keep
+	// it small and stack-local by reusing the same 16-byte array.
+	var b [16]byte
 	for j := 0; j <= 5; j++ {
 		for i := 1; i <= n; i++ {
-			// B = E(K, A || R[i])
-			b := make([]byte, 16)
-			copy(b[0:8], r[0])
-			copy(b[8:16], r[i])
-			block.Encrypt(b, b)
+			copy(b[0:8], rb[0:8])
+			copy(b[8:16], rb[i*8:(i+1)*8])
+			block.Encrypt(b[:], b[:])
 
-			// A = MSB(64, B) XOR t where t = (n*j)+i
+			// A = MSB(64, B) XOR t
 			t := uint64(n*j + i)
-			r[0] = b[0:8]
+			copy(rb[0:8], b[0:8])
 			for k := 7; k >= 0; k-- {
-				r[0][k] ^= byte(t >> ((7 - k) * 8))
+				rb[7-k] ^= byte(t >> (uint(k) * 8))
 			}
-
 			// R[i] = LSB(64, B)
-			r[i] = b[8:16]
+			copy(rb[i*8:(i+1)*8], b[8:16])
 		}
 	}
 
-	// Concatenate all blocks
-	result := make([]byte, (n+1)*8)
-	for i := 0; i <= n; i++ {
-		copy(result[i*8:(i+1)*8], r[i])
-	}
-
-	return result, nil
+	// Copy the register contents to the returned []byte. The returned
+	// ciphertext is not sensitive — it's the wrapped output intended
+	// for external storage.
+	out := make([]byte, regLen)
+	copy(out, rb)
+	return out, nil
 }
 
-// unwrapKeyWithAESKWP unwraps key material using AES Key Wrap with Padding (RFC 5649).
+// unwrapKeyWithAESKWP inverts wrapKeyWithAESKWP. The unwrapped output
+// IS sensitive and is returned as a plain []byte — the caller is
+// expected to immediately move it into a secure.Buffer.
 func unwrapKeyWithAESKWP(ciphertext, key []byte) ([]byte, error) {
 	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
-		return nil, fmt.Errorf("AES key must be 16, 24, or 32 bytes")
+		return nil, &InvalidKeySizeError{Algorithm: "aes-kwp", Size: len(key)}
 	}
 	if len(ciphertext) < 16 || len(ciphertext)%8 != 0 {
-		return nil, fmt.Errorf("ciphertext must be at least 16 bytes and a multiple of 8")
+		return nil, &MalformedWrappedKeyError{Reason: "ciphertext must be >= 16 bytes and multiple of 8"}
 	}
-
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+		return nil, &CryptoError{Op: "aes.NewCipher (unwrap)", Err: err}
 	}
 
 	n := (len(ciphertext) / 8) - 1
 
-	// Special case for n = 1
+	// Special case: n == 1.
 	if n == 1 {
-		// P[1] = D(K, C[0] || C[1])
-		output := make([]byte, 16)
-		block.Decrypt(output, ciphertext)
-
-		// Check AIV
-		if binary.BigEndian.Uint32(output[0:4]) != 0xA65959A6 {
-			return nil, fmt.Errorf("invalid AIV in wrapped key")
+		out := make([]byte, 16)
+		block.Decrypt(out, ciphertext)
+		if binary.BigEndian.Uint32(out[0:4]) != 0xA65959A6 {
+			return nil, &MalformedWrappedKeyError{Reason: "invalid AIV"}
 		}
-
-		mli := binary.BigEndian.Uint32(output[4:8])
+		mli := binary.BigEndian.Uint32(out[4:8])
 		if mli > 8 {
-			return nil, fmt.Errorf("invalid message length in AIV: %d", mli)
+			return nil, &MalformedWrappedKeyError{Reason: "invalid MLI"}
 		}
-
-		return output[8 : 8+mli], nil
+		// The plaintext portion (out[8:8+mli]) is sensitive — move it
+		// into a Buffer briefly, then return a caller-owned slice.
+		return encloseAndCopy(out[8 : 8+mli])
 	}
 
-	// Initialize registers
-	r := make([][]byte, n+1)
-	for i := 0; i <= n; i++ {
-		r[i] = ciphertext[i*8 : (i+1)*8]
+	// General case: unwrap into a register buffer (secure.Buffer).
+	regLen := (n + 1) * 8
+	registers, rerr := secure.NewBuffer(regLen)
+	if rerr != nil {
+		return nil, &CryptoError{Op: "alloc register buffer (unwrap)", Err: rerr}
 	}
+	defer registers.Destroy()
+	rb := registers.Bytes()
+	copy(rb, ciphertext)
 
-	// Perform 6*n rounds of unwrapping
+	var b [16]byte
 	for j := 5; j >= 0; j-- {
 		for i := n; i >= 1; i-- {
-			// B = D(K, (A XOR t) || R[i]) where t = n*j+i
-			b := make([]byte, 16)
-			copy(b[0:8], r[0])
-
+			copy(b[0:8], rb[0:8])
 			t := uint64(n*j + i)
 			for k := 7; k >= 0; k-- {
-				b[k] ^= byte(t >> ((7 - k) * 8))
+				b[7-k] ^= byte(t >> (uint(k) * 8))
 			}
-
-			copy(b[8:16], r[i])
-			block.Decrypt(b, b)
-
-			// A = MSB(64, B)
-			r[0] = b[0:8]
-
-			// R[i] = LSB(64, B)
-			r[i] = b[8:16]
+			copy(b[8:16], rb[i*8:(i+1)*8])
+			block.Decrypt(b[:], b[:])
+			copy(rb[0:8], b[0:8])
+			copy(rb[i*8:(i+1)*8], b[8:16])
 		}
 	}
 
-	// Verify AIV and extract plaintext length
-	if binary.BigEndian.Uint32(r[0][0:4]) != 0xA65959A6 {
-		return nil, fmt.Errorf("invalid AIV in wrapped key")
+	if binary.BigEndian.Uint32(rb[0:4]) != 0xA65959A6 {
+		return nil, &MalformedWrappedKeyError{Reason: "invalid AIV"}
 	}
-
-	mli := binary.BigEndian.Uint32(r[0][4:8])
+	mli := binary.BigEndian.Uint32(rb[4:8])
 	if mli > uint32(n*8) {
-		return nil, fmt.Errorf("invalid message length in AIV: %d", mli)
+		return nil, &MalformedWrappedKeyError{Reason: "invalid MLI"}
 	}
 
-	// Extract and return plaintext
-	plaintext := make([]byte, n*8)
-	for i := 1; i <= n; i++ {
-		copy(plaintext[(i-1)*8:i*8], r[i])
-	}
-
-	return plaintext[:mli], nil
+	// The unwrapped plaintext sits in rb[8 : 8+mli]. Copy it out; the
+	// register buffer is destroyed by the deferred Destroy above.
+	return encloseAndCopy(rb[8 : 8+mli])
 }
 
-// GetHashForAlgorithm returns the hash function for the given wrapping algorithm.
-// This is useful for determining the correct hash to use with RSA-OAEP operations.
+// encloseAndCopy runs the sensitive src through a *secure.Buffer and
+// returns a fresh caller-owned slice. The source slice is wiped via
+// secure.Wipe.
+//
+// This helper exists so every "returning sensitive bytes to a caller"
+// site has the same pattern: the material takes a round trip through
+// a locked buffer even though we cannot control what the caller does
+// next. Combined with the documented contract ("callers MUST move
+// immediately into a Buffer/Secret"), this bounds the plaintext
+// lifetime to a single stack frame on both sides of the boundary.
+func encloseAndCopy(src []byte) ([]byte, error) {
+	if len(src) == 0 {
+		return nil, &EmptyInputError{Field: "src"}
+	}
+	buf, err := secure.NewBuffer(len(src))
+	if err != nil {
+		return nil, &CryptoError{Op: "enclose sensitive result", Err: err}
+	}
+	defer buf.Destroy()
+	copy(buf.Bytes(), src)
+	out := make([]byte, len(src))
+	copy(out, buf.Bytes())
+	// Best-effort wipe of our caller-supplied source.
+	secure.Wipe(src)
+	return out, nil
+}
+
+// GetHashForAlgorithm returns the crypto.Hash ID for the given
+// wrapping algorithm. Kept for backward compatibility with callers
+// that need the hash identifier separately (e.g., PKCS#11 mechanisms).
 func GetHashForAlgorithm(algorithm backend.WrappingAlgorithm) (crypto.Hash, error) {
 	switch algorithm {
 	case backend.WrappingAlgorithmRSAES_OAEP_SHA_1,
@@ -409,6 +413,6 @@ func GetHashForAlgorithm(algorithm backend.WrappingAlgorithm) (crypto.Hash, erro
 		backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256:
 		return crypto.SHA256, nil
 	default:
-		return 0, fmt.Errorf("unsupported wrapping algorithm: %s", algorithm)
+		return 0, &UnsupportedAlgorithmError{Algorithm: string(algorithm)}
 	}
 }

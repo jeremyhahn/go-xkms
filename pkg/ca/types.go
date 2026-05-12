@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package ca provides type definitions for the XKMSCA certificate authority.
+// Package ca provides type definitions for the TrustedCA certificate authority.
 //
 // This package defines the core types used for certificate signing requests,
 // certificate issuance, revocation tracking, and X.509 subject/SAN configuration.
@@ -100,6 +100,13 @@ type CAConfig struct {
 	// RequireCSRSignature requires all CSRs to have a valid signature.
 	// Default: true
 	RequireCSRSignature bool `yaml:"require-csr-signature" json:"require_csr_signature" mapstructure:"require-csr-signature"`
+
+	// AutoImportIssuingCA enables automatic import of issuing CA certificates
+	// from the Authority Information Access (AIA) extension of processed
+	// certificates. When true, ImportIssuingCAs will be invoked recursively
+	// to fetch and store the complete issuer chain.
+	// Default: false
+	AutoImportIssuingCA bool `yaml:"auto-import-issuing-ca" json:"auto_import_issuing_ca" mapstructure:"auto-import-issuing-ca"`
 }
 
 // Validate checks that the CAConfig has valid required fields.
@@ -442,4 +449,17 @@ type SignOptions struct {
 
 	// SANS provides additional SANs to include beyond those in the CSR.
 	SANS *SubjectAlternativeNames
+
+	// Signer optionally provides an external signer for this single signing
+	// operation. When non-nil, the CA uses this signer (and IssuerCert, if
+	// provided) instead of its own CA key + cert. This enables multi-tenant
+	// signing where tenant-specific keys issue certificates under an
+	// umbrella CA's trust chain.
+	Signer crypto.Signer
+
+	// IssuerCert optionally provides the issuer certificate for this
+	// signing operation. Required when Signer is non-nil and the signer's
+	// subject does not match the CA's own subject. Ignored when Signer
+	// is nil.
+	IssuerCert *x509.Certificate
 }

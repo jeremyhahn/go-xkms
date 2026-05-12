@@ -38,6 +38,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
+	p11 "github.com/miekg/pkcs11"
 )
 
 const (
@@ -77,7 +78,15 @@ func initSoftHSMToken(t *testing.T) (tokenLabel string, slotID int, cleanup func
 
 	t.Setenv("SOFTHSM2_CONF", confFile)
 
-	label := "test-piv-" + t.Name()
+	// SoftHSM2 enforces a max label length of 32 characters.
+	// Truncate the test name to fit within the limit.
+	name := t.Name()
+	const maxLabel = 32
+	const prefix = "piv-"
+	if len(prefix)+len(name) > maxLabel {
+		name = name[len(name)-(maxLabel-len(prefix)):]
+	}
+	label := prefix + name
 	cmd := exec.Command("softhsm2-util", "--init-token", "--free",
 		"--label", label, "--pin", testPIN, "--so-pin", testSOPIN)
 	cmd.Env = append(os.Environ(), "SOFTHSM2_CONF="+confFile)
@@ -133,6 +142,47 @@ func newPKCS11Storage(t *testing.T, libPath string, slotID int) *pivpkcs11.PKCS1
 
 	t.Cleanup(func() {
 		storage.Close()
+	})
+
+	return storage
+}
+
+// newSOSessionStorage opens a raw PKCS#11 context and session, logs in as
+// CKU_USER, then creates a PKCS11CertStorage via NewFromSessionWithSO.
+// Returns the storage. Cleanup closes the session and finalizes the context.
+func newSOSessionStorage(t *testing.T, libPath string, slotID int) *pivpkcs11.PKCS11CertStorage {
+	t.Helper()
+
+	ctx := p11.New(libPath)
+	require.NotNil(t, ctx, "failed to load PKCS#11 library")
+
+	if err := ctx.Initialize(); err != nil {
+		// Tolerate CKR_CRYPTOKI_ALREADY_INITIALIZED when SoftHSM is
+		// shared across tests in the same process.
+		if p11Err, ok := err.(p11.Error); !ok || uint(p11Err) != p11.CKR_CRYPTOKI_ALREADY_INITIALIZED {
+			require.NoError(t, err, "PKCS#11 Initialize failed")
+		}
+	}
+
+	session, err := ctx.OpenSession(uint(slotID), p11.CKF_SERIAL_SESSION|p11.CKF_RW_SESSION)
+	require.NoError(t, err, "OpenSession failed")
+
+	if err := ctx.Login(session, p11.CKU_USER, testPIN); err != nil {
+		// Tolerate CKR_USER_ALREADY_LOGGED_IN when token login is shared.
+		if p11Err, ok := err.(p11.Error); !ok || uint(p11Err) != p11.CKR_USER_ALREADY_LOGGED_IN {
+			require.NoError(t, err, "CKU_USER Login failed")
+		}
+	}
+
+	storage, err := pivpkcs11.NewFromSessionWithSO(ctx, session, uint(slotID), testSOPIN, testPIN)
+	require.NoError(t, err, "NewFromSessionWithSO failed")
+
+	t.Cleanup(func() {
+		storage.Close()
+		ctx.Logout(session)
+		ctx.CloseSession(session)
+		ctx.Finalize()
+		ctx.Destroy()
 	})
 
 	return storage
@@ -494,4 +544,151 @@ func TestPKCS11CertStorage_CKAIDMapping(t *testing.T) {
 
 	assert.NotEqual(t, cert9a.Raw, cert9c.Raw,
 		"certificates in different slots must be distinct (CKA_ID isolation)")
+}
+
+// TestPKCS11CertStorage_NewFromSessionWithSO verifies that a PKCS11CertStorage
+// created via NewFromSessionWithSO can perform the full Store/Retrieve/Delete
+// lifecycle, proving SO session elevation works for write operations.
+func TestPKCS11CertStorage_NewFromSessionWithSO(t *testing.T) {
+	libPath := softhsmLibPath()
+	if libPath == "" {
+		t.Skip("SoftHSM2 not available")
+	}
+
+	_, slotID, cleanup := initSoftHSMToken(t)
+	defer cleanup()
+
+	storage := newSOSessionStorage(t, libPath, slotID)
+
+	cert := generateTestCertWithSubject(t, "so-session-lifecycle")
+
+	// Store via SO-elevated session
+	err := storage.Store(pivcert.PIVSlotAuthentication, cert)
+	require.NoError(t, err, "Store via SO session should succeed")
+
+	// Retrieve and verify
+	retrieved, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err, "Retrieve after SO Store should succeed")
+	assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName,
+		"retrieved certificate subject should match stored certificate")
+	assert.Equal(t, cert.Raw, retrieved.Raw,
+		"retrieved certificate DER bytes should match stored certificate")
+
+	// List should show the slot
+	slots, err := storage.List()
+	require.NoError(t, err, "List should succeed")
+	found := false
+	for _, info := range slots {
+		if info.Slot == pivcert.PIVSlotAuthentication {
+			found = true
+			assert.Contains(t, info.Subject, "so-session-lifecycle")
+			break
+		}
+	}
+	assert.True(t, found, "slot 9a should appear in List after SO Store")
+
+	// Delete via SO-elevated session
+	err = storage.Delete(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err, "Delete via SO session should succeed")
+
+	// Confirm deletion
+	_, err = storage.Retrieve(pivcert.PIVSlotAuthentication)
+	require.Error(t, err, "Retrieve after Delete should fail")
+}
+
+// TestPKCS11CertStorage_SOSessionOverwrite verifies that overwriting a
+// certificate in the same slot works via SO session elevation. This is the
+// exact scenario that was broken (CKR_USER_TYPE_INVALID) before the SO
+// session support was added: the delete-then-create pattern during overwrite
+// requires SO login on YubiKey PIV tokens.
+func TestPKCS11CertStorage_SOSessionOverwrite(t *testing.T) {
+	libPath := softhsmLibPath()
+	if libPath == "" {
+		t.Skip("SoftHSM2 not available")
+	}
+
+	_, slotID, cleanup := initSoftHSMToken(t)
+	defer cleanup()
+
+	storage := newSOSessionStorage(t, libPath, slotID)
+
+	cert1 := generateTestCertWithSubject(t, "so-overwrite-original")
+	cert2 := generateTestCertWithSubject(t, "so-overwrite-replacement")
+
+	// Store first cert
+	err := storage.Store(pivcert.PIVSlotAuthentication, cert1)
+	require.NoError(t, err, "first Store via SO session should succeed")
+
+	// Verify first cert
+	retrieved, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err)
+	assert.Equal(t, "so-overwrite-original", retrieved.Subject.CommonName)
+
+	// Overwrite with second cert (this is the operation that previously failed
+	// with CKR_USER_TYPE_INVALID because the delete phase needed SO login)
+	err = storage.Store(pivcert.PIVSlotAuthentication, cert2)
+	require.NoError(t, err, "overwrite Store via SO session should succeed")
+
+	// Verify the replacement cert is stored
+	retrieved, err = storage.Retrieve(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err, "Retrieve after overwrite should succeed")
+	assert.Equal(t, "so-overwrite-replacement", retrieved.Subject.CommonName,
+		"retrieved certificate should be the replacement, not the original")
+	assert.Equal(t, cert2.Raw, retrieved.Raw,
+		"retrieved certificate DER bytes should match the replacement")
+	assert.NotEqual(t, cert1.Raw, retrieved.Raw,
+		"retrieved certificate should not match the original")
+
+	// Verify only one cert in the slot
+	slots, err := storage.List()
+	require.NoError(t, err)
+	count := 0
+	for _, info := range slots {
+		if info.Slot == pivcert.PIVSlotAuthentication {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "should have exactly one certificate in slot 9a after overwrite")
+}
+
+// TestPKCS11CertStorage_NewFromSessionWithSO_InvalidConfig verifies that
+// NewFromSessionWithSO returns an error when called with a nil context.
+func TestPKCS11CertStorage_NewFromSessionWithSO_InvalidConfig(t *testing.T) {
+	_, err := pivpkcs11.NewFromSessionWithSO(nil, 0, 0, testSOPIN, testPIN)
+	require.Error(t, err, "NewFromSessionWithSO with nil ctx should return an error")
+	assert.Contains(t, err.Error(), "NewFromSessionWithSO",
+		"error should identify the constructor")
+}
+
+// TestPKCS11CertStorage_SOSessionStore_ThenRegularRetrieve stores a certificate
+// via an SO-elevated session, then retrieves it via a regular (non-SO) session
+// to verify data integrity across session types. This proves that the cert
+// object written by the SO session is accessible to normal CKU_USER sessions.
+func TestPKCS11CertStorage_SOSessionStore_ThenRegularRetrieve(t *testing.T) {
+	libPath := softhsmLibPath()
+	if libPath == "" {
+		t.Skip("SoftHSM2 not available")
+	}
+
+	_, slotID, cleanup := initSoftHSMToken(t)
+	defer cleanup()
+
+	cert := generateTestCertWithSubject(t, "so-store-regular-retrieve")
+
+	// Store via SO-elevated session
+	soStorage := newSOSessionStorage(t, libPath, slotID)
+	err := soStorage.Store(pivcert.PIVSlotAuthentication, cert)
+	require.NoError(t, err, "Store via SO session should succeed")
+
+	// Retrieve via a separate regular (non-SO) session
+	regularStorage := newPKCS11Storage(t, libPath, slotID)
+	retrieved, err := regularStorage.Retrieve(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err, "Retrieve via regular session should succeed")
+
+	assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName,
+		"certificate subject should match across session types")
+	assert.Equal(t, cert.SerialNumber, retrieved.SerialNumber,
+		"certificate serial number should match across session types")
+	assert.Equal(t, cert.Raw, retrieved.Raw,
+		"certificate DER bytes should be identical across session types")
 }

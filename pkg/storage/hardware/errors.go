@@ -68,6 +68,14 @@ var (
 	// accepts DestroyObject but leaves the slot object intact because PIV
 	// slots can only be overwritten or reset, never individually deleted.
 	ErrDeleteNotSupportedOnToken = errors.New("hardware: token silently rejected cert deletion")
+
+	// ErrSOSessionRequired indicates the storage was configured with
+	// requireSO=true but no SO PIN was supplied. The operation would fall
+	// through to a CKU_USER session that the token rejects with
+	// CKR_USER_TYPE_INVALID (notably YubiKey PIV). The caller must provide
+	// an SO PIN (for YubiKey, the PIV management key hex string) when
+	// constructing the storage.
+	ErrSOSessionRequired = errors.New("PKCS#11 token requires SO session but no SO PIN was provided")
 )
 
 // IsCapacityError returns true if the error indicates a capacity-related issue

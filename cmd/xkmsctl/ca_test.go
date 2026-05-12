@@ -34,30 +34,30 @@ type mockCAClient struct {
 	connected  bool
 
 	// CA operations
-	caBundle     *transport.GetCABundleResponse
-	caBundleErr  error
-	caCert       *transport.GetCACertificateResponse
-	caCertErr    error
-	signCSRResp  *transport.SignCSRResponse
-	signCSRErr   error
-	issueResp    *transport.IssueCertificateResponse
-	issueErr     error
-	revokeResp   *transport.RevokeCertificateResponse
-	revokeErr    error
-	crlResp      *transport.GenerateCRLResponse
-	crlErr       error
+	caBundle      *transport.GetCABundleResponse
+	caBundleErr   error
+	caCert        *transport.GetCACertificateResponse
+	caCertErr     error
+	signCSRResp   *transport.SignCSRResponse
+	signCSRErr    error
+	issueResp     *transport.IssueCertificateResponse
+	issueErr      error
+	revokeResp    *transport.RevokeCertificateResponse
+	revokeErr     error
+	crlResp       *transport.GenerateCRLResponse
+	crlErr        error
 	isRevokedResp *transport.IsRevokedResponse
 	isRevokedErr  error
 
 	// TCG CA operations
-	issueEKResp  *transport.IssueEKCertificateResponse
-	issueEKErr   error
-	issueAKResp  *transport.IssueAKCertificateResponse
-	issueAKErr   error
-	signTCGResp  *transport.SignTCGCSRResponse
-	signTCGErr   error
-	enrollResp   *transport.EnrollDeviceResponse
-	enrollErr    error
+	issueEKResp *transport.IssueEKCertificateResponse
+	issueEKErr  error
+	issueAKResp *transport.IssueAKCertificateResponse
+	issueAKErr  error
+	signTCGResp *transport.SignTCGCSRResponse
+	signTCGErr  error
+	enrollResp  *transport.EnrollDeviceResponse
+	enrollErr   error
 }
 
 func newMockCAClient() *mockCAClient {
@@ -487,7 +487,7 @@ func (m *mockCAClient) GetTenant(_ context.Context, _ string) (*transport.GetTen
 func (m *mockCAClient) ListTenants(_ context.Context) (*transport.ListTenantsResponse, error) {
 	return nil, nil
 }
-func (m *mockCAClient) DeleteTenant(_ context.Context, _ string) error       { return nil }
+func (m *mockCAClient) DeleteTenant(_ context.Context, _ string) error { return nil }
 func (m *mockCAClient) TenantBarrierInit(_ context.Context, _ *transport.TenantBarrierInitRequest) error {
 	return nil
 }
@@ -515,8 +515,6 @@ func (m *mockCAClient) SubmitCredential(_ context.Context, _ *transport.Credenti
 func (m *mockCAClient) GetCredentialStrategy(_ context.Context) (*transport.CredentialStrategyResponse, error) {
 	return nil, nil
 }
-
-
 
 // =============================================================================
 // CA Command Structure Tests

@@ -97,8 +97,8 @@ func (a *JWTAuthenticator) AuthenticateHTTP(r *http.Request) (*Identity, error) 
 	}
 
 	// Add HTTP-specific attributes
-	identity.Attributes["auth_method"] = "jwt"
-	identity.Attributes["remote_addr"] = r.RemoteAddr
+	identity.Metadata["auth_method"] = "jwt"
+	identity.Metadata["remote_addr"] = r.RemoteAddr
 
 	return identity, nil
 }
@@ -130,12 +130,20 @@ func (a *JWTAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD)
 	}
 
 	// Add gRPC-specific attributes
-	identity.Attributes["auth_method"] = "jwt"
+	identity.Metadata["auth_method"] = "jwt"
 
 	return identity, nil
 }
 
 // validateToken parses and validates a JWT token.
+//
+// The token's standard claims map onto qrdb's Identity fields:
+//   - sub        → Identity.Subject (required)
+//   - tenant_id  → Identity.TenantID
+//   - role       → Identity.Roles (single role token)
+//   - roles      → Identity.Roles (preferred multi-role token)
+//   - username   → Identity.Metadata["username"]
+//   - name       → Identity.Metadata["display_name"]
 func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) {
 	// Parse token with verification
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
@@ -175,31 +183,23 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 		return nil, fmt.Errorf("missing subject claim")
 	}
 
-	// Build identity
 	identity := &Identity{
-		Subject:    sub,
-		Claims:     make(map[string]interface{}),
-		Attributes: make(map[string]string),
+		Subject:  sub,
+		Metadata: make(map[string]string),
 	}
 
-	// Copy all claims
-	for k, v := range claims {
-		identity.Claims[k] = v
-	}
-
-	// Extract role if present
-	if role, ok := claims["role"].(string); ok {
-		identity.Claims["roles"] = []string{role}
-	}
+	// Extract roles. Prefer the multi-role "roles" claim; fall back to a
+	// single-role "role" claim for OAuth2 deployments that emit one role.
+	identity.Roles = extractRolesClaim(claims)
 
 	// Extract username if present
 	if username, ok := claims["username"].(string); ok {
-		identity.Attributes["username"] = username
+		identity.Metadata["username"] = username
 	}
 
 	// Extract name if present
 	if name, ok := claims["name"].(string); ok {
-		identity.Attributes["display_name"] = name
+		identity.Metadata["display_name"] = name
 	}
 
 	// Extract tenant_id if present
@@ -208,6 +208,36 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 	}
 
 	return identity, nil
+}
+
+// extractRolesClaim extracts the role list from a JWT claims map. It supports
+// the canonical "roles" claim ([]string or []interface{}) and falls back to a
+// single-role "role" claim. Returns an empty slice when no role claim is set.
+func extractRolesClaim(claims jwt.MapClaims) []string {
+	if v, ok := claims["roles"]; ok {
+		switch r := v.(type) {
+		case []string:
+			out := make([]string, len(r))
+			copy(out, r)
+			return out
+		case []interface{}:
+			out := make([]string, 0, len(r))
+			for _, item := range r {
+				if s, ok := item.(string); ok && s != "" {
+					out = append(out, s)
+				}
+			}
+			return out
+		case string:
+			if r != "" {
+				return []string{r}
+			}
+		}
+	}
+	if role, ok := claims["role"].(string); ok && role != "" {
+		return []string{role}
+	}
+	return nil
 }
 
 // validateAudience checks if the token audience matches any configured audience.

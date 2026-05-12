@@ -481,7 +481,6 @@ func TestClaimShare_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-
 // --- Credentials ---
 
 func TestSubmitCredential_NotConnected(t *testing.T) {

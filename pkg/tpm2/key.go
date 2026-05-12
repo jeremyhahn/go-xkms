@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math"
 	"math/big"
+	"strings"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -252,8 +253,9 @@ func (tpm *TPM2) EKAttributes() (*types.KeyAttributes, error) {
 		// naming convention if a IDevID is defined, otherwise use "ek" as the CN.
 		if tpm.config.EK.CN == "" {
 			if tpm.config.IDevID != nil {
+				model := strings.ReplaceAll(tpm.config.IDevID.Model, " ", "_")
 				ekAttrs.CN = fmt.Sprintf("ek-%s-%s",
-					tpm.config.IDevID.Model, tpm.config.IDevID.Serial)
+					model, tpm.config.IDevID.Serial)
 			} else {
 				ekAttrs.CN = "ek"
 			}

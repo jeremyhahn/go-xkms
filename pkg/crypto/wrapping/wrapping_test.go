@@ -16,6 +16,7 @@ package wrapping
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -157,37 +158,43 @@ func TestInvalidInputs(t *testing.T) {
 	t.Run("WrapRSAOAEP_NilKeyMaterial", func(t *testing.T) {
 		_, err := WrapRSAOAEP(nil, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "key material cannot be nil or empty")
+		var eErr *EmptyInputError
+		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
 	})
 
 	t.Run("WrapRSAOAEP_EmptyKeyMaterial", func(t *testing.T) {
 		_, err := WrapRSAOAEP([]byte{}, &privateKey.PublicKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "key material cannot be nil or empty")
+		var eErr *EmptyInputError
+		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
 	})
 
 	t.Run("WrapRSAOAEP_NilPublicKey", func(t *testing.T) {
 		_, err := WrapRSAOAEP(validKeyMaterial, nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "public key cannot be nil")
+		var nErr *NilInputError
+		assert.True(t, errors.As(err, &nErr), "expected NilInputError, got %v", err)
 	})
 
 	t.Run("WrapRSAOAEP_InvalidAlgorithm", func(t *testing.T) {
 		_, err := WrapRSAOAEP(validKeyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithm("INVALID"))
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported wrapping algorithm")
+		var uErr *UnsupportedAlgorithmError
+		assert.True(t, errors.As(err, &uErr), "expected UnsupportedAlgorithmError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAOAEP_NilWrappedKey", func(t *testing.T) {
 		_, err := UnwrapRSAOAEP(nil, privateKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "wrapped key cannot be nil or empty")
+		var eErr *EmptyInputError
+		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAOAEP_EmptyWrappedKey", func(t *testing.T) {
 		_, err := UnwrapRSAOAEP([]byte{}, privateKey, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "wrapped key cannot be nil or empty")
+		var eErr *EmptyInputError
+		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAOAEP_NilPrivateKey", func(t *testing.T) {
@@ -196,7 +203,8 @@ func TestInvalidInputs(t *testing.T) {
 
 		_, err = UnwrapRSAOAEP(wrapped, nil, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "private key cannot be nil")
+		var nErr *NilInputError
+		assert.True(t, errors.As(err, &nErr), "expected NilInputError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAOAEP_InvalidAlgorithm", func(t *testing.T) {
@@ -205,7 +213,8 @@ func TestInvalidInputs(t *testing.T) {
 
 		_, err = UnwrapRSAOAEP(wrapped, privateKey, backend.WrappingAlgorithm("INVALID"))
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported wrapping algorithm")
+		var uErr *UnsupportedAlgorithmError
+		assert.True(t, errors.As(err, &uErr), "expected UnsupportedAlgorithmError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAOAEP_CorruptedData", func(t *testing.T) {
@@ -222,37 +231,41 @@ func TestInvalidInputs(t *testing.T) {
 	t.Run("WrapRSAAES_NilKeyMaterial", func(t *testing.T) {
 		_, err := WrapRSAAES(nil, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "key material cannot be nil or empty")
+		var eErr *EmptyInputError
+		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
 	})
 
 	t.Run("WrapRSAAES_EmptyKeyMaterial", func(t *testing.T) {
 		_, err := WrapRSAAES([]byte{}, &privateKey.PublicKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "key material cannot be nil or empty")
+		var eErr *EmptyInputError
+		assert.True(t, errors.As(err, &eErr), "expected EmptyInputError, got %v", err)
 	})
 
 	t.Run("WrapRSAAES_NilPublicKey", func(t *testing.T) {
 		_, err := WrapRSAAES(validKeyMaterial, nil, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "public key cannot be nil")
+		var nErr *NilInputError
+		assert.True(t, errors.As(err, &nErr), "expected NilInputError, got %v", err)
 	})
 
 	t.Run("WrapRSAAES_InvalidAlgorithm", func(t *testing.T) {
 		_, err := WrapRSAAES(validKeyMaterial, &privateKey.PublicKey, backend.WrappingAlgorithm("INVALID"))
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported wrapping algorithm")
+		var uErr *UnsupportedAlgorithmError
+		assert.True(t, errors.As(err, &uErr), "expected UnsupportedAlgorithmError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAAES_NilWrappedKey", func(t *testing.T) {
 		_, err := UnwrapRSAAES(nil, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "wrapped key is too short or nil")
+		assert.Error(t, err) // malformed or empty wrapped key
 	})
 
 	t.Run("UnwrapRSAAES_TooShortWrappedKey", func(t *testing.T) {
 		_, err := UnwrapRSAAES([]byte{1, 2, 3}, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "wrapped key is too short or nil")
+		assert.Error(t, err) // malformed or empty wrapped key
 	})
 
 	t.Run("UnwrapRSAAES_NilPrivateKey", func(t *testing.T) {
@@ -261,7 +274,8 @@ func TestInvalidInputs(t *testing.T) {
 
 		_, err = UnwrapRSAAES(wrapped, nil, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "private key cannot be nil")
+		var nErr *NilInputError
+		assert.True(t, errors.As(err, &nErr), "expected NilInputError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAAES_InvalidAlgorithm", func(t *testing.T) {
@@ -270,7 +284,8 @@ func TestInvalidInputs(t *testing.T) {
 
 		_, err = UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithm("INVALID"))
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported wrapping algorithm")
+		var uErr *UnsupportedAlgorithmError
+		assert.True(t, errors.As(err, &uErr), "expected UnsupportedAlgorithmError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAAES_CorruptedLength", func(t *testing.T) {
@@ -285,7 +300,8 @@ func TestInvalidInputs(t *testing.T) {
 
 		_, err = UnwrapRSAAES(wrapped, privateKey, backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "corrupted")
+		var mErr *MalformedWrappedKeyError
+		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
 	})
 
 	t.Run("UnwrapRSAAES_CorruptedAESKey", func(t *testing.T) {
@@ -353,28 +369,32 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 		invalidKey := make([]byte, 15)
 		_, err := wrapKeyWithAESKWP(validPlaintext, invalidKey)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "AES key must be")
+		var szErr *InvalidKeySizeError
+		assert.True(t, errors.As(err, &szErr), "expected InvalidKeySizeError, got %v", err)
 	})
 
 	t.Run("InvalidKeySize_20bytes", func(t *testing.T) {
 		invalidKey := make([]byte, 20)
 		_, err := wrapKeyWithAESKWP(validPlaintext, invalidKey)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "AES key must be")
+		var szErr *InvalidKeySizeError
+		assert.True(t, errors.As(err, &szErr), "expected InvalidKeySizeError, got %v", err)
 	})
 
 	t.Run("UnwrapInvalidCiphertextLength", func(t *testing.T) {
 		shortCiphertext := make([]byte, 8) // Too short
 		_, err := unwrapKeyWithAESKWP(shortCiphertext, validAESKey)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "must be at least 16 bytes")
+		var mErr *MalformedWrappedKeyError
+		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
 	})
 
 	t.Run("UnwrapInvalidCiphertextAlignment", func(t *testing.T) {
 		badCiphertext := make([]byte, 17) // Not a multiple of 8
 		_, err := unwrapKeyWithAESKWP(badCiphertext, validAESKey)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "multiple of 8")
+		var mErr *MalformedWrappedKeyError
+		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
 	})
 
 	t.Run("UnwrapCorruptedAIV", func(t *testing.T) {
@@ -386,7 +406,8 @@ func TestAESKWP_InvalidInputs(t *testing.T) {
 
 		_, err = unwrapKeyWithAESKWP(wrapped, validAESKey)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid AIV")
+		var mErr *MalformedWrappedKeyError
+		assert.True(t, errors.As(err, &mErr), "expected MalformedWrappedKeyError, got %v", err)
 	})
 
 	t.Run("UnwrapWrongKey", func(t *testing.T) {

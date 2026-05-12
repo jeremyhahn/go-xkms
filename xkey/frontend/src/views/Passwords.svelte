@@ -17,7 +17,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { mdiPlus, mdiLockOutline, mdiDownload, mdiUpload, mdiImport, mdiAccountGroup, mdiPencil, mdiDelete } from '$lib/utils/icons';
   import { addNotification } from '$lib/stores/notifications';
-  import { isWailsAvailable, callBackend, callBackendVoid, TeamService } from '$lib/api/backend';
+  import { isWailsAvailable, notifyBackendUnavailable, callBackend, callBackendVoid, TeamService } from '$lib/api/backend';
   import type {
     StaticPasswordEntry,
     AddPasswordParams,
@@ -397,7 +397,19 @@
     showEditDialog = true;
   }
 
+  function openImportDialog(): void {
+    if (!isWailsAvailable()) {
+      notifyBackendUnavailable('Importing passwords');
+      return;
+    }
+    showImportDialog = true;
+  }
+
   function openRestoreDialog(): void {
+    if (!isWailsAvailable()) {
+      notifyBackendUnavailable('Restoring passwords');
+      return;
+    }
     restoreFilePath = '';
     restoreEncrypted = false;
     restoreAlgorithm = 'aes-256';
@@ -449,6 +461,10 @@
   }
 
   function openBackupDialog(): void {
+    if (!isWailsAvailable()) {
+      notifyBackendUnavailable('Backing up passwords');
+      return;
+    }
     backupEncrypt = false;
     backupAlgorithm = 'aes-256';
     backupPassword = '';
@@ -503,7 +519,7 @@
   <GradientHeader title="Passwords" subtitle="Static password management" />
 
   <ViewToolbar>
-    <Button icon={mdiImport} variant="outline" on:click={() => { showImportDialog = true; }}>Import</Button>
+    <Button icon={mdiImport} variant="outline" on:click={openImportDialog}>Import</Button>
     <Button icon={mdiUpload} variant="outline" on:click={openRestoreDialog}>Restore</Button>
     <Button icon={mdiDownload} variant="outline" on:click={openBackupDialog}>Backup</Button>
     <div class="toolbar-spacer" />
@@ -663,7 +679,7 @@
     onImported={loadPasswords}
   />
 
-  <Modal title="Backup Passwords" bind:open={showBackupDialog} persistent={false}>
+  <Modal title="Backup Passwords" bind:open={showBackupDialog}>
     <div class="backup-body">
       <p class="text-body-medium backup-description">
         Export all {passwords.length} password{passwords.length !== 1 ? 's' : ''} to a file. Optionally encrypt the backup with AES.
@@ -695,7 +711,7 @@
     </svelte:fragment>
   </Modal>
 
-  <Modal title="Restore Passwords" bind:open={showRestoreDialog} persistent={false}>
+  <Modal title="Restore Passwords" bind:open={showRestoreDialog}>
     <div class="backup-body">
       <p class="text-body-medium backup-description">
         Import passwords from a backup file. Existing passwords with the same name will be skipped.

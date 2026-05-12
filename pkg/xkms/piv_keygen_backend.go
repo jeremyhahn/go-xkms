@@ -143,10 +143,14 @@ func (g *backendPIVKeyGenerator) GeneratePIVKey(slot pivcert.PIVSlot, algorithm 
 	return g.backend.Signer(attrs)
 }
 
-// GetPIVSigner returns a signer for an existing key identified by CN.
-func (g *backendPIVKeyGenerator) GetPIVSigner(_ pivcert.PIVSlot, cn string) (crypto.Signer, error) {
+// GetPIVSigner returns a signer for an existing key in the given PIV slot.
+// PIVSlot is populated so slot-constrained backends (e.g., YubiKey PKCS#11)
+// can locate the key by CKA_ID instead of relying on a CN convention that may
+// not match the certificate subject users choose when generating the key.
+func (g *backendPIVKeyGenerator) GetPIVSigner(slot pivcert.PIVSlot, cn string) (crypto.Signer, error) {
 	attrs := &types.KeyAttributes{
-		CN: cn,
+		CN:      cn,
+		PIVSlot: string(slot),
 	}
 	return g.backend.Signer(attrs)
 }

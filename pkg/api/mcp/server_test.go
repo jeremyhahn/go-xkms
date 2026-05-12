@@ -1811,7 +1811,6 @@ func TestServer_HandleRequest_WithAuthenticatedIdentity(t *testing.T) {
 	// Create context with identity
 	identity := &auth.Identity{
 		Subject: "test-user",
-		Claims:  make(map[string]interface{}),
 	}
 	ctx := auth.WithIdentity(context.Background(), identity)
 

@@ -1,0 +1,11 @@
+{
+  "name": "trusted-ca-integration-client-playwright",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.45.0"
+  }
+}

@@ -204,6 +204,14 @@ func (s *PKCS11Service) ProbeModules() []ProbeResult {
 }
 
 // isSoftHSM2Module checks if the library path is a SoftHSM2 module.
+// isYubiKeyLibraryPath reports whether the supplied library path refers to
+// the Yubico PKCS#11 module (libykcs11). Detection is path-based because the
+// canonical filename is unambiguous across distributions and packaging.
+func isYubiKeyLibraryPath(libraryPath string) bool {
+	base := strings.ToLower(filepath.Base(libraryPath))
+	return strings.Contains(base, "libykcs11") || strings.Contains(base, "ykcs11")
+}
+
 func isSoftHSM2Module(libraryPath string) bool {
 	base := strings.ToLower(filepath.Base(libraryPath))
 	return strings.Contains(base, "softhsm")
@@ -573,6 +581,14 @@ func (s *PKCS11Service) Connect(moduleID string, slotID uint, userPin, soPin str
 		"module_id", moduleID,
 		"slot_id", slotID)
 
+	// Re-probe the module's slots before connecting. Modules restored from
+	// config at startup may have stale slot info (e.g., YubiKey not plugged
+	// in yet, or another app held the CCID interface during startup scan).
+	if _, refreshErr := s.RefreshSlots(moduleID); refreshErr != nil {
+		s.log.Debug("slot refresh before connect failed, proceeding with cached info",
+			"module_id", moduleID, "error", refreshErr)
+	}
+
 	// Get module info to validate slot
 	mod, err := s.manager.GetModule(moduleID)
 	if err != nil {
@@ -625,6 +641,21 @@ func (s *PKCS11Service) Connect(moduleID string, slotID uint, userPin, soPin str
 			return fmt.Errorf("%w: slot %d not found, available initialized slots: %v", ErrPKCS11SlotNotFound, slotID, availableSlots)
 		}
 		return fmt.Errorf("%w: slot %d (module has %d slots, none initialized)", ErrPKCS11SlotNotFound, slotID, len(mod.Slots))
+	}
+
+	// Warn when connecting to a YubiKey without an SO PIN: the token will
+	// refuse certificate writes (C_DestroyObject / C_CreateObject) under
+	// CKU_USER with CKR_USER_TYPE_INVALID. The management key must be
+	// supplied as the SO PIN for any slot that requires mutating
+	// certificate objects (e.g. PIV slot 9a key generation).
+	if isYubiKeyLibraryPath(mod.LibraryPath) && soPin == "" {
+		s.log.Error("YubiKey PIV requires SO PIN (management key) for key generation and certificate writes -- refusing to connect",
+			"module_id", moduleID,
+			"slot_id", slotID,
+			"library_path", mod.LibraryPath)
+		return fmt.Errorf("%w: YubiKey PIV requires the management key (factory default: %s)",
+			ErrPKCS11SOPINRequired,
+			"010203040506070801020304050607080102030405060708")
 	}
 
 	_, err = s.manager.Connect(moduleID, slotID, userPin, soPin)

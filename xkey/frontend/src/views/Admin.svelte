@@ -14,7 +14,7 @@
     mdiChevronUp, mdiChevronDown
   } from '$lib/utils/icons';
   import { navigateTo } from '$lib/stores/app';
-  import { isWailsAvailable, callBackend, callBackendVoid } from '$lib/api/backend';
+  import { isWailsAvailable, callBackend, callBackendVoid, callBackendVoidWithError } from '$lib/api/backend';
   import { addNotification } from '$lib/stores/notifications';
   import type {
     BackendBackendInfo,
@@ -194,6 +194,28 @@
   // Connection test state
   let connectionTestStatus: 'idle' | 'testing' | 'success' | 'error' = 'idle';
   let connectionTestMessage = '';
+
+  // Default YubiKey PIV management key (hex, 24 bytes). Used to prefill
+  // the SO PIN field when a YubiKey is detected; users override if they
+  // have changed the management key on the device.
+  const YUBIKEY_DEFAULT_MGMT_KEY = '010203040506070801020304050607080102030405060708';
+
+  // Reactive: true when the currently selected PKCS#11 library path
+  // matches a YubiKey module. Detected via the file basename (libykcs11)
+  // OR the probed display name reported by ProbeSlots (e.g. 'YubiKey').
+  $: pkcs11IsYubiKey = (() => {
+    const lib = (backendConfig['library_path'] || '').toLowerCase();
+    const display = (backendConfig['display_name'] || '').toLowerCase();
+    return lib.includes('libykcs11') || lib.includes('ykcs11') || display.includes('yubikey');
+  })();
+
+  // Auto-prefill SO PIN with the default YubiKey management key when a
+  // YubiKey is detected and the field is currently empty. This matches
+  // the dedicated 'yubikey' backend flow and avoids silent failures on
+  // certificate write operations.
+  $: if (pkcs11IsYubiKey && !pkcs11SoPin) {
+    pkcs11SoPin = YUBIKEY_DEFAULT_MGMT_KEY;
+  }
 
   // Connect backend dialog state
   let showConnectDialog = false;
@@ -630,6 +652,16 @@
             return;
           }
 
+          // YubiKey PIV requires the management key (supplied as SO PIN)
+          // for any operation that writes certificates (e.g. key
+          // generation on slot 9a). Reject early rather than letting the
+          // backend surface CKR_USER_TYPE_INVALID.
+          if (pkcs11IsYubiKey && !pkcs11SoPin) {
+            addNotification('error', 'YubiKey PIV requires the management key (SO PIN) for certificate writes');
+            addingBackend = false;
+            return;
+          }
+
           if (pkcs11Initialize) {
             // Validate initialization fields
             if (!pkcs11TokenLabel) {
@@ -743,15 +775,26 @@
 
   async function handleConnectBackend(backendId: string, backendType: string): Promise<void> {
     if (backendType === 'pkcs11') {
-      // Find the backend to get its display name
       const backend = backends.find(b => b.id === backendId);
       connectBackendId = backendId;
       connectBackendType = backendType;
       connectBackendName = backend?.deviceName || backend?.name || backendId;
       connectUserPin = '';
-      connectMgmtKey = '';
-      connectSlotId = 0; // Default slot, could be enhanced to remember/lookup
+      connectSlotId = 0;
       connecting = false;
+
+      // YubiKey PIV requires the management key (SO PIN) for all write ops.
+      // Prefill with the factory default so users don't have to look it up.
+      const isYubiKeyBackend = backendId.includes('ykcs11') || backendId.includes('yubikey')
+        || (backend?.metadata?.library_path?.includes('ykcs11') ?? false);
+      connectMgmtKey = isYubiKeyBackend ? YUBIKEY_DEFAULT_MGMT_KEY : '';
+
+      // Re-probe slots so stale module info (e.g., from startup when YubiKey
+      // was not yet plugged in) gets refreshed before the user tries to connect.
+      if (backend?.metadata?.library_path) {
+        await callBackend('PKCS11Service', 'ProbeSlots', backend.metadata.library_path);
+      }
+
       showConnectDialog = true;
     } else {
       addNotification('info', `Connect to ${backendId} - not implemented for ${backendType}`);
@@ -767,7 +810,7 @@
     connecting = true;
     try {
       if (connectBackendType === 'pkcs11') {
-        const ok = await callBackendVoid(
+        const { ok, error } = await callBackendVoidWithError(
           'PKCS11Service', 'Connect',
           connectBackendId, connectSlotId, connectUserPin, connectMgmtKey
         );
@@ -776,7 +819,7 @@
           showConnectDialog = false;
           await loadBackends();
         } else {
-          addNotification('error', 'Failed to connect. Check your PIN.');
+          addNotification('error', error || 'Failed to connect. Check your PIN and management key.');
         }
       }
     } catch (err) {
@@ -1198,6 +1241,28 @@
               />
               <span class="field-hint text-body-small">Enter the User PIN to connect to an existing initialized token</span>
             </div>
+
+            {#if pkcs11IsYubiKey}
+              <!-- Management key (SO PIN) is required for YubiKey PIV
+                   certificate writes. Prefilled with the Yubico default;
+                   user must override if they have changed it. -->
+              <div class="form-field">
+                <label class="text-label-medium" for="pkcs11-yubi-mgmt-key">
+                  Management Key (SO PIN) <span class="required">*</span>
+                </label>
+                <input
+                  id="pkcs11-yubi-mgmt-key"
+                  data-testid="pkcs11-yubi-mgmt-key"
+                  type="password"
+                  class="text-input"
+                  required
+                  aria-required="true"
+                  placeholder="YubiKey PIV management key (hex)"
+                  bind:value={pkcs11SoPin}
+                />
+                <span class="field-hint text-body-small">YubiKey PIV requires the management key to write/delete certificates.</span>
+              </div>
+            {/if}
           {/if}
 
           <!-- Slot Selection -->

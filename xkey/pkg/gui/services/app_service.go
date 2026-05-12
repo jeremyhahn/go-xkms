@@ -60,6 +60,18 @@ type AppStatus struct {
 	HardwareBacked   bool   `json:"hardware_backed"`
 }
 
+// IdentityConfig stores default X.509 subject fields used as defaults
+// when generating certificates, CSRs, and PIV credentials. Configured
+// once in Settings → Identity and reused across all cert operations.
+type IdentityConfig struct {
+	CommonName         string `json:"common_name"`
+	Organization       string `json:"organization"`
+	OrganizationalUnit string `json:"organizational_unit"`
+	Country            string `json:"country"`
+	Province           string `json:"province"`
+	Locality           string `json:"locality"`
+}
+
 // GUIConfigData mirrors the GUI configuration fields so the services
 // package does not import the gui package (avoiding import cycles).
 // The gui.App is responsible for creating this from gui.GUIConfig.
@@ -104,6 +116,7 @@ type GUIConfigData struct {
 	FIDO2RequireUserPresence  bool                     `json:"fido2_require_user_presence"`
 	FIDO2UserIntentCheck      bool                     `json:"fido2_user_intent_check"`
 	AutoFillPolicy            *autofill.AutoFillPolicy `json:"autofill_policy,omitempty"`
+	Identity                  IdentityConfig           `json:"identity"`
 }
 
 // ConfigUpdater is called by AppService.UpdateConfig to persist changes.
@@ -517,6 +530,9 @@ func configChangedFields(old, new *GUIConfigData) []string {
 	if old.DeveloperTools != new.DeveloperTools {
 		fields = append(fields, "developer_tools")
 	}
+	if old.Identity != new.Identity {
+		fields = append(fields, "identity")
+	}
 	return fields
 }
 
@@ -562,6 +578,26 @@ func (s *AppService) SetDeveloperTools(enabled bool) error {
 	return s.UpdateConfig(&updated)
 }
 
+// GetIdentity returns the current identity configuration with default
+// X.509 subject fields.
+func (s *AppService) GetIdentity() IdentityConfig {
+	cfg := s.config.Load()
+	if cfg == nil {
+		return IdentityConfig{}
+	}
+	return cfg.Identity
+}
+
+// UpdateIdentity updates the identity configuration and persists it.
+func (s *AppService) UpdateIdentity(identity IdentityConfig) error {
+	cfg := s.GetConfig()
+	if cfg == nil {
+		return ErrAppConfigNil
+	}
+	cfg.Identity = identity
+	return s.UpdateConfig(cfg)
+}
+
 // MinimizeToTray hides the main application window to the system tray.
 func (s *AppService) MinimizeToTray() {
 	if s.windowHideFunc != nil {
@@ -586,6 +622,33 @@ func (s *AppService) SaveTextFile(suggestedName string, content string) (string,
 		Filters: []wailsruntime.FileFilter{
 			{DisplayName: "JSON Files", Pattern: "*.json"},
 			{DisplayName: "Text Files", Pattern: "*.txt"},
+			{DisplayName: "All Files", Pattern: "*"},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if filePath == "" {
+		return "", nil // user cancelled
+	}
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		return "", err
+	}
+	return filePath, nil
+}
+
+// SavePEMFile opens a native save dialog filtered for PEM-encoded artefacts
+// (certificates, public keys, CSRs) and writes the provided content to the
+// chosen file path. Returns the saved file path, or an empty string if the
+// user cancelled the dialog.
+func (s *AppService) SavePEMFile(suggestedName string, content string) (string, error) {
+	filePath, err := wailsruntime.SaveFileDialog(s.ctx, wailsruntime.SaveDialogOptions{
+		DefaultFilename: suggestedName,
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "PEM Files", Pattern: "*.pem"},
+			{DisplayName: "Certificate Files", Pattern: "*.crt;*.cer"},
+			{DisplayName: "CSR Files", Pattern: "*.csr"},
+			{DisplayName: "Public Key Files", Pattern: "*.pub"},
 			{DisplayName: "All Files", Pattern: "*"},
 		},
 	})

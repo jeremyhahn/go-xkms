@@ -17,8 +17,8 @@ package grpc
 
 import (
 	"context"
-	"crypto/ed25519"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -30,8 +30,8 @@ import (
 	"time"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/pin"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -2545,9 +2545,9 @@ func TestWrapKey_InvalidPublicKey(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.WrapKey(context.Background(), &pb.WrapKeyRequest{
-		KeyMaterial:      []byte("key-material"),
+		KeyMaterial:       []byte("key-material"),
 		WrappingPublicKey: []byte("invalid-public-key"),
-		Algorithm:        "RSAES_OAEP_SHA_256",
+		Algorithm:         "RSAES_OAEP_SHA_256",
 	})
 	require.Error(t, err)
 	st, ok := status.FromError(err)
@@ -2632,7 +2632,7 @@ func TestDeriveKey_UnsupportedAlgorithm(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.DeriveKey(context.Background(), &pb.DeriveKeyRequest{
-		Algorithm:     "unsupported-kdf",
+		Algorithm:        "unsupported-kdf",
 		InputKeyMaterial: []byte("input"),
 	})
 	require.Error(t, err)
@@ -3003,8 +3003,8 @@ func TestUnseal_NoBackendsAvailable(t *testing.T) {
 // denyAllAuthorizer always denies authorization.
 type denyAllAuthorizer struct{}
 
-func (d *denyAllAuthorizer) Authorize(_ context.Context, _ *authz.AuthorizationRequest) (*authz.AuthorizationDecision, error) {
-	return &authz.AuthorizationDecision{Allowed: false, Reason: "denied"}, nil
+func (d *denyAllAuthorizer) Authorize(_ context.Context, _ *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
+	return &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied"}, nil
 }
 
 func TestAuthzDeny_BarrierShamirMethods(t *testing.T) {
@@ -3477,7 +3477,7 @@ func TestImportKey_UnsupportedTypeWithRealBackend(t *testing.T) {
 	_, err = svc.ImportKey(context.Background(), &pb.ImportKeyRequest{
 		KeyId: "imp-unsup-dst", Backend: "software",
 		WrappedKey: exp.WrappedKey, Algorithm: exp.Algorithm,
-		KeyType: "chacha20",
+		KeyType:     "chacha20",
 		ImportToken: exp.ImportToken,
 	})
 	require.Error(t, err)

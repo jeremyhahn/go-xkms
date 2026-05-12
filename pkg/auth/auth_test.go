@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,34 +30,28 @@ func TestIdentity_HasRole(t *testing.T) {
 		want     bool
 	}{
 		{
-			name: "has role - string slice",
+			name: "has role",
 			identity: &Identity{
 				Subject: "user1",
-				Claims: map[string]interface{}{
-					"roles": []string{"admin", "user"},
-				},
+				Roles:   []string{"admin", "user"},
 			},
 			role: "admin",
 			want: true,
 		},
 		{
-			name: "has role - interface slice",
+			name: "second role match",
 			identity: &Identity{
 				Subject: "user1",
-				Claims: map[string]interface{}{
-					"roles": []interface{}{"admin", "user"},
-				},
+				Roles:   []string{"admin", "user"},
 			},
 			role: "user",
 			want: true,
 		},
 		{
-			name: "has role - single string",
+			name: "single role match",
 			identity: &Identity{
 				Subject: "user1",
-				Claims: map[string]interface{}{
-					"roles": "admin",
-				},
+				Roles:   []string{"admin"},
 			},
 			role: "admin",
 			want: true,
@@ -65,171 +60,33 @@ func TestIdentity_HasRole(t *testing.T) {
 			name: "does not have role",
 			identity: &Identity{
 				Subject: "user1",
-				Claims: map[string]interface{}{
-					"roles": []string{"user", "guest"},
-				},
+				Roles:   []string{"user", "guest"},
 			},
 			role: "admin",
 			want: false,
 		},
 		{
-			name:     "nil identity",
-			identity: nil,
-			role:     "admin",
-			want:     false,
-		},
-		{
-			name: "nil claims",
+			name: "no roles assigned",
 			identity: &Identity{
 				Subject: "user1",
-				Claims:  nil,
 			},
 			role: "admin",
 			want: false,
 		},
 		{
-			name: "empty roles",
+			name: "empty role lookup",
 			identity: &Identity{
 				Subject: "user1",
-				Claims:  map[string]interface{}{},
+				Roles:   []string{"admin"},
 			},
-			role: "admin",
+			role: "",
 			want: false,
-		},
-		{
-			name: "roles claim missing",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"other": "value",
-				},
-			},
-			role: "admin",
-			want: false,
-		},
-		{
-			name: "interface slice with non-string",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"roles": []interface{}{"admin", 123, "user"},
-				},
-			},
-			role: "admin",
-			want: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := tt.identity.HasRole(tt.role)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestIdentity_HasPermission(t *testing.T) {
-	tests := []struct {
-		name       string
-		identity   *Identity
-		permission string
-		want       bool
-	}{
-		{
-			name: "has permission - string slice",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"permissions": []string{"read", "write"},
-				},
-			},
-			permission: "read",
-			want:       true,
-		},
-		{
-			name: "has permission - interface slice",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"permissions": []interface{}{"read", "write"},
-				},
-			},
-			permission: "write",
-			want:       true,
-		},
-		{
-			name: "has permission - single string",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"permissions": "read",
-				},
-			},
-			permission: "read",
-			want:       true,
-		},
-		{
-			name: "does not have permission",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"permissions": []string{"read"},
-				},
-			},
-			permission: "write",
-			want:       false,
-		},
-		{
-			name:       "nil identity",
-			identity:   nil,
-			permission: "read",
-			want:       false,
-		},
-		{
-			name: "nil claims",
-			identity: &Identity{
-				Subject: "user1",
-				Claims:  nil,
-			},
-			permission: "read",
-			want:       false,
-		},
-		{
-			name: "empty permissions",
-			identity: &Identity{
-				Subject: "user1",
-				Claims:  map[string]interface{}{},
-			},
-			permission: "read",
-			want:       false,
-		},
-		{
-			name: "permissions claim missing",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"other": "value",
-				},
-			},
-			permission: "read",
-			want:       false,
-		},
-		{
-			name: "interface slice with non-string",
-			identity: &Identity{
-				Subject: "user1",
-				Claims: map[string]interface{}{
-					"permissions": []interface{}{"read", 456, "write"},
-				},
-			},
-			permission: "read",
-			want:       true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.identity.HasPermission(tt.permission)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -244,10 +101,8 @@ func TestWithIdentity_GetIdentity(t *testing.T) {
 			name: "valid identity",
 			identity: &Identity{
 				Subject: "user1",
-				Claims: map[string]interface{}{
-					"roles": []string{"admin"},
-				},
-				Attributes: map[string]string{
+				Roles:   []string{"admin"},
+				Metadata: map[string]string{
 					"auth_method": "apikey",
 				},
 			},
@@ -264,10 +119,8 @@ func TestWithIdentity_GetIdentity(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			// Add identity to context
 			ctxWithIdentity := WithIdentity(ctx, tt.identity)
 
-			// Retrieve identity from context
 			retrieved := GetIdentity(ctxWithIdentity)
 
 			require.NotNil(t, retrieved)
@@ -285,6 +138,9 @@ func TestGetIdentity_NoIdentity(t *testing.T) {
 }
 
 func TestGetIdentity_WrongType(t *testing.T) {
+	// IdentityContextKey is a constant exposed for tests that need to
+	// validate the helper doesn't panic when a non-Identity value is
+	// stored under the same key.
 	ctx := context.WithValue(context.Background(), IdentityContextKey, "not an identity")
 
 	identity := GetIdentity(ctx)
@@ -300,9 +156,8 @@ func TestNoOpAuthenticator_AuthenticateHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, identity)
 	assert.Equal(t, "anonymous", identity.Subject)
-	assert.NotNil(t, identity.Claims)
-	assert.NotNil(t, identity.Attributes)
-	assert.Equal(t, "none", identity.Attributes["auth_method"])
+	assert.NotNil(t, identity.Metadata)
+	assert.Equal(t, "none", identity.Metadata["auth_method"])
 }
 
 func TestNoOpAuthenticator_AuthenticateGRPC(t *testing.T) {
@@ -313,9 +168,8 @@ func TestNoOpAuthenticator_AuthenticateGRPC(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, identity)
 	assert.Equal(t, "anonymous", identity.Subject)
-	assert.NotNil(t, identity.Claims)
-	assert.NotNil(t, identity.Attributes)
-	assert.Equal(t, "none", identity.Attributes["auth_method"])
+	assert.NotNil(t, identity.Metadata)
+	assert.Equal(t, "none", identity.Metadata["auth_method"])
 }
 
 func TestNoOpAuthenticator_Name(t *testing.T) {
@@ -326,25 +180,45 @@ func TestNoOpAuthenticator_Name(t *testing.T) {
 	assert.Equal(t, "noop", name)
 }
 
-func TestIdentity_TenantID_Empty(t *testing.T) {
-	identity := &Identity{
-		Subject: "user1",
-	}
-	assert.True(t, identity.IsCrossTenant(), "IsCrossTenant should return true for empty TenantID")
+func TestIsCrossTenant_NilIdentity(t *testing.T) {
+	assert.True(t, IsCrossTenant(nil),
+		"a nil identity is platform-internal: no auth context implies system scope")
 }
 
-func TestIdentity_TenantID_Set(t *testing.T) {
-	identity := &Identity{
-		Subject:  "user1",
-		TenantID: "tenant-abc",
-	}
-	assert.False(t, identity.IsCrossTenant(), "IsCrossTenant should return false for populated TenantID")
-	assert.Equal(t, "tenant-abc", identity.TenantID)
+func TestIsCrossTenant_SystemTenant(t *testing.T) {
+	id := &Identity{Subject: "platform-admin", TenantID: tenant.SystemTenantID}
+	assert.True(t, IsCrossTenant(id),
+		"identities anchored in the system tenant get platform/cross-tenant scope")
 }
 
-func TestIdentity_TenantID_Nil(t *testing.T) {
-	var identity *Identity
-	assert.True(t, identity.IsCrossTenant(), "IsCrossTenant should return true for nil identity")
+func TestIsCrossTenant_EmptyTenant(t *testing.T) {
+	id := &Identity{Subject: "bootstrap"}
+	assert.True(t, IsCrossTenant(id),
+		"a bootstrap identity (empty TenantID) is treated as system-scoped pre-tenant-binding")
+}
+
+func TestIsCrossTenant_ScopedTenant(t *testing.T) {
+	id := &Identity{Subject: "user1", TenantID: "tenant-abc"}
+	assert.False(t, IsCrossTenant(id),
+		"a tenant-scoped identity is bound to its own tenant only")
+}
+
+func TestFirstRole(t *testing.T) {
+	cases := []struct {
+		name string
+		id   *Identity
+		want string
+	}{
+		{name: "nil identity", id: nil, want: ""},
+		{name: "no roles", id: &Identity{Subject: "u"}, want: ""},
+		{name: "single role", id: &Identity{Subject: "u", Roles: []string{"admin"}}, want: "admin"},
+		{name: "multiple roles", id: &Identity{Subject: "u", Roles: []string{"so", "user"}}, want: "so"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, FirstRole(tc.id))
+		})
+	}
 }
 
 func TestWithTenantBarrier_GetTenantBarrier(t *testing.T) {

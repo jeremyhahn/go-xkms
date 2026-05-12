@@ -340,7 +340,9 @@ func init() {
 }
 
 // openTrustStore creates a FileStore using config from viper.
-// Uses trust.store_path if set, otherwise defaults to {homeDir}/.xkey/trust/.
+// Uses trust.store_path if set, otherwise defaults to {homeDir}/.xkey/data/trust/
+// to align with the xkey GUI and the browser launcher (browser.go), which
+// both read from $HOME/.xkey/data/trust.
 func openTrustStore() (*truststore.FileStore, error) {
 	storePath := viper.GetString("trust.store_path")
 	if storePath == "" {
@@ -348,7 +350,7 @@ func openTrustStore() (*truststore.FileStore, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrTrustStoreOpen, err)
 		}
-		storePath = filepath.Join(homeDir, ".xkey", "trust")
+		storePath = filepath.Join(homeDir, ".xkey", "data", "trust")
 	}
 	store, err := truststore.NewFileStore(&truststore.FileStoreConfig{BaseDir: storePath})
 	if err != nil {

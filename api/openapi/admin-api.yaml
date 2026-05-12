@@ -1,0 +1,2460 @@
+openapi: 3.0.3
+info:
+  title: go-trusted-ca Admin API
+  description: |
+    Administrative API for managing the go-trusted-ca Certificate Authority.
+
+    This API provides endpoints for:
+    - **Tenant Management**: Multi-tenant CRUD operations with isolated CA hierarchies
+    - **Certificate Management**: List, view, and revoke certificates
+    - **Account Management**: Manage ACME accounts
+    - **Order Management**: View certificate orders
+    - **External Account Binding (EAB)**: Manage pre-authorized account bindings
+    - **Policy Management**: RBAC policy configuration
+    - **CA Status/Stats**: Monitor CA health and metrics
+
+    ## Authentication
+
+    All endpoints require authentication via API key or mTLS client certificate.
+    Role-based access control (RBAC) determines operation permissions.
+
+    ## Roles
+
+    | Role | Level | Permissions |
+    |------|-------|-------------|
+    | super-admin | 100 | Full system access, manage all tenants and root CA |
+    | admin | 80 | Tenant-level full access, manage intermediate CAs |
+    | endorser | 60 | Operator permissions plus EAB management |
+    | operator | 40 | Read/write access, no delete or CA management |
+    | viewer | 20 | Read-only access |
+
+  version: 1.0.0
+  contact:
+    name: Automate The Things, LLC
+    email: support@automatethethings.com
+    url: https://github.com/jeremyhahn/go-trusted-ca
+  license:
+    name: AGPL-3.0 / Commercial
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+
+servers:
+  - url: https://localhost:8443
+    description: Local development server
+  - url: https://ca.example.com
+    description: Production server
+
+tags:
+  - name: Tenants
+    description: Multi-tenant management operations (super-admin/admin)
+  - name: Tenant CA
+    description: Tenant Certificate Authority operations
+  - name: EAB
+    description: External Account Binding management
+  - name: Policies
+    description: RBAC policy management
+  - name: Certificates
+    description: Certificate management operations
+  - name: Accounts
+    description: ACME account management
+  - name: Orders
+    description: ACME order management
+  - name: Status
+    description: CA status and statistics
+
+security:
+  - ApiKeyAuth: []
+  - mTLS: []
+
+paths:
+  # ============================================================================
+  # Tenant Management Endpoints
+  # ============================================================================
+  /api/v1/tenants:
+    get:
+      tags:
+        - Tenants
+      summary: List all tenants
+      description: |
+        Returns a paginated list of all tenants in the system.
+        Requires super-admin role.
+      operationId: listTenants
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: status
+          in: query
+          description: Filter by tenant status
+          schema:
+            type: string
+            enum: [active, suspended, deleted]
+      responses:
+        '200':
+          description: List of tenants
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TenantInfo'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - Tenants
+      summary: Create a new tenant
+      description: |
+        Creates a new tenant with optional settings configuration.
+        Requires super-admin role.
+      operationId: createTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+            example:
+              id: "acme-corp"
+              name: "ACME Corporation"
+              settings:
+                max_certificates: 1000
+                max_accounts: 100
+                allowed_key_algorithms: ["ECDSA-P256", "ECDSA-P384", "RSA-2048"]
+                certificate_validity_days: 90
+                require_eab: true
+                allow_endorse_01: true
+                allow_enroll_01: true
+      responses:
+        '201':
+          description: Tenant created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TenantInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Tenant already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error:
+                  code: "ALREADY_EXISTS"
+                  message: "Tenant already exists"
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}:
+    get:
+      tags:
+        - Tenants
+      summary: Get tenant by ID
+      description: |
+        Retrieves detailed information about a specific tenant.
+        Admin can view their own tenant; super-admin can view all.
+      operationId: getTenant
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      responses:
+        '200':
+          description: Tenant details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TenantInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags:
+        - Tenants
+      summary: Update tenant
+      description: |
+        Updates tenant name and/or settings.
+        Requires admin role for the tenant.
+      operationId: updateTenant
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        '200':
+          description: Tenant updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TenantInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - Tenants
+      summary: Delete tenant
+      description: |
+        Permanently deletes a tenant and all associated resources.
+        Requires super-admin role. This operation cannot be undone.
+      operationId: deleteTenant
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      responses:
+        '200':
+          description: Tenant deleted successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "Tenant deleted successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/status:
+    put:
+      tags:
+        - Tenants
+      summary: Update tenant status
+      description: |
+        Updates the status of a tenant (active, suspended, or deleted).
+        Requires super-admin role.
+      operationId: updateTenantStatus
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantStatusRequest'
+      responses:
+        '200':
+          description: Tenant status updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "Tenant status updated successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ============================================================================
+  # Tenant CA Endpoints
+  # ============================================================================
+  /api/v1/tenants/{tenantId}/root-ca:
+    post:
+      tags:
+        - Tenant CA
+      summary: Create tenant root CA
+      description: |
+        Creates a new root Certificate Authority for the tenant.
+        The root CA is used to sign intermediate CAs.
+        Requires admin role.
+      operationId: createTenantRootCA
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRootCARequest'
+            example:
+              common_name: "ACME Corp Root CA"
+              key_algorithm: "ECDSA-P384"
+              validity_years: 20
+      responses:
+        '201':
+          description: Root CA created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TenantRootCAInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/intermediate-cas:
+    get:
+      tags:
+        - Tenant CA
+      summary: List tenant intermediate CAs
+      description: |
+        Returns all intermediate CAs configured for the tenant.
+        Requires admin role.
+      operationId: listTenantIntermediateCAs
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      responses:
+        '200':
+          description: List of intermediate CAs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TenantIntCAInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - Tenant CA
+      summary: Create tenant intermediate CA
+      description: |
+        Creates a new intermediate CA for the tenant.
+        The intermediate CA can be signed by either the global root CA or the tenant's root CA.
+        Requires admin role.
+      operationId: createTenantIntermediateCA
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantIntermediateCARequest'
+            example:
+              common_name: "ACME Corp Issuing CA"
+              parent_type: "tenant"
+              purpose: "server-auth"
+              key_algorithm: "ECDSA-P256"
+              validity_years: 10
+              set_as_default: true
+      responses:
+        '201':
+          description: Intermediate CA created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TenantIntCAInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/intermediate-cas/{caId}:
+    get:
+      tags:
+        - Tenant CA
+      summary: Get intermediate CA by ID
+      description: |
+        Retrieves details of a specific intermediate CA.
+        Requires admin role.
+      operationId: getTenantIntermediateCA
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/CAIdParam'
+      responses:
+        '200':
+          description: Intermediate CA details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TenantIntCAInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/intermediate-cas/{caId}/status:
+    put:
+      tags:
+        - Tenant CA
+      summary: Update intermediate CA status
+      description: |
+        Updates the status of an intermediate CA.
+        Valid statuses: active, pending-rotation, revoked.
+        Requires admin role.
+      operationId: updateTenantIntermediateCAStatus
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/CAIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateIntermediateCAStatusRequest'
+      responses:
+        '200':
+          description: Intermediate CA status updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "Intermediate CA status updated successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/default-intermediate-ca:
+    put:
+      tags:
+        - Tenant CA
+      summary: Set default intermediate CA
+      description: |
+        Sets the default intermediate CA for certificate issuance.
+        Requires admin role.
+      operationId: setTenantDefaultIntermediateCA
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantDefaultCARequest'
+      responses:
+        '200':
+          description: Default intermediate CA updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "Default intermediate CA updated successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/ca-status:
+    get:
+      tags:
+        - Tenant CA
+      summary: Get tenant CA status
+      description: |
+        Returns the overall CA configuration status for a tenant,
+        including root CA, intermediate CAs, and issuance capability.
+        Requires admin role.
+      operationId: getTenantCAStatus
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      responses:
+        '200':
+          description: Tenant CA status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TenantCAStatusInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ============================================================================
+  # External Account Binding (EAB) Endpoints
+  # ============================================================================
+  /api/v1/tenants/{tenantId}/eab:
+    get:
+      tags:
+        - EAB
+      summary: List tenant EABs
+      description: |
+        Returns a paginated list of External Account Bindings for the tenant.
+        Requires endorser role or higher.
+      operationId: listTenantEABs
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: status
+          in: query
+          description: Filter by EAB status
+          schema:
+            type: string
+            enum: [pending, used, revoked, expired]
+        - name: purpose
+          in: query
+          description: Filter by EAB purpose
+          schema:
+            type: string
+            enum: [account-binding, endorse-01, enroll-01]
+      responses:
+        '200':
+          description: List of EABs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/EABInfo'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - EAB
+      summary: Create tenant EAB
+      description: |
+        Creates a new External Account Binding for pre-authorized ACME registration.
+        The MAC key is returned only once in the response and cannot be retrieved later.
+
+        Supported purposes:
+        - **account-binding**: Standard ACME EAB for account creation
+        - **endorse-01**: TPM endorsement key binding for device attestation
+        - **enroll-01**: Certificate enrollment binding
+
+        Requires endorser role or higher.
+      operationId: createTenantEAB
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEABRequest'
+            examples:
+              account-binding:
+                summary: Standard account binding
+                value:
+                  purpose: "account-binding"
+                  external_account_id: "user-12345"
+                  contact: ["mailto:user@example.com"]
+                  expires_in_days: 7
+              endorse-01:
+                summary: TPM endorsement binding
+                value:
+                  purpose: "endorse-01"
+                  device_info:
+                    device_id: "device-001"
+                    manufacturer: "Dell"
+                    model: "PowerEdge R750"
+                    ek_public_key_hash: "sha256:abc123..."
+                    tpm_manufacturer: "Infineon"
+                  expires_in_days: 30
+              enroll-01:
+                summary: Certificate enrollment binding
+                value:
+                  purpose: "enroll-01"
+                  external_account_id: "workload-xyz"
+                  metadata:
+                    environment: "production"
+                    service: "api-gateway"
+      responses:
+        '201':
+          description: EAB created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CreateEABResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/eab/{kid}:
+    get:
+      tags:
+        - EAB
+      summary: Get EAB by key ID
+      description: |
+        Retrieves details of a specific External Account Binding.
+        Note: The MAC key is not returned in this response.
+        Requires endorser role or higher.
+      operationId: getTenantEAB
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/KidParam'
+      responses:
+        '200':
+          description: EAB details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/EABInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - EAB
+      summary: Delete EAB
+      description: |
+        Deletes an External Account Binding.
+        Requires admin role.
+      operationId: deleteTenantEAB
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/KidParam'
+      responses:
+        '200':
+          description: EAB deleted successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "EAB deleted successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ============================================================================
+  # Policy Management Endpoints (RBAC)
+  # ============================================================================
+  /api/v1/tenants/{tenantId}/policies:
+    get:
+      tags:
+        - Policies
+      summary: List tenant policies
+      description: |
+        Returns a paginated list of RBAC policies for the tenant.
+        Policies are managed via RBAC.
+        Requires admin role.
+      operationId: listTenantPolicies
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: purpose
+          in: query
+          description: Filter by policy label purpose
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of policies
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/IAMPolicy'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - Policies
+      summary: Create tenant policy
+      description: |
+        Creates a new RBAC policy for the tenant.
+        Uses RBAC policy format.
+        Requires admin role.
+      operationId: createTenantPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IAMPolicy'
+            example:
+              apiVersion: "rbac.trustedca.io/v1"
+              kind: "Policy"
+              metadata:
+                name: "allow-server-certs"
+                labels:
+                  purpose: "certificate-issuance"
+              spec:
+                description: "Allow issuance of server certificates"
+                effect: "allow"
+                subjects:
+                  - kind: "ServiceAccount"
+                    name: "acme-client"
+                resources:
+                  - kind: "Certificate"
+                    name: "*"
+                actions:
+                  - "issue"
+                  - "renew"
+                conditions:
+                  - attribute: "certificate.type"
+                    operator: "equals"
+                    value: "server"
+      responses:
+        '201':
+          description: Policy created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IAMPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Policy already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/tenants/{tenantId}/policies/{policyName}:
+    get:
+      tags:
+        - Policies
+      summary: Get policy by name
+      description: |
+        Retrieves a specific RBAC policy by name.
+        Requires admin role.
+      operationId: getTenantPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/PolicyNameParam'
+      responses:
+        '200':
+          description: Policy details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IAMPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags:
+        - Policies
+      summary: Update policy
+      description: |
+        Updates an existing RBAC policy.
+        System-managed policies cannot be modified.
+        Requires admin role.
+      operationId: updateTenantPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/PolicyNameParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IAMPolicy'
+      responses:
+        '200':
+          description: Policy updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/IAMPolicy'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Policy is immutable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error:
+                  code: "POLICY_IMMUTABLE"
+                  message: "System-managed policies cannot be modified"
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - Policies
+      summary: Delete policy
+      description: |
+        Deletes an RBAC policy.
+        System-managed policies cannot be deleted.
+        Requires admin role.
+      operationId: deleteTenantPolicy
+      parameters:
+        - $ref: '#/components/parameters/TenantIdParam'
+        - $ref: '#/components/parameters/PolicyNameParam'
+      responses:
+        '200':
+          description: Policy deleted successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "Policy deleted successfully"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Policy is immutable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ============================================================================
+  # Certificate Management Endpoints
+  # ============================================================================
+  /admin/certificates:
+    get:
+      tags:
+        - Certificates
+      summary: List certificates
+      description: |
+        Returns a paginated list of all issued certificates.
+        Requires viewer role or higher.
+      operationId: listCertificates
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: status
+          in: query
+          description: Filter by certificate status
+          schema:
+            type: string
+            enum: [valid, revoked, expired]
+        - name: subject
+          in: query
+          description: Filter by subject (partial match)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of certificates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CertificateInfo'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/certificates/expiring:
+    get:
+      tags:
+        - Certificates
+      summary: List expiring certificates
+      description: |
+        Returns certificates that will expire within the specified number of days.
+        Requires viewer role or higher.
+      operationId: listExpiringCertificates
+      parameters:
+        - name: days
+          in: query
+          description: Number of days to look ahead (default 30)
+          schema:
+            type: integer
+            default: 30
+            minimum: 1
+            maximum: 365
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+      responses:
+        '200':
+          description: List of expiring certificates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CertificateInfo'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/certificates/{serial}:
+    get:
+      tags:
+        - Certificates
+      summary: Get certificate by serial number
+      description: |
+        Retrieves detailed information about a specific certificate.
+        Requires viewer role or higher.
+      operationId: getCertificate
+      parameters:
+        - $ref: '#/components/parameters/SerialParam'
+      responses:
+        '200':
+          description: Certificate details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CertificateInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/certificates/{serial}/revoke:
+    post:
+      tags:
+        - Certificates
+      summary: Revoke certificate
+      description: |
+        Revokes a certificate with an optional reason.
+        Requires admin role.
+      operationId: revokeCertificate
+      parameters:
+        - $ref: '#/components/parameters/SerialParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeRequest'
+            example:
+              reason: "keyCompromise"
+      responses:
+        '200':
+          description: Certificate revoked successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "Certificate revoked successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ============================================================================
+  # Account Management Endpoints
+  # ============================================================================
+  /admin/accounts:
+    get:
+      tags:
+        - Accounts
+      summary: List ACME accounts
+      description: |
+        Returns a paginated list of all ACME accounts.
+        Requires viewer role or higher.
+      operationId: listAccounts
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: status
+          in: query
+          description: Filter by account status
+          schema:
+            type: string
+            enum: [valid, deactivated, revoked]
+      responses:
+        '200':
+          description: List of accounts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AccountInfo'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/accounts/{accountId}:
+    get:
+      tags:
+        - Accounts
+      summary: Get account by ID
+      description: |
+        Retrieves detailed information about a specific ACME account.
+        Requires viewer role or higher.
+      operationId: getAccount
+      parameters:
+        - $ref: '#/components/parameters/AccountIdParam'
+      responses:
+        '200':
+          description: Account details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/AccountInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - Accounts
+      summary: Disable account
+      description: |
+        Disables an ACME account, preventing further certificate issuance.
+        Requires admin role.
+      operationId: disableAccount
+      parameters:
+        - $ref: '#/components/parameters/AccountIdParam'
+      responses:
+        '200':
+          description: Account disabled successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          message:
+                            type: string
+                            example: "Account disabled successfully"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ============================================================================
+  # Order Management Endpoints
+  # ============================================================================
+  /admin/orders:
+    get:
+      tags:
+        - Orders
+      summary: List orders
+      description: |
+        Returns a paginated list of certificate orders.
+        Requires viewer role or higher.
+      operationId: listOrders
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - name: status
+          in: query
+          description: Filter by order status
+          schema:
+            type: string
+            enum: [pending, ready, processing, valid, invalid]
+        - name: account_id
+          in: query
+          description: Filter by account ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/OrderInfo'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/orders/{orderId}:
+    get:
+      tags:
+        - Orders
+      summary: Get order by ID
+      description: |
+        Retrieves detailed information about a specific order.
+        Requires viewer role or higher.
+      operationId: getOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderIdParam'
+        - name: account_id
+          in: query
+          required: true
+          description: Account ID that owns the order
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/OrderInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ============================================================================
+  # Status and Stats Endpoints
+  # ============================================================================
+  /admin/status:
+    get:
+      tags:
+        - Status
+      summary: Get CA status
+      description: |
+        Returns the current status of the Certificate Authority,
+        including initialization state, version, and key information.
+        Requires viewer role or higher.
+      operationId: getStatus
+      responses:
+        '200':
+          description: CA status
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CAStatus'
+              example:
+                success: true
+                data:
+                  identity: "go-trusted-ca"
+                  initialized: true
+                  version: "1.0.0"
+                  started_at: "2025-01-03T10:00:00Z"
+                  key_algorithm: "ECDSA-P384"
+                  signature_algorithm: "SHA384-ECDSA"
+                  root_ca: "CN=Trusted Root CA"
+                  intermediate_ca: "CN=Trusted Issuing CA"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /admin/stats:
+    get:
+      tags:
+        - Status
+      summary: Get CA statistics
+      description: |
+        Returns aggregate statistics about certificates, accounts, and orders.
+        Requires viewer role or higher.
+      operationId: getStats
+      responses:
+        '200':
+          description: CA statistics
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CAStats'
+              example:
+                success: true
+                data:
+                  total_certificates: 1250
+                  valid_certificates: 1100
+                  revoked_certificates: 50
+                  expired_certificates: 100
+                  total_accounts: 85
+                  active_accounts: 80
+                  total_orders: 1500
+                  pending_orders: 12
+                  completed_orders: 1450
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  # ============================================================================
+  # Security Schemes
+  # ============================================================================
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication
+    mTLS:
+      type: mutualTLS
+      description: Mutual TLS client certificate authentication
+
+  # ============================================================================
+  # Parameters
+  # ============================================================================
+  parameters:
+    TenantIdParam:
+      name: tenantId
+      in: path
+      required: true
+      description: Unique tenant identifier
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+        minLength: 2
+        maxLength: 63
+      example: "acme-corp"
+
+    CAIdParam:
+      name: caId
+      in: path
+      required: true
+      description: Intermediate CA identifier
+      schema:
+        type: string
+      example: "int-ca-001"
+
+    KidParam:
+      name: kid
+      in: path
+      required: true
+      description: EAB Key Identifier
+      schema:
+        type: string
+      example: "eab-abc123"
+
+    PolicyNameParam:
+      name: policyName
+      in: path
+      required: true
+      description: Policy name
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+      example: "allow-server-certs"
+
+    SerialParam:
+      name: serial
+      in: path
+      required: true
+      description: Certificate serial number (hexadecimal)
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]+$'
+      example: "1A2B3C4D5E6F"
+
+    AccountIdParam:
+      name: accountId
+      in: path
+      required: true
+      description: ACME account ID
+      schema:
+        type: integer
+        format: int64
+      example: 12345
+
+    OrderIdParam:
+      name: orderId
+      in: path
+      required: true
+      description: ACME order ID
+      schema:
+        type: integer
+        format: int64
+      example: 67890
+
+    PageParam:
+      name: page
+      in: query
+      description: Page number (1-indexed)
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+
+    PerPageParam:
+      name: per_page
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        default: 20
+        minimum: 1
+        maximum: 100
+
+  # ============================================================================
+  # Response Schemas
+  # ============================================================================
+  responses:
+    BadRequest:
+      description: Bad request - invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "INVALID_REQUEST"
+              message: "Invalid request body"
+
+    Unauthorized:
+      description: Unauthorized - authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "UNAUTHORIZED"
+              message: "Authentication required"
+
+    Forbidden:
+      description: Forbidden - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "FORBIDDEN"
+              message: "Insufficient permissions for this operation"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "NOT_FOUND"
+              message: "Resource not found"
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An internal error occurred"
+
+  # ============================================================================
+  # Schemas
+  # ============================================================================
+  schemas:
+    SuccessResponse:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          description: Response payload
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          $ref: '#/components/schemas/ErrorInfo'
+
+    ErrorInfo:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          example: "NOT_FOUND"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Resource not found"
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        per_page:
+          type: integer
+          description: Items per page
+          example: 20
+        total:
+          type: integer
+          description: Total number of items
+          example: 150
+
+    # Tenant Schemas
+    TenantInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique tenant identifier
+          example: "acme-corp"
+        name:
+          type: string
+          description: Human-readable tenant name
+          example: "ACME Corporation"
+        status:
+          type: string
+          enum: [active, suspended, deleted]
+          description: Current tenant status
+          example: "active"
+        root_ca:
+          $ref: '#/components/schemas/TenantRootCAInfo'
+        intermediate_cas:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantIntCAInfo'
+        default_intermediate_ca_id:
+          type: string
+          description: ID of the default intermediate CA
+          example: "int-ca-001"
+        settings:
+          $ref: '#/components/schemas/TenantSettingsInfo'
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-01T00:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-01-03T12:00:00Z"
+        created_by:
+          type: string
+          description: User who created the tenant
+          example: "admin@example.com"
+
+    TenantRootCAInfo:
+      type: object
+      properties:
+        common_name:
+          type: string
+          example: "ACME Corp Root CA"
+        serial_number:
+          type: string
+          example: "1A2B3C4D"
+        key_algorithm:
+          type: string
+          example: "ECDSA-P384"
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, revoked]
+          example: "active"
+        created_at:
+          type: string
+          format: date-time
+
+    TenantIntCAInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "int-ca-001"
+        common_name:
+          type: string
+          example: "ACME Corp Issuing CA"
+        serial_number:
+          type: string
+          example: "5E6F7A8B"
+        parent_type:
+          type: string
+          enum: [global, tenant]
+          description: Whether signed by global or tenant root CA
+          example: "tenant"
+        purpose:
+          type: string
+          description: CA purpose (general, server-auth, client-auth, etc.)
+          example: "server-auth"
+        key_algorithm:
+          type: string
+          example: "ECDSA-P256"
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [active, pending-rotation, revoked]
+          example: "active"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TenantSettingsInfo:
+      type: object
+      properties:
+        max_certificates:
+          type: integer
+          description: Maximum certificates allowed
+          example: 1000
+        max_accounts:
+          type: integer
+          description: Maximum ACME accounts allowed
+          example: 100
+        allowed_key_algorithms:
+          type: array
+          items:
+            type: string
+          example: ["ECDSA-P256", "ECDSA-P384", "RSA-2048"]
+        allowed_challenge_types:
+          type: array
+          items:
+            type: string
+          example: ["http-01", "dns-01", "device-attest-01"]
+        certificate_validity_days:
+          type: integer
+          description: Default certificate validity in days
+          example: 90
+        require_eab:
+          type: boolean
+          description: Whether EAB is required for account creation
+          example: true
+        allow_endorse_01:
+          type: boolean
+          description: Whether endorse-01 challenge is enabled
+          example: true
+        allow_enroll_01:
+          type: boolean
+          description: Whether enroll-01 challenge is enabled
+          example: true
+
+    TenantCAStatusInfo:
+      type: object
+      properties:
+        tenant_id:
+          type: string
+          example: "acme-corp"
+        root_ca:
+          $ref: '#/components/schemas/TenantRootCAInfo'
+        intermediate_cas:
+          type: array
+          items:
+            $ref: '#/components/schemas/TenantIntCAInfo'
+        default_intermediate_ca_id:
+          type: string
+          example: "int-ca-001"
+        active_ca_count:
+          type: integer
+          description: Number of active intermediate CAs
+          example: 2
+        can_issue_certificates:
+          type: boolean
+          description: Whether the tenant can issue certificates
+          example: true
+
+    CreateTenantRequest:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          description: Unique tenant identifier (lowercase alphanumeric with hyphens)
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+          minLength: 2
+          maxLength: 63
+          example: "acme-corp"
+        name:
+          type: string
+          description: Human-readable tenant name
+          example: "ACME Corporation"
+        settings:
+          $ref: '#/components/schemas/TenantSettingsInfo'
+
+    UpdateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Updated tenant name
+        settings:
+          $ref: '#/components/schemas/TenantSettingsInfo'
+
+    UpdateTenantStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [active, suspended, deleted]
+          description: New tenant status
+
+    CreateTenantRootCARequest:
+      type: object
+      required:
+        - common_name
+        - key_algorithm
+        - validity_years
+      properties:
+        common_name:
+          type: string
+          description: CA common name
+          example: "ACME Corp Root CA"
+        key_algorithm:
+          type: string
+          description: Key algorithm (ECDSA-P256, ECDSA-P384, RSA-2048, RSA-4096)
+          example: "ECDSA-P384"
+        validity_years:
+          type: integer
+          description: Certificate validity in years
+          minimum: 1
+          maximum: 30
+          example: 20
+
+    CreateTenantIntermediateCARequest:
+      type: object
+      required:
+        - common_name
+        - key_algorithm
+        - validity_years
+      properties:
+        common_name:
+          type: string
+          description: CA common name
+          example: "ACME Corp Issuing CA"
+        parent_type:
+          type: string
+          enum: [global, tenant]
+          default: global
+          description: Whether to sign with global or tenant root CA
+        purpose:
+          type: string
+          description: CA purpose (general, server-auth, client-auth)
+          example: "server-auth"
+        key_algorithm:
+          type: string
+          description: Key algorithm
+          example: "ECDSA-P256"
+        validity_years:
+          type: integer
+          description: Certificate validity in years
+          minimum: 1
+          maximum: 20
+          example: 10
+        set_as_default:
+          type: boolean
+          description: Set this CA as the default for certificate issuance
+          default: false
+
+    UpdateTenantDefaultCARequest:
+      type: object
+      required:
+        - intermediate_ca_id
+      properties:
+        intermediate_ca_id:
+          type: string
+          description: ID of the intermediate CA to set as default
+          example: "int-ca-001"
+
+    UpdateIntermediateCAStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [active, pending-rotation, revoked]
+          description: New CA status
+
+    # EAB Schemas
+    EABInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          description: EAB key identifier (kid)
+          example: "eab-abc123"
+        tenant_id:
+          type: string
+          example: "acme-corp"
+        status:
+          type: string
+          enum: [pending, used, revoked, expired]
+          example: "pending"
+        purpose:
+          type: string
+          enum: [account-binding, endorse-01, enroll-01]
+          example: "account-binding"
+        account_id:
+          type: integer
+          format: int64
+          description: Associated ACME account ID (if used)
+        external_account_id:
+          type: string
+          description: External reference identifier
+          example: "user-12345"
+        device_info:
+          $ref: '#/components/schemas/EABDeviceInfo'
+        contact:
+          type: array
+          items:
+            type: string
+          example: ["mailto:admin@example.com"]
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+          example: "admin@example.com"
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    EABDeviceInfo:
+      type: object
+      properties:
+        device_id:
+          type: string
+          example: "device-001"
+        manufacturer:
+          type: string
+          example: "Dell"
+        model:
+          type: string
+          example: "PowerEdge R750"
+        ek_public_key_hash:
+          type: string
+          description: SHA256 hash of the TPM endorsement key
+          example: "sha256:a1b2c3d4..."
+        tpm_manufacturer:
+          type: string
+          example: "Infineon"
+        tpm_firmware_version:
+          type: string
+          example: "7.85.4555.0"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+
+    CreateEABRequest:
+      type: object
+      properties:
+        purpose:
+          type: string
+          enum: [account-binding, endorse-01, enroll-01]
+          default: account-binding
+          description: EAB purpose
+        external_account_id:
+          type: string
+          description: External reference identifier
+        device_info:
+          $ref: '#/components/schemas/EABDeviceInfo'
+        contact:
+          type: array
+          items:
+            type: string
+          description: Contact URLs (mailto:, tel:, etc.)
+        expires_in_days:
+          type: integer
+          description: Number of days until expiration
+          minimum: 1
+          maximum: 365
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional metadata key-value pairs
+
+    CreateEABResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: EAB key identifier (kid)
+          example: "eab-abc123"
+        mac_key:
+          type: string
+          description: Base64url-encoded MAC key (shown only once)
+          example: "ZOMGTlZrZW5YbGZ..."
+        algorithm:
+          type: string
+          description: MAC algorithm
+          example: "HS256"
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # Policy Schemas (RBAC)
+    IAMPolicy:
+      type: object
+      required:
+        - metadata
+        - spec
+      properties:
+        apiVersion:
+          type: string
+          description: API version
+          default: "rbac.trustedca.io/v1"
+          example: "rbac.trustedca.io/v1"
+        kind:
+          type: string
+          description: Resource kind
+          default: "Policy"
+          example: "Policy"
+        metadata:
+          $ref: '#/components/schemas/IAMPolicyMetadata'
+        spec:
+          $ref: '#/components/schemas/IAMPolicySpec'
+
+    IAMPolicyMetadata:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Policy name (unique within tenant)
+          example: "allow-server-certs"
+        tenant:
+          type: string
+          description: Owning tenant ID
+          example: "acme-corp"
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+          description: Labels for filtering and organization
+          example:
+            purpose: "certificate-issuance"
+            environment: "production"
+        annotations:
+          type: object
+          additionalProperties:
+            type: string
+          description: Annotations for additional metadata
+
+    IAMPolicySpec:
+      type: object
+      required:
+        - effect
+        - subjects
+        - resources
+        - actions
+      properties:
+        description:
+          type: string
+          description: Human-readable policy description
+          example: "Allow issuance of server certificates"
+        effect:
+          type: string
+          enum: [allow, deny]
+          description: Policy effect
+          example: "allow"
+        subjects:
+          type: array
+          items:
+            $ref: '#/components/schemas/IAMSubject'
+          description: Subjects the policy applies to
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/IAMResource'
+          description: Resources the policy applies to
+        actions:
+          type: array
+          items:
+            type: string
+          description: Allowed or denied actions
+          example: ["issue", "renew", "revoke"]
+        conditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/IAMCondition'
+          description: Additional conditions for policy evaluation
+
+    IAMSubject:
+      type: object
+      required:
+        - kind
+        - name
+      properties:
+        kind:
+          type: string
+          description: Subject kind (User, ServiceAccount, Group)
+          example: "ServiceAccount"
+        name:
+          type: string
+          description: Subject name or pattern (* for all)
+          example: "acme-client"
+
+    IAMResource:
+      type: object
+      required:
+        - kind
+        - name
+      properties:
+        kind:
+          type: string
+          description: Resource kind (Certificate, Account, Order, etc.)
+          example: "Certificate"
+        name:
+          type: string
+          description: Resource name or pattern (* for all)
+          example: "*"
+
+    IAMCondition:
+      type: object
+      required:
+        - attribute
+        - operator
+        - value
+      properties:
+        attribute:
+          type: string
+          description: Attribute to evaluate
+          example: "certificate.type"
+        operator:
+          type: string
+          enum: [equals, not_equals, in, not_in, contains, starts_with, ends_with, regex]
+          description: Comparison operator
+          example: "equals"
+        value:
+          description: Value to compare against
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          example: "server"
+
+    # Certificate Schemas
+    CertificateInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12345
+        serial_number:
+          type: string
+          description: Certificate serial number (hex)
+          example: "1A2B3C4D5E6F"
+        subject:
+          type: string
+          description: Certificate subject DN
+          example: "CN=api.example.com"
+        issuer:
+          type: string
+          description: Certificate issuer DN
+          example: "CN=ACME Corp Issuing CA"
+        not_before:
+          type: string
+          format: date-time
+        not_after:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [valid, revoked, expired]
+          example: "valid"
+        issued_at:
+          type: string
+          format: date-time
+        cert_url:
+          type: string
+          format: uri
+          description: URL to download the certificate
+
+    RevokeRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Revocation reason code
+          enum:
+            - unspecified
+            - keyCompromise
+            - cACompromise
+            - affiliationChanged
+            - superseded
+            - cessationOfOperation
+            - certificateHold
+            - removeFromCRL
+            - privilegeWithdrawn
+            - aACompromise
+          example: "keyCompromise"
+
+    # Account Schemas
+    AccountInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 12345
+        status:
+          type: string
+          enum: [valid, deactivated, revoked]
+          example: "valid"
+        contact:
+          type: array
+          items:
+            type: string
+          example: ["mailto:admin@example.com"]
+        created_at:
+          type: string
+          format: date-time
+        terms_of_service_agreed:
+          type: boolean
+          example: true
+        orders_url:
+          type: string
+          format: uri
+        order_count:
+          type: integer
+          description: Total number of orders
+          example: 15
+
+    # Order Schemas
+    OrderInfo:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 67890
+        account_id:
+          type: integer
+          format: int64
+          example: 12345
+        status:
+          type: string
+          enum: [pending, ready, processing, valid, invalid]
+          example: "valid"
+        identifiers:
+          type: array
+          items:
+            type: string
+          description: Requested identifiers
+          example: ["api.example.com", "www.example.com"]
+        not_before:
+          type: string
+          description: Requested not-before time
+        not_after:
+          type: string
+          description: Requested not-after time
+        expires:
+          type: string
+          description: Order expiration time
+        certificate:
+          type: string
+          format: uri
+          description: Certificate URL (if issued)
+        created_at:
+          type: string
+          format: date-time
+
+    # Status Schemas
+    CAStatus:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: CA identity name
+          example: "go-trusted-ca"
+        initialized:
+          type: boolean
+          description: Whether the CA is initialized
+          example: true
+        version:
+          type: string
+          description: CA software version
+          example: "1.0.0"
+        started_at:
+          type: string
+          format: date-time
+          description: CA start time
+        key_algorithm:
+          type: string
+          description: Root CA key algorithm
+          example: "ECDSA-P384"
+        signature_algorithm:
+          type: string
+          description: Signature algorithm
+          example: "SHA384-ECDSA"
+        root_ca:
+          type: string
+          description: Root CA subject
+          example: "CN=Trusted Root CA"
+        intermediate_ca:
+          type: string
+          description: Default intermediate CA subject
+          example: "CN=Trusted Issuing CA"
+
+    CAStats:
+      type: object
+      properties:
+        total_certificates:
+          type: integer
+          description: Total certificates issued
+          example: 1250
+        valid_certificates:
+          type: integer
+          description: Currently valid certificates
+          example: 1100
+        revoked_certificates:
+          type: integer
+          description: Revoked certificates
+          example: 50
+        expired_certificates:
+          type: integer
+          description: Expired certificates
+          example: 100
+        total_accounts:
+          type: integer
+          description: Total ACME accounts
+          example: 85
+        active_accounts:
+          type: integer
+          description: Active (valid) accounts
+          example: 80
+        total_orders:
+          type: integer
+          description: Total orders created
+          example: 1500
+        pending_orders:
+          type: integer
+          description: Currently pending orders
+          example: 12
+        completed_orders:
+          type: integer
+          description: Successfully completed orders
+          example: 1450

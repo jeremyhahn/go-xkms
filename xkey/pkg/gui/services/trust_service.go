@@ -282,9 +282,15 @@ func (s *TrustService) GetCertificatePEM(fingerprint string) (string, error) {
 // cancels the dialog.
 func (s *TrustService) ImportCertificateFile() (int, error) {
 	if s.store == nil {
+		s.log.Warn("ImportCertificateFile: trust store not initialized")
 		return 0, ErrNilTrustStore
 	}
+	if s.ctx == nil {
+		s.log.Error("ImportCertificateFile: Wails context not set; cannot open file dialog")
+		return 0, fmt.Errorf("trust: Wails context not initialized")
+	}
 
+	s.log.Debug("ImportCertificateFile: opening native file dialog")
 	filePath, err := wailsruntime.OpenFileDialog(s.ctx, wailsruntime.OpenDialogOptions{
 		Title: "Import Certificate",
 		Filters: []wailsruntime.FileFilter{
@@ -293,36 +299,46 @@ func (s *TrustService) ImportCertificateFile() (int, error) {
 		},
 	})
 	if err != nil {
-		return 0, err
+		s.log.Error("ImportCertificateFile: OpenFileDialog failed", "error", err)
+		return 0, fmt.Errorf("open file dialog: %w", err)
 	}
 
 	// User cancelled the dialog.
 	if filePath == "" {
+		s.log.Debug("ImportCertificateFile: user cancelled the dialog")
 		return 0, nil
 	}
 
+	s.log.Debug("ImportCertificateFile: reading selected file", "path", filePath)
 	data, err := os.ReadFile(filePath) // #nosec G304 -- user-selected file via native dialog
 	if err != nil {
-		return 0, err
+		s.log.Error("ImportCertificateFile: file read failed", "path", filePath, "error", err)
+		return 0, fmt.Errorf("read %s: %w", filePath, err)
 	}
 
 	// Detect PEM vs DER by checking for the PEM header.
 	if strings.Contains(string(data), "BEGIN CERTIFICATE") {
 		n, addErr := s.store.AddPEM(data)
-		if addErr == nil && n > 0 {
+		if addErr != nil {
+			s.log.Error("ImportCertificateFile: AddPEM failed", "path", filePath, "error", addErr)
+			return 0, fmt.Errorf("parse PEM from %s: %w", filePath, addErr)
+		}
+		if n > 0 {
 			s.notifyMutate()
 		}
-		return n, addErr
+		return n, nil
 	}
 
 	// Treat as DER-encoded certificate.
 	cert, err := x509.ParseCertificate(data)
 	if err != nil {
-		return 0, err
+		s.log.Error("ImportCertificateFile: DER parse failed", "path", filePath, "error", err)
+		return 0, fmt.Errorf("parse DER from %s: %w", filePath, err)
 	}
 
 	if err := s.store.AddCertificate(cert); err != nil {
-		return 0, err
+		s.log.Error("ImportCertificateFile: AddCertificate failed", "path", filePath, "error", err)
+		return 0, fmt.Errorf("add certificate from %s: %w", filePath, err)
 	}
 	s.notifyMutate()
 	return 1, nil

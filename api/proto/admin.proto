@@ -1,0 +1,407 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-trusted-ca.
+//
+// go-trusted-ca is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+syntax = "proto3";
+
+package trustedca.admin.v1;
+
+option go_package = "github.com/jeremyhahn/go-xkms/api/proto/admin/v1;adminv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// AdminService provides administrative operations for go-trusted-ca.
+service AdminService {
+  // Tenant operations
+  rpc CreateTenant(CreateTenantRequest) returns (TenantInfo);
+  rpc GetTenant(GetTenantRequest) returns (TenantInfo);
+  rpc UpdateTenant(UpdateTenantRequest) returns (TenantInfo);
+  rpc DeleteTenant(DeleteTenantRequest) returns (google.protobuf.Empty);
+  rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+
+  // EAB operations
+  rpc CreateEAB(CreateEABRequest) returns (CreateEABResponse);
+  rpc GetEAB(GetEABRequest) returns (EABInfo);
+  rpc DeleteEAB(DeleteEABRequest) returns (google.protobuf.Empty);
+  rpc ListEABs(ListEABsRequest) returns (ListEABsResponse);
+
+  // Role operations (RBAC)
+  rpc CreateTenantRole(CreateTenantRoleRequest) returns (Role);
+  rpc GetTenantRole(GetTenantRoleRequest) returns (Role);
+  rpc UpdateTenantRole(UpdateTenantRoleRequest) returns (Role);
+  rpc DeleteTenantRole(DeleteTenantRoleRequest) returns (google.protobuf.Empty);
+  rpc ListTenantRoles(ListTenantRolesRequest) returns (ListTenantRolesResponse);
+
+  // User operations (RBAC)
+  rpc CreateTenantUser(CreateTenantUserRequest) returns (User);
+  rpc GetTenantUser(GetTenantUserRequest) returns (User);
+  rpc UpdateTenantUser(UpdateTenantUserRequest) returns (User);
+  rpc DeleteTenantUser(DeleteTenantUserRequest) returns (google.protobuf.Empty);
+  rpc ListTenantUsers(ListTenantUsersRequest) returns (ListTenantUsersResponse);
+
+  // Certificate operations
+  rpc ListCertificates(ListCertificatesRequest) returns (ListCertificatesResponse);
+  rpc GetCertificate(GetCertificateRequest) returns (CertificateInfo);
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (google.protobuf.Empty);
+
+  // Account operations
+  rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
+  rpc GetAccount(GetAccountRequest) returns (AccountInfo);
+  rpc DisableAccount(DisableAccountRequest) returns (google.protobuf.Empty);
+
+  // Status operations
+  rpc GetStatus(google.protobuf.Empty) returns (CAStatus);
+  rpc GetStats(google.protobuf.Empty) returns (CAStats);
+}
+
+// Pagination for list operations.
+message Pagination {
+  int32 page = 1;
+  int32 per_page = 2;
+  int32 total = 3;
+}
+
+// Tenant messages
+
+message TenantInfo {
+  string id = 1;
+  string name = 2;
+  string status = 3;
+  TenantRootCAInfo root_ca = 4;
+  repeated TenantIntermediateCAInfo intermediate_cas = 5;
+  string default_intermediate_ca_id = 6;
+  TenantSettings settings = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  string created_by = 10;
+}
+
+message TenantSettings {
+  int32 max_certificates = 1;
+  int32 max_accounts = 2;
+  repeated string allowed_key_algorithms = 3;
+  repeated string allowed_challenge_types = 4;
+  int32 certificate_validity_days = 5;
+  bool require_eab = 6;
+  bool allow_endorse_01 = 7;
+  bool allow_enroll_01 = 8;
+}
+
+message TenantRootCAInfo {
+  string common_name = 1;
+  string serial_number = 2;
+  string key_algorithm = 3;
+  google.protobuf.Timestamp not_before = 4;
+  google.protobuf.Timestamp not_after = 5;
+  string status = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+
+message TenantIntermediateCAInfo {
+  string id = 1;
+  string common_name = 2;
+  string serial_number = 3;
+  string parent_type = 4;
+  string purpose = 5;
+  string key_algorithm = 6;
+  google.protobuf.Timestamp not_before = 7;
+  google.protobuf.Timestamp not_after = 8;
+  string status = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message CreateTenantRequest {
+  string id = 1;
+  string name = 2;
+  TenantSettings settings = 3;
+}
+
+message GetTenantRequest {
+  string tenant_id = 1;
+}
+
+message UpdateTenantRequest {
+  string tenant_id = 1;
+  string name = 2;
+  TenantSettings settings = 3;
+}
+
+message DeleteTenantRequest {
+  string tenant_id = 1;
+}
+
+message ListTenantsRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string status = 3;
+}
+
+message ListTenantsResponse {
+  repeated TenantInfo tenants = 1;
+  Pagination pagination = 2;
+}
+
+// EAB messages
+
+message EABDeviceInfo {
+  string device_id = 1;
+  string manufacturer = 2;
+  string model = 3;
+  string ek_public_key_hash = 4;
+  string tpm_manufacturer = 5;
+  string tpm_firmware_version = 6;
+  map<string, string> metadata = 7;
+}
+
+message EABInfo {
+  string id = 1;
+  string tenant_id = 2;
+  string purpose = 3;
+  string status = 4;
+  uint64 account_id = 5;
+  string external_account_id = 6;
+  EABDeviceInfo device_info = 7;
+  repeated string contact = 8;
+  google.protobuf.Timestamp created_at = 9;
+  string created_by = 10;
+  google.protobuf.Timestamp used_at = 11;
+  google.protobuf.Timestamp expires_at = 12;
+}
+
+message CreateEABRequest {
+  string tenant_id = 1;
+  string purpose = 2;
+  int32 expires_in_days = 3;
+  repeated string contact = 4;
+  string external_account_id = 5;
+  EABDeviceInfo device_info = 6;
+  map<string, string> metadata = 7;
+}
+
+message CreateEABResponse {
+  string id = 1;
+  string mac_key = 2;
+  string algorithm = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message GetEABRequest {
+  string tenant_id = 1;
+  string kid = 2;
+}
+
+message DeleteEABRequest {
+  string tenant_id = 1;
+  string kid = 2;
+}
+
+message ListEABsRequest {
+  string tenant_id = 1;
+  int32 page = 2;
+  int32 per_page = 3;
+  string status = 4;
+  string purpose = 5;
+}
+
+message ListEABsResponse {
+  repeated EABInfo eabs = 1;
+  Pagination pagination = 2;
+}
+
+// Role messages (RBAC)
+
+message Role {
+  string id = 1;
+  string name = 2;
+  string tenant_id = 3;
+  repeated string permissions = 4;
+  bool system = 5;
+  string created_at = 6;
+  string updated_at = 7;
+}
+
+message CreateTenantRoleRequest {
+  string tenant_id = 1;
+  string name = 2;
+  repeated string permissions = 3;
+}
+
+message GetTenantRoleRequest {
+  string tenant_id = 1;
+  string role_id = 2;
+}
+
+message UpdateTenantRoleRequest {
+  string tenant_id = 1;
+  string role_id = 2;
+  string name = 3;
+  repeated string permissions = 4;
+}
+
+message DeleteTenantRoleRequest {
+  string tenant_id = 1;
+  string role_id = 2;
+}
+
+message ListTenantRolesRequest {
+  string tenant_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListTenantRolesResponse {
+  repeated Role roles = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+// User messages (RBAC)
+
+message User {
+  string id = 1;
+  string username = 2;
+  string tenant_id = 3;
+  repeated string role_ids = 4;
+  bool enabled = 5;
+  bool system = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message CreateTenantUserRequest {
+  string tenant_id = 1;
+  string username = 2;
+  repeated string role_ids = 3;
+}
+
+message GetTenantUserRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message UpdateTenantUserRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+  string username = 3;
+  repeated string role_ids = 4;
+}
+
+message DeleteTenantUserRequest {
+  string tenant_id = 1;
+  string user_id = 2;
+}
+
+message ListTenantUsersRequest {
+  string tenant_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListTenantUsersResponse {
+  repeated User users = 1;
+  int32 total = 2;
+  bool has_more = 3;
+}
+
+// Certificate messages
+
+message CertificateInfo {
+  uint64 id = 1;
+  string serial_number = 2;
+  string subject = 3;
+  string issuer = 4;
+  google.protobuf.Timestamp not_before = 5;
+  google.protobuf.Timestamp not_after = 6;
+  string status = 7;
+  google.protobuf.Timestamp issued_at = 8;
+  string cert_url = 9;
+}
+
+message ListCertificatesRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string status = 3;
+  string subject = 4;
+  int32 expires_days = 5;
+}
+
+message ListCertificatesResponse {
+  repeated CertificateInfo certificates = 1;
+  Pagination pagination = 2;
+}
+
+message GetCertificateRequest {
+  string serial = 1;
+}
+
+message RevokeCertificateRequest {
+  string serial = 1;
+  string reason = 2;
+}
+
+// Account messages
+
+message AccountInfo {
+  uint64 id = 1;
+  string status = 2;
+  repeated string contact = 3;
+  google.protobuf.Timestamp created_at = 4;
+  bool terms_of_service_agreed = 5;
+  string orders_url = 6;
+  int32 order_count = 7;
+}
+
+message ListAccountsRequest {
+  int32 page = 1;
+  int32 per_page = 2;
+  string status = 3;
+}
+
+message ListAccountsResponse {
+  repeated AccountInfo accounts = 1;
+  Pagination pagination = 2;
+}
+
+message GetAccountRequest {
+  uint64 account_id = 1;
+}
+
+message DisableAccountRequest {
+  uint64 account_id = 1;
+}
+
+// Status messages
+
+message CAStatus {
+  string identity = 1;
+  bool initialized = 2;
+  string version = 3;
+  google.protobuf.Timestamp started_at = 4;
+  string key_algorithm = 5;
+  string signature_algo = 6;
+  string root_ca = 7;
+  string intermediate_ca = 8;
+}
+
+message CAStats {
+  int32 total_certificates = 1;
+  int32 valid_certificates = 2;
+  int32 revoked_certificates = 3;
+  int32 expired_certificates = 4;
+  int32 total_accounts = 5;
+  int32 active_accounts = 6;
+  int32 total_orders = 7;
+  int32 pending_orders = 8;
+  int32 completed_orders = 9;
+}

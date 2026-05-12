@@ -69,7 +69,7 @@
   }
 </script>
 
-<Modal bind:open title="Unseal Barrier" maxWidth="420px">
+<Modal bind:open title="Unseal Barrier" maxWidth="420px" persistent={true}>
   <div class="unseal-form">
     <div class="strategy-indicator">
       <Icon path={mdiShieldLockOutline} size={20} />

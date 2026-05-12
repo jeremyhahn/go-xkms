@@ -402,6 +402,30 @@ func (ca *CA) SignTCGCSRIDevID(
 		return nil, nil, fmt.Errorf("%w: idevid: %v", ErrTCGCertIssuanceFailed, err)
 	}
 
+	// Persist both issued certs to the CA's certificate store so they
+	// appear in ListCertificates, can be revoked, and are available for
+	// post-issuance hooks (DNS registration, SDN VLAN transition, etc.).
+	// Without this, ACME enroll-01 silently signs+returns certs to the
+	// device while the CA forgets they exist — devices end up with valid
+	// certs the CA can never revoke, list, or audit. Matches SignCSR's
+	// post-signing storage call (ca.go:1349).
+	if ca.certStore != nil {
+		iakCert, parseErr := x509.ParseCertificate(iakCertDER)
+		if parseErr != nil {
+			return nil, nil, fmt.Errorf("%w: parse iak for store: %v", ErrTCGCertIssuanceFailed, parseErr)
+		}
+		if storeErr := ca.certStore.StoreCertificate(iakCert); storeErr != nil {
+			return nil, nil, fmt.Errorf("%w: store iak: %v", ErrTCGCertIssuanceFailed, storeErr)
+		}
+		idevidCert, parseErr := x509.ParseCertificate(idevidCertDER)
+		if parseErr != nil {
+			return nil, nil, fmt.Errorf("%w: parse idevid for store: %v", ErrTCGCertIssuanceFailed, parseErr)
+		}
+		if storeErr := ca.certStore.StoreCertificate(idevidCert); storeErr != nil {
+			return nil, nil, fmt.Errorf("%w: store idevid: %v", ErrTCGCertIssuanceFailed, storeErr)
+		}
+	}
+
 	return iakCertDER, idevidCertDER, nil
 }
 

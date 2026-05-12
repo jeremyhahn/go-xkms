@@ -101,7 +101,7 @@
   }
 </script>
 
-<Modal bind:open title={title} maxWidth="420px">
+<Modal bind:open title={title} maxWidth="420px" persistent={true}>
   <div class="pin-form">
     {#if mode === 'change-so' || mode === 'change-user'}
       <Input

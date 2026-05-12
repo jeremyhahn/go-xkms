@@ -25,19 +25,19 @@ import (
 // --- Mock TPM Provider ---
 
 type mockTPMProvider struct {
-	provisioned     bool
-	hierarchyAuths  map[string]string // hierarchy -> auth value
-	installErr      error
-	setAuthErr      error
-	lockoutInfoErr  error
-	daResetErr      error
-	failedAttempts  int
-	maxFail         int
-	interval        int
-	recovery        int
-	installCalled   bool
-	setAuthCalls    []setAuthCall
-	daResetCalls    int
+	provisioned    bool
+	hierarchyAuths map[string]string // hierarchy -> auth value
+	installErr     error
+	setAuthErr     error
+	lockoutInfoErr error
+	daResetErr     error
+	failedAttempts int
+	maxFail        int
+	interval       int
+	recovery       int
+	installCalled  bool
+	setAuthCalls   []setAuthCall
+	daResetCalls   int
 }
 
 type setAuthCall struct {

@@ -282,8 +282,9 @@ func TestValidateInitFlags_MissingUserPin(t *testing.T) {
 
 func TestValidateInitFlags_ValidSingleAdmin(t *testing.T) {
 	flags := &initFlags{
-		soPin:   "so-pin-value",
-		userPin: "user-pin-value",
+		soPin:           "so-pin-value",
+		userPin:         "user-pin-value",
+		barrierStrategy: "software",
 	}
 	if err := validateInitFlags(flags); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -291,42 +292,45 @@ func TestValidateInitFlags_ValidSingleAdmin(t *testing.T) {
 }
 
 func TestValidateInitFlags_ThresholdWithoutOfficers(t *testing.T) {
+	// Threshold without --barrier-strategy=shamir and without officers
+	// is rejected. The canonical model requires --shares >= 2 when
+	// --barrier-strategy=shamir; supplying --threshold alone with the
+	// default software strategy is invalid.
 	flags := &initFlags{
-		soPin:     "so-pin-value",
-		userPin:   "user-pin-value",
-		threshold: 2,
+		soPin:           "so-pin-value",
+		userPin:         "user-pin-value",
+		barrierStrategy: "software",
+		threshold:       2,
 	}
 	err := validateInitFlags(flags)
 	if err == nil {
-		t.Fatal("expected error for threshold without officers")
-	}
-	if !errors.Is(err, ErrThresholdRequiresOfficers) {
-		t.Errorf("expected ErrThresholdRequiresOfficers, got %v", err)
+		t.Fatal("expected error for threshold with non-shamir strategy")
 	}
 }
 
 func TestValidateInitFlags_ThresholdExceedsOfficers(t *testing.T) {
 	flags := &initFlags{
-		soPin:     "so-pin-value",
-		userPin:   "user-pin-value",
-		threshold: 3,
-		officers:  stringSlice{"admin1:/path/csr1", "admin2:/path/csr2"},
+		soPin:           "so-pin-value",
+		userPin:         "user-pin-value",
+		barrierStrategy: "shamir",
+		shares:          2,
+		threshold:       3,
+		officers:        stringSlice{"admin1:/path/csr1", "admin2:/path/csr2"},
 	}
 	err := validateInitFlags(flags)
 	if err == nil {
-		t.Fatal("expected error for threshold exceeding officers")
-	}
-	if !errors.Is(err, ErrThresholdExceedsOfficers) {
-		t.Errorf("expected ErrThresholdExceedsOfficers, got %v", err)
+		t.Fatal("expected error for threshold exceeding shares")
 	}
 }
 
 func TestValidateInitFlags_ValidMofN(t *testing.T) {
 	flags := &initFlags{
-		soPin:     "so-pin-value",
-		userPin:   "user-pin-value",
-		threshold: 2,
-		officers:  stringSlice{"admin1:/path/csr1", "admin2:/path/csr2", "admin3:/path/csr3"},
+		soPin:           "so-pin-value",
+		userPin:         "user-pin-value",
+		barrierStrategy: "shamir",
+		shares:          3,
+		threshold:       2,
+		officers:        stringSlice{"admin1:/path/csr1", "admin2:/path/csr2", "admin3:/path/csr3"},
 	}
 	if err := validateInitFlags(flags); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -515,21 +519,25 @@ func TestParseInitFlags_InvalidFlag(t *testing.T) {
 }
 
 func TestValidateInitFlags_ThresholdOneIsNotMofN(t *testing.T) {
-	// threshold=1 should be treated as single admin (no officers required)
+	// Per canonical surface, --threshold is only valid when
+	// --barrier-strategy=shamir. Threshold=1 with the default
+	// software strategy is rejected.
 	flags := &initFlags{
-		soPin:     "so-pin",
-		userPin:   "user-pin",
-		threshold: 1,
+		soPin:           "so-pin",
+		userPin:         "user-pin",
+		barrierStrategy: "software",
+		threshold:       1,
 	}
-	if err := validateInitFlags(flags); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err := validateInitFlags(flags); err == nil {
+		t.Fatal("expected ErrSharesRequiresShamir for threshold>0 with non-shamir strategy")
 	}
 }
 
 func TestValidateInitFlags_ThresholdZeroIsValid(t *testing.T) {
 	flags := &initFlags{
-		soPin:   "so-pin",
-		userPin: "user-pin",
+		soPin:           "so-pin",
+		userPin:         "user-pin",
+		barrierStrategy: "software",
 	}
 	if err := validateInitFlags(flags); err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -187,10 +187,10 @@ func TestCopyKey_DestBackendNotFound(t *testing.T) {
 	defer xkms.Reset()
 
 	_, err := svc.CopyKey(context.Background(), &pb.CopyKeyRequest{
-		SourceBackend:    "software",
-		SourceKeyId:      "k",
-		DestBackend:      "nonexistent",
-		DestKeyId:        "k2",
+		SourceBackend:     "software",
+		SourceKeyId:       "k",
+		DestBackend:       "nonexistent",
+		DestKeyId:         "k2",
 		WrappingAlgorithm: "AES-WRAP",
 	})
 	require.Error(t, err)

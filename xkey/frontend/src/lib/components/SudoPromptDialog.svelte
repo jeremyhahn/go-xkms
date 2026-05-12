@@ -40,7 +40,7 @@
   }
 </script>
 
-<Modal bind:open {title} maxWidth="420px">
+<Modal bind:open {title} maxWidth="420px" persistent={true}>
   <div class="sudo-prompt">
     <div class="sudo-header">
       <div class="sudo-icon">

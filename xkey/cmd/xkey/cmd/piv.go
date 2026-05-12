@@ -48,6 +48,7 @@ const (
 	viperKeyPIVPKCS11Library = "piv.pkcs11_library"
 	viperKeyPIVPKCS11Token   = "piv.pkcs11_token"
 	viperKeyPIVPKCS11PIN     = "piv.pkcs11_pin"
+	viperKeyPIVPKCS11SOPIN  = "piv.pkcs11_so_pin"
 )
 
 // PIV command errors.
@@ -183,6 +184,9 @@ type PIVConfig struct {
 
 	// PKCS11PIN is the PKCS#11 user PIN.
 	PKCS11PIN string
+
+	// PKCS11SOPIN is the PKCS#11 Security Officer PIN.
+	PKCS11SOPIN string
 }
 
 // Validate checks the PIV configuration for errors.
@@ -448,6 +452,8 @@ func init() {
 		"PKCS#11 token label")
 	PIVCmd.PersistentFlags().String("pkcs11-pin", "",
 		"PKCS#11 user PIN")
+	PIVCmd.PersistentFlags().String("pkcs11-so-pin", "",
+		"PKCS#11 Security Officer PIN (required for key generation)")
 
 	// Bind PIV flags to viper
 	_ = viper.BindPFlag(viperKeyPIVBackend, PIVCmd.PersistentFlags().Lookup("backend"))
@@ -457,6 +463,7 @@ func init() {
 	_ = viper.BindPFlag(viperKeyPIVPKCS11Library, PIVCmd.PersistentFlags().Lookup("pkcs11-library"))
 	_ = viper.BindPFlag(viperKeyPIVPKCS11Token, PIVCmd.PersistentFlags().Lookup("pkcs11-token"))
 	_ = viper.BindPFlag(viperKeyPIVPKCS11PIN, PIVCmd.PersistentFlags().Lookup("pkcs11-pin"))
+	_ = viper.BindPFlag(viperKeyPIVPKCS11SOPIN, PIVCmd.PersistentFlags().Lookup("pkcs11-so-pin"))
 
 	// Export command specific flags
 	pivExportCmd.Flags().String("format", defaultPIVExportFormat,
@@ -496,6 +503,7 @@ func buildPIVConfig() *PIVConfig {
 		PKCS11Library: viper.GetString(viperKeyPIVPKCS11Library),
 		PKCS11Token:   viper.GetString(viperKeyPIVPKCS11Token),
 		PKCS11PIN:     viper.GetString(viperKeyPIVPKCS11PIN),
+		PKCS11SOPIN:   viper.GetString(viperKeyPIVPKCS11SOPIN),
 	}
 }
 
@@ -526,12 +534,10 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (pivcert.PIVCertifica
 		return pivcertfile.NewFileBackend(fileConfig)
 
 	case PIVStorageTypeTPM2:
-		// TPM2 backend not yet implemented
-		return nil, fmt.Errorf("piv: TPM2 storage backend not yet implemented")
+		return createTPM2PIVStorage(cfg, logger)
 
 	case PIVStorageTypePKCS11:
-		// PKCS#11 backend not yet implemented
-		return nil, fmt.Errorf("piv: PKCS#11 storage backend not yet implemented")
+		return createPKCS11PIVStorage(cfg, logger)
 
 	default:
 		return nil, ErrPIVInvalidStorageType

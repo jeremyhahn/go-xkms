@@ -28,7 +28,11 @@ type (
 	// Password represents a secret used to authenticate or decrypt protected data.
 	Password = types.Password
 
-	// ClearPassword is a simple in-memory implementation of the Password interface.
+	// ClearPassword implements Password by holding the UserAuth bytes
+	// inside a memguard-backed enclave (see pkg/types.ClearPassword).
+	// SDK consumers use this type through the Password interface for
+	// backwards compatibility; for new code, prefer
+	// github.com/jeremyhahn/go-xkms/sdk/go/secure.Buffer directly.
 	ClearPassword = types.ClearPassword
 
 	// KeyAttributes describes a cryptographic key's metadata and configuration.

@@ -1,0 +1,61 @@
+@import "tailwindcss";
+@source "../../shared/src/**/*.{svelte,ts,js}";
+@plugin "daisyui";
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 dark:bg-slate-900 dark:text-slate-100 transition-colors duration-200;
+  }
+
+  /* Focus ring styles */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-blue-500/50 ring-offset-2 ring-offset-white dark:ring-offset-slate-900;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent dark:bg-slate-800;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-slate-300 dark:bg-slate-600;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-slate-400 dark:bg-slate-500;
+  }
+}
+
+@layer components {
+  /* Common input styling */
+  .input {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm
+           text-slate-900 placeholder-slate-400
+           focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20
+           disabled:cursor-not-allowed disabled:opacity-60
+           dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100
+           dark:placeholder-slate-500 dark:focus:border-blue-400
+           transition-colors duration-150;
+  }
+
+  .select {
+    @apply input appearance-none bg-no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%2394a3b8'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z'/%3E%3C/svg%3E");
+    background-position: right 0.5rem center;
+    background-size: 1.25rem;
+    padding-right: 2.5rem;
+  }
+}
+
+@layer utilities {
+  .scrollbar-dark::-webkit-scrollbar {
+    @apply w-2;
+  }
+  .scrollbar-dark::-webkit-scrollbar-track {
+    @apply bg-slate-800;
+  }
+  .scrollbar-dark::-webkit-scrollbar-thumb {
+    @apply bg-slate-600 rounded;
+  }
+}

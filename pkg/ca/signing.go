@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package ca provides CSR signing helper functions for the XKMSCA certificate authority.
+// Package ca provides CSR signing helper functions for the TrustedCA certificate authority.
 //
 // This file provides helper functions for certificate signing request (CSR) handling
 // and Subject Alternative Name (SAN) operations that complement the main CA implementation.

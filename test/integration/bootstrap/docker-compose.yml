@@ -1,5 +1,12 @@
 services:
-  # xKMS server with REST + Noise bootstrap enabled
+  # xKMS server with REST + Noise bootstrap enabled.
+  #
+  # The REST (8443) and Noise (8445) ports are published to the host so
+  # this compose can double as an interactive dev backend for the xkey
+  # desktop app. The mappings can be overridden via the XKMS_HOST_REST_PORT
+  # and XKMS_HOST_NOISE_PORT env vars if those ports are already in use
+  # locally. When running the integration tests the publish is harmless;
+  # the test runner container reaches the server via bootstrap-net.
   xkms-server:
     build:
       context: ../../..
@@ -11,6 +18,9 @@ services:
         - VERSION=${VERSION:-0.0.1-alpha}
     image: go-xkms-bootstrap:latest
     container_name: bootstrap-xkms-server
+    ports:
+      - "${XKMS_HOST_REST_PORT:-8443}:8443"
+      - "${XKMS_HOST_NOISE_PORT:-8445}:8445"
     volumes:
       - xkms-data:/data
       - xkms-certs:/etc/xkms/certs

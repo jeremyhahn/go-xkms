@@ -598,3 +598,118 @@ All interfaces expose the complete KeyStore API (17/17 methods).
 [0.1.2-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.2-alpha
 [0.1.1-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.1-alpha
 [0.1.0-alpha]: https://github.com/jeremyhahn/go-xkms/releases/tag/v0.1.0-alpha
+
+---
+
+## Merged from go-trusted-ca (2026-04-16)
+
+The go-trusted-ca repository was merged into go-xkms. All ACME-related
+functionality now lives under `pkg/acme/`. The following sections are
+imported from go-trusted-ca's CHANGELOG for historical reference.
+
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+
+#### API Documentation
+- **Swagger UI** at `/docs` for interactive API exploration
+- **ACME API OpenAPI spec** (`/openapi/acme-api.yaml`) - Full RFC 8555 documentation
+- **Admin API OpenAPI spec** (`/openapi/admin-api.yaml`) - Administrative endpoints
+- Spec switching via query parameter (`?spec=admin-api`)
+
+#### Monitoring & Observability
+- **Grafana Dashboard** (`deploy/grafana/dashboard.json`)
+  - SLO tracking (99.9% availability, 99% challenge success)
+  - Error budget tracking
+  - Request latency heatmaps (p50, p95, p99)
+  - Certificate issuance metrics
+  - Challenge validation rates by type
+  - System resource monitoring (CPU, memory, goroutines, GC)
+
+#### Multi-Arch Docker Builds
+- GitHub Actions workflow for automated multi-arch builds
+- Support for `linux/amd64` and `linux/arm64`
+- Trivy security scanning on every build
+- SBOM (Software Bill of Materials) generation
+- Build provenance attestation
+
+---
+
+## [0.1.0-alpha] - 2026-01-02
+
+### Added
+
+#### ACME Server (RFC 8555 Compliant)
+- Full RFC 8555 ACME protocol implementation
+- Directory endpoint with capability discovery
+- Account management (create, update, deactivate, key rollover)
+- Order workflow with authorization and challenge validation
+- Certificate issuance and revocation
+- Nonce management and replay protection
+
+#### Challenge Types
+- **HTTP-01**: Standard domain validation via HTTP token
+- **DNS-01**: Domain validation via DNS TXT records
+- **device-attest-01**: TPM 2.0 device attestation per draft-acme-device-attest
+- **enroll-01**: TCG-compliant IDevID enrollment for TPM-equipped devices
+- **endorse-01**: Endorsement Key certificate provisioning
+
+#### Multi-Tenancy
+- Tenant isolation with dedicated CAs
+- Per-tenant key management via go-xkms KMS
+- RBAC role-based access control
+- RBAC policies with CEL expressions
+
+#### Admin API
+- RESTful management interface
+- Tenant lifecycle management
+- Policy and role administration
+- CA status and health monitoring
+
+#### Storage Backends
+- All go-xkms backends supported:
+  - Local filesystem (PKCS#8)
+  - TPM 2.0 hardware protection
+  - PKCS#11 HSM integration
+  - AWS KMS
+  - GCP Cloud KMS
+  - Azure Key Vault
+  - HashiCorp Vault
+- Certificate storage via go-objstore
+
+#### Security
+- JWT-based authentication
+- TLS 1.3 support
+- Rate limiting with RFC 8555 compliance
+- Proxy header support (X-Forwarded-For, X-Real-IP)
+
+#### Deployment
+- Single-node embedded mode
+- Raft-based clustering via QRDB
+- Docker container support
+- Prometheus metrics endpoint
+
+#### Developer Experience
+- Comprehensive test coverage (90%+ on core packages)
+- Integration test suite with Docker
+- Example configurations and quickstart guide
+
+### Dependencies
+- go-xkms v0.2.2-alpha
+- go-objstore v0.1.4-alpha
+- go-qrdb (local development)
+
+### Known Limitations
+- TCG-CSR-IDEVID parsing partially implemented
+- Client package coverage at 74.8% (TPM functions require integration tests)
+
+---
+
+[0.1.0-alpha]: https://github.com/jeremyhahn/go-trusted-ca/releases/tag/v0.1.0-alpha

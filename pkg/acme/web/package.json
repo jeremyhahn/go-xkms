@@ -1,0 +1,19 @@
+{
+  "name": "go-trusted-ca-web",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/admin",
+    "packages/client"
+  ],
+  "scripts": {
+    "dev:admin": "npm -w packages/admin run dev",
+    "dev:client": "npm -w packages/client run dev",
+    "build:admin": "npm -w packages/admin run build",
+    "build:client": "npm -w packages/client run build",
+    "build": "npm -w packages/admin run build && npm -w packages/client run build",
+    "preview:admin": "npm -w packages/admin run preview",
+    "preview:client": "npm -w packages/client run preview",
+    "check": "npm -w packages/admin run check && npm -w packages/client run check"
+  }
+}

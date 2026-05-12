@@ -271,9 +271,9 @@ func TestHandleWrapKey(t *testing.T) {
 
 	t.Run("POST with invalid PEM", func(t *testing.T) {
 		body, _ := json.Marshal(WrapKeyRequest{
-			KeyMaterial:        []byte("key"),
+			KeyMaterial:          []byte("key"),
 			WrappingPublicKeyPEM: "not-a-pem",
-			Algorithm:          "RSA_OAEP_SHA256",
+			Algorithm:            "RSA_OAEP_SHA256",
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/test-key/wrap?backend=software", bytes.NewReader(body))
 		w := httptest.NewRecorder()
@@ -308,7 +308,7 @@ func TestHandleUnwrapKey(t *testing.T) {
 	t.Run("POST missing wrapped_key", func(t *testing.T) {
 		body, _ := json.Marshal(UnwrapKeyRequest{
 			WrappingPublicKeyPEM: pubKeyPEM,
-			Algorithm:           "RSA_OAEP_SHA256",
+			Algorithm:            "RSA_OAEP_SHA256",
 		})
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/test-key/unwrap?backend=software", bytes.NewReader(body))
 		w := httptest.NewRecorder()

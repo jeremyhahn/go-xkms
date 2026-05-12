@@ -833,11 +833,53 @@ func (tpm *TPM2) SetHierarchyAuth(oldPasswd, newPasswd types.Password, hierarchy
 			},
 		}.Execute(tpm.transport)
 		if err != nil {
+			// Reinstall recovery: if the empty-auth attempt failed with
+			// TPM_RC_BAD_AUTH, a prior platformd run on this TPM set the
+			// hierarchy auth to the current soPIN. A fresh install never
+			// gets to clear the TPM (the installer doesn't PPI-clear, and
+			// TPM2_Clear fails inside platformd because DA protects it).
+			// So retry once using newPassword as the old auth — this
+			// covers the common case where a platform is reinstalled
+			// with the same soPIN and the TPM still has the prior
+			// provisioning. It's a no-op if already under the right auth
+			// (HierarchyChangeAuth with old==new is idempotent).
+			if len(oldPassword) == 0 && len(newPassword) > 0 && isTPMBadAuth(err) {
+				tpm.logger.Warn("hierarchy auth already set with soPIN; retrying with soPIN as old-auth (reinstall recovery)",
+					slog.String("first_error", err.Error()))
+				_, retryErr := tpm2.HierarchyChangeAuth{
+					AuthHandle: tpm2.AuthHandle{
+						Handle: hierarchy,
+						Auth:   tpm2.PasswordAuth(newPassword),
+					},
+					NewAuth: tpm2.TPM2BAuth{
+						Buffer: newPassword,
+					},
+				}.Execute(tpm.transport)
+				if retryErr == nil {
+					tpm.logger.Info("hierarchy auth confirmed (reinstall recovery)")
+					continue
+				}
+				tpm.logger.Error("failed to change hierarchy auth after soPIN retry", slog.String("error", retryErr.Error()))
+				return retryErr
+			}
 			tpm.logger.Error("failed to change hierarchy auth", slog.String("error", err.Error()))
 			return err
 		}
 	}
 	return nil
+}
+
+// isTPMBadAuth reports whether err is a TPM_RC_BAD_AUTH failure. We only
+// match on the string because the go-tpm error wrapping doesn't expose a
+// stable typed code at this call site. Accepting the literal prefix is
+// safe — TPM_RC_BAD_AUTH is the canonical form emitted by go-tpm.
+func isTPMBadAuth(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "TPM_RC_BAD_AUTH") ||
+		strings.Contains(msg, "authorization failure without DA implications")
 }
 
 // Retrieve the Endorsement Key Certificate. If the EK cert-handle is 0, the EK certificate

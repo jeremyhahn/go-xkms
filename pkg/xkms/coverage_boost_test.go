@@ -96,7 +96,7 @@ func (m *boostIEKeyProvider) Decrypter(attrs *types.KeyAttributes) (crypto.Decry
 	return nil, errors.New("not supported")
 }
 func (m *boostIEKeyProvider) RotateKey(attrs *types.KeyAttributes) error { return nil }
-func (m *boostIEKeyProvider) Close() error                              { return nil }
+func (m *boostIEKeyProvider) Close() error                               { return nil }
 
 func (m *boostIEKeyProvider) GetImportParameters(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	if m.getParamsErr != nil {
@@ -137,7 +137,6 @@ func (m *boostIEKeyProvider) ImportKey(attrs *types.KeyAttributes, wrapped *back
 	return nil
 }
 
-
 func (m *boostIEKeyProvider) ExportKey(attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.WrappedKeyMaterial, error) {
 	if m.exportErr != nil {
 		return nil, m.exportErr
@@ -161,9 +160,9 @@ type boostSymKey struct {
 	keyData []byte
 }
 
-func (k *boostSymKey) Algorithm() string         { return string(k.attrs.SymmetricAlgorithm) }
-func (k *boostSymKey) KeySize() int              { return len(k.keyData) * 8 }
-func (k *boostSymKey) Raw() ([]byte, error)      { return k.keyData, nil }
+func (k *boostSymKey) Algorithm() string    { return string(k.attrs.SymmetricAlgorithm) }
+func (k *boostSymKey) KeySize() int         { return len(k.keyData) * 8 }
+func (k *boostSymKey) Raw() ([]byte, error) { return k.keyData, nil }
 
 type boostSymEncrypter struct {
 	encryptErr error

@@ -1,0 +1,40 @@
+# Dockerfile for HTTP-01 Challenge Responder
+FROM golang:1.26.1-alpine AS builder
+
+WORKDIR /build
+
+# Copy challenge responder source
+COPY cmd/challenge_responder.go .
+
+# Initialize module and build
+RUN go mod init challenge-responder && \
+    CGO_ENABLED=0 GOOS=linux go build -o challenge-responder .
+
+# Final stage
+FROM alpine:latest
+
+RUN apk --no-cache add wget
+
+# Create non-root user for security
+RUN addgroup -g 1000 challenge && \
+    adduser -u 1000 -G challenge -s /bin/sh -D challenge
+
+WORKDIR /app
+
+COPY --from=builder /build/challenge-responder .
+
+# Create challenge directory
+RUN mkdir -p /challenges
+
+# Set ownership for non-root user
+RUN chown -R challenge:challenge /app /challenges
+
+ENV LISTEN_PORT=80
+ENV CHALLENGE_DIR=/challenges
+
+EXPOSE 80
+
+# Switch to non-root user
+USER challenge
+
+CMD ["./challenge-responder"]

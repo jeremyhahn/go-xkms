@@ -112,6 +112,13 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 		return ErrPIVCSRCommonNameRequired
 	}
 
+	// Get optional Distinguished Name fields.
+	org, _ := cmd.Flags().GetString("organization")
+	ou, _ := cmd.Flags().GetString("organizational-unit")
+	country, _ := cmd.Flags().GetString("country")
+	province, _ := cmd.Flags().GetString("province")
+	locality, _ := cmd.Flags().GetString("locality")
+
 	// Get configuration
 	cfg := buildPIVConfig()
 
@@ -123,9 +130,14 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 	// Generate CSR via xkms package-level function.
 	ctx := cmd.Context()
 	resp, err := xkms.GeneratePIVCSR(ctx, &transport.GeneratePIVCSRRequest{
-		Backend: string(cfg.Backend),
-		Slot:    string(slot),
-		Subject: cn,
+		Backend:            string(cfg.Backend),
+		Slot:               string(slot),
+		Subject:            cn,
+		Organization:       org,
+		OrganizationalUnit: ou,
+		Country:            country,
+		State:              province,
+		Locality:           locality,
 	})
 	if err != nil {
 		return err

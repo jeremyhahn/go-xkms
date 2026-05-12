@@ -85,7 +85,7 @@ func TestCompositeAuthenticator_HTTP_FirstSucceeds(t *testing.T) {
 		name: "first",
 		httpResult: &Identity{
 			Subject: "first-user",
-			Claims:  map[string]interface{}{},
+			Roles:   []string{},
 		},
 	}
 	second := &compositeTestAuth{
@@ -125,7 +125,7 @@ func TestCompositeAuthenticator_HTTP_SecondSucceeds(t *testing.T) {
 		name: "second",
 		httpResult: &Identity{
 			Subject: "second-user",
-			Claims:  map[string]interface{}{},
+			Roles:   []string{},
 		},
 	}
 
@@ -189,7 +189,7 @@ func TestCompositeAuthenticator_GRPC_FirstSucceeds(t *testing.T) {
 		name: "first",
 		grpcResult: &Identity{
 			Subject: "grpc-first-user",
-			Claims:  map[string]interface{}{},
+			Roles:   []string{},
 		},
 	}
 	second := &compositeTestAuth{
@@ -229,7 +229,7 @@ func TestCompositeAuthenticator_GRPC_SecondSucceeds(t *testing.T) {
 		name: "second",
 		grpcResult: &Identity{
 			Subject: "grpc-second-user",
-			Claims:  map[string]interface{}{},
+			Roles:   []string{},
 		},
 	}
 
@@ -291,11 +291,11 @@ func TestCompositeAuthenticator_SingleAuthenticator(t *testing.T) {
 		name: "only",
 		httpResult: &Identity{
 			Subject: "only-user",
-			Claims:  map[string]interface{}{},
+			Roles:   []string{},
 		},
 		grpcResult: &Identity{
 			Subject: "only-grpc-user",
-			Claims:  map[string]interface{}{},
+			Roles:   []string{},
 		},
 	}
 

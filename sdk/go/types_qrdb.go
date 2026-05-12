@@ -143,10 +143,10 @@ type QRDBShareService = qrdb.ShareService
 
 // Ceremony constructors.
 var (
-	QRDBNewCeremonyService    = qrdb.NewCeremonyService
-	QRDBNewThresholdRegistry  = qrdb.NewThresholdRegistry
+	QRDBNewCeremonyService       = qrdb.NewCeremonyService
+	QRDBNewThresholdRegistry     = qrdb.NewThresholdRegistry
 	QRDBNewCustodianGroupService = qrdb.NewCustodianGroupService
-	QRDBNewShareService       = qrdb.NewShareService
+	QRDBNewShareService          = qrdb.NewShareService
 )
 
 // ==========================================================================
@@ -167,7 +167,7 @@ var (
 	QRDBErrCeremonyInvalidThreshold            = qrdb.ErrCeremonyInvalidThreshold
 	QRDBErrCeremonyNoOfficers                  = qrdb.ErrCeremonyNoOfficers
 	QRDBErrCeremonyInvalidCSR                  = qrdb.ErrCeremonyInvalidCSR
-	QRDBErrCeremonyDuplicateUsername            = qrdb.ErrCeremonyDuplicateUsername
+	QRDBErrCeremonyDuplicateUsername           = qrdb.ErrCeremonyDuplicateUsername
 	QRDBErrCeremonyPendingCertNotFound         = qrdb.ErrCeremonyPendingCertNotFound
 	QRDBErrCeremonyCertAlreadyClaimed          = qrdb.ErrCeremonyCertAlreadyClaimed
 	QRDBErrCeremonyShareAlreadyClaimed         = qrdb.ErrCeremonyShareAlreadyClaimed
@@ -288,13 +288,13 @@ type (
 
 // DAO error query helpers.
 var (
-	QRDBIsDAOTransactionClosed    = qrdb.IsDAOTransactionClosed
+	QRDBIsDAOTransactionClosed      = qrdb.IsDAOTransactionClosed
 	QRDBIsDAOTransactionCommitError = qrdb.IsDAOTransactionCommitError
-	QRDBIsDAOInvalidEntity        = qrdb.IsDAOInvalidEntity
-	QRDBIsDAOInvalidCondition     = qrdb.IsDAOInvalidCondition
-	QRDBIsDAOConditionFailed      = qrdb.IsDAOConditionFailed
-	QRDBIsDAOUnitOfWorkClosed     = qrdb.IsDAOUnitOfWorkClosed
-	QRDBIsDAOUnitOfWorkCommitError = qrdb.IsDAOUnitOfWorkCommitError
+	QRDBIsDAOInvalidEntity          = qrdb.IsDAOInvalidEntity
+	QRDBIsDAOInvalidCondition       = qrdb.IsDAOInvalidCondition
+	QRDBIsDAOConditionFailed        = qrdb.IsDAOConditionFailed
+	QRDBIsDAOUnitOfWorkClosed       = qrdb.IsDAOUnitOfWorkClosed
+	QRDBIsDAOUnitOfWorkCommitError  = qrdb.IsDAOUnitOfWorkCommitError
 )
 
 // ==========================================================================
@@ -405,35 +405,35 @@ const (
 
 // Database constructors.
 var (
-	QRDBNewDatabase              = qrdb.NewDatabase
-	QRDBNewStandaloneBackend     = qrdb.NewStandaloneBackend
-	QRDBNewBarrierBackend        = qrdb.NewBarrierBackend
-	QRDBNewBackendStorageAdapter = qrdb.NewBackendStorageAdapter
+	QRDBNewDatabase               = qrdb.NewDatabase
+	QRDBNewStandaloneBackend      = qrdb.NewStandaloneBackend
+	QRDBNewBarrierBackend         = qrdb.NewBarrierBackend
+	QRDBNewBackendStorageAdapter  = qrdb.NewBackendStorageAdapter
 	QRDBNewDatabaseBarrierManager = qrdb.NewDatabaseBarrierManager
 )
 
 // Database error types.
 type (
-	QRDBDBInvalidNameError           = qrdb.DBInvalidNameError
-	QRDBDBInvalidEngineError         = qrdb.DBInvalidEngineError
-	QRDBDBInvalidBackendError        = qrdb.DBInvalidBackendError
-	QRDBDBAlreadyExistsError         = qrdb.DBAlreadyExistsError
-	QRDBDBNotFoundError              = qrdb.DBNotFoundError
-	QRDBDBNotOpenError               = qrdb.DBNotOpenError
-	QRDBDBOpenError                  = qrdb.DBOpenError
-	QRDBDBCloseError                 = qrdb.DBCloseError
-	QRDBDBMetaReadError              = qrdb.DBMetaReadError
-	QRDBDBMetaWriteError             = qrdb.DBMetaWriteError
-	QRDBDBDropError                  = qrdb.DBDropError
-	QRDBDBStorageCreateError         = qrdb.DBStorageCreateError
-	QRDBDBInvalidModeError           = qrdb.DBInvalidModeError
-	QRDBDBConnectionRequiredError    = qrdb.DBConnectionRequiredError
+	QRDBDBInvalidNameError            = qrdb.DBInvalidNameError
+	QRDBDBInvalidEngineError          = qrdb.DBInvalidEngineError
+	QRDBDBInvalidBackendError         = qrdb.DBInvalidBackendError
+	QRDBDBAlreadyExistsError          = qrdb.DBAlreadyExistsError
+	QRDBDBNotFoundError               = qrdb.DBNotFoundError
+	QRDBDBNotOpenError                = qrdb.DBNotOpenError
+	QRDBDBOpenError                   = qrdb.DBOpenError
+	QRDBDBCloseError                  = qrdb.DBCloseError
+	QRDBDBMetaReadError               = qrdb.DBMetaReadError
+	QRDBDBMetaWriteError              = qrdb.DBMetaWriteError
+	QRDBDBDropError                   = qrdb.DBDropError
+	QRDBDBStorageCreateError          = qrdb.DBStorageCreateError
+	QRDBDBInvalidModeError            = qrdb.DBInvalidModeError
+	QRDBDBConnectionRequiredError     = qrdb.DBConnectionRequiredError
 	QRDBDBInvalidRaftClusterModeError = qrdb.DBInvalidRaftClusterModeError
 	QRDBDBInvalidDiscoveryMethodError = qrdb.DBInvalidDiscoveryMethodError
-	QRDBDBRangeIteratorError         = qrdb.DBRangeIteratorError
-	QRDBDBBarrierCreateError         = qrdb.DBBarrierCreateError
-	QRDBDBBarrierSealError           = qrdb.DBBarrierSealError
-	QRDBDBBarrierUnsealError         = qrdb.DBBarrierUnsealError
+	QRDBDBRangeIteratorError          = qrdb.DBRangeIteratorError
+	QRDBDBBarrierCreateError          = qrdb.DBBarrierCreateError
+	QRDBDBBarrierSealError            = qrdb.DBBarrierSealError
+	QRDBDBBarrierUnsealError          = qrdb.DBBarrierUnsealError
 )
 
 // ==========================================================================
@@ -460,61 +460,61 @@ const (
 
 // QRDB structured error types.
 type (
-	QRDBError                = qrdb.QRDBError
-	QRDBQuotaExceededError   = qrdb.QuotaExceededError
-	QRDBMessageError         = qrdb.MessageError
-	QRDBWrappedMessageError  = qrdb.WrappedMessageError
+	QRDBError                  = qrdb.QRDBError
+	QRDBQuotaExceededError     = qrdb.QuotaExceededError
+	QRDBMessageError           = qrdb.MessageError
+	QRDBWrappedMessageError    = qrdb.WrappedMessageError
 	QRDBParameterNotFoundError = qrdb.ParameterNotFoundError
 )
 
 // QRDB error constructors.
 var (
-	QRDBNewError  = qrdb.NewError
-	QRDBNewErrorf = qrdb.NewErrorf
+	QRDBNewError   = qrdb.NewError
+	QRDBNewErrorf  = qrdb.NewErrorf
 	QRDBWrapError  = qrdb.WrapError
 	QRDBWrapErrorf = qrdb.WrapErrorf
 )
 
 // QRDB error query helpers.
 var (
-	QRDBIsErrorCode             = qrdb.IsErrorCode
-	QRDBAsError                 = qrdb.AsError
-	QRDBErrorCodeOf             = qrdb.ErrorCodeOf
-	QRDBErrorOperationOf        = qrdb.ErrorOperationOf
-	QRDBIsRetryableError        = qrdb.IsRetryableError
-	QRDBErrorContext            = qrdb.ErrorContext
-	QRDBIsErrorNotFound         = qrdb.IsErrorNotFound
-	QRDBIsErrorCanceled         = qrdb.IsErrorCanceled
-	QRDBIsErrorInvalidInput     = qrdb.IsErrorInvalidInput
-	QRDBIsErrorResourceExhausted = qrdb.IsErrorResourceExhausted
+	QRDBIsErrorCode                    = qrdb.IsErrorCode
+	QRDBAsError                        = qrdb.AsError
+	QRDBErrorCodeOf                    = qrdb.ErrorCodeOf
+	QRDBErrorOperationOf               = qrdb.ErrorOperationOf
+	QRDBIsRetryableError               = qrdb.IsRetryableError
+	QRDBErrorContext                   = qrdb.ErrorContext
+	QRDBIsErrorNotFound                = qrdb.IsErrorNotFound
+	QRDBIsErrorCanceled                = qrdb.IsErrorCanceled
+	QRDBIsErrorInvalidInput            = qrdb.IsErrorInvalidInput
+	QRDBIsErrorResourceExhausted       = qrdb.IsErrorResourceExhausted
 	QRDBIsErrorSystemKeyspaceViolation = qrdb.IsErrorSystemKeyspaceViolation
-	QRDBIsErrorCrossTenantAccess      = qrdb.IsErrorCrossTenantAccess
-	QRDBIsErrorMissingTenantContext   = qrdb.IsErrorMissingTenantContext
-	QRDBIsErrorQuotaExceeded          = qrdb.IsErrorQuotaExceeded
-	QRDBIsErrorMissingJustification   = qrdb.IsErrorMissingJustification
-	QRDBIsErrorMissingUserContext     = qrdb.IsErrorMissingUserContext
-	QRDBIsErrorCircuitOpen            = qrdb.IsErrorCircuitOpen
+	QRDBIsErrorCrossTenantAccess       = qrdb.IsErrorCrossTenantAccess
+	QRDBIsErrorMissingTenantContext    = qrdb.IsErrorMissingTenantContext
+	QRDBIsErrorQuotaExceeded           = qrdb.IsErrorQuotaExceeded
+	QRDBIsErrorMissingJustification    = qrdb.IsErrorMissingJustification
+	QRDBIsErrorMissingUserContext      = qrdb.IsErrorMissingUserContext
+	QRDBIsErrorCircuitOpen             = qrdb.IsErrorCircuitOpen
 )
 
 // QRDB convenience error constructors.
 var (
-	QRDBErrorNotFound      = qrdb.ErrorNotFound
-	QRDBErrorAlreadyExists = qrdb.ErrorAlreadyExists
-	QRDBErrorInvalidInput  = qrdb.ErrorInvalidInput
-	QRDBErrorInvalidInputf = qrdb.ErrorInvalidInputf
-	QRDBErrorTimeout       = qrdb.ErrorTimeout
-	QRDBErrorInternal      = qrdb.ErrorInternal
-	QRDBErrorInternalf     = qrdb.ErrorInternalf
-	QRDBErrorUnavailable   = qrdb.ErrorUnavailable
-	QRDBErrorUnavailablef  = qrdb.ErrorUnavailablef
-	QRDBErrorNotImplemented = qrdb.ErrorNotImplemented
-	QRDBErrorCircuitOpen    = qrdb.ErrorCircuitOpen
-	QRDBNewQuotaExceededError          = qrdb.NewQuotaExceededError
+	QRDBErrorNotFound                   = qrdb.ErrorNotFound
+	QRDBErrorAlreadyExists              = qrdb.ErrorAlreadyExists
+	QRDBErrorInvalidInput               = qrdb.ErrorInvalidInput
+	QRDBErrorInvalidInputf              = qrdb.ErrorInvalidInputf
+	QRDBErrorTimeout                    = qrdb.ErrorTimeout
+	QRDBErrorInternal                   = qrdb.ErrorInternal
+	QRDBErrorInternalf                  = qrdb.ErrorInternalf
+	QRDBErrorUnavailable                = qrdb.ErrorUnavailable
+	QRDBErrorUnavailablef               = qrdb.ErrorUnavailablef
+	QRDBErrorNotImplemented             = qrdb.ErrorNotImplemented
+	QRDBErrorCircuitOpen                = qrdb.ErrorCircuitOpen
+	QRDBNewQuotaExceededError           = qrdb.NewQuotaExceededError
 	QRDBNewSystemKeyspaceViolationError = qrdb.NewSystemKeyspaceViolationError
-	QRDBNewCrossTenantAccessError      = qrdb.NewCrossTenantAccessError
-	QRDBNewMissingTenantContextError   = qrdb.NewMissingTenantContextError
-	QRDBNewMissingJustificationError   = qrdb.NewMissingJustificationError
-	QRDBNewMissingUserContextError     = qrdb.NewMissingUserContextError
+	QRDBNewCrossTenantAccessError       = qrdb.NewCrossTenantAccessError
+	QRDBNewMissingTenantContextError    = qrdb.NewMissingTenantContextError
+	QRDBNewMissingJustificationError    = qrdb.NewMissingJustificationError
+	QRDBNewMissingUserContextError      = qrdb.NewMissingUserContextError
 )
 
 // ==========================================================================
@@ -605,21 +605,21 @@ type (
 
 // Seal strategy types.
 type (
-	QRDBStrategyID         = qrdb.StrategyID
-	QRDBSealingStrategy    = qrdb.SealingStrategy
-	QRDBSymmetricEncrypter = qrdb.SymmetricEncrypter
-	QRDBStorageBackend     = qrdb.StorageBackend
-	QRDBCredentials        = qrdb.Credentials
-	QRDBSealedRootKey      = qrdb.SealedRootKey
-	QRDBShareAccumulator   = qrdb.ShareAccumulator
-	QRDBShareSplitter      = qrdb.ShareSplitter
-	QRDBQuorumProgress     = qrdb.QuorumProgress
-	QRDBShamirInitResult   = qrdb.ShamirInitResult
-	QRDBShamirConfig       = qrdb.ShamirConfig
-	QRDBSoftwareStrategy   = qrdb.SoftwareStrategy
-	QRDBEpochBarrier       = qrdb.EpochBarrier
-	QRDBEpochBarrierConfig = qrdb.EpochBarrierConfig
-	QRDBInvocationCounter  = qrdb.InvocationCounter
+	QRDBStrategyID           = qrdb.StrategyID
+	QRDBSealingStrategy      = qrdb.SealingStrategy
+	QRDBSymmetricEncrypter   = qrdb.SymmetricEncrypter
+	QRDBStorageBackend       = qrdb.StorageBackend
+	QRDBCredentials          = qrdb.Credentials
+	QRDBSealedRootKey        = qrdb.SealedRootKey
+	QRDBShareAccumulator     = qrdb.ShareAccumulator
+	QRDBShareSplitter        = qrdb.ShareSplitter
+	QRDBQuorumProgress       = qrdb.QuorumProgress
+	QRDBShamirInitResult     = qrdb.ShamirInitResult
+	QRDBShamirConfig         = qrdb.ShamirConfig
+	QRDBSoftwareStrategy     = qrdb.SoftwareStrategy
+	QRDBEpochBarrier         = qrdb.EpochBarrier
+	QRDBEpochBarrierConfig   = qrdb.EpochBarrierConfig
+	QRDBInvocationCounter    = qrdb.InvocationCounter
 	QRDBNonceTrackerProvider = qrdb.NonceTrackerProvider
 	QRDBAEADProvider         = qrdb.AEADProvider
 	QRDBSymmetricAlgorithm   = qrdb.SymmetricAlgorithm
@@ -627,15 +627,15 @@ type (
 
 // Seal barrier types.
 type (
-	QRDBStorageBarrier    = qrdb.StorageBarrier
-	QRDBBarrier           = qrdb.Barrier
-	QRDBBarrierConfig     = qrdb.BarrierConfig
-	QRDBBarrierStatus     = qrdb.BarrierStatus
-	QRDBBarrierRegistry   = qrdb.BarrierRegistry
-	QRDBTenantBarrier     = qrdb.TenantBarrier
+	QRDBStorageBarrier      = qrdb.StorageBarrier
+	QRDBBarrier             = qrdb.Barrier
+	QRDBBarrierConfig       = qrdb.BarrierConfig
+	QRDBBarrierStatus       = qrdb.BarrierStatus
+	QRDBBarrierRegistry     = qrdb.BarrierRegistry
+	QRDBTenantBarrier       = qrdb.TenantBarrier
 	QRDBTenantBarrierConfig = qrdb.TenantBarrierConfig
-	QRDBMemoryBackend     = qrdb.MemoryBackend
-	QRDBNamespacedBackend = qrdb.NamespacedBackend
+	QRDBMemoryBackend       = qrdb.MemoryBackend
+	QRDBNamespacedBackend   = qrdb.NamespacedBackend
 )
 
 // QRDBShamirStrategy implements Shamir secret sharing as a sealing strategy.
@@ -682,22 +682,22 @@ const QRDBDefaultQuorumTTL = qrdb.DefaultQuorumTTL
 
 // Seal constructors.
 var (
-	QRDBNewStorageBarrier        = qrdb.NewStorageBarrier
-	QRDBNewBarrier               = qrdb.NewBarrier
-	QRDBNewBarrierRegistry       = qrdb.NewBarrierRegistry
-	QRDBNewTenantBarrier         = qrdb.NewTenantBarrier
-	QRDBNewMemoryBackend         = qrdb.NewMemoryBackend
-	QRDBNewNamespacedBackend     = qrdb.NewNamespacedBackend
-	QRDBNewShamirStrategy        = qrdb.NewShamirStrategy
-	QRDBNewSoftwareStrategy      = qrdb.NewSoftwareStrategy
-	QRDBNewSealStore             = qrdb.NewSealStore
-	QRDBNewStorageAdapter        = qrdb.NewStorageAdapter
+	QRDBNewStorageBarrier         = qrdb.NewStorageBarrier
+	QRDBNewBarrier                = qrdb.NewBarrier
+	QRDBNewBarrierRegistry        = qrdb.NewBarrierRegistry
+	QRDBNewTenantBarrier          = qrdb.NewTenantBarrier
+	QRDBNewMemoryBackend          = qrdb.NewMemoryBackend
+	QRDBNewNamespacedBackend      = qrdb.NewNamespacedBackend
+	QRDBNewShamirStrategy         = qrdb.NewShamirStrategy
+	QRDBNewSoftwareStrategy       = qrdb.NewSoftwareStrategy
+	QRDBNewSealStore              = qrdb.NewSealStore
+	QRDBNewStorageAdapter         = qrdb.NewStorageAdapter
 	QRDBNewShamirShareAccumulator = qrdb.NewShamirShareAccumulator
-	QRDBNewInvocationCounter     = qrdb.NewInvocationCounter
-	QRDBNewNonceTracker          = qrdb.NewNonceTracker
-	QRDBNewSoftwareAEADProvider  = qrdb.NewSoftwareAEADProvider
+	QRDBNewInvocationCounter      = qrdb.NewInvocationCounter
+	QRDBNewNonceTracker           = qrdb.NewNonceTracker
+	QRDBNewSoftwareAEADProvider   = qrdb.NewSoftwareAEADProvider
 	QRDBDefaultEpochBarrierConfig = qrdb.DefaultEpochBarrierConfig
-	QRDBDefaultPreferenceOrder   = qrdb.DefaultPreferenceOrder
+	QRDBDefaultPreferenceOrder    = qrdb.DefaultPreferenceOrder
 )
 
 // ==========================================================================
@@ -757,13 +757,13 @@ var (
 
 // Seal error types.
 type (
-	QRDBSealGetError           = qrdb.SealGetError
-	QRDBSealPutError           = qrdb.SealPutError
-	QRDBSealStoreError         = qrdb.SealStoreError
-	QRDBSealInvalidShareError  = qrdb.SealInvalidShareError
-	QRDBSealBarrierSealedError = qrdb.SealBarrierSealedError
-	QRDBSealDEKDerivationError = qrdb.SealDEKDerivationError
-	QRDBSealInvalidConfigError = qrdb.SealInvalidConfigError
+	QRDBSealGetError               = qrdb.SealGetError
+	QRDBSealPutError               = qrdb.SealPutError
+	QRDBSealStoreError             = qrdb.SealStoreError
+	QRDBSealInvalidShareError      = qrdb.SealInvalidShareError
+	QRDBSealBarrierSealedError     = qrdb.SealBarrierSealedError
+	QRDBSealDEKDerivationError     = qrdb.SealDEKDerivationError
+	QRDBSealInvalidConfigError     = qrdb.SealInvalidConfigError
 	QRDBSealTenantDEKNotFoundError = qrdb.SealTenantDEKNotFoundError
 )
 
@@ -812,7 +812,7 @@ type QRDBSMBackend = qrdb.SMBackend
 
 // State machine implementations.
 type (
-	QRDBFastStateMachine = qrdb.FastStateMachine
+	QRDBFastStateMachine  = qrdb.FastStateMachine
 	QRDBConcurrentBackend = qrdb.ConcurrentBackend
 	QRDBStandardBackend   = qrdb.StandardBackend
 	QRDBDiskBackend       = qrdb.DiskBackend
@@ -885,17 +885,17 @@ var QRDBNewSMRegistry = qrdb.NewSMRegistry
 
 // State machine error types.
 type (
-	QRDBSMInvalidOpcodeError       = qrdb.SMInvalidOpcodeError
-	QRDBSMIncompleteDataError      = qrdb.SMIncompleteDataError
-	QRDBSMSnapshotError            = qrdb.SMSnapshotError
-	QRDBSMStorageError             = qrdb.SMStorageError
+	QRDBSMInvalidOpcodeError        = qrdb.SMInvalidOpcodeError
+	QRDBSMIncompleteDataError       = qrdb.SMIncompleteDataError
+	QRDBSMSnapshotError             = qrdb.SMSnapshotError
+	QRDBSMStorageError              = qrdb.SMStorageError
 	QRDBSMServiceNotConfiguredError = qrdb.SMServiceNotConfiguredError
-	QRDBSMUnknownSMTypeError       = qrdb.SMUnknownSMTypeError
+	QRDBSMUnknownSMTypeError        = qrdb.SMUnknownSMTypeError
 )
 
 // State machine constructors.
 var (
-	QRDBNewFastStateMachine = qrdb.NewFastStateMachine
+	QRDBNewFastStateMachine  = qrdb.NewFastStateMachine
 	QRDBNewConcurrentBackend = qrdb.NewConcurrentBackend
 	QRDBNewStandardBackend   = qrdb.NewStandardBackend
 	QRDBNewDiskBackend       = qrdb.NewDiskBackend
@@ -925,21 +925,21 @@ type QRDBStorageIteratorOptions = qrdb.StorageIteratorOptions
 
 // Storage error types.
 type (
-	QRDBStorageError         = qrdb.StorageError
-	QRDBStorageOpError       = qrdb.StorageOpError
+	QRDBStorageError            = qrdb.StorageError
+	QRDBStorageOpError          = qrdb.StorageOpError
 	QRDBStorageKeyNotFoundError = qrdb.StorageKeyNotFoundError
-	QRDBStorageClosedError   = qrdb.StorageClosedError
-	QRDBStorageBatchError    = qrdb.StorageBatchError
-	QRDBStorageIteratorError = qrdb.StorageIteratorError
-	QRDBStorageSnapshotError = qrdb.StorageSnapshotError
+	QRDBStorageClosedError      = qrdb.StorageClosedError
+	QRDBStorageBatchError       = qrdb.StorageBatchError
+	QRDBStorageIteratorError    = qrdb.StorageIteratorError
+	QRDBStorageSnapshotError    = qrdb.StorageSnapshotError
 )
 
 // Storage implementations.
 type (
-	QRDBMemoryStorage       = qrdb.MemoryStorage
-	QRDBFileEngine          = qrdb.FileEngine
-	QRDBPebbleStorage       = qrdb.PebbleStorage
-	QRDBPebbleConfig        = qrdb.PebbleConfig
+	QRDBMemoryStorage         = qrdb.MemoryStorage
+	QRDBFileEngine            = qrdb.FileEngine
+	QRDBPebbleStorage         = qrdb.PebbleStorage
+	QRDBPebbleConfig          = qrdb.PebbleConfig
 	QRDBPebbleCompressionType = qrdb.PebbleCompressionType
 )
 
@@ -952,12 +952,12 @@ const (
 
 // Storage constructors.
 var (
-	QRDBNewMemoryStorage     = qrdb.NewMemoryStorage
-	QRDBNewFileStorage       = qrdb.NewFileStorage
-	QRDBNewPebbleStorage     = qrdb.NewPebbleStorage
+	QRDBNewMemoryStorage       = qrdb.NewMemoryStorage
+	QRDBNewFileStorage         = qrdb.NewFileStorage
+	QRDBNewPebbleStorage       = qrdb.NewPebbleStorage
 	QRDBNewPebbleStorageFromDB = qrdb.NewPebbleStorageFromDB
-	QRDBDefaultPebbleConfig  = qrdb.DefaultPebbleConfig
-	QRDBTestPebbleConfig     = qrdb.TestPebbleConfig
+	QRDBDefaultPebbleConfig    = qrdb.DefaultPebbleConfig
+	QRDBTestPebbleConfig       = qrdb.TestPebbleConfig
 )
 
 // ==========================================================================

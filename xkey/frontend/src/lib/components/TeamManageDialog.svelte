@@ -77,7 +77,6 @@
   bind:open
   title={mode === 'create' ? 'New Team' : 'Manage Team'}
   maxWidth="480px"
-  persistent={false}
 >
   <div class="team-form">
     <div class="form-field">

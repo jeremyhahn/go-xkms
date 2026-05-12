@@ -7,10 +7,10 @@ package unix
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -1229,14 +1229,6 @@ func TestIsRevoked_Connected(t *testing.T) {
 	assert.False(t, resp.Revoked)
 }
 
-
-
-
-
-
-
-
-
 func TestListPIVSlots_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
@@ -1516,24 +1508,53 @@ func TestErrNotSupported_Methods(t *testing.T) {
 		{"EnableUser", func() error { return tr.EnableUser(context.Background(), "u") }},
 		{"DisableUser", func() error { return tr.DisableUser(context.Background(), "u") }},
 		{"ListUserCredentials", func() error { _, err := tr.ListUserCredentials(context.Background(), "u"); return err }},
-		{"PasswordStoreSetAccessMode", func() error { return tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{}) }},
+		{"PasswordStoreSetAccessMode", func() error {
+			return tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{})
+		}},
 		{"SealStorePut", func() error { return tr.SealStorePut(context.Background(), &transport.SealStorePutRequest{}) }},
-		{"SealStoreGet", func() error { _, err := tr.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{}); return err }},
+		{"SealStoreGet", func() error {
+			_, err := tr.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{})
+			return err
+		}},
 		{"SealStoreDelete", func() error { return tr.SealStoreDelete(context.Background(), &transport.SealStoreDeleteRequest{}) }},
 		{"SealStoreList", func() error { _, err := tr.SealStoreList(context.Background()); return err }},
 		{"SealStoreReseal", func() error { return tr.SealStoreReseal(context.Background(), &transport.SealStoreResealRequest{}) }},
 		{"SealStoreStatus", func() error { _, err := tr.SealStoreStatus(context.Background()); return err }},
-		{"PolicyCreate", func() error { _, err := tr.PolicyCreate(context.Background(), &transport.PolicyCreateRequest{}); return err }},
+		{"PolicyCreate", func() error {
+			_, err := tr.PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
+			return err
+		}},
 		{"PolicyGet", func() error { _, err := tr.PolicyGet(context.Background(), &transport.PolicyGetRequest{}); return err }},
 		{"PolicyList", func() error { _, err := tr.PolicyList(context.Background()); return err }},
 		{"PolicyDelete", func() error { return tr.PolicyDelete(context.Background(), &transport.PolicyDeleteRequest{}) }},
-		{"PolicyRefresh", func() error { _, err := tr.PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{}); return err }},
-		{"PolicyVerify", func() error { _, err := tr.PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{}); return err }},
-		{"PolicyExport", func() error { _, err := tr.PolicyExport(context.Background(), &transport.PolicyExportRequest{}); return err }},
-		{"BeginRegistration", func() error { _, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{}); return err }},
-		{"FinishRegistration", func() error { _, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{}); return err }},
-		{"BeginAuthentication", func() error { _, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{}); return err }},
-		{"FinishAuthentication", func() error { _, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{}); return err }},
+		{"PolicyRefresh", func() error {
+			_, err := tr.PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{})
+			return err
+		}},
+		{"PolicyVerify", func() error {
+			_, err := tr.PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{})
+			return err
+		}},
+		{"PolicyExport", func() error {
+			_, err := tr.PolicyExport(context.Background(), &transport.PolicyExportRequest{})
+			return err
+		}},
+		{"BeginRegistration", func() error {
+			_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
+			return err
+		}},
+		{"FinishRegistration", func() error {
+			_, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
+			return err
+		}},
+		{"BeginAuthentication", func() error {
+			_, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
+			return err
+		}},
+		{"FinishAuthentication", func() error {
+			_, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
+			return err
+		}},
 	}
 
 	for _, tc := range tests {
@@ -1543,14 +1564,9 @@ func TestErrNotSupported_Methods(t *testing.T) {
 		})
 	}
 
-
 }
 
 // --- Helper function tests ---
-
-
-
-
 
 func TestPbCustodianGroupToTransport_Nil(t *testing.T) {
 	assert.Empty(t, pbCustodianGroupToTransport(nil).ID)
@@ -1578,12 +1594,6 @@ func TestPbTenantInfoToTransport_WithData(t *testing.T) {
 	}
 	assert.Equal(t, "t-1", pbTenantInfoToTransport(ti).ID)
 }
-
-
-
-
-
-
 
 func TestClose_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)

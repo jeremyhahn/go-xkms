@@ -16,7 +16,7 @@
 // SO officer certificate enrollment, and credential sealing.
 //
 // This package is a thin adapter layer over go-qrdb's ceremony package,
-// bridging go-xkms's CA interface (ca.XKMSCA) to go-qrdb's CeremonyCA
+// bridging go-xkms's CA interface (ca.TrustedCA) to go-qrdb's CeremonyCA
 // interface.
 //
 // The ceremony progresses through three states:
@@ -149,9 +149,9 @@ func validateCeremonyConfig(config *CeremonyConfig) error {
 // issues certificates for each officer. In single-admin mode, an SO admin
 // certificate is issued and the system transitions directly to operational.
 //
-// The caInstance parameter is go-xkms's XKMSCA, which is adapted to go-qrdb's
+// The caInstance parameter is go-xkms's TrustedCA, which is adapted to go-qrdb's
 // CeremonyCA interface via CAAdapter.
-func (cs *CeremonyService) Initialize(ctx context.Context, caInstance ca.XKMSCA) (*InitResult, error) {
+func (cs *CeremonyService) Initialize(ctx context.Context, caInstance ca.TrustedCA) (*InitResult, error) {
 	adapter := NewCAAdapter(caInstance)
 	result, err := cs.inner.Initialize(ctx, adapter)
 	if err != nil {

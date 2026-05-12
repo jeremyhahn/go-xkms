@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -975,4 +976,55 @@ func TestAlgorithmCertMatchers(t *testing.T) {
 		_, ok := algorithmCertMatchers["rsa"]
 		assert.False(t, ok)
 	})
+}
+
+// TestTrustStrapBootstrapRoute_ReturnsRawPEM guards the routing of
+// /v1/ca/bootstrap. The upstream go-truststrap spkipin.Client expects
+// the response body to be a raw PEM certificate chain with Content-Type
+// application/pem-certificate-chain. A prior regression mounted the
+// JSON-envelope CAHandlers.HandleGetCABundle at this path, causing
+// every SPKI bootstrap to fail with "truststore: invalid certificate".
+// This test mirrors the exact route wiring in server.go and asserts
+// the response is raw PEM so the regression cannot return.
+func TestTrustStrapBootstrapRoute_ReturnsRawPEM(t *testing.T) {
+	originalBundler := caBundler
+	t.Cleanup(func() { caBundler = originalBundler })
+
+	rootCert, _ := generateTestRSACACert(t)
+	bundlePEM := certToPEM(rootCert)
+	caBundler = &mockCABundler{bundle: bundlePEM, cert: rootCert}
+
+	ctx := newTestHandlerContext()
+
+	r := chi.NewRouter()
+	r.Get("/v1/ca/bootstrap", ctx.GetCABundleHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/ca/bootstrap", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, ContentTypePEMCertChain, w.Header().Get("Content-Type"),
+		"bootstrap must use application/pem-certificate-chain — "+
+			"go-truststrap spkipin.Client parses the body as raw PEM")
+
+	body := w.Body.String()
+	assert.True(t, len(body) > 0, "body must be non-empty")
+	assert.Contains(t, body, "-----BEGIN CERTIFICATE-----",
+		"bootstrap body must be raw PEM, not JSON envelope")
+	assert.Contains(t, body, "-----END CERTIFICATE-----")
+	assert.NotContains(t, body, "\"bundle_pem\"",
+		"bootstrap must NOT return the JSON envelope — go-truststrap "+
+			"cannot parse {bundle_pem:...} as certificates")
+	assert.NotContains(t, body, "\"certificates\"",
+		"bootstrap must NOT return the JSON envelope")
+
+	// Confirm the body actually parses as a PEM-encoded x509 certificate so
+	// this test fails if someone replaces the handler with a stub that
+	// happens to contain the BEGIN/END marker text.
+	block, _ := pem.Decode(w.Body.Bytes())
+	require.NotNil(t, block, "body must PEM-decode")
+	assert.Equal(t, "CERTIFICATE", block.Type)
+	_, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err, "decoded PEM must be a parseable x509 certificate")
 }

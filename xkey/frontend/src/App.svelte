@@ -24,7 +24,7 @@
     mdiCreditCardOutline, mdiChip, mdiCog, mdiClipboardTextOutline,
     mdiWrenchOutline, mdiMenu, mdiWeatherSunny, mdiWeatherNight,
     mdiThemeLightDark, mdiKey, mdiChevronLeft, mdiLanConnect, mdiLockOutline,
-    mdiShieldLockOutline, mdiOpenInApp, mdiCertificate, mdiConsoleLine
+    mdiShieldLockOutline, mdiOpenInApp, mdiCertificate, mdiConsoleLine, mdiWeb
   } from '$lib/utils/icons';
   import { isServerConnected } from '$lib/stores/connection';
 
@@ -54,6 +54,7 @@
   import OIDC from './views/OIDC.svelte';
   import Certificates from './views/Certificates.svelte';
   import APIExplorer from './views/APIExplorer.svelte';
+  import Browser from './views/Browser.svelte';
 
   interface NavItem {
     id: string;
@@ -74,6 +75,7 @@
     { id: 'piv', label: 'PIV', icon: mdiCreditCardOutline, section: 'applications' },
     { id: 'passwords', label: 'Passwords', icon: mdiLockOutline, section: 'applications' },
     { id: 'seal', label: 'Sealed Data', icon: mdiShieldCheckOutline, section: 'applications' },
+    { id: 'browser', label: 'Browser', icon: mdiWeb, section: 'applications' },
     { id: 'audit-log', label: 'Audit Log', icon: mdiClipboardTextOutline, section: 'admin' },
     { id: 'admin', label: 'Admin', icon: mdiWrenchOutline, section: 'admin' },
     { id: 'oidc', label: 'OIDC', icon: mdiOpenInApp, section: 'developer' },
@@ -432,6 +434,8 @@
         <Certificates />
       {:else if view === 'api-explorer'}
         <APIExplorer />
+      {:else if view === 'browser'}
+        <Browser />
       {/if}
     </div>
   </main>
@@ -686,5 +690,43 @@
   @keyframes fade-in {
     from { opacity: 0; }
     to { opacity: 1; }
+  }
+
+  /* Responsive: force sidebar into icon-only mode below 900px */
+  @media (max-width: 900px) {
+    .app-shell .sidebar {
+      width: 64px;
+      min-width: 64px;
+    }
+
+    .app-shell .sidebar-header {
+      justify-content: center;
+      padding: 16px 12px;
+    }
+
+    .app-shell .brand-text {
+      display: none;
+    }
+
+    .app-shell .sidebar-toggle {
+      display: none;
+    }
+
+    .app-shell .nav-label {
+      display: none;
+    }
+
+    .app-shell .nav-section-label {
+      display: none;
+    }
+
+    .app-shell .connection-label {
+      display: none;
+    }
+
+    .app-shell .connection-indicator {
+      justify-content: center;
+      padding: 8px;
+    }
   }
 </style>

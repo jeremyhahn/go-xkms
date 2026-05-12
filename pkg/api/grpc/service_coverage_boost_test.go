@@ -426,7 +426,7 @@ func TestDeriveKeyECDH_Validation(t *testing.T) {
 
 	t.Run("missing key_id", func(t *testing.T) {
 		_, err := svc.DeriveKeyECDH(context.Background(), &pb.DeriveKeyECDHRequest{
-			Backend:      "software",
+			Backend:       "software",
 			PeerPublicKey: []byte("key"),
 		})
 		require.Error(t, err)
@@ -448,8 +448,8 @@ func TestDeriveKeyECDH_Validation(t *testing.T) {
 
 	t.Run("backend not found", func(t *testing.T) {
 		_, err := svc.DeriveKeyECDH(context.Background(), &pb.DeriveKeyECDHRequest{
-			KeyId:        "k",
-			Backend:      "nonexistent",
+			KeyId:         "k",
+			Backend:       "nonexistent",
 			PeerPublicKey: []byte("key"),
 		})
 		require.Error(t, err)
@@ -817,4 +817,3 @@ func TestGetCertChain_Validation(t *testing.T) {
 }
 
 // ===================== Barrier PIN additional tests =====================
-

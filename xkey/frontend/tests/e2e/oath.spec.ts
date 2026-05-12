@@ -283,6 +283,47 @@ test.describe('OATH View', () => {
     });
   });
 
+  test.describe('Modal Accessibility - Escape and Backdrop Dismiss', () => {
+    test('Escape key closes the Add Account dialog', async ({ page }) => {
+      const addButton = page.getByRole('button', { name: 'Add Account' }).first();
+      await addButton.click();
+
+      await expect(page.locator('[role="dialog"]')).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+
+      await expect(page.locator('[role="dialog"]')).not.toBeVisible();
+    });
+
+    test('backdrop click closes the Add Account dialog', async ({ page }) => {
+      const addButton = page.getByRole('button', { name: 'Add Account' }).first();
+      await addButton.click();
+
+      await expect(page.locator('[role="dialog"]')).toBeVisible();
+
+      // Click the backdrop area outside the modal surface
+      await page.locator('.modal-backdrop').click({ position: { x: 10, y: 10 } });
+      await page.waitForTimeout(300);
+
+      await expect(page.locator('[role="dialog"]')).not.toBeVisible();
+    });
+
+    test('dialog can be reopened after being dismissed with Escape', async ({ page }) => {
+      const addButton = page.getByRole('button', { name: 'Add Account' }).first();
+
+      await addButton.click();
+      await expect(page.locator('[role="dialog"]')).toBeVisible();
+
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(300);
+      await expect(page.locator('[role="dialog"]')).not.toBeVisible();
+
+      await addButton.click();
+      await expect(page.locator('[role="dialog"]')).toBeVisible();
+    });
+  });
+
   test.describe('Search Functionality', () => {
     test('search bar appears when accounts exist', async ({ page }) => {
       const wails = await isWailsMode(page);

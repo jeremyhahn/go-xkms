@@ -1,0 +1,277 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+// Package ca provides cross-signing operations that allow a certificate
+// issued by this CA to be counter-signed by an external issuer. Cross-signed
+// certificates are persisted to the object store so the original issuer
+// relationship can be rediscovered when constructing chains for validation.
+//
+// # Storage Layout
+//
+// Cross-signed certificates are stored in the object store under the
+// "cross-signed/{issuer_cn}/{subject_cn}.pem" key pattern, with PEM-encoded
+// CERTIFICATE bodies. Readers additionally surface legacy "xsigned/" keyed
+// entries so that an object store populated by earlier tooling remains
+// accessible.
+package ca
+
+import (
+	"bytes"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+)
+
+// crossSignedStoreKey builds the canonical object-store key for a
+// cross-signed certificate. Kept as a helper so the path conventions
+// are declared once and reused by all cross-signing methods.
+func crossSignedStoreKey(issuerCN, subjectCN string) string {
+	return fmt.Sprintf("cross-signed/%s/%s.pem", issuerCN, subjectCN)
+}
+
+// ImportXSignedCertificate persists a certificate that has been cross-signed
+// by an external issuer (identified by issuerCN). The certificate is stored
+// in PEM form so the original DER can be recovered verbatim. Both issuerCN
+// and cert must be non-nil/non-empty.
+//
+// Requires the object store to be configured; returns ErrObjectStoreRequired
+// otherwise.
+//
+// Thread-safe: Yes
+func (ca *CA) ImportXSignedCertificate(issuerCN string, cert *x509.Certificate) error {
+	if issuerCN == "" {
+		return fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+	}
+	if cert == nil {
+		return ErrInvalidCertificate
+	}
+	if ca.objectStore == nil {
+		return ErrObjectStoreRequired
+	}
+
+	pemData := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
+	if pemData == nil {
+		return fmt.Errorf("%w: failed to encode cross-signed certificate", ErrStorageError)
+	}
+
+	key := crossSignedStoreKey(issuerCN, cert.Subject.CommonName)
+	if err := ca.objectStore.Put(key, bytes.NewReader(pemData)); err != nil {
+		return fmt.Errorf("%w: failed to store cross-signed certificate: %v", ErrStorageError, err)
+	}
+	return nil
+}
+
+// XSignedRootCertificate walks the cross-signed certificate chain for the
+// specified issuer starting from cert until it encounters a self-signed
+// certificate, and returns that root. If cert is already self-signed it is
+// returned directly.
+//
+// Thread-safe: Yes
+func (ca *CA) XSignedRootCertificate(issuerCN string, cert *x509.Certificate) (*x509.Certificate, error) {
+	if issuerCN == "" {
+		return nil, fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+	}
+	if cert == nil {
+		return nil, ErrInvalidCertificate
+	}
+	if ca.objectStore == nil {
+		return nil, ErrObjectStoreRequired
+	}
+
+	if cert.Issuer.CommonName == cert.Subject.CommonName {
+		return cert, nil
+	}
+
+	parent, err := ca.readCrossSignedCertificate(issuerCN, cert.Issuer.CommonName)
+	if err != nil {
+		return nil, err
+	}
+	return ca.XSignedRootCertificate(issuerCN, parent)
+}
+
+// XSignedIntermediateCertificates walks the cross-signed chain from the
+// provided certificate upwards and returns every non-self-signed CA
+// certificate encountered, in chain order (closest-to-leaf first). The
+// returned slice is empty when no intermediate chain is available in the
+// object store.
+//
+// Thread-safe: Yes
+func (ca *CA) XSignedIntermediateCertificates(issuerCN string, cert *x509.Certificate) ([]*x509.Certificate, error) {
+	if issuerCN == "" {
+		return nil, fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+	}
+	if cert == nil {
+		return nil, ErrInvalidCertificate
+	}
+	if ca.objectStore == nil {
+		return nil, ErrObjectStoreRequired
+	}
+
+	intermediates := make([]*x509.Certificate, 0)
+	current := cert
+
+	for current.Issuer.CommonName != current.Subject.CommonName {
+		parent, err := ca.readCrossSignedCertificate(issuerCN, current.Issuer.CommonName)
+		if err != nil {
+			// No more cross-signed entries available; terminate walk.
+			break
+		}
+		if parent.IsCA && parent.Issuer.CommonName != parent.Subject.CommonName {
+			intermediates = append(intermediates, parent)
+		}
+		current = parent
+	}
+	return intermediates, nil
+}
+
+// XSignedCertificate retrieves a specific cross-signed certificate that was
+// issued by issuerCN for the subject identified by attrs.CN. Returns
+// ErrCertificateNotFound when no matching entry exists.
+//
+// Thread-safe: Yes
+func (ca *CA) XSignedCertificate(issuerCN string, attrs *types.KeyAttributes) (*x509.Certificate, error) {
+	if issuerCN == "" {
+		return nil, fmt.Errorf("%w: issuer common name required", ErrInvalidConfig)
+	}
+	if attrs == nil || attrs.CN == "" {
+		return nil, fmt.Errorf("%w: key attributes with CN required", ErrInvalidCertificate)
+	}
+	if ca.objectStore == nil {
+		return nil, ErrObjectStoreRequired
+	}
+
+	return ca.readCrossSignedCertificate(issuerCN, attrs.CN)
+}
+
+// CrossSignedPEM returns a PEM bundle containing every cross-signed
+// certificate found for the subject identified by attrs.CN across all
+// issuers present in the object store. Returns ErrCertificateNotFound when
+// no entries match.
+//
+// Thread-safe: Yes
+func (ca *CA) CrossSignedPEM(attrs *types.KeyAttributes) ([]byte, error) {
+	if attrs == nil || attrs.CN == "" {
+		return nil, fmt.Errorf("%w: key attributes with CN required", ErrInvalidCertificate)
+	}
+	if ca.objectStore == nil {
+		return nil, ErrObjectStoreRequired
+	}
+
+	items, err := ca.objectStore.List("cross-signed/")
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to list cross-signed certificates: %v", ErrStorageError, err)
+	}
+
+	var bundle strings.Builder
+	suffix := fmt.Sprintf("/%s.pem", attrs.CN)
+	for _, item := range items {
+		if !strings.HasSuffix(item, suffix) {
+			continue
+		}
+		reader, err := ca.objectStore.Get(item)
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			continue
+		}
+		_, _ = bundle.Write(data)
+	}
+
+	if bundle.Len() == 0 {
+		return nil, fmt.Errorf("%w: no cross-signed certificates for %s", ErrCertificateNotFound, attrs.CN)
+	}
+	return []byte(bundle.String()), nil
+}
+
+// readCrossSignedCertificate is the shared helper that reads a single
+// cross-signed entry from the object store and parses it into a
+// *x509.Certificate.
+func (ca *CA) readCrossSignedCertificate(issuerCN, subjectCN string) (*x509.Certificate, error) {
+	key := crossSignedStoreKey(issuerCN, subjectCN)
+	reader, err := ca.objectStore.Get(key)
+	if err != nil {
+		return nil, fmt.Errorf("%w: cross-signed certificate %s (issuer %s): %v",
+			ErrCertificateNotFound, subjectCN, issuerCN, err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to read cross-signed certificate: %v", ErrStorageError, err)
+	}
+
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("%w: invalid PEM for cross-signed certificate %s", ErrInvalidPEM, subjectCN)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to parse cross-signed certificate %s: %v",
+			ErrInvalidCertificate, subjectCN, err)
+	}
+	return cert, nil
+}
+
+// getXSignedCertificates lists every cross-signed certificate stored under
+// any issuer for the given subject CN. This is the helper used by the
+// cross-sign-aware trust pool variants to augment the chain.
+//
+// Implementations return an empty slice (not an error) if the object store
+// is unavailable so the caller can continue with only the native chain.
+func (ca *CA) getXSignedCertificates(cn string) ([]*x509.Certificate, error) {
+	if ca.objectStore == nil {
+		return nil, nil
+	}
+
+	items, err := ca.objectStore.List("cross-signed/")
+	if err != nil {
+		return nil, nil
+	}
+
+	suffix := fmt.Sprintf("/%s.pem", cn)
+	certs := make([]*x509.Certificate, 0)
+	for _, item := range items {
+		if !strings.HasSuffix(item, suffix) {
+			continue
+		}
+		reader, err := ca.objectStore.Get(item)
+		if err != nil {
+			continue
+		}
+		data, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			continue
+		}
+		block, _ := pem.Decode(data)
+		if block == nil {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		certs = append(certs, cert)
+	}
+	return certs, nil
+}

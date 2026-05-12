@@ -25,7 +25,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -53,7 +53,7 @@ type ServerConfig struct {
 	Port           int
 	TLSConfig      *tls.Config
 	Authenticator  auth.Authenticator
-	Authorizer     authz.Authorizer
+	Authorizer     keyauthz.Authorizer
 	AuditLogger    audit.Logger
 	Logger         *slog.Logger
 	EnableLogging  bool

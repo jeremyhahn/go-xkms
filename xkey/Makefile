@@ -35,6 +35,13 @@ endif
 
 BUILD_TAGS := ble production codec_json $(PKCS11_TAG)$(WEBKIT_TAG)
 
+# Development tags: exclude "production" because the Wails CLI injects the
+# "dev" tag automatically during `wails dev`, and wails's internal app
+# package has separate files guarded by //go:build dev and //go:build
+# production that each declare App.Run and CreateApp. Including both tags
+# produces "method App.Run already declared" at link time.
+DEV_TAGS := ble codec_json $(PKCS11_TAG)$(WEBKIT_TAG)
+
 # Unit test tags: exclude "ble" so BLE stub is used (fast, no hardware).
 # The ble tag enables real bluetooth.DefaultAdapter.Enable() which blocks
 # ~25s on machines without BLE hardware. Integration tests use BUILD_TAGS
@@ -59,7 +66,11 @@ FRONTEND_DIR := $(PROJECT_ROOT)/frontend
 
 # Build artifacts
 BUILD_DIR := build
-BIN_DIR := $(BUILD_DIR)/bin
+# The xkey binary is written directly to the top-level go-xkms build/bin/
+# directory so there is a single authoritative output location for the
+# whole project (overridable via `make BIN_DIR=...`). BUILD_DIR itself
+# stays under xkey/ for coverage and benchmark artefacts.
+BIN_DIR ?= $(WORKSPACE_ROOT)/build/bin
 COVERAGE_DIR := $(BUILD_DIR)/coverage
 
 # Docker builder image — all CGO deps (webkit, libusb, bluetooth, Node.js)
@@ -153,7 +164,20 @@ build-local: frontend-build extension-build
 ## dev: Development mode with Wails hot reload (frontend + backend)
 dev: frontend-install
 	@echo "$(CYAN)$(BOLD)Starting xKey development server...$(RESET)"
-	@wails dev -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)"
+	@GODEBUG=gotypesalias=1 wails dev -tags "$(DEV_TAGS)" -ldflags "$(LDFLAGS)"
+
+.PHONY: dev-browser
+## dev-browser: Development mode serving at http://localhost:34115 for Playwright live-backend tests
+dev-browser: frontend-install
+	@echo "$(CYAN)$(BOLD)Starting xKey dev (browser mode) on :34115...$(RESET)"
+	@# GODEBUG=gotypesalias=1 forces go/types to materialize type aliases;
+	@# wails v2.12.0 is built with gotypesalias=0 baked in which trips
+	@# x/tools/go/packages when xkey/pkg/pcr_policy imports parameterized
+	@# type aliases (e.g. qrdbsdk.PageResult[E]) from go-qrdb/sdk/go.
+	@# -nosyncgomod + -m skip 'go mod tidy' which fails outside the parent
+	@# go.work. The xkey module's deps are resolved via the workspace at
+	@# ~/sources/go.work when it exists.
+	@GODEBUG=gotypesalias=1 wails dev -browser -nosyncgomod -m -tags "$(DEV_TAGS)" -ldflags "$(LDFLAGS)"
 
 # ==============================================================================
 # Frontend Targets
@@ -407,6 +431,32 @@ integration-test-piv:
 	@echo "$(CYAN)$(BOLD)Running PIV integration tests...$(RESET)"
 	@$(GO) test $(INTEGRATION_TEST_FLAGS) -timeout=10m ./test/integration/piv/...
 	@echo "$(GREEN)PIV integration tests passed$(RESET)"
+
+.PHONY: integration-test-piv-yubikey
+## integration-test-piv-yubikey: Run PIV YubiKey integration tests (requires stock YubiKey plugged in)
+integration-test-piv-yubikey:
+	@echo "$(CYAN)$(BOLD)Running PIV YubiKey integration tests...$(RESET)"
+	@$(GO) test -v -tags="integration pkcs11 yubikey $(BUILD_TAGS)" -count=1 -timeout=60m ./test/integration/piv/... -run 'TestYubiKey'
+	@echo "$(GREEN)PIV YubiKey integration tests passed$(RESET)"
+
+.PHONY: integration-test-oath-yubikey
+## integration-test-oath-yubikey: Run OATH YubiKey integration tests (placeholder — requires xkey oath YubiKey backend)
+integration-test-oath-yubikey:
+	@echo "$(CYAN)$(BOLD)Running OATH YubiKey integration tests...$(RESET)"
+	@$(GO) test -v -tags="integration yubikey $(BUILD_TAGS)" -count=1 -timeout=30m ./test/integration/oath/... -run 'TestYubiKey'
+	@echo "$(GREEN)OATH YubiKey integration tests passed$(RESET)"
+
+.PHONY: integration-test-fido2-yubikey
+## integration-test-fido2-yubikey: Run FIDO2 YubiKey integration tests (placeholder — requires xkey fido2 YubiKey pass-through)
+integration-test-fido2-yubikey:
+	@echo "$(CYAN)$(BOLD)Running FIDO2 YubiKey integration tests...$(RESET)"
+	@$(GO) test -v -tags="integration linux yubikey $(BUILD_TAGS)" -count=1 -timeout=30m ./test/integration/fido2/... -run 'TestYubiKey'
+	@echo "$(GREEN)FIDO2 YubiKey integration tests passed$(RESET)"
+
+.PHONY: integration-test-yubikey
+## integration-test-yubikey: Run ALL YubiKey hardware integration tests (PIV + OATH + FIDO2) — NOT part of global integration-test
+integration-test-yubikey: integration-test-piv-yubikey integration-test-oath-yubikey integration-test-fido2-yubikey
+	@echo "$(GREEN)$(BOLD)All YubiKey hardware integration tests passed$(RESET)"
 
 .PHONY: integration-test-ssh
 ## integration-test-ssh: Run SSH agent integration tests

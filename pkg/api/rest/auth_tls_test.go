@@ -195,10 +195,8 @@ func (a *testBearerAuthenticator) AuthenticateHTTP(r *http.Request) (*auth.Ident
 	}
 	return &auth.Identity{
 		Subject: "test-user",
-		Claims: map[string]interface{}{
-			"roles": []string{"admin"},
-		},
-		Attributes: map[string]string{
+		Roles:   []string{"admin"},
+		Metadata: map[string]string{
 			"scope": "full",
 		},
 	}, nil

@@ -33,7 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -94,16 +94,16 @@ var (
 // Service implements the KeystoreService gRPC interface
 type Service struct {
 	pb.UnimplementedKeystoreServiceServer
-	authorizer  authz.Authorizer
+	authorizer  keyauthz.Authorizer
 	auditLogger audit.Logger
 }
 
 // NewService creates a new gRPC service.
 // The service uses the global xkms service for backend management.
 // If authorizer or auditLogger are nil, no-op implementations are used.
-func NewService(authorizer authz.Authorizer, auditLogger audit.Logger) *Service {
+func NewService(authorizer keyauthz.Authorizer, auditLogger audit.Logger) *Service {
 	if authorizer == nil {
-		authorizer = &authz.NoOpAuthorizer{}
+		authorizer = &keyauthz.NoOpAuthorizer{}
 	}
 	if auditLogger == nil {
 		auditLogger = &audit.NoOpLogger{}
@@ -128,7 +128,7 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 		role = extractRoleFromIdentity(identity)
 	}
 
-	authzReq := &authz.AuthorizationRequest{
+	authzReq := &keyauthz.AuthorizationRequest{
 		Subject:  subject,
 		Role:     role,
 		Resource: resource,
@@ -173,34 +173,11 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 	return nil
 }
 
-// extractRoleFromIdentity extracts the first role from an identity's claims.
-// It handles roles stored as []string, []interface{}, or string.
+// extractRoleFromIdentity returns the first role on an identity, or "" if none.
+// It is a thin wrapper over auth.FirstRole used so audit / authorization-request
+// builders in this package can stay symmetric with the REST/QUIC analogues.
 func extractRoleFromIdentity(identity *auth.Identity) string {
-	if identity == nil || identity.Claims == nil {
-		return ""
-	}
-
-	roles, ok := identity.Claims["roles"]
-	if !ok {
-		return ""
-	}
-
-	switch r := roles.(type) {
-	case []string:
-		if len(r) > 0 {
-			return r[0]
-		}
-	case []interface{}:
-		if len(r) > 0 {
-			if s, ok := r[0].(string); ok {
-				return s
-			}
-		}
-	case string:
-		return r
-	}
-
-	return ""
+	return auth.FirstRole(identity)
 }
 
 // Health returns the health status of the service

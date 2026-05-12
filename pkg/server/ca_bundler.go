@@ -61,7 +61,7 @@ func (b *tlsCABundler) CACertificate() (*x509.Certificate, error) {
 	return b.cert, nil
 }
 
-// caInstanceProvider is the subset of ca.XKMSCA needed to create a bundler.
+// caInstanceProvider is the subset of ca.TrustedCA needed to create a bundler.
 type caInstanceProvider interface {
 	CABundle() ([]byte, error)
 	CACertificate() (*x509.Certificate, error)

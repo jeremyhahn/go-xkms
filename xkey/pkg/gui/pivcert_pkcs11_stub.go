@@ -26,6 +26,6 @@ func newPKCS11PIVCertStorage(config *pivcert.PKCS11StorageConfig) (pivcert.PIVCe
 }
 
 // newPKCS11PIVCertStorageFromConnection returns an error when PKCS#11 support is not compiled in.
-func newPKCS11PIVCertStorageFromConnection(conn *manager.Connection) (pivcert.PIVCertificateStorage, error) {
+func newPKCS11PIVCertStorageFromConnection(conn *manager.Connection, soPin, userPin string) (pivcert.PIVCertificateStorage, error) {
 	return nil, pivcert.NewStorageTypeError("newPKCS11PIVCertStorageFromConnection", pivcert.StorageTypePKCS11, pivcert.ErrPKCS11NotAvailable)
 }

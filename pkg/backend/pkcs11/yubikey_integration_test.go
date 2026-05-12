@@ -19,8 +19,8 @@
 //   - A physical YubiKey (5 series or compatible) plugged in.
 //   - libykcs11.so available on the system.
 //   - The YubiKey PIV applet in its factory-default state:
-//       User PIN:           123456
-//       Management Key:     010203040506070801020304050607080102030405060708
+//     User PIN:           123456
+//     Management Key:     010203040506070801020304050607080102030405060708
 //
 // The tests RESET the YubiKey PIV applet to defaults at the end of the run
 // via `ykman piv reset --force`. If ykman is not installed, you MUST reset

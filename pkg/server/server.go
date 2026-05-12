@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -47,7 +48,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -60,7 +61,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/pin"
-	"github.com/jeremyhahn/go-xkms/pkg/rbac"
+	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -98,7 +99,7 @@ type Server struct {
 	webauthnConfig *webauthn.Config
 
 	// Authorization
-	authorizer authz.Authorizer
+	authorizer keyauthz.Authorizer
 
 	// Audit logging
 	auditLogger audit.Logger
@@ -137,7 +138,7 @@ type Server struct {
 	metricsCollector *metrics.ResourceCollector
 
 	// CA for certificate authority operations
-	ca ca.XKMSCA
+	ca ca.TrustedCA
 
 	// Credential service for managing backend credentials
 	credentialService *credentialspkg.Service
@@ -342,7 +343,7 @@ func New(cfg *config.Config) (*Server, error) {
 			svc.SetCeremonyService(initialize.NewCeremonyAdapter(s.ceremonyService))
 		}
 		if s.ca != nil {
-			// s.ca is ca.XKMSCA which doesn't include the *Raw adapter methods.
+			// s.ca is ca.TrustedCA which doesn't include the *Raw adapter methods.
 			// The concrete *ca.CA struct satisfies provider.CA via its Raw methods
 			// in service_adapter.go. Type-assert to wire the typed interface.
 			if caProvider, ok := s.ca.(provider.CA); ok {
@@ -772,11 +773,11 @@ func (s *Server) initializeAuthorization() error {
 	s.logger.Info("Initializing authorization...")
 
 	if s.config.Auth.EnableRBAC {
-		adapter := rbac.NewMemoryRBACAdapter(true)
-		s.authorizer = authz.NewRBACAuthorizer(adapter)
+		adapter := keyrbac.NewMemoryRBACAdapter(true)
+		s.authorizer = keyauthz.NewRBACAuthorizer(adapter)
 		s.logger.Info("RBAC authorization enabled")
 	} else {
-		s.authorizer = &authz.NoOpAuthorizer{}
+		s.authorizer = &keyauthz.NoOpAuthorizer{}
 		s.logger.Info("Authorization disabled, using NoOp authorizer")
 	}
 
@@ -1056,8 +1057,8 @@ func (s *Server) PolicyManager() *policy.Manager {
 }
 
 // SetCA sets the Certificate Authority for CA-backed TLS and certificate operations.
-func (s *Server) SetCA(basicCA ca.XKMSCA) {
-	s.ca = basicCA
+func (s *Server) SetCA(trustedCA ca.TrustedCA) {
+	s.ca = trustedCA
 }
 
 // SetCeremonyService sets the init ceremony service.
@@ -1290,7 +1291,7 @@ func (s *Server) initializeCA() error {
 	}
 
 	// Create the CA instance
-	basicCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
+	trustedCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
 		Config:    s.config.CA,
 		KeyStore:  backend,
 		CertStore: caCertStore,
@@ -1301,14 +1302,14 @@ func (s *Server) initializeCA() error {
 
 	// Try to load existing CA state (certificates and keys from a previous run).
 	// If loading fails, the CA has not been initialized yet, so create it.
-	if err := basicCA.Load(); err != nil {
+	if err := trustedCA.Load(); err != nil {
 		s.logger.Info("No existing CA found, initializing new CA", "reason", err.Error())
-		if initErr := basicCA.Init(); initErr != nil {
+		if initErr := trustedCA.Init(); initErr != nil {
 			return &ErrCAInit{Operation: "initialize new CA", Err: initErr}
 		}
 	}
 
-	s.ca = basicCA
+	s.ca = trustedCA
 
 	cn := s.config.CA.Identity[0].Subject.CommonName
 	s.logger.Info("CA initialized", "identity", cn)
@@ -1316,7 +1317,7 @@ func (s *Server) initializeCA() error {
 	// If TLS is enabled with a server_cn, auto-issue a TLS server certificate
 	// so that buildTLSConfig() can retrieve it for HTTPS/gRPC/QUIC.
 	if s.config.TLS.Enabled && s.config.TLS.ServerCN != "" {
-		if err := s.ensureTLSServerCert(basicCA, keystoreType); err != nil {
+		if err := s.ensureTLSServerCert(trustedCA, keystoreType); err != nil {
 			return &ErrTLSCertOp{Operation: "ensure TLS server certificate", Err: err}
 		}
 	}
@@ -1327,7 +1328,7 @@ func (s *Server) initializeCA() error {
 // ensureTLSServerCert checks if a TLS server certificate exists for the configured
 // server CN and issues one from the CA if it doesn't. This enables CA-backed TLS
 // without requiring pre-generated cert/key files.
-func (s *Server) ensureTLSServerCert(xkmsCA ca.XKMSCA, keystoreType types.StoreType) error {
+func (s *Server) ensureTLSServerCert(xkmsCA ca.TrustedCA, keystoreType types.StoreType) error {
 	serverCN := s.config.TLS.ServerCN
 
 	// Build key attributes for the TLS server cert using the CA identity's store type
@@ -1393,7 +1394,7 @@ func (s *Server) ensureTLSServerCert(xkmsCA ca.XKMSCA, keystoreType types.StoreT
 // certificate (from a previous run) but the backend's certStorage doesn't. This
 // happens when Docker volumes are partially cleaned between runs. The function
 // retrieves the existing cert from the CA's certStore and stores it in the backend.
-func (s *Server) syncExistingTLSCert(xkmsCA ca.XKMSCA, serverCN string, keystoreType types.StoreType) error {
+func (s *Server) syncExistingTLSCert(xkmsCA ca.TrustedCA, serverCN string, keystoreType types.StoreType) error {
 	s.logger.Info("TLS cert exists in CA but not in backend, syncing", "cn", serverCN)
 
 	cert, err := xkmsCA.CertStore().GetCertificate(serverCN)
@@ -1413,7 +1414,7 @@ func (s *Server) syncExistingTLSCert(xkmsCA ca.XKMSCA, serverCN string, keystore
 // cert storage so that ca.TLSCertificate() → keyStore.GetTLSCertificate() can
 // find it. The CA stores certs in its own certStore, but GetTLSCertificate looks
 // in the compositeBackend's certStorage (separate storage).
-func (s *Server) storeTLSCertInBackend(xkmsCA ca.XKMSCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
+func (s *Server) storeTLSCertInBackend(xkmsCA ca.TrustedCA, serverCN string, keystoreType types.StoreType, cert *x509.Certificate) error {
 	backend, ok := s.backends[string(keystoreType)]
 	if !ok {
 		return &ErrBackendNotAvailable{Backend: string(keystoreType), Purpose: "TLS cert storage"}
@@ -1983,38 +1984,29 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 		}
 	}
 
-	// Load CA certificate pool if configured
+	// Build the unified ClientCAs pool from the primary CA file plus
+	// any additional client CAs configured via TLS.ClientCAs. The helper
+	// canonicalizes each path and deduplicates by filename so the same
+	// CA referenced from multiple sources is loaded only once.
+	primary := []string{}
 	if s.config.TLS.CAFile != "" {
-		caCert, err := os.ReadFile(s.config.TLS.CAFile)
-		if err != nil {
-			return nil, &ErrFileRead{Path: "CA certificate", Err: err}
-		}
-
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, ErrCAParseCert
-		}
-
-		tlsConfig.ClientCAs = caCertPool
+		primary = append(primary, s.config.TLS.CAFile)
 	}
-
-	// Load additional client CAs if configured
-	if len(s.config.TLS.ClientCAs) > 0 {
-		if tlsConfig.ClientCAs == nil {
-			tlsConfig.ClientCAs = x509.NewCertPool()
-		}
-
-		for _, caPath := range s.config.TLS.ClientCAs {
-			// #nosec G304 - CA certificate path from trusted config file
-			caCert, err := os.ReadFile(caPath)
-			if err != nil {
-				return nil, &ErrFileRead{Path: "additional client CA certificate at " + caPath, Err: err}
-			}
-
-			if !tlsConfig.ClientCAs.AppendCertsFromPEM(caCert) {
-				return nil, &ErrCertParse{Path: caPath}
+	clientPool, err := loadClientCAsUnion(primary, s.config.TLS.ClientCAs)
+	if err != nil {
+		// Map the helper's typed error into the legacy CA parse sentinel
+		// when the failure is the primary CAFile entry to keep callers
+		// that match on ErrCAParseCert stable.
+		var certParseErr *ErrCertParse
+		if errors.As(err, &certParseErr) && s.config.TLS.CAFile != "" && certParseErr.Path != "" {
+			if abs, absErr := filepath.Abs(s.config.TLS.CAFile); absErr == nil && abs == certParseErr.Path {
+				return nil, ErrCAParseCert
 			}
 		}
+		return nil, err
+	}
+	if clientPool != nil {
+		tlsConfig.ClientCAs = clientPool
 	}
 
 	// Configure client authentication (mTLS) if specified

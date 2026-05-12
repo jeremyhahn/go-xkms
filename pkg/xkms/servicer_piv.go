@@ -15,6 +15,7 @@ package xkms
 
 import (
 	"context"
+	"encoding/pem"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -81,4 +82,31 @@ func (s *XKMSService) InitPIVBackendResolver() error {
 		return newBackendPIVKeyGenerator(b, storeType), nil
 	}
 	return SetPIVBackendResolver(resolver)
+}
+
+// InitPIVCASignFunc configures the PIV manager to sign CSRs using the
+// CA provider registered with this XKMSService. This enables the "ca-signed"
+// output format for PIV key generation.
+func (s *XKMSService) InitPIVCASignFunc() error {
+	ca, err := s.getCA()
+	if err != nil {
+		return nil // CA not configured — ca-signed mode will return ErrPIVCASignFuncNotSet
+	}
+
+	fn := func(ctx context.Context, csrPEM []byte, profile string, validityDays int) ([]byte, []byte, error) {
+		cert, signErr := ca.SignCSRRaw(csrPEM, profile, validityDays)
+		if signErr != nil {
+			return nil, nil, signErr
+		}
+		certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+
+		// Build CA chain PEM.
+		var chainPEM []byte
+		caCert, caErr := ca.CACertificate()
+		if caErr == nil && caCert != nil {
+			chainPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw})
+		}
+		return certPEM, chainPEM, nil
+	}
+	return SetPIVCASignFunc(fn)
 }

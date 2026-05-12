@@ -1002,7 +1002,7 @@ func TestCheckSharedPasswordOwnership_AdminBypass(t *testing.T) {
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject:  "bob",
 		TenantID: "tenant-1",
-		Claims:   map[string]interface{}{"roles": []string{"admin"}},
+		Roles:    []string{"admin"},
 	})
 	pw := &staticpw.StaticPassword{
 		OwnerID: "alice",
@@ -1017,7 +1017,7 @@ func TestCheckSharedPasswordOwnership_SOBypass(t *testing.T) {
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject:  "bob",
 		TenantID: "tenant-1",
-		Claims:   map[string]interface{}{"roles": []string{"so"}},
+		Roles:    []string{"so"},
 	})
 	pw := &staticpw.StaticPassword{
 		OwnerID: "alice",
@@ -1142,7 +1142,7 @@ func TestPasswordUpdate_SharedOwnershipAllowedForAdmin(t *testing.T) {
 	adminCtx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject:  "bob",
 		TenantID: "tenant-1",
-		Claims:   map[string]interface{}{"roles": []string{"admin"}},
+		Roles:    []string{"admin"},
 	})
 	newName := "Admin Updated"
 	err = svc.PasswordUpdate(adminCtx, &transport.PasswordUpdateRequest{

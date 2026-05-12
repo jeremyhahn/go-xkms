@@ -1518,10 +1518,22 @@ func TestErrNotSupported_Methods(t *testing.T) {
 		fn   func() error
 	}{
 		{"GetInitStatus", func() error { _, err := tr.GetInitStatus(context.Background()); return err }},
-		{"ClaimCertBegin", func() error { _, err := tr.ClaimCertBegin(context.Background(), &transport.ClaimCertBeginRequest{}); return err }},
-		{"ClaimCertComplete", func() error { _, err := tr.ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{}); return err }},
-		{"ClaimShare", func() error { _, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{}); return err }},
-		{"SubmitCredential", func() error { _, err := tr.SubmitCredential(context.Background(), &transport.CredentialSubmitRequest{}); return err }},
+		{"ClaimCertBegin", func() error {
+			_, err := tr.ClaimCertBegin(context.Background(), &transport.ClaimCertBeginRequest{})
+			return err
+		}},
+		{"ClaimCertComplete", func() error {
+			_, err := tr.ClaimCertComplete(context.Background(), &transport.ClaimCertCompleteRequest{})
+			return err
+		}},
+		{"ClaimShare", func() error {
+			_, err := tr.ClaimShare(context.Background(), &transport.ClaimShareRequest{})
+			return err
+		}},
+		{"SubmitCredential", func() error {
+			_, err := tr.SubmitCredential(context.Background(), &transport.CredentialSubmitRequest{})
+			return err
+		}},
 		{"GetCredentialStrategy", func() error { _, err := tr.GetCredentialStrategy(context.Background()); return err }},
 		{"ListUsers", func() error { _, err := tr.ListUsers(context.Background()); return err }},
 		{"GetUser", func() error { _, err := tr.GetUser(context.Background(), "u"); return err }},
@@ -1529,24 +1541,53 @@ func TestErrNotSupported_Methods(t *testing.T) {
 		{"EnableUser", func() error { return tr.EnableUser(context.Background(), "u") }},
 		{"DisableUser", func() error { return tr.DisableUser(context.Background(), "u") }},
 		{"ListUserCredentials", func() error { _, err := tr.ListUserCredentials(context.Background(), "u"); return err }},
-		{"PasswordStoreSetAccessMode", func() error { return tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{}) }},
+		{"PasswordStoreSetAccessMode", func() error {
+			return tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{})
+		}},
 		{"SealStorePut", func() error { return tr.SealStorePut(context.Background(), &transport.SealStorePutRequest{}) }},
-		{"SealStoreGet", func() error { _, err := tr.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{}); return err }},
+		{"SealStoreGet", func() error {
+			_, err := tr.SealStoreGet(context.Background(), &transport.SealStoreGetRequest{})
+			return err
+		}},
 		{"SealStoreDelete", func() error { return tr.SealStoreDelete(context.Background(), &transport.SealStoreDeleteRequest{}) }},
 		{"SealStoreList", func() error { _, err := tr.SealStoreList(context.Background()); return err }},
 		{"SealStoreReseal", func() error { return tr.SealStoreReseal(context.Background(), &transport.SealStoreResealRequest{}) }},
 		{"SealStoreStatus", func() error { _, err := tr.SealStoreStatus(context.Background()); return err }},
-		{"PolicyCreate", func() error { _, err := tr.PolicyCreate(context.Background(), &transport.PolicyCreateRequest{}); return err }},
+		{"PolicyCreate", func() error {
+			_, err := tr.PolicyCreate(context.Background(), &transport.PolicyCreateRequest{})
+			return err
+		}},
 		{"PolicyGet", func() error { _, err := tr.PolicyGet(context.Background(), &transport.PolicyGetRequest{}); return err }},
 		{"PolicyList", func() error { _, err := tr.PolicyList(context.Background()); return err }},
 		{"PolicyDelete", func() error { return tr.PolicyDelete(context.Background(), &transport.PolicyDeleteRequest{}) }},
-		{"PolicyRefresh", func() error { _, err := tr.PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{}); return err }},
-		{"PolicyVerify", func() error { _, err := tr.PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{}); return err }},
-		{"PolicyExport", func() error { _, err := tr.PolicyExport(context.Background(), &transport.PolicyExportRequest{}); return err }},
-		{"BeginRegistration", func() error { _, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{}); return err }},
-		{"FinishRegistration", func() error { _, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{}); return err }},
-		{"BeginAuthentication", func() error { _, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{}); return err }},
-		{"FinishAuthentication", func() error { _, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{}); return err }},
+		{"PolicyRefresh", func() error {
+			_, err := tr.PolicyRefresh(context.Background(), &transport.PolicyRefreshRequest{})
+			return err
+		}},
+		{"PolicyVerify", func() error {
+			_, err := tr.PolicyVerify(context.Background(), &transport.PolicyVerifyRequest{})
+			return err
+		}},
+		{"PolicyExport", func() error {
+			_, err := tr.PolicyExport(context.Background(), &transport.PolicyExportRequest{})
+			return err
+		}},
+		{"BeginRegistration", func() error {
+			_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
+			return err
+		}},
+		{"FinishRegistration", func() error {
+			_, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
+			return err
+		}},
+		{"BeginAuthentication", func() error {
+			_, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
+			return err
+		}},
+		{"FinishAuthentication", func() error {
+			_, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
+			return err
+		}},
 	}
 
 	for _, tc := range tests {

@@ -1278,3 +1278,389 @@ func TestGetPIVCertificate_DERFormat(t *testing.T) {
 	assert.NotEmpty(t, resp.Certificate)
 	assert.Equal(t, "DER", resp.Format)
 }
+
+// ========================================================================
+// Output Format Tests
+// ========================================================================
+
+func TestGeneratePIVKey_OutputFormat_PublicKeyOnly(t *testing.T) {
+	store, _ := setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		OutputFormat: "public-key",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// PublicKey should be set.
+	assert.NotEmpty(t, resp.PublicKey)
+	block, _ := pem.Decode(resp.PublicKey)
+	require.NotNil(t, block)
+	assert.Equal(t, "PUBLIC KEY", block.Type)
+
+	// Certificate and CSR should be empty.
+	assert.Empty(t, resp.Certificate)
+	assert.Empty(t, resp.CSR)
+
+	// No cert should have been stored.
+	_, err = store.Retrieve(pivcert.PIVSlotAuthentication)
+	assert.Error(t, err, "expected no cert stored for public-key output")
+}
+
+func TestGeneratePIVKey_OutputFormat_CSR(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		Subject:      "CSR Test Subject",
+		OutputFormat: "csr",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// CSR and PublicKey should be set, Certificate should be empty.
+	assert.NotEmpty(t, resp.CSR)
+	assert.NotEmpty(t, resp.PublicKey)
+	assert.Empty(t, resp.Certificate)
+
+	// Parse the CSR PEM and verify it is valid PKCS#10 with correct subject.
+	block, _ := pem.Decode(resp.CSR)
+	require.NotNil(t, block)
+	assert.Equal(t, "CERTIFICATE REQUEST", block.Type)
+
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, "CSR Test Subject", csr.Subject.CommonName)
+
+	err = csr.CheckSignature()
+	assert.NoError(t, err)
+}
+
+func TestGeneratePIVKey_OutputFormat_SelfSigned(t *testing.T) {
+	store, _ := setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		OutputFormat: "self-signed",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// Same behavior as default (empty OutputFormat): certificate and public key set.
+	assert.NotEmpty(t, resp.Certificate)
+	assert.NotEmpty(t, resp.PublicKey)
+	assert.Empty(t, resp.CSR)
+	assert.Empty(t, resp.ChainPEM)
+
+	// Cert should be stored.
+	_, err = store.Retrieve(pivcert.PIVSlotAuthentication)
+	assert.NoError(t, err)
+}
+
+func TestGeneratePIVKey_OutputFormat_Invalid(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	_, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		OutputFormat: "invalid",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVInvalidOutputFormat)
+}
+
+func TestGeneratePIVKey_OutputFormat_EmptyDefault(t *testing.T) {
+	store, _ := setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:   "software",
+		Slot:      "9a",
+		Algorithm: "ecdsap256",
+		// OutputFormat intentionally empty - should default to self-signed.
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	assert.NotEmpty(t, resp.Certificate)
+	assert.NotEmpty(t, resp.PublicKey)
+
+	// Verify it produced a self-signed certificate.
+	block, _ := pem.Decode(resp.Certificate)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, cert.Subject.String(), cert.Issuer.String(), "expected self-signed (subject == issuer)")
+
+	// Cert should be stored.
+	_, err = store.Retrieve(pivcert.PIVSlotAuthentication)
+	assert.NoError(t, err)
+}
+
+// testCASignFunc is a PIVCASignFunc that creates a test CA-signed certificate.
+func testCASignFunc(_ context.Context, csrPEM []byte, _ string, validityDays int) ([]byte, []byte, error) {
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		return nil, nil, errors.New("invalid CSR PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(100),
+		Subject:               pkix.Name{CommonName: "Test CA"},
+		IsCA:                  true,
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caCertDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	caCert, err := x509.ParseCertificate(caCertDER)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      csr.Subject,
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Duration(validityDays) * 24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, csr.PublicKey, caKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	chainPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCertDER})
+	return certPEM, chainPEM, nil
+}
+
+func TestGeneratePIVKey_OutputFormat_CASigned_Success(t *testing.T) {
+	store, _ := setupPIVWithMockResolver(t)
+
+	err := SetPIVCASignFunc(testCASignFunc)
+	require.NoError(t, err)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		Subject:      "CA-Signed Test",
+		OutputFormat: "ca-signed",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	// Certificate, PublicKey, CSR, and ChainPEM should all be set.
+	assert.NotEmpty(t, resp.Certificate)
+	assert.NotEmpty(t, resp.PublicKey)
+	assert.NotEmpty(t, resp.CSR)
+	assert.NotEmpty(t, resp.ChainPEM)
+
+	// Parse the certificate and verify it was signed by the test CA.
+	block, _ := pem.Decode(resp.Certificate)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, "CA-Signed Test", cert.Subject.CommonName)
+	assert.Equal(t, "Test CA", cert.Issuer.CommonName)
+	assert.NotEqual(t, cert.Subject.String(), cert.Issuer.String(), "expected CA-signed, not self-signed")
+
+	// Verify chain contains the CA cert.
+	chainBlock, _ := pem.Decode(resp.ChainPEM)
+	require.NotNil(t, chainBlock)
+	caCert, err := x509.ParseCertificate(chainBlock.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, "Test CA", caCert.Subject.CommonName)
+
+	// Cert should have been stored.
+	stored, err := store.Retrieve(pivcert.PIVSlotAuthentication)
+	require.NoError(t, err)
+	assert.Equal(t, cert.SerialNumber.Int64(), stored.SerialNumber.Int64())
+}
+
+func TestGeneratePIVKey_OutputFormat_CASigned_NoCAFunc(t *testing.T) {
+	setupPIVWithMockResolver(t)
+	// Do not call SetPIVCASignFunc - caSignFunc is nil.
+
+	_, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		OutputFormat: "ca-signed",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVCASignFuncNotSet)
+}
+
+func TestGeneratePIVKey_OutputFormat_CASigned_CAError(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	caErr := errors.New("ca signing failed")
+	err := SetPIVCASignFunc(func(_ context.Context, _ []byte, _ string, _ int) ([]byte, []byte, error) {
+		return nil, nil, caErr
+	})
+	require.NoError(t, err)
+
+	_, err = GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		OutputFormat: "ca-signed",
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, caErr)
+}
+
+func TestGeneratePIVKey_ValidityDays_SelfSigned(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		ValidityDays: 365,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	block, _ := pem.Decode(resp.Certificate)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	// Verify NotAfter is approximately 365 days from now (within 1 minute tolerance).
+	expected := time.Now().Add(365 * 24 * time.Hour)
+	diff := cert.NotAfter.Sub(expected)
+	if diff < 0 {
+		diff = -diff
+	}
+	assert.Less(t, diff, time.Minute, "NotAfter should be ~365 days from now")
+}
+
+func TestGeneratePIVKey_ValidityDays_Default(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		ValidityDays: 0, // Should use 10-year default.
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	block, _ := pem.Decode(resp.Certificate)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	// Verify NotAfter is approximately 10 years from now (within 1 minute tolerance).
+	expected := time.Now().Add(10 * 365 * 24 * time.Hour)
+	diff := cert.NotAfter.Sub(expected)
+	if diff < 0 {
+		diff = -diff
+	}
+	assert.Less(t, diff, time.Minute, "NotAfter should be ~10 years from now")
+}
+
+func TestGeneratePIVKey_SubjectFields(t *testing.T) {
+	setupPIVWithMockResolver(t)
+
+	resp, err := GeneratePIVKey(context.Background(), &transport.GeneratePIVKeyRequest{
+		Backend:      "software",
+		Slot:         "9a",
+		Algorithm:    "ecdsap256",
+		Subject:      "Custom CN",
+		Organization: "Test Org",
+		Country:      "US",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	block, _ := pem.Decode(resp.Certificate)
+	require.NotNil(t, block)
+	cert, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+
+	assert.Equal(t, "Custom CN", cert.Subject.CommonName)
+	require.Len(t, cert.Subject.Organization, 1)
+	assert.Equal(t, "Test Org", cert.Subject.Organization[0])
+	require.Len(t, cert.Subject.Country, 1)
+	assert.Equal(t, "US", cert.Subject.Country[0])
+}
+
+// ========================================================================
+// PIVCASignFunc Tests
+// ========================================================================
+
+func TestSetPIVCASignFunc_Success(t *testing.T) {
+	ResetPIV()
+	t.Cleanup(func() { ResetPIV() })
+
+	err := InitializePIV(&PIVManagerConfig{})
+	require.NoError(t, err)
+
+	err = SetPIVCASignFunc(func(_ context.Context, _ []byte, _ string, _ int) ([]byte, []byte, error) {
+		return nil, nil, nil
+	})
+	require.NoError(t, err)
+}
+
+func TestSetPIVCASignFunc_NotInitialized(t *testing.T) {
+	ResetPIV()
+
+	err := SetPIVCASignFunc(func(_ context.Context, _ []byte, _ string, _ int) ([]byte, []byte, error) {
+		return nil, nil, nil
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrPIVNotInitialized)
+}
+
+// ========================================================================
+// pivSlotToCAProfile Tests
+// ========================================================================
+
+func TestPivSlotToCAProfile(t *testing.T) {
+	tests := []struct {
+		slot     string
+		expected string
+	}{
+		{"9a", "piv-authentication"},
+		{"9c", "piv-signature"},
+		{"9d", "piv-key-management"},
+		{"9e", "piv-card-auth"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.slot, func(t *testing.T) {
+			profile, ok := pivSlotToCAProfile[tt.slot]
+			require.True(t, ok, "expected slot %q in pivSlotToCAProfile", tt.slot)
+			assert.Equal(t, tt.expected, profile)
+		})
+	}
+
+	// Unknown slot should not be present in the map; code defaults to "piv-authentication".
+	_, ok := pivSlotToCAProfile["ff"]
+	assert.False(t, ok, "unknown slot should not be in pivSlotToCAProfile")
+}

@@ -811,32 +811,48 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 		updated.ServerAutoConnect = true
 	}
 
-	updated.SetupComplete = true
-	// Always save storage_type as "barrier". Data must never be stored in
-	// plain text. If barrier initialization failed during the wizard, the
-	// app startup repair logic will detect the missing root key and
-	// initialize the barrier on the first unlock.
+	// Refuse to mark setup complete when the barrier (the system's only
+	// at-rest encryption boundary) was wired but failed to initialize.
+	// Persisting SetupComplete=true with BarrierInitialized=false leaves
+	// the user in a half-broken state where the saved User PIN cannot
+	// recover the barrier and the unlock screen reports "incorrect PIN"
+	// forever. When no barrier service is wired (s.barrierSvc == nil,
+	// test-only path), preserve the legacy completion behavior.
 	updated.StorageType = "barrier"
 	updated.SealerBackend = choices.SealerBackend
-	// Always persist the intended barrier strategy so that deferred
-	// initialization (on next startup) uses the user's chosen strategy
-	// (e.g., tpm2) rather than defaulting to software.
-	if barrierInitialized {
+	barrierAttempted := s.barrierSvc != nil
+	switch {
+	case barrierInitialized:
+		updated.SetupComplete = true
 		updated.BarrierInitialized = true
 		updated.BarrierStrategy = barrierStrategy
 		updated.BarrierAutoUnsealEnabled = (barrierStrategy == "tpm2")
 		if barrierAutoUnsealBlobID != "" {
 			updated.BarrierAutoUnsealBlobID = barrierAutoUnsealBlobID
 		}
-	} else {
-		// Barrier init failed — save the intended strategy for deferred init.
+		result.SetupComplete = true
+	case barrierAttempted:
+		// Barrier init was attempted with a real service and failed.
+		// Persist the intended strategy so the user can retry, but do
+		// NOT mark setup complete.
+		updated.SetupComplete = false
+		updated.BarrierInitialized = false
 		updated.BarrierStrategy = choices.SealerBackend
+		result.SetupComplete = false
+		result.Success = false
+		result.Errors = append(result.Errors,
+			fmt.Sprintf("barrier %s initialization failed — setup cannot complete; please re-run the wizard with a different sealer backend or resolve the underlying error",
+				choices.SealerBackend))
+	default:
+		// No barrier service wired (test path). Preserve legacy behavior.
+		updated.SetupComplete = true
+		updated.BarrierStrategy = choices.SealerBackend
+		result.SetupComplete = true
 	}
 	if err := s.configSave(&updated); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("config save failed: %v", err))
 		result.Success = false
 	}
-	result.SetupComplete = true
 
 	// Emit setup completed event.
 	if s.eventEmitter != nil {

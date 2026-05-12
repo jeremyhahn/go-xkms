@@ -89,7 +89,7 @@
   }
 </script>
 
-<Modal bind:open {title} maxWidth="420px">
+<Modal bind:open {title} maxWidth="420px" persistent={true}>
   <div class="master-pw-form">
     {#if mode === 'change'}
       <Input

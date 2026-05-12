@@ -196,8 +196,8 @@ func (a *OIDCAuthenticator) AuthenticateHTTP(r *http.Request) (*Identity, error)
 	}
 
 	// Add HTTP-specific attributes
-	identity.Attributes["auth_method"] = "oidc"
-	identity.Attributes["remote_addr"] = r.RemoteAddr
+	identity.Metadata["auth_method"] = "oidc"
+	identity.Metadata["remote_addr"] = r.RemoteAddr
 
 	return identity, nil
 }
@@ -225,7 +225,7 @@ func (a *OIDCAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD
 	}
 
 	// Add gRPC-specific attributes
-	identity.Attributes["auth_method"] = "oidc"
+	identity.Metadata["auth_method"] = "oidc"
 
 	return identity, nil
 }
@@ -480,16 +480,18 @@ func (a *OIDCAuthenticator) validateAudience(claims jwt.MapClaims) error {
 	}
 }
 
-// claimsToIdentity converts OIDC claims to an Identity.
+// claimsToIdentity converts OIDC claims to an Identity. The OIDC standard
+// claims map onto qrdb's Identity fields:
+//
+//   - sub                 → Identity.Subject
+//   - email               → Identity.Metadata["email"]
+//   - name                → Identity.Metadata["display_name"]
+//   - preferred_username  → Identity.Metadata["username"]
+//   - roles / groups /    → Identity.Roles (collected via extractRoles)
+//     Keycloak realm_access / resource_access
 func (a *OIDCAuthenticator) claimsToIdentity(claims map[string]interface{}) *Identity {
 	identity := &Identity{
-		Claims:     make(map[string]interface{}),
-		Attributes: make(map[string]string),
-	}
-
-	// Copy all claims
-	for k, v := range claims {
-		identity.Claims[k] = v
+		Metadata: make(map[string]string),
 	}
 
 	// Extract subject
@@ -499,24 +501,21 @@ func (a *OIDCAuthenticator) claimsToIdentity(claims map[string]interface{}) *Ide
 
 	// Extract email
 	if email, ok := claims["email"].(string); ok {
-		identity.Attributes["email"] = email
+		identity.Metadata["email"] = email
 	}
 
 	// Extract name
 	if name, ok := claims["name"].(string); ok {
-		identity.Attributes["display_name"] = name
+		identity.Metadata["display_name"] = name
 	}
 
 	// Extract preferred username
 	if username, ok := claims["preferred_username"].(string); ok {
-		identity.Attributes["username"] = username
+		identity.Metadata["username"] = username
 	}
 
-	// Extract roles/groups into normalized "roles" claim
-	roles := extractRoles(claims)
-	if len(roles) > 0 {
-		identity.Claims["roles"] = roles
-	}
+	// Extract roles/groups into the Roles field
+	identity.Roles = extractRoles(claims)
 
 	return identity
 }

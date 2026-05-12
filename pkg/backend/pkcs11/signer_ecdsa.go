@@ -248,7 +248,10 @@ func generateECDSAKeyPair(pool *SessionPool, id, label []byte, curve elliptic.Cu
 		)
 		return err
 	}
-	if isYubiKeyPIV && soPIN != "" {
+	if isYubiKeyPIV {
+		if soPIN == "" {
+			return nil, fmt.Errorf("pkcs11: generate ECDSA key pair: %w", ErrSOPINRequired)
+		}
 		err = pool.WithSOSession(soPIN, userPIN, genFn)
 	} else {
 		err = pool.WithSession(genFn)

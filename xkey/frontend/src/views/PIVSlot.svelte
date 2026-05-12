@@ -4,18 +4,16 @@
   import Button from '$lib/components/Button.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import Modal from '$lib/components/Modal.svelte';
-  import CSRDialog, { type CSRDialogData } from '$lib/components/CSRDialog.svelte';
   import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
-  import GeneratePIVKeyDialog from '$lib/components/GeneratePIVKeyDialog.svelte';
+  import CopyIconButton from '$lib/components/CopyIconButton.svelte';
   import {
-    mdiArrowLeft, mdiCertificate, mdiCreditCardOutline, mdiKey, mdiExport,
-    mdiDelete, mdiShieldCheckOutline, mdiContentCopy, mdiDownload, mdiPlus
+    mdiArrowLeft, mdiCertificate, mdiCreditCardOutline, mdiKey,
+    mdiShieldCheckOutline,
   } from '$lib/utils/icons';
   import { navigateTo, appState } from '$lib/stores/app';
   import { formatDateTime, formatFingerprint } from '$lib/utils/format';
-  import { addNotification } from '$lib/stores/notifications';
-  import { isWailsAvailable, callBackend, callBackendVoid } from '$lib/api/backend';
+  import { isWailsAvailable, callBackend } from '$lib/api/backend';
+  import type { BackendPIVSlot } from '$lib/api/backend';
   import type { PIVSlot } from '$lib/types';
 
   /** Slot label and purpose lookup by slot ID */
@@ -24,6 +22,7 @@
     '9C': { label: 'Digital Signature', purpose: 'Code signing, document signing' },
     '9D': { label: 'Key Management', purpose: 'Encryption, key exchange' },
     '9E': { label: 'Card Authentication', purpose: 'Physical access, card authentication' },
+    'F9': { label: 'Attestation', purpose: 'Device attestation certificate' },
   };
 
   /** Response shape from PIVService.GetCertificate */
@@ -40,16 +39,8 @@
     pem: string;
   }
 
-  let showCSRDialog = false;
-  let showDeleteConfirm = false;
-  let showGenerateDialog = false;
-  let showCSRResult = false;
-  let csrPEM = '';
   let loading = true;
-  let exporting = false;
-  let deleting = false;
-  let generatingCSR = false;
-
+  let certPEM = '';
   let slot: PIVSlot | null = null;
   let slotId = '';
 
@@ -70,9 +61,10 @@
         label: meta.label,
         purpose: meta.purpose,
         loaded: false,
+        hasKey: false,
         algorithm: null, subject: null, issuer: null, serialNumber: null,
         notBefore: null, notAfter: null, keyUsage: [], fingerprint: null, daysRemaining: null,
-        backend: null,
+        backend: null, backendDisplayName: null,
       };
       loading = false;
       return;
@@ -90,6 +82,7 @@
         label: meta.label,
         purpose: meta.purpose,
         loaded: true,
+        hasKey: true,
         algorithm: cert.algorithm || null,
         subject: cert.subject || null,
         issuer: cert.issuer || null,
@@ -99,93 +92,33 @@
         keyUsage: [],
         fingerprint: cert.fingerprint || null,
         daysRemaining,
-        backend: null,
+        backend: null, backendDisplayName: null,
       };
+      certPEM = cert.pem || '';
     } else {
+      let hasKey = false;
+      let keyAlgorithm: string | null = null;
+      const slotList = await callBackend<BackendPIVSlot[]>('PIVService', 'GetSlots');
+      if (slotList) {
+        const match = slotList.find(s => s.slot.toUpperCase() === id);
+        if (match) {
+          hasKey = match.has_key || (match.algorithm !== undefined && match.algorithm !== '');
+          keyAlgorithm = match.algorithm || null;
+        }
+      }
+
       slot = {
         slotId: id,
         label: meta.label,
         purpose: meta.purpose,
         loaded: false,
-        algorithm: null, subject: null, issuer: null, serialNumber: null,
+        hasKey,
+        algorithm: keyAlgorithm, subject: null, issuer: null, serialNumber: null,
         notBefore: null, notAfter: null, keyUsage: [], fingerprint: null, daysRemaining: null,
-        backend: null,
+        backend: null, backendDisplayName: null,
       };
     }
     loading = false;
-  }
-
-  async function handleExport(): Promise<void> {
-    if (!slot) return;
-    exporting = true;
-    const pem = await callBackend<string>('PIVService', 'ExportCertificate', slot.slotId);
-    exporting = false;
-
-    if (pem) {
-      try {
-        await navigator.clipboard.writeText(pem);
-        addNotification('success', 'Certificate PEM copied to clipboard');
-      } catch {
-        addNotification('error', 'Failed to copy certificate to clipboard');
-      }
-    } else {
-      addNotification('error', 'Failed to export certificate');
-    }
-  }
-
-  async function handleGenerateCSR(data: CSRDialogData): Promise<void> {
-    if (!slot) return;
-    generatingCSR = true;
-    showCSRDialog = false;
-
-    const subject = {
-      common_name: data.commonName,
-      organization: data.organization,
-      organizational_unit: data.organizationalUnit,
-      country: data.country,
-      state: data.state,
-      locality: data.locality,
-    };
-
-    const result = await callBackend<string>('PIVService', 'GenerateCSR', slot.slotId, subject);
-    generatingCSR = false;
-
-    if (result) {
-      csrPEM = result;
-      showCSRResult = true;
-      addNotification('success', 'CSR generated successfully');
-    } else {
-      addNotification('error', 'Failed to generate CSR');
-    }
-  }
-
-  async function handleCopyCSR(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(csrPEM);
-      addNotification('success', 'CSR copied to clipboard');
-    } catch {
-      addNotification('error', 'Failed to copy CSR to clipboard');
-    }
-  }
-
-  async function handleDelete(): Promise<void> {
-    if (!slot) return;
-    deleting = true;
-    const ok = await callBackendVoid('PIVService', 'DeleteCertificate', slot.slotId);
-    deleting = false;
-    showDeleteConfirm = false;
-
-    if (ok) {
-      addNotification('info', `Slot ${slot.slotId} cleared`);
-      navigateTo('piv');
-    } else {
-      addNotification('error', `Failed to delete key from slot ${slot.slotId}`);
-    }
-  }
-
-  function handleKeyGenerated(): void {
-    showGenerateDialog = false;
-    loadCertificate();
   }
 
   function getDaysColor(days: number | null): string {
@@ -258,6 +191,10 @@
                 <span class="text-label-small field-label">Status</span>
                 <StatusBadge status={slot.daysRemaining && slot.daysRemaining > 30 ? 'verified' : slot.daysRemaining && slot.daysRemaining > 0 ? 'warning' : 'error'} />
               </div>
+              <div class="detail-field detail-field-wide">
+                <span class="text-label-small field-label">Fingerprint (SHA-256)</span>
+                <code class="text-body-small font-mono">{slot.fingerprint ? formatFingerprint(slot.fingerprint) : 'N/A'}</code>
+              </div>
             </div>
           </div>
         </Card>
@@ -282,36 +219,47 @@
           </Card>
         {/if}
 
-        <!-- Fingerprint -->
-        <Card variant="security">
-          <div class="section">
+        <!-- PEM section -->
+        {#if certPEM}
+          <Card variant="outlined">
+            <div class="section">
+              <div class="pem-header">
+                <span class="text-label-medium">Certificate PEM</span>
+                <CopyIconButton text={certPEM} tooltip="Copy PEM to clipboard" />
+              </div>
+              <pre class="pem-content text-body-small font-mono">{certPEM}</pre>
+            </div>
+          </Card>
+        {/if}
+
+        <p class="text-body-small actions-hint">
+          Actions for this slot are available from the PIV overview page.
+        </p>
+
+      {:else if slot.hasKey}
+        <!-- Key-Only: key present but no certificate stored yet -->
+        <Card variant="outlined">
+          <div class="section" data-testid="piv-slot-key-only">
             <h2 class="text-title-medium section-heading">
               <Icon path={mdiKey} size={20} />
-              Fingerprint (SHA-256)
+              Key Generated
             </h2>
-            <code class="fingerprint text-body-small font-mono">
-              {slot.fingerprint ? formatFingerprint(slot.fingerprint) : 'N/A'}
-            </code>
+            <div class="detail-grid">
+              <div class="detail-field">
+                <span class="text-label-small field-label">Algorithm</span>
+                <span class="text-body-medium">{slot.algorithm || 'Unknown'}</span>
+              </div>
+            </div>
+            <p class="text-body-medium key-only-desc">
+              A key pair exists in this slot but no certificate has been stored yet.
+            </p>
           </div>
         </Card>
 
-        <!-- Actions -->
-        <Card variant="outlined">
-          <div class="section">
-            <h2 class="text-title-medium section-heading">Actions</h2>
-            <div class="action-buttons">
-              <Button variant="primary" size="sm" icon={mdiExport} loading={exporting} on:click={handleExport}>
-                Export Certificate (PEM)
-              </Button>
-              <Button variant="outline" size="sm" on:click={() => (showCSRDialog = true)}>
-                Generate CSR
-              </Button>
-              <Button variant="danger" size="sm" icon={mdiDelete} on:click={() => (showDeleteConfirm = true)}>
-                Delete Key and Certificate
-              </Button>
-            </div>
-          </div>
-        </Card>
+        <p class="text-body-small actions-hint">
+          Actions for this slot are available from the PIV overview page.
+        </p>
+
       {:else}
         <!-- Empty Slot -->
         <Card variant="outlined">
@@ -319,54 +267,15 @@
             <Icon path={mdiCreditCardOutline} size={48} color="var(--color-on-surface-variant)" />
             <h3 class="text-title-medium">Slot {slot.slotId} is empty</h3>
             <p class="text-body-medium empty-desc">{slot.purpose}</p>
-            <Button variant="primary" icon={mdiPlus} on:click={() => (showGenerateDialog = true)}>
-              Generate Key
-            </Button>
           </div>
         </Card>
+
+        <p class="text-body-small actions-hint">
+          Actions for this slot are available from the PIV overview page.
+        </p>
       {/if}
     </div>
   {/if}
-
-  <CSRDialog
-    bind:open={showCSRDialog}
-    onClose={() => (showCSRDialog = false)}
-    onGenerate={handleGenerateCSR}
-  />
-
-  <GeneratePIVKeyDialog
-    bind:open={showGenerateDialog}
-    slotId={slotId}
-    slotLabel={slot?.label || ''}
-    onClose={() => (showGenerateDialog = false)}
-    onGenerated={handleKeyGenerated}
-  />
-
-  <Modal bind:open={showDeleteConfirm} title="Delete Key and Certificate?" maxWidth="400px">
-    <p class="text-body-medium">
-      This will permanently delete the key and certificate from slot <strong>{slot?.slotId}</strong>.
-      This action cannot be undone.
-    </p>
-    <svelte:fragment slot="actions">
-      <Button variant="text" on:click={() => (showDeleteConfirm = false)}>Cancel</Button>
-      <Button variant="danger" loading={deleting} on:click={handleDelete}>Delete</Button>
-    </svelte:fragment>
-  </Modal>
-
-  <Modal bind:open={showCSRResult} title="Certificate Signing Request" maxWidth="560px">
-    <div class="csr-result">
-      <p class="text-body-medium">
-        CSR generated for slot <strong>{slot?.slotId}</strong>. Copy the PEM below and submit it to your certificate authority.
-      </p>
-      <pre class="csr-pem text-body-small font-mono">{csrPEM}</pre>
-    </div>
-    <svelte:fragment slot="actions">
-      <Button variant="text" on:click={() => (showCSRResult = false)}>Close</Button>
-      <Button variant="primary" icon={mdiContentCopy} on:click={handleCopyCSR}>
-        Copy to Clipboard
-      </Button>
-    </svelte:fragment>
-  </Modal>
 </div>
 
 <style>
@@ -416,9 +325,29 @@
     margin: 0; color: var(--color-on-surface);
   }
 
-  .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 20px; }
 
-  .detail-field { display: flex; flex-direction: column; gap: 4px; }
+  .detail-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .detail-field-wide { grid-column: 1 / -1; }
+
+  .pem-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .pem-content {
+    background: var(--color-surface-variant);
+    border: 1px solid var(--color-outline-variant);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin: 0;
+    max-height: 260px;
+    overflow: auto;
+    white-space: pre;
+    word-break: break-all;
+  }
 
   .field-label {
     color: var(--color-on-surface-variant);
@@ -438,18 +367,6 @@
     flex-shrink: 0;
   }
 
-  .fingerprint {
-    padding: 12px 16px;
-    background-color: var(--color-surface-container);
-    border-radius: var(--radius-sm);
-    word-break: break-all;
-    line-height: 1.6;
-  }
-
-  .action-buttons {
-    display: flex; flex-wrap: wrap; gap: 12px;
-  }
-
   .empty-slot {
     display: flex; flex-direction: column; align-items: center;
     gap: 16px; padding: 48px; text-align: center;
@@ -458,22 +375,15 @@
   .empty-slot h3 { margin: 0; color: var(--color-on-surface); }
   .empty-desc { color: var(--color-on-surface-variant); margin: 0; }
 
-  .csr-result {
-    display: flex; flex-direction: column; gap: 12px;
+  .key-only-desc {
+    color: var(--color-on-surface-variant);
+    margin: 0;
   }
 
-  .csr-result p { margin: 0; }
-
-  .csr-pem {
-    padding: 12px 16px;
-    background-color: var(--color-surface-container);
-    border-radius: var(--radius-sm);
-    word-break: break-all;
-    white-space: pre-wrap;
-    line-height: 1.5;
-    max-height: 300px;
-    overflow-y: auto;
+  .actions-hint {
+    color: var(--color-on-surface-variant);
+    opacity: 0.7;
     margin: 0;
-    border: 1px solid var(--color-outline-variant);
+    font-style: italic;
   }
 </style>

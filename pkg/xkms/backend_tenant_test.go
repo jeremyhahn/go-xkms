@@ -49,22 +49,22 @@ type recordingBackend struct {
 	lastKeyID string
 
 	// Canned return values.
-	generateRSAErr   error
-	generateECDSAErr error
+	generateRSAErr     error
+	generateECDSAErr   error
 	generateEd25519Err error
-	getKeyErr        error
-	deleteKeyErr     error
-	rotateKeyErr     error
-	signerErr        error
-	decrypterErr     error
-	saveCertErr      error
-	getCertErr       error
-	deleteCertErr    error
-	saveCertChainErr error
-	getCertChainErr  error
-	certExistsErr    error
-	getTLSCertErr    error
-	closeErr         error
+	getKeyErr          error
+	deleteKeyErr       error
+	rotateKeyErr       error
+	signerErr          error
+	decrypterErr       error
+	saveCertErr        error
+	getCertErr         error
+	deleteCertErr      error
+	saveCertChainErr   error
+	getCertChainErr    error
+	certExistsErr      error
+	getTLSCertErr      error
+	closeErr           error
 }
 
 var _ Backend = (*recordingBackend)(nil)

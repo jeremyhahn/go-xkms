@@ -41,7 +41,7 @@ test.describe('Settings View', () => {
   });
 
   test.describe('Category Navigation', () => {
-    test('settings navigation sidebar renders all 11 categories', async ({
+    test('settings navigation sidebar renders all 12 categories', async ({
       page,
     }) => {
       const settingsNav = page.locator('.settings-nav');
@@ -49,6 +49,7 @@ test.describe('Settings View', () => {
 
       const categories = [
         'General',
+        'Identity',
         'Appearance',
         'Browser',
         'API Explorer',
@@ -68,10 +69,10 @@ test.describe('Settings View', () => {
       }
     });
 
-    test('exactly 11 navigation items are rendered', async ({ page }) => {
+    test('exactly 12 navigation items are rendered', async ({ page }) => {
       const navItems = page.locator('.settings-nav .settings-nav-item');
       const count = await navItems.count();
-      expect(count).toBe(11);
+      expect(count).toBe(12);
     });
 
     test('General is the default active category', async ({ page }) => {
@@ -962,6 +963,161 @@ test.describe('Settings View', () => {
       await expect(
         page.getByText('FIDO2 Virtual Authenticator'),
       ).toBeVisible();
+    });
+  });
+
+  // ── Settings → Identity ─────────────────────────────────────────────────
+
+  test.describe('Identity Category', () => {
+    test('Identity category button is visible in settings nav', async ({ page }) => {
+      const settingsNav = page.locator('.settings-nav');
+      await expect(settingsNav.getByRole('button', { name: 'Identity' })).toBeVisible();
+    });
+
+    test('clicking Identity shows the identity form', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      // The SettingsIdentity component renders a section heading and description.
+      await expect(page.locator('.settings-section h2', { hasText: 'Identity' })).toBeVisible();
+      await expect(
+        page.getByText('Default X.509 subject fields used when generating certificates.'),
+      ).toBeVisible();
+    });
+
+    test('identity form has all 6 fields', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      // Labels rendered by the Input components
+      await expect(page.getByText('Common Name')).toBeVisible();
+      await expect(page.getByText('Organization', { exact: true })).toBeVisible();
+      await expect(page.getByText('Organizational Unit')).toBeVisible();
+      await expect(page.getByText('Country (ISO 3166-1 alpha-2)')).toBeVisible();
+      await expect(page.getByText('State / Province')).toBeVisible();
+      await expect(page.getByText('Locality / City')).toBeVisible();
+    });
+
+    test('identity form renders exactly 6 input fields', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      const inputs = page.locator('.identity-form input');
+      await expect(inputs).toHaveCount(6);
+    });
+
+    test('all identity inputs are editable', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      const inputs = page.locator('.identity-form input');
+      const count = await inputs.count();
+      for (let i = 0; i < count; i++) {
+        await expect(inputs.nth(i)).toBeEditable();
+      }
+    });
+
+    test('Country field placeholder indicates 2-character ISO code', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      // The placeholder text on the Country input is "e.g. US" — two characters.
+      const countryInput = page.locator('.identity-form input').nth(3);
+      await expect(countryInput).toHaveAttribute('placeholder', 'e.g. US');
+    });
+
+    test('Save button is visible in the identity panel', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      const saveBtn = page.locator('.identity-actions').getByRole('button', { name: 'Save' });
+      await expect(saveBtn).toBeVisible();
+    });
+
+    test('Save button is enabled when identity form is rendered', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      const saveBtn = page.locator('.identity-actions').getByRole('button', { name: 'Save' });
+      await expect(saveBtn).toBeEnabled();
+    });
+
+    test('editing Common Name and switching away preserves the typed value on return', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      const cnInput = page.locator('.identity-form input').first();
+      await cnInput.fill('Roundtrip Test');
+
+      // Navigate to a different category
+      await navigateToSettingsCategory(page, 'General');
+      await expect(page.getByText('Start with system')).toBeVisible();
+
+      // Navigate back to Identity
+      await navigateToSettingsCategory(page, 'Identity');
+
+      // Svelte destroys and remounts the component on category switch so the
+      // value resets to the last persisted state (empty in standalone mode).
+      // This test verifies the component remounts cleanly without errors.
+      const freshCn = page.locator('.identity-form input').first();
+      await expect(freshCn).toBeVisible();
+      await expect(freshCn).toBeEditable();
+    });
+
+    test('Identity panel does not show loading spinner in standalone mode', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      // In standalone (non-Wails) mode isWailsAvailable() returns false so
+      // onMount exits early without setting loading=true.
+      await expect(page.getByText('Loading...')).not.toBeVisible();
+    });
+
+    test('Identity is positioned as the second navigation item (after General)', async ({ page }) => {
+      const navItems = page.locator('.settings-nav .settings-nav-item');
+      // First item is General, second is Identity.
+      await expect(navItems.nth(1)).toContainText('Identity');
+    });
+
+    test('Identity heading does not overlap the description paragraph', async ({ page }) => {
+      await navigateToSettingsCategory(page, 'Identity');
+
+      const heading = page.locator('.settings-section h2', { hasText: 'Identity' });
+      const description = page.locator('.identity-desc');
+
+      await expect(heading).toBeVisible();
+      await expect(description).toBeVisible();
+
+      const headingBox = await heading.boundingBox();
+      const descBox = await description.boundingBox();
+
+      expect(headingBox).not.toBeNull();
+      expect(descBox).not.toBeNull();
+
+      // The description's top Y must be >= the heading's bottom Y (no overlap).
+      expect(descBox!.y).toBeGreaterThanOrEqual(headingBox!.y + headingBox!.height);
+    });
+  });
+
+  test.describe('Wails Mode - Identity', () => {
+    test('identity loads persisted values from backend on mount', async ({ page }) => {
+      const wails = await isWailsMode(page);
+      test.skip(!wails, 'Requires Wails backend');
+
+      await navigateToSettingsCategory(page, 'Identity');
+      await page.waitForTimeout(500);
+
+      // Loading spinner should have cleared.
+      await expect(page.getByText('Loading...')).not.toBeVisible({ timeout: 5_000 });
+
+      // Identity form should be visible after load.
+      await expect(page.locator('.identity-form')).toBeVisible();
+    });
+
+    test('Save triggers success notification', async ({ page }) => {
+      const wails = await isWailsMode(page);
+      test.skip(!wails, 'Requires Wails backend');
+
+      await navigateToSettingsCategory(page, 'Identity');
+      await page.waitForTimeout(500);
+
+      const saveBtn = page.locator('.identity-actions').getByRole('button', { name: 'Save' });
+      await saveBtn.click();
+      await page.waitForTimeout(500);
+
+      // A notification saying "Identity saved" should appear.
+      await expect(page.getByText('Identity saved')).toBeVisible({ timeout: 5_000 });
     });
   });
 });

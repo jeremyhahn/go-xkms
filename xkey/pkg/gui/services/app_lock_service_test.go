@@ -433,11 +433,12 @@ func TestAppLockService_Unlock_BarrierAlreadyUnsealed_UsesPINService(t *testing.
 	assert.False(t, barrierSvc.unsealCalled) // Barrier should NOT be called
 }
 
-func TestAppLockService_Unlock_BarrierNotInitialized_FallsBackToPIN(t *testing.T) {
+func TestAppLockService_Unlock_BarrierNotInitialized_VerifiesPINAndInitializes(t *testing.T) {
 	// When barrier is configured but NOT initialized (directory doesn't exist),
-	// Unlock should fall back to PINService verification instead of trying to
-	// unseal the non-existent barrier. This handles edge cases where config
-	// says storage_type=barrier but the barrier directory was never created.
+	// Unlock first verifies the PIN against PINService, then initializes the
+	// barrier with the same PIN so the next restart can take the unseal path.
+	// This is the recovery flow when the wizard's barrier init failed but the
+	// User PIN was successfully persisted.
 	pinSvc := NewPINService()
 	pinSvc.SetContext(context.Background())
 
@@ -461,12 +462,12 @@ func TestAppLockService_Unlock_BarrierNotInitialized_FallsBackToPIN(t *testing.T
 
 	assert.True(t, svc.IsLocked())
 
-	// Unlock should use PINService path (not barrier unseal) because barrier
-	// is not initialized, even though it's "sealed".
+	// PIN verifies, then Initialize is called on the barrier with the PIN.
 	err := svc.Unlock("user-pin")
 	require.NoError(t, err)
 	assert.False(t, svc.IsLocked())
-	assert.False(t, barrierSvc.unsealCalled, "should not attempt barrier unseal when not initialized")
+	assert.True(t, barrierSvc.unsealCalled, "barrier Initialize should be called after PIN verify")
+	assert.Equal(t, "user-pin", barrierSvc.unsealPassword)
 }
 
 func TestAppLockService_Unlock_SetupIncomplete_BarrierNotInitializedAndPINNotSet(t *testing.T) {

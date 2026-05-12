@@ -151,7 +151,7 @@ func (h *TenantHandlers) ListTenantsHandler(w http.ResponseWriter, r *http.Reque
 	tenants := make([]tenantInfoResponse, 0, len(ids))
 	for _, id := range ids {
 		// If identity is tenant-scoped, only include the caller's own tenant
-		if identity != nil && !identity.IsCrossTenant() && id != identity.TenantID {
+		if identity != nil && !auth.IsCrossTenant(identity) && id != identity.TenantID {
 			continue
 		}
 

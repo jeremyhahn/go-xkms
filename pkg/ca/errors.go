@@ -1,4 +1,4 @@
-// Package ca provides error definitions for the XKMSCA certificate authority.
+// Package ca provides error definitions for the TrustedCA certificate authority.
 //
 // All errors are defined as sentinel variables for consistent error checking
 // using errors.Is(). Error messages follow Go conventions: lowercase without
@@ -52,6 +52,12 @@ var (
 
 	// ErrInvalidSignature indicates the signature verification failed.
 	ErrInvalidSignature = errors.New("ca: invalid signature")
+
+	// ErrInvalidIssuer indicates that a signer was supplied for a signing
+	// operation but no accompanying issuer certificate was provided. The
+	// issuer cert is required so the issued certificate's Issuer and
+	// AuthorityKeyIdentifier fields can be populated.
+	ErrInvalidIssuer = errors.New("ca: signer provided without issuer certificate")
 )
 
 // Revocation errors indicate issues with certificate revocation.
@@ -103,6 +109,13 @@ var (
 
 	// ErrCertStoreRequired indicates a certificate store must be configured.
 	ErrCertStoreRequired = errors.New("ca: certificate store required")
+
+	// ErrObjectStoreRequired indicates an object store must be configured for
+	// the invoked operation. CA-adjacent features like cross-signing, AIA
+	// trust-chain caching, CRL snapshot storage, and attestation evidence
+	// persistence require a blob-style store that CertStore's CN-keyed model
+	// cannot serve.
+	ErrObjectStoreRequired = errors.New("ca: object store required")
 
 	// ErrStorageError indicates a storage operation failed.
 	ErrStorageError = errors.New("ca: storage operation failed")

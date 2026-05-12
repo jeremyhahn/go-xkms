@@ -15,6 +15,7 @@ export type ViewId =
   | 'tpm'
   | 'passwords'
   | 'seal'
+  | 'browser'
   | 'audit-log'
   | 'api-explorer'
   | 'admin'
@@ -36,6 +37,7 @@ export const VIEW_LABELS: Record<ViewId, string> = {
   tpm: 'TPM 2.0',
   passwords: 'Passwords',
   seal: 'Sealed Data',
+  browser: 'Browser',
   'audit-log': 'Audit Log',
   'api-explorer': 'API Explorer',
   admin: 'Admin',
@@ -58,6 +60,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   tpm: 'TPM 2.0',
   passwords: 'Passwords',
   seal: 'Sealed Data',
+  browser: 'Browser',
   'audit-log': 'Audit Log',
   'api-explorer': 'API Explorer',
   admin: 'Admin',

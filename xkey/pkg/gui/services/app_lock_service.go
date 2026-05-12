@@ -164,17 +164,20 @@ func (s *AppLockService) Unlock(pin string) error {
 		"pin_service_configured", s.pinSvc != nil)
 
 	if barrierConfigured && !barrierInitialized {
-		// Barrier is configured but the root key is missing (directory was
-		// never created, or data was corrupted). Do NOT auto-initialize,
-		// which would create a new empty barrier and silently lose any
-		// previously encrypted data. Fall back to PIN verification when
-		// available, otherwise report setup incomplete.
-		s.log.Warn("app unlock: barrier not initialized, falling back to PIN verification")
+		// Barrier is configured but the root key is missing — typically
+		// because the wizard's barrier init failed (e.g. TPM provisioning
+		// error) while the PIN was still persisted to the software backend.
+		// Verify the PIN first; on success, initialize the barrier with
+		// the same PIN so subsequent unlocks take the unseal path. We do
+		// NOT auto-initialize without verifying the PIN: that would create
+		// a new empty barrier with whatever string the user typed.
+		s.log.Warn("app unlock: barrier not initialized, verifying PIN to recover")
 		if s.pinSvc == nil {
 			s.log.Error("app unlock: PIN service not configured")
-			return ErrAppLockPINInvalid
+			return ErrAppLockSetupIncomplete
 		}
-		if status, statusErr := s.pinSvc.GetPINStatus(); statusErr == nil && !status.UserPINSet {
+		status, statusErr := s.pinSvc.GetPINStatus()
+		if statusErr != nil || status == nil || !status.UserPINSet {
 			s.log.Error("app unlock: user PIN not set - setup incomplete",
 				"barrier_configured", barrierConfigured,
 				"barrier_initialized", barrierInitialized)
@@ -183,6 +186,18 @@ func (s *AppLockService) Unlock(pin string) error {
 		if err := s.pinSvc.VerifyUserPIN(pin); err != nil {
 			s.log.Warn("app unlock: PIN verification failed", "error", err)
 			return err
+		}
+		// PIN is correct. Try to initialize the barrier with this PIN so
+		// future restarts take the unseal path. Failure here does not
+		// fail the unlock — the user is authenticated, and a degraded
+		// state is better than locking them out. The post-init hook
+		// (when registered) wires barrier-dependent stores.
+		if initErr := s.barrierSvc.Initialize(pin, s.barrierStrategy); initErr != nil {
+			s.log.Warn("app unlock: barrier initialization with PIN failed (continuing without barrier)",
+				"strategy", s.barrierStrategy, "error", initErr)
+		} else {
+			s.log.Info("app unlock: barrier initialized with verified PIN",
+				"strategy", s.barrierStrategy)
 		}
 	} else if barrierSealed {
 		// Barrier is sealed: PIN is the barrier password.

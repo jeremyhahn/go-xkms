@@ -146,6 +146,8 @@ type App struct {
 	appLockService           *services.AppLockService
 	pkcs11Service            *services.PKCS11Service
 	teamService              *services.TeamService
+	certificateService       *services.CertificateService
+	securityFactorService    *services.SecurityFactorService
 
 	// backendRegistry tracks all registered cryptographic backends
 	// (local and remote) and their operational state.
@@ -1207,10 +1209,26 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		return
 	}
 
-	// Check if already registered.
-	if _, err := xkms.GetBackend("pkcs11"); err == nil {
-		a.log.Debug("PKCS#11 xkms backend already registered")
+	// YubiKey PIV rejects key generation, certificate writes, and certificate
+	// deletes when the session is logged in only as CKU_USER. The management
+	// key must be supplied as the SO PIN. Refuse to register a YubiKey
+	// backend without it -- this cuts the failure at the boundary instead
+	// of surfacing CKR_USER_TYPE_INVALID at operation time.
+	if isYubiKeyLibrary(libraryPath) && soPin == "" {
+		a.log.Error("refusing to register YubiKey PKCS#11 backend without SO PIN (management key)",
+			"library", libraryPath, "slot", slotID)
 		return
+	}
+
+	// If a backend is already registered, close it and re-register.
+	// This handles reconnection after YubiKey reset or disconnect/reconnect
+	// cycles where the old backend's sessions may be stale.
+	if existingBackend, err := xkms.GetBackend("pkcs11"); err == nil {
+		a.log.Info("replacing existing PKCS#11 xkms backend (reconnect)")
+		if closer, ok := existingBackend.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		xkms.UnregisterBackend("pkcs11")
 	}
 
 	factory, ok := xkms.GetBackendFactory(xkms.BackendPKCS11)
@@ -1579,6 +1597,9 @@ func NewApp(cfg *GUIConfig) *App {
 	trustSvc := services.NewTrustService(nil)
 	trustSvc.SetElevator(elevator)
 
+	// Create certificate service. Client is set after ConnectionService connects.
+	certSvc := services.NewCertificateService()
+
 	// Create setup wizard service.
 	setupWizardSvc := services.NewSetupWizardService()
 
@@ -1600,6 +1621,10 @@ func NewApp(cfg *GUIConfig) *App {
 	// Create PIV service in standalone mode by default. The remote client
 	// is set when the ConnectionService establishes a server connection.
 	pivSvc := services.NewPIVService(nil, "software")
+
+	// Create security factor service. Proxies auth factor REST API calls to the
+	// connected platform server. The PIV service is passed for smartcard support.
+	securityFactorSvc := services.NewSecurityFactorService(connSvc, pivSvc)
 
 	pinSvc := services.NewPINService()
 	pinSvc.SetBarrierService(barrierSvc)
@@ -1701,6 +1726,8 @@ func NewApp(cfg *GUIConfig) *App {
 		oidcService:              oidcSvc,
 		clipboardService:         clipboardSvc,
 		trustService:             trustSvc,
+		certificateService:       certSvc,
+		securityFactorService:    securityFactorSvc,
 		setupWizardService:       setupWizardSvc,
 		pinService:               pinSvc,
 		barrierService:           barrierSvc,
@@ -1863,7 +1890,7 @@ func NewApp(cfg *GUIConfig) *App {
 		mgr := a.pkcs11Service.GetManager()
 		if mgr != nil {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
-				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn)
+				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
 				if p11Err == nil {
 					if pivErr := xkms.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
 						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
@@ -2012,8 +2039,10 @@ func NewApp(cfg *GUIConfig) *App {
 			pivSvc.SetClient(client)
 			a.custodianService.SetClient(client)
 			a.tenantService.SetClient(client)
+			a.certificateService.SetClient(client)
 		case events.EventServerDisconnected, events.EventServerError:
 			pivSvc.SetClient(nil)
+			a.certificateService.SetClient(nil)
 		}
 	})
 
@@ -2368,6 +2397,8 @@ func (a *App) Run() error {
 		a.pairingService,
 		a.barrierAutoUnsealService,
 		a.teamService,
+		a.certificateService,
+		a.securityFactorService,
 	}
 	// Append optional services that may fail initialization.
 	if a.browserService != nil {
@@ -2384,6 +2415,8 @@ func (a *App) Run() error {
 		Title:         "xKey",
 		Width:         a.config.WindowWidth,
 		Height:        a.config.WindowHeight,
+		MinWidth:      900,
+		MinHeight:     600,
 		Frameless:     false,
 		StartHidden:   a.config.StartMinimized,
 		OnStartup:     a.startup,
@@ -2462,6 +2495,7 @@ func (a *App) startup(ctx context.Context) {
 	a.agentService.SetContext(ctx)
 	a.autofillService.SetContext(ctx)
 	a.pairingService.SetContext(ctx)
+	a.securityFactorService.SetContext(ctx)
 	a.browserService.SetContext(ctx)
 	if a.secureBrowserService != nil {
 		a.secureBrowserService.SetContext(ctx)
@@ -2737,12 +2771,31 @@ func (a *App) startupReturningUser(ctx context.Context) {
 	// initialized), defer data directory initialization until the user
 	// provides a password. Starting services now would use plain file
 	// fallback storage, storing data in plain text.
+	//
+	// Exception: the PIN service stores its hashes in a dedicated
+	// data/pin/ subdirectory (NOT behind the barrier), so it is safe to
+	// wire up before the barrier is unsealed. Doing so lets the unlock
+	// flow verify the user's PIN even when the barrier is missing or
+	// sealed — without it, a half-initialized state (e.g. wizard's
+	// barrier init failed but the PIN was saved) leaves the unlock
+	// screen permanently broken with "incorrect PIN."
 	if a.config.StorageType == "barrier" && !a.barrierService.IsUnsealed() {
 		if !a.config.BarrierInitialized {
 			a.log.Info("barrier not initialized, waiting for user to set password")
 		} else {
 			a.log.Info("barrier sealed, deferring data directory init until unseal")
 		}
+		// Resolve the data directory path so the PIN service can find
+		// its dedicated pin/ subtree. This does NOT initialize any
+		// barrier-dependent stores.
+		if a.dataDir == "" {
+			if dir, err := dataDir(); err == nil {
+				a.dataDir = dir
+			} else {
+				a.log.Warn("failed to resolve data dir for pre-unseal PIN service", "error", err)
+			}
+		}
+		a.initPINService()
 		// Emit locked event so the frontend shows the unlock/password dialog.
 		a.EmitEvent(events.NewEvent(events.EventBarrierLocked, nil))
 		return

@@ -11,72 +11,98 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package auth provides xkms authentication adapters and identity helpers.
+//
+// Identity itself is qrdb-shaped: xkms aliases qrdb's auth.Identity so the
+// platform identity model lives in qrdb (Subject, TenantID, Roles, Metadata)
+// and downstream xkms code never re-models it. Authorization that depends on
+// xkms-domain permissions (keys, certs, secrets, ...) is handled by
+// pkg/keyrbac and pkg/keyauthz; this package owns only authentication and
+// the request-scoped tenant barrier.
 package auth
 
 import (
 	"context"
 	"net/http"
 
+	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	"google.golang.org/grpc/metadata"
 )
 
-// Identity represents an authenticated user or service
-type Identity struct {
-	// Subject is the unique identifier for the authenticated entity (user ID, service name, etc.)
-	Subject string
+// Identity is the qrdb-shaped authenticated principal. It is intentionally
+// a type alias so identity values flow between xkms and qrdb without a
+// translation step. The fields are documented on qrdbauth.Identity:
+//
+//   - Subject  — principal id (CN, JWT sub, ...)
+//   - TenantID — owning tenant; never empty for a well-formed identity
+//   - Roles    — assigned role names
+//   - Metadata — additional auth attributes (auth_method, cert_serial, ...)
+type Identity = qrdbauth.Identity
 
-	// TenantID is the tenant scope for this identity. An empty value indicates system-level access.
-	TenantID string
-
-	// Claims contains additional authenticated information (roles, permissions, etc.)
-	Claims map[string]interface{}
-
-	// Attributes contains metadata about the authentication (auth method, timestamp, etc.)
-	Attributes map[string]string
-}
-
-// IsCrossTenant returns true if this identity has no tenant scope (system-level).
-func (i *Identity) IsCrossTenant() bool {
-	return i == nil || i.TenantID == ""
-}
-
-// Authenticator is the interface for authentication adapters
-// Applications implement this interface to integrate their authentication system
+// Authenticator is the xkms authentication adapter interface. It is
+// transport-aware (HTTP and gRPC) and is therefore distinct from
+// qrdb's single-method Authenticator; xkms's adapters wrap protocol
+// state to extract credentials.
 type Authenticator interface {
-	// AuthenticateHTTP authenticates an HTTP request and returns an identity
-	// Returns nil identity if authentication fails
+	// AuthenticateHTTP authenticates an HTTP request and returns an identity.
+	// Returns an error if authentication fails.
 	AuthenticateHTTP(r *http.Request) (*Identity, error)
 
-	// AuthenticateGRPC authenticates a gRPC request using metadata
-	// Returns nil identity if authentication fails
+	// AuthenticateGRPC authenticates a gRPC request using metadata.
+	// Returns an error if authentication fails.
 	AuthenticateGRPC(ctx context.Context, md metadata.MD) (*Identity, error)
 
-	// Name returns the authenticator name for logging/debugging
+	// Name returns the authenticator name for logging/debugging.
 	Name() string
 }
 
-// ContextKey is the type for context keys used by the auth package
+// ContextKey is the type for context keys used by the auth package.
 type ContextKey string
 
 const (
-	// IdentityContextKey is the context key for storing authenticated identity
+	// IdentityContextKey is the context key for storing authenticated identity.
+	// It is retained as a stable export for callers that put non-Identity
+	// values under the same context key in tests; production code should use
+	// WithIdentity / GetIdentity.
 	IdentityContextKey ContextKey = "auth.identity"
 
-	// TenantBarrierContextKey is the context key for storing the tenant barrier
+	// TenantBarrierContextKey is the context key for storing the tenant barrier.
 	TenantBarrierContextKey ContextKey = "auth.tenant_barrier"
 )
 
-// GetIdentity extracts the identity from a context
-func GetIdentity(ctx context.Context) *Identity {
-	if identity, ok := ctx.Value(IdentityContextKey).(*Identity); ok {
-		return identity
-	}
-	return nil
+// WithIdentity stores an Identity in the context. It delegates to qrdb's
+// auth.WithIdentity so xkms and qrdb share the same context-key implementation.
+func WithIdentity(ctx context.Context, id *Identity) context.Context {
+	return qrdbauth.WithIdentity(ctx, id)
 }
 
-// WithIdentity adds an identity to a context
-func WithIdentity(ctx context.Context, identity *Identity) context.Context {
-	return context.WithValue(ctx, IdentityContextKey, identity)
+// GetIdentity retrieves the Identity stored in the context. Returns nil
+// when no identity is present.
+func GetIdentity(ctx context.Context) *Identity {
+	return qrdbauth.IdentityFromContext(ctx)
+}
+
+// IsCrossTenant reports whether the identity has cross-tenant scope under
+// the system-tenant rule: an identity rooted in the reserved system tenant
+// is treated as platform-scoped, anything else is bound to its own tenant.
+// A nil identity is treated as system-scoped (no auth context => platform
+// boot / internal pipeline).
+func IsCrossTenant(id *Identity) bool {
+	if id == nil {
+		return true
+	}
+	return id.TenantID == tenant.SystemTenantID || id.TenantID == ""
+}
+
+// FirstRole returns the first role on the identity, or "" if the identity
+// has none. It is the canonical helper for call sites that need a single
+// role string for audit / authorization-request building.
+func FirstRole(id *Identity) string {
+	if id == nil || len(id.Roles) == 0 {
+		return ""
+	}
+	return id.Roles[0]
 }
 
 // GetTenantBarrier extracts the tenant barrier from a context.
@@ -87,66 +113,4 @@ func GetTenantBarrier(ctx context.Context) interface{} {
 // WithTenantBarrier adds a tenant barrier to a context.
 func WithTenantBarrier(ctx context.Context, barrier interface{}) context.Context {
 	return context.WithValue(ctx, TenantBarrierContextKey, barrier)
-}
-
-// HasRole checks if the identity has a specific role
-func (i *Identity) HasRole(role string) bool {
-	if i == nil || i.Claims == nil {
-		return false
-	}
-
-	roles, ok := i.Claims["roles"]
-	if !ok {
-		return false
-	}
-
-	switch r := roles.(type) {
-	case []string:
-		for _, v := range r {
-			if v == role {
-				return true
-			}
-		}
-	case []interface{}:
-		for _, v := range r {
-			if str, ok := v.(string); ok && str == role {
-				return true
-			}
-		}
-	case string:
-		return r == role
-	}
-
-	return false
-}
-
-// HasPermission checks if the identity has a specific permission
-func (i *Identity) HasPermission(permission string) bool {
-	if i == nil || i.Claims == nil {
-		return false
-	}
-
-	perms, ok := i.Claims["permissions"]
-	if !ok {
-		return false
-	}
-
-	switch p := perms.(type) {
-	case []string:
-		for _, v := range p {
-			if v == permission {
-				return true
-			}
-		}
-	case []interface{}:
-		for _, v := range p {
-			if str, ok := v.(string); ok && str == permission {
-				return true
-			}
-		}
-	case string:
-		return p == permission
-	}
-
-	return false
 }

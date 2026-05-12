@@ -3125,3 +3125,101 @@ func TestPIVErrors_AllUnique(t *testing.T) {
 		seen[msg] = true
 	}
 }
+
+// --- New flag registration tests ---
+
+func TestPivGenerateCmd_OutputFormatFlag(t *testing.T) {
+	f := pivGenerateCmd.Flags().Lookup("output-format")
+	if f == nil {
+		t.Fatal("output-format flag not found")
+	}
+	if f.DefValue != "self-signed" {
+		t.Errorf("output-format flag default = %q, want self-signed", f.DefValue)
+	}
+}
+
+func TestPivGenerateCmd_SubjectFlag(t *testing.T) {
+	f := pivGenerateCmd.Flags().Lookup("subject")
+	if f == nil {
+		t.Fatal("subject flag not found")
+	}
+	if f.DefValue != "" {
+		t.Errorf("subject flag default = %q, want empty string", f.DefValue)
+	}
+}
+
+func TestPivGenerateCmd_OrganizationFlag(t *testing.T) {
+	f := pivGenerateCmd.Flags().Lookup("organization")
+	if f == nil {
+		t.Fatal("organization flag not found")
+	}
+	if f.DefValue != "" {
+		t.Errorf("organization flag default = %q, want empty string", f.DefValue)
+	}
+}
+
+func TestPivGenerateCmd_CountryFlag(t *testing.T) {
+	f := pivGenerateCmd.Flags().Lookup("country")
+	if f == nil {
+		t.Fatal("country flag not found")
+	}
+	if f.DefValue != "" {
+		t.Errorf("country flag default = %q, want empty string", f.DefValue)
+	}
+}
+
+func TestPivGenerateCmd_ValidityDaysFlag(t *testing.T) {
+	f := pivGenerateCmd.Flags().Lookup("validity-days")
+	if f == nil {
+		t.Fatal("validity-days flag not found")
+	}
+	if f.DefValue != "0" {
+		t.Errorf("validity-days flag default = %q, want 0", f.DefValue)
+	}
+	if f.Value.Type() != "int" {
+		t.Errorf("validity-days flag type = %q, want int", f.Value.Type())
+	}
+}
+
+func TestPivGenerateCmd_OutputFlag(t *testing.T) {
+	f := pivGenerateCmd.Flags().Lookup("output")
+	if f == nil {
+		t.Fatal("output flag not found")
+	}
+	if f.DefValue != "" {
+		t.Errorf("output flag default = %q, want empty string", f.DefValue)
+	}
+	if f.Shorthand != "o" {
+		t.Errorf("output flag shorthand = %q, want o", f.Shorthand)
+	}
+}
+
+func TestPivGenerateCmd_AllNewFlags(t *testing.T) {
+	flags := []struct {
+		name     string
+		defValue string
+		flagType string
+	}{
+		{"output-format", "self-signed", "string"},
+		{"subject", "", "string"},
+		{"organization", "", "string"},
+		{"country", "", "string"},
+		{"validity-days", "0", "int"},
+		{"output", "", "string"},
+	}
+
+	for _, tc := range flags {
+		t.Run(tc.name, func(t *testing.T) {
+			f := pivGenerateCmd.Flags().Lookup(tc.name)
+			if f == nil {
+				t.Fatalf("flag %q not found on pivGenerateCmd", tc.name)
+			}
+			if f.DefValue != tc.defValue {
+				t.Errorf("flag %q default = %q, want %q", tc.name, f.DefValue, tc.defValue)
+			}
+			if f.Value.Type() != tc.flagType {
+				t.Errorf("flag %q type = %q, want %q", tc.name, f.Value.Type(), tc.flagType)
+			}
+		})
+	}
+}

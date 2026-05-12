@@ -1,0 +1,296 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+)
+
+// TestStartACMEServer_Disabled verifies that startACMEServer is a no-op when
+// the ACME configuration is absent or disabled. No listener should be
+// created and no error should be returned.
+func TestStartACMEServer_Disabled(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	cases := []struct {
+		name string
+		cfg  *config.Config
+	}{
+		{"acme_nil", &config.Config{}},
+		{"acme_disabled", &config.Config{ACME: &config.ACMEConfig{Enabled: false}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			as, err := startACMEServer(nil, tc.cfg, logger)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if as != nil {
+				t.Fatalf("expected nil acmeServer when disabled, got %#v", as)
+			}
+			// Shutting down a nil acmeServer must be safe.
+			if err := as.Shutdown(context.Background()); err != nil {
+				t.Fatalf("Shutdown(nil) returned error: %v", err)
+			}
+		})
+	}
+}
+
+// TestACMEConfig_Validate exercises the validation rules for ACMEConfig.
+func TestACMEConfig_Validate(t *testing.T) {
+	cases := []struct {
+		name    string
+		cfg     *config.ACMEConfig
+		wantErr error
+	}{
+		{"nil_is_ok", nil, nil},
+		{"disabled_is_ok", &config.ACMEConfig{Enabled: false}, nil},
+		{
+			"missing_addr",
+			&config.ACMEConfig{Enabled: true},
+			config.ErrACMEMissingHTTPSAddr,
+		},
+		{
+			"missing_external_url",
+			&config.ACMEConfig{Enabled: true, HTTPSAddr: ":8443"},
+			config.ErrACMEMissingExternalURL,
+		},
+		{
+			"missing_keystore_backend",
+			&config.ACMEConfig{Enabled: true, HTTPSAddr: ":8443", ExternalURL: "https://acme.example.com"},
+			config.ErrACMEMissingKeystoreBackend,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("expected %v, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestBuildChallengeMap_Selection verifies that buildChallengeMap registers
+// verifiers only for challenge types that have been enabled.
+func TestBuildChallengeMap_Selection(t *testing.T) {
+	m := buildChallengeMap(config.ACMEChallengesConfig{HTTP01: true, DNS01: false})
+	if _, ok := m[common.ChallengeTypeHTTP01]; !ok {
+		t.Fatalf("expected http-01 verifier to be registered")
+	}
+	if _, ok := m[common.ChallengeTypeDNS01]; ok {
+		t.Fatalf("expected dns-01 verifier to be absent when disabled")
+	}
+
+	m = buildChallengeMap(config.ACMEChallengesConfig{HTTP01: false, DNS01: true})
+	if _, ok := m[common.ChallengeTypeHTTP01]; ok {
+		t.Fatalf("expected http-01 verifier to be absent when disabled")
+	}
+	if _, ok := m[common.ChallengeTypeDNS01]; !ok {
+		t.Fatalf("expected dns-01 verifier to be registered")
+	}
+}
+
+// stubRestService implements handlers.RestServicer for router-wiring tests.
+// Each handler records whether it was invoked so tests can assert that the
+// mux routes requests to the expected endpoint.
+type stubRestService struct {
+	directoryCalled atomic.Bool
+	newNonceCalled  atomic.Bool
+	newOrderCalled  atomic.Bool
+}
+
+func (s *stubRestService) AccountHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) AuthorizationHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) CABundleHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) CertificateHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) ChallengeHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) DirectoryHandler(w http.ResponseWriter, _ *http.Request) {
+	s.directoryCalled.Store(true)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"newNonce":   "https://acme.example.com/acme/new-nonce",
+		"newAccount": "https://acme.example.com/acme/new-account",
+		"newOrder":   "https://acme.example.com/acme/new-order",
+		"revokeCert": "https://acme.example.com/acme/revoke-cert",
+		"keyChange":  "https://acme.example.com/acme/key-change",
+	})
+}
+
+func (s *stubRestService) KeyChangeHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) NewAccountHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) NewNonceHandler(w http.ResponseWriter, _ *http.Request) {
+	s.newNonceCalled.Store(true)
+	w.Header().Set("Replay-Nonce", "test-nonce")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) NewOrderHandler(w http.ResponseWriter, _ *http.Request) {
+	s.newOrderCalled.Store(true)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) OrderFinalizeHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) OrderHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) OrdersListHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *stubRestService) RevokeCertHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Compile-time assertion that stubRestService satisfies handlers.RestServicer.
+var _ handlers.RestServicer = (*stubRestService)(nil)
+
+// TestBuildACMERouter_DirectoryEndpoint verifies that buildACMERouter
+// produces a gorilla/mux router that dispatches GET /acme/directory to the
+// DirectoryHandler and returns a valid ACME directory JSON document. This
+// exercises the route wiring without requiring a full CA/storage bootstrap.
+func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
+	svc := &stubRestService{}
+	router := buildACMERouter(svc, "/acme")
+
+	ts := httptest.NewServer(router)
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/acme/directory")
+	if err != nil {
+		t.Fatalf("GET /acme/directory: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected HTTP 200, got %d: %s", resp.StatusCode, string(body))
+	}
+	if !svc.directoryCalled.Load() {
+		t.Fatalf("DirectoryHandler was not invoked")
+	}
+
+	var directory map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&directory); err != nil {
+		t.Fatalf("decode directory: %v", err)
+	}
+	for _, field := range []string{"newNonce", "newAccount", "newOrder", "revokeCert", "keyChange"} {
+		if _, ok := directory[field]; !ok {
+			t.Fatalf("expected %q in directory, got %+v", field, directory)
+		}
+	}
+}
+
+// TestBuildACMERouter_RouteMethods verifies that methods are correctly
+// enforced on ACME routes. In particular, GET /acme/new-nonce should
+// succeed while GET /acme/new-order should be rejected (POST-only).
+func TestBuildACMERouter_RouteMethods(t *testing.T) {
+	svc := &stubRestService{}
+	router := buildACMERouter(svc, "/acme")
+	ts := httptest.NewServer(router)
+	t.Cleanup(ts.Close)
+
+	// new-nonce accepts GET per RFC 8555.
+	resp, err := http.Get(ts.URL + "/acme/new-nonce")
+	if err != nil {
+		t.Fatalf("GET /acme/new-nonce: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 on GET new-nonce, got %d", resp.StatusCode)
+	}
+	if !svc.newNonceCalled.Load() {
+		t.Fatalf("NewNonceHandler was not invoked")
+	}
+
+	// new-order requires POST; GET must be rejected.
+	resp, err = http.Get(ts.URL + "/acme/new-order")
+	if err != nil {
+		t.Fatalf("GET /acme/new-order: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 on GET new-order, got %d", resp.StatusCode)
+	}
+	if svc.newOrderCalled.Load() {
+		t.Fatalf("NewOrderHandler should not have been invoked on GET")
+	}
+
+	// POST is accepted.
+	resp, err = http.Post(ts.URL+"/acme/new-order", "application/jose+json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST /acme/new-order: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected 204 on POST new-order, got %d", resp.StatusCode)
+	}
+	if !svc.newOrderCalled.Load() {
+		t.Fatalf("NewOrderHandler was not invoked on POST")
+	}
+}
+
+// TestBuildACMETLSConfig_RejectsReuse verifies that the TLS builder rejects
+// the reuse_tls option until that support is implemented in a follow-up.
+func TestBuildACMETLSConfig_RejectsReuse(t *testing.T) {
+	_, err := buildACMETLSConfig(&config.ACMEConfig{ReuseTLS: true})
+	if err == nil {
+		t.Fatalf("expected error when reuse_tls is set")
+	}
+}

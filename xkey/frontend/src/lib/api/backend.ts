@@ -163,6 +163,7 @@ export interface BackendPIVSlot {
   name: string;
   description: string;
   has_cert: boolean;
+  has_key?: boolean;
   algorithm?: string;
   key_size?: number;
   subject?: string;
@@ -180,6 +181,35 @@ export interface PIVGenerateKeyResult {
   key_size: number;
   subject: string;
   message: string;
+}
+
+export interface PIVGenerateOptions {
+  slot: string;
+  algorithm: string;
+  subject: string;
+  organization: string;
+  country: string;
+  output_format: string;
+  validity_days: number;
+  ca_source: string;
+}
+
+export interface PIVGenerateAdvancedResult {
+  slot: string;
+  algorithm: string;
+  key_size: number;
+  subject: string;
+  message: string;
+  output_format: string;
+  cert_pem?: string;
+  public_key_pem?: string;
+  csr_pem?: string;
+  chain_pem?: string;
+}
+
+export interface PIVCAAvailability {
+  local: boolean;
+  remote: boolean;
 }
 
 export interface BackendPairedDevice {
@@ -905,6 +935,15 @@ export interface AvailableToken {
   is_expired: boolean;
 }
 
+export interface IdentityConfig {
+  common_name: string;
+  organization: string;
+  organizational_unit: string;
+  country: string;
+  province: string;
+  locality: string;
+}
+
 export interface BarrierStatus {
   sealed: boolean;
   strategy: string;
@@ -1036,6 +1075,23 @@ export const TeamService = {
 export function isWailsAvailable(): boolean {
   return typeof window !== 'undefined' && window.go !== undefined;
 }
+
+/**
+ * notifyBackendUnavailable shows an error toast when a user-initiated action
+ * cannot proceed because no backend is connected. The same operations are
+ * available via the xkey CLI and via the Wails desktop runtime — only this
+ * standalone browser preview lacks a backend connection.
+ */
+export function notifyBackendUnavailable(action: string): void {
+  // Dynamically import to avoid a top-level circular dependency between
+  // the API module and the Svelte store layer.
+  import('$lib/stores/notifications').then(({ addNotification }) => {
+    addNotification('error', `${action} is not available — no backend connection`);
+  });
+}
+
+/** @deprecated use notifyBackendUnavailable */
+export const notifyWailsRequired = notifyBackendUnavailable;
 
 export async function callBackend<T>(
   service: string,

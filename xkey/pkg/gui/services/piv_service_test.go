@@ -1677,3 +1677,207 @@ func TestPIVService_ResolveXKMSBackendName_SameIDAndCategory(t *testing.T) {
 	// When ID and category match, no translation needed.
 	assert.Equal(t, "software", svc.resolveXKMSBackendName("software"))
 }
+
+// --- GenerateKeyAdvanced tests ---
+
+func TestPIVService_GenerateKeyAdvanced_SelfSigned(t *testing.T) {
+	initTestPIVManager(t)
+
+	certPEM := generatePIVCertPEM(t, "PIV Authentication")
+	client := &mockPIVClient{
+		generatePIVKeyResp: &transport.GeneratePIVKeyResponse{
+			Slot:        "9a",
+			Certificate: certPEM,
+		},
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	result, err := svc.GenerateKeyAdvanced(PIVGenerateOptions{
+		Slot:         "9a",
+		Algorithm:    "ECCP256",
+		OutputFormat: "self-signed",
+		CASource:     "remote",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "9a", result.Slot)
+	assert.Equal(t, "ECCP256", result.Algorithm)
+	assert.Equal(t, "self-signed", result.OutputFormat)
+	assert.NotEmpty(t, result.CertPEM)
+	assert.Contains(t, result.CertPEM, "BEGIN CERTIFICATE")
+}
+
+func TestPIVService_GenerateKeyAdvanced_PublicKey(t *testing.T) {
+	client := &mockPIVClient{
+		generatePIVKeyResp: &transport.GeneratePIVKeyResponse{
+			Slot:      "9a",
+			PublicKey: []byte("-----BEGIN PUBLIC KEY-----\nMFkwEwYH\n-----END PUBLIC KEY-----\n"),
+		},
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	result, err := svc.GenerateKeyAdvanced(PIVGenerateOptions{
+		Slot:         "9a",
+		Algorithm:    "ECCP256",
+		OutputFormat: "public-key",
+		CASource:     "remote",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "public-key", result.OutputFormat)
+	assert.NotEmpty(t, result.PublicKeyPEM)
+	assert.Empty(t, result.CertPEM)
+}
+
+func TestPIVService_GenerateKeyAdvanced_CSR(t *testing.T) {
+	client := &mockPIVClient{
+		generatePIVKeyResp: &transport.GeneratePIVKeyResponse{
+			Slot: "9c",
+			CSR:  []byte("-----BEGIN CERTIFICATE REQUEST-----\nMIIB\n-----END CERTIFICATE REQUEST-----\n"),
+		},
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	result, err := svc.GenerateKeyAdvanced(PIVGenerateOptions{
+		Slot:         "9c",
+		Algorithm:    "ECCP384",
+		OutputFormat: "csr",
+		CASource:     "remote",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "csr", result.OutputFormat)
+	assert.NotEmpty(t, result.CSRPEM)
+	assert.Contains(t, result.Message, "CSR generated")
+	assert.Contains(t, result.Message, "9c")
+}
+
+func TestPIVService_GenerateKeyAdvanced_InvalidSlot(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	result, err := svc.GenerateKeyAdvanced(PIVGenerateOptions{
+		Slot:         "",
+		Algorithm:    "ECCP256",
+		OutputFormat: "self-signed",
+	})
+	assert.Nil(t, result)
+	assert.True(t, errors.Is(err, ErrPIVInvalidSlot))
+}
+
+func TestPIVService_GenerateKeyAdvanced_InvalidAlgorithm(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	result, err := svc.GenerateKeyAdvanced(PIVGenerateOptions{
+		Slot:         "9a",
+		Algorithm:    "INVALID",
+		OutputFormat: "self-signed",
+	})
+	assert.Nil(t, result)
+	assert.True(t, errors.Is(err, ErrPIVInvalidAlgorithm))
+}
+
+func TestPIVService_GenerateKeyAdvanced_NotConnected(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	result, err := svc.GenerateKeyAdvanced(PIVGenerateOptions{
+		Slot:         "9a",
+		Algorithm:    "ECCP256",
+		OutputFormat: "self-signed",
+	})
+	assert.Nil(t, result)
+	assert.True(t, errors.Is(err, ErrPIVClientNotSet))
+}
+
+func TestPIVService_GenerateKeyAdvanced_WithSubjectFields(t *testing.T) {
+	certPEM := generatePIVCertPEM(t, "Test Subject")
+	client := &mockPIVClient{
+		generatePIVKeyResp: &transport.GeneratePIVKeyResponse{
+			Slot:        "9a",
+			Certificate: certPEM,
+		},
+	}
+	svc := NewPIVService(client, "software")
+	svc.SetContext(context.Background())
+
+	result, err := svc.GenerateKeyAdvanced(PIVGenerateOptions{
+		Slot:         "9a",
+		Algorithm:    "ECCP256",
+		Subject:      "Test Subject",
+		Organization: "Test Org",
+		Country:      "US",
+		OutputFormat: "self-signed",
+		CASource:     "remote",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Equal(t, "self-signed", result.OutputFormat)
+	assert.NotEmpty(t, result.CertPEM)
+	assert.NotEmpty(t, result.Subject)
+}
+
+// --- GetCAAvailability tests ---
+
+func TestPIVService_GetCAAvailability_NoneAvailable(t *testing.T) {
+	svc := NewPIVService(nil, "")
+
+	avail := svc.GetCAAvailability()
+	assert.False(t, avail["local"])
+	assert.False(t, avail["remote"])
+}
+
+func TestPIVService_GetCAAvailability_LocalOnly(t *testing.T) {
+	svc := NewPIVService(nil, "")
+	svc.SetLocalEnabled(true)
+	svc.SetLocalCAAvailable(true)
+
+	avail := svc.GetCAAvailability()
+	assert.True(t, avail["local"])
+	assert.False(t, avail["remote"])
+}
+
+func TestPIVService_GetCAAvailability_RemoteOnly(t *testing.T) {
+	client := &mockPIVClient{}
+	svc := NewPIVService(client, "software")
+
+	avail := svc.GetCAAvailability()
+	assert.False(t, avail["local"])
+	assert.True(t, avail["remote"])
+}
+
+func TestPIVService_GetCAAvailability_Both(t *testing.T) {
+	client := &mockPIVClient{}
+	svc := NewPIVService(client, "software")
+	svc.SetLocalEnabled(true)
+	svc.SetLocalCAAvailable(true)
+
+	avail := svc.GetCAAvailability()
+	assert.True(t, avail["local"])
+	assert.True(t, avail["remote"])
+}
+
+// --- SetLocalCAAvailable tests ---
+
+func TestPIVService_SetLocalCAAvailable(t *testing.T) {
+	svc := NewPIVService(nil, "")
+
+	// Default: local not available.
+	avail := svc.GetCAAvailability()
+	assert.False(t, avail["local"])
+
+	// Enable local and set CA available.
+	svc.SetLocalEnabled(true)
+	svc.SetLocalCAAvailable(true)
+
+	avail = svc.GetCAAvailability()
+	assert.True(t, avail["local"])
+
+	// Disable CA availability.
+	svc.SetLocalCAAvailable(false)
+
+	avail = svc.GetCAAvailability()
+	assert.False(t, avail["local"])
+}

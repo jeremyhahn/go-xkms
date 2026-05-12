@@ -142,9 +142,7 @@ func TestTenantMiddleware_SORole(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "security-officer",
 			TenantID: "nonexistent-tenant",
-			Claims: map[string]interface{}{
-				"roles": []string{"so"},
-			},
+			Roles: []string{"so"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -166,9 +164,7 @@ func TestTenantMiddleware_SORole(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "security-officer",
 			TenantID: "any-tenant",
-			Claims: map[string]interface{}{
-				"roles": []interface{}{"so", "admin"},
-			},
+			Roles: []string{"so", "admin"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -192,9 +188,7 @@ func TestTenantMiddleware_TenantNotFound(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "nonexistent-tenant",
-			Claims: map[string]interface{}{
-				"roles": []string{"user"},
-			},
+			Roles: []string{"user"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -229,9 +223,7 @@ func TestTenantMiddleware_TenantSealed(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "sealed-tenant",
-			Claims: map[string]interface{}{
-				"roles": []string{"operator"},
-			},
+			Roles: []string{"operator"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -272,9 +264,7 @@ func TestTenantMiddleware_TenantBarrierInjected(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "active-tenant",
-			Claims: map[string]interface{}{
-				"roles": []string{"operator"},
-			},
+			Roles: []string{"operator"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -303,9 +293,7 @@ func TestTenantMiddleware_NoRegistry(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "some-tenant",
-			Claims: map[string]interface{}{
-				"roles": []string{"user"},
-			},
+			Roles: []string{"user"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -330,9 +318,7 @@ func TestTenantMiddleware_NonSORoleNotCrossTenant(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-admin",
 			TenantID: "missing-tenant",
-			Claims: map[string]interface{}{
-				"roles": []string{"admin"},
-			},
+			Roles: []string{"admin"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -346,7 +332,7 @@ func TestTenantMiddleware_NonSORoleNotCrossTenant(t *testing.T) {
 	})
 }
 
-func TestTenantMiddleware_IdentityWithNoClaims(t *testing.T) {
+func TestTenantMiddleware_IdentityWithNoRoles(t *testing.T) {
 	t.Run("identity with nil claims and valid tenant passes through", func(t *testing.T) {
 		registry := testTenantMiddlewareRegistry(t)
 

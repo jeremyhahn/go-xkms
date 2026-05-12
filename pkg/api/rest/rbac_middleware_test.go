@@ -22,14 +22,14 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/rbac"
+	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestRBACMiddleware(t *testing.T) (*RBACMiddleware, *rbac.MemoryRBACAdapter) {
+func newTestRBACMiddleware(t *testing.T) (*RBACMiddleware, *keyrbac.MemoryRBACAdapter) {
 	t.Helper()
-	adapter := rbac.NewMemoryRBACAdapter(true)
+	adapter := keyrbac.NewMemoryRBACAdapter(true)
 	// Create a discard logger for tests
 	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -43,7 +43,7 @@ func newTestRBACMiddleware(t *testing.T) (*RBACMiddleware, *rbac.MemoryRBACAdapt
 }
 
 func TestNewRBACMiddleware(t *testing.T) {
-	adapter := rbac.NewMemoryRBACAdapter(true)
+	adapter := keyrbac.NewMemoryRBACAdapter(true)
 	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	t.Run("creates middleware with config", func(t *testing.T) {
@@ -70,8 +70,8 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test users
-	_ = adapter.AssignRole(ctx, "admin@example.com", rbac.RoleAdmin)
-	_ = adapter.AssignRole(ctx, "user@example.com", rbac.RoleUser)
+	_ = adapter.AssignRole(ctx, "admin@example.com", keyrbac.RoleAdmin)
+	_ = adapter.AssignRole(ctx, "user@example.com", keyrbac.RoleUser)
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -79,7 +79,7 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 	})
 
 	t.Run("grants access with valid permission", func(t *testing.T) {
-		handler := middleware.RequirePermission(rbac.ResourceKeys, rbac.ActionCreate)(nextHandler)
+		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionCreate)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", nil)
 		// Add identity to context
@@ -94,7 +94,7 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 	})
 
 	t.Run("denies access without permission", func(t *testing.T) {
-		handler := middleware.RequirePermission(rbac.ResourceKeys, rbac.ActionDelete)(nextHandler)
+		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionDelete)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/keys/123", nil)
 		// User role cannot delete keys
@@ -108,7 +108,7 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 	})
 
 	t.Run("returns 401 without identity", func(t *testing.T) {
-		handler := middleware.RequirePermission(rbac.ResourceKeys, rbac.ActionRead)(nextHandler)
+		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionRead)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
 		// No identity in context
@@ -120,7 +120,7 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 	})
 
 	t.Run("returns 403 for nonexistent user", func(t *testing.T) {
-		handler := middleware.RequirePermission(rbac.ResourceKeys, rbac.ActionRead)(nextHandler)
+		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionRead)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
 		identity := &auth.Identity{Subject: "nonexistent@example.com"}
@@ -138,8 +138,8 @@ func TestRBACMiddleware_RequireRole(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test users
-	_ = adapter.AssignRole(ctx, "admin@example.com", rbac.RoleAdmin)
-	_ = adapter.AssignRole(ctx, "operator@example.com", rbac.RoleOperator)
+	_ = adapter.AssignRole(ctx, "admin@example.com", keyrbac.RoleAdmin)
+	_ = adapter.AssignRole(ctx, "operator@example.com", keyrbac.RoleOperator)
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -147,7 +147,7 @@ func TestRBACMiddleware_RequireRole(t *testing.T) {
 	})
 
 	t.Run("grants access with correct role", func(t *testing.T) {
-		handler := middleware.RequireRole(rbac.RoleAdmin)(nextHandler)
+		handler := middleware.RequireRole(keyrbac.RoleAdmin)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
 		identity := &auth.Identity{Subject: "admin@example.com"}
@@ -160,7 +160,7 @@ func TestRBACMiddleware_RequireRole(t *testing.T) {
 	})
 
 	t.Run("denies access with wrong role", func(t *testing.T) {
-		handler := middleware.RequireRole(rbac.RoleAdmin)(nextHandler)
+		handler := middleware.RequireRole(keyrbac.RoleAdmin)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
 		identity := &auth.Identity{Subject: "operator@example.com"}
@@ -173,7 +173,7 @@ func TestRBACMiddleware_RequireRole(t *testing.T) {
 	})
 
 	t.Run("returns 401 without identity", func(t *testing.T) {
-		handler := middleware.RequireRole(rbac.RoleAdmin)(nextHandler)
+		handler := middleware.RequireRole(keyrbac.RoleAdmin)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
 
@@ -189,9 +189,9 @@ func TestRBACMiddleware_RequireAnyRole(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test users
-	_ = adapter.AssignRole(ctx, "admin@example.com", rbac.RoleAdmin)
-	_ = adapter.AssignRole(ctx, "operator@example.com", rbac.RoleOperator)
-	_ = adapter.AssignRole(ctx, "user@example.com", rbac.RoleUser)
+	_ = adapter.AssignRole(ctx, "admin@example.com", keyrbac.RoleAdmin)
+	_ = adapter.AssignRole(ctx, "operator@example.com", keyrbac.RoleOperator)
+	_ = adapter.AssignRole(ctx, "user@example.com", keyrbac.RoleUser)
 
 	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -199,7 +199,7 @@ func TestRBACMiddleware_RequireAnyRole(t *testing.T) {
 	})
 
 	t.Run("grants access with any matching role", func(t *testing.T) {
-		handler := middleware.RequireAnyRole(rbac.RoleAdmin, rbac.RoleOperator)(nextHandler)
+		handler := middleware.RequireAnyRole(keyrbac.RoleAdmin, keyrbac.RoleOperator)(nextHandler)
 
 		// Admin has access
 		req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
@@ -221,7 +221,7 @@ func TestRBACMiddleware_RequireAnyRole(t *testing.T) {
 	})
 
 	t.Run("denies access without matching role", func(t *testing.T) {
-		handler := middleware.RequireAnyRole(rbac.RoleAdmin, rbac.RoleOperator)(nextHandler)
+		handler := middleware.RequireAnyRole(keyrbac.RoleAdmin, keyrbac.RoleOperator)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
 		identity := &auth.Identity{Subject: "user@example.com"}
@@ -234,7 +234,7 @@ func TestRBACMiddleware_RequireAnyRole(t *testing.T) {
 	})
 
 	t.Run("returns 401 without identity", func(t *testing.T) {
-		handler := middleware.RequireAnyRole(rbac.RoleAdmin, rbac.RoleOperator)(nextHandler)
+		handler := middleware.RequireAnyRole(keyrbac.RoleAdmin, keyrbac.RoleOperator)(nextHandler)
 
 		req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
 
@@ -265,32 +265,32 @@ func TestPermissionConstants(t *testing.T) {
 	// Verify permission constants are correctly defined
 	tests := []struct {
 		name       string
-		permission rbac.Permission
+		permission keyrbac.Permission
 		resource   string
 		action     string
 	}{
-		{"PermissionKeysCreate", PermissionKeysCreate, rbac.ResourceKeys, rbac.ActionCreate},
-		{"PermissionKeysRead", PermissionKeysRead, rbac.ResourceKeys, rbac.ActionRead},
-		{"PermissionKeysList", PermissionKeysList, rbac.ResourceKeys, rbac.ActionList},
-		{"PermissionKeysDelete", PermissionKeysDelete, rbac.ResourceKeys, rbac.ActionDelete},
-		{"PermissionKeysSign", PermissionKeysSign, rbac.ResourceKeys, rbac.ActionSign},
-		{"PermissionKeysVerify", PermissionKeysVerify, rbac.ResourceKeys, rbac.ActionVerify},
-		{"PermissionKeysEncrypt", PermissionKeysEncrypt, rbac.ResourceKeys, rbac.ActionEncrypt},
-		{"PermissionKeysDecrypt", PermissionKeysDecrypt, rbac.ResourceKeys, rbac.ActionDecrypt},
-		{"PermissionKeysRotate", PermissionKeysRotate, rbac.ResourceKeys, rbac.ActionRotate},
-		{"PermissionKeysImport", PermissionKeysImport, rbac.ResourceKeys, rbac.ActionImport},
-		{"PermissionKeysExport", PermissionKeysExport, rbac.ResourceKeys, rbac.ActionExport},
-		{"PermissionCertsCreate", PermissionCertsCreate, rbac.ResourceCertificates, rbac.ActionCreate},
-		{"PermissionCertsRead", PermissionCertsRead, rbac.ResourceCertificates, rbac.ActionRead},
-		{"PermissionCertsList", PermissionCertsList, rbac.ResourceCertificates, rbac.ActionList},
-		{"PermissionCertsDelete", PermissionCertsDelete, rbac.ResourceCertificates, rbac.ActionDelete},
-		{"PermissionUsersCreate", PermissionUsersCreate, rbac.ResourceUsers, rbac.ActionCreate},
-		{"PermissionUsersRead", PermissionUsersRead, rbac.ResourceUsers, rbac.ActionRead},
-		{"PermissionUsersList", PermissionUsersList, rbac.ResourceUsers, rbac.ActionList},
-		{"PermissionUsersUpdate", PermissionUsersUpdate, rbac.ResourceUsers, rbac.ActionUpdate},
-		{"PermissionUsersDelete", PermissionUsersDelete, rbac.ResourceUsers, rbac.ActionDelete},
-		{"PermissionBackendsList", PermissionBackendsList, rbac.ResourceBackends, rbac.ActionList},
-		{"PermissionBackendsRead", PermissionBackendsRead, rbac.ResourceBackends, rbac.ActionRead},
+		{"PermissionKeysCreate", PermissionKeysCreate, keyrbac.ResourceKeys, keyrbac.ActionCreate},
+		{"PermissionKeysRead", PermissionKeysRead, keyrbac.ResourceKeys, keyrbac.ActionRead},
+		{"PermissionKeysList", PermissionKeysList, keyrbac.ResourceKeys, keyrbac.ActionList},
+		{"PermissionKeysDelete", PermissionKeysDelete, keyrbac.ResourceKeys, keyrbac.ActionDelete},
+		{"PermissionKeysSign", PermissionKeysSign, keyrbac.ResourceKeys, keyrbac.ActionSign},
+		{"PermissionKeysVerify", PermissionKeysVerify, keyrbac.ResourceKeys, keyrbac.ActionVerify},
+		{"PermissionKeysEncrypt", PermissionKeysEncrypt, keyrbac.ResourceKeys, keyrbac.ActionEncrypt},
+		{"PermissionKeysDecrypt", PermissionKeysDecrypt, keyrbac.ResourceKeys, keyrbac.ActionDecrypt},
+		{"PermissionKeysRotate", PermissionKeysRotate, keyrbac.ResourceKeys, keyrbac.ActionRotate},
+		{"PermissionKeysImport", PermissionKeysImport, keyrbac.ResourceKeys, keyrbac.ActionImport},
+		{"PermissionKeysExport", PermissionKeysExport, keyrbac.ResourceKeys, keyrbac.ActionExport},
+		{"PermissionCertsCreate", PermissionCertsCreate, keyrbac.ResourceCertificates, keyrbac.ActionCreate},
+		{"PermissionCertsRead", PermissionCertsRead, keyrbac.ResourceCertificates, keyrbac.ActionRead},
+		{"PermissionCertsList", PermissionCertsList, keyrbac.ResourceCertificates, keyrbac.ActionList},
+		{"PermissionCertsDelete", PermissionCertsDelete, keyrbac.ResourceCertificates, keyrbac.ActionDelete},
+		{"PermissionUsersCreate", PermissionUsersCreate, keyrbac.ResourceUsers, keyrbac.ActionCreate},
+		{"PermissionUsersRead", PermissionUsersRead, keyrbac.ResourceUsers, keyrbac.ActionRead},
+		{"PermissionUsersList", PermissionUsersList, keyrbac.ResourceUsers, keyrbac.ActionList},
+		{"PermissionUsersUpdate", PermissionUsersUpdate, keyrbac.ResourceUsers, keyrbac.ActionUpdate},
+		{"PermissionUsersDelete", PermissionUsersDelete, keyrbac.ResourceUsers, keyrbac.ActionDelete},
+		{"PermissionBackendsList", PermissionBackendsList, keyrbac.ResourceBackends, keyrbac.ActionList},
+		{"PermissionBackendsRead", PermissionBackendsRead, keyrbac.ResourceBackends, keyrbac.ActionRead},
 	}
 
 	for _, tt := range tests {

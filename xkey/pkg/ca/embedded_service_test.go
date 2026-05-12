@@ -39,8 +39,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mockXKMSCA implements ca.TCGCA for unit testing.
-type mockXKMSCA struct {
+// mockTrustedCA implements ca.TCGCA for unit testing.
+type mockTrustedCA struct {
 	caCert          *x509.Certificate
 	caBundlePEM     []byte
 	signCSRCert     *x509.Certificate
@@ -73,27 +73,27 @@ type mockXKMSCA struct {
 	tpmSet        bool
 }
 
-func (m *mockXKMSCA) Init() error                    { return m.initErr }
-func (m *mockXKMSCA) Load() error                    { return m.loadErr }
-func (m *mockXKMSCA) IsInitialized() bool            { return m.initialized }
-func (m *mockXKMSCA) Config() *ca.Identity           { return &ca.Identity{} }
-func (m *mockXKMSCA) Identity() string               { return "Test CA" }
-func (m *mockXKMSCA) KeyStore() xkms.Backend         { return nil }
-func (m *mockXKMSCA) CertStore() certstore.CertStore { return nil }
-func (m *mockXKMSCA) Verify(_ *x509.Certificate) ([][]*x509.Certificate, error) {
+func (m *mockTrustedCA) Init() error                    { return m.initErr }
+func (m *mockTrustedCA) Load() error                    { return m.loadErr }
+func (m *mockTrustedCA) IsInitialized() bool            { return m.initialized }
+func (m *mockTrustedCA) Config() *ca.Identity           { return &ca.Identity{} }
+func (m *mockTrustedCA) Identity() string               { return "Test CA" }
+func (m *mockTrustedCA) KeyStore() xkms.Backend         { return nil }
+func (m *mockTrustedCA) CertStore() certstore.CertStore { return nil }
+func (m *mockTrustedCA) Verify(_ *x509.Certificate) ([][]*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockXKMSCA) TLSCertificate(_ *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockTrustedCA) TLSCertificate(_ *types.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, nil
 }
-func (m *mockXKMSCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+func (m *mockTrustedCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockXKMSCA) CreateCSR(_ *ca.CertificateRequest) ([]byte, error) {
+func (m *mockTrustedCA) CreateCSR(_ *ca.CertificateRequest) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockXKMSCA) Public() crypto.PublicKey {
+func (m *mockTrustedCA) Public() crypto.PublicKey {
 	if m.privateKey == nil {
 		return nil
 	}
@@ -103,46 +103,46 @@ func (m *mockXKMSCA) Public() crypto.PublicKey {
 	return nil
 }
 
-func (m *mockXKMSCA) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
+func (m *mockTrustedCA) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockXKMSCA) CACertificate() (*x509.Certificate, error) {
+func (m *mockTrustedCA) CACertificate() (*x509.Certificate, error) {
 	if m.caCertErr != nil {
 		return nil, m.caCertErr
 	}
 	return m.caCert, nil
 }
 
-func (m *mockXKMSCA) CABundle() ([]byte, error) {
+func (m *mockTrustedCA) CABundle() ([]byte, error) {
 	if m.caBundleErr != nil {
 		return nil, m.caBundleErr
 	}
 	return m.caBundlePEM, nil
 }
 
-func (m *mockXKMSCA) SignCSR(_ []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
+func (m *mockTrustedCA) SignCSR(_ []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
 	if m.signCSRErr != nil {
 		return nil, m.signCSRErr
 	}
 	return m.signCSRCert, nil
 }
 
-func (m *mockXKMSCA) IssueCertificate(_ *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (m *mockTrustedCA) IssueCertificate(_ *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
 	if m.issueErr != nil {
 		return nil, m.issueErr
 	}
 	return m.issuedCert, nil
 }
 
-func (m *mockXKMSCA) IssueCertificateWithProfile(_ *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
+func (m *mockTrustedCA) IssueCertificateWithProfile(_ *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
 	if m.issueProfileErr != nil {
 		return nil, m.issueProfileErr
 	}
 	return m.issuedCert, nil
 }
 
-func (m *mockXKMSCA) Revoke(serial *big.Int, _ int) error {
+func (m *mockTrustedCA) Revoke(serial *big.Int, _ int) error {
 	if m.revokeErr != nil {
 		return m.revokeErr
 	}
@@ -153,14 +153,14 @@ func (m *mockXKMSCA) Revoke(serial *big.Int, _ int) error {
 	return nil
 }
 
-func (m *mockXKMSCA) GenerateCRL() ([]byte, error) {
+func (m *mockTrustedCA) GenerateCRL() ([]byte, error) {
 	if m.generateCRLErr != nil {
 		return nil, m.generateCRLErr
 	}
 	return m.crlDER, nil
 }
 
-func (m *mockXKMSCA) IsRevoked(serial *big.Int) (bool, error) {
+func (m *mockTrustedCA) IsRevoked(serial *big.Int) (bool, error) {
 	if m.isRevokedErr != nil {
 		return false, m.isRevokedErr
 	}
@@ -170,35 +170,35 @@ func (m *mockXKMSCA) IsRevoked(serial *big.Int) (bool, error) {
 	return m.revokedSerials[serial.Text(10)], nil
 }
 
-func (m *mockXKMSCA) IssueEKCertificate(_ *ca.CertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
+func (m *mockTrustedCA) IssueEKCertificate(_ *ca.CertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
 	if m.issueEKErr != nil {
 		return nil, m.issueEKErr
 	}
 	return m.ekCert, nil
 }
 
-func (m *mockXKMSCA) IssueAKCertificate(_ *ca.CertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
+func (m *mockTrustedCA) IssueAKCertificate(_ *ca.CertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
 	if m.issueAKErr != nil {
 		return nil, m.issueAKErr
 	}
 	return m.akCert, nil
 }
 
-func (m *mockXKMSCA) SignTCGCSRIDevID(_ *tpm2.TCG_CSR_IDEVID, _ *ca.CertificateRequest) ([]byte, []byte, error) {
+func (m *mockTrustedCA) SignTCGCSRIDevID(_ *tpm2.TCG_CSR_IDEVID, _ *ca.CertificateRequest) ([]byte, []byte, error) {
 	if m.signTCGCSRErr != nil {
 		return nil, nil, m.signTCGCSRErr
 	}
 	return m.iakCertDER, m.idevidCertDER, nil
 }
 
-func (m *mockXKMSCA) EnrollDevice(_ []byte, _ *ca.CertificateRequest) (*ca.TCGEnrollmentResult, error) {
+func (m *mockTrustedCA) EnrollDevice(_ []byte, _ *ca.CertificateRequest) (*ca.TCGEnrollmentResult, error) {
 	if m.enrollErr != nil {
 		return nil, m.enrollErr
 	}
 	return m.enrollResult, nil
 }
 
-func (m *mockXKMSCA) SetTPM(_ tpm2.TrustedPlatformModule) {
+func (m *mockTrustedCA) SetTPM(_ tpm2.TrustedPlatformModule) {
 	m.tpmSet = true
 }
 
@@ -258,14 +258,14 @@ func createTestCRL(t *testing.T, caCert *x509.Certificate, caKey crypto.PrivateK
 }
 
 // newTestService creates a Service with a populated mock for testing.
-func newTestService(t *testing.T) (*Service, *mockXKMSCA) {
+func newTestService(t *testing.T) (*Service, *mockTrustedCA) {
 	t.Helper()
 
 	cert, key := createTestCert(t)
 	certPEM := createTestCertPEM(t, cert)
 	crlDER := createTestCRL(t, cert, key)
 
-	mock := &mockXKMSCA{
+	mock := &mockTrustedCA{
 		caCert:      cert,
 		caBundlePEM: certPEM,
 		signCSRCert: cert,
@@ -312,7 +312,7 @@ func newTestService(t *testing.T) (*Service, *mockXKMSCA) {
 
 func TestNewService_Success(t *testing.T) {
 	cert, key := createTestCert(t)
-	mock := &mockXKMSCA{caCert: cert, privateKey: key}
+	mock := &mockTrustedCA{caCert: cert, privateKey: key}
 
 	svc, err := NewService(&Config{HomeDir: "/tmp/test"}, mock)
 	require.NoError(t, err)
@@ -322,7 +322,7 @@ func TestNewService_Success(t *testing.T) {
 
 func TestNewService_NilConfig(t *testing.T) {
 	cert, key := createTestCert(t)
-	mock := &mockXKMSCA{caCert: cert, privateKey: key}
+	mock := &mockTrustedCA{caCert: cert, privateKey: key}
 
 	svc, err := NewService(nil, mock)
 	assert.Nil(t, svc)

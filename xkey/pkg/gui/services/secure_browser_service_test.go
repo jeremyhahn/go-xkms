@@ -178,23 +178,26 @@ func TestComputeTrustHash(t *testing.T) {
 	assert.NotEqual(t, hash1, hash4)
 }
 
-// TestComputeTrustHashEmpty verifies hash of empty cert list.
+// TestComputeTrustHashEmpty verifies hash of empty cert list. The hash
+// is salted with trustHashImplVersion (followed by '|') so an empty
+// cert list still hashes the version-only payload.
 func TestComputeTrustHashEmpty(t *testing.T) {
 	hash := computeTrustHash(nil)
-	// SHA-256 of empty string.
-	expected := sha256.Sum256([]byte(""))
+	expected := sha256.Sum256([]byte(trustHashImplVersion + "|"))
 	assert.Equal(t, hex.EncodeToString(expected[:]), hash)
 }
 
 // TestComputeTrustHashDeterministic verifies the exact hash value.
+// The hash is salted with trustHashImplVersion so that on-disk hashes
+// from older xkey builds are invalidated when the sync logic changes.
 func TestComputeTrustHashDeterministic(t *testing.T) {
 	cert := testSecureBrowserCA(t, "Deterministic CA")
 	fp := certFingerprint(cert)
 
-	// Manual computation.
+	// Manual computation: version || sorted-fingerprints.
 	sorted := []string{fp}
 	sort.Strings(sorted)
-	expected := sha256.Sum256([]byte(strings.Join(sorted, "")))
+	expected := sha256.Sum256([]byte(trustHashImplVersion + "|" + strings.Join(sorted, "")))
 
 	hash := computeTrustHash([]*x509.Certificate{cert})
 	assert.Equal(t, hex.EncodeToString(expected[:]), hash)
@@ -670,13 +673,14 @@ func TestBuildLaunchArgsChromeShared(t *testing.T) {
 }
 
 // TestBuildLaunchArgsFirefoxIsolated verifies Firefox isolated launch args.
+// Firefox loads CAs from the profile's cert9.db (seeded by syncFirefox), so
+// no environment variables are passed at launch.
 func TestBuildLaunchArgsFirefoxIsolated(t *testing.T) {
 	svc, baseDir := newTestSecureBrowserService(t, nil)
 
 	args, env, err := svc.buildLaunchArgs("firefox", ProfileModeIsolated, "/usr/bin/firefox", "https://example.com")
 	require.NoError(t, err)
-	require.Len(t, env, 1)
-	assert.Contains(t, env[0], "MOZ_POLICIES_FILE=")
+	assert.Empty(t, env, "firefox launch must not set any env vars (policies.json is per-profile NSS DB)")
 	assert.Equal(t, "/usr/bin/firefox", args[0])
 	assert.Equal(t, "--profile", args[1])
 	assert.Equal(t, filepath.Join(baseDir, "firefox", "profile"), args[2])
@@ -684,13 +688,15 @@ func TestBuildLaunchArgsFirefoxIsolated(t *testing.T) {
 }
 
 // TestBuildLaunchArgsFirefoxShared verifies Firefox shared launch args.
+// In shared mode the launcher does not touch the user's profile NSS DB
+// and does not pass any env vars; system administrators must deploy the
+// policies.json into a Firefox-supported path.
 func TestBuildLaunchArgsFirefoxShared(t *testing.T) {
 	svc, _ := newTestSecureBrowserService(t, nil)
 
 	args, env, err := svc.buildLaunchArgs("firefox", ProfileModeShared, "/usr/bin/firefox", "https://example.com")
 	require.NoError(t, err)
-	require.Len(t, env, 1)
-	assert.Contains(t, env[0], "MOZ_POLICIES_FILE=")
+	assert.Empty(t, env, "firefox shared launch must not set any env vars")
 	assert.Equal(t, "/usr/bin/firefox", args[0])
 	assert.Equal(t, "https://example.com", args[1])
 	assert.Len(t, args, 2)

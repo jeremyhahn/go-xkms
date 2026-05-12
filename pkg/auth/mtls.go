@@ -47,10 +47,35 @@ type MTLSUser struct {
 	Enabled bool
 }
 
-// MTLSAuthenticator authenticates requests using mutual TLS (client certificates)
+// CertMetadata captures string-shaped attributes that the mTLS authenticator
+// derives from a client certificate. These flow into Identity.Metadata so
+// downstream code can correlate identity with audit/log entries without
+// re-parsing the certificate.
+type CertMetadata struct {
+	// CommonName is the certificate's Subject Common Name.
+	CommonName string
+	// Organization is the comma-joined list of Subject.Organization values.
+	Organization string
+	// OrganizationalUnit is the comma-joined list of Subject.OrganizationalUnit values.
+	OrganizationalUnit string
+	// Country is the comma-joined list of Subject.Country values.
+	Country string
+	// Province is the comma-joined list of Subject.Province values.
+	Province string
+	// Locality is the comma-joined list of Subject.Locality values.
+	Locality string
+	// DNSNames is the comma-joined list of SAN DNS names.
+	DNSNames string
+	// EmailAddresses is the comma-joined list of SAN email addresses.
+	EmailAddresses string
+	// ExtKeyUsage is the comma-joined list of extended key usages.
+	ExtKeyUsage string
+}
+
+// MTLSAuthenticator authenticates requests using mutual TLS (client certificates).
 type MTLSAuthenticator struct {
-	// extractClaims is a function that extracts claims from a client certificate
-	extractClaims func(*x509.Certificate) map[string]interface{}
+	// extractMetadata derives string metadata for Identity.Metadata.
+	extractMetadata func(*x509.Certificate) CertMetadata
 
 	// extractSubject is a function that extracts the subject from a client certificate
 	extractSubject func(*x509.Certificate) string
@@ -59,11 +84,11 @@ type MTLSAuthenticator struct {
 	userStore UserStore
 }
 
-// MTLSConfig configures the mTLS authenticator
+// MTLSConfig configures the mTLS authenticator.
 type MTLSConfig struct {
-	// ExtractClaims extracts claims from the client certificate
-	// If nil, uses default extraction (CN, OU, O)
-	ExtractClaims func(*x509.Certificate) map[string]interface{}
+	// ExtractMetadata derives certificate-derived metadata for the
+	// authenticated identity. If nil, defaultExtractCertMetadata is used.
+	ExtractMetadata func(*x509.Certificate) CertMetadata
 
 	// ExtractSubject extracts the subject identifier from the client certificate
 	// If nil, uses the certificate's Subject Common Name
@@ -87,8 +112,8 @@ func NewMTLSAuthenticator(config *MTLSConfig) *MTLSAuthenticator {
 		config = &MTLSConfig{}
 	}
 
-	if config.ExtractClaims == nil {
-		config.ExtractClaims = defaultExtractClaims
+	if config.ExtractMetadata == nil {
+		config.ExtractMetadata = defaultExtractCertMetadata
 	}
 
 	if config.ExtractSubject == nil {
@@ -96,9 +121,9 @@ func NewMTLSAuthenticator(config *MTLSConfig) *MTLSAuthenticator {
 	}
 
 	return &MTLSAuthenticator{
-		extractClaims:  config.ExtractClaims,
-		extractSubject: config.ExtractSubject,
-		userStore:      config.UserStore,
+		extractMetadata: config.ExtractMetadata,
+		extractSubject:  config.ExtractSubject,
+		userStore:       config.UserStore,
 	}
 }
 
@@ -115,7 +140,7 @@ func (a *MTLSAuthenticator) AuthenticateHTTP(r *http.Request) (*Identity, error)
 		return nil, err
 	}
 
-	identity.Attributes["remote_addr"] = r.RemoteAddr
+	identity.Metadata["remote_addr"] = r.RemoteAddr
 
 	return identity, nil
 }
@@ -145,7 +170,7 @@ func (a *MTLSAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD
 		return nil, err
 	}
 
-	identity.Attributes["peer_addr"] = p.Addr.String()
+	identity.Metadata["peer_addr"] = p.Addr.String()
 
 	return identity, nil
 }
@@ -178,21 +203,19 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 			}
 
 			identity := &Identity{
-				Subject:    user.Username,
-				TenantID:   user.TenantID,
-				Claims:     a.extractClaims(cert),
-				Attributes: make(map[string]string),
+				Subject:  user.Username,
+				TenantID: user.TenantID,
+				Metadata: a.certMetadataMap(cert),
 			}
 
-			// Enrich claims with user role
 			if user.Role != "" {
-				identity.Claims["roles"] = []string{user.Role}
+				identity.Roles = []string{user.Role}
 			}
-			identity.Claims["display_name"] = user.DisplayName
-			identity.Attributes["auth_method"] = "mtls"
-			identity.Attributes["cert_serial"] = cert.SerialNumber.String()
-			identity.Attributes["cert_issuer"] = cert.Issuer.String()
-			identity.Attributes["cert_fingerprint"] = fingerprint
+			identity.Metadata["display_name"] = user.DisplayName
+			identity.Metadata["auth_method"] = "mtls"
+			identity.Metadata["cert_serial"] = cert.SerialNumber.String()
+			identity.Metadata["cert_issuer"] = cert.Issuer.String()
+			identity.Metadata["cert_fingerprint"] = fingerprint
 
 			return identity, nil
 		}
@@ -200,9 +223,8 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 	}
 
 	identity := &Identity{
-		Subject:    a.extractSubject(cert),
-		Claims:     a.extractClaims(cert),
-		Attributes: make(map[string]string),
+		Subject:  a.extractSubject(cert),
+		Metadata: a.certMetadataMap(cert),
 	}
 
 	// Extract tenant from first OU if present
@@ -210,11 +232,47 @@ func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certif
 		identity.TenantID = cert.Subject.OrganizationalUnit[0]
 	}
 
-	identity.Attributes["auth_method"] = "mtls"
-	identity.Attributes["cert_serial"] = cert.SerialNumber.String()
-	identity.Attributes["cert_issuer"] = cert.Issuer.String()
+	identity.Metadata["auth_method"] = "mtls"
+	identity.Metadata["cert_serial"] = cert.SerialNumber.String()
+	identity.Metadata["cert_issuer"] = cert.Issuer.String()
 
 	return identity, nil
+}
+
+// certMetadataMap converts the configured certificate metadata extractor's
+// output into a flat map suitable for Identity.Metadata. Empty fields are
+// omitted to keep the map compact.
+func (a *MTLSAuthenticator) certMetadataMap(cert *x509.Certificate) map[string]string {
+	cm := a.extractMetadata(cert)
+	out := make(map[string]string, 9)
+	if cm.CommonName != "" {
+		out["common_name"] = cm.CommonName
+	}
+	if cm.Organization != "" {
+		out["organization"] = cm.Organization
+	}
+	if cm.OrganizationalUnit != "" {
+		out["organizational_unit"] = cm.OrganizationalUnit
+	}
+	if cm.Country != "" {
+		out["country"] = cm.Country
+	}
+	if cm.Province != "" {
+		out["province"] = cm.Province
+	}
+	if cm.Locality != "" {
+		out["locality"] = cm.Locality
+	}
+	if cm.DNSNames != "" {
+		out["dns_names"] = cm.DNSNames
+	}
+	if cm.EmailAddresses != "" {
+		out["email_addresses"] = cm.EmailAddresses
+	}
+	if cm.ExtKeyUsage != "" {
+		out["ext_key_usage"] = cm.ExtKeyUsage
+	}
+	return out
 }
 
 // defaultExtractSubject extracts the subject from the certificate's Common Name
@@ -232,29 +290,47 @@ func defaultExtractSubject(cert *x509.Certificate) string {
 	return cert.SerialNumber.String()
 }
 
-// defaultExtractClaims extracts standard claims from the certificate
-func defaultExtractClaims(cert *x509.Certificate) map[string]interface{} {
-	claims := make(map[string]interface{})
-
-	claims["common_name"] = cert.Subject.CommonName
-	claims["organization"] = cert.Subject.Organization
-	claims["organizational_unit"] = cert.Subject.OrganizationalUnit
-	claims["country"] = cert.Subject.Country
-	claims["province"] = cert.Subject.Province
-	claims["locality"] = cert.Subject.Locality
-	claims["dns_names"] = cert.DNSNames
-	claims["email_addresses"] = cert.EmailAddresses
-
-	// Add extended key usage as permissions
-	if len(cert.ExtKeyUsage) > 0 {
-		perms := make([]string, 0, len(cert.ExtKeyUsage))
-		for _, usage := range cert.ExtKeyUsage {
-			perms = append(perms, keyUsageString(usage))
-		}
-		claims["permissions"] = perms
+// defaultExtractCertMetadata extracts the standard string-shaped certificate
+// attributes used as identity metadata.
+func defaultExtractCertMetadata(cert *x509.Certificate) CertMetadata {
+	return CertMetadata{
+		CommonName:         cert.Subject.CommonName,
+		Organization:       joinNonEmpty(cert.Subject.Organization),
+		OrganizationalUnit: joinNonEmpty(cert.Subject.OrganizationalUnit),
+		Country:            joinNonEmpty(cert.Subject.Country),
+		Province:           joinNonEmpty(cert.Subject.Province),
+		Locality:           joinNonEmpty(cert.Subject.Locality),
+		DNSNames:           joinNonEmpty(cert.DNSNames),
+		EmailAddresses:     joinNonEmpty(cert.EmailAddresses),
+		ExtKeyUsage:        joinExtKeyUsage(cert.ExtKeyUsage),
 	}
+}
 
-	return claims
+// joinNonEmpty joins a string slice with commas, returning "" for an empty slice.
+func joinNonEmpty(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	out := values[0]
+	for _, v := range values[1:] {
+		if v == "" {
+			continue
+		}
+		out += "," + v
+	}
+	return out
+}
+
+// joinExtKeyUsage formats extended key usages as a comma-separated string.
+func joinExtKeyUsage(usages []x509.ExtKeyUsage) string {
+	if len(usages) == 0 {
+		return ""
+	}
+	out := keyUsageString(usages[0])
+	for _, u := range usages[1:] {
+		out += "," + keyUsageString(u)
+	}
+	return out
 }
 
 // keyUsageString converts x509.ExtKeyUsage to a string

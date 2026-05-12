@@ -4,7 +4,7 @@ All Certificate Authority operations in go-xkms are available through every serv
 
 ## Overview
 
-The CA subsystem exposes 11 operations (7 standard + 4 TCG) through 6 server protocols. Every protocol converges at the `XKMSService` layer, which delegates to the underlying `ca.XKMSCA` (or `ca.TCGCA`) instance via duck-typed interfaces. This architecture guarantees identical behavior regardless of transport.
+The CA subsystem exposes 11 operations (7 standard + 4 TCG) through 6 server protocols. Every protocol converges at the `XKMSService` layer, which delegates to the underlying `ca.TrustedCA` (or `ca.TCGCA`) instance via duck-typed interfaces. This architecture guarantees identical behavior regardless of transport.
 
 ## Architecture
 
@@ -26,7 +26,7 @@ CLI (xkmsctl)                      SDK Client
                     +-------+--------+
                             |
                     +-------v--------+
-                    |   ca.XKMSCA    |
+                    |   ca.TrustedCA    |
                     |   ca.TCGCA     |
                     +-------+--------+
                             |
@@ -37,7 +37,7 @@ CLI (xkmsctl)                      SDK Client
         +---------------+      +---------------+
 ```
 
-All six transports converge at `XKMSService`. The service layer uses duck-typed interfaces (`caMethodBundle`, `caMethodSignCSRRaw`, etc.) to call into `ca.XKMSCA` without creating an import cycle.
+All six transports converge at `XKMSService`. The service layer uses duck-typed interfaces (`caMethodBundle`, `caMethodSignCSRRaw`, etc.) to call into `ca.TrustedCA` without creating an import cycle.
 
 ### Wiring Path
 

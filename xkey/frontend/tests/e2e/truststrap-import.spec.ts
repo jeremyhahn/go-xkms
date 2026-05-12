@@ -449,4 +449,99 @@ test.describe('Trust Store — truststrap import dialog', () => {
       page.locator('[data-testid="truststrap-server-input"]'),
     ).toHaveValue('https://kms.example.com:8443');
   });
+
+  // Regression: the shared Server field lets users type a URL on one tab
+  // and switch to Noise, where URLs are invalid (Noise wants host:port
+  // only). The frontend must reject this with a clear message rather than
+  // letting the invalid payload reach the backend bootstrapper.
+  test('Noise rejects a URL-format Server value with a clear message', async ({
+    page,
+  }) => {
+    await gotoTrustStore(page);
+    await openImportDialog(page);
+    await page.locator('[data-testid="import-tab-direct"]').click();
+
+    await page
+      .locator('[data-testid="truststrap-server-input"]')
+      .fill('https://kms.example.com:8443');
+    await page.locator('[data-testid="import-tab-noise"]').click();
+    await page
+      .locator('[data-testid="truststrap-noise-key-input"]')
+      .fill('a'.repeat(64));
+
+    await page.locator('[data-testid="truststrap-fetch-btn"]').click();
+
+    // Backend must NOT have been called with the URL value.
+    await page.waitForTimeout(200);
+    const calls = await page.evaluate(
+      () => (window as any).__truststrapImportCalls as Array<Record<string, unknown>>,
+    );
+    expect(calls).toHaveLength(0);
+
+    // Modal must stay open so the user can correct their input.
+    await expect(page.locator('[data-testid="import-tabs"]')).toBeVisible();
+  });
+
+  // Regression: the inverse — DANE/SPKI/Direct must reject a bare
+  // host:port value that's missing the scheme, since the underlying
+  // truststrap bootstrappers require a full URL.
+  test('DANE rejects a host:port value missing the https scheme', async ({
+    page,
+  }) => {
+    await gotoTrustStore(page);
+    await openImportDialog(page);
+    await page.locator('[data-testid="import-tab-dane"]').click();
+
+    await page
+      .locator('[data-testid="truststrap-server-input"]')
+      .fill('kms.example.com:8443');
+
+    await page.locator('[data-testid="truststrap-fetch-btn"]').click();
+
+    await page.waitForTimeout(200);
+    const calls = await page.evaluate(
+      () => (window as any).__truststrapImportCalls as Array<Record<string, unknown>>,
+    );
+    expect(calls).toHaveLength(0);
+    await expect(page.locator('[data-testid="import-tabs"]')).toBeVisible();
+  });
+
+  test('SPKI and Direct accept full https URLs; Noise accepts bare host:port', async ({
+    page,
+  }) => {
+    await gotoTrustStore(page);
+    await openImportDialog(page);
+
+    // Direct — full URL accepted.
+    await page.locator('[data-testid="import-tab-direct"]').click();
+    await page
+      .locator('[data-testid="truststrap-server-input"]')
+      .fill('https://kms.example.com:8443');
+    await page.locator('[data-testid="truststrap-fetch-btn"]').click();
+    await page.waitForFunction(
+      () => ((window as any).__truststrapImportCalls ?? []).length >= 1,
+      { timeout: 3_000 },
+    );
+
+    // Reopen and try Noise with bare host:port.
+    await openImportDialog(page);
+    await page.locator('[data-testid="import-tab-noise"]').click();
+    await page
+      .locator('[data-testid="truststrap-server-input"]')
+      .fill('kms.example.com:8445');
+    await page
+      .locator('[data-testid="truststrap-noise-key-input"]')
+      .fill('a'.repeat(64));
+    await page.locator('[data-testid="truststrap-fetch-btn"]').click();
+    await page.waitForFunction(
+      () => ((window as any).__truststrapImportCalls ?? []).length >= 2,
+      { timeout: 3_000 },
+    );
+
+    const calls = await page.evaluate(
+      () => (window as any).__truststrapImportCalls as Array<Record<string, unknown>>,
+    );
+    expect(calls[0]).toMatchObject({ method: 'direct', server: 'https://kms.example.com:8443' });
+    expect(calls[1]).toMatchObject({ method: 'noise',  server: 'kms.example.com:8445' });
+  });
 });

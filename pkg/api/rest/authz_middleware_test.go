@@ -22,19 +22,19 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockAuthorizer is a test double for authz.Authorizer.
+// mockAuthorizer is a test double for keyauthz.Authorizer.
 type mockAuthorizer struct {
-	decision *authz.AuthorizationDecision
+	decision *keyauthz.AuthorizationDecision
 	err      error
-	lastReq  *authz.AuthorizationRequest
+	lastReq  *keyauthz.AuthorizationRequest
 }
 
-func (m *mockAuthorizer) Authorize(_ context.Context, req *authz.AuthorizationRequest) (*authz.AuthorizationDecision, error) {
+func (m *mockAuthorizer) Authorize(_ context.Context, req *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
 	m.lastReq = req
 	return m.decision, m.err
 }
@@ -62,7 +62,7 @@ func okHandler(w http.ResponseWriter, _ *http.Request) {
 
 func TestAuthzMiddleware_AllowedRequest(t *testing.T) {
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true, Reason: "admin"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true, Reason: "admin"},
 	}
 	logger := &mockAuditLogger{}
 	middleware := NewAuthzMiddleware(authorizer, logger)
@@ -72,9 +72,7 @@ func TestAuthzMiddleware_AllowedRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
 	identity := &auth.Identity{
 		Subject: "admin@example.com",
-		Claims: map[string]interface{}{
-			"roles": []string{"admin"},
-		},
+		Roles: []string{"admin"},
 	}
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -94,7 +92,7 @@ func TestAuthzMiddleware_AllowedRequest(t *testing.T) {
 
 func TestAuthzMiddleware_DeniedRequest(t *testing.T) {
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "insufficient permissions"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "insufficient permissions"},
 	}
 	logger := &mockAuditLogger{}
 	middleware := NewAuthzMiddleware(authorizer, logger)
@@ -104,9 +102,7 @@ func TestAuthzMiddleware_DeniedRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/keys/my-key", nil)
 	identity := &auth.Identity{
 		Subject: "user@example.com",
-		Claims: map[string]interface{}{
-			"roles": "user",
-		},
+		Roles: []string{"user"},
 	}
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -119,7 +115,7 @@ func TestAuthzMiddleware_DeniedRequest(t *testing.T) {
 
 func TestAuthzMiddleware_DeniedRequestDefaultReason(t *testing.T) {
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: ""},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: ""},
 	}
 	logger := &mockAuditLogger{}
 	middleware := NewAuthzMiddleware(authorizer, logger)
@@ -152,9 +148,7 @@ func TestAuthzMiddleware_AuthzError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
 	identity := &auth.Identity{
 		Subject: "admin@example.com",
-		Claims: map[string]interface{}{
-			"roles": []string{"admin"},
-		},
+		Roles: []string{"admin"},
 	}
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -167,7 +161,7 @@ func TestAuthzMiddleware_AuthzError(t *testing.T) {
 
 func TestAuthzMiddleware_NoIdentity(t *testing.T) {
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	logger := &mockAuditLogger{}
 	middleware := NewAuthzMiddleware(authorizer, logger)
@@ -191,7 +185,7 @@ func TestAuthzMiddleware_NoIdentity(t *testing.T) {
 
 func TestAuthzMiddleware_NoIdentityDenied(t *testing.T) {
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "anonymous access denied"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "anonymous access denied"},
 	}
 	logger := &mockAuditLogger{}
 	middleware := NewAuthzMiddleware(authorizer, logger)
@@ -214,7 +208,7 @@ func TestAuthzMiddleware_NoIdentityDenied(t *testing.T) {
 func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 	t.Run("logs allow event on authorized request", func(t *testing.T) {
 		authorizer := &mockAuthorizer{
-			decision: &authz.AuthorizationDecision{Allowed: true},
+			decision: &keyauthz.AuthorizationDecision{Allowed: true},
 		}
 		logger := &mockAuditLogger{}
 		middleware := NewAuthzMiddleware(authorizer, logger)
@@ -225,9 +219,7 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 		req.RemoteAddr = "192.168.1.100:54321"
 		identity := &auth.Identity{
 			Subject: "operator@example.com",
-			Claims: map[string]interface{}{
-				"roles": "operator",
-			},
+			Roles: []string{"operator"},
 		}
 		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -249,7 +241,7 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 
 	t.Run("logs deny event on unauthorized request", func(t *testing.T) {
 		authorizer := &mockAuthorizer{
-			decision: &authz.AuthorizationDecision{Allowed: false, Reason: "no permission"},
+			decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "no permission"},
 		}
 		logger := &mockAuditLogger{}
 		middleware := NewAuthzMiddleware(authorizer, logger)
@@ -260,9 +252,7 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 		req.RemoteAddr = "10.0.0.5:12345"
 		identity := &auth.Identity{
 			Subject: "viewer@example.com",
-			Claims: map[string]interface{}{
-				"roles": []string{"viewer"},
-			},
+			Roles: []string{"viewer"},
 		}
 		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -305,7 +295,7 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 
 	t.Run("omits role from details when empty", func(t *testing.T) {
 		authorizer := &mockAuthorizer{
-			decision: &authz.AuthorizationDecision{Allowed: true},
+			decision: &keyauthz.AuthorizationDecision{Allowed: true},
 		}
 		logger := &mockAuditLogger{}
 		middleware := NewAuthzMiddleware(authorizer, logger)
@@ -329,7 +319,7 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 
 	t.Run("audit logger error does not affect request processing", func(t *testing.T) {
 		authorizer := &mockAuthorizer{
-			decision: &authz.AuthorizationDecision{Allowed: true},
+			decision: &keyauthz.AuthorizationDecision{Allowed: true},
 		}
 		logger := &mockAuditLogger{
 			err: errors.New("audit log write failed"),
@@ -353,60 +343,19 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 func TestAuthzMiddleware_RoleExtraction(t *testing.T) {
 	tests := []struct {
 		name         string
-		claims       map[string]interface{}
+		roles        []string
 		expectedRole string
 	}{
-		{
-			name:         "extracts from []string",
-			claims:       map[string]interface{}{"roles": []string{"admin", "operator"}},
-			expectedRole: "admin",
-		},
-		{
-			name:         "extracts from []interface{}",
-			claims:       map[string]interface{}{"roles": []interface{}{"operator", "viewer"}},
-			expectedRole: "operator",
-		},
-		{
-			name:         "extracts from string",
-			claims:       map[string]interface{}{"roles": "user"},
-			expectedRole: "user",
-		},
-		{
-			name:         "empty []string returns empty",
-			claims:       map[string]interface{}{"roles": []string{}},
-			expectedRole: "",
-		},
-		{
-			name:         "empty []interface{} returns empty",
-			claims:       map[string]interface{}{"roles": []interface{}{}},
-			expectedRole: "",
-		},
-		{
-			name:         "nil claims returns empty",
-			claims:       nil,
-			expectedRole: "",
-		},
-		{
-			name:         "missing roles key returns empty",
-			claims:       map[string]interface{}{"permissions": "read"},
-			expectedRole: "",
-		},
-		{
-			name:         "non-string in []interface{} returns empty",
-			claims:       map[string]interface{}{"roles": []interface{}{42}},
-			expectedRole: "",
-		},
-		{
-			name:         "unsupported type returns empty",
-			claims:       map[string]interface{}{"roles": 123},
-			expectedRole: "",
-		},
+		{name: "first of multiple", roles: []string{"admin", "operator"}, expectedRole: "admin"},
+		{name: "single role", roles: []string{"user"}, expectedRole: "user"},
+		{name: "empty slice returns empty", roles: []string{}, expectedRole: ""},
+		{name: "nil slice returns empty", roles: nil, expectedRole: ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			authorizer := &mockAuthorizer{
-				decision: &authz.AuthorizationDecision{Allowed: true},
+				decision: &keyauthz.AuthorizationDecision{Allowed: true},
 			}
 			logger := &mockAuditLogger{}
 			middleware := NewAuthzMiddleware(authorizer, logger)
@@ -416,7 +365,7 @@ func TestAuthzMiddleware_RoleExtraction(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
 			identity := &auth.Identity{
 				Subject: "test@example.com",
-				Claims:  tt.claims,
+				Roles:   tt.roles,
 			}
 			req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -453,7 +402,7 @@ func TestAuthzMiddleware_NilDecisionAllowed(t *testing.T) {
 
 func TestAuthzMiddleware_ContextMapInitialized(t *testing.T) {
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	logger := &mockAuditLogger{}
 	middleware := NewAuthzMiddleware(authorizer, logger)
@@ -478,8 +427,8 @@ func TestExtractRole(t *testing.T) {
 		assert.Equal(t, "", extractRole(nil))
 	})
 
-	t.Run("nil claims returns empty", func(t *testing.T) {
-		identity := &auth.Identity{Subject: "test", Claims: nil}
+	t.Run("nil roles returns empty", func(t *testing.T) {
+		identity := &auth.Identity{Subject: "test"}
 		assert.Equal(t, "", extractRole(identity))
 	})
 }

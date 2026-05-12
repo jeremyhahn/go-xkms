@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // DKEKStatus represents the current DKEK initialization status.
@@ -49,9 +50,10 @@ type DKEKShare struct {
 	Data []byte `json:"data"`
 }
 
-// GenerateDKEKShares generates N DKEK shares where M are required to reconstruct.
-// This creates a new random 256-bit DKEK and splits it using Shamir's Secret Sharing.
-// The shares should be distributed to key custodians for safekeeping.
+// GenerateDKEKShares generates N DKEK shares where M are required to
+// reconstruct. A fresh 256-bit DKEK is generated, split with Shamir's
+// Secret Sharing, and then immediately wiped — the raw DKEK never
+// leaves the mlocked Buffer, and the caller only ever sees the shares.
 //
 // Parameters:
 //   - n: Total number of shares to generate
@@ -66,14 +68,22 @@ func GenerateDKEKShares(n, m int) ([]DKEKShare, error) {
 		return nil, ErrDKEKThresholdInvalid
 	}
 
-	// Generate random 256-bit DKEK
-	dkek := make([]byte, 32)
-	if _, err := rand.Read(dkek); err != nil {
+	// Allocate the DKEK inside a memguard enclave so the plaintext key
+	// is mlocked, canary-guarded, and explicitly wiped on Destroy.
+	dkekBuf, err := secure.NewBuffer(32)
+	if err != nil {
+		return nil, fmt.Errorf("smartcardhsm: failed to allocate DKEK buffer: %w", err)
+	}
+	defer dkekBuf.Destroy()
+
+	if _, err := rand.Read(dkekBuf.Bytes()); err != nil {
 		return nil, fmt.Errorf("smartcardhsm: failed to generate DKEK: %w", err)
 	}
 
-	// Split using Shamir's Secret Sharing
-	shares, err := qrdbsdk.ShamirSplit(dkek, n, m)
+	// Split using Shamir's Secret Sharing. ShamirSplit reads the DKEK
+	// directly from the enclaved slice; on return the enclave is
+	// destroyed by the deferred cleanup above.
+	shares, err := qrdbsdk.ShamirSplit(dkekBuf.Bytes(), n, m)
 	if err != nil {
 		return nil, fmt.Errorf("smartcardhsm: failed to split DKEK: %w", err)
 	}

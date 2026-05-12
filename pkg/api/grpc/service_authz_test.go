@@ -22,7 +22,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/authz"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -32,21 +32,21 @@ import (
 
 // mockAuthorizer is a test authorizer that returns configurable decisions.
 type mockAuthorizer struct {
-	decision *authz.AuthorizationDecision
+	decision *keyauthz.AuthorizationDecision
 	err      error
 
 	mu          sync.Mutex
-	lastRequest *authz.AuthorizationRequest
+	lastRequest *keyauthz.AuthorizationRequest
 }
 
-func (m *mockAuthorizer) Authorize(_ context.Context, req *authz.AuthorizationRequest) (*authz.AuthorizationDecision, error) {
+func (m *mockAuthorizer) Authorize(_ context.Context, req *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
 	m.mu.Lock()
 	m.lastRequest = req
 	m.mu.Unlock()
 	return m.decision, m.err
 }
 
-func (m *mockAuthorizer) LastRequest() *authz.AuthorizationRequest {
+func (m *mockAuthorizer) LastRequest() *keyauthz.AuthorizationRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.lastRequest
@@ -88,7 +88,7 @@ func (m *mockAuditLogger) LastEvent() *audit.Event {
 
 // setupAuthzServiceTest initializes the xkms and returns a service with
 // the given authorizer and audit logger.
-func setupAuthzServiceTest(t *testing.T, authorizer authz.Authorizer, auditLogger audit.Logger) *Service {
+func setupAuthzServiceTest(t *testing.T, authorizer keyauthz.Authorizer, auditLogger audit.Logger) *Service {
 	t.Helper()
 	xkms.Reset()
 
@@ -129,14 +129,14 @@ func TestAuthz_AuthorizeAllowed(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true, Reason: "test-allow"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true, Reason: "test-allow"},
 	}
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "user-1",
-		Claims:  map[string]interface{}{"roles": "admin"},
+		Roles: []string{"admin"},
 	})
 
 	err := svc.authorize(ctx, "keys", "read", "test-key")
@@ -188,14 +188,14 @@ func TestAuthz_AuthorizeDenied(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "insufficient privileges"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "insufficient privileges"},
 	}
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "user-2",
-		Claims:  map[string]interface{}{"roles": "reader"},
+		Roles: []string{"reader"},
 	})
 
 	err := svc.authorize(ctx, "keys", "write", "my-key")
@@ -228,7 +228,7 @@ func TestAuthz_AuthorizeDeniedDefaultReason(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: ""},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: ""},
 	}
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
@@ -289,7 +289,7 @@ func TestAuthz_AuthorizeNilIdentity(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
@@ -316,11 +316,9 @@ func TestAuthz_AuthorizeNilIdentity(t *testing.T) {
 
 // --- extractRoleFromIdentity tests ---
 
-func TestAuthz_ExtractRoleStringSlice(t *testing.T) {
+func TestAuthz_ExtractRoleFirstOfMany(t *testing.T) {
 	identity := &auth.Identity{
-		Claims: map[string]interface{}{
-			"roles": []string{"admin", "operator"},
-		},
+		Roles: []string{"admin", "operator"},
 	}
 	role := extractRoleFromIdentity(identity)
 	if role != "admin" {
@@ -328,27 +326,11 @@ func TestAuthz_ExtractRoleStringSlice(t *testing.T) {
 	}
 }
 
-func TestAuthz_ExtractRoleInterfaceSlice(t *testing.T) {
-	identity := &auth.Identity{
-		Claims: map[string]interface{}{
-			"roles": []interface{}{"viewer", "editor"},
-		},
-	}
+func TestAuthz_ExtractRoleSingle(t *testing.T) {
+	identity := &auth.Identity{Roles: []string{"platform-admin"}}
 	role := extractRoleFromIdentity(identity)
-	if role != "viewer" {
-		t.Errorf("Expected 'viewer', got '%s'", role)
-	}
-}
-
-func TestAuthz_ExtractRoleString(t *testing.T) {
-	identity := &auth.Identity{
-		Claims: map[string]interface{}{
-			"roles": "superadmin",
-		},
-	}
-	role := extractRoleFromIdentity(identity)
-	if role != "superadmin" {
-		t.Errorf("Expected 'superadmin', got '%s'", role)
+	if role != "platform-admin" {
+		t.Errorf("Expected 'platform-admin', got '%s'", role)
 	}
 }
 
@@ -359,7 +341,7 @@ func TestAuthz_ExtractRoleNilIdentity(t *testing.T) {
 	}
 }
 
-func TestAuthz_ExtractRoleNilClaims(t *testing.T) {
+func TestAuthz_ExtractRoleNoRoles(t *testing.T) {
 	identity := &auth.Identity{}
 	role := extractRoleFromIdentity(identity)
 	if role != "" {
@@ -367,39 +349,11 @@ func TestAuthz_ExtractRoleNilClaims(t *testing.T) {
 	}
 }
 
-func TestAuthz_ExtractRoleNoRolesClaim(t *testing.T) {
-	identity := &auth.Identity{
-		Claims: map[string]interface{}{
-			"permissions": "read",
-		},
-	}
-	role := extractRoleFromIdentity(identity)
-	if role != "" {
-		t.Errorf("Expected empty string, got '%s'", role)
-	}
-}
-
 func TestAuthz_ExtractRoleEmptySlice(t *testing.T) {
-	identity := &auth.Identity{
-		Claims: map[string]interface{}{
-			"roles": []string{},
-		},
-	}
+	identity := &auth.Identity{Roles: []string{}}
 	role := extractRoleFromIdentity(identity)
 	if role != "" {
 		t.Errorf("Expected empty string, got '%s'", role)
-	}
-}
-
-func TestAuthz_ExtractRoleInterfaceSliceNonString(t *testing.T) {
-	identity := &auth.Identity{
-		Claims: map[string]interface{}{
-			"roles": []interface{}{42},
-		},
-	}
-	role := extractRoleFromIdentity(identity)
-	if role != "" {
-		t.Errorf("Expected empty string for non-string interface element, got '%s'", role)
 	}
 }
 
@@ -418,7 +372,7 @@ func TestAuthz_NewServiceNilDefaults(t *testing.T) {
 	}
 
 	// Verify NoOp authorizer always allows
-	decision, err := svc.authorizer.Authorize(context.Background(), &authz.AuthorizationRequest{})
+	decision, err := svc.authorizer.Authorize(context.Background(), &keyauthz.AuthorizationRequest{})
 	if err != nil {
 		t.Fatalf("NoOp authorizer should not error: %v", err)
 	}
@@ -429,7 +383,7 @@ func TestAuthz_NewServiceNilDefaults(t *testing.T) {
 
 func TestAuthz_NewServiceCustomAuthorizer(t *testing.T) {
 	customAuthz := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "custom"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "custom"},
 	}
 	customAudit := &mockAuditLogger{}
 
@@ -455,7 +409,7 @@ func TestAuthz_ListBackendsMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -472,7 +426,7 @@ func TestAuthz_GetBackendInfoMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -489,7 +443,7 @@ func TestAuthz_GenerateKeyMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -510,7 +464,7 @@ func TestAuthz_ListKeysMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -527,7 +481,7 @@ func TestAuthz_SignMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -547,7 +501,7 @@ func TestAuthz_DeleteKeyMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -567,7 +521,7 @@ func TestAuthz_SealMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -587,7 +541,7 @@ func TestAuthz_CanSealMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -604,7 +558,7 @@ func TestAuthz_ListCertsMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -621,7 +575,7 @@ func TestAuthz_DeleteCertMapping(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -642,7 +596,7 @@ func TestAuthz_ListBackendsDenied(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "denied"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied"},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -660,7 +614,7 @@ func TestAuthz_GenerateKeyDenied(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "no write access"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "no write access"},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -685,7 +639,7 @@ func TestAuthz_SignDenied(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "use denied"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "use denied"},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -706,7 +660,7 @@ func TestAuthz_DeleteKeyDenied(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "delete denied"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "delete denied"},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -730,7 +684,7 @@ func TestAuthz_HealthNoAuthzCheck(t *testing.T) {
 
 	// Use a denying authorizer to prove Health is not checked
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "deny all"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "deny all"},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -754,14 +708,14 @@ func TestAuthz_AuditLogOnAllow(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: true},
+		decision: &keyauthz.AuthorizationDecision{Allowed: true},
 	}
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "audited-user",
-		Claims:  map[string]interface{}{"roles": "operator"},
+		Roles: []string{"operator"},
 	})
 
 	_, _ = svc.ListBackends(ctx, &pb.ListBackendsRequest{})
@@ -796,14 +750,14 @@ func TestAuthz_AuditLogOnDeny(t *testing.T) {
 	defer xkms.Reset()
 
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "denied"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied"},
 	}
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "denied-user",
-		Claims:  map[string]interface{}{"roles": []string{"guest"}},
+		Roles: []string{"guest"},
 	})
 
 	_, _ = svc.GenerateKey(ctx, &pb.GenerateKeyRequest{
@@ -866,7 +820,7 @@ func TestAuthz_ValidationBeforeAuthz(t *testing.T) {
 
 	// Create a denying authorizer to ensure authz is not reached
 	authorizer := &mockAuthorizer{
-		decision: &authz.AuthorizationDecision{Allowed: false, Reason: "should not reach"},
+		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "should not reach"},
 	}
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
@@ -889,7 +843,7 @@ func TestAuthz_ValidationBeforeAuthz(t *testing.T) {
 }
 
 // assertMapping verifies the authorization request matches the expected mapping.
-func assertMapping(t *testing.T, req *authz.AuthorizationRequest, expected authzMapping) {
+func assertMapping(t *testing.T, req *keyauthz.AuthorizationRequest, expected authzMapping) {
 	t.Helper()
 	if req.Resource != expected.resource {
 		t.Errorf("Expected resource '%s', got '%s'", expected.resource, req.Resource)

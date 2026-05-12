@@ -186,7 +186,7 @@ func (s *Service) GetCABundle(_ context.Context, req *transport.GetCABundleReque
 // GetCACertificate retrieves the CA certificate.
 //
 // The Identity field in the request is currently unused; the service always
-// returns the certificate from the configured XKMSCA.
+// returns the certificate from the configured TrustedCA.
 func (s *Service) GetCACertificate(_ context.Context, req *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
