@@ -265,9 +265,21 @@ func (w *Writer) AddTrustedCA(cert *x509.Certificate, label string) error {
 	return nil
 }
 
-// RemoveByPrefix removes all certificate and trust objects from cert9.db whose
-// label (column a3) starts with the given prefix. It also removes associated
-// trust signatures from key4.db metaData.
+// RemoveByPrefix removes certificate objects whose label (column a3) starts
+// with the given prefix AND every trust object whose CKA_ISSUER +
+// CKA_SERIAL_NUMBER pair matches one of those certificates.
+//
+// Trust objects carry no label (CKA_LABEL is explicit-null per the NSS
+// on-disk format), so a label-prefix match alone leaves the trust objects
+// behind. NSS later picks one of the stale trust objects when looking up
+// trust for a re-added certificate, and the corresponding HMAC signatures
+// from the previous run no longer validate — the cert then shows ",,"
+// trust flags despite a fresh, valid trust object also existing in the
+// database. Re-syncing the same certificate set repeatedly compounds the
+// problem: every sync layered another stale trust object on top.
+//
+// Associated key4.db HMAC signatures are removed for every deleted object,
+// both certificate IDs and trust IDs.
 func (w *Writer) RemoveByPrefix(prefix string) error {
 	if w.closed {
 		return ErrWriterClosed
@@ -276,9 +288,11 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 		return ErrEmptyPrefix
 	}
 
-	// Find object IDs to remove so we can clean up key4.db signatures too.
+	// Capture (id, issuer, serial) for every certificate matching the label
+	// prefix. The issuer+serial pairs are what links a trust object to its
+	// certificate in NSS.
 	rows, err := w.certDB.Query(
-		"SELECT id FROM nssPublic WHERE typeof(a3) = 'blob' AND CAST(a3 AS TEXT) LIKE ?",
+		"SELECT id, a81, a82 FROM nssPublic WHERE typeof(a3) = 'blob' AND CAST(a3 AS TEXT) LIKE ?",
 		prefix+"%",
 	)
 	if err != nil {
@@ -286,26 +300,65 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 	}
 	defer rows.Close()
 
-	var ids []int64
+	type certRef struct {
+		id     int64
+		issuer []byte
+		serial []byte
+	}
+	var certs []certRef
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var c certRef
+		if err := rows.Scan(&c.id, &c.issuer, &c.serial); err != nil {
 			return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
 		}
-		ids = append(ids, id)
+		certs = append(certs, c)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
 	}
 
-	if len(ids) == 0 {
+	if len(certs) == 0 {
 		return nil
 	}
 
-	// Delete from cert9.db.
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
+	// Find every trust object whose issuer+serial match any of the certs we
+	// are about to remove. There may be more than one per cert if previous
+	// syncs left stale entries behind.
+	var trustIDs []int64
+	for _, c := range certs {
+		tRows, err := w.certDB.Query(
+			"SELECT id FROM nssPublic WHERE hex(a0) = ? AND a81 = ? AND a82 = ?",
+			"CE534353", c.issuer, c.serial,
+		)
+		if err != nil {
+			return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
+		}
+		for tRows.Next() {
+			var id int64
+			if err := tRows.Scan(&id); err != nil {
+				tRows.Close()
+				return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
+			}
+			trustIDs = append(trustIDs, id)
+		}
+		if err := tRows.Err(); err != nil {
+			tRows.Close()
+			return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
+		}
+		tRows.Close()
+	}
+
+	// Gather all IDs to delete (certs + trust objects) and run a single
+	// DELETE.
+	allIDs := make([]int64, 0, len(certs)+len(trustIDs))
+	for _, c := range certs {
+		allIDs = append(allIDs, c.id)
+	}
+	allIDs = append(allIDs, trustIDs...)
+
+	placeholders := make([]string, len(allIDs))
+	args := make([]any, len(allIDs))
+	for i, id := range allIDs {
 		placeholders[i] = "?"
 		args[i] = id
 	}
@@ -314,8 +367,8 @@ func (w *Writer) RemoveByPrefix(prefix string) error {
 		return fmt.Errorf("%w: %s", ErrRemoveCertificate, err)
 	}
 
-	// Delete trust signatures from key4.db metaData.
-	for _, id := range ids {
+	// Drop HMAC signatures for every removed object.
+	for _, id := range allIDs {
 		sigPrefix := fmt.Sprintf("sig_cert_%x_%%", id)
 		if _, err := w.keyDB.Exec("DELETE FROM metaData WHERE id LIKE ?", sigPrefix); err != nil {
 			return fmt.Errorf("%w: %s", ErrRemoveTrust, err)
@@ -556,20 +609,31 @@ func buildPBES2PasswordEntry(intermediateKey []byte) ([]byte, error) {
 }
 
 // writeTrustSignatures writes a PBMAC1 signature into key4.db metaData for
-// each non-null attribute on the trust object.
+// the trust attributes NSS verifies on a trust object. NSS only checks the
+// CKA_TRUST_* and CKA_CERT_*_HASH attribute signatures; signing the
+// structural attributes (CLASS/TOKEN/PRIVATE/LABEL/ISSUER/SERIAL/OVERRIDE)
+// just adds noise to metaData. We match what certutil writes.
 func (w *Writer) writeTrustSignatures(trustID int64, attrs map[string][]byte) error {
 	for attrName, attrValue := range attrs {
 		attrType, err := parseAttrHex(attrName)
 		if err != nil {
-			continue // skip attributes that don't parse as hex (shouldn't happen)
+			continue
+		}
+		if !nssSignsAttribute(attrType) {
+			continue
 		}
 
-		sigBlob, err := w.buildPBMAC1Signature(attrType, attrValue)
+		sigBlob, err := w.buildPBMAC1Signature(uint32(trustID), attrType, attrValue)
 		if err != nil {
 			return err
 		}
 
-		sigID := fmt.Sprintf("sig_cert_%x_%s", trustID, attrName)
+		// NSS expects sig IDs of the form sig_cert_<trustID-hex>_<attrType-hex>.
+		// The attribute portion must be the bare PKCS#11 attribute ID — no
+		// "a" SQLite column-name prefix. If the prefix is present NSS
+		// silently ignores the signature, treats the trust attribute as
+		// untrusted, and certutil -L shows the cert with ",," trust flags.
+		sigID := fmt.Sprintf("sig_cert_%x_%x", trustID, attrType)
 		_, err = w.keyDB.Exec(
 			"INSERT OR REPLACE INTO metaData (id, item1, item2) VALUES (?, ?, NULL)",
 			sigID, sigBlob,
@@ -581,8 +645,26 @@ func (w *Writer) writeTrustSignatures(trustID int64, attrs map[string][]byte) er
 	return nil
 }
 
-// buildPBMAC1Signature creates the ASN.1 PBMAC1 blob for a single attribute.
-func (w *Writer) buildPBMAC1Signature(attrType uint32, attrValue []byte) ([]byte, error) {
+// nssSignsAttribute reports whether NSS expects a HMAC signature for the
+// given PKCS#11 attribute type on a trust object. NSS validates only the
+// trust-bearing attributes; structural attributes are not signed.
+func nssSignsAttribute(attrType uint32) bool {
+	switch attrType {
+	case 0xCE536358, // CKA_TRUST_SERVER_AUTH
+		0xCE536359, // CKA_TRUST_CLIENT_AUTH
+		0xCE53635A, // CKA_TRUST_CODE_SIGNING
+		0xCE53635B, // CKA_TRUST_EMAIL_PROTECTION
+		0xCE536360, // CKA_TRUST_STEP_UP_APPROVED
+		0xCE5363B4, // CKA_CERT_SHA1_HASH
+		0xCE5363B5: // CKA_CERT_MD5_HASH
+		return true
+	}
+	return false
+}
+
+// buildPBMAC1Signature creates the ASN.1 PBMAC1 blob for one attribute on
+// the trust object identified by objectID.
+func (w *Writer) buildPBMAC1Signature(objectID, attrType uint32, attrValue []byte) ([]byte, error) {
 	salt := make([]byte, 32)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, err
@@ -590,10 +672,7 @@ func (w *Writer) buildPBMAC1Signature(attrType uint32, attrValue []byte) ([]byte
 
 	sigKey := pbkdf2.Key(w.intermediateKey, salt, 1, 32, sha256.New)
 
-	// Build the data to sign:
-	// encode(0_as_ulong) + encode(attrType_as_ulong) + attrValue
-	// where encode(x) = len(x) as 4-byte BE + x
-	data := encodeSignatureData(attrType, attrValue)
+	data := encodeSignatureData(objectID, attrType, attrValue)
 
 	mac := hmac.New(sha256.New, sigKey)
 	mac.Write(data)
@@ -603,31 +682,25 @@ func (w *Writer) buildPBMAC1Signature(attrType uint32, attrValue []byte) ([]byte
 }
 
 // encodeSignatureData builds the HMAC input for a trust attribute signature.
-// Format: encode(0_as_ulong_4bytes) + encode(attrType_as_ulong_4bytes) + attrValue
-// where encode(piece) = len(piece) as 4-byte big-endian + piece.
-func encodeSignatureData(attrType uint32, attrValue []byte) []byte {
-	zeroULONG := encodeUint32(0)
-	typeULONG := encodeUint32(attrType)
-
-	// encode(zeroULONG): 4-byte length + 4-byte value
-	// encode(typeULONG): 4-byte length + 4-byte value
-	// attrValue: raw bytes
-	totalLen := 4 + len(zeroULONG) + 4 + len(typeULONG) + len(attrValue)
-	buf := make([]byte, 0, totalLen)
-
-	buf = appendEncoded(buf, zeroULONG)
-	buf = appendEncoded(buf, typeULONG)
+// NSS (lib/softoken/sftkdb.c sftkdb_HMACSDB) concatenates raw big-endian
+// values with no length prefixes:
+//
+//	objectID  (CK_OBJECT_HANDLE, uint32 BE) ||
+//	attrType  (CK_ATTRIBUTE_TYPE, uint32 BE) ||
+//	attrValue (raw bytes)
+//
+// The earlier xkey writer substituted 0 for objectID and wrapped each
+// ulong in a 4-byte length prefix; the resulting HMAC didn't validate so
+// NSS treated every trust attribute as untrusted.
+func encodeSignatureData(objectID, attrType uint32, attrValue []byte) []byte {
+	buf := make([]byte, 0, 8+len(attrValue))
+	objBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(objBuf, objectID)
+	typeBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(typeBuf, attrType)
+	buf = append(buf, objBuf...)
+	buf = append(buf, typeBuf...)
 	buf = append(buf, attrValue...)
-
-	return buf
-}
-
-// appendEncoded appends len(data) as 4-byte big-endian followed by data.
-func appendEncoded(buf, data []byte) []byte {
-	lenBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lenBuf, uint32(len(data)))
-	buf = append(buf, lenBuf...)
-	buf = append(buf, data...)
 	return buf
 }
 

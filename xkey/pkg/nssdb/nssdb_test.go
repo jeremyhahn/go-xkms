@@ -27,6 +27,8 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,12 +316,44 @@ func TestRemoveByPrefix(t *testing.T) {
 	err = w.RemoveByPrefix("xkey-remove")
 	require.NoError(t, err)
 
-	// The certificate object has a matching label, so it should be removed.
-	// The trust object has explicit-null as label, so it won't match the prefix.
-	err = w.certDB.QueryRow("SELECT COUNT(*) FROM nssPublic WHERE a0 = ?",
-		encodeUint32(ckoCertificate)).Scan(&count)
+	// Both the certificate object and its trust object must be removed.
+	// Trust objects carry no label (CKA_LABEL is explicit-null) so a
+	// label-only match leaves them behind; the implementation needs to
+	// also delete trust objects whose CKA_ISSUER + CKA_SERIAL_NUMBER
+	// match the certificate being removed. Without this, every re-sync
+	// adds a duplicate trust object on top of the previous one and NSS
+	// eventually picks one whose HMAC signatures no longer validate.
+	err = w.certDB.QueryRow("SELECT COUNT(*) FROM nssPublic").Scan(&count)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count, "certificate objects should be removed")
+	assert.Equal(t, 0, count, "both certificate and trust objects must be removed")
+}
+
+func TestRemoveByPrefixCleansStaleTrustObjects(t *testing.T) {
+	// Simulate the sync-and-replace pattern: add a cert, then add the
+	// SAME cert again with the same label. Without proper trust-object
+	// cleanup the second AddTrustedCA leaves a stale trust object behind.
+	dir := t.TempDir()
+	w, err := NewWriter(dir)
+	require.NoError(t, err)
+	defer w.Close()
+
+	cert := testCA(t)
+	const label = "xkey-stale-test"
+
+	require.NoError(t, w.AddTrustedCA(cert, label))
+	require.NoError(t, w.RemoveByPrefix("xkey-"))
+	require.NoError(t, w.AddTrustedCA(cert, label))
+	require.NoError(t, w.RemoveByPrefix("xkey-"))
+	require.NoError(t, w.AddTrustedCA(cert, label))
+
+	// After three add/remove cycles + a final add, exactly one cert + one
+	// trust object should remain. Anything else means stale trust objects
+	// are accumulating.
+	var certCount, trustCount int
+	require.NoError(t, w.certDB.QueryRow("SELECT COUNT(*) FROM nssPublic WHERE hex(a0) = '00000001'").Scan(&certCount))
+	require.NoError(t, w.certDB.QueryRow("SELECT COUNT(*) FROM nssPublic WHERE hex(a0) = 'CE534353'").Scan(&trustCount))
+	assert.Equal(t, 1, certCount, "exactly one cert object should remain")
+	assert.Equal(t, 1, trustCount, "exactly one trust object should remain (no stale duplicates)")
 }
 
 func TestRemoveByPrefixEmptyPrefix(t *testing.T) {
@@ -549,46 +583,32 @@ func TestPkcs7Pad(t *testing.T) {
 }
 
 func TestEncodeSignatureData(t *testing.T) {
-	attrType := uint32(0x81)
-	attrValue := []byte("test-value")
+	// NSS HMAC input format (from softoken/sftkdb.c sftkdb_HMACSDB):
+	// 4-byte objectID BE || 4-byte attrType BE || raw attrValue (no length
+	// prefixes anywhere). Any deviation makes NSS reject the signature.
+	objectID := uint32(0x2A08EEB1)
+	attrType := uint32(0xCE536358)
+	attrValue := []byte{0xCE, 0x53, 0x43, 0x52}
 
-	data := encodeSignatureData(attrType, attrValue)
+	data := encodeSignatureData(objectID, attrType, attrValue)
 
-	// Parse the encoded data:
-	// 4-byte len + 4-byte zero ULONG + 4-byte len + 4-byte type ULONG + attrValue
-	offset := 0
-
-	// First piece: encode(0 as ULONG)
-	pieceLen := binary.BigEndian.Uint32(data[offset : offset+4])
-	offset += 4
-	assert.Equal(t, uint32(4), pieceLen)
-	assert.Equal(t, uint32(0), binary.BigEndian.Uint32(data[offset:offset+4]))
-	offset += 4
-
-	// Second piece: encode(attrType as ULONG)
-	pieceLen = binary.BigEndian.Uint32(data[offset : offset+4])
-	offset += 4
-	assert.Equal(t, uint32(4), pieceLen)
-	assert.Equal(t, attrType, binary.BigEndian.Uint32(data[offset:offset+4]))
-	offset += 4
-
-	// Remaining: raw attrValue
-	assert.Equal(t, attrValue, data[offset:])
+	require.Len(t, data, 4+4+len(attrValue))
+	assert.Equal(t, objectID, binary.BigEndian.Uint32(data[0:4]))
+	assert.Equal(t, attrType, binary.BigEndian.Uint32(data[4:8]))
+	assert.Equal(t, attrValue, data[8:])
 }
 
-func TestAppendEncoded(t *testing.T) {
-	data := []byte{0xDE, 0xAD}
-	result := appendEncoded(nil, data)
-
-	assert.Len(t, result, 6)
-	assert.Equal(t, uint32(2), binary.BigEndian.Uint32(result[0:4]))
-	assert.Equal(t, data, result[4:6])
-}
-
-func TestAppendEncodedEmpty(t *testing.T) {
-	result := appendEncoded(nil, nil)
-	assert.Len(t, result, 4)
-	assert.Equal(t, uint32(0), binary.BigEndian.Uint32(result[0:4]))
+func TestNSSSignsAttribute(t *testing.T) {
+	signed := []uint32{
+		0xCE536358, 0xCE536359, 0xCE53635A, 0xCE53635B,
+		0xCE536360, 0xCE5363B4, 0xCE5363B5,
+	}
+	for _, a := range signed {
+		assert.True(t, nssSignsAttribute(a), "%#x should be signed", a)
+	}
+	for _, a := range []uint32{0, 0x1, 0x2, 0x3, 0x81, 0x82, 0x170, 0x11, 0xCE534353} {
+		assert.False(t, nssSignsAttribute(a), "%#x should not be signed", a)
+	}
 }
 
 // --- ASN.1 structure tests ---
@@ -808,17 +828,27 @@ func TestTrustSignaturesInKey4DB(t *testing.T) {
 	).Scan(&sigCount)
 	require.NoError(t, err)
 
-	// Trust object has 14 attributes, each should have a PBMAC1 signature.
-	assert.Equal(t, 14, sigCount, "each trust attribute should have a PBMAC1 signature")
+	// NSS only verifies CKA_TRUST_* and CKA_CERT_*_HASH signatures on a
+	// trust object — 7 attributes. Signing the structural attributes
+	// (CLASS/TOKEN/PRIVATE/LABEL/ISSUER/SERIAL/OVERRIDE_EXTENSIONS) is
+	// unnecessary noise; certutil-created trust objects only carry the 7
+	// signed attributes.
+	assert.Equal(t, 7, sigCount, "only NSS-verified trust attributes should have PBMAC1 signatures")
 
-	// Verify each signature is valid ASN.1.
-	rows, err := w.keyDB.Query("SELECT item1 FROM metaData WHERE id LIKE 'sig_cert_%'")
+	// Verify each signature is valid ASN.1 and that the sig ID matches the
+	// format NSS expects: sig_cert_<trustID-hex>_<attrType-hex>. The attr
+	// portion must NOT carry the "a" SQLite column-name prefix — NSS looks
+	// up sigs by raw PKCS#11 attribute type, so a leading "a" makes NSS
+	// silently ignore the sig and the trust attribute is treated as
+	// untrusted.
+	rows, err := w.keyDB.Query("SELECT id, item1 FROM metaData WHERE id LIKE 'sig_cert_%'")
 	require.NoError(t, err)
 	defer rows.Close()
 
 	for rows.Next() {
+		var id string
 		var item1 []byte
-		require.NoError(t, rows.Scan(&item1))
+		require.NoError(t, rows.Scan(&id, &item1))
 		assert.Greater(t, len(item1), 0, "signature blob should not be empty")
 
 		// Verify it's valid ASN.1.
@@ -826,6 +856,18 @@ func TestTrustSignaturesInKey4DB(t *testing.T) {
 		rest, err := asn1.Unmarshal(item1, &outer)
 		assert.NoError(t, err, "signature should be valid ASN.1")
 		assert.Empty(t, rest)
+
+		// Verify sig ID format: sig_cert_<hex>_<hex> with no "a" prefix on
+		// the attribute portion.
+		parts := strings.SplitN(id, "_", 4)
+		require.Len(t, parts, 4, "sig ID %q must split into 4 underscore parts", id)
+		assert.Equal(t, "sig", parts[0])
+		assert.Equal(t, "cert", parts[1])
+		_, err = strconv.ParseUint(parts[2], 16, 64)
+		assert.NoError(t, err, "trust ID portion of %q must be hex", id)
+		assert.NotEqual(t, byte('a'), parts[3][0], "attr portion of %q must not start with column-name 'a' prefix", id)
+		_, err = strconv.ParseUint(parts[3], 16, 32)
+		assert.NoError(t, err, "attr portion of %q must be hex", id)
 	}
 	require.NoError(t, rows.Err())
 }
