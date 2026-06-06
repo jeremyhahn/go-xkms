@@ -45,14 +45,19 @@ var validStrategies = map[string]bool{
 	"gcp_kms":      true,
 	"azure_kv":     true,
 	"vault":        true,
-	"software":     true,
+	// "passphrase" is the canonical name for password/software-derived sealing
+	// (aligns with the seal layer's StrategyPassphrase and qrdb's naming).
+	"passphrase": true,
+	// "software" is retained as a backward-compatible alias for "passphrase".
+	"software": true,
 }
 
 // Config holds credential service configuration.
 type Config struct {
 	// Strategy determines how backend credentials are sealed at rest.
 	// Valid values: "manual", "barrier", "tpm2", "pkcs11", "aws_kms",
-	// "gcp_kms", "azure_kv", "vault", "software"
+	// "gcp_kms", "azure_kv", "vault", "passphrase" ("software" is a
+	// backward-compatible alias for "passphrase").
 	// Default: "manual" -- operator enters credentials at each startup.
 	Strategy string
 }

@@ -5,9 +5,13 @@ services:
       dockerfile: test/integration/pkcs8/Dockerfile
     volumes:
       - ../../..:/app
-      # Sibling module mounts (for go.mod replace directives)
+      # In-house module closure, resolved via /tmp/go.work (see ensure-gowork.sh)
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
+      - ../../../../go-objstore:/go-objstore:cached
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
     working_dir: /app
 
 networks:

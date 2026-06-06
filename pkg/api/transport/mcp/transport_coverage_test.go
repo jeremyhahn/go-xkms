@@ -503,71 +503,6 @@ func TestCanSeal_Connected(t *testing.T) {
 	assert.True(t, resp.CanSeal)
 }
 
-// --- User Service ---
-
-func TestListUsers_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	resp, err := tr.ListUsers(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestGetUser_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	resp, err := tr.GetUser(context.Background(), "admin")
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestDeleteUser_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	err := tr.DeleteUser(context.Background(), "admin")
-	assert.NoError(t, err)
-}
-
-func TestEnableUser_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	err := tr.EnableUser(context.Background(), "admin")
-	assert.NoError(t, err)
-}
-
-func TestDisableUser_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	err := tr.DisableUser(context.Background(), "admin")
-	assert.NoError(t, err)
-}
-
-func TestListUserCredentials_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	resp, err := tr.ListUserCredentials(context.Background(), "admin")
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
 // --- WebAuthn (not supported) ---
 
 func TestBeginRegistration_NotSupported(t *testing.T) {
@@ -888,47 +823,6 @@ func TestBarrierUnsealWithShares_Connected(t *testing.T) {
 	defer tr.Close()
 
 	err := tr.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{})
-	assert.NoError(t, err)
-}
-
-func TestBarrierShamirListShares_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	resp, err := tr.BarrierShamirListShares(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestBarrierShamirDeleteShare_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	err := tr.BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{Index: 0})
-	assert.NoError(t, err)
-}
-
-func TestBarrierShamirDeleteAllShares_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	err := tr.BarrierShamirDeleteAllShares(context.Background())
-	assert.NoError(t, err)
-}
-
-func TestBarrierShamirVerify_Connected(t *testing.T) {
-	addr, cleanup := newCatchAllMCPServer(t)
-	defer cleanup()
-	tr := connectToMockServer(t, addr)
-	defer tr.Close()
-
-	err := tr.BarrierShamirVerify(context.Background())
 	assert.NoError(t, err)
 }
 

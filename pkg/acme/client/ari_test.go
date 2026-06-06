@@ -27,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
@@ -729,7 +728,7 @@ func (m *mockARIAccountDAO) Save(_ context.Context, _ *entities.ACMEAccount) err
 	return nil
 }
 
-func (m *mockARIAccountDAO) SaveWithCondition(_ context.Context, _ *entities.ACMEAccount, _ qrdbdao.Condition) error {
+func (m *mockARIAccountDAO) SaveWithCondition(_ context.Context, _ *entities.ACMEAccount, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -749,7 +748,7 @@ func (m *mockARIAccountDAO) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsd
 	panic("not implemented")
 }
 
-func (m *mockARIAccountDAO) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbdao.PagerFunc[*entities.ACMEAccount]) error {
+func (m *mockARIAccountDAO) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbsdk.PagerFunc[*entities.ACMEAccount]) error {
 	panic("not implemented")
 }
 
@@ -785,7 +784,7 @@ func (m *mockARIAccountDAO) CountByIndex(_ context.Context, _ string, _ interfac
 	panic("not implemented")
 }
 
-func (m *mockARIAccountDAO) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ACMEAccount] {
+func (m *mockARIAccountDAO) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ACMEAccount] {
 	panic("not implemented")
 }
 

@@ -455,7 +455,6 @@ func TestNew_Success(t *testing.T) {
 	assert.NotEmpty(t, server.backends)
 	assert.NotEmpty(t, server.backends)
 	assert.NotNil(t, server.healthChecker)
-	assert.NotNil(t, server.userStore)
 	assert.NotNil(t, server.authenticator)
 	assert.NotNil(t, server.ctx)
 	assert.NotNil(t, server.cancel)

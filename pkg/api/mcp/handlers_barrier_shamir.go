@@ -65,11 +65,6 @@ type BarrierRecoverWithKeysParams struct {
 	Keys []string `json:"keys"`
 }
 
-// BarrierShamirDeleteShareParams represents parameters for deleting a single share.
-type BarrierShamirDeleteShareParams struct {
-	Index int `json:"index"`
-}
-
 // BarrierGenerateRootTokenParams represents parameters for root token generation.
 type BarrierGenerateRootTokenParams struct {
 	Shares []string `json:"shares"`
@@ -271,105 +266,6 @@ func (s *Server) handleBarrierRekey(ctx context.Context, req *JSONRPCRequest) (i
 		"shares":       result.Shares,
 		"threshold":    result.Threshold,
 		"total_shares": result.TotalShares,
-	}, nil
-}
-
-// handleBarrierShamirListShares handles the barrier.shamirListShares method.
-// It returns information about the shares stored in the Shamir strategy.
-func (s *Server) handleBarrierShamirListShares(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, ErrBarrierNotConfigured
-	}
-
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return nil, ErrBarrierShamirNotConfigured
-	}
-
-	count, err := shamirStrat.ShareCount(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"count":     count,
-		"threshold": shamirStrat.Threshold(),
-		"total":     shamirStrat.TotalShares(),
-	}, nil
-}
-
-// handleBarrierShamirDeleteShare handles the barrier.shamirDeleteShare method.
-// It deletes a single share by index from the Shamir strategy storage.
-func (s *Server) handleBarrierShamirDeleteShare(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, ErrBarrierNotConfigured
-	}
-
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return nil, ErrBarrierShamirNotConfigured
-	}
-
-	var params BarrierShamirDeleteShareParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
-	}
-
-	if params.Index < 1 {
-		return nil, ErrBarrierShareIndexInvalid
-	}
-
-	if err := shamirStrat.DeleteShare(ctx, params.Index); err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"success": true,
-		"message": fmt.Sprintf("share %d deleted", params.Index),
-	}, nil
-}
-
-// handleBarrierShamirDeleteAllShares handles the barrier.shamirDeleteAllShares method.
-// It deletes all shares from the Shamir strategy storage.
-func (s *Server) handleBarrierShamirDeleteAllShares(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, ErrBarrierNotConfigured
-	}
-
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return nil, ErrBarrierShamirNotConfigured
-	}
-
-	if err := shamirStrat.DeleteAllShares(ctx); err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"success": true,
-		"message": "all shares deleted",
-	}, nil
-}
-
-// handleBarrierShamirVerify handles the barrier.shamirVerify method.
-// It verifies the integrity and consistency of all stored shares.
-func (s *Server) handleBarrierShamirVerify(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
-	if s.barrier == nil {
-		return nil, ErrBarrierNotConfigured
-	}
-
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return nil, ErrBarrierShamirNotConfigured
-	}
-
-	if err := shamirStrat.VerifyShares(ctx); err != nil {
-		return nil, err
-	}
-
-	return map[string]interface{}{
-		"success": true,
-		"message": "shares verified successfully",
 	}, nil
 }
 

@@ -386,41 +386,6 @@ func createTestCertWithOCSP(t *testing.T, ocspURL string) (*x509.Certificate, *e
 	return cert, key
 }
 
-// createIssuerCert creates a CA certificate for issuing test certs
-func createIssuerCert(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
-	t.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("failed to generate key: %v", err)
-	}
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName:   "Test Issuer CA",
-			Organization: []string{"Test Org"},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-	}
-
-	certBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		t.Fatalf("failed to create certificate: %v", err)
-	}
-
-	cert, err := x509.ParseCertificate(certBytes)
-	if err != nil {
-		t.Fatalf("failed to parse certificate: %v", err)
-	}
-
-	return cert, key
-}
-
 // TestGetOCSPStandalone tests the standalone GetOCSP function
 func TestGetOCSPStandalone(t *testing.T) {
 	t.Run("nil certificate", func(t *testing.T) {

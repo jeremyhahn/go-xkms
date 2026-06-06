@@ -23,8 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // FIDO2 type aliases to avoid circular imports
@@ -104,7 +103,7 @@ func (p *Printer) PrintBackendList(backends []string) error {
 }
 
 // PrintBackendInfo prints detailed backend information
-func (p *Printer) PrintBackendInfo(backendName string, caps types.Capabilities) error {
+func (p *Printer) PrintBackendInfo(backendName string, caps client.Capabilities) error {
 	switch p.format {
 	case OutputFormatJSON:
 		return p.printJSON(map[string]interface{}{
@@ -132,7 +131,7 @@ func (p *Printer) PrintBackendInfo(backendName string, caps types.Capabilities) 
 }
 
 // PrintKeyList prints a list of keys
-func (p *Printer) PrintKeyList(keys []*types.KeyAttributes) error {
+func (p *Printer) PrintKeyList(keys []*client.KeyAttributes) error {
 	switch p.format {
 	case OutputFormatJSON:
 		keyList := make([]map[string]interface{}, len(keys))
@@ -175,7 +174,7 @@ func (p *Printer) PrintKeyList(keys []*types.KeyAttributes) error {
 }
 
 // PrintKeyInfo prints detailed key information
-func (p *Printer) PrintKeyInfo(key *types.KeyAttributes) error {
+func (p *Printer) PrintKeyInfo(key *client.KeyAttributes) error {
 	switch p.format {
 	case OutputFormatJSON:
 		info := map[string]interface{}{
@@ -280,7 +279,7 @@ func (p *Printer) PrintDecryptedData(plaintext string) error {
 }
 
 // PrintEncryptedData prints encrypted data (ciphertext, nonce, tag all base64 encoded)
-func (p *Printer) PrintEncryptedData(data *types.EncryptedData) error {
+func (p *Printer) PrintEncryptedData(data *client.EncryptedData) error {
 	switch p.format {
 	case OutputFormatJSON:
 		return p.printJSON(map[string]interface{}{
@@ -480,7 +479,7 @@ func (p *Printer) PrintTLSCertificate(key interface{}, cert *x509.Certificate, c
 }
 
 // PrintImportParameters prints import parameters
-func (p *Printer) PrintImportParameters(params *backend.ImportParameters) error {
+func (p *Printer) PrintImportParameters(params *client.ImportParameters) error {
 	switch p.format {
 	case OutputFormatJSON:
 		// For JSON, we need to handle the crypto.PublicKey specially

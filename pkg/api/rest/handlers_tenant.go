@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Typed errors for tenant handlers.
@@ -31,6 +32,18 @@ var (
 	ErrMissingTenantID     = errors.New("missing tenant_id")
 	ErrMissingTenantName   = errors.New("missing tenant name")
 )
+
+// isCrossTenantAccess reports whether the given identity is attempting to act
+// on a tenant other than its own. A nil identity, a system-level identity
+// (empty TenantID), a request scoped to no tenant, and same-tenant access all
+// return false; only a tenant-scoped identity targeting a different tenant is
+// cross-tenant.
+func isCrossTenantAccess(identity *auth.Identity, tenantID string) bool {
+	if identity == nil || identity.TenantID == "" || tenantID == "" {
+		return false
+	}
+	return identity.TenantID != tenantID
+}
 
 // createTenantRequest represents a request to register a new tenant.
 type createTenantRequest struct {
@@ -67,9 +80,14 @@ type tenantBarrierStatusResponse struct {
 }
 
 // tenantBarrierInitRequest represents a request to initialize a tenant barrier.
+// Passphrase carries the tenant admin's caller-supplied secret; the server
+// never generates it (§3.6). Strategy selects the seal strategy (empty means
+// the passphrase strategy).
 type tenantBarrierInitRequest struct {
-	Threshold int `json:"threshold,omitempty"`
-	Shares    int `json:"shares,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+	Strategy   string `json:"strategy,omitempty"`
+	Threshold  int    `json:"threshold,omitempty"`
+	Shares     int    `json:"shares,omitempty"`
 }
 
 // tenantBarrierUnsealRequest represents a request to unseal a tenant barrier.
@@ -314,8 +332,21 @@ func (h *TenantHandlers) TenantBarrierInitHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	creds := seal.Credentials{Secret: "tenant-init"}
-	if err := h.registry.InitializeTenant(r.Context(), tenantID, creds); err != nil {
+	// Route through the service layer so the §3.6 invariant (the server never
+	// generates a tenant secret) is enforced in exactly one place. The
+	// passphrase is taken verbatim from the caller's request.
+	svc, err := xkms.Get()
+	if err != nil {
+		writeError(w, err, http.StatusServiceUnavailable)
+		return
+	}
+	if err := svc.TenantBarrierInit(r.Context(), &transport.TenantBarrierInitRequest{
+		TenantID:   tenantID,
+		Passphrase: req.Passphrase,
+		Strategy:   req.Strategy,
+		Threshold:  req.Threshold,
+		Shares:     req.Shares,
+	}); err != nil {
 		handleTenantError(w, err)
 		return
 	}
@@ -365,8 +396,19 @@ func (h *TenantHandlers) TenantBarrierUnsealHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	creds := seal.Credentials{Secret: string(req.Key)}
-	if err := h.registry.UnsealTenant(r.Context(), tenantID, creds); err != nil {
+	// Route through the service layer; the unseal credentials are taken
+	// verbatim from the caller's request (Key for passphrase strategies, Share
+	// for shamir). The server holds no tenant secret of its own.
+	svc, err := xkms.Get()
+	if err != nil {
+		writeError(w, err, http.StatusServiceUnavailable)
+		return
+	}
+	if err := svc.TenantBarrierUnseal(r.Context(), &transport.TenantBarrierUnsealRequest{
+		TenantID: tenantID,
+		Key:      req.Key,
+		Share:    req.Share,
+	}); err != nil {
 		handleTenantError(w, err)
 		return
 	}

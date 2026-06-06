@@ -217,19 +217,12 @@ func (b *Backend) ImportKey(attrs *types.KeyAttributes, wrapped *backend.Wrapped
 		b.p11ctx = p
 	}
 
-	// Get token slot
-	slots, err := b.p11ctx.GetSlotList(true)
+	// Resolve the token slot by configured Slot/TokenLabel. Using slots[0]
+	// directly breaks when more than one token is present in the same
+	// SoftHSM/HSM (the wrong token — hence the wrong PIN — would be selected).
+	slot, err := b.resolveSlot()
 	if err != nil {
-		return fmt.Errorf("failed to get slot list: %w", err)
-	}
-
-	if len(slots) == 0 {
-		return ErrTokenNotFound
-	}
-
-	slot := slots[0]
-	if b.config.Slot != nil {
-		slot = uint(*b.config.Slot)
+		return err
 	}
 
 	// Open session
@@ -558,19 +551,12 @@ func (b *Backend) ExportKey(attrs *types.KeyAttributes, algorithm backend.Wrappi
 		b.p11ctx = p
 	}
 
-	// Get token slot
-	slots, err := b.p11ctx.GetSlotList(true)
+	// Resolve the token slot by configured Slot/TokenLabel. Using slots[0]
+	// directly breaks when more than one token is present in the same
+	// SoftHSM/HSM (the wrong token — hence the wrong PIN — would be selected).
+	slot, err := b.resolveSlot()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get slot list: %w", err)
-	}
-
-	if len(slots) == 0 {
-		return nil, ErrTokenNotFound
-	}
-
-	slot := slots[0]
-	if b.config.Slot != nil {
-		slot = uint(*b.config.Slot)
+		return nil, err
 	}
 
 	// Open session
@@ -769,19 +755,12 @@ func (b *Backend) ExportKeyMaterial(attrs *types.KeyAttributes) ([]byte, error) 
 		return nil, fmt.Errorf("PKCS#11 context not initialized for export operations")
 	}
 
-	// Get token slot
-	slots, err := b.p11ctx.GetSlotList(true)
+	// Resolve the token slot by configured Slot/TokenLabel. Using slots[0]
+	// directly breaks when more than one token is present in the same
+	// SoftHSM/HSM (the wrong token — hence the wrong PIN — would be selected).
+	slot, err := b.resolveSlot()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get slot list: %w", err)
-	}
-
-	if len(slots) == 0 {
-		return nil, ErrTokenNotFound
-	}
-
-	slot := slots[0]
-	if b.config.Slot != nil {
-		slot = uint(*b.config.Slot)
+		return nil, err
 	}
 
 	// Open session

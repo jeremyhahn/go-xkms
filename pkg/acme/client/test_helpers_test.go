@@ -29,7 +29,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 )
 
@@ -59,7 +58,7 @@ func (m *mockStorage) Save(_ context.Context, account *entities.ACMEAccount) err
 	return nil
 }
 
-func (m *mockStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEAccount, _ qrdbdao.Condition) error {
+func (m *mockStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEAccount, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -83,7 +82,7 @@ func (m *mockStorage) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsdk.Page
 	panic("not implemented")
 }
 
-func (m *mockStorage) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbdao.PagerFunc[*entities.ACMEAccount]) error {
+func (m *mockStorage) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbsdk.PagerFunc[*entities.ACMEAccount]) error {
 	panic("not implemented")
 }
 
@@ -119,7 +118,7 @@ func (m *mockStorage) CountByIndex(_ context.Context, _ string, _ interface{}) (
 	panic("not implemented")
 }
 
-func (m *mockStorage) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ACMEAccount] {
+func (m *mockStorage) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ACMEAccount] {
 	panic("not implemented")
 }
 
@@ -139,7 +138,7 @@ func (m *mockCertStorage) Save(_ context.Context, cert *entities.ACMECertificate
 	return nil
 }
 
-func (m *mockCertStorage) SaveWithCondition(_ context.Context, _ *entities.ACMECertificate, _ qrdbdao.Condition) error {
+func (m *mockCertStorage) SaveWithCondition(_ context.Context, _ *entities.ACMECertificate, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -162,7 +161,7 @@ func (m *mockCertStorage) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsdk.
 	panic("not implemented")
 }
 
-func (m *mockCertStorage) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbdao.PagerFunc[*entities.ACMECertificate]) error {
+func (m *mockCertStorage) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbsdk.PagerFunc[*entities.ACMECertificate]) error {
 	panic("not implemented")
 }
 
@@ -198,7 +197,7 @@ func (m *mockCertStorage) CountByIndex(_ context.Context, _ string, _ interface{
 	panic("not implemented")
 }
 
-func (m *mockCertStorage) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ACMECertificate] {
+func (m *mockCertStorage) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ACMECertificate] {
 	panic("not implemented")
 }
 
@@ -218,7 +217,7 @@ func (m *mockOrderStorage) Save(_ context.Context, order *entities.ACMEOrder) er
 	return nil
 }
 
-func (m *mockOrderStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEOrder, _ qrdbdao.Condition) error {
+func (m *mockOrderStorage) SaveWithCondition(_ context.Context, _ *entities.ACMEOrder, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -241,7 +240,7 @@ func (m *mockOrderStorage) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsdk
 	panic("not implemented")
 }
 
-func (m *mockOrderStorage) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbdao.PagerFunc[*entities.ACMEOrder]) error {
+func (m *mockOrderStorage) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbsdk.PagerFunc[*entities.ACMEOrder]) error {
 	panic("not implemented")
 }
 
@@ -277,7 +276,7 @@ func (m *mockOrderStorage) CountByIndex(_ context.Context, _ string, _ interface
 	panic("not implemented")
 }
 
-func (m *mockOrderStorage) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ACMEOrder] {
+func (m *mockOrderStorage) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ACMEOrder] {
 	panic("not implemented")
 }
 

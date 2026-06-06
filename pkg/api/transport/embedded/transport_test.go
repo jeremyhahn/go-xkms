@@ -278,48 +278,6 @@ func (m *mockService) CanSeal(_ context.Context, _ string) (*transport.CanSealRe
 	return &transport.CanSealResponse{CanSeal: true}, nil
 }
 
-func (m *mockService) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	if m.shouldFail {
-		return nil, errMock
-	}
-	return &transport.ListUsersResponse{}, nil
-}
-
-func (m *mockService) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
-	if m.shouldFail {
-		return nil, errMock
-	}
-	return &transport.GetUserResponse{}, nil
-}
-
-func (m *mockService) DeleteUser(_ context.Context, _ string) error {
-	if m.shouldFail {
-		return errMock
-	}
-	return nil
-}
-
-func (m *mockService) EnableUser(_ context.Context, _ string) error {
-	if m.shouldFail {
-		return errMock
-	}
-	return nil
-}
-
-func (m *mockService) DisableUser(_ context.Context, _ string) error {
-	if m.shouldFail {
-		return errMock
-	}
-	return nil
-}
-
-func (m *mockService) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
-	if m.shouldFail {
-		return nil, errMock
-	}
-	return &transport.ListUserCredentialsResponse{}, nil
-}
-
 func (m *mockService) BeginRegistration(_ context.Context, _ *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
 	if m.shouldFail {
 		return nil, errMock
@@ -524,34 +482,6 @@ func (m *mockService) BarrierUnsealWithShare(_ context.Context, _ *transport.Bar
 }
 
 func (m *mockService) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	if m.shouldFail {
-		return errMock
-	}
-	return nil
-}
-
-func (m *mockService) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	if m.shouldFail {
-		return nil, errMock
-	}
-	return &transport.BarrierShamirSharesResponse{}, nil
-}
-
-func (m *mockService) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	if m.shouldFail {
-		return errMock
-	}
-	return nil
-}
-
-func (m *mockService) BarrierShamirDeleteAllShares(_ context.Context) error {
-	if m.shouldFail {
-		return errMock
-	}
-	return nil
-}
-
-func (m *mockService) BarrierShamirVerify(_ context.Context) error {
 	if m.shouldFail {
 		return errMock
 	}
@@ -978,6 +908,62 @@ func (m *mockService) GetCredentialStrategy(_ context.Context) (*transport.Crede
 	return &transport.CredentialStrategyResponse{Strategy: "manual"}, nil
 }
 
+func (m *mockService) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetUserResponse{}, nil
+}
+
+func (m *mockService) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ListUsersResponse{}, nil
+}
+
+func (m *mockService) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetUserResponse{}, nil
+}
+
+func (m *mockService) DeleteUser(_ context.Context, _ string) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
+func (m *mockService) EnableUser(_ context.Context, _ string) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
+func (m *mockService) DisableUser(_ context.Context, _ string) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
+func (m *mockService) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+	if m.shouldFail {
+		return errMock
+	}
+	return nil
+}
+
+func (m *mockService) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ListUserCredentialsResponse{}, nil
+}
+
 // --- Constructor tests ---
 
 func TestNew_NilService(t *testing.T) {
@@ -1215,12 +1201,6 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		{"Seal", func() error { _, e := tr.Seal(ctx, &transport.SealRequest{}); return e }},
 		{"Unseal", func() error { _, e := tr.Unseal(ctx, &transport.UnsealRequest{}); return e }},
 		{"CanSeal", func() error { _, e := tr.CanSeal(ctx, "sw"); return e }},
-		{"ListUsers", func() error { _, e := tr.ListUsers(ctx); return e }},
-		{"GetUser", func() error { _, e := tr.GetUser(ctx, "admin"); return e }},
-		{"DeleteUser", func() error { return tr.DeleteUser(ctx, "admin") }},
-		{"EnableUser", func() error { return tr.EnableUser(ctx, "admin") }},
-		{"DisableUser", func() error { return tr.DisableUser(ctx, "admin") }},
-		{"ListUserCredentials", func() error { _, e := tr.ListUserCredentials(ctx, "admin"); return e }},
 		{"BeginRegistration", func() error { _, e := tr.BeginRegistration(ctx, &transport.BeginRegistrationRequest{}); return e }},
 		{"FinishRegistration", func() error { _, e := tr.FinishRegistration(ctx, &transport.FinishRegistrationRequest{}); return e }},
 		{"BeginAuthentication", func() error { _, e := tr.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{}); return e }},
@@ -1254,10 +1234,6 @@ func TestAllMethods_NotConnected(t *testing.T) {
 		}},
 		{"BarrierUnsealWithShare", func() error { _, e := tr.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{}); return e }},
 		{"BarrierUnsealWithShares", func() error { return tr.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{}) }},
-		{"BarrierShamirListShares", func() error { _, e := tr.BarrierShamirListShares(ctx); return e }},
-		{"BarrierShamirDeleteShare", func() error { return tr.BarrierShamirDeleteShare(ctx, &transport.BarrierShamirDeleteShareRequest{}) }},
-		{"BarrierShamirDeleteAllShares", func() error { return tr.BarrierShamirDeleteAllShares(ctx) }},
-		{"BarrierShamirVerify", func() error { return tr.BarrierShamirVerify(ctx) }},
 		{"BarrierRekey", func() error { _, e := tr.BarrierRekey(ctx, &transport.BarrierRekeyRequest{}); return e }},
 		{"BarrierGenerateRecoveryKeys", func() error {
 			_, e := tr.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{})
@@ -1378,12 +1354,6 @@ func TestAllMethods_Connected(t *testing.T) {
 		{"Seal", func() error { _, e := tr.Seal(ctx, &transport.SealRequest{}); return e }},
 		{"Unseal", func() error { _, e := tr.Unseal(ctx, &transport.UnsealRequest{}); return e }},
 		{"CanSeal", func() error { _, e := tr.CanSeal(ctx, "sw"); return e }},
-		{"ListUsers", func() error { _, e := tr.ListUsers(ctx); return e }},
-		{"GetUser", func() error { _, e := tr.GetUser(ctx, "admin"); return e }},
-		{"DeleteUser", func() error { return tr.DeleteUser(ctx, "admin") }},
-		{"EnableUser", func() error { return tr.EnableUser(ctx, "admin") }},
-		{"DisableUser", func() error { return tr.DisableUser(ctx, "admin") }},
-		{"ListUserCredentials", func() error { _, e := tr.ListUserCredentials(ctx, "admin"); return e }},
 		{"BeginRegistration", func() error { _, e := tr.BeginRegistration(ctx, &transport.BeginRegistrationRequest{}); return e }},
 		{"FinishRegistration", func() error { _, e := tr.FinishRegistration(ctx, &transport.FinishRegistrationRequest{}); return e }},
 		{"BeginAuthentication", func() error { _, e := tr.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{}); return e }},
@@ -1417,10 +1387,6 @@ func TestAllMethods_Connected(t *testing.T) {
 		}},
 		{"BarrierUnsealWithShare", func() error { _, e := tr.BarrierUnsealWithShare(ctx, &transport.BarrierUnsealShareRequest{}); return e }},
 		{"BarrierUnsealWithShares", func() error { return tr.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{}) }},
-		{"BarrierShamirListShares", func() error { _, e := tr.BarrierShamirListShares(ctx); return e }},
-		{"BarrierShamirDeleteShare", func() error { return tr.BarrierShamirDeleteShare(ctx, &transport.BarrierShamirDeleteShareRequest{}) }},
-		{"BarrierShamirDeleteAllShares", func() error { return tr.BarrierShamirDeleteAllShares(ctx) }},
-		{"BarrierShamirVerify", func() error { return tr.BarrierShamirVerify(ctx) }},
 		{"BarrierRekey", func() error { _, e := tr.BarrierRekey(ctx, &transport.BarrierRekeyRequest{}); return e }},
 		{"BarrierGenerateRecoveryKeys", func() error {
 			_, e := tr.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{})

@@ -321,11 +321,11 @@ func TestNewSubError(t *testing.T) {
 	if se.TrustedCAError == nil {
 		t.Fatal("TrustedCAError is nil")
 	}
-	if se.TrustedCAError.Type != BadCSR {
-		t.Errorf("Type = %v, want %v", se.TrustedCAError.Type, BadCSR)
+	if se.Type != BadCSR {
+		t.Errorf("Type = %v, want %v", se.Type, BadCSR)
 	}
-	if se.TrustedCAError.Detail != "invalid CSR format" {
-		t.Errorf("Detail = %q, want 'invalid CSR format'", se.TrustedCAError.Detail)
+	if se.Detail != "invalid CSR format" {
+		t.Errorf("Detail = %q, want 'invalid CSR format'", se.Detail)
 	}
 	if se.Identifier.Type != "dns" {
 		t.Errorf("Identifier.Type = %q, want 'dns'", se.Identifier.Type)

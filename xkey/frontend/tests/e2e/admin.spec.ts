@@ -8,6 +8,8 @@ import {
 } from './helpers';
 import * as fs from 'fs';
 
+const REPO_ROOT = process.cwd().replace(/\/xkey\/frontend$/, '');
+
 test.describe('Admin View (Backend Administration)', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -95,7 +97,7 @@ test.describe('Admin View (Backend Administration)', () => {
 // without a live backend because the logic under test is purely in the
 // Svelte template + validation code.
 
-const ADMIN_PATH_YKC = '/home/jhahn/sources/go-xkms/xkey/frontend/src/views/Admin.svelte';
+const ADMIN_PATH_YKC = `${REPO_ROOT}/xkey/frontend/src/views/Admin.svelte`;
 
 test.describe('PKCS#11 YubiKey SO PIN gating (source)', () => {
   test('reactive pkcs11IsYubiKey flag matches libykcs11 in library_path', () => {

@@ -6,6 +6,9 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
+# Materialize /tmp/go.work + GOWORK before running the test CMD passed as args.
+ENTRYPOINT ["bash", ".devcontainer/scripts/ensure-gowork.sh"]
+
 CMD ["sh", "-c", "echo 'Waiting for Vault to be ready...'; \
      while ! curl -sf http://vault:8200/v1/sys/health > /dev/null; do sleep 1; done; \
      echo 'Vault is ready!'; \

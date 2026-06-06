@@ -28,14 +28,14 @@ import (
 
 type fakeUserClient struct {
 	mu      sync.Mutex
-	byID    map[string]*qrdbtransport.User
+	byID    map[uint64]*qrdbtransport.User
 	byUname map[string]*qrdbtransport.User // tenantID|username -> user
 	nextID  uint64
 }
 
 func newFakeUserClient() *fakeUserClient {
 	return &fakeUserClient{
-		byID:    make(map[string]*qrdbtransport.User),
+		byID:    make(map[uint64]*qrdbtransport.User),
 		byUname: make(map[string]*qrdbtransport.User),
 		nextID:  1,
 	}
@@ -53,7 +53,7 @@ func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 		return nil, errors.New("already exists")
 	}
 	u := &qrdbtransport.User{
-		ID:       strconv.FormatUint(f.nextID, 10),
+		ID:       f.nextID,
 		Username: req.Username,
 		TenantID: req.TenantID,
 		Enabled:  true,
@@ -64,7 +64,7 @@ func (f *fakeUserClient) CreateUser(ctx context.Context, req *qrdbtransport.Crea
 	return u, nil
 }
 
-func (f *fakeUserClient) GetUser(ctx context.Context, id string) (*qrdbtransport.User, error) {
+func (f *fakeUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	u, ok := f.byID[id]
@@ -84,11 +84,15 @@ func (f *fakeUserClient) GetUserByUsername(ctx context.Context, tenantID, userna
 	return u, nil
 }
 
+func (f *fakeUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
+	return nil, errors.New("user not found")
+}
+
 func (f *fakeUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
 	return nil, errors.New("not implemented in stub")
 }
 
-func (f *fakeUserClient) DeleteUser(ctx context.Context, id string) error {
+func (f *fakeUserClient) DeleteUser(ctx context.Context, id uint64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	u, ok := f.byID[id]
@@ -104,12 +108,22 @@ func (f *fakeUserClient) ListUsers(ctx context.Context, req *qrdbtransport.ListU
 	return nil, errors.New("not implemented in stub")
 }
 
-func (f *fakeUserClient) EnableUser(ctx context.Context, id string) error {
+func (f *fakeUserClient) EnableUser(ctx context.Context, id uint64) error {
 	return nil
 }
 
-func (f *fakeUserClient) DisableUser(ctx context.Context, id string) error {
+func (f *fakeUserClient) DisableUser(ctx context.Context, id uint64) error {
 	return nil
+}
+
+func (f *fakeUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.byID[userID]
+	if !ok {
+		return nil, errors.New("user not found")
+	}
+	return u, nil
 }
 
 // ----- in-memory qrdbtransport.KVClient stub -----
@@ -447,8 +461,47 @@ func TestQRDBAdapter_SaveUser_NilArg(t *testing.T) {
 }
 
 func TestQRDBAdapter_FormatUserIDForTest(t *testing.T) {
+	// The webauthn handle is the fixed 8-byte big-endian form of the qrdb
+	// uint64 user id, matching qrdb's on-disk key encoding.
 	got := formatUserIDForTest(42)
-	if string(got) != "42" {
-		t.Fatalf("got %q", got)
+	if len(got) != 8 {
+		t.Fatalf("expected 8-byte handle, got %d bytes", len(got))
+	}
+	id, err := UserIDFromHandle(got)
+	if err != nil {
+		t.Fatalf("UserIDFromHandle: %v", err)
+	}
+	if id != 42 {
+		t.Fatalf("got id %d want 42", id)
+	}
+}
+
+// TestUserHandleRoundTrip proves a qrdb uint64 user id survives the
+// WebAuthn handle encode/decode cycle for representative values, and
+// that a malformed (non-8-byte) handle is rejected with a typed error.
+func TestUserHandleRoundTrip(t *testing.T) {
+	for _, n := range []uint64{0, 1, 42, 1 << 20, 1<<63 + 7, ^uint64(0)} {
+		h := HandleFromUserID(n)
+		if len(h) != 8 {
+			t.Fatalf("id %d: expected 8-byte handle, got %d", n, len(h))
+		}
+		got, err := UserIDFromHandle(h)
+		if err != nil {
+			t.Fatalf("id %d: decode: %v", n, err)
+		}
+		if got != n {
+			t.Fatalf("id %d: round-trip got %d", n, got)
+		}
+	}
+
+	for _, bad := range [][]byte{nil, {}, []byte("1"), make([]byte, 7), make([]byte, 9)} {
+		_, err := UserIDFromHandle(bad)
+		var ihe *InvalidUserHandleError
+		if !errors.As(err, &ihe) {
+			t.Fatalf("handle %v: expected *InvalidUserHandleError, got %T (%v)", bad, err, err)
+		}
+		if ihe.Length != len(bad) {
+			t.Fatalf("handle %v: reported length %d", bad, ihe.Length)
+		}
 	}
 }

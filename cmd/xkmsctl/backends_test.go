@@ -367,31 +367,6 @@ func (m *mockBackendsClient) CanSeal(ctx context.Context, backend string) (*clie
 	return nil, nil
 }
 
-// User management stub implementations
-func (m *mockBackendsClient) ListUsers(ctx context.Context, _ ...transport.ListOption) (*client.ListUsersResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-func (m *mockBackendsClient) GetUser(ctx context.Context, username string) (*client.GetUserResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
-func (m *mockBackendsClient) DeleteUser(ctx context.Context, username string) error {
-	return client.ErrNotSupported
-}
-
-func (m *mockBackendsClient) EnableUser(ctx context.Context, username string) error {
-	return client.ErrNotSupported
-}
-
-func (m *mockBackendsClient) DisableUser(ctx context.Context, username string) error {
-	return client.ErrNotSupported
-}
-
-func (m *mockBackendsClient) ListUserCredentials(ctx context.Context, username string) (*client.ListUserCredentialsResponse, error) {
-	return nil, client.ErrNotSupported
-}
-
 // Authentication flow stub implementations
 func (m *mockBackendsClient) BeginRegistration(ctx context.Context, req *client.BeginRegistrationRequest) (*client.BeginRegistrationResponse, error) {
 	return nil, client.ErrNotSupported
@@ -825,26 +800,6 @@ func (m *mockBackendsClient) BarrierUnsealWithShares(ctx context.Context, req *t
 	return nil
 }
 
-// BarrierShamirListShares returns Shamir share metadata.
-func (m *mockBackendsClient) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (m *mockBackendsClient) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (m *mockBackendsClient) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return nil
-}
-
-// BarrierShamirVerify verifies Shamir share integrity.
-func (m *mockBackendsClient) BarrierShamirVerify(_ context.Context) error {
-	return nil
-}
-
 // BarrierRekey re-encrypts the barrier with a new root key.
 func (m *mockBackendsClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	return nil, nil
@@ -1097,5 +1052,37 @@ func (m *mockBackendsClient) SubmitCredential(_ context.Context, _ *transport.Cr
 }
 
 func (m *mockBackendsClient) GetCredentialStrategy(_ context.Context) (*transport.CredentialStrategyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockBackendsClient) DeleteUser(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockBackendsClient) EnableUser(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockBackendsClient) DisableUser(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockBackendsClient) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
+
+func (m *mockBackendsClient) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
 	return nil, nil
 }

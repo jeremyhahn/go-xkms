@@ -45,7 +45,7 @@ func testPasswordSetup(t *testing.T) (*seal.BarrierRegistry, staticpw.Store, *st
 		sysBackend,
 		seal.BarrierConfig{
 			RootKeyPath:     "root-key",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)

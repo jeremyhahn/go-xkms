@@ -22,21 +22,20 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
-	"github.com/jeremyhahn/go-xkms/pkg/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
-	"github.com/jeremyhahn/go-xkms/pkg/metrics"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
-	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
+	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -54,13 +53,10 @@ type Server struct {
 	barrierRegistry *seal.BarrierRegistry
 	webauthnHandler *webauthnhttp.Handler
 	webauthnStores  *WebAuthnStores
-	userHandlers    *UserHandlers
-	userStore       user.Store
 	rbacAdapter     keyrbac.RBACAdapter
 	rbacMiddleware  *RBACMiddleware
 
-	// Bootstrap and custodian handlers
-	bootstrapHandlers  *BootstrapHandlers
+	// Custodian handlers
 	custodianHandlers  *CustodianHandlers
 	shareHandlers      *ShareHandlers
 	tenantHandlers     *TenantHandlers
@@ -112,18 +108,34 @@ type Config struct {
 	// WebAuthnConfig is the WebAuthn configuration (optional, enables WebAuthn if provided)
 	WebAuthnConfig *webauthn.Config
 
+	// WebAuthnService is an optional, pre-built WebAuthn relying-party service.
+	// When provided (together with WebAuthnConfig), the REST server mounts its
+	// browser handlers on this exact instance instead of constructing its own.
+	// This lets the server share a single WebAuthn service between the REST
+	// browser ceremony and the SDK ceremony (via XKMSService.SetWebAuthn), so
+	// sessions and credentials live in one place.
+	WebAuthnService *webauthn.Service
+
 	// RateLimiter is the rate limiter instance (optional, disables rate limiting if not provided)
 	RateLimiter *ratelimit.Limiter
 
-	// UserStore is the user store (optional, enables user management if provided)
-	UserStore user.Store
+	// WebAuthnUsers is the qrdb user client used to persist WebAuthn users
+	// (optional). When set together with WebAuthnKV, the WebAuthn relying
+	// party persists users and credentials on qrdb instead of in memory.
+	WebAuthnUsers qrdbtransport.UserClient
+
+	// WebAuthnKV is the qrdb KV client used to persist WebAuthn credentials.
+	WebAuthnKV qrdbtransport.KVClient
+
+	// WebAuthnTenantID scopes qrdb-backed WebAuthn user creation and lookup.
+	WebAuthnTenantID string
 
 	// RBACAdapter is the RBAC adapter (optional, enables RBAC if provided).
 	// When EnableRBAC is true and no adapter is provided, the server falls
 	// back to an in-memory adapter pre-loaded with the FIPS 140-3 default
 	// roles. Identity-platform integrations should pass an adapter that
-	// reads role membership from qrdb (see pkg/user.QRDBMembership) and
-	// resolves permissions through xkms's key-domain registry.
+	// reads role membership from the embedded qrdb node and resolves
+	// permissions through xkms's key-domain registry.
 	RBACAdapter keyrbac.RBACAdapter
 
 	// EnableRBAC enables role-based access control on API endpoints (default: false)
@@ -137,7 +149,7 @@ type Config struct {
 	Barrier *seal.Barrier
 
 	// PINManager is the optional PIN backend for SO/User PIN operations
-	PINManager pin.PINBackend
+	PINManager qrdbsdk.PINBackend
 
 	// PasswordStore is the optional static password store
 	PasswordStore *staticpw.BackendStore
@@ -147,9 +159,6 @@ type Config struct {
 
 	// PolicyManager is the optional policy manager
 	PolicyManager *policy.Manager
-
-	// BootstrapService is the optional bootstrap service
-	BootstrapService *bootstrap.Service
 
 	// BarrierRegistry is the optional barrier registry for multi-tenant isolation
 	BarrierRegistry *seal.BarrierRegistry
@@ -234,12 +243,8 @@ func NewServer(cfg *Config) (*Server, error) {
 		barrierRegistry: cfg.BarrierRegistry,
 	}
 
-	// Set up user handlers if user store is configured
-	if cfg.UserStore != nil {
-		server.userStore = cfg.UserStore
-		server.userHandlers = NewUserHandlers(cfg.UserStore)
-		log.Info("User management enabled")
-	}
+	// User management is served by the qrdb node's native user API; xkms no
+	// longer hosts a duplicate user-CRUD surface.
 
 	// Set up RBAC if enabled
 	if cfg.EnableRBAC {
@@ -265,51 +270,65 @@ func NewServer(cfg *Config) (*Server, error) {
 		log.Info("RBAC enabled")
 	}
 
-	// Set up WebAuthn if configured
+	// Set up WebAuthn if configured.
 	if cfg.WebAuthnConfig != nil {
-		var webauthnUserStore webauthn.UserStore
-		var sessionStore webauthn.SessionStore
-		var credentialStore webauthn.CredentialStore
+		// Prefer a pre-built service shared with the SDK ceremony (via
+		// XKMSService.SetWebAuthn) so sessions and credentials live in one
+		// place. Only construct stores + a service locally when the caller did
+		// not supply one (e.g. standalone REST usage / tests).
+		svc := cfg.WebAuthnService
+		if svc == nil {
+			var webauthnUserStore webauthn.UserStore
+			var sessionStore webauthn.SessionStore
+			var credentialStore webauthn.CredentialStore
 
-		// If user store is configured, use user-backed WebAuthn stores
-		// This ensures WebAuthn users are persisted
-		if cfg.UserStore != nil {
-			webauthnUserStore = user.NewWebAuthnUserAdapter(cfg.UserStore)
-			sessionStore = user.NewWebAuthnSessionAdapter(cfg.UserStore, 5*time.Minute)
-			credentialStore = user.NewWebAuthnCredentialAdapter(cfg.UserStore)
-			log.Info("WebAuthn using user store for persistence")
-		} else {
-			// Fall back to in-memory stores for development/testing
+			// Sessions are ephemeral and always live in memory; persistence
+			// applies to users and credentials only.
 			stores := NewWebAuthnStores(&WebAuthnStoresConfig{
 				SessionTTL: 5 * time.Minute,
 			})
-			webauthnUserStore = stores.UserStore()
 			sessionStore = stores.SessionStore()
-			credentialStore = stores.CredentialStore()
 			server.webauthnStores = stores
-			log.Info("WebAuthn using in-memory stores")
-		}
 
-		svc, err := webauthn.NewService(webauthn.ServiceParams{
-			Config:          cfg.WebAuthnConfig,
-			UserStore:       webauthnUserStore,
-			SessionStore:    sessionStore,
-			CredentialStore: credentialStore,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create webauthn service: %w", err)
+			// When the qrdb clients are configured, persist WebAuthn users and
+			// credentials on the qrdb node — the single source of identity.
+			// Otherwise fall back to in-memory stores for development/testing.
+			if cfg.WebAuthnUsers != nil && cfg.WebAuthnKV != nil {
+				qrdbUsers, qrdbCreds, qerr := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+					Users:    cfg.WebAuthnUsers,
+					KV:       cfg.WebAuthnKV,
+					TenantID: cfg.WebAuthnTenantID,
+				})
+				if qerr != nil {
+					return nil, fmt.Errorf("failed to create qrdb webauthn stores: %w", qerr)
+				}
+				webauthnUserStore = qrdbUsers
+				credentialStore = qrdbCreds
+				log.Info("WebAuthn using qrdb stores for persistence")
+			} else {
+				webauthnUserStore = stores.UserStore()
+				credentialStore = stores.CredentialStore()
+				log.Info("WebAuthn using in-memory stores")
+			}
+
+			var err error
+			svc, err = webauthn.NewService(webauthn.ServiceParams{
+				Config:          cfg.WebAuthnConfig,
+				UserStore:       webauthnUserStore,
+				SessionStore:    sessionStore,
+				CredentialStore: credentialStore,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to create webauthn service: %w", err)
+			}
+		} else {
+			log.Info("WebAuthn using shared service instance")
 		}
 
 		server.webauthnHandler = webauthnhttp.NewHandler(svc)
 
 		log.Info("WebAuthn enabled",
 			slog.String("rpid", cfg.WebAuthnConfig.RPID))
-	}
-
-	// Set up bootstrap handlers if bootstrap service is configured
-	if cfg.BootstrapService != nil {
-		server.bootstrapHandlers = NewBootstrapHandlers(cfg.BootstrapService, log)
-		log.Info("Bootstrap handlers enabled")
 	}
 
 	// Set up custodian handlers if custodian service is configured
@@ -579,10 +598,6 @@ func (s *Server) setupRouter() *chi.Mux {
 			r.Post("/shamir/initialize", s.handlers.BarrierInitializeShamirHandler)
 			r.Post("/shamir/unseal-share", s.handlers.BarrierUnsealShareHandler)
 			r.Post("/shamir/unseal-shares", s.handlers.BarrierUnsealSharesHandler)
-			r.Get("/shamir/shares", s.handlers.BarrierShamirListSharesHandler)
-			r.Delete("/shamir/shares/{index}", s.handlers.BarrierShamirDeleteShareHandler)
-			r.Delete("/shamir/shares", s.handlers.BarrierShamirDeleteAllSharesHandler)
-			r.Post("/shamir/verify", s.handlers.BarrierShamirVerifyHandler)
 
 			// Rekey and recovery endpoints
 			r.Post("/rekey", s.handlers.BarrierRekeyHandler)
@@ -735,15 +750,6 @@ func (s *Server) setupRouter() *chi.Mux {
 		}
 	})
 
-	// Bootstrap routes (unauthenticated - needed for initial setup)
-	if s.bootstrapHandlers != nil {
-		r.Route("/api/v1/bootstrap", func(r chi.Router) {
-			r.Get("/status", s.bootstrapHandlers.HandleGetStatus)
-			r.Post("/init", s.bootstrapHandlers.HandleInit)
-			r.Post("/threshold-init", s.bootstrapHandlers.HandleThresholdInit)
-		})
-	}
-
 	// go-truststrap bootstrap endpoint (unauthenticated - serves CA bundle for
 	// DANE/TLSA and SPKI-pin trust establishment). The upstream go-truststrap
 	// library hardcodes this path and expects raw PEM (Content-Type
@@ -755,35 +761,51 @@ func (s *Server) setupRouter() *chi.Mux {
 	if s.webauthnHandler != nil {
 		r.Route("/api/v1/webauthn", func(r chi.Router) {
 			webauthnhttp.MountChi(r, s.webauthnHandler)
+
+			// SDK registration ceremony: lossless JSON options + attestation,
+			// delegated to the XKMSService (which shares the same WebAuthn
+			// service instance as the browser handlers above).
+			r.Post("/sdk/registration/begin", s.handleSDKBeginRegistration)
+			r.Post("/sdk/registration/finish", s.handleSDKFinishRegistration)
+
+			// SDK authentication ceremony: lossless JSON options + assertion,
+			// symmetric to the registration ceremony above.
+			r.Post("/sdk/authentication/begin", s.handleSDKBeginAuthentication)
+			r.Post("/sdk/authentication/finish", s.handleSDKFinishAuthentication)
 		})
 	}
 
-	// User management routes
-	if s.userHandlers != nil {
-		// Bootstrap status endpoint (unauthenticated - used to check if setup is required)
-		r.Get("/api/v1/users/bootstrap/status", s.userHandlers.BootstrapStatusHandler)
+	// User management. xkms presents its own user API; the backing store is
+	// the embedded qrdb node (reached via the XKMSService). The CLI/webui drive
+	// these endpoints through the xkms SDK.
+	r.Route("/api/v1/users", func(r chi.Router) {
+		r.Use(s.AuthenticationMiddleware())
 
-		// Authenticated user management routes
-		r.Route("/api/v1/users", func(r chi.Router) {
-			r.Use(s.AuthenticationMiddleware())
-
-			if s.rbacMiddleware != nil {
-				r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionList)).
-					Get("/", s.userHandlers.ListUsersHandler)
-				r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionRead)).
-					Get("/{id}", s.userHandlers.GetUserHandler)
-				r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionUpdate)).
-					Put("/{id}", s.userHandlers.UpdateUserHandler)
-				r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionDelete)).
-					Delete("/{id}", s.userHandlers.DeleteUserHandler)
-			} else {
-				r.Get("/", s.userHandlers.ListUsersHandler)
-				r.Get("/{id}", s.userHandlers.GetUserHandler)
-				r.Put("/{id}", s.userHandlers.UpdateUserHandler)
-				r.Delete("/{id}", s.userHandlers.DeleteUserHandler)
-			}
-		})
-	}
+		if s.rbacMiddleware != nil {
+			r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionCreate)).
+				Post("/", s.handleCreateUser)
+			r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionList)).
+				Get("/", s.handleListUsers)
+			r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionRead)).
+				Get("/{username}", s.handleGetUser)
+			r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionRead)).
+				Get("/{username}/credentials", s.handleListUserCredentials)
+			r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionUpdate)).
+				Put("/{username}", s.handleUpdateUser)
+			r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionUpdate)).
+				Post("/{username}/cert-bindings", s.handleBindUserCert)
+			r.With(s.rbacMiddleware.RequirePermission(keyrbac.ResourceUsers, keyrbac.ActionDelete)).
+				Delete("/{username}", s.handleDeleteUser)
+		} else {
+			r.Post("/", s.handleCreateUser)
+			r.Get("/", s.handleListUsers)
+			r.Get("/{username}", s.handleGetUser)
+			r.Get("/{username}/credentials", s.handleListUserCredentials)
+			r.Put("/{username}", s.handleUpdateUser)
+			r.Post("/{username}/cert-bindings", s.handleBindUserCert)
+			r.Delete("/{username}", s.handleDeleteUser)
+		}
+	})
 
 	return r
 }

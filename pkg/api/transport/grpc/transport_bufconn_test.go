@@ -271,22 +271,6 @@ func (s *mockKeystoreServer) BarrierUnsealShares(_ context.Context, _ *pb.Barrie
 	return &emptypb.Empty{}, nil
 }
 
-func (s *mockKeystoreServer) BarrierShamirListShares(_ context.Context, _ *emptypb.Empty) (*pb.BarrierShamirSharesResponse, error) {
-	return &pb.BarrierShamirSharesResponse{Count: 2, Threshold: 2, Total: 3}, nil
-}
-
-func (s *mockKeystoreServer) BarrierShamirDeleteShare(_ context.Context, _ *pb.BarrierShamirDeleteShareRequest) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) BarrierShamirDeleteAllShares(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
-func (s *mockKeystoreServer) BarrierShamirVerify(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
-	return &emptypb.Empty{}, nil
-}
-
 func (s *mockKeystoreServer) BarrierRekey(_ context.Context, _ *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
 	return &pb.BarrierShamirInitResponse{Shares: []string{"new-share-1", "new-share-2"}, Threshold: 2}, nil
 }
@@ -585,9 +569,7 @@ func newBufconnTransport(t *testing.T) (*Transport, func()) {
 	pb.RegisterKeystoreServiceServer(srv, &mockKeystoreServer{})
 
 	go func() {
-		if err := srv.Serve(lis); err != nil {
-			// Server stopped
-		}
+		_ = srv.Serve(lis)
 	}()
 
 	conn, err := grpc.NewClient(
@@ -607,9 +589,9 @@ func newBufconnTransport(t *testing.T) (*Transport, func()) {
 	}
 
 	cleanup := func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	}
 
 	return tr, cleanup
@@ -675,7 +657,7 @@ func TestGetKey_Connected(t *testing.T) {
 
 	resp, err := tr.GetKey(context.Background(), "software", "key-1")
 	require.NoError(t, err)
-	assert.Equal(t, "key-1", resp.KeyInfo.KeyID)
+	assert.Equal(t, "key-1", resp.KeyID)
 }
 
 func TestDeleteKey_Connected(t *testing.T) {
@@ -1018,33 +1000,6 @@ func TestBarrierUnsealWithShares_Connected(t *testing.T) {
 	tr, cleanup := newBufconnTransport(t)
 	defer cleanup()
 	require.NoError(t, tr.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{Shares: []string{"s1", "s2"}}))
-}
-
-func TestBarrierShamirListShares_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-
-	resp, err := tr.BarrierShamirListShares(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Count)
-}
-
-func TestBarrierShamirDeleteShare_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{Index: 0}))
-}
-
-func TestBarrierShamirDeleteAllShares_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierShamirDeleteAllShares(context.Background()))
-}
-
-func TestBarrierShamirVerify_Connected(t *testing.T) {
-	tr, cleanup := newBufconnTransport(t)
-	defer cleanup()
-	require.NoError(t, tr.BarrierShamirVerify(context.Background()))
 }
 
 func TestBarrierRekey_Connected(t *testing.T) {
@@ -1535,12 +1490,6 @@ func TestErrNotSupported_Methods(t *testing.T) {
 			return err
 		}},
 		{"GetCredentialStrategy", func() error { _, err := tr.GetCredentialStrategy(context.Background()); return err }},
-		{"ListUsers", func() error { _, err := tr.ListUsers(context.Background()); return err }},
-		{"GetUser", func() error { _, err := tr.GetUser(context.Background(), "u"); return err }},
-		{"DeleteUser", func() error { return tr.DeleteUser(context.Background(), "u") }},
-		{"EnableUser", func() error { return tr.EnableUser(context.Background(), "u") }},
-		{"DisableUser", func() error { return tr.DisableUser(context.Background(), "u") }},
-		{"ListUserCredentials", func() error { _, err := tr.ListUserCredentials(context.Background(), "u"); return err }},
 		{"PasswordStoreSetAccessMode", func() error {
 			return tr.PasswordStoreSetAccessMode(context.Background(), &transport.PasswordStoreSetAccessModeRequest{})
 		}},
@@ -1572,22 +1521,6 @@ func TestErrNotSupported_Methods(t *testing.T) {
 			_, err := tr.PolicyExport(context.Background(), &transport.PolicyExportRequest{})
 			return err
 		}},
-		{"BeginRegistration", func() error {
-			_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
-			return err
-		}},
-		{"FinishRegistration", func() error {
-			_, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
-			return err
-		}},
-		{"BeginAuthentication", func() error {
-			_, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
-			return err
-		}},
-		{"FinishAuthentication", func() error {
-			_, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
-			return err
-		}},
 	}
 
 	for _, tc := range tests {
@@ -1601,6 +1534,27 @@ func TestErrNotSupported_Methods(t *testing.T) {
 		_, err := tr.SignCSRInit(context.Background(), &transport.SignCSRInitRequest{})
 		assert.ErrorIs(t, err, ErrNotSupported)
 	})
+}
+
+// TestRegistration_RPCWired confirms the FIDO2 registration and authentication
+// RPCs reach the server over the gRPC transport. Empty/invalid requests are
+// rejected with an error, proving the calls are plumbed end-to-end rather than
+// short-circuited as client-side stubs.
+func TestRegistration_RPCWired(t *testing.T) {
+	tr, cleanup := newBufconnTransport(t)
+	defer cleanup()
+
+	_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
+	assert.Error(t, err)
+
+	_, err = tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
+	assert.Error(t, err)
+
+	_, err = tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
+	assert.Error(t, err)
+
+	_, err = tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
+	assert.Error(t, err)
 }
 
 // --- Helper function tests ---

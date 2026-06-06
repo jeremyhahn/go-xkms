@@ -27,7 +27,7 @@ import (
 )
 
 // setupTestStore creates a temporary directory for use as a local objstore backend.
-func setupTestStore(t *testing.T) (string, func()) {
+func setupTestStore(t *testing.T) (string, func()) { //nolint:unused // used by factory_test.go under //go:build codec_json
 	t.Helper()
 	tmpDir, err := os.MkdirTemp("", "acme-test-*")
 	require.NoError(t, err)
@@ -316,94 +316,4 @@ func hasPrefix(s, prefix string) bool {
 		return false
 	}
 	return s[:len(prefix)] == prefix
-}
-
-// mockStorageReaderError is a mock reader that returns an error.
-type mockStorageReaderError struct{}
-
-func (m *mockStorageReaderError) Configure(config map[string]string) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) AddPolicy(policy common.LifecyclePolicy) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) RemovePolicy(id string) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) GetPolicies() ([]common.LifecyclePolicy, error) {
-	return nil, nil
-}
-
-func (m *mockStorageReaderError) Put(key string, reader io.Reader) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) PutWithContext(ctx context.Context, key string, reader io.Reader) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) PutWithMetadata(ctx context.Context, key string, reader io.Reader, metadata *common.Metadata) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) Get(key string) (io.ReadCloser, error) {
-	return &errorReadCloser{}, nil
-}
-
-func (m *mockStorageReaderError) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
-	return &errorReadCloser{}, nil
-}
-
-func (m *mockStorageReaderError) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
-	return nil, nil
-}
-
-func (m *mockStorageReaderError) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) GetWithMetadata(ctx context.Context, key string) (io.ReadCloser, *common.Metadata, error) {
-	return &errorReadCloser{}, nil, nil
-}
-
-func (m *mockStorageReaderError) Delete(key string) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) DeleteWithContext(ctx context.Context, key string) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) List(prefix string) ([]string, error) {
-	return nil, nil
-}
-
-func (m *mockStorageReaderError) ListWithContext(ctx context.Context, prefix string) ([]string, error) {
-	return nil, nil
-}
-
-func (m *mockStorageReaderError) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error) {
-	return nil, nil
-}
-
-func (m *mockStorageReaderError) Archive(key string, destination common.Archiver) error {
-	return nil
-}
-
-func (m *mockStorageReaderError) Exists(ctx context.Context, key string) (bool, error) {
-	return false, nil
-}
-
-// errorReadCloser is a ReadCloser that returns an error on Read.
-type errorReadCloser struct{}
-
-func (e *errorReadCloser) Read(p []byte) (n int, err error) {
-	return 0, errors.New("mock read error")
-}
-
-func (e *errorReadCloser) Close() error {
-	return nil
 }

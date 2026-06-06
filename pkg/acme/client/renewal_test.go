@@ -813,11 +813,11 @@ func newRenewalMockServer(t *testing.T) *renewalMockServer {
 func (m *renewalMockServer) handleDirectory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	dir := map[string]interface{}{
-		"newNonce":   m.Server.URL + "/acme/new-nonce",
-		"newAccount": m.Server.URL + "/acme/new-account",
-		"newOrder":   m.Server.URL + "/acme/new-order",
-		"revokeCert": m.Server.URL + "/acme/revoke-cert",
-		"keyChange":  m.Server.URL + "/acme/key-change",
+		"newNonce":   m.URL + "/acme/new-nonce",
+		"newAccount": m.URL + "/acme/new-account",
+		"newOrder":   m.URL + "/acme/new-order",
+		"revokeCert": m.URL + "/acme/revoke-cert",
+		"keyChange":  m.URL + "/acme/key-change",
 	}
 	_ = json.NewEncoder(w).Encode(dir)
 }
@@ -830,7 +830,7 @@ func (m *renewalMockServer) handleNewNonce(w http.ResponseWriter, r *http.Reques
 
 func (m *renewalMockServer) handleNewAccount(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", atomic.AddInt64(&m.nonceCounter, 1)))
-	w.Header().Set("Location", m.Server.URL+"/acme/account/1")
+	w.Header().Set("Location", m.URL+"/acme/account/1")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -841,13 +841,13 @@ func (m *renewalMockServer) handleNewAccount(w http.ResponseWriter, r *http.Requ
 
 func (m *renewalMockServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", atomic.AddInt64(&m.nonceCounter, 1)))
-	w.Header().Set("Location", m.Server.URL+"/acme/order/1")
+	w.Header().Set("Location", m.URL+"/acme/order/1")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":         "pending",
-		"authorizations": []string{m.Server.URL + "/acme/authz/1"},
-		"finalize":       m.Server.URL + "/acme/finalize/1",
+		"authorizations": []string{m.URL + "/acme/authz/1"},
+		"finalize":       m.URL + "/acme/finalize/1",
 		"identifiers": []map[string]string{
 			{"type": "dns", "value": "example.com"},
 		},
@@ -867,7 +867,7 @@ func (m *renewalMockServer) handleAuthz(w http.ResponseWriter, r *http.Request) 
 			{
 				"type":   "http-01",
 				"status": "valid",
-				"url":    m.Server.URL + "/acme/challenge/1",
+				"url":    m.URL + "/acme/challenge/1",
 				"token":  "test-token",
 			},
 		},
@@ -889,7 +889,7 @@ func (m *renewalMockServer) handleFinalize(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":      "valid",
-		"certificate": m.Server.URL + "/acme/cert/1",
+		"certificate": m.URL + "/acme/cert/1",
 	})
 }
 
@@ -926,11 +926,11 @@ func createRenewalTestClient(t *testing.T, server *renewalMockServer) *Client {
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	serverCert := server.Server.Certificate()
+	serverCert := server.Certificate()
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Raw})
 
 	config := &Config{
-		DirectoryURL:        server.Server.URL + "/directory",
+		DirectoryURL:        server.URL + "/directory",
 		SystemCertPool:      false,
 		RequestServerBundle: false,
 		TrustedRoots:        []string{string(certPEM)},

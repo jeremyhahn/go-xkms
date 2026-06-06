@@ -29,7 +29,7 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -380,6 +380,11 @@ type TrustStrapImportRequest struct {
 // ImportFromTrustStrap fetches a CA bundle via the chosen go-truststrap
 // bootstrap mechanism and imports the resulting certificates into the
 // trust store. Returns the number of certificates added.
+//
+// Dispatch goes through xkms/pkg/trust/bootstrap — the single
+// canonical trust-bootstrap library in the stack — so this method
+// stays in sync with the same modes the xkmsctl CLI and the QuicBaaS
+// SDK expose.
 func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, error) {
 	if s.store == nil {
 		return 0, ErrNilTrustStore
@@ -388,67 +393,69 @@ func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, e
 		return 0, ErrTrustStrapEmptyServer
 	}
 
-	bootstrapper, err := s.newTrustStrapBootstrapper(req)
+	cfg, err := s.buildBootstrapConfig(req)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = bootstrapper.Close() }()
 
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	resp, err := bootstrapper.FetchCABundle(ctx, nil)
+	bundle, err := bootstrap.Fetch(ctx, cfg)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrTrustStrapFetch, err)
 	}
-	if resp == nil || len(resp.BundlePEM) == 0 {
+	if bundle == nil || len(bundle.PEM) == 0 {
 		return 0, ErrTrustStrapEmptyBundle
 	}
 
-	n, err := s.store.AddPEM(resp.BundlePEM)
+	n, err := s.store.AddPEM(bundle.PEM)
 	if err == nil && n > 0 {
 		s.notifyMutate()
 	}
 	return n, err
 }
 
-// newTrustStrapBootstrapper constructs the appropriate truststrap
-// Bootstrapper for the requested Method. Bootstrapper-specific validation
-// (key length, URL format, etc.) is delegated to the truststrap package.
-func (s *TrustService) newTrustStrapBootstrapper(req TrustStrapImportRequest) (truststrap.Bootstrapper, error) {
+// buildBootstrapConfig projects a UI-supplied TrustStrapImportRequest
+// onto the canonical bootstrap.Config shape consumed by
+// xkms/pkg/trust/bootstrap.Fetch. Bootstrapper-specific validation
+// (key length, URL format, etc.) is delegated to the library.
+func (s *TrustService) buildBootstrapConfig(req TrustStrapImportRequest) (bootstrap.Config, error) {
+	cfg := bootstrap.Config{
+		ServerURL:  req.Server,
+		BundlePath: req.BundlePath,
+		Logger:     s.log,
+	}
 	switch strings.ToLower(strings.TrimSpace(req.Method)) {
 	case "dane":
-		return truststrap.NewDANEBootstrapper(&truststrap.DANEConfig{
-			ServerURL:  req.Server,
-			BundlePath: req.BundlePath,
+		cfg.Mode = bootstrap.ModeDANE
+		cfg.DANE = &bootstrap.DANEConfig{
 			DNSServer:  req.DNSServer,
 			DNSOverTLS: req.DNSOverTLS,
-			Logger:     s.log,
-		})
+		}
 	case "noise":
-		return truststrap.NewNoiseBootstrapper(&truststrap.NoiseConfig{
+		// For Noise the UI's Server field is already a host:port
+		// pair (per TrustStrapImportRequest doc), so pass it as
+		// the explicit Noise address.
+		cfg.Mode = bootstrap.ModeNoise
+		cfg.Noise = &bootstrap.NoiseConfig{
 			ServerAddr:      req.Server,
 			ServerStaticKey: req.ServerStaticKey,
-			Logger:          s.log,
-		})
+		}
 	case "spki":
-		return truststrap.NewSPKIBootstrapper(&truststrap.SPKIConfig{
-			ServerURL:     req.Server,
-			SPKIPinSHA256: req.SPKIPinSHA256,
-			BundlePath:    req.BundlePath,
-			Logger:        s.log,
-		})
+		cfg.Mode = bootstrap.ModeSPKI
+		cfg.SPKI = &bootstrap.SPKIConfig{
+			Pin: req.SPKIPinSHA256,
+		}
 	case "direct":
-		return truststrap.NewDirectBootstrapper(&truststrap.DirectConfig{
-			ServerURL:  req.Server,
-			BundlePath: req.BundlePath,
-			Logger:     s.log,
-		})
+		cfg.Mode = bootstrap.ModeDirect
+		cfg.Direct = &bootstrap.DirectConfig{}
 	default:
-		return nil, fmt.Errorf("%w: %q", ErrTrustStrapUnsupportedMethod, req.Method)
+		return bootstrap.Config{}, fmt.Errorf("%w: %q", ErrTrustStrapUnsupportedMethod, req.Method)
 	}
+	return cfg, nil
 }
 
 // ExportCertificatePEM returns the PEM-encoded certificate matching the

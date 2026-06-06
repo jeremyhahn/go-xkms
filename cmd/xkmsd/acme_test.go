@@ -216,7 +216,7 @@ func TestBuildACMERouter_DirectoryEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /acme/directory: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -251,7 +251,7 @@ func TestBuildACMERouter_RouteMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /acme/new-nonce: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("expected 204 on GET new-nonce, got %d", resp.StatusCode)
 	}

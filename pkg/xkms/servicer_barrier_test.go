@@ -85,46 +85,6 @@ func TestBarrierUnsealWithShares_NotConfigured(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrNotConfigured))
 }
 
-func TestBarrierShamirListShares_NotConfigured(t *testing.T) {
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	_, err = svc.BarrierShamirListShares(context.Background())
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotConfigured))
-}
-
-func TestBarrierShamirDeleteShare_NotConfigured(t *testing.T) {
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	err = svc.BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{})
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotConfigured))
-}
-
-func TestBarrierShamirDeleteAllShares_NotConfigured(t *testing.T) {
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	err = svc.BarrierShamirDeleteAllShares(context.Background())
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotConfigured))
-}
-
-func TestBarrierShamirVerify_NotConfigured(t *testing.T) {
-	setupService(t)
-	svc, err := Get()
-	require.NoError(t, err)
-
-	err = svc.BarrierShamirVerify(context.Background())
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotConfigured))
-}
-
 func TestBarrierRekey_NotConfigured(t *testing.T) {
 	setupService(t)
 	svc, err := Get()
@@ -197,7 +157,8 @@ func setupBarrier(t *testing.T) *seal.Barrier {
 		slog.Default(),
 		barrierStore,
 		seal.BarrierConfig{
-			RootKeyPath: "barrier/root-key",
+			RootKeyPath:     "barrier/root-key",
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		softStrat,
 	)
@@ -218,14 +179,14 @@ func setupBarrierWithShamir(t *testing.T, threshold, total int) *seal.Barrier {
 	t.Helper()
 	barrierStore := storage.NewMemory()
 	softStrat := seal.NewSoftwareStrategy()
-	shamirStore := storage.NewMemory()
-	shamirStrat, err := seal.NewShamirStrategy(shamirStore, threshold, total)
+	shamirStrat, err := seal.NewShamirStrategy(threshold, total)
 	require.NoError(t, err)
 	barrier, err := seal.NewBarrier(
 		slog.Default(),
 		barrierStore,
 		seal.BarrierConfig{
-			RootKeyPath: "barrier/root-key",
+			RootKeyPath:     "barrier/root-key",
+			PreferenceOrder: []seal.StrategyID{seal.StrategyShamir, seal.StrategyPassphrase},
 			Shamir: &seal.ShamirConfig{
 				Threshold:   threshold,
 				TotalShares: total,
@@ -282,13 +243,6 @@ func TestBarrierUnsealWithShares_NilRequest(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilRequest)
 }
 
-func TestBarrierShamirDeleteShare_NilRequest(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
-	err := svc.BarrierShamirDeleteShare(context.Background(), nil)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrNilRequest)
-}
-
 func TestBarrierRekey_NilRequest(t *testing.T) {
 	svc := setupServiceWithBarrier(t)
 	_, err := svc.BarrierRekey(context.Background(), nil)
@@ -315,38 +269,6 @@ func TestBarrierGenerateRootToken_NilRequest(t *testing.T) {
 	_, err := svc.BarrierGenerateRootToken(context.Background(), nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNilRequest)
-}
-
-// --- Barrier Shamir methods without Shamir strategy ---
-// ShamirStrategy() returns nil when no Shamir strategy is configured,
-// so these methods should return ErrShamirNotConfigured.
-
-func TestBarrierShamirListShares_NoShamirStrategy(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
-	_, err := svc.BarrierShamirListShares(context.Background())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, seal.ErrShamirNotConfigured)
-}
-
-func TestBarrierShamirDeleteShare_NoShamirStrategy(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
-	err := svc.BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{Index: 0})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, seal.ErrShamirNotConfigured)
-}
-
-func TestBarrierShamirDeleteAllShares_NoShamirStrategy(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
-	err := svc.BarrierShamirDeleteAllShares(context.Background())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, seal.ErrShamirNotConfigured)
-}
-
-func TestBarrierShamirVerify_NoShamirStrategy(t *testing.T) {
-	svc := setupServiceWithBarrier(t)
-	err := svc.BarrierShamirVerify(context.Background())
-	require.Error(t, err)
-	assert.ErrorIs(t, err, seal.ErrShamirNotConfigured)
 }
 
 // --- BarrierStatus with barrier set ---
@@ -636,86 +558,6 @@ func TestBarrierRecoverWithKeys_AfterInit(t *testing.T) {
 	status, err := svc.BarrierStatus(ctx)
 	require.NoError(t, err)
 	assert.False(t, status.Sealed)
-}
-
-// --- Shamir list/delete/verify with strategy ---
-
-func TestBarrierShamirListShares_WithShamirStrategy(t *testing.T) {
-	svc := setupServiceWithShamirBarrier(t, 2, 3)
-	ctx := context.Background()
-
-	// Initialize with Shamir (direct mode)
-	_, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
-		Threshold:   2,
-		TotalShares: 3,
-	})
-	require.NoError(t, err)
-
-	// List shares
-	resp, err := svc.BarrierShamirListShares(ctx)
-	require.NoError(t, err)
-	require.NotNil(t, resp)
-	assert.Equal(t, 3, resp.Count)
-	assert.Equal(t, 2, resp.Threshold)
-	assert.Equal(t, 3, resp.Total)
-}
-
-func TestBarrierShamirVerify_WithShamirStrategy(t *testing.T) {
-	svc := setupServiceWithShamirBarrier(t, 2, 3)
-	ctx := context.Background()
-
-	// Initialize with Shamir (direct mode)
-	_, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
-		Threshold:   2,
-		TotalShares: 3,
-	})
-	require.NoError(t, err)
-
-	// Verify shares
-	err = svc.BarrierShamirVerify(ctx)
-	require.NoError(t, err)
-}
-
-func TestBarrierShamirDeleteShare_WithShamirStrategy(t *testing.T) {
-	svc := setupServiceWithShamirBarrier(t, 2, 5)
-	ctx := context.Background()
-
-	// Initialize with Shamir (direct mode)
-	_, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
-		Threshold:   2,
-		TotalShares: 5,
-	})
-	require.NoError(t, err)
-
-	// Delete one share by index
-	err = svc.BarrierShamirDeleteShare(ctx, &transport.BarrierShamirDeleteShareRequest{Index: 1})
-	require.NoError(t, err)
-
-	// Verify one less share
-	resp, err := svc.BarrierShamirListShares(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, 4, resp.Count)
-}
-
-func TestBarrierShamirDeleteAllShares_WithShamirStrategy(t *testing.T) {
-	svc := setupServiceWithShamirBarrier(t, 2, 3)
-	ctx := context.Background()
-
-	// Initialize with Shamir (direct mode)
-	_, err := svc.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
-		Threshold:   2,
-		TotalShares: 3,
-	})
-	require.NoError(t, err)
-
-	// Delete all shares
-	err = svc.BarrierShamirDeleteAllShares(ctx)
-	require.NoError(t, err)
-
-	// Verify no shares remain
-	resp, err := svc.BarrierShamirListShares(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, 0, resp.Count)
 }
 
 // --- BarrierGenerateRootToken success ---

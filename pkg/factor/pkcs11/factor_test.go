@@ -1,0 +1,314 @@
+// Copyright (c) 2026 Jeremy Hahn
+// Copyright (c) 2026 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package pkcs11
+
+import (
+	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"errors"
+	"testing"
+	"time"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
+
+// ecKeyPair generates an ECDSA P-256 key pair and returns the base64 DER
+// (PKIX) public key plus a sign function producing an ASN.1 DER signature over
+// SHA-256 of the nonce.
+func ecKeyPair(t *testing.T) (pubDER string, sign func(nonce []byte) []byte) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate ec key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal ec public: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(der), func(nonce []byte) []byte {
+		digest := sha256.Sum256(nonce)
+		sig, signErr := priv.Sign(rand.Reader, digest[:], crypto.SHA256)
+		if signErr != nil {
+			t.Fatalf("ec sign: %v", signErr)
+		}
+		return sig
+	}
+}
+
+// rsaKeyPair generates an RSA-2048 key pair and returns the base64 DER public
+// key plus a PKCS#1 v1.5 sign function over SHA-256 of the nonce.
+func rsaKeyPair(t *testing.T) (pubDER string, sign func(nonce []byte) []byte) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	der, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal rsa public: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(der), func(nonce []byte) []byte {
+		digest := sha256.Sum256(nonce)
+		sig, signErr := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, digest[:])
+		if signErr != nil {
+			t.Fatalf("rsa sign: %v", signErr)
+		}
+		return sig
+	}
+}
+
+func TestPKCS11Factor_Name(t *testing.T) {
+	if got := New(Config{}).Name(); got != FactorName {
+		t.Fatalf("Name() = %q, want %q", got, FactorName)
+	}
+}
+
+func TestPKCS11Factor_NewDefaults(t *testing.T) {
+	f := New(Config{})
+	if f.cfg.DefaultMechanism != defaultMechanism {
+		t.Fatalf("DefaultMechanism = %q, want %q", f.cfg.DefaultMechanism, defaultMechanism)
+	}
+	if f.cfg.ChallengeTTLSeconds != defaultChallengeTTLSeconds {
+		t.Fatalf("ChallengeTTLSeconds = %d, want %d", f.cfg.ChallengeTTLSeconds, defaultChallengeTTLSeconds)
+	}
+}
+
+func TestPKCS11Factor_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+
+	tests := []struct {
+		name    string
+		keyPair func(t *testing.T) (string, func([]byte) []byte)
+		algo    string
+	}{
+		{"ecdsa", ecKeyPair, "ecdsa"},
+		{"rsa", rsaKeyPair, "rsa"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pubDER, sign := tc.keyPair(t)
+
+			enrollment, err := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+				UserID: "custodian-1",
+				MethodParams: map[string]any{
+					"public_key_der": pubDER,
+					"slot_id":        0,
+					"token_label":    "TestToken",
+					"key_id":         "abc123",
+				},
+			})
+			if err != nil {
+				t.Fatalf("Enroll: %v", err)
+			}
+			if enrollment.FactorName != FactorName {
+				t.Fatalf("FactorName = %q, want %q", enrollment.FactorName, FactorName)
+			}
+			if enrollment.Metadata["algorithm"] != tc.algo {
+				t.Fatalf("algorithm = %q, want %q", enrollment.Metadata["algorithm"], tc.algo)
+			}
+			if enrollment.Metadata["key_id"] != "abc123" {
+				t.Fatalf("key_id = %q, want abc123", enrollment.Metadata["key_id"])
+			}
+			if enrollment.Metadata["slot"] != "0" {
+				t.Fatalf("slot = %q, want 0", enrollment.Metadata["slot"])
+			}
+			if len(enrollment.PublicKey) == 0 {
+				t.Fatal("PublicKey is empty")
+			}
+
+			challenge, err := f.Challenge(ctx, enrollment)
+			if err != nil {
+				t.Fatalf("Challenge: %v", err)
+			}
+			if len(challenge.Nonce) != nonceLength {
+				t.Fatalf("nonce length = %d, want %d", len(challenge.Nonce), nonceLength)
+			}
+
+			response := &qrdbsdk.AuthFactorResponse{
+				Value: sign(challenge.Nonce),
+				Metadata: map[string]string{
+					"public_key_der": base64.StdEncoding.EncodeToString(enrollment.PublicKey),
+				},
+			}
+			if err := f.Verify(ctx, challenge, response); err != nil {
+				t.Fatalf("Verify: %v", err)
+			}
+		})
+	}
+}
+
+func TestPKCS11Factor_Enroll_RejectsNilParams(t *testing.T) {
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	if _, err := New(Config{}).Enroll(context.Background(), nil); !errors.As(err, &inv) {
+		t.Fatalf("Enroll(nil) err = %v, want EnrollmentInvalidError", err)
+	}
+}
+
+func TestPKCS11Factor_Enroll_RejectsMissingPublicKey(t *testing.T) {
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	_, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "u1",
+		MethodParams: map[string]any{},
+	})
+	if !errors.As(err, &inv) {
+		t.Fatalf("Enroll(no pubkey) err = %v, want EnrollmentInvalidError", err)
+	}
+}
+
+func TestPKCS11Factor_Enroll_RejectsMalformedDER(t *testing.T) {
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	_, err := New(Config{}).Enroll(context.Background(), &qrdbsdk.AuthFactorEnrollParams{
+		UserID: "u1",
+		MethodParams: map[string]any{
+			"public_key_der": base64.StdEncoding.EncodeToString([]byte("not-a-der-key")),
+		},
+	})
+	if !errors.As(err, &inv) {
+		t.Fatalf("Enroll(bad der) err = %v, want EnrollmentInvalidError", err)
+	}
+}
+
+func TestPKCS11Factor_Verify_RejectsExpiredChallenge(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	pubDER, _ := ecKeyPair(t)
+	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "u1",
+		MethodParams: map[string]any{"public_key_der": pubDER},
+	})
+	challenge, _ := f.Challenge(ctx, enrollment)
+	challenge.ExpiresAt = challenge.ExpiresAt.Add(-time.Hour)
+
+	var expired *qrdbsdk.AuthFactorChallengeExpiredError
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Metadata: map[string]string{"public_key_der": pubDER},
+	})
+	if !errors.As(err, &expired) {
+		t.Fatalf("Verify(expired) err = %v, want ChallengeExpiredError", err)
+	}
+}
+
+func TestPKCS11Factor_Verify_RejectsMissingPublicKey(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	pubDER, sign := ecKeyPair(t)
+	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "u1",
+		MethodParams: map[string]any{"public_key_der": pubDER},
+	})
+	challenge, _ := f.Challenge(ctx, enrollment)
+
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    sign(challenge.Nonce),
+		Metadata: map[string]string{},
+	})
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(no pubkey) err = %v, want VerificationFailedError", err)
+	}
+}
+
+func TestPKCS11Factor_Verify_RejectsBadSignature(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	pubDER, _ := ecKeyPair(t)
+	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "u1",
+		MethodParams: map[string]any{"public_key_der": pubDER},
+	})
+	challenge, _ := f.Challenge(ctx, enrollment)
+
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    []byte("not-a-valid-DER-signature"),
+		Metadata: map[string]string{"public_key_der": pubDER},
+	})
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(bad sig) err = %v, want VerificationFailedError", err)
+	}
+}
+
+func TestPKCS11Factor_Verify_RejectsTamperedNonce(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	pubDER, sign := ecKeyPair(t)
+	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "u1",
+		MethodParams: map[string]any{"public_key_der": pubDER},
+	})
+	challenge, _ := f.Challenge(ctx, enrollment)
+
+	// Sign the original nonce, then tamper with the challenge nonce so the
+	// signature no longer matches.
+	sig := sign(challenge.Nonce)
+	challenge.Nonce[0] ^= 0xFF
+
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    sig,
+		Metadata: map[string]string{"public_key_der": pubDER},
+	})
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(tampered nonce) err = %v, want VerificationFailedError", err)
+	}
+}
+
+func TestPKCS11Factor_Verify_RejectsWrongKeySignature(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	pubDER, _ := ecKeyPair(t)
+	_, signOther := ecKeyPair(t)
+	enrollment, _ := f.Enroll(ctx, &qrdbsdk.AuthFactorEnrollParams{
+		UserID:       "u1",
+		MethodParams: map[string]any{"public_key_der": pubDER},
+	})
+	challenge, _ := f.Challenge(ctx, enrollment)
+
+	var failed *qrdbsdk.AuthFactorVerificationFailedError
+	err := f.Verify(ctx, challenge, &qrdbsdk.AuthFactorResponse{
+		Value:    signOther(challenge.Nonce),
+		Metadata: map[string]string{"public_key_der": pubDER},
+	})
+	if !errors.As(err, &failed) {
+		t.Fatalf("Verify(wrong key) err = %v, want VerificationFailedError", err)
+	}
+}
+
+func TestPKCS11Factor_Verify_RejectsNilArgs(t *testing.T) {
+	ctx := context.Background()
+	f := New(Config{})
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	if err := f.Verify(ctx, nil, &qrdbsdk.AuthFactorResponse{}); !errors.As(err, &inv) {
+		t.Fatalf("Verify(nil challenge) err = %v, want EnrollmentInvalidError", err)
+	}
+	if err := f.Verify(ctx, &qrdbsdk.AuthFactorChallenge{}, nil); !errors.As(err, &inv) {
+		t.Fatalf("Verify(nil response) err = %v, want EnrollmentInvalidError", err)
+	}
+}
+
+func TestPKCS11Factor_Challenge_RejectsNilEnrollment(t *testing.T) {
+	var inv *qrdbsdk.AuthFactorEnrollmentInvalidError
+	if _, err := New(Config{}).Challenge(context.Background(), nil); !errors.As(err, &inv) {
+		t.Fatalf("Challenge(nil) err = %v, want EnrollmentInvalidError", err)
+	}
+}

@@ -412,18 +412,18 @@ func TestBarrierService_BestStrategy_AlwaysHasSoftwareFC4(t *testing.T) {
 	best, err := svc.BestStrategy()
 	require.NoError(t, err)
 	require.NotNil(t, best)
-	assert.Equal(t, string(seal.StrategySoftware), best.ID)
+	assert.Equal(t, string(seal.StrategyPassphrase), best.ID)
 }
 
 func TestBarrierService_Initialize_EmptyPasswordFC4(t *testing.T) {
 	svc := newTestBarrierService(t)
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierPasswordRequired)
 }
 
 func TestBarrierService_Initialize_SuccessFC4(t *testing.T) {
 	svc := newTestBarrierService(t)
-	err := svc.Initialize("test-password-12345", "software")
+	err := svc.Initialize("test-password-12345", "passphrase")
 	require.NoError(t, err)
 	assert.NotNil(t, svc.barrier)
 	assert.True(t, svc.IsUnsealed())
@@ -431,10 +431,10 @@ func TestBarrierService_Initialize_SuccessFC4(t *testing.T) {
 
 func TestBarrierService_Initialize_AlreadyInitializedFC4(t *testing.T) {
 	svc := newTestBarrierService(t)
-	err := svc.Initialize("test-password-12345", "software")
+	err := svc.Initialize("test-password-12345", "passphrase")
 	require.NoError(t, err)
 
-	err = svc.Initialize("test-password-12345", "software")
+	err = svc.Initialize("test-password-12345", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierAlreadyInit)
 }
 
@@ -442,11 +442,11 @@ func TestBarrierService_Unseal_WrongPasswordFC4(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	err := svc.Initialize("correct-password", "software")
+	err := svc.Initialize("correct-password", "passphrase")
 	require.NoError(t, err)
 
 	svc2 := NewBarrierService(dir, slog.Default())
-	err = svc2.Unseal("wrong-password", "software")
+	err = svc2.Unseal("wrong-password", "passphrase")
 	assert.Error(t, err)
 }
 
@@ -454,11 +454,11 @@ func TestBarrierService_Unseal_SuccessFC4(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	err := svc.Initialize("correct-password", "software")
+	err := svc.Initialize("correct-password", "passphrase")
 	require.NoError(t, err)
 
 	svc2 := NewBarrierService(dir, slog.Default())
-	err = svc2.Unseal("correct-password", "software")
+	err = svc2.Unseal("correct-password", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc2.IsUnsealed())
 }

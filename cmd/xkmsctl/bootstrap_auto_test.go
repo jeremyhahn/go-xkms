@@ -18,9 +18,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // TestRunAutoBootstrapNoServerURL verifies that an empty server URL returns
@@ -66,8 +67,9 @@ func TestBuildAutoConfig_DANE(t *testing.T) {
 	}
 	cfg := buildAutoConfig(params)
 	require.NotNil(t, cfg)
+	assert.Equal(t, params.serverURL, cfg.ServerURL)
+	assert.Equal(t, bootstrap.ModeAuto, cfg.Mode)
 	require.NotNil(t, cfg.DANE)
-	assert.Equal(t, params.serverURL, cfg.DANE.ServerURL)
 	assert.Equal(t, params.daneHostname, cfg.DANE.Hostname)
 	assert.Equal(t, params.daneDNSServer, cfg.DANE.DNSServer)
 	assert.Nil(t, cfg.Noise)
@@ -76,7 +78,8 @@ func TestBuildAutoConfig_DANE(t *testing.T) {
 }
 
 // TestBuildAutoConfig_Noise verifies that Noise config is populated when
-// noiseKey is set, including automatic address derivation.
+// noiseKey is set. Address derivation is handled by the library at
+// Fetch time (verified in pkg/trust/bootstrap tests).
 func TestBuildAutoConfig_Noise(t *testing.T) {
 	params := &autoBootstrapParams{
 		serverURL: "https://kms.example.com:8443",
@@ -85,7 +88,9 @@ func TestBuildAutoConfig_Noise(t *testing.T) {
 	cfg := buildAutoConfig(params)
 	require.NotNil(t, cfg)
 	require.NotNil(t, cfg.Noise)
-	assert.Equal(t, "kms.example.com:8445", cfg.Noise.ServerAddr)
+	// CLI passes an empty ServerAddr; bootstrap library derives one
+	// from cfg.ServerURL inside Fetch.
+	assert.Empty(t, cfg.Noise.ServerAddr)
 	assert.Equal(t, params.noiseKey, cfg.Noise.ServerStaticKey)
 	assert.Nil(t, cfg.DANE)
 	assert.Nil(t, cfg.SPKI)
@@ -93,7 +98,7 @@ func TestBuildAutoConfig_Noise(t *testing.T) {
 }
 
 // TestBuildAutoConfig_NoiseExplicitAddr verifies that an explicit noise-addr
-// overrides the derived address.
+// is preserved on the per-mode sub-config.
 func TestBuildAutoConfig_NoiseExplicitAddr(t *testing.T) {
 	params := &autoBootstrapParams{
 		serverURL: "https://kms.example.com:8443",
@@ -115,9 +120,9 @@ func TestBuildAutoConfig_SPKI(t *testing.T) {
 	}
 	cfg := buildAutoConfig(params)
 	require.NotNil(t, cfg)
+	assert.Equal(t, params.serverURL, cfg.ServerURL)
 	require.NotNil(t, cfg.SPKI)
-	assert.Equal(t, params.serverURL, cfg.SPKI.ServerURL)
-	assert.Equal(t, params.spkiPin, cfg.SPKI.SPKIPinSHA256)
+	assert.Equal(t, params.spkiPin, cfg.SPKI.Pin)
 	assert.Nil(t, cfg.DANE)
 	assert.Nil(t, cfg.Noise)
 	assert.Nil(t, cfg.Direct)
@@ -132,8 +137,8 @@ func TestBuildAutoConfig_Direct(t *testing.T) {
 	}
 	cfg := buildAutoConfig(params)
 	require.NotNil(t, cfg)
+	assert.Equal(t, params.serverURL, cfg.ServerURL)
 	require.NotNil(t, cfg.Direct)
-	assert.Equal(t, params.serverURL, cfg.Direct.ServerURL)
 	assert.Nil(t, cfg.DANE)
 	assert.Nil(t, cfg.Noise)
 	assert.Nil(t, cfg.SPKI)
@@ -158,8 +163,8 @@ func TestBuildAutoConfig_AllMethods(t *testing.T) {
 }
 
 // TestBuildAutoConfig_BundlePath verifies that a custom bundle path is
-// passed through to Direct config (DANE and SPKI use hardcoded paths
-// in go-truststrap).
+// passed through on the root Config.BundlePath (every mode that consumes
+// it picks it up from there inside the bootstrap library).
 func TestBuildAutoConfig_BundlePath(t *testing.T) {
 	customPath := "/custom/ca/endpoint"
 	params := &autoBootstrapParams{
@@ -171,7 +176,7 @@ func TestBuildAutoConfig_BundlePath(t *testing.T) {
 	}
 	cfg := buildAutoConfig(params)
 	require.NotNil(t, cfg)
-	assert.Equal(t, customPath, cfg.Direct.BundlePath)
+	assert.Equal(t, customPath, cfg.BundlePath)
 }
 
 // TestBuildAutoConfig_NoneConfigured verifies that nil is returned when no
@@ -184,32 +189,9 @@ func TestBuildAutoConfig_NoneConfigured(t *testing.T) {
 	assert.Nil(t, cfg)
 }
 
-// TestBuildAutoConfig_UsesDefaultMethodOrder verifies that we rely on
-// truststrap's DefaultMethodOrder (DANE, Noise, SPKI, Direct) and don't
-// override it with a custom order.
-func TestBuildAutoConfig_UsesDefaultMethodOrder(t *testing.T) {
-	params := &autoBootstrapParams{
-		serverURL:     "https://kms.example.com:8443",
-		daneHostname:  "kms.example.com",
-		noiseKey:      "0000000000000000000000000000000000000000000000000000000000000000",
-		spkiPin:       "abc123",
-		directEnabled: true,
-	}
-	cfg := buildAutoConfig(params)
-	require.NotNil(t, cfg)
-
-	// MethodOrder should be nil/empty — truststrap defaults to DefaultMethodOrder.
-	assert.Empty(t, cfg.MethodOrder)
-
-	// Verify truststrap's default is what we expect.
-	expected := []truststrap.Method{
-		truststrap.MethodDANE,
-		truststrap.MethodNoise,
-		truststrap.MethodSPKI,
-		truststrap.MethodDirect,
-	}
-	assert.Equal(t, expected, truststrap.DefaultMethodOrder)
-}
+// Method-order behavior is now owned by the library (which always
+// passes go-truststrap's DefaultMethodOrder). Coverage lives in
+// pkg/trust/bootstrap. No xkmsctl-level assertion remains.
 
 // TestWriteCABundleToFile verifies that writeCABundle writes the bundle
 // to a file when an output path is specified.
@@ -267,42 +249,10 @@ func TestWriteCABundleToStdout(t *testing.T) {
 	assert.Contains(t, output, "stdout-test")
 }
 
-// TestDeriveNoiseAddr verifies Noise address derivation from server URLs.
-func TestDeriveNoiseAddr(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "https with port",
-			input:    "https://kms.example.com:8443",
-			expected: "kms.example.com:8445",
-		},
-		{
-			name:     "https without port",
-			input:    "https://kms.example.com",
-			expected: "kms.example.com:8445",
-		},
-		{
-			name:     "with path",
-			input:    "https://kms.example.com:8443/api/v1",
-			expected: "kms.example.com:8445",
-		},
-		{
-			name:     "no scheme",
-			input:    "kms.example.com:8443",
-			expected: "kms.example.com:8445",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := deriveNoiseAddr(tt.input)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
+// Noise address derivation is canonically tested in
+// pkg/trust/bootstrap/bootstrap_test.go::TestDeriveNoiseAddr.
+// xkmsctl now delegates via the library so no separate
+// CLI-level test is needed here.
 
 // TestBootstrapAutoCommandFlagParsing verifies that the auto command
 // correctly parses all its flags.

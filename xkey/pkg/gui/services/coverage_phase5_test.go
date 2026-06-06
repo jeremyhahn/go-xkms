@@ -1443,7 +1443,7 @@ func TestP5B_BarrierService_Initialize_EmptyPassword_SoftwareStrategy(t *testing
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	assert.True(t, errors.Is(err, ErrBarrierPasswordRequired))
 }
 
@@ -1454,11 +1454,11 @@ func TestP5B_BarrierService_Initialize_AlreadyInit(t *testing.T) {
 	svc := NewBarrierService(dir, slog.Default())
 
 	// Initialize first.
-	err := svc.Initialize("password123", "software")
+	err := svc.Initialize("password123", "passphrase")
 	assert.NoError(t, err)
 
 	// Second initialization should fail.
-	err = svc.Initialize("password123", "software")
+	err = svc.Initialize("password123", "passphrase")
 	assert.True(t, errors.Is(err, ErrBarrierAlreadyInit))
 }
 
@@ -1531,7 +1531,7 @@ func TestP5B_BarrierService_ProbeStrategies_NoTPMFunc(t *testing.T) {
 
 	strategies := svc.ProbeStrategies()
 	assert.Len(t, strategies, 1)
-	assert.Equal(t, "software", strategies[0].ID)
+	assert.Equal(t, "passphrase", strategies[0].ID)
 	assert.True(t, strategies[0].Available)
 }
 
@@ -1556,7 +1556,7 @@ func TestP5B_BarrierService_InitUnsealRoundTrip(t *testing.T) {
 	svc := NewBarrierService(dir, slog.Default())
 
 	// Initialize.
-	err := svc.Initialize("password123", "software")
+	err := svc.Initialize("password123", "passphrase")
 	assert.NoError(t, err)
 	assert.True(t, svc.IsUnsealed())
 	assert.NotNil(t, svc.GetBackend())
@@ -1568,7 +1568,7 @@ func TestP5B_BarrierService_InitUnsealRoundTrip(t *testing.T) {
 
 	// Unseal with a new service instance.
 	svc2 := NewBarrierService(dir, slog.Default())
-	err = svc2.Unseal("password123", "software")
+	err = svc2.Unseal("password123", "passphrase")
 	assert.NoError(t, err)
 	assert.True(t, svc2.IsUnsealed())
 }

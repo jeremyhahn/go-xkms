@@ -86,26 +86,6 @@ func TestBarrierUnsealWithShares_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestBarrierShamirListShares_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierShamirListShares(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirDeleteShare_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirDeleteAllShares_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierShamirDeleteAllShares(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirVerify_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierShamirVerify(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestBarrierRekey_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
@@ -282,38 +262,6 @@ func TestExportPIVCertificate_NotConnected(t *testing.T) {
 func TestGeneratePIVCSR_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).GeneratePIVCSR(context.Background(), &transport.GeneratePIVCSRRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-// --- Users (not supported for gRPC, return ErrNotSupported) ---
-
-func TestListUsers_NotSupported(t *testing.T) {
-	_, err := newDisconnected(t).ListUsers(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestGetUser_NotSupported(t *testing.T) {
-	_, err := newDisconnected(t).GetUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestDeleteUser_NotSupported(t *testing.T) {
-	err := newDisconnected(t).DeleteUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestEnableUser_NotSupported(t *testing.T) {
-	err := newDisconnected(t).EnableUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestDisableUser_NotSupported(t *testing.T) {
-	err := newDisconnected(t).DisableUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestListUserCredentials_NotSupported(t *testing.T) {
-	_, err := newDisconnected(t).ListUserCredentials(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
 }
 
 // --- WebAuthn (not supported) ---

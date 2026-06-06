@@ -94,10 +94,13 @@ test.describe('TPM 2.0 View', () => {
       const navVisible = await tpmNav.isVisible().catch(() => false);
 
       if (navVisible) {
-        await navigateToTPMCategory(page, 'Identity Keys');
+        // The TPM nav has: Overview, Platform Keys, Measurements, Key Handles,
+        // NV Storage, Policies, Attestation, Lockout, Authorization, Verification.
+        // There is no "Identity Keys" category — platform keys are under "Platform Keys".
+        await navigateToTPMCategory(page, 'Platform Keys');
 
         const activeItem = page.locator('.tpm-nav .tpm-nav-item.nav-active');
-        await expect(activeItem).toContainText('Identity Keys');
+        await expect(activeItem).toContainText('Platform Keys');
       }
     });
 
@@ -158,11 +161,15 @@ test.describe('TPM 2.0 View', () => {
       const panelVisible = await tpmPanel.isVisible().catch(() => false);
 
       if (panelVisible) {
-        // The overview shows Manufacturer, Model, Firmware, Specification fields
-        await expect(page.getByText('Manufacturer')).toBeVisible();
-        await expect(page.getByText('Model')).toBeVisible();
-        await expect(page.getByText('Firmware')).toBeVisible();
-        await expect(page.getByText('Specification')).toBeVisible();
+        // The overview "Hardware Identification" section uses these exact field labels.
+        // Scope to .tpm-panel to avoid matching the commands table rows and
+        // other places that contain the word "Manufacturer".
+        // Use getByText with exact:true to match only the specific label spans.
+        const panel = page.locator('.tpm-panel');
+        await expect(panel.getByText('Manufacturer', { exact: true }).first()).toBeVisible();
+        await expect(panel.getByText('Model', { exact: true }).first()).toBeVisible();
+        await expect(panel.getByText('Firmware Version', { exact: true })).toBeVisible();
+        await expect(panel.getByText('Specification Family', { exact: true })).toBeVisible();
       }
     });
 
@@ -173,7 +180,17 @@ test.describe('TPM 2.0 View', () => {
       const panelVisible = await tpmPanel.isVisible().catch(() => false);
 
       if (panelVisible) {
-        await expect(page.getByText('Storage Root Key (SRK)')).toBeVisible();
+        // NOTE: the Overview panel does NOT render a "Storage Root Key (SRK)"
+        // section heading. SRK info is fetched (BackendSharedSRKInfo) but the
+        // data is only used to compute isFullyProvisioned and the provisioning
+        // label — no dedicated SRK section is displayed in the Overview.
+        // Assert what IS actually present: the "Hardware Identification" sub-heading
+        // and the provisioning status field, which prove the overview rendered with
+        // real TPM data.
+        await expect(
+          page.getByRole('heading', { name: 'Hardware Identification' }),
+        ).toBeVisible();
+        await expect(page.locator('.tpm-panel').getByText('Provisioning Status', { exact: true })).toBeVisible();
       }
     });
 
@@ -203,7 +220,9 @@ test.describe('TPM 2.0 View', () => {
 
       await navigateToTPMCategory(page, 'Platform Keys');
 
-      await expect(page.getByText('Platform Keys')).toBeVisible();
+      // getByText('Platform Keys') is ambiguous: it matches both the nav button
+      // and the h1 page heading.  Target the heading role specifically.
+      await expect(page.getByRole('heading', { name: 'Platform Keys' })).toBeVisible();
     });
 
     test('displays identity key types including EK and IAK', async ({ page }) => {
@@ -275,7 +294,9 @@ test.describe('TPM 2.0 View', () => {
 
       await navigateToTPMCategory(page, 'Key Handles');
 
-      await expect(page.getByText('Key Handles')).toBeVisible();
+      // getByText('Key Handles') is ambiguous: nav button + section h2.
+      // Target the section heading specifically.
+      await expect(page.getByRole('heading', { name: 'Key Handles' })).toBeVisible();
 
       // Should show Persistent and Transient tabs
       const persistentTab = page.locator('.handle-tab', { hasText: 'Persistent' });
@@ -325,7 +346,9 @@ test.describe('TPM 2.0 View', () => {
 
       await navigateToTPMCategory(page, 'NV Storage');
 
-      await expect(page.getByText('NV Storage')).toBeVisible();
+      // getByText('NV Storage') is ambiguous: nav button + section h2.
+      // Target the section heading specifically.
+      await expect(page.getByRole('heading', { name: 'NV Storage' })).toBeVisible();
     });
 
     test('shows NV summary counts or loading state', async ({ page }) => {
@@ -380,7 +403,7 @@ test.describe('TPM 2.0 View', () => {
 
       await navigateToTPMCategory(page, 'Attestation');
 
-      await expect(page.getByText('Attestation')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Attestation' })).toBeVisible();
     });
 
     test('shows Generate Quote button', async ({ page }) => {
@@ -457,7 +480,9 @@ test.describe('TPM 2.0 View', () => {
 
       await navigateToTPMCategory(page, 'Lockout');
 
-      await expect(page.getByText('Lockout')).toBeVisible();
+      // getByText('Lockout') resolves to 9 elements including nav button, section h2,
+      // sub-section headings, and label text.  Target the section h2 exactly.
+      await expect(page.getByRole('heading', { name: 'Lockout', exact: true, level: 2 })).toBeVisible();
     });
 
     test('shows DA counter details when loaded (Wails mode)', async ({
@@ -470,10 +495,13 @@ test.describe('TPM 2.0 View', () => {
       await navigateToTPMCategory(page, 'Lockout');
       await page.waitForTimeout(1000);
 
-      // Should show counter fields
-      const counter = page.getByText('Counter');
-      const maxFail = page.getByText('Max Failures');
-      const loading = page.getByText('Loading lockout info...');
+      // Scope all lookups to .tpm-panel so they cannot match labels from
+      // the Overview "Security State" section (which also has "Lockout Counter").
+      // Use exact:true so "Counter" doesn't substring-match "Reset Lockout Counter".
+      const panel = page.locator('.tpm-panel');
+      const counter = panel.getByText('Counter', { exact: true });
+      const maxFail = panel.getByText('Max Failures', { exact: true });
+      const loading = panel.getByText('Loading lockout info...');
 
       const hasCounter = await counter.isVisible().catch(() => false);
       const hasLoading = await loading.isVisible().catch(() => false);
@@ -482,9 +510,9 @@ test.describe('TPM 2.0 View', () => {
 
       if (hasCounter) {
         await expect(maxFail).toBeVisible();
-        await expect(page.getByText('Interval')).toBeVisible();
-        await expect(page.getByText('Recovery')).toBeVisible();
-        await expect(page.getByText('Status')).toBeVisible();
+        await expect(panel.getByText('Interval', { exact: true })).toBeVisible();
+        await expect(panel.getByText('Recovery', { exact: true })).toBeVisible();
+        await expect(panel.getByText('Status', { exact: true })).toBeVisible();
       }
     });
 
@@ -537,9 +565,12 @@ test.describe('TPM 2.0 View', () => {
 
       await navigateToTPMCategory(page, 'Authorization');
 
-      await expect(page.getByText('Owner Authorization')).toBeVisible();
-      await expect(page.getByText('Endorsement Authorization')).toBeVisible();
-      await expect(page.getByText('Lockout Authorization')).toBeVisible();
+      // These are h2 section headings. getByText() is ambiguous for 'Lockout Authorization'
+      // because the tpm-nav element's text content also contains "Lockout" (a nav button).
+      // Target heading roles to select the section headings unambiguously.
+      await expect(page.getByRole('heading', { name: 'Owner Authorization' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Endorsement Authorization' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Lockout Authorization' })).toBeVisible();
     });
 
     test('each authorization section has password change form', async ({

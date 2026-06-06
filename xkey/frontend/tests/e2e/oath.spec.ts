@@ -218,8 +218,9 @@ test.describe('OATH View', () => {
       await dialogAddBtn.click();
       await page.waitForTimeout(1000);
 
-      // The account should appear in the grid
-      await expect(page.getByText('GitHub')).toBeVisible();
+      // The account should appear in the grid.
+      // Scope to the oath-grid to avoid matching the toast notification.
+      await expect(page.locator('.oath-grid').getByText('GitHub', { exact: true })).toBeVisible();
     });
 
     test('TOTP code displays as 6 digits', async ({ page }) => {
@@ -252,10 +253,14 @@ test.describe('OATH View', () => {
         const accountCards = page.locator('.totp-card');
         const countBefore = await accountCards.count();
 
+        // First click switches the button to confirm mode ("Confirm?" label).
+        // Second click on the same button completes the deletion.
+        await deleteButton.click();
+        await page.waitForTimeout(200);
         await deleteButton.click();
         await page.waitForTimeout(500);
 
-        // After deletion, either the count decreased or the card is gone
+        // After deletion the count must have decreased.
         const countAfter = await accountCards.count();
         expect(countAfter).toBeLessThan(countBefore);
       }

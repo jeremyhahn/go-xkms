@@ -2,7 +2,9 @@ import { test, expect } from '@playwright/test';
 import { navigateTo, waitForAppReady, ensureSidebarExpanded, isWailsMode } from './helpers';
 import * as fs from 'fs';
 
-const ADMIN_PATH = '/home/jhahn/sources/go-xkms/xkey/frontend/src/views/Admin.svelte';
+const REPO_ROOT = process.cwd().replace(/\/xkey\/frontend$/, '');
+
+const ADMIN_PATH = `${REPO_ROOT}/xkey/frontend/src/views/Admin.svelte`;
 const DEFAULT_MGMT_KEY = '010203040506070801020304050607080102030405060708';
 
 // ── Static source analysis tests ──────────────────────────────────────────────
@@ -106,8 +108,18 @@ test.describe('Admin: YubiKey management key default (browser)', () => {
     await expect(yukCard).toBeVisible({ timeout: 5_000 });
     await yukCard.click();
 
-    // The management key input should now be visible and carry the default value.
+    // The Configure YubiKey dialog opens and runs an async PKCS#11 library probe.
+    await expect(page.getByRole('dialog', { name: 'Configure YubiKey' })).toBeVisible({ timeout: 5_000 });
+
+    // The async probe resolves to EITHER the management-key form (hardware present)
+    // OR a library-not-found error (no YubiKey). isVisible() does not wait, so race
+    // the two outcomes with a retrying assertion, then branch on which one rendered.
     const mgmtKeyInput = page.locator('#yuk-mgmt-key');
+    const libNotFound = page.getByText(/libykcs11\.so not found|not found in any known location/i);
+    await expect(mgmtKeyInput.or(libNotFound)).toBeVisible({ timeout: 10_000 });
+    test.skip(await libNotFound.isVisible(), 'YubiKey PKCS#11 library (libykcs11.so) not found — no YubiKey hardware present');
+
+    // The management key input should now be visible and carry the default value.
     await expect(mgmtKeyInput).toBeVisible({ timeout: 5_000 });
 
     const value = await mgmtKeyInput.inputValue();
@@ -131,6 +143,16 @@ test.describe('Admin: YubiKey management key default (browser)', () => {
     const yukCard = modal.locator('.backend-type-card', { hasText: 'YubiKey' });
     await expect(yukCard).toBeVisible({ timeout: 5_000 });
     await yukCard.click();
+
+    // The Configure YubiKey dialog opens and runs an async PKCS#11 library probe.
+    await expect(page.getByRole('dialog', { name: 'Configure YubiKey' })).toBeVisible({ timeout: 5_000 });
+
+    // The async probe resolves to EITHER the management-key form OR a library-not-found
+    // error. isVisible() does not wait, so race the two with a retrying assertion first.
+    const mgmtKeyInput = page.locator('#yuk-mgmt-key');
+    const libNotFound = page.getByText(/libykcs11\.so not found|not found in any known location/i);
+    await expect(mgmtKeyInput.or(libNotFound)).toBeVisible({ timeout: 10_000 });
+    test.skip(await libNotFound.isVisible(), 'YubiKey PKCS#11 library (libykcs11.so) not found — no YubiKey hardware present');
 
     // The hint span adjacent to the management key input must explain the default.
     const hintText = await page
@@ -160,8 +182,9 @@ test.describe('Admin: PKCS#11 SO PIN field accessibility (browser)', () => {
     const modal = page.locator('[role="dialog"]');
     await expect(modal).toBeVisible();
 
-    // Select PKCS#11 backend type.
-    const pkcs11Card = modal.locator('.backend-type-card', { hasText: /PKCS.?11/i });
+    // Select PKCS#11 backend type. Use an exact match on the card label to avoid
+    // matching the YubiKey card which also contains "PKCS#11" in its description.
+    const pkcs11Card = modal.locator('.backend-type-card', { hasText: 'PKCS#11 / HSM' });
     await expect(pkcs11Card).toBeVisible({ timeout: 5_000 });
     await pkcs11Card.click();
 

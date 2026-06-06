@@ -33,21 +33,64 @@ else
   PKCS11_TAG := pkcs11
 endif
 
-BUILD_TAGS := ble production codec_json $(PKCS11_TAG)$(WEBKIT_TAG)
+# Object-storage (go-objstore) cloud backends for the embedded qrdb datastore.
+# Desktop default: OFF (lean binary, no cloud SDKs). Opt in per backend (e.g.
+# WITH_AWS_S3=1) or per provider (WITH_AWS=1). Tag names match go-objstore.
+WITH_AWS_S3        ?= 0
+WITH_MINIO         ?= 0
+WITH_GCP_STORAGE   ?= 0
+WITH_AZURE_BLOB    ?= 0
+WITH_GLACIER       ?= 0
+WITH_AZURE_ARCHIVE ?= 0
+WITH_AWS   ?= 0
+WITH_GCP   ?= 0
+WITH_AZURE ?= 0
+ifeq ($(WITH_AWS),1)
+  WITH_AWS_S3 := 1
+  WITH_GLACIER := 1
+endif
+ifeq ($(WITH_GCP),1)
+  WITH_GCP_STORAGE := 1
+endif
+ifeq ($(WITH_AZURE),1)
+  WITH_AZURE_BLOB := 1
+  WITH_AZURE_ARCHIVE := 1
+endif
+OBJSTORE_TAGS :=
+ifeq ($(WITH_AWS_S3),1)
+  OBJSTORE_TAGS += awss3
+endif
+ifeq ($(WITH_MINIO),1)
+  OBJSTORE_TAGS += minio
+endif
+ifeq ($(WITH_GCP_STORAGE),1)
+  OBJSTORE_TAGS += gcpstorage
+endif
+ifeq ($(WITH_AZURE_BLOB),1)
+  OBJSTORE_TAGS += azureblob
+endif
+ifeq ($(WITH_GLACIER),1)
+  OBJSTORE_TAGS += glacier
+endif
+ifeq ($(WITH_AZURE_ARCHIVE),1)
+  OBJSTORE_TAGS += azurearchive
+endif
+
+BUILD_TAGS := ble production codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
 # Development tags: exclude "production" because the Wails CLI injects the
 # "dev" tag automatically during `wails dev`, and wails's internal app
 # package has separate files guarded by //go:build dev and //go:build
 # production that each declare App.Run and CreateApp. Including both tags
 # produces "method App.Run already declared" at link time.
-DEV_TAGS := ble codec_json $(PKCS11_TAG)$(WEBKIT_TAG)
+DEV_TAGS := ble codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
 # Unit test tags: exclude "ble" so BLE stub is used (fast, no hardware).
 # The ble tag enables real bluetooth.DefaultAdapter.Enable() which blocks
 # ~25s on machines without BLE hardware. Integration tests use BUILD_TAGS
 # (with ble) for real hardware testing in the devcontainer.
 # Note: PKCS#11 is included in test tags since it doesn't require hardware for unit tests.
-TEST_TAGS := production codec_json $(PKCS11_TAG)$(WEBKIT_TAG)
+TEST_TAGS := production codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
 # Go parameters
 GO := go

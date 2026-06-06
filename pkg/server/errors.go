@@ -83,9 +83,6 @@ var (
 	// ErrNoBackendsAvailable indicates no full-service backends are available.
 	ErrNoBackendsAvailable = errors.New("server: no backends available - at least one full-service backend must be initialized")
 
-	// ErrBootstrapRequiresUserStore indicates the bootstrap service requires a user store.
-	ErrBootstrapRequiresUserStore = errors.New("server: bootstrap service requires user store")
-
 	// ErrNoTLSCertAvailable indicates no TLS certificate is available.
 	ErrNoTLSCertAvailable = errors.New("server: no TLS certificate available: configure CA or TLS cert/key files")
 
@@ -131,6 +128,21 @@ type ErrStorageCreate struct {
 func (e *ErrStorageCreate) Error() string {
 	return fmt.Sprintf("failed to create %s: %s", e.Resource, e.Err)
 }
+
+// QRDBNodeError reports a failure constructing or closing the in-process qrdb
+// node that xkms hosts as its core engine.
+type QRDBNodeError struct {
+	Stage string
+	Err   error
+}
+
+// Error returns the error message.
+func (e *QRDBNodeError) Error() string {
+	return fmt.Sprintf("qrdb node: %s: %s", e.Stage, e.Err)
+}
+
+// Unwrap returns the wrapped cause.
+func (e *QRDBNodeError) Unwrap() error { return e.Err }
 
 // Unwrap returns the underlying error.
 func (e *ErrStorageCreate) Unwrap() error {
@@ -370,6 +382,36 @@ func (e *ErrCABundleGet) Error() string {
 // Unwrap returns the underlying error.
 func (e *ErrCABundleGet) Unwrap() error {
 	return e.Err
+}
+
+// ErrSealStrategyBuild represents a failure constructing a hardware or cloud
+// sealing strategy from an already-initialized backend. Strategy names the
+// barrier strategy ID that failed; Err carries the underlying cause.
+type ErrSealStrategyBuild struct {
+	Strategy string
+	Err      error
+}
+
+// Error returns the error message.
+func (e *ErrSealStrategyBuild) Error() string {
+	return fmt.Sprintf("failed to build %s seal strategy: %s", e.Strategy, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrSealStrategyBuild) Unwrap() error {
+	return e.Err
+}
+
+// ErrSealBackendNotConfigured indicates a hardware/cloud seal strategy was
+// listed in the barrier preference order but its backend is not configured or
+// not compiled into the binary, so no sealer is available to back it.
+type ErrSealBackendNotConfigured struct {
+	Strategy string
+}
+
+// Error returns the error message.
+func (e *ErrSealBackendNotConfigured) Error() string {
+	return fmt.Sprintf("seal strategy %q selected in barrier preference order but its backend is not configured", e.Strategy)
 }
 
 // ErrUnsupportedStorageBackend indicates an unsupported storage backend was specified.

@@ -48,7 +48,7 @@ const (
 	viperKeyPIVPKCS11Library = "piv.pkcs11_library"
 	viperKeyPIVPKCS11Token   = "piv.pkcs11_token"
 	viperKeyPIVPKCS11PIN     = "piv.pkcs11_pin"
-	viperKeyPIVPKCS11SOPIN  = "piv.pkcs11_so_pin"
+	viperKeyPIVPKCS11SOPIN   = "piv.pkcs11_so_pin"
 )
 
 // PIV command errors.

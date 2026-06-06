@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -45,7 +45,7 @@ func createBarrierTestServer(t *testing.T) *Server {
 	return server
 }
 
-// mockPINManager implements pin.PINBackend for testing.
+// mockPINManager implements qrdbsdk.PINBackend for testing.
 type mockPINManager struct {
 	soPINSet      bool
 	userPINSet    bool
@@ -59,7 +59,7 @@ type mockPINManager struct {
 	resetErr      error
 }
 
-func (m *mockPINManager) Strategy() pin.StrategyID            { return "mock" }
+func (m *mockPINManager) Strategy() qrdbsdk.PINStrategyID     { return "mock" }
 func (m *mockPINManager) IsInitialized() bool                 { return m.initialized }
 func (m *mockPINManager) SOPINSet() bool                      { return m.soPINSet }
 func (m *mockPINManager) UserPINSet() bool                    { return m.userPINSet }
@@ -70,8 +70,8 @@ func (m *mockPINManager) ChangeUserPIN(cur, new string) error { return m.changeU
 func (m *mockPINManager) VerifySOPIN(p string) error          { return m.verifySOErr }
 func (m *mockPINManager) VerifyUserPIN(p string) error        { return m.verifyUserErr }
 func (m *mockPINManager) ResetLockout(so string) error        { return m.resetErr }
-func (m *mockPINManager) GetLockoutStatus() *pin.LockoutStatus {
-	return &pin.LockoutStatus{
+func (m *mockPINManager) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
+	return &qrdbsdk.PINLockoutStatus{
 		FailedAttempts:  0,
 		MaxAttempts:     10,
 		IsLocked:        false,
@@ -452,13 +452,13 @@ func TestPINErrors(t *testing.T) {
 
 	mock := &mockPINManager{
 		initialized:   true,
-		setSOPINErr:   pin.ErrPINInvalid,
-		verifySOErr:   pin.ErrPINLocked,
-		verifyUserErr: pin.ErrPINNotSet,
-		changeSOErr:   pin.ErrSOPINRequired,
-		changeUserErr: pin.ErrPINTooShort,
-		setUserPINErr: pin.ErrPINAlreadySet,
-		resetErr:      pin.ErrInvalidCurrentPIN,
+		setSOPINErr:   qrdbsdk.ErrPINInvalid,
+		verifySOErr:   qrdbsdk.ErrPINLocked,
+		verifyUserErr: qrdbsdk.ErrPINNotSet,
+		changeSOErr:   qrdbsdk.ErrSOPINRequired,
+		changeUserErr: qrdbsdk.ErrPINTooShort,
+		setUserPINErr: qrdbsdk.ErrPINAlreadySet,
+		resetErr:      qrdbsdk.ErrInvalidCurrentPIN,
 	}
 	server.pinManager = mock
 

@@ -24,7 +24,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
@@ -38,8 +37,8 @@ const barrierRootKeyPath = "barrier/root_key"
 
 // strategyLabels maps strategy IDs to human-readable labels for the frontend.
 var strategyLabels = map[seal.StrategyID]string{
-	seal.StrategySoftware: "Software (AES-256-GCM)",
-	seal.StrategyTPM2:     "TPM 2.0 Hardware",
+	seal.StrategyPassphrase: "Passphrase (AES-256-GCM)",
+	seal.StrategyTPM2:       "TPM 2.0 Hardware",
 }
 
 // BarrierStrategyInfo describes a seal strategy's availability for the frontend.
@@ -175,14 +174,14 @@ func (s *BarrierService) IsInitialized() bool {
 }
 
 // ProbeStrategies returns a list of sealing strategies with their current
-// availability. Software is always available. TPM2 is available only when
+// availability. Passphrase is always available. TPM2 is available only when
 // tpmSealerFn returns a non-nil sealer.
 func (s *BarrierService) ProbeStrategies() []BarrierStrategyInfo {
 	return s.probeStrategiesUnlocked()
 }
 
 // BestStrategy returns the best available strategy according to the default
-// preference order. Hardware-backed strategies are preferred over software.
+// preference order. Hardware-backed strategies are preferred over passphrase.
 func (s *BarrierService) BestStrategy() (*BarrierStrategyInfo, error) {
 	return s.bestStrategyUnlocked()
 }
@@ -192,10 +191,10 @@ func (s *BarrierService) BestStrategy() (*BarrierStrategyInfo, error) {
 // storage backend.
 //
 // The strategyID parameter specifies which sealing strategy to use (e.g.,
-// "software", "tpm2"). This must be explicitly chosen by the caller — no
+// "passphrase", "tpm2"). This must be explicitly chosen by the caller — no
 // auto-detection or fallback is performed.
 //
-// A password is required when the strategy is software-based.
+// A password is required when the strategy is passphrase.
 // After initialization the barrier transitions to the unsealed state.
 func (s *BarrierService) Initialize(password, strategyID string) error {
 	s.mu.Lock()
@@ -244,9 +243,11 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		_ = base.Close()
 	}
 
-	// Validate password for software strategy.
-	if strategyID == string(seal.StrategySoftware) && password == "" {
-		s.log.Error("barrier: software strategy requires password but none provided")
+	// Validate password for the passphrase strategy: a missing password is
+	// caught here before the deferred-passphrase strategy errors deeper in
+	// the barrier.
+	if strategyID == string(seal.StrategyPassphrase) && password == "" {
+		s.log.Error("barrier: passphrase strategy requires password but none provided")
 		return ErrBarrierPasswordRequired
 	}
 
@@ -272,7 +273,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 
 	barrier, bErr := seal.NewBarrier(s.log, base, seal.BarrierConfig{
 		RootKeyPath:     barrierRootKeyPath,
-		PreferenceOrder: seal.DefaultPreferenceOrder,
+		PreferenceOrder: []seal.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
 		_ = base.Close()
@@ -364,7 +365,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 
 	barrier, bErr := seal.NewBarrier(s.log, base, seal.BarrierConfig{
 		RootKeyPath:     barrierRootKeyPath,
-		PreferenceOrder: seal.DefaultPreferenceOrder,
+		PreferenceOrder: []seal.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
 		_ = base.Close()
@@ -542,7 +543,7 @@ func (s *BarrierService) assembleStrategy(strategyID string) (seal.SealingStrate
 			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
 		}
 		return seal.NewTPM2Strategy(sealer, nil), nil
-	case seal.StrategySoftware:
+	case seal.StrategyPassphrase:
 		return seal.NewSoftwareStrategy(), nil
 	default:
 		return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
@@ -550,12 +551,14 @@ func (s *BarrierService) assembleStrategy(strategyID string) (seal.SealingStrate
 }
 
 // createBaseBackend creates the base storage backend for the barrier.
-// Uses the registered factory if set, otherwise defaults to filestorage.New.
+// Uses the registered factory if set, otherwise defaults to the go-qrdb file
+// engine, which writes the same flat <storageDir>/<key> layout as xkey's
+// historical storage (no data migration).
 func (s *BarrierService) createBaseBackend(storageDir string) (storage.Backend, error) {
 	if s.baseBackendFn != nil {
 		return s.baseBackendFn(storageDir)
 	}
-	return filestorage.New(storageDir)
+	return storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: storageDir})
 }
 
 // BarrierSealInfo describes the barrier's seal state for the frontend.
@@ -639,17 +642,25 @@ func (s *BarrierService) GetSealInfo() *BarrierSealInfo {
 // bestStrategyUnlocked returns the best strategy without acquiring the mutex.
 // Callers must hold s.mu.
 func (s *BarrierService) bestStrategyUnlocked() (*BarrierStrategyInfo, error) {
+	// The seal layer no longer exposes an implicit DefaultPreferenceOrder.
+	// This GUI helper recommends an available HARDWARE-backed strategy first,
+	// otherwise the first available passphrase strategy — derived from each
+	// strategy's own HardwareBacked metadata, not a library default.
 	probed := s.probeStrategiesUnlocked()
-	available := make(map[string]*BarrierStrategyInfo, len(probed))
+	var fallback *BarrierStrategyInfo
 	for i := range probed {
-		if probed[i].Available {
-			available[probed[i].ID] = &probed[i]
+		if !probed[i].Available {
+			continue
+		}
+		if probed[i].HardwareBacked {
+			return &probed[i], nil
+		}
+		if fallback == nil {
+			fallback = &probed[i]
 		}
 	}
-	for _, id := range seal.DefaultPreferenceOrder {
-		if info, ok := available[string(id)]; ok {
-			return info, nil
-		}
+	if fallback != nil {
+		return fallback, nil
 	}
 	return nil, seal.ErrNoAvailableStrategy
 }
@@ -658,10 +669,10 @@ func (s *BarrierService) bestStrategyUnlocked() (*BarrierStrategyInfo, error) {
 func (s *BarrierService) probeStrategiesUnlocked() []BarrierStrategyInfo {
 	strategies := []BarrierStrategyInfo{
 		{
-			ID:             string(seal.StrategySoftware),
+			ID:             string(seal.StrategyPassphrase),
 			Available:      true,
 			HardwareBacked: false,
-			Label:          strategyLabels[seal.StrategySoftware],
+			Label:          strategyLabels[seal.StrategyPassphrase],
 		},
 	}
 	if s.tpmSealerFn != nil {
@@ -669,7 +680,7 @@ func (s *BarrierService) probeStrategiesUnlocked() []BarrierStrategyInfo {
 		// Check both non-nil AND CanSeal() to match the inner barrier's
 		// TPM2Strategy.Available() check. Without CanSeal(), the service
 		// may report TPM2 as "best" (skipping password guard) while the
-		// barrier internally falls to Software with an empty password.
+		// barrier internally falls to Passphrase with an empty password.
 		available := sealer != nil && sealer.CanSeal()
 		strategies = append(strategies, BarrierStrategyInfo{
 			ID:             string(seal.StrategyTPM2),

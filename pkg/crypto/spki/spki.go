@@ -130,7 +130,7 @@ func VerifyConnection(pin string) func(tls.ConnectionState) error {
 // during truststrap bootstrap to establish initial trust with a remote server.
 func NewPinnedTLSConfig(spkiPin string) *tls.Config {
 	return &tls.Config{
-		MinVersion:         tls.VersionTLS12,
+		MinVersion:         tls.VersionTLS13,
 		InsecureSkipVerify: true, //nolint:gosec // CA chain skipped; VerifyConnection provides SPKI pin verification
 		VerifyConnection:   VerifyConnection(spkiPin),
 	}
@@ -151,7 +151,7 @@ func FetchServerPin(address string) (string, *x509.Certificate, error) {
 func FetchServerPinWithCA(address string, rootCAs *x509.CertPool) (string, *x509.Certificate, error) {
 	conn, err := tls.Dial("tcp", address, &tls.Config{
 		RootCAs:    rootCAs,
-		MinVersion: tls.VersionTLS12,
+		MinVersion: tls.VersionTLS13,
 	})
 	if err != nil {
 		return "", nil, ErrDialFailed

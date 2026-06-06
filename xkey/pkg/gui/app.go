@@ -38,13 +38,15 @@ import (
 	tpm2lib "github.com/google/go-tpm/tpm2"
 	tpmtransport "github.com/google/go-tpm/tpm2/transport"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/autofill"
 	backendtpm2 "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
+	"github.com/jeremyhahn/go-xkms/pkg/pintpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	pivfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	tpm2store "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -160,8 +162,8 @@ type App struct {
 	// fido2KeyBackend is the composite FIDO2 key backend that routes credential
 	// key operations to the appropriate backend (software, TPM2, PKCS#11, etc.).
 	// Backends are registered/unregistered dynamically as they become available.
-	fido2KeyBackend *keybackend.CompositeBackend
-	screenLockMonitor     *notify.ScreenLockMonitor
+	fido2KeyBackend   *keybackend.CompositeBackend
+	screenLockMonitor *notify.ScreenLockMonitor
 
 	// Expiry checker for static password entries.
 	expiryChecker *staticpw.ExpiryChecker
@@ -171,8 +173,8 @@ type App struct {
 	fido2Storage  authenticator.StatefulCredentialStorage
 	staticpwStore staticpw.Store
 	trustStore    truststore.TrustStore
-	pivFileStore    pivcert.PIVCertificateStorage
-	pivStorageBE    storage.Backend // underlying storage for creating namespaced PIV stores
+	pivFileStore  pivcert.PIVCertificateStorage
+	pivStorageBE  storage.Backend // underlying storage for creating namespaced PIV stores
 
 	// TPM instance (lazy-initialized, closed on shutdown).
 	tpmMu             sync.Mutex
@@ -213,6 +215,12 @@ type App struct {
 
 	// configDirPath caches the resolved config directory (~/.config/xkey/).
 	configDirPath string
+
+	// storageEngine is the resolved go-qrdb storage engine kind ("file",
+	// "pebble", or "memory") backing all local persistence. It is read once
+	// from config via storageEngineOnce and defaults to "file".
+	storageEngine     string
+	storageEngineOnce sync.Once
 }
 
 // configToData converts gui.GUIConfig to services.GUIConfigData to avoid
@@ -508,8 +516,8 @@ func (a *App) restorePKCS11Modules() {
 // initLocalPIV initializes the local PIV manager. When barrierBackend
 // is non-nil, PIV certificates are stored through the barrier with a
 // "piv/" prefix for transparent AES-256-GCM encryption. When
-// barrierBackend is nil, a plain filestorage backend is created under
-// the given data directory.
+// barrierBackend is nil, a plain backend from openStore (the configured
+// go-qrdb engine) is created under the given data directory.
 //
 // Each backend gets its own namespaced PIV certificate store so that
 // certificates from one backend (e.g., "software") do not appear when
@@ -521,7 +529,8 @@ func (a *App) restorePKCS11Modules() {
 // name so that lookups from the GUI (registry IDs) and from xkms
 // (category names) both succeed.
 func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
-	backendIDs []string, registry backendregistry.Registry) (pivcert.PIVCertificateStorage, storage.Backend, bool) {
+	backendIDs []string, registry backendregistry.Registry,
+	openStore func(string) (storage.Backend, error)) (pivcert.PIVCertificateStorage, storage.Backend, bool) {
 	if dir == "" {
 		return nil, nil, false
 	}
@@ -536,7 +545,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 			return nil, nil, false
 		}
 
-		fb, err := filestorage.New(pivDir)
+		fb, err := openStore(pivDir)
 		if err != nil {
 			log.Warn("failed to create PIV storage backend", "error", err)
 			return nil, nil, false
@@ -669,6 +678,28 @@ func closeBackend(log *slog.Logger, b storage.Backend) {
 // file-backed stores, wiring them to the services that were constructed
 // with nil stores. This must be called AFTER the LUKS/storage decision
 // so that ~/.xkey/data/ is created on the correct filesystem.
+// storageEngineKind resolves, once, the go-qrdb storage engine backing all
+// local persistence. It reads State.StorageEngine from the unified config and
+// defaults to the file engine, whose flat <dir>/<key> layout matches xkey's
+// historical on-disk format (no data migration).
+func (a *App) storageEngineKind() storage.EngineKind {
+	a.storageEngineOnce.Do(func() {
+		a.storageEngine = "file"
+		if ucfg, err := config.Load(); err == nil && ucfg.State.StorageEngine != "" {
+			a.storageEngine = ucfg.State.StorageEngine
+		}
+	})
+	return storage.EngineKind(a.storageEngine)
+}
+
+// openStore creates a storage.Backend rooted at dir using the configured
+// storage engine. It is the single construction point for xkey's local file
+// stores, so flipping State.StorageEngine switches the underlying engine
+// (file, pebble, memory) without changing any call site.
+func (a *App) openStore(dir string) (storage.Backend, error) {
+	return storage.OpenEngine(storage.EngineConfig{Kind: a.storageEngineKind(), Path: dir})
+}
+
 func (a *App) initializeDataDir() error {
 	if a.dataDir != "" {
 		return ErrDataDirAlreadyInit
@@ -712,7 +743,7 @@ func (a *App) initializeDataDir() error {
 			a.fido2Service.SetStorage(fido2Storage)
 		}
 	} else {
-		fido2Backend, fErr := filestorage.New(filepath.Join(dir, "fido2"))
+		fido2Backend, fErr := a.openStore(filepath.Join(dir, "fido2"))
 		if fErr != nil {
 			a.log.Warn("failed to create FIDO2 storage backend", "error", fErr)
 		} else {
@@ -735,7 +766,7 @@ func (a *App) initializeDataDir() error {
 			a.fido2Service.SetRPPolicyStore(rpPolicyStore)
 		}
 	} else {
-		rpBackend, rpErr := filestorage.New(filepath.Join(dir, "fido2"))
+		rpBackend, rpErr := a.openStore(filepath.Join(dir, "fido2"))
 		if rpErr != nil {
 			a.log.Warn("failed to create FIDO2 RP policy backend", "error", rpErr)
 		} else {
@@ -755,7 +786,7 @@ func (a *App) initializeDataDir() error {
 		a.staticPWService.SetStore(spwStore)
 		a.log.Info("static password store using barrier backend")
 	} else {
-		spwBackend, spwErr := filestorage.New(filepath.Join(dir, "passwords"))
+		spwBackend, spwErr := a.openStore(filepath.Join(dir, "passwords"))
 		if spwErr != nil {
 			a.log.Warn("failed to create password file store", "error", spwErr)
 		} else {
@@ -773,7 +804,7 @@ func (a *App) initializeDataDir() error {
 		if barrierBackend != nil {
 			teamBackend = barrierBackend
 		} else {
-			fb, fbErr := filestorage.New(filepath.Join(dir, "teams"))
+			fb, fbErr := a.openStore(filepath.Join(dir, "teams"))
 			if fbErr != nil {
 				a.log.Warn("failed to create team file store", "error", fbErr)
 			} else {
@@ -870,7 +901,7 @@ func (a *App) initializeDataDir() error {
 		if mkErr := os.MkdirAll(shareDataDir, 0700); mkErr != nil {
 			a.log.Warn("failed to create share data directory", "error", mkErr)
 		} else {
-			shareBackend, sbErr := filestorage.New(shareDataDir)
+			shareBackend, sbErr := a.openStore(shareDataDir)
 			if sbErr != nil {
 				a.log.Warn("failed to create share file backend", "error", sbErr)
 			} else {
@@ -893,7 +924,7 @@ func (a *App) initializeDataDir() error {
 			pivBackendIDs = append(pivBackendIDs, b.ID)
 		}
 	}
-	pivFileStore, pivStorageBE, pivOK := initLocalPIV(a.log, dir, barrierBackend, pivBackendIDs, a.backendRegistry)
+	pivFileStore, pivStorageBE, pivOK := initLocalPIV(a.log, dir, barrierBackend, pivBackendIDs, a.backendRegistry, a.openStore)
 	if pivOK {
 		a.pivService.SetLocalEnabled(true)
 		a.pivFileStore = pivFileStore
@@ -1088,7 +1119,7 @@ func (a *App) initializeAuthenticator() {
 	}
 
 	// Wire PINVerifier so the authenticator delegates PIN state queries
-	// to the pin.Service (single source of truth) instead of internal state.
+	// to the qrdbsdk.PINService (single source of truth) instead of internal state.
 	auth.SetPINVerifier(a.pinService)
 	aaguid := auth.AAGUID()
 	a.log.Info("shared FIDO2 authenticator initialized",
@@ -1275,7 +1306,7 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 	// Create cert storage at the same location used by AutoInitialize.
 	keysDir := filepath.Join(a.dataDir, "keys")
 	certDir := filepath.Join(keysDir, "certs")
-	certStore, csErr := filestorage.New(certDir)
+	certStore, csErr := a.openStore(certDir)
 	if csErr != nil {
 		a.log.Warn("failed to create cert storage for PKCS#11 backend", "error", csErr)
 		return
@@ -1910,8 +1941,8 @@ func NewApp(cfg *GUIConfig) *App {
 				// to handle SO login for key generation.
 				if a.fido2KeyBackend != nil {
 					// The xkms backend is registered under "pkcs11" (see
-				// registerPKCS11XKMSBackend), not the module ID.
-				p11Backend, p11Err := xkms.GetBackend("pkcs11")
+					// registerPKCS11XKMSBackend), not the module ID.
+					p11Backend, p11Err := xkms.GetBackend("pkcs11")
 					if p11Err == nil && p11Backend != nil {
 						bt := types.BackendType(moduleID)
 						provider := p11Backend.KeyProvider()
@@ -2562,6 +2593,12 @@ func (a *App) startup(ctx context.Context) {
 		a.barrierService.SetDataDir(dataDirPath)
 	}
 
+	// Route the barrier's base storage backend through the configured go-qrdb
+	// storage engine so the engine switch (file/pebble/memory) applies to the
+	// barrier as well. The factory defaults to the file engine, matching xkey's
+	// historical flat on-disk layout.
+	a.barrierService.SetBaseBackendFactory(a.openStore)
+
 	if a.config.SetupComplete {
 		// Returning user: handle LUKS auto-unseal or locked state.
 		a.startupReturningUser(ctx)
@@ -2662,7 +2699,7 @@ func (a *App) startupReturningUser(ctx context.Context) {
 			if a.config.SealerBackend != "" {
 				a.config.BarrierStrategy = a.config.SealerBackend
 			} else if a.config.BarrierStrategy == "" {
-				a.config.BarrierStrategy = "software"
+				a.config.BarrierStrategy = "passphrase"
 			}
 			if err := SaveGUIConfig(a.config); err != nil {
 				a.log.Error("failed to persist corrected config", "error", err)
@@ -2690,7 +2727,7 @@ func (a *App) startupReturningUser(ctx context.Context) {
 			if a.config.SealerBackend != "" {
 				a.config.BarrierStrategy = a.config.SealerBackend
 			} else if a.config.BarrierStrategy == "" {
-				a.config.BarrierStrategy = "software"
+				a.config.BarrierStrategy = "passphrase"
 			}
 		}
 		if err := SaveGUIConfig(a.config); err != nil {
@@ -2870,7 +2907,7 @@ func (a *App) postDataDirStartup() {
 	a.startIPCServer()
 }
 
-// initPINService creates a pin.Service with the appropriate backend and
+// initPINService creates a qrdbsdk.PINService with the appropriate backend and
 // wires it to the GUI PINService. Prefers TPM2 when available, falls back
 // to software-based PIN management.
 //
@@ -2881,60 +2918,83 @@ func (a *App) postDataDirStartup() {
 //
 // An SRK from a prior TPM owner may exist (IsInitialized=true) but have unknown
 // auth. Using IsInitialized alone would select TPM2 and break every PIN check.
+// guiTPMProvider adapts the xKey GUI's TPM accessor and wizard/GUIConfig
+// auth-readiness model to the shared pinselect.TPMProvider contract. TPM2 is
+// usable only when the SRK is initialized AND its auth was confirmed this
+// session (wizard) or restored from a prior session that persisted
+// PINStrategy="tpm2".
+type guiTPMProvider struct{ app *App }
+
+// PlatformAuth implements pinselect.TPMProvider.
+func (p guiTPMProvider) PlatformAuth() (pintpm2.PlatformAuthProvider, bool) {
+	tpmImpl, err := p.app.tpmAccessor.Acquire()
+	if err != nil {
+		return nil, false
+	}
+	p.app.tpmAccessor.Release()
+	pks := tpmImpl.PlatformKeyStore()
+	if pks == nil || !pks.IsInitialized() {
+		return nil, false
+	}
+	if !pks.IsAuthReady() {
+		if p.app.config.PINStrategy != "tpm2" {
+			p.app.log.Warn("PIN backend: TPM2 SRK exists but auth not confirmed, falling back to software")
+			return nil, false
+		}
+		pks.SetAuthReady(true)
+	}
+	concrete, ok := pks.(*tpm2pkg.PlatformKeyStore)
+	if !ok {
+		return nil, false
+	}
+	return concrete, true
+}
+
+// guiSoftwarePINProvider persists software PIN state under <dataDir>/pin and
+// routes through pinadapter so the qrdb software backend observes the
+// canonical not-found error on a fresh install (a correctness fix over passing
+// the raw file storage backend directly).
+type guiSoftwarePINProvider struct {
+	dataDir string
+	engine  storage.EngineKind
+}
+
+// Storage implements pinselect.SoftwareProvider.
+func (p guiSoftwarePINProvider) Storage() (qrdbsdk.PINStorage, error) {
+	pinDir := filepath.Join(p.dataDir, "pin")
+	if err := os.MkdirAll(pinDir, 0700); err != nil {
+		return nil, err
+	}
+	fs, err := storage.OpenEngine(storage.EngineConfig{Kind: p.engine, Path: pinDir})
+	if err != nil {
+		return nil, err
+	}
+	return pinadapter.New(fs)
+}
+
+// HashConfig implements pinselect.SoftwareProvider.
+func (p guiSoftwarePINProvider) HashConfig() qrdbsdk.PINHashConfig {
+	return qrdbsdk.AutoDetectHashConfig()
+}
+
 func (a *App) initPINService() {
 	if a.dataDir == "" {
 		a.log.Warn("initPINService: dataDir not set, skipping")
 		return
 	}
 
-	var backend pin.PINBackend
-
-	// Try TPM2 backend if the TPM is available and the SRK exists.
-	tpmImpl, err := a.tpmAccessor.Acquire()
-	if err == nil {
-		a.tpmAccessor.Release()
-		pks := tpmImpl.PlatformKeyStore()
-		if pks != nil && pks.IsInitialized() {
-			useTPM2 := false
-
-			if pks.IsAuthReady() {
-				// Auth was confirmed this session (wizard just ran).
-				useTPM2 = true
-			} else if a.config.PINStrategy == "tpm2" {
-				// A prior session confirmed TPM2 auth — restore that state.
-				pks.SetAuthReady(true)
-				useTPM2 = true
-			}
-
-			if useTPM2 {
-				backend = pin.NewTPM2Backend(pks.(*tpm2pkg.PlatformKeyStore))
-				a.log.Info("PIN backend: TPM2 (SRK password auth)")
-			} else {
-				a.log.Warn("PIN backend: TPM2 SRK exists but auth not confirmed, falling back to software")
-			}
-		}
-	}
-
-	// Fall back to software backend.
-	if backend == nil {
-		pinDir := filepath.Join(a.dataDir, "pin")
-		if mkErr := os.MkdirAll(pinDir, 0700); mkErr != nil {
-			a.log.Error("initPINService: failed to create PIN directory", "error", mkErr)
-			return
-		}
-		fileStore, fsErr := filestorage.New(pinDir)
-		if fsErr != nil {
-			a.log.Error("initPINService: failed to create PIN file storage", "error", fsErr)
-			return
-		}
-		hashConfig := pin.AutoDetectHashConfig()
-		var swErr error
-		backend, swErr = pin.NewSoftwareBackend(fileStore, hashConfig)
-		if swErr != nil {
-			a.log.Error("initPINService: failed to create software PIN backend", "error", swErr)
-			return
-		}
-		a.log.Info("PIN backend: software (Argon2id/PBKDF2)")
+	// Select the PIN backend via the shared pinselect decision point so the
+	// xKey GUI and the quicbaasd daemon use ONE selection rule (TPM2 →
+	// software) rather than duplicated inline logic. The GUI supplies its own
+	// environment adapters: TPM auth-readiness comes from the wizard /
+	// persisted GUIConfig, and software state persists under <dataDir>/pin.
+	backend, err := pinselect.Select(pinselect.Config{
+		TPM:      guiTPMProvider{app: a},
+		Software: guiSoftwarePINProvider{dataDir: a.dataDir, engine: a.storageEngineKind()},
+	})
+	if err != nil {
+		a.log.Error("initPINService: failed to select PIN backend", "error", err)
+		return
 	}
 
 	// Persist the selected strategy so restarts use the same backend.
@@ -2946,7 +3006,7 @@ func (a *App) initPINService() {
 		}
 	}
 
-	svc := pin.NewService(backend, a.log)
+	svc := qrdbsdk.NewPINService(backend, a.log)
 
 	// Wire FIDO2 hash setter so PIN changes propagate to the authenticator.
 	svc.SetFIDO2HashSetter(func(hash []byte) {

@@ -36,7 +36,6 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
@@ -78,7 +77,7 @@ func (m *CoverageMockEABDAO) Save(_ context.Context, _ *entities.ExternalAccount
 	return m.saveErr
 }
 
-func (m *CoverageMockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAccountBinding, _ qrdbdao.Condition) error {
+func (m *CoverageMockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAccountBinding, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -105,7 +104,7 @@ func (m *CoverageMockEABDAO) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbs
 	panic("not implemented")
 }
 
-func (m *CoverageMockEABDAO) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbdao.PagerFunc[*entities.ExternalAccountBinding]) error {
+func (m *CoverageMockEABDAO) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbsdk.PagerFunc[*entities.ExternalAccountBinding]) error {
 	panic("not implemented")
 }
 
@@ -150,7 +149,7 @@ func (m *CoverageMockEABDAO) CountByIndex(_ context.Context, _ string, _ interfa
 	panic("not implemented")
 }
 
-func (m *CoverageMockEABDAO) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ExternalAccountBinding] {
+func (m *CoverageMockEABDAO) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ExternalAccountBinding] {
 	panic("not implemented")
 }
 

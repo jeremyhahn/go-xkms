@@ -324,6 +324,31 @@ type CertificateRequest struct {
 	// IssuerKeyStoreType indicates the CA's keystore backend type for TCG extensions.
 	// When set, adds a tp-issuerKeyStore extension. Common values: "TPM2", "PKCS8", "PKCS11".
 	IssuerKeyStoreType string `yaml:"issuer-keystore-type" json:"issuer_keystore_type" mapstructure:"issuer-keystore-type"`
+
+	// SPIFFETrustDomain, when non-empty alongside TenantID, instructs the CA to
+	// synthesize a tenant-scoped SPIFFE URI SAN of the form
+	// spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name> and append it to
+	// the issued certificate. This is symmetric with the CSR-sign path's
+	// SignOptions.SPIFFETrustDomain: it is how broker-issued (generate-and-
+	// distribute) client certificates carry their tenant binding for login-time
+	// tenant derivation. Runtime-only; not serialized.
+	SPIFFETrustDomain string `yaml:"-" json:"-"`
+
+	// TenantID is the tenant the issued certificate is scoped to. Required to
+	// synthesize the SPIFFE SAN (together with SPIFFETrustDomain). The SO /
+	// bootstrap cert is issued with TenantID="system". Runtime-only; not
+	// serialized.
+	TenantID string `yaml:"-" json:"-"`
+
+	// SPIFFEKind selects the workload kind for the SPIFFE SAN: "user" or "svc".
+	// Defaults to "user" when empty (and a SPIFFE SAN is requested).
+	// Runtime-only; not serialized.
+	SPIFFEKind string `yaml:"-" json:"-"`
+
+	// SPIFFEName is the workload name embedded in the SPIFFE SAN (username for
+	// users, service name for services). Defaults to the certificate subject
+	// CommonName when empty. Runtime-only; not serialized.
+	SPIFFEName string `yaml:"-" json:"-"`
 }
 
 // Validate checks that the CertificateRequest has valid required fields.
@@ -462,4 +487,26 @@ type SignOptions struct {
 	// subject does not match the CA's own subject. Ignored when Signer
 	// is nil.
 	IssuerCert *x509.Certificate
+
+	// SPIFFETrustDomain, when non-empty alongside TenantID, instructs the CA
+	// to synthesize a tenant-scoped SPIFFE URI SAN of the form
+	// spiffe://<trust-domain>/tenant/<tenantID>/<kind>/<name> and append it to
+	// the issued certificate. This is how broker-issued client certificates
+	// carry their tenant binding for login-time tenant derivation. The trust
+	// domain is operator-configured and supplied per issuance.
+	SPIFFETrustDomain string
+
+	// TenantID is the tenant the issued certificate is scoped to. Required to
+	// synthesize the SPIFFE SAN (together with SPIFFETrustDomain). The SO /
+	// bootstrap cert is issued with TenantID="system".
+	TenantID string
+
+	// SPIFFEKind selects the workload kind for the SPIFFE SAN: "user" or
+	// "svc". Defaults to "user" when empty (and a SPIFFE SAN is requested).
+	SPIFFEKind string
+
+	// SPIFFEName is the workload name embedded in the SPIFFE SAN (username for
+	// users, service name for services). Defaults to the certificate subject
+	// CommonName when empty.
+	SPIFFEName string
 }

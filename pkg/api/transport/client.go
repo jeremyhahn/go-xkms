@@ -181,18 +181,6 @@ type BarrierService interface {
 	// BarrierUnsealWithShares submits multiple Shamir shares to unseal in a single request.
 	BarrierUnsealWithShares(ctx context.Context, req *BarrierUnsealSharesRequest) error
 
-	// BarrierShamirListShares returns metadata about stored Shamir shares.
-	BarrierShamirListShares(ctx context.Context) (*BarrierShamirSharesResponse, error)
-
-	// BarrierShamirDeleteShare deletes a single Shamir share by index.
-	BarrierShamirDeleteShare(ctx context.Context, req *BarrierShamirDeleteShareRequest) error
-
-	// BarrierShamirDeleteAllShares deletes all stored Shamir shares.
-	BarrierShamirDeleteAllShares(ctx context.Context) error
-
-	// BarrierShamirVerify verifies the integrity of stored Shamir shares.
-	BarrierShamirVerify(ctx context.Context) error
-
 	// BarrierRekey generates new Shamir shares, replacing the existing ones.
 	BarrierRekey(ctx context.Context, req *BarrierRekeyRequest) (*BarrierRekeyResponse, error)
 
@@ -322,8 +310,12 @@ type PINService interface {
 	ResetLockout(ctx context.Context, req *ResetLockoutRequest) error
 }
 
-// UserService handles user management operations.
+// UserService handles xkms user management operations. xkms presents its own
+// user model; the backing store is the embedded qrdb node.
 type UserService interface {
+	// CreateUser creates a new xkms user.
+	CreateUser(ctx context.Context, req *CreateUserRequest) (*GetUserResponse, error)
+
 	// ListUsers returns a list of all users.
 	ListUsers(ctx context.Context, opts ...ListOption) (*ListUsersResponse, error)
 
@@ -338,6 +330,9 @@ type UserService interface {
 
 	// DisableUser disables a user account.
 	DisableUser(ctx context.Context, username string) error
+
+	// BindUserCert binds an mTLS certificate's SPKI thumbprint to a user.
+	BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error
 
 	// ListUserCredentials returns a list of credentials for a user.
 	ListUserCredentials(ctx context.Context, username string) (*ListUserCredentialsResponse, error)

@@ -15,7 +15,7 @@ package xkms
 
 import (
 	gotpm2 "github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 )
@@ -34,13 +34,7 @@ type SimulatorInterface = tpm2.SimulatorInterface
 type PlatformKeyStorer = tpm2.PlatformKeyStorer
 
 // PINBackend defines the interface for backend-native PIN operations.
-type PINBackend = pin.PINBackend
-
-// PINManager is the legacy interface for PIN management operations.
-//
-// Deprecated: Use PINBackend for backend implementations and pin.Service as
-// the entry point.
-type PINManager = pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
+type PINBackend = qrdbsdk.PINBackend
 
 // ---------------------------------------------------------------------------
 // Struct and concrete type aliases

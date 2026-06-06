@@ -1081,11 +1081,11 @@ func (s *mockACMEServerForChallenges) handleDirectory(w http.ResponseWriter, _ *
 	w.Header().Set("Replay-Nonce", s.getNonce())
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"newNonce":   s.Server.URL + "/acme/new-nonce",
-		"newAccount": s.Server.URL + "/acme/new-account",
-		"newOrder":   s.Server.URL + "/acme/new-order",
-		"revokeCert": s.Server.URL + "/acme/revoke-cert",
-		"keyChange":  s.Server.URL + "/acme/key-change",
+		"newNonce":   s.URL + "/acme/new-nonce",
+		"newAccount": s.URL + "/acme/new-account",
+		"newOrder":   s.URL + "/acme/new-order",
+		"revokeCert": s.URL + "/acme/revoke-cert",
+		"keyChange":  s.URL + "/acme/key-change",
 	})
 }
 
@@ -1097,7 +1097,7 @@ func (s *mockACMEServerForChallenges) handleNewNonce(w http.ResponseWriter, _ *h
 func (s *mockACMEServerForChallenges) handleNewAccount(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Replay-Nonce", s.getNonce())
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", s.Server.URL+"/acme/account/1")
+	w.Header().Set("Location", s.URL+"/acme/account/1")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":  "valid",
@@ -1117,15 +1117,15 @@ func (s *mockACMEServerForChallenges) handleAccount(w http.ResponseWriter, _ *ht
 func (s *mockACMEServerForChallenges) handleNewOrder(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Replay-Nonce", s.getNonce())
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", s.Server.URL+"/acme/order/1")
+	w.Header().Set("Location", s.URL+"/acme/order/1")
 	w.WriteHeader(http.StatusCreated)
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":         "pending",
 		"expires":        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"identifiers":    []map[string]string{{"type": "dns", "value": "example.com"}},
-		"authorizations": []string{s.Server.URL + "/acme/authz/1"},
-		"finalize":       s.Server.URL + "/acme/finalize/1",
+		"authorizations": []string{s.URL + "/acme/authz/1"},
+		"finalize":       s.URL + "/acme/finalize/1",
 	})
 }
 
@@ -1145,12 +1145,12 @@ func (s *mockACMEServerForChallenges) handleOrder(w http.ResponseWriter, _ *http
 		"status":         status,
 		"expires":        time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"identifiers":    []map[string]string{{"type": "dns", "value": "example.com"}},
-		"authorizations": []string{s.Server.URL + "/acme/authz/1"},
-		"finalize":       s.Server.URL + "/acme/finalize/1",
+		"authorizations": []string{s.URL + "/acme/authz/1"},
+		"finalize":       s.URL + "/acme/finalize/1",
 	}
 
 	if s.orderFinalized {
-		resp["certificate"] = s.Server.URL + "/acme/cert/1"
+		resp["certificate"] = s.URL + "/acme/cert/1"
 	}
 
 	_ = json.NewEncoder(w).Encode(resp)
@@ -1168,13 +1168,13 @@ func (s *mockACMEServerForChallenges) handleAuthz(w http.ResponseWriter, _ *http
 	challenges := []map[string]interface{}{
 		{
 			"type":   "http-01",
-			"url":    s.Server.URL + "/acme/challenge/1",
+			"url":    s.URL + "/acme/challenge/1",
 			"token":  "test-token-123",
 			"status": s.challengeStatus,
 		},
 		{
 			"type":   "dns-01",
-			"url":    s.Server.URL + "/acme/challenge/2",
+			"url":    s.URL + "/acme/challenge/2",
 			"token":  "dns-token-456",
 			"status": s.challengeStatus,
 		},
@@ -1200,7 +1200,7 @@ func (s *mockACMEServerForChallenges) handleChallenge(w http.ResponseWriter, r *
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"type":   s.challengeType,
-		"url":    s.Server.URL + "/acme/challenge/1",
+		"url":    s.URL + "/acme/challenge/1",
 		"token":  "test-token-123",
 		"status": s.challengeStatus,
 	})
@@ -1210,11 +1210,11 @@ func (s *mockACMEServerForChallenges) handleFinalize(w http.ResponseWriter, _ *h
 	s.orderFinalized = true
 	w.Header().Set("Replay-Nonce", s.getNonce())
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", s.Server.URL+"/acme/order/1")
+	w.Header().Set("Location", s.URL+"/acme/order/1")
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":      "valid",
-		"certificate": s.Server.URL + "/acme/cert/1",
+		"certificate": s.URL + "/acme/cert/1",
 	})
 }
 
@@ -1318,7 +1318,7 @@ func TestCrossSignWithChallenge_Validation(t *testing.T) {
 		server := newMockACMEServerForChallenges(t)
 		defer server.Close()
 
-		resp, err := http.Get(server.Server.URL + "/directory")
+		resp, err := http.Get(server.URL + "/directory")
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1335,7 +1335,7 @@ func TestCrossSignWithChallenge_Validation(t *testing.T) {
 		server := newMockACMEServerForChallenges(t)
 		defer server.Close()
 
-		resp, err := http.Post(server.Server.URL+"/acme/new-account", "application/json", nil)
+		resp, err := http.Post(server.URL+"/acme/new-account", "application/json", nil)
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1408,7 +1408,7 @@ func TestCrossSigner_ProcessAuthorization(t *testing.T) {
 		defer server.Close()
 
 		// Verify server responds with valid status
-		resp, err := http.Get(server.Server.URL + "/acme/authz/1")
+		resp, err := http.Get(server.URL + "/acme/authz/1")
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1422,7 +1422,7 @@ func TestCrossSigner_ProcessAuthorization(t *testing.T) {
 		server.authzStatus = "pending"
 		defer server.Close()
 
-		resp, err := http.Get(server.Server.URL + "/acme/authz/1")
+		resp, err := http.Get(server.URL + "/acme/authz/1")
 		require.NoError(t, err)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -1489,7 +1489,7 @@ func TestMockServerChallengeFlow(t *testing.T) {
 
 	// Test challenge acceptance
 	client := &http.Client{}
-	req, _ := http.NewRequest(http.MethodPost, server.Server.URL+"/acme/challenge/1", nil)
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/acme/challenge/1", nil)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -1509,7 +1509,7 @@ func TestOrderFinalization(t *testing.T) {
 
 	// Finalize order
 	client := &http.Client{}
-	req, _ := http.NewRequest(http.MethodPost, server.Server.URL+"/acme/finalize/1", nil)
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/acme/finalize/1", nil)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
@@ -1517,7 +1517,7 @@ func TestOrderFinalization(t *testing.T) {
 	assert.True(t, server.orderFinalized)
 
 	// Verify order shows valid status
-	resp, err = http.Get(server.Server.URL + "/acme/order/1")
+	resp, err = http.Get(server.URL + "/acme/order/1")
 	require.NoError(t, err)
 	defer func() { _ = resp.Body.Close() }()
 
@@ -1604,8 +1604,8 @@ func TestProcessAuthorization_AlreadyValid(t *testing.T) {
 		w.Header().Set("Replay-Nonce", "test-nonce")
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case r.URL.Path == "/acme/authz/1":
+		switch r.URL.Path {
+		case "/acme/authz/1":
 			authz := map[string]interface{}{
 				"status": "valid", // Already valid
 				"identifier": map[string]string{
@@ -1657,8 +1657,8 @@ func TestProcessAuthorization_NoSuitableChallenge(t *testing.T) {
 		w.Header().Set("Replay-Nonce", "test-nonce")
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case r.URL.Path == "/acme/authz/1":
+		switch r.URL.Path {
+		case "/acme/authz/1":
 			authz := map[string]interface{}{
 				"status": "pending",
 				"identifier": map[string]string{
@@ -1747,8 +1747,8 @@ func TestProcessAuthorization_SelectsDNS01Challenge(t *testing.T) {
 		w.Header().Set("Replay-Nonce", "test-nonce")
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case r.URL.Path == "/acme/authz/1":
+		switch r.URL.Path {
+		case "/acme/authz/1":
 			status := "pending"
 			if selectedChallengeType != "" {
 				status = "valid"
@@ -1771,7 +1771,7 @@ func TestProcessAuthorization_SelectsDNS01Challenge(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(authz)
 
-		case r.URL.Path == "/acme/challenge/1":
+		case "/acme/challenge/1":
 			selectedChallengeType = "dns-01"
 			challenge := map[string]interface{}{
 				"type":   "dns-01",
@@ -1816,8 +1816,8 @@ func TestProcessAuthorization_SelectsTLSALPN01Challenge(t *testing.T) {
 		w.Header().Set("Replay-Nonce", "test-nonce")
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case r.URL.Path == "/acme/authz/1":
+		switch r.URL.Path {
+		case "/acme/authz/1":
 			status := "pending"
 			if selectedChallengeType != "" {
 				status = "valid"
@@ -1840,7 +1840,7 @@ func TestProcessAuthorization_SelectsTLSALPN01Challenge(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(authz)
 
-		case r.URL.Path == "/acme/challenge/1":
+		case "/acme/challenge/1":
 			selectedChallengeType = "tls-alpn-01"
 			challenge := map[string]interface{}{
 				"type":   "tls-alpn-01",
@@ -1885,8 +1885,8 @@ func TestProcessAuthorization_AcceptChallengeError(t *testing.T) {
 		w.Header().Set("Replay-Nonce", "test-nonce")
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case r.URL.Path == "/acme/authz/1":
+		switch r.URL.Path {
+		case "/acme/authz/1":
 			authz := map[string]interface{}{
 				"status": "pending",
 				"identifier": map[string]string{
@@ -1905,7 +1905,7 @@ func TestProcessAuthorization_AcceptChallengeError(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(authz)
 
-		case r.URL.Path == "/acme/challenge/1":
+		case "/acme/challenge/1":
 			requestCount++
 			// Return error on challenge accept
 			w.WriteHeader(http.StatusForbidden)
@@ -1949,8 +1949,8 @@ func TestProcessAuthorization_WaitAuthorizationError(t *testing.T) {
 		w.Header().Set("Replay-Nonce", "test-nonce")
 		w.Header().Set("Content-Type", "application/json")
 
-		switch {
-		case r.URL.Path == "/acme/authz/1":
+		switch r.URL.Path {
+		case "/acme/authz/1":
 			status := "pending"
 			if challengeAccepted {
 				status = "invalid" // Return invalid status after challenge acceptance
@@ -1973,7 +1973,7 @@ func TestProcessAuthorization_WaitAuthorizationError(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(authz)
 
-		case r.URL.Path == "/acme/challenge/1":
+		case "/acme/challenge/1":
 			challengeAccepted = true
 			challenge := map[string]interface{}{
 				"type":   "http-01",
@@ -2391,11 +2391,11 @@ func newCrossSignMockServer(t *testing.T) *crossSignMockServer {
 func (m *crossSignMockServer) handleDirectory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	dir := map[string]interface{}{
-		"newNonce":   m.Server.URL + "/acme/new-nonce",
-		"newAccount": m.Server.URL + "/acme/new-account",
-		"newOrder":   m.Server.URL + "/acme/new-order",
-		"revokeCert": m.Server.URL + "/acme/revoke-cert",
-		"keyChange":  m.Server.URL + "/acme/key-change",
+		"newNonce":   m.URL + "/acme/new-nonce",
+		"newAccount": m.URL + "/acme/new-account",
+		"newOrder":   m.URL + "/acme/new-order",
+		"revokeCert": m.URL + "/acme/revoke-cert",
+		"keyChange":  m.URL + "/acme/key-change",
 		"meta": map[string]interface{}{
 			"termsOfService": "https://example.com/terms",
 		},
@@ -2411,7 +2411,7 @@ func (m *crossSignMockServer) handleNewNonce(w http.ResponseWriter, r *http.Requ
 
 func (m *crossSignMockServer) handleNewAccount(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", atomic.AddInt64(&m.nonceCounter, 1)))
-	w.Header().Set("Location", m.Server.URL+"/acme/account/1")
+	w.Header().Set("Location", m.URL+"/acme/account/1")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -2422,13 +2422,13 @@ func (m *crossSignMockServer) handleNewAccount(w http.ResponseWriter, r *http.Re
 
 func (m *crossSignMockServer) handleNewOrder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Replay-Nonce", fmt.Sprintf("nonce-%d", atomic.AddInt64(&m.nonceCounter, 1)))
-	w.Header().Set("Location", m.Server.URL+"/acme/order/1")
+	w.Header().Set("Location", m.URL+"/acme/order/1")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":         "pending",
-		"authorizations": []string{m.Server.URL + "/acme/authz/1"},
-		"finalize":       m.Server.URL + "/acme/finalize/1",
+		"authorizations": []string{m.URL + "/acme/authz/1"},
+		"finalize":       m.URL + "/acme/finalize/1",
 		"identifiers": []map[string]string{
 			{"type": "dns", "value": "example.com"},
 		},
@@ -2458,7 +2458,7 @@ func (m *crossSignMockServer) handleAuthz(w http.ResponseWriter, r *http.Request
 			{
 				"type":   "http-01",
 				"status": m.chalStatus,
-				"url":    m.Server.URL + "/acme/challenge/1",
+				"url":    m.URL + "/acme/challenge/1",
 				"token":  "test-token",
 			},
 		},
@@ -2471,7 +2471,7 @@ func (m *crossSignMockServer) handleChallenge(w http.ResponseWriter, r *http.Req
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"type":   "http-01",
 		"status": "valid",
-		"url":    m.Server.URL + "/acme/challenge/1",
+		"url":    m.URL + "/acme/challenge/1",
 		"token":  "test-token",
 	})
 }
@@ -2491,8 +2491,8 @@ func (m *crossSignMockServer) handleFinalize(w http.ResponseWriter, r *http.Requ
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":      "valid",
-		"certificate": m.Server.URL + "/acme/cert/1",
-		"finalize":    m.Server.URL + "/acme/finalize/1",
+		"certificate": m.URL + "/acme/cert/1",
+		"finalize":    m.URL + "/acme/finalize/1",
 	})
 }
 
@@ -2529,11 +2529,11 @@ func createCrossSignTestClient(t *testing.T, server *crossSignMockServer) *Clien
 	accountKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	serverCert := server.Server.Certificate()
+	serverCert := server.Certificate()
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Raw})
 
 	config := &Config{
-		DirectoryURL:        server.Server.URL + "/directory",
+		DirectoryURL:        server.URL + "/directory",
 		SystemCertPool:      false,
 		RequestServerBundle: false,
 		TrustedRoots:        []string{string(certPEM)},
@@ -2913,11 +2913,11 @@ func TestCrossSignerFromClient_Valid(t *testing.T) {
 	client := createCrossSignTestClient(t, server)
 	defer func() { _ = client.Close() }()
 
-	serverCert := server.Server.Certificate()
+	serverCert := server.Certificate()
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverCert.Raw})
 
 	crossSigner, err := CrossSignerFromClient(client, &CrossSignConfig{
-		DirectoryURL:        server.Server.URL + "/directory",
+		DirectoryURL:        server.URL + "/directory",
 		ChallengeType:       "http-01",
 		TrustedRoots:        []string{string(certPEM)},
 		RequestServerBundle: false,

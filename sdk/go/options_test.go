@@ -148,32 +148,6 @@ func (m *mockService) AttestKey(ctx context.Context, req *AttestKeyRequest) (*At
 	return nil, nil
 }
 
-// User management methods
-
-func (m *mockService) ListUsers(ctx context.Context, opts ...ListOption) (*ListUsersResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) GetUser(ctx context.Context, username string) (*GetUserResponse, error) {
-	return nil, nil
-}
-
-func (m *mockService) DeleteUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *mockService) EnableUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *mockService) DisableUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *mockService) ListUserCredentials(ctx context.Context, username string) (*ListUserCredentialsResponse, error) {
-	return nil, nil
-}
-
 // Authentication flow methods
 
 func (m *mockService) BeginRegistration(ctx context.Context, req *BeginRegistrationRequest) (*BeginRegistrationResponse, error) {
@@ -1301,26 +1275,6 @@ func (m *mockService) BarrierUnsealWithShares(ctx context.Context, req *BarrierU
 	return nil
 }
 
-// BarrierShamirListShares returns Shamir share metadata.
-func (m *mockService) BarrierShamirListShares(_ context.Context) (*BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (m *mockService) BarrierShamirDeleteShare(_ context.Context, _ *BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (m *mockService) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return nil
-}
-
-// BarrierShamirVerify verifies Shamir share integrity.
-func (m *mockService) BarrierShamirVerify(_ context.Context) error {
-	return nil
-}
-
 // BarrierRekey re-encrypts the barrier with a new root key.
 func (m *mockService) BarrierRekey(_ context.Context, _ *BarrierRekeyRequest) (*BarrierRekeyResponse, error) {
 	return nil, nil
@@ -1477,5 +1431,37 @@ func (m *mockService) SubmitCredential(ctx context.Context, req *CredentialSubmi
 }
 
 func (m *mockService) GetCredentialStrategy(ctx context.Context) (*CredentialStrategyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) CreateUser(ctx context.Context, req *CreateUserRequest) (*GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) ListUsers(ctx context.Context, opts ...ListOption) (*ListUsersResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) GetUser(ctx context.Context, username string) (*GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockService) DeleteUser(ctx context.Context, username string) error {
+	return nil
+}
+
+func (m *mockService) EnableUser(ctx context.Context, username string) error {
+	return nil
+}
+
+func (m *mockService) DisableUser(ctx context.Context, username string) error {
+	return nil
+}
+
+func (m *mockService) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	return nil
+}
+
+func (m *mockService) ListUserCredentials(ctx context.Context, username string) (*ListUserCredentialsResponse, error) {
 	return nil, nil
 }

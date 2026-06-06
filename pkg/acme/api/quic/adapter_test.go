@@ -687,6 +687,7 @@ func TestDecodeListResponse(t *testing.T) {
 		}
 		if pagination == nil {
 			t.Error("Expected pagination to be returned")
+			return
 		}
 		if pagination.Total != 0 {
 			t.Errorf("Expected total 0, got %d", pagination.Total)
@@ -1371,7 +1372,7 @@ func TestUserOperations(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("CreateTenantUser success", func(t *testing.T) {
-		responseBody := `{"id":"user-1","username":"alice","tenantID":"tenant-1"}`
+		responseBody := `{"id":1,"username":"alice","tenantID":"tenant-1"}`
 		response := &http.Response{
 			StatusCode: http.StatusCreated,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -1414,7 +1415,7 @@ func TestUserOperations(t *testing.T) {
 	})
 
 	t.Run("GetTenantUser success", func(t *testing.T) {
-		responseBody := `{"id":"user-1","username":"bob","tenantID":"tenant-1"}`
+		responseBody := `{"id":1,"username":"bob","tenantID":"tenant-1"}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -1454,14 +1455,14 @@ func TestUserOperations(t *testing.T) {
 	})
 
 	t.Run("UpdateTenantUser success", func(t *testing.T) {
-		responseBody := `{"id":"user-1","username":"bob-updated","tenantID":"tenant-1"}`
+		responseBody := `{"id":1,"username":"bob-updated","tenantID":"tenant-1"}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
 		}
 		adapter := createMockAdapter(response, nil)
 
-		req := &db.UpdateUserRequest{ID: "user-1", Username: "bob-updated"}
+		req := &db.UpdateUserRequest{ID: 1, Username: "bob-updated"}
 		updated, err := adapter.UpdateTenantUser(ctx, "tenant-1", req)
 		if err != nil {
 			t.Fatalf("UpdateTenantUser() failed: %v", err)
@@ -1474,7 +1475,7 @@ func TestUserOperations(t *testing.T) {
 	t.Run("UpdateTenantUser transport error", func(t *testing.T) {
 		adapter := createMockAdapter(nil, errors.New("timeout"))
 
-		req := &db.UpdateUserRequest{ID: "user-1", Username: "bob"}
+		req := &db.UpdateUserRequest{ID: 1, Username: "bob"}
 		_, err := adapter.UpdateTenantUser(ctx, "tenant-1", req)
 		if err == nil {
 			t.Error("Expected error for transport failure")
@@ -1489,7 +1490,7 @@ func TestUserOperations(t *testing.T) {
 		}
 		adapter := createMockAdapter(response, nil)
 
-		req := &db.UpdateUserRequest{ID: "user-1", Username: "bob"}
+		req := &db.UpdateUserRequest{ID: 1, Username: "bob"}
 		_, err := adapter.UpdateTenantUser(ctx, "tenant-1", req)
 		if err == nil {
 			t.Error("Expected error for invalid JSON")
@@ -1519,7 +1520,7 @@ func TestUserOperations(t *testing.T) {
 	})
 
 	t.Run("ListTenantUsers success", func(t *testing.T) {
-		responseBody := `{"users":[{"id":"user-1","username":"alice"},{"id":"user-2","username":"bob"}],"total":2,"hasMore":false}`
+		responseBody := `{"users":[{"id":1,"username":"alice"},{"id":2,"username":"bob"}],"total":2,"hasMore":false}`
 		response := &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
@@ -2377,7 +2378,7 @@ func TestHTTPMethods(t *testing.T) {
 			name:           "UpdateTenantUser uses PUT",
 			expectedMethod: http.MethodPut,
 			execute: func(a *Adapter) error {
-				_, err := a.UpdateTenantUser(context.Background(), "t1", &db.UpdateUserRequest{ID: "user-1", Username: "bob"})
+				_, err := a.UpdateTenantUser(context.Background(), "t1", &db.UpdateUserRequest{ID: 1, Username: "bob"})
 				return err
 			},
 		},
@@ -2756,9 +2757,9 @@ func TestAdapterURLPaths(t *testing.T) {
 		},
 		{
 			name:        "UpdateTenantUser URL",
-			expectedURL: "https://localhost:9444/api/v1/tenants/t1/users/user-1",
+			expectedURL: "https://localhost:9444/api/v1/tenants/t1/users/1",
 			execute: func(a *Adapter) error {
-				_, err := a.UpdateTenantUser(context.Background(), "t1", &db.UpdateUserRequest{ID: "user-1", Username: "bob"})
+				_, err := a.UpdateTenantUser(context.Background(), "t1", &db.UpdateUserRequest{ID: 1, Username: "bob"})
 				return err
 			},
 		},

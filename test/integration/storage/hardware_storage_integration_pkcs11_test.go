@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	"github.com/miekg/pkcs11"
 )
+
 // tryInitSoftHSM attempts to initialize PKCS#11 storage via SoftHSM.
 // Returns nil if SoftHSM is not available in the test environment.
 func tryInitSoftHSM(t *testing.T) hardware.HardwareCertStorage {

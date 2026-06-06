@@ -72,7 +72,7 @@ func TestAuthzMiddleware_AllowedRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
 	identity := &auth.Identity{
 		Subject: "admin@example.com",
-		Roles: []string{"admin"},
+		Roles:   []string{"admin"},
 	}
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -102,7 +102,7 @@ func TestAuthzMiddleware_DeniedRequest(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/keys/my-key", nil)
 	identity := &auth.Identity{
 		Subject: "user@example.com",
-		Roles: []string{"user"},
+		Roles:   []string{"user"},
 	}
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -148,7 +148,7 @@ func TestAuthzMiddleware_AuthzError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
 	identity := &auth.Identity{
 		Subject: "admin@example.com",
-		Roles: []string{"admin"},
+		Roles:   []string{"admin"},
 	}
 	req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -219,7 +219,7 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 		req.RemoteAddr = "192.168.1.100:54321"
 		identity := &auth.Identity{
 			Subject: "operator@example.com",
-			Roles: []string{"operator"},
+			Roles:   []string{"operator"},
 		}
 		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 
@@ -252,7 +252,7 @@ func TestAuthzMiddleware_AuditLogging(t *testing.T) {
 		req.RemoteAddr = "10.0.0.5:12345"
 		identity := &auth.Identity{
 			Subject: "viewer@example.com",
-			Roles: []string{"viewer"},
+			Roles:   []string{"viewer"},
 		}
 		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
 

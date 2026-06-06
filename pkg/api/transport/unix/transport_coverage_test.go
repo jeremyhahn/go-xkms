@@ -88,26 +88,6 @@ func TestBarrierUnsealWithShares_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestBarrierShamirListShares_NotConnected(t *testing.T) {
-	_, err := newDisconnected(t).BarrierShamirListShares(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirDeleteShare_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirDeleteAllShares_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierShamirDeleteAllShares(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirVerify_NotConnected(t *testing.T) {
-	err := newDisconnected(t).BarrierShamirVerify(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestBarrierRekey_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).BarrierRekey(context.Background(), &transport.BarrierRekeyRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
@@ -286,58 +266,27 @@ func TestGeneratePIVCSR_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-// --- Users (not supported for gRPC, return ErrNotSupported) ---
-
-func TestListUsers_NotSupported(t *testing.T) {
-	_, err := newDisconnected(t).ListUsers(context.Background())
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestGetUser_NotSupported(t *testing.T) {
-	_, err := newDisconnected(t).GetUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestDeleteUser_NotSupported(t *testing.T) {
-	err := newDisconnected(t).DeleteUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestEnableUser_NotSupported(t *testing.T) {
-	err := newDisconnected(t).EnableUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestDisableUser_NotSupported(t *testing.T) {
-	err := newDisconnected(t).DisableUser(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
-func TestListUserCredentials_NotSupported(t *testing.T) {
-	_, err := newDisconnected(t).ListUserCredentials(context.Background(), "admin")
-	assert.ErrorIs(t, err, ErrNotSupported)
-}
-
 // --- WebAuthn (not supported) ---
 
-func TestBeginRegistration_NotSupported(t *testing.T) {
+func TestBeginRegistration_Disconnected(t *testing.T) {
+	// Registration is a real RPC; with no live connection the call fails.
 	_, err := newDisconnected(t).BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.Error(t, err)
 }
 
-func TestFinishRegistration_NotSupported(t *testing.T) {
+func TestFinishRegistration_Disconnected(t *testing.T) {
 	_, err := newDisconnected(t).FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.Error(t, err)
 }
 
-func TestBeginAuthentication_NotSupported(t *testing.T) {
+func TestBeginAuthentication_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestFinishAuthentication_NotSupported(t *testing.T) {
+func TestFinishAuthentication_NotConnected(t *testing.T) {
 	_, err := newDisconnected(t).FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{})
-	assert.ErrorIs(t, err, ErrNotSupported)
+	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
 // --- SealStore (not supported) ---

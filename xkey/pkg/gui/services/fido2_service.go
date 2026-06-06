@@ -24,10 +24,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"

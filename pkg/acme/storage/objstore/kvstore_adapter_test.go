@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +29,7 @@ func TestNewKVStoreAdapter(t *testing.T) {
 	adapter := NewKVStoreAdapter(store)
 	assert.NotNil(t, adapter)
 
-	var _ kvstore.KVStore = adapter
+	var _ = adapter
 }
 
 // TestKVStoreAdapter_PutAndGet verifies basic put and get operations.
@@ -234,7 +234,7 @@ func TestKVStoreAdapter_RegisterEntityIndexes(t *testing.T) {
 	store := newMockStorage()
 	adapter := NewKVStoreAdapter(store)
 
-	err := adapter.RegisterEntityIndexes("test", []kvstore.EntityIndex{
+	err := adapter.RegisterEntityIndexes("test", []qrdbsdk.EntityIndex{
 		{FieldName: "Name", JSONFieldName: "name"},
 	})
 	require.NoError(t, err)

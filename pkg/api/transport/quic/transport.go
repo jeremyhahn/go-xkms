@@ -1004,48 +1004,6 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 	return &resp, nil
 }
 
-// ListUsers returns a list of all users.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return nil, ErrNotSupported
-}
-
-// GetUser returns information about a specific user.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
-	return nil, ErrNotSupported
-}
-
-// DeleteUser deletes a user.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) DeleteUser(_ context.Context, _ string) error {
-	return ErrNotSupported
-}
-
-// EnableUser enables a user account.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) EnableUser(_ context.Context, _ string) error {
-	return ErrNotSupported
-}
-
-// DisableUser disables a user account.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) DisableUser(_ context.Context, _ string) error {
-	return ErrNotSupported
-}
-
-// ListUserCredentials returns a list of credentials for a user.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, ErrNotSupported
-}
-
 // BeginRegistration begins a WebAuthn registration flow.
 // Note: This is a stub implementation that returns ErrNotSupported.
 // Authentication flow will be implemented in a future version.
@@ -1591,49 +1549,6 @@ func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.
 		return ErrNotConnected
 	}
 	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/unseal-shares", req)
-	return err
-}
-
-// BarrierShamirListShares returns metadata about stored Shamir shares.
-func (t *Transport) BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	data, err := t.doRawRequest(ctx, http.MethodGet, "/v1/barrier/shamir/shares", nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp transport.BarrierShamirSharesResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &resp, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (t *Transport) BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	_, err := t.doRawRequest(ctx, http.MethodDelete, fmt.Sprintf("/v1/barrier/shamir/shares/%d", req.Index), nil)
-	return err
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (t *Transport) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	_, err := t.doRawRequest(ctx, http.MethodDelete, "/v1/barrier/shamir/shares", nil)
-	return err
-}
-
-// BarrierShamirVerify verifies the integrity of stored Shamir shares.
-func (t *Transport) BarrierShamirVerify(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	_, err := t.doRawRequest(ctx, http.MethodPost, "/v1/barrier/shamir/verify", nil)
 	return err
 }
 
@@ -2402,6 +2317,52 @@ func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.Crede
 	}
 
 	return &resp, nil
+}
+
+// ==================== User Operations ====================
+//
+// User management over QUIC is not yet wired; the CLI/webui reach xkms user
+// management via the REST transport. These stubs keep the Client interface
+// satisfied.
+
+// CreateUser is not supported over the QUIC transport.
+func (t *Transport) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// ListUsers is not supported over the QUIC transport.
+func (t *Transport) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// GetUser is not supported over the QUIC transport.
+func (t *Transport) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// DeleteUser is not supported over the QUIC transport.
+func (t *Transport) DeleteUser(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+// EnableUser is not supported over the QUIC transport.
+func (t *Transport) EnableUser(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+// DisableUser is not supported over the QUIC transport.
+func (t *Transport) DisableUser(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+// BindUserCert is not supported over the QUIC transport.
+func (t *Transport) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+	return ErrNotSupported
+}
+
+// ListUserCredentials is not supported over the QUIC transport.
+func (t *Transport) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, ErrNotSupported
 }
 
 // Compile-time assertion that Transport implements transport.Client.

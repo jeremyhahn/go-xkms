@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
@@ -73,8 +73,8 @@ func (m *barrierMockPolicyStore) List(_ context.Context) ([]*pcrpolicy.PCRPolicy
 	return nil, nil
 }
 
-func (m *barrierMockPolicyStore) Page(_ context.Context, _ dao.PageQuery) (dao.PageResult[*pcrpolicy.PCRPolicyEntity], error) {
-	return dao.PageResult[*pcrpolicy.PCRPolicyEntity]{}, nil
+func (m *barrierMockPolicyStore) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsdk.PageResult[*pcrpolicy.PCRPolicyEntity], error) {
+	return qrdbsdk.PageResult[*pcrpolicy.PCRPolicyEntity]{}, nil
 }
 
 func (m *barrierMockPolicyStore) Delete(_ context.Context, _ string) error {
@@ -271,7 +271,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_Match(t *testing.T) {
 	svc := newBarrierAutoUnsealSvcWithMock(t, store, mock)
 
 	policy := testBarrierAutoUnsealPolicy()
-	match, err := svc.VerifyPCRs(context.Background(), policy)
+	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.True(t, match, "PCR values should match")
 	assert.NoError(t, err)
 }
@@ -283,7 +283,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_Mismatch(t *testing.T) {
 
 	policy := testBarrierAutoUnsealPolicy()
 	policy.PCRs[7] = []byte{0xFF, 0xEE, 0xDD, 0xCC} // different from mock
-	match, err := svc.VerifyPCRs(context.Background(), policy)
+	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.False(t, match, "PCR values should not match")
 	assert.NoError(t, err, "mismatch is not an error, just a false result")
 }
@@ -293,7 +293,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_NilPolicy(t *testing.T) {
 	mock := defaultBarrierAutoUnsealMock()
 	svc := newBarrierAutoUnsealSvcWithMock(t, store, mock)
 
-	match, err := svc.VerifyPCRs(context.Background(), nil)
+	match, err := svc.verifyPCRs(context.Background(), nil)
 	assert.False(t, match)
 	assert.NoError(t, err)
 }
@@ -308,7 +308,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_EmptyPCRs(t *testing.T) {
 		Bank: "sha256",
 		PCRs: map[uint][]byte{},
 	}
-	match, err := svc.VerifyPCRs(context.Background(), policy)
+	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.False(t, match)
 	assert.NoError(t, err)
 }
@@ -320,7 +320,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_InvalidBank(t *testing.T) {
 
 	policy := testBarrierAutoUnsealPolicy()
 	policy.Bank = "md5" // unsupported bank
-	match, err := svc.VerifyPCRs(context.Background(), policy)
+	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.False(t, match)
 	assert.ErrorIs(t, err, ErrBarrierAutoUnsealInvalidBank)
 }
@@ -332,7 +332,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_TPMReadError(t *testing.T) {
 	svc := newBarrierAutoUnsealSvcWithMock(t, store, mock)
 
 	policy := testBarrierAutoUnsealPolicy()
-	match, err := svc.VerifyPCRs(context.Background(), policy)
+	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.False(t, match)
 	assert.ErrorIs(t, err, ErrBarrierAutoUnsealReadPCRFailed)
 }
@@ -350,7 +350,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_MissingPCRIndex(t *testing.T) {
 			14: {0xDE, 0xAD, 0xBE, 0xEF},
 		},
 	}
-	match, err := svc.VerifyPCRs(context.Background(), policy)
+	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.False(t, match, "should return false when expected PCR index is not in TPM response")
 	assert.NoError(t, err)
 }
@@ -363,7 +363,7 @@ func TestBarrierAutoUnsealService_VerifyPCRs_DigestLengthMismatch(t *testing.T) 
 	policy := testBarrierAutoUnsealPolicy()
 	// Policy expects a 5-byte digest but TPM returns 4-byte.
 	policy.PCRs[0] = []byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE}
-	match, err := svc.VerifyPCRs(context.Background(), policy)
+	match, err := svc.verifyPCRs(context.Background(), policy)
 	assert.False(t, match)
 	assert.NoError(t, err)
 }

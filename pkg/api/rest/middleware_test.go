@@ -16,7 +16,10 @@ package rest
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
 func TestResponseWriter(t *testing.T) {
@@ -129,6 +132,27 @@ func TestCORSMiddleware(t *testing.T) {
 
 		if w.Code != http.StatusOK {
 			t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
+		}
+	})
+
+	// A cross-origin browser frontend completes the WebAuthn ceremony by
+	// sending X-Session-Id / X-User-Id on /finish and reading them from
+	// /begin responses. Those headers must be both allowed and exposed.
+	t.Run("Permits and exposes WebAuthn session headers", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/webauthn/login/finish", nil)
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		allow := w.Header().Get("Access-Control-Allow-Headers")
+		expose := w.Header().Get("Access-Control-Expose-Headers")
+		for _, h := range []string{webauthnhttp.HeaderSessionID, webauthnhttp.HeaderUserID} {
+			if !strings.Contains(allow, h) {
+				t.Errorf("Access-Control-Allow-Headers missing %q: %q", h, allow)
+			}
+			if !strings.Contains(expose, h) {
+				t.Errorf("Access-Control-Expose-Headers missing %q: %q", h, expose)
+			}
 		}
 	})
 }

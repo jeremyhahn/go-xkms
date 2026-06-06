@@ -202,18 +202,6 @@ func (m *authMockClient) CanSeal(context.Context, string) (*transport.CanSealRes
 func (m *authMockClient) AttestKey(context.Context, *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
 	return &transport.AttestKeyResponse{}, nil
 }
-func (m *authMockClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return &transport.ListUsersResponse{}, nil
-}
-func (m *authMockClient) GetUser(context.Context, string) (*transport.GetUserResponse, error) {
-	return &transport.GetUserResponse{}, nil
-}
-func (m *authMockClient) DeleteUser(context.Context, string) error  { return nil }
-func (m *authMockClient) EnableUser(context.Context, string) error  { return nil }
-func (m *authMockClient) DisableUser(context.Context, string) error { return nil }
-func (m *authMockClient) ListUserCredentials(context.Context, string) (*transport.ListUserCredentialsResponse, error) {
-	return &transport.ListUserCredentialsResponse{}, nil
-}
 func (m *authMockClient) BeginRegistration(context.Context, *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
 	return &transport.BeginRegistrationResponse{}, nil
 }
@@ -292,26 +280,6 @@ func (m *authMockClient) BarrierUnsealWithShare(context.Context, *transport.Barr
 	return nil, nil
 }
 func (m *authMockClient) BarrierUnsealWithShares(context.Context, *transport.BarrierUnsealSharesRequest) error {
-	return nil
-}
-
-// BarrierShamirListShares returns Shamir share metadata.
-func (m *authMockClient) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (m *authMockClient) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (m *authMockClient) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return nil
-}
-
-// BarrierShamirVerify verifies Shamir share integrity.
-func (m *authMockClient) BarrierShamirVerify(_ context.Context) error {
 	return nil
 }
 
@@ -859,8 +827,8 @@ func TestNewPKCS11TLSConfig_FullFlow_Success(t *testing.T) {
 	if _, ok := tlsCfg.Certificates[0].PrivateKey.(crypto.Signer); !ok {
 		t.Fatal("PrivateKey should implement crypto.Signer")
 	}
-	if tlsCfg.MinVersion != tls.VersionTLS12 {
-		t.Errorf("MinVersion = %d, want %d", tlsCfg.MinVersion, tls.VersionTLS12)
+	if tlsCfg.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %d, want %d", tlsCfg.MinVersion, tls.VersionTLS13)
 	}
 }
 

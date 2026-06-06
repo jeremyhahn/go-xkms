@@ -89,9 +89,7 @@ func newTestDNSServer(t *testing.T) *testDNSServer {
 	}
 
 	go func() {
-		if err := m.server.ActivateAndServe(); err != nil {
-			// Server shutdown is expected
-		}
+		_ = m.server.ActivateAndServe()
 	}()
 
 	// Give server time to start
@@ -120,46 +118,6 @@ func (m *testDNSServer) addTXTRecord(fqdn, value string) {
 	}
 	m.mu.Lock()
 	m.responses[key] = append(m.responses[key], txt)
-	m.mu.Unlock()
-}
-
-func (m *testDNSServer) addNSRecord(fqdn, ns string) {
-	fqdn = ToFQDN(fqdn)
-	key := fqdn + "NS"
-	nsRR := &dns.NS{
-		Hdr: dns.RR_Header{
-			Name:   fqdn,
-			Rrtype: dns.TypeNS,
-			Class:  dns.ClassINET,
-			Ttl:    300,
-		},
-		Ns: ToFQDN(ns),
-	}
-	m.mu.Lock()
-	m.responses[key] = append(m.responses[key], nsRR)
-	m.mu.Unlock()
-}
-
-func (m *testDNSServer) addSOARecord(fqdn string) {
-	fqdn = ToFQDN(fqdn)
-	key := fqdn + "SOA"
-	soa := &dns.SOA{
-		Hdr: dns.RR_Header{
-			Name:   fqdn,
-			Rrtype: dns.TypeSOA,
-			Class:  dns.ClassINET,
-			Ttl:    300,
-		},
-		Ns:      "ns1." + fqdn,
-		Mbox:    "admin." + fqdn,
-		Serial:  2024010101,
-		Refresh: 3600,
-		Retry:   600,
-		Expire:  604800,
-		Minttl:  60,
-	}
-	m.mu.Lock()
-	m.responses[key] = append(m.responses[key], soa)
 	m.mu.Unlock()
 }
 

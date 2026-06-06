@@ -37,7 +37,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/ocsp"
@@ -1160,7 +1159,7 @@ func TestWrapPreCheck_Client90(t *testing.T) {
 
 func TestChallengeResolver_SetPreferencesWhenClosed_Coverage90(t *testing.T) {
 	resolver := NewChallengeResolver()
-	resolver.Close()
+	_ = resolver.Close()
 
 	// Should not panic or error, just do nothing
 	resolver.SetPreferences("dns-01", "http-01")
@@ -1175,7 +1174,7 @@ func TestChallengeResolver_SetPreferencesWhenClosed_Coverage90(t *testing.T) {
 func TestChallengeResolver_SolveWithCleanup_Coverage90(t *testing.T) {
 	t.Run("returns error when solve fails", func(t *testing.T) {
 		resolver := NewChallengeResolver()
-		resolver.RegisterSolver(&cov90MockChallengeSolver{
+		_ = resolver.RegisterSolver(&cov90MockChallengeSolver{
 			solveErr: errors.New("solve failed"),
 		})
 
@@ -1845,7 +1844,7 @@ func TestGetOCSP_HTTPMock_Client90(t *testing.T) {
 	t.Run("request read error", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Read but don't write anything - this will cause a read error
-			io.ReadAll(r.Body)
+			_, _ = io.ReadAll(r.Body)
 			// Close connection abruptly by not writing response
 			hj, ok := w.(http.Hijacker)
 			if ok {
@@ -2003,29 +2002,6 @@ func cov90CertsToPEM(certs []*x509.Certificate) []byte {
 		})...)
 	}
 	return pemData
-}
-
-// cov90MockStorage implements storage.AccountDAO for testing
-type cov90MockStorage struct{}
-
-func (m *cov90MockStorage) Save(_ context.Context, _ *entities.ACMEAccount) error {
-	return nil
-}
-
-func (m *cov90MockStorage) Get(_ context.Context, _ uint64) (*entities.ACMEAccount, error) {
-	return nil, nil
-}
-
-func (m *cov90MockStorage) Exists(_ context.Context, _ uint64) (bool, error) {
-	return false, nil
-}
-
-func (m *cov90MockStorage) Delete(_ context.Context, _ uint64) error {
-	return nil
-}
-
-func (m *cov90MockStorage) List(_ context.Context, _ string) ([]*entities.ACMEAccount, error) {
-	return nil, nil
 }
 
 // cov90MockChallengeSolver for testing

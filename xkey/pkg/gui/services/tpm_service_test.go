@@ -37,7 +37,7 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -211,7 +211,7 @@ func (m *mockTPM) Provision(soPIN types.Password) error      { return m.provisio
 func (m *mockTPM) Install(soPIN types.Password, _ *tpm2pkg.InstallOptions) error {
 	return m.installErr
 }
-func (m *mockTPM) WriteEKCert(ekCert []byte) error           { return m.writeEKCertErr }
+func (m *mockTPM) WriteEKCert(ekCert []byte) error { return m.writeEKCertErr }
 func (m *mockTPM) IAKCertificate() (*x509.Certificate, error) {
 	return m.iakCert, m.iakCertErr
 }
@@ -245,7 +245,7 @@ func (m *mockTPM) CalculateName(_ tpm2.TPMAlgID, _ []byte) {
 	panic("mockTPM: CalculateName not expected")
 }
 func (m *mockTPM) Clear(_ []byte) error { panic("mockTPM: Clear not expected") }
-func (m *mockTPM) ForceClear() error      { return nil }
+func (m *mockTPM) ForceClear() error    { return nil }
 func (m *mockTPM) Close() error         { return nil }
 func (m *mockTPM) CreateECDSA(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*ecdsa.PublicKey, error) {
 	panic("mockTPM: CreateECDSA not expected")
@@ -526,14 +526,13 @@ func (m *mockPlatformKeyStorer) Backend() store.KeyBackend           { return ni
 func (m *mockPlatformKeyStorer) Initialize(_, _ string) error        { return nil }
 func (m *mockPlatformKeyStorer) InitializeWithDefaults() error       { return nil }
 func (m *mockPlatformKeyStorer) IsInitialized() bool                 { return m.initialized }
-func (m *mockPlatformKeyStorer) PINManager() pin.PINManager          { return nil } //nolint:staticcheck // TODO: migrate to PINBackend
 func (m *mockPlatformKeyStorer) PlatformPolicyEnabled() bool         { return m.policyEnabled }
 func (m *mockPlatformKeyStorer) VerifyAuth(_ string) error           { return nil }
 func (m *mockPlatformKeyStorer) ChangeAuth(_, _ string) error        { return nil }
 func (m *mockPlatformKeyStorer) GetLockoutInfo() (int, int, int, int, error) {
 	return 0, 10, 0, 300, nil
 }
-func (m *mockPlatformKeyStorer) PINBackend() pin.PINBackend                  { return nil }
+func (m *mockPlatformKeyStorer) PINBackend() qrdbsdk.PINBackend              { return nil }
 func (m *mockPlatformKeyStorer) DictionaryAttackLockoutReset(_ []byte) error { return nil }
 func (m *mockPlatformKeyStorer) IsProvisioned() bool                         { return m.initialized }
 func (m *mockPlatformKeyStorer) IsAuthReady() bool                           { return m.initialized }

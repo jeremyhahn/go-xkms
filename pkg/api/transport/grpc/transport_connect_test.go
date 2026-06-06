@@ -203,22 +203,6 @@ func (s *errorKeystoreServer) BarrierUnsealShares(_ context.Context, _ *pb.Barri
 	return nil, status.Error(codes.Internal, "barrier unseal shares failed")
 }
 
-func (s *errorKeystoreServer) BarrierShamirListShares(_ context.Context, _ *emptypb.Empty) (*pb.BarrierShamirSharesResponse, error) {
-	return nil, status.Error(codes.Internal, "barrier list shares failed")
-}
-
-func (s *errorKeystoreServer) BarrierShamirDeleteShare(_ context.Context, _ *pb.BarrierShamirDeleteShareRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "barrier delete share failed")
-}
-
-func (s *errorKeystoreServer) BarrierShamirDeleteAllShares(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "barrier delete all shares failed")
-}
-
-func (s *errorKeystoreServer) BarrierShamirVerify(_ context.Context, _ *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "barrier shamir verify failed")
-}
-
 func (s *errorKeystoreServer) BarrierRekey(_ context.Context, _ *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
 	return nil, status.Error(codes.Internal, "barrier rekey failed")
 }
@@ -476,9 +460,7 @@ func newErrorBufconnTransport(t *testing.T) (*Transport, func()) {
 	pb.RegisterKeystoreServiceServer(srv, &errorKeystoreServer{})
 
 	go func() {
-		if err := srv.Serve(lis); err != nil {
-			// Server stopped
-		}
+		_ = srv.Serve(lis)
 	}()
 
 	conn, err := grpc.NewClient(
@@ -498,9 +480,9 @@ func newErrorBufconnTransport(t *testing.T) (*Transport, func()) {
 	}
 
 	cleanup := func() {
-		conn.Close()
+		_ = conn.Close()
 		srv.Stop()
-		lis.Close()
+		_ = lis.Close()
 	}
 
 	return tr, cleanup
@@ -514,12 +496,10 @@ func TestConnect_NonTLS(t *testing.T) {
 	pb.RegisterKeystoreServiceServer(srv, &mockKeystoreServer{})
 
 	go func() {
-		if err := srv.Serve(lis); err != nil {
-			// Server stopped
-		}
+		_ = srv.Serve(lis)
 	}()
 	defer srv.Stop()
-	defer lis.Close()
+	defer func() { _ = lis.Close() }()
 
 	// Create a transport that connects through bufconn
 	cfg := transport.DefaultConfig()
@@ -538,7 +518,7 @@ func TestConnect_NonTLS(t *testing.T) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	tr.conn = conn
 	tr.client = pb.NewKeystoreServiceClient(conn)
@@ -603,9 +583,7 @@ func TestConnect_HealthCheckFails(t *testing.T) {
 	pb.RegisterKeystoreServiceServer(srv, &errorKeystoreServer{})
 
 	go func() {
-		if err := srv.Serve(lis); err != nil {
-			// Server stopped
-		}
+		_ = srv.Serve(lis)
 	}()
 	defer srv.Stop()
 	defer lis.Close()
@@ -978,38 +956,6 @@ func TestBarrierUnsealShares_ServerError(t *testing.T) {
 	defer cleanup()
 
 	err := tr.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{Shares: []string{"s1", "s2"}})
-	require.Error(t, err)
-}
-
-func TestBarrierShamirListShares_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	_, err := tr.BarrierShamirListShares(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierShamirDeleteShare_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{Index: 0})
-	require.Error(t, err)
-}
-
-func TestBarrierShamirDeleteAllShares_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierShamirDeleteAllShares(context.Background())
-	require.Error(t, err)
-}
-
-func TestBarrierShamirVerify_ServerError(t *testing.T) {
-	tr, cleanup := newErrorBufconnTransport(t)
-	defer cleanup()
-
-	err := tr.BarrierShamirVerify(context.Background())
 	require.Error(t, err)
 }
 

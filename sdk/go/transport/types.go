@@ -87,8 +87,6 @@ type BarrierInitializeShamirResponse = pkgtransport.BarrierInitializeShamirRespo
 type BarrierUnsealShareRequest = pkgtransport.BarrierUnsealShareRequest
 type BarrierUnsealShareResponse = pkgtransport.BarrierUnsealShareResponse
 type BarrierUnsealSharesRequest = pkgtransport.BarrierUnsealSharesRequest
-type BarrierShamirSharesResponse = pkgtransport.BarrierShamirSharesResponse
-type BarrierShamirDeleteShareRequest = pkgtransport.BarrierShamirDeleteShareRequest
 type BarrierRekeyRequest = pkgtransport.BarrierRekeyRequest
 type BarrierRekeyResponse = pkgtransport.BarrierRekeyResponse
 type BarrierGenerateRecoveryKeysRequest = pkgtransport.BarrierGenerateRecoveryKeysRequest
@@ -168,9 +166,10 @@ type ResetLockoutRequest = pkgtransport.ResetLockoutRequest
 
 // User types.
 type UserInfo = pkgtransport.UserInfo
+type CredentialInfo = pkgtransport.CredentialInfo
+type CreateUserRequest = pkgtransport.CreateUserRequest
 type ListUsersResponse = pkgtransport.ListUsersResponse
 type GetUserResponse = pkgtransport.GetUserResponse
-type CredentialInfo = pkgtransport.CredentialInfo
 type ListUserCredentialsResponse = pkgtransport.ListUserCredentialsResponse
 
 // Password types.
@@ -209,9 +208,6 @@ type PolicyVerifyRequest = pkgtransport.PolicyVerifyRequest
 type PolicyVerifyResponse = pkgtransport.PolicyVerifyResponse
 type PolicyExportRequest = pkgtransport.PolicyExportRequest
 type PolicyExportResponse = pkgtransport.PolicyExportResponse
-
-// Credential types.
-type CredentialParam = pkgtransport.CredentialParam
 
 // Pagination types and functional options.
 type PageRequest = pkgtransport.PageRequest

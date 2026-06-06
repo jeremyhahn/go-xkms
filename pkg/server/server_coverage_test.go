@@ -52,18 +52,6 @@ func TestServer_BarrierRegistry_NilByDefault(t *testing.T) {
 	assert.Nil(t, server.BarrierRegistry())
 }
 
-func TestServer_BootstrapService_NilByDefault(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.Nil(t, server.BootstrapService())
-}
-
 func TestServer_PINManager_NilByDefault(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
@@ -287,28 +275,6 @@ func TestServer_InitializeBarrier_WithPreferenceOrder(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.Barrier())
-}
-
-// ============================================================================
-// Tests — initializeBootstrapService
-// ============================================================================
-
-func TestServer_InitializeBootstrapService_Enabled(t *testing.T) {
-	xkms.Reset()
-	defer xkms.Reset()
-
-	cfg := createMinimalConfig(t)
-	cfg.InitBootstrap.Enabled = true
-	cfg.InitBootstrap.TokenTTL = 300
-	cfg.InitBootstrap.ThresholdMode = true
-	cfg.InitBootstrap.AdminThreshold = 2
-	cfg.InitBootstrap.AdminTotal = 3
-
-	server, err := New(cfg)
-	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
-
-	assert.NotNil(t, server.BootstrapService())
 }
 
 // ============================================================================

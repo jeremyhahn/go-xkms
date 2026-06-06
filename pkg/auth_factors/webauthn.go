@@ -16,9 +16,14 @@ package auth_factors
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"time"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	"github.com/go-webauthn/webauthn/protocol"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
@@ -72,7 +77,7 @@ func (v *WebAuthnFactorVerifier) Type() qrdbtransport.FactorType {
 //     assertion may pass it via challenge.Signature.
 //
 // On success, returns nil. On any failure, returns a typed error.
-func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
+func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
 	if v.service == nil {
 		return &NilServiceError{Adapter: "webauthn"}
 	}
@@ -80,10 +85,10 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbauth.Au
 		return &MissingFactorError{}
 	}
 	if factor.RevokedAt != nil {
-		return &qrdbauth.FactorRevokedError{FactorID: factor.ID}
+		return &qrdbsdk.FactorRevokedError{FactorID: factor.ID}
 	}
-	if factor.Type != qrdbauth.AuthFactorFIDO2 {
-		return &qrdbauth.FactorTypeUnsupportedError{Type: string(factor.Type)}
+	if factor.Type != qrdbsdk.AuthFactorFIDO2 {
+		return &qrdbsdk.FactorTypeUnsupportedError{Type: string(factor.Type)}
 	}
 
 	// Confirm the credential id matches what was enrolled. The challenge
@@ -96,12 +101,13 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbauth.Au
 	}
 
 	// Look up the underlying webauthn user by handle. The factor's
-	// UserID is the qrdb numeric user id; xkms webauthn uses a byte
-	// handle. The qrdbUserStoreAdapter (see pkg/webauthn/qrdb_userstore.go)
-	// makes the conversion deterministic — formatting the uint64 as
-	// decimal bytes — but we leave hardware-specific resolution to the
-	// service. Callers that pass an opaque user handle through
-	// MethodMetadata["user_handle_b64"] win out.
+	// UserID is the qrdb uint64 user id; xkms webauthn uses an 8-byte
+	// big-endian byte handle. xkmswebauthn.HandleFromUserID is the single
+	// source of truth for that encoding (see pkg/webauthn/qrdb_userstore.go).
+	// A caller that passes an opaque handle through
+	// MethodMetadata["user_handle_b64"] wins out; otherwise we derive the
+	// handle from factor.UserID so the assertion is scoped to the owning
+	// user rather than relying solely on the discoverable-credential flow.
 	if challenge.MethodMetadata == nil {
 		return &MissingMethodMetadataError{Field: "session_id"}
 	}
@@ -110,28 +116,87 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbauth.Au
 		return &MissingMethodMetadataError{Field: "session_id"}
 	}
 
-	// At this layer the xkms service.FinishLogin requires the parsed
-	// CredentialAssertionData. The transport calling this verifier is
-	// expected to have already parsed the assertion blob; production
-	// xkms callers (HTTP handler) thread the parsed object via the
-	// service directly. The factor adapter is invoked from the qrdb
-	// FactorClient.Verify path which receives raw signature bytes —
-	// we therefore require the caller to have parsed the assertion
-	// upstream and stored a sentinel in MethodMetadata when used in
-	// production. Tests (factor_verifier_fake) supply parsed data via
-	// the service field.
-	//
-	// A cleaner production wiring is to have callers go through the
-	// xkms webauthn HTTP handler directly (which is the already-shipped
-	// path); the qrdb FactorClient.Verify entry-point is a
-	// non-WebAuthn-native fallback that exists for symmetry with mtls
-	// and piv. The error below makes that explicit.
-	if len(challenge.Signature) == 0 && challenge.MethodMetadata["assertion"] == "" {
-		return &VerifyNotSupportedError{
-			Reason: "WebAuthn assertions must be verified through xkms webauthn.Service.FinishLogin; use the HTTP handler path",
+	// Parse the WebAuthn assertion the client produced. It arrives either as
+	// the base64url/JSON blob in MethodMetadata["assertion"] (the unified
+	// login path threads it there) or, for callers that route it through the
+	// signature field, in challenge.Signature.
+	assertionRaw := challenge.MethodMetadata["assertion"]
+	if assertionRaw == "" && len(challenge.Signature) > 0 {
+		assertionRaw = string(challenge.Signature)
+	}
+	if assertionRaw == "" {
+		return &MissingMethodMetadataError{Field: "assertion"}
+	}
+	parsed, err := protocol.ParseCredentialRequestResponseBytes([]byte(assertionRaw))
+	if err != nil {
+		return &SignatureVerifyError{Reason: "parse webauthn assertion: " + err.Error()}
+	}
+
+	// Resolve the WebAuthn user handle. An explicit caller-supplied handle
+	// wins; otherwise we derive it from the factor's qrdb uint64 user id so
+	// the assertion is bound to the owning user. A zero UserID leaves the
+	// handle nil, driving the discoverable-credential flow where the
+	// assertion's credential id identifies the user within the session.
+	var userID []byte
+	if uh := challenge.MethodMetadata["user_handle_b64"]; uh != "" {
+		if decoded, derr := base64.RawURLEncoding.DecodeString(uh); derr == nil {
+			userID = decoded
 		}
 	}
+	if userID == nil && factor.UserID != 0 {
+		userID = xkmswebauthn.HandleFromUserID(factor.UserID)
+	}
+
+	// FinishLogin verifies the assertion signature, RP id/origin, and sign
+	// counter against the stored credential and consumes the session. A nil
+	// error means the proof-of-possession is valid.
+	if _, _, ferr := v.service.FinishLogin(ctx, sessionID, userID, parsed); ferr != nil {
+		return &SignatureVerifyError{Reason: "webauthn assertion verification failed: " + ferr.Error()}
+	}
 	return nil
+}
+
+// BeginChallenge implements the qrdb embedded FactorChallenger capability so
+// WebAuthn login flows through the unified qrdb Begin/Finish ceremony. It opens
+// a WebAuthn assertion ceremony on the relying-party service and returns the
+// raw challenge bytes (qrdb's "nonce") plus the metadata the client needs to
+// drive navigator.credentials.get() and that the verifier needs at FinishLogin:
+//
+//   - metadata["options"]:    the JSON PublicKeyCredentialRequestOptions.
+//   - metadata["session_id"]: the RP session id (echoed back at Verify time).
+//
+// tenantID scopes per-tenant RP configuration; for a single-RP service it is
+// advisory. An empty hint drives the discoverable-credential flow.
+func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID string, factorType qrdbtransport.FactorType, hint string) ([]byte, map[string]string, time.Time, error) {
+	if v == nil || v.service == nil {
+		return nil, nil, time.Time{}, &NilServiceError{Adapter: "webauthn"}
+	}
+	if factorType != qrdbtransport.FactorTypeFIDO2 {
+		return nil, nil, time.Time{}, &qrdbsdk.FactorTypeUnsupportedError{Type: string(factorType)}
+	}
+
+	// A non-empty hint (username/email) scopes the ceremony to that user's
+	// credentials; otherwise nil requests a discoverable-credential ceremony.
+	var userID []byte
+	if hint != "" {
+		if u, uErr := v.service.GetUserByEmail(ctx, hint); uErr == nil && u != nil {
+			userID = u.WebAuthnID()
+		}
+	}
+
+	options, sessionID, err := v.service.BeginLogin(ctx, userID)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	optionsJSON, err := json.Marshal(options)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	meta := map[string]string{
+		"session_id": sessionID,
+		"options":    string(optionsJSON),
+	}
+	return []byte(options.Response.Challenge), meta, time.Time{}, nil
 }
 
 // Compile-time interface assertion. The qrdb embedded transport's
@@ -146,7 +211,7 @@ var _ qrdbWebAuthnVerifier = (*WebAuthnFactorVerifier)(nil)
 // SDK wiring file performs the embedded.FactorVerifier registration.
 type qrdbWebAuthnVerifier interface {
 	Type() qrdbtransport.FactorType
-	Verify(ctx context.Context, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error
+	Verify(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error
 }
 
 // NilServiceError is returned when the adapter is constructed with a

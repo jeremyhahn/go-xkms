@@ -524,7 +524,7 @@ func setupServiceWithPasswordManager(t *testing.T) (*XKMSService, *seal.BarrierR
 		sysBackend,
 		seal.BarrierConfig{
 			RootKeyPath:     "root-key",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)

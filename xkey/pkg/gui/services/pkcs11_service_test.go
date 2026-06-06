@@ -29,7 +29,7 @@ import (
 // and failure paths of PKCS11Service.Disconnect without a real PKCS#11 library.
 type disconnectMockManager struct {
 	manager.Manager
-	disconnectErr error
+	disconnectErr    error
 	disconnectCalled atomic.Bool
 }
 

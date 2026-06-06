@@ -15,21 +15,22 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 )
 
 // UserStore is a narrow interface used by MTLSAuthenticator for cert-to-user lookup.
-// This avoids a circular dependency on the pkg/user package.
+// It keeps the authenticator decoupled from the concrete identity backend; the
+// production implementation (QRDBUserStore) resolves users from the embedded
+// qrdb node by their certificate SPKI thumbprint.
 type UserStore interface {
-	// GetByCertFingerprint retrieves user info by the SHA-256 fingerprint of a client certificate.
+	// GetByCertFingerprint retrieves user info by the canonical SPKI thumbprint of a client certificate.
 	GetByCertFingerprint(ctx context.Context, fingerprint string) (MTLSUser, error)
 }
 
@@ -94,9 +95,9 @@ type MTLSConfig struct {
 	// If nil, uses the certificate's Subject Common Name
 	ExtractSubject func(*x509.Certificate) string
 
-	// UserStore is an optional store that maps certificate fingerprints to users.
-	// When provided, the authenticator will look up the user by the SHA-256 fingerprint
-	// of the client certificate's DER-encoded Raw bytes. If found and enabled, the
+	// UserStore is an optional store that maps certificate identities to users.
+	// When provided, the authenticator looks up the user by the canonical SPKI
+	// thumbprint (qrdbsdk.ComputeSPKIThumbprint) of the client certificate. If found and enabled, the
 	// identity subject is set to the username and the role claim is added.
 	// If found but disabled, ErrUserDisabled is returned.
 	// If not found, the authenticator falls back to extracting identity from certificate fields.
@@ -180,21 +181,18 @@ func (a *MTLSAuthenticator) Name() string {
 	return "mtls"
 }
 
-// ComputeCertFingerprint computes the SHA-256 hex fingerprint of a certificate's
-// DER-encoded Raw bytes. This is the canonical fingerprint used for cert binding lookups.
-func ComputeCertFingerprint(cert *x509.Certificate) string {
-	hash := sha256.Sum256(cert.Raw)
-	return hex.EncodeToString(hash[:])
-}
-
 // buildIdentity constructs an identity from a client certificate. When a UserStore is
-// configured, it first attempts to look up the user by certificate fingerprint. If the
+// configured, it first attempts to look up the user by canonical SPKI thumbprint. If the
 // user is found and enabled, the identity is enriched with user information and role.
 // If the user is found but disabled, ErrUserDisabled is returned. If the user is not
 // found (or no UserStore is configured), the identity is extracted from the certificate fields.
 func (a *MTLSAuthenticator) buildIdentity(ctx context.Context, cert *x509.Certificate) (*Identity, error) {
 	if a.userStore != nil {
-		fingerprint := ComputeCertFingerprint(cert)
+		// Canonical mTLS identity: qrdb's SPKI thumbprint (SHA-256 over
+		// SubjectPublicKeyInfo, base64url). This is the single algorithm shared by
+		// qrdb, xkms, and quicbaas so cert bindings resolve consistently across the
+		// stack. Consumed via the qrdb SDK — never reimplemented locally.
+		fingerprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 		user, err := a.userStore.GetByCertFingerprint(ctx, fingerprint)
 		if err == nil {
 			// User found -- check if enabled

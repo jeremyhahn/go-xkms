@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
@@ -351,7 +351,7 @@ func TestDAOStore_Page(t *testing.T) {
 	}
 
 	// Page with size 2.
-	result, err := store.Page(ctx, dao.PageQuery{Page: 1, PageSize: 2})
+	result, err := store.Page(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 2})
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestDAOStore_Page(t *testing.T) {
 	}
 
 	// Page 3 with size 2 should have 1 entry.
-	result, err = store.Page(ctx, dao.PageQuery{Page: 3, PageSize: 2})
+	result, err = store.Page(ctx, qrdbsdk.PageQuery{Page: 3, PageSize: 2})
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -386,7 +386,7 @@ func TestDAOStore_Page_Closed(t *testing.T) {
 		t.Fatalf("failed to close: %v", err)
 	}
 
-	_, err := store.Page(ctx, dao.PageQuery{Page: 1, PageSize: 10})
+	_, err := store.Page(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 10})
 	if !errors.Is(err, ErrStoreClosed) {
 		t.Fatalf("expected ErrStoreClosed, got: %v", err)
 	}

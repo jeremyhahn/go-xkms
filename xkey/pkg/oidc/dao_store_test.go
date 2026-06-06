@@ -19,7 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
@@ -178,7 +178,7 @@ func TestDAOStore_Page(t *testing.T) {
 	}
 
 	// Page with size 2.
-	result, err := store.Page(context.Background(), dao.PageQuery{Page: 1, PageSize: 2})
+	result, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 2})
 	require.NoError(t, err)
 	assert.Len(t, result.Entities, 2)
 	assert.Equal(t, 5, result.Total)
@@ -187,13 +187,13 @@ func TestDAOStore_Page(t *testing.T) {
 	assert.Equal(t, 2, result.PageSize)
 
 	// Page 2.
-	result2, err := store.Page(context.Background(), dao.PageQuery{Page: 2, PageSize: 2})
+	result2, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 2, PageSize: 2})
 	require.NoError(t, err)
 	assert.Len(t, result2.Entities, 2)
 	assert.True(t, result2.HasMore)
 
 	// Page 3 (last page with 1 entry).
-	result3, err := store.Page(context.Background(), dao.PageQuery{Page: 3, PageSize: 2})
+	result3, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 3, PageSize: 2})
 	require.NoError(t, err)
 	assert.Len(t, result3.Entities, 1)
 	assert.False(t, result3.HasMore)
@@ -203,7 +203,7 @@ func TestDAOStore_Page_Closed(t *testing.T) {
 	store := newTestDAOStore(t)
 	require.NoError(t, store.Close())
 
-	_, err := store.Page(context.Background(), dao.PageQuery{Page: 1, PageSize: 10})
+	_, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 10})
 	require.ErrorIs(t, err, ErrStoreClosed)
 }
 

@@ -536,24 +536,6 @@ const (
 	QRDBLogLevelFatal = qrdb.LogLevelFatal
 )
 
-// QRDBHNSWIndex is the interface for HNSW approximate nearest-neighbor indexes.
-type QRDBHNSWIndex = qrdb.HNSWIndex
-
-// QRDBHNSWSearchResult holds a single search result from an HNSW index.
-type QRDBHNSWSearchResult = qrdb.HNSWSearchResult
-
-// QRDBHNSWStats holds statistics about an HNSW index.
-type QRDBHNSWStats = qrdb.HNSWStats
-
-// QRDBHNSWIndexFactory creates HNSW index instances.
-type QRDBHNSWIndexFactory = qrdb.HNSWIndexFactory
-
-// QRDBHNSWConfig configures HNSW index parameters.
-type QRDBHNSWConfig = qrdb.HNSWConfig
-
-// QRDBDefaultHNSWConfig returns the default HNSW configuration.
-var QRDBDefaultHNSWConfig = qrdb.DefaultHNSWConfig
-
 // QRDBRaftNode is the interface for Raft consensus node operations.
 type QRDBRaftNode = qrdb.RaftNode
 
@@ -665,17 +647,9 @@ type (
 	QRDBAuditLogger = qrdb.AuditLogger
 )
 
-// Seal strategy ID constants.
-const (
-	QRDBStrategyTPM2     = qrdb.StrategyTPM2
-	QRDBStrategyPKCS11   = qrdb.StrategyPKCS11
-	QRDBStrategyAWSKMS   = qrdb.StrategyAWSKMS
-	QRDBStrategyGCPKMS   = qrdb.StrategyGCPKMS
-	QRDBStrategyAzureKV  = qrdb.StrategyAzureKV
-	QRDBStrategyVault    = qrdb.StrategyVault
-	QRDBStrategyShamir   = qrdb.StrategyShamir
-	QRDBStrategySoftware = qrdb.StrategySoftware
-)
+// Seal strategy ID constants are exported from the xkms SDK's seal.go
+// (StrategyTPM2/PKCS11/AWSKMS/GCPKMS/AzureKV/Vault/Shamir/Passphrase). The
+// former QRDBStrategy* re-exports here were redundant and unused; removed.
 
 // QRDBDefaultQuorumTTL is the default time-to-live for a Shamir quorum session.
 const QRDBDefaultQuorumTTL = qrdb.DefaultQuorumTTL
@@ -697,7 +671,6 @@ var (
 	QRDBNewNonceTracker           = qrdb.NewNonceTracker
 	QRDBNewSoftwareAEADProvider   = qrdb.NewSoftwareAEADProvider
 	QRDBDefaultEpochBarrierConfig = qrdb.DefaultEpochBarrierConfig
-	QRDBDefaultPreferenceOrder    = qrdb.DefaultPreferenceOrder
 )
 
 // ==========================================================================
@@ -958,6 +931,10 @@ var (
 	QRDBNewPebbleStorageFromDB = qrdb.NewPebbleStorageFromDB
 	QRDBDefaultPebbleConfig    = qrdb.DefaultPebbleConfig
 	QRDBTestPebbleConfig       = qrdb.TestPebbleConfig
+	// QRDBEncryptedPebbleConfig returns a DefaultPebbleConfig with the Pebble
+	// vfs.FS pre-set to an encfs-wrapped FS backed by the supplied
+	// StorageBarrier. A nil barrier returns a plain DefaultPebbleConfig.
+	QRDBEncryptedPebbleConfig = qrdb.EncryptedPebbleConfig
 )
 
 // ==========================================================================
@@ -1048,53 +1025,22 @@ type QRDBDatabaseServiceOption = qrdb.DatabaseServiceOption
 var QRDBNewDatabaseService = qrdb.NewDatabaseService
 
 // ==========================================================================
-// Vector storage types (from types_vector.go)
-// ==========================================================================
-
-// QRDBPebbleVectorStorage is a PebbleDB-backed vector storage engine.
-type QRDBPebbleVectorStorage = qrdb.PebbleVectorStorage
-
-// QRDBNewPebbleVectorStorage creates a new PebbleDB-backed vector storage.
-var QRDBNewPebbleVectorStorage = qrdb.NewPebbleVectorStorage
-
-// QRDBVectorStorageConfig configures PebbleDB vector storage.
-type QRDBVectorStorageConfig = qrdb.VectorStorageConfig
-
-// QRDBDefaultVectorStorageConfig returns a default configuration for vector storage.
-var QRDBDefaultVectorStorageConfig = qrdb.DefaultVectorStorageConfig
-
-// QRDBVectorValue holds a single vector with metadata.
-type QRDBVectorValue = qrdb.VectorValue
-
-// QRDBVectorNamespaceInfo holds metadata about a vector namespace.
-type QRDBVectorNamespaceInfo = qrdb.VectorNamespaceInfo
-
-// QRDBVectorScanOptions configures vector scan operations.
-type QRDBVectorScanOptions = qrdb.VectorScanOptions
-
-// QRDBVectorMetadataFilter describes a metadata filter for vector queries.
-type QRDBVectorMetadataFilter = qrdb.VectorMetadataFilter
-
-// QRDBVectorFilterOperator defines the comparison operator for metadata filters.
-type QRDBVectorFilterOperator = qrdb.VectorFilterOperator
-
-// QRDBVectorFilterOperator constants.
-const (
-	QRDBVectorFilterEqual    = qrdb.VectorFilterEqual
-	QRDBVectorFilterNotEqual = qrdb.VectorFilterNotEqual
-	QRDBVectorFilterIn       = qrdb.VectorFilterIn
-	QRDBVectorFilterNotIn    = qrdb.VectorFilterNotIn
-)
-
-// ==========================================================================
 // Time series types (from types_timeseries.go)
 // ==========================================================================
 
 // QRDBTimeSeriesStorage is a PebbleDB-backed time series storage engine.
 type QRDBTimeSeriesStorage = qrdb.TimeSeriesStorage
 
+// QRDBTimeSeriesStorageOption configures a PebbleDB-backed time series storage instance.
+type QRDBTimeSeriesStorageOption = qrdb.TimeSeriesStorageOption
+
 // QRDBNewTimeSeriesStorageWithDir creates a new time series storage at the given directory.
+// Optional QRDBTimeSeriesStorageOption values configure the underlying PebbleDB instance.
 var QRDBNewTimeSeriesStorageWithDir = qrdb.NewTimeSeriesStorageWithDir
+
+// QRDBTimeSeriesWithBarrier returns a QRDBTimeSeriesStorageOption that wraps the
+// Pebble vfs.FS with seal/encfs for at-rest encryption. A nil barrier is a no-op.
+var QRDBTimeSeriesWithBarrier = qrdb.TimeSeriesWithBarrier
 
 // QRDBTimeSeriesDataPoint holds a single time series data point.
 type QRDBTimeSeriesDataPoint = qrdb.TimeSeriesDataPoint

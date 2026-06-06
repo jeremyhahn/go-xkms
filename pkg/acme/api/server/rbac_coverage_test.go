@@ -308,7 +308,7 @@ func TestGRPC_ListTenantRoles_Error(t *testing.T) {
 func TestGRPC_CreateTenantUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:        "user-1",
+			ID:        1,
 			Username:  "alice",
 			TenantID:  "tenant-1",
 			RoleIDs:   []string{"role-1", "role-2"},
@@ -328,7 +328,7 @@ func TestGRPC_CreateTenantUser_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", resp.Id)
+	assert.Equal(t, "1", resp.Id)
 	assert.Equal(t, "alice", resp.Username)
 	assert.Equal(t, "tenant-1", resp.TenantId)
 	assert.Equal(t, []string{"role-1", "role-2"}, resp.RoleIds)
@@ -369,7 +369,7 @@ func TestGRPC_CreateTenantUser_Error(t *testing.T) {
 func TestGRPC_GetTenantUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice",
 			TenantID: "tenant-1",
 			RoleIDs:  []string{"role-1"},
@@ -386,7 +386,7 @@ func TestGRPC_GetTenantUser_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", resp.Id)
+	assert.Equal(t, "1", resp.Id)
 	assert.Equal(t, "alice", resp.Username)
 	assert.True(t, resp.System)
 }
@@ -424,7 +424,7 @@ func TestGRPC_GetTenantUser_Error(t *testing.T) {
 func TestGRPC_UpdateTenantUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:        "user-1",
+			ID:        1,
 			Username:  "alice-updated",
 			TenantID:  "tenant-1",
 			RoleIDs:   []string{"role-1", "role-3"},
@@ -437,7 +437,7 @@ func TestGRPC_UpdateTenantUser_Success(t *testing.T) {
 
 	resp, err := grpcSrv.UpdateTenantUser(context.Background(), &adminv1.UpdateTenantUserRequest{
 		TenantId: "tenant-1",
-		UserId:   "user-1",
+		UserId:   "1",
 		Username: "alice-updated",
 		RoleIds:  []string{"role-1", "role-3"},
 	})
@@ -453,7 +453,7 @@ func TestGRPC_UpdateTenantUser_ServiceNotAvailable(t *testing.T) {
 
 	_, err := grpcSrv.UpdateTenantUser(context.Background(), &adminv1.UpdateTenantUserRequest{
 		TenantId: "tenant-1",
-		UserId:   "user-1",
+		UserId:   "1",
 	})
 
 	assert.Error(t, err)
@@ -471,7 +471,7 @@ func TestGRPC_UpdateTenantUser_Error(t *testing.T) {
 
 	_, err := grpcSrv.UpdateTenantUser(context.Background(), &adminv1.UpdateTenantUserRequest{
 		TenantId: "tenant-1",
-		UserId:   "user-1",
+		UserId:   "1",
 	})
 
 	assert.Error(t, err)
@@ -525,8 +525,8 @@ func TestGRPC_ListTenantUsers_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		users: &db.ListUsersResponse{
 			Users: []*db.User{
-				{ID: "user-1", Username: "alice", TenantID: "tenant-1", Enabled: true},
-				{ID: "user-2", Username: "bob", TenantID: "tenant-1", Enabled: false},
+				{ID: 1, Username: "alice", TenantID: "tenant-1", Enabled: true},
+				{ID: 2, Username: "bob", TenantID: "tenant-1", Enabled: false},
 			},
 			Total:   2,
 			HasMore: true,
@@ -611,7 +611,7 @@ func TestConvertDBRoleToProto_Nil(t *testing.T) {
 
 func TestConvertDBUserToProto_Success(t *testing.T) {
 	user := &db.User{
-		ID:        "user-1",
+		ID:        1,
 		Username:  "alice",
 		TenantID:  "tenant-1",
 		RoleIDs:   []string{"role-1", "role-2"},
@@ -624,7 +624,7 @@ func TestConvertDBUserToProto_Success(t *testing.T) {
 	result := convertDBUserToProto(user)
 
 	require.NotNil(t, result)
-	assert.Equal(t, "user-1", result.Id)
+	assert.Equal(t, "1", result.Id)
 	assert.Equal(t, "alice", result.Username)
 	assert.Equal(t, "tenant-1", result.TenantId)
 	assert.Equal(t, []string{"role-1", "role-2"}, result.RoleIds)
@@ -1104,7 +1104,7 @@ func TestMCP_ListRoles_ServiceError(t *testing.T) {
 func TestMCP_CreateUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice",
 			TenantID: "tenant-1",
 			RoleIDs:  []string{"role-1"},
@@ -1199,7 +1199,7 @@ func TestMCP_CreateUser_ServiceError(t *testing.T) {
 func TestMCP_GetUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice",
 			TenantID: "tenant-1",
 		},
@@ -1287,7 +1287,7 @@ func TestMCP_GetUser_ServiceError(t *testing.T) {
 func TestMCP_UpdateUser_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		user: &db.User{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice-updated",
 			TenantID: "tenant-1",
 			RoleIDs:  []string{"role-1", "role-3"},
@@ -1298,7 +1298,7 @@ func TestMCP_UpdateUser_Success(t *testing.T) {
 	params := map[string]interface{}{
 		"tenantId": "tenant-1",
 		"user": map[string]interface{}{
-			"id":       "user-1",
+			"id":       1,
 			"username": "alice-updated",
 			"roleIDs":  []string{"role-1", "role-3"},
 		},
@@ -1355,7 +1355,7 @@ func TestMCP_UpdateUser_ServiceError(t *testing.T) {
 	params := map[string]interface{}{
 		"tenantId": "tenant-1",
 		"user": map[string]interface{}{
-			"id":       "user-1",
+			"id":       1,
 			"username": "updated",
 		},
 	}
@@ -1466,7 +1466,7 @@ func TestMCP_ListUsers_Success(t *testing.T) {
 	mockTenant := &mockTenantService{
 		users: &db.ListUsersResponse{
 			Users: []*db.User{
-				{ID: "user-1", Username: "alice"},
+				{ID: 1, Username: "alice"},
 			},
 			Total:   1,
 			HasMore: false,

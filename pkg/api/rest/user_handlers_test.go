@@ -14,1475 +14,543 @@
 package rest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
 
-// mockUserStore implements user.Store for testing
-type mockUserStore struct {
-	mu           sync.RWMutex
-	users        map[string]*user.User
-	sessions     map[string][]byte
-	createFunc   func(ctx context.Context, username, displayName string, role user.Role, tenantID string) (*user.User, error)
-	getByIDFunc  func(ctx context.Context, id []byte) (*user.User, error)
-	updateFunc   func(ctx context.Context, u *user.User) error
-	deleteFunc   func(ctx context.Context, id []byte) error
-	listFunc     func(ctx context.Context) ([]*user.User, error)
-	countFunc    func(ctx context.Context) (int, error)
-	hasUsersFunc func(ctx context.Context) (bool, error)
-	countAdmins  func(ctx context.Context) (int, error)
+// ============================================================================
+// In-memory qrdb UserClient / RoleClient mocks for the rest package.
+//
+// The user HTTP handlers reach the qrdb user/role clients exclusively through
+// the XKMSService singleton. These mocks let the handlers run entirely
+// in-memory: only the methods the user servicer actually invokes carry
+// programmable behavior; the rest satisfy the interface with a sentinel error.
+// ============================================================================
+
+var errRestMockUnused = errors.New("rest mock: method not used")
+
+type restMockUserClient struct {
+	createUser        func(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
+	getUserByUsername func(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
+	listUsers         func(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error)
+	deleteUser        func(ctx context.Context, id uint64) error
+	enableUser        func(ctx context.Context, id uint64) error
+	disableUser       func(ctx context.Context, id uint64) error
+	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 }
 
-func newMockUserStore() *mockUserStore {
-	return &mockUserStore{
-		users:    make(map[string]*user.User),
-		sessions: make(map[string][]byte),
-	}
+var _ qrdbtransport.UserClient = (*restMockUserClient)(nil)
+
+func (m *restMockUserClient) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	return m.createUser(ctx, req)
 }
 
-func (m *mockUserStore) Create(ctx context.Context, username, displayName string, role user.Role, tenantID string) (*user.User, error) {
-	if m.createFunc != nil {
-		return m.createFunc(ctx, username, displayName, role, tenantID)
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	id := []byte(username) // Simple ID for testing
-	u := &user.User{
-		ID:          id,
-		Username:    username,
-		DisplayName: displayName,
-		Role:        role,
-		Enabled:     true,
-		TenantID:    tenantID,
-		CreatedAt:   time.Now(),
-	}
-	m.users[username] = u
-	return u, nil
+func (m *restMockUserClient) GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+	return nil, errRestMockUnused
 }
 
-func (m *mockUserStore) GetByID(ctx context.Context, id []byte) (*user.User, error) {
-	if m.getByIDFunc != nil {
-		return m.getByIDFunc(ctx, id)
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, u := range m.users {
-		if string(u.ID) == string(id) {
-			return u, nil
-		}
-	}
-	return nil, user.ErrUserNotFound
+func (m *restMockUserClient) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
+	return m.getUserByUsername(ctx, tenantID, username)
 }
 
-func (m *mockUserStore) GetByUsername(ctx context.Context, username string) (*user.User, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	if u, ok := m.users[username]; ok {
-		return u, nil
-	}
-	return nil, user.ErrUserNotFound
+func (m *restMockUserClient) GetUserByCertThumbprint(ctx context.Context, thumbprint string) (*qrdbtransport.User, error) {
+	return nil, errRestMockUnused
 }
 
-func (m *mockUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (*user.User, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	for _, u := range m.users {
-		for _, b := range u.CertBindings {
-			if b.Fingerprint == fingerprint {
-				return u, nil
-			}
-		}
-	}
-	return nil, user.ErrCertBindingNotFound
+func (m *restMockUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	return m.addCertBinding(ctx, userID, thumbprint, notAfterUnix)
 }
 
-func (m *mockUserStore) Update(ctx context.Context, u *user.User) error {
-	if m.updateFunc != nil {
-		return m.updateFunc(ctx, u)
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.users[u.Username] = u
-	return nil
+func (m *restMockUserClient) UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+	return nil, errRestMockUnused
 }
 
-func (m *mockUserStore) Delete(ctx context.Context, id []byte) error {
-	if m.deleteFunc != nil {
-		return m.deleteFunc(ctx, id)
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *restMockUserClient) DeleteUser(ctx context.Context, id uint64) error {
+	return m.deleteUser(ctx, id)
+}
 
-	for username, u := range m.users {
-		if string(u.ID) == string(id) {
-			delete(m.users, username)
+func (m *restMockUserClient) ListUsers(ctx context.Context, req *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
+	return m.listUsers(ctx, req)
+}
+
+func (m *restMockUserClient) EnableUser(ctx context.Context, id uint64) error {
+	return m.enableUser(ctx, id)
+}
+
+func (m *restMockUserClient) DisableUser(ctx context.Context, id uint64) error {
+	return m.disableUser(ctx, id)
+}
+
+type restMockRoleClient struct {
+	getRole   func(ctx context.Context, id string) (*qrdbtransport.Role, error)
+	listRoles func(ctx context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error)
+}
+
+var _ qrdbtransport.RoleClient = (*restMockRoleClient)(nil)
+
+func (m *restMockRoleClient) CreateRole(ctx context.Context, req *qrdbtransport.CreateRoleRequest) (*qrdbtransport.Role, error) {
+	return nil, errRestMockUnused
+}
+
+func (m *restMockRoleClient) GetRole(ctx context.Context, id string) (*qrdbtransport.Role, error) {
+	if m.getRole == nil {
+		return nil, errRestMockUnused
+	}
+	return m.getRole(ctx, id)
+}
+
+func (m *restMockRoleClient) UpdateRole(ctx context.Context, req *qrdbtransport.UpdateRoleRequest) (*qrdbtransport.Role, error) {
+	return nil, errRestMockUnused
+}
+
+func (m *restMockRoleClient) DeleteRole(ctx context.Context, id string) error {
+	return errRestMockUnused
+}
+
+func (m *restMockRoleClient) ListRoles(ctx context.Context, req *qrdbtransport.ListRolesRequest) (*qrdbtransport.ListRolesResponse, error) {
+	if m.listRoles == nil {
+		return &qrdbtransport.ListRolesResponse{}, nil
+	}
+	return m.listRoles(ctx, req)
+}
+
+func (m *restMockRoleClient) AssignRole(ctx context.Context, userID uint64, roleID string) error {
+	return errRestMockUnused
+}
+
+func (m *restMockRoleClient) UnassignRole(ctx context.Context, userID uint64, roleID string) error {
+	return errRestMockUnused
+}
+
+func (m *restMockRoleClient) ListPermissions(ctx context.Context) (*qrdbtransport.ListPermissionsResponse, error) {
+	return nil, errRestMockUnused
+}
+
+// setupUserHandlerTest initializes the XKMSService singleton, wires the
+// provided user/role mocks (when non-nil), mounts the user routes on a chi
+// router, and returns the router. Passing nil clients leaves the service's
+// user subsystem unconfigured so the ErrNotConfigured paths are reachable.
+func setupUserHandlerTest(t *testing.T, users qrdbtransport.UserClient, roles qrdbtransport.RoleClient) *chi.Mux {
+	t.Helper()
+
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	if users != nil || roles != nil {
+		svc.SetUserClients(users, roles)
+	}
+	t.Cleanup(func() { xkms.Reset() })
+
+	s := &Server{}
+	r := chi.NewRouter()
+	r.Route("/users", func(r chi.Router) {
+		r.Post("/", s.handleCreateUser)
+		r.Get("/", s.handleListUsers)
+		r.Get("/{username}", s.handleGetUser)
+		r.Put("/{username}", s.handleUpdateUser)
+		r.Delete("/{username}", s.handleDeleteUser)
+		r.Post("/{username}/cert-bindings", s.handleBindUserCert)
+		r.Get("/{username}/credentials", s.handleListUserCredentials)
+	})
+	return r
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+// ============================================================================
+// handleListUsers
+// ============================================================================
+
+func TestHandleListUsers_Success(t *testing.T) {
+	users := &restMockUserClient{
+		listUsers: func(_ context.Context, _ *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
+			return &qrdbtransport.ListUsersResponse{Users: []*qrdbtransport.User{
+				{ID: 1, Username: "alice", Enabled: true},
+				{ID: 2, Username: "bob", Enabled: false},
+			}}, nil
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/users/", nil))
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp struct {
+		Users []map[string]any `json:"users"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.Len(t, resp.Users, 2)
+	assert.Equal(t, "alice", resp.Users[0]["username"])
+}
+
+func TestHandleListUsers_ServiceError(t *testing.T) {
+	users := &restMockUserClient{
+		listUsers: func(_ context.Context, _ *qrdbtransport.ListUsersRequest) (*qrdbtransport.ListUsersResponse, error) {
+			return nil, errors.New("backend down")
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/users/", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+func TestHandleListUsers_NotConfigured(t *testing.T) {
+	// No user clients wired => svc.users is nil => ErrNotConfigured => 500.
+	r := setupUserHandlerTest(t, nil, nil)
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/users/", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
+func TestHandleListUsers_ServiceNotInitialized(t *testing.T) {
+	// The singleton is reset (never initialized) => xkms.Get() fails => 503.
+	xkms.Reset()
+	t.Cleanup(func() { xkms.Reset() })
+
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleListUsers(rr, httptest.NewRequest(http.MethodGet, "/users/", nil))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+}
+
+// ============================================================================
+// handleListUserCredentials
+// ============================================================================
+
+func TestHandleListUserCredentials_Success(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 7, Username: username, Enabled: true}, nil
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/users/alice/credentials", nil))
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp struct {
+		Credentials []userCredentialItem `json:"credentials"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Empty(t, resp.Credentials)
+}
+
+func TestHandleListUserCredentials_UserNotFound(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+			return nil, errors.New("no such user")
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/users/ghost/credentials", nil))
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestHandleListUserCredentials_ServiceNotInitialized(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(func() { xkms.Reset() })
+
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleListUserCredentials(rr, httptest.NewRequest(http.MethodGet, "/users/x/credentials", nil))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+}
+
+// ============================================================================
+// handleUpdateUser
+// ============================================================================
+
+func TestHandleUpdateUser_Enable(t *testing.T) {
+	enabled := false
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 3, Username: username, Enabled: enabled}, nil
+		},
+		enableUser: func(_ context.Context, _ uint64) error {
+			enabled = true
 			return nil
-		}
+		},
 	}
-	return user.ErrUserNotFound
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	assert.True(t, enabled)
+	var info map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &info))
+	assert.Equal(t, "alice", info["username"])
 }
 
-func (m *mockUserStore) List(ctx context.Context) ([]*user.User, error) {
-	if m.listFunc != nil {
-		return m.listFunc(ctx)
+func TestHandleUpdateUser_Disable(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 4, Username: username, Enabled: false}, nil
+		},
+		disableUser: func(_ context.Context, _ uint64) error { return nil },
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	users := make([]*user.User, 0, len(m.users))
-	for _, u := range m.users {
-		users = append(users, u)
+	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(false)})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/bob", bytes.NewReader(body)))
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestHandleUpdateUser_BadJSON(t *testing.T) {
+	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewBufferString("{not json")))
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestHandleUpdateUser_MissingEnabledField(t *testing.T) {
+	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	// Valid JSON but no "enabled" key => body.Enabled stays nil => 400.
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewBufferString("{}")))
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestHandleUpdateUser_EnableError(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 5, Username: username}, nil
+		},
+		enableUser: func(_ context.Context, _ uint64) error { return errors.New("enable failed") },
 	}
-	return users, nil
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func (m *mockUserStore) ListByTenant(ctx context.Context, tenantID string) ([]*user.User, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]*user.User, 0)
-	for _, u := range m.users {
-		if u.TenantID == tenantID {
-			result = append(result, u)
-		}
+func TestHandleUpdateUser_GetAfterUpdateError(t *testing.T) {
+	// Enable succeeds, but the follow-up GetUser fails => 500.
+	calls := 0
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			calls++
+			if calls >= 2 {
+				return nil, errors.New("vanished")
+			}
+			return &qrdbtransport.User{ID: 6, Username: username}, nil
+		},
+		enableUser: func(_ context.Context, _ uint64) error { return nil },
 	}
-	return result, nil
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPut, "/users/alice", bytes.NewReader(body)))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func (m *mockUserStore) Count(ctx context.Context) (int, error) {
-	if m.countFunc != nil {
-		return m.countFunc(ctx)
+func TestHandleUpdateUser_ServiceNotInitialized(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(func() { xkms.Reset() })
+
+	s := &Server{}
+	body, _ := json.Marshal(updateUserBody{Enabled: boolPtr(true)})
+	rr := httptest.NewRecorder()
+	s.handleUpdateUser(rr, httptest.NewRequest(http.MethodPut, "/users/x", bytes.NewReader(body)))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code)
+}
+
+// ============================================================================
+// handleCreateUser / handleGetUser / handleDeleteUser / handleBindUserCert
+// (already partly covered elsewhere; these add the success + error branches
+// reachable purely through the singleton.)
+// ============================================================================
+
+func TestHandleCreateUser_Success(t *testing.T) {
+	users := &restMockUserClient{
+		createUser: func(_ context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 1, Username: req.Username, Enabled: true}, nil
+		},
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.users), nil
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(createUserBody{Username: "carol", DisplayName: "Carol"})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusCreated, rr.Code)
+	var info map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &info))
+	assert.Equal(t, "carol", info["username"])
+	assert.Equal(t, "Carol", info["display_name"])
 }
 
-func (m *mockUserStore) HasAnyUsers(ctx context.Context) (bool, error) {
-	if m.hasUsersFunc != nil {
-		return m.hasUsersFunc(ctx)
+func TestHandleCreateUser_BadJSON(t *testing.T) {
+	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewBufferString("nope")))
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
+func TestHandleCreateUser_ServiceError(t *testing.T) {
+	users := &restMockUserClient{
+		createUser: func(_ context.Context, _ *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+			return nil, errors.New("duplicate")
+		},
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return len(m.users) > 0, nil
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(createUserBody{Username: "carol"})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/", bytes.NewReader(body)))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func (m *mockUserStore) CountAdmins(ctx context.Context) (int, error) {
-	if m.countAdmins != nil {
-		return m.countAdmins(ctx)
+func TestHandleGetUser_Success(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 9, Username: username, Enabled: true}, nil
+		},
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
 
-	count := 0
-	for _, u := range m.users {
-		if u.Role == user.RoleAdmin {
-			count++
-		}
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/users/dave", nil))
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var info map[string]any
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &info))
+	assert.Equal(t, "dave", info["username"])
+}
+
+func TestHandleGetUser_NotFound(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+			return nil, errors.New("missing")
+		},
 	}
-	return count, nil
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/users/ghost", nil))
+
+	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
-func (m *mockUserStore) SaveSession(ctx context.Context, sessionID string, data []byte, ttl time.Duration) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sessions[sessionID] = data
-	return nil
-}
-
-func (m *mockUserStore) GetSession(ctx context.Context, sessionID string) ([]byte, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if data, ok := m.sessions[sessionID]; ok {
-		return data, nil
+func TestHandleDeleteUser_Success(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 11, Username: username}, nil
+		},
+		deleteUser: func(_ context.Context, _ uint64) error { return nil },
 	}
-	return nil, fmt.Errorf("session not found")
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/users/dave", nil))
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Equal(t, "deleted", resp["status"])
 }
 
-func (m *mockUserStore) DeleteSession(ctx context.Context, sessionID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.sessions, sessionID)
-	return nil
+func TestHandleDeleteUser_Error(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+			return nil, errors.New("nope")
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodDelete, "/users/ghost", nil))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }
 
-func (m *mockUserStore) Close() error {
-	return nil
+func TestHandleBindUserCert_Success(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, username string) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 13, Username: username}, nil
+		},
+		addCertBinding: func(_ context.Context, _ uint64, _ string, _ int64) (*qrdbtransport.User, error) {
+			return &qrdbtransport.User{ID: 13}, nil
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(bindUserCertBody{Thumbprint: "abc123", NotAfterUnix: 9999999999})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/dave/cert-bindings", bytes.NewReader(body)))
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Equal(t, "bound", resp["status"])
 }
 
-// Helper to add a test user
-func (m *mockUserStore) addUser(u *user.User) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.users[u.Username] = u
+func TestHandleBindUserCert_BadJSON(t *testing.T) {
+	r := setupUserHandlerTest(t, &restMockUserClient{}, &restMockRoleClient{})
+
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/dave/cert-bindings", bytes.NewBufferString("x")))
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
-// TestNewUserHandlers tests UserHandlers creation
-func TestNewUserHandlers(t *testing.T) {
-	store := newMockUserStore()
-	handlers := NewUserHandlers(store)
-
-	assert.NotNil(t, handlers)
-	assert.Equal(t, store, handlers.userStore)
-}
-
-// TestBootstrapStatusHandler tests the bootstrap status endpoint
-func TestBootstrapStatusHandler(t *testing.T) {
-	t.Run("returns requires_setup when no users", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/bootstrap/status", nil)
-		w := httptest.NewRecorder()
-
-		handlers.BootstrapStatusHandler(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp BootstrapStatusResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.True(t, resp.RequiresSetup)
-		assert.Equal(t, 0, resp.UserCount)
-		assert.Contains(t, resp.Message, "register the first administrator")
-	})
-
-	t.Run("returns configured when users exist", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("test"),
-			Username: "admin",
-			Role:     user.RoleAdmin,
-		})
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/bootstrap/status", nil)
-		w := httptest.NewRecorder()
-
-		handlers.BootstrapStatusHandler(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp BootstrapStatusResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.False(t, resp.RequiresSetup)
-		assert.Equal(t, 1, resp.UserCount)
-		assert.Contains(t, resp.Message, "configured and ready")
-	})
-
-	t.Run("returns error when HasAnyUsers fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.hasUsersFunc = func(ctx context.Context) (bool, error) {
-			return false, fmt.Errorf("database error")
-		}
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/bootstrap/status", nil)
-		w := httptest.NewRecorder()
-
-		handlers.BootstrapStatusHandler(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-
-	t.Run("returns error when Count fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.countFunc = func(ctx context.Context) (int, error) {
-			return 0, fmt.Errorf("count error")
-		}
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/bootstrap/status", nil)
-		w := httptest.NewRecorder()
-
-		handlers.BootstrapStatusHandler(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-}
-
-// TestListUsersHandler tests listing users
-func TestListUsersHandler(t *testing.T) {
-	t.Run("returns empty list when no users", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-
-		handlers.ListUsersHandler(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserListResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Empty(t, resp.Users)
-		assert.Equal(t, 0, resp.Total)
-	})
-
-	t.Run("returns users when present", func(t *testing.T) {
-		store := newMockUserStore()
-		now := time.Now()
-		loginTime := now.Add(-1 * time.Hour)
-		store.addUser(&user.User{
-			ID:          []byte("user1"),
-			Username:    "admin",
-			DisplayName: "Admin User",
-			Role:        user.RoleAdmin,
-			Enabled:     true,
-			CreatedAt:   now,
-			LastLoginAt: &loginTime,
-			Credentials: []user.Credential{
-				{ID: []byte("cred1"), Name: "Key 1"},
-			},
-		})
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-
-		handlers.ListUsersHandler(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserListResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Len(t, resp.Users, 1)
-		assert.Equal(t, 1, resp.Total)
-		assert.Equal(t, "admin", resp.Users[0].Username)
-		assert.Equal(t, "Admin User", resp.Users[0].DisplayName)
-		assert.Equal(t, string(user.RoleAdmin), resp.Users[0].Role)
-		assert.True(t, resp.Users[0].Enabled)
-		assert.Equal(t, 1, resp.Users[0].CredentialCount)
-		assert.NotEmpty(t, resp.Users[0].LastLoginAt)
-	})
-
-	t.Run("returns error when List fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.listFunc = func(ctx context.Context) ([]*user.User, error) {
-			return nil, fmt.Errorf("list error")
-		}
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-
-		handlers.ListUsersHandler(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-}
-
-// TestGetUserHandler tests getting a specific user
-func TestGetUserHandler(t *testing.T) {
-	t.Run("returns error for missing ID", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code) // chi returns 404 for missing param
-	})
-
-	t.Run("returns error for invalid ID format", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		// Invalid base64
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/!!!invalid!!!", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("returns error for non-existent user", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		// Valid base64 but user doesn't exist
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/bm9uZXhpc3RlbnQ", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-
-	t.Run("returns user when found", func(t *testing.T) {
-		store := newMockUserStore()
-		now := time.Now()
-		loginTime := now.Add(-1 * time.Hour)
-		credTime := now.Add(-2 * time.Hour)
-		store.addUser(&user.User{
-			ID:          []byte("testuser"),
-			Username:    "testuser",
-			DisplayName: "Test User",
-			Role:        user.RoleOperator,
-			Enabled:     true,
-			CreatedAt:   now,
-			LastLoginAt: &loginTime,
-			Credentials: []user.Credential{
-				{ID: []byte("cred1"), Name: "Security Key", CreatedAt: credTime, LastUsedAt: &loginTime},
-			},
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		// Use base64url encoding of "testuser"
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dGVzdHVzZXI", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserDetailResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, "testuser", resp.Username)
-		assert.Equal(t, "Test User", resp.DisplayName)
-		assert.Equal(t, string(user.RoleOperator), resp.Role)
-		assert.True(t, resp.Enabled)
-		assert.Len(t, resp.Credentials, 1)
-		assert.Equal(t, "Security Key", resp.Credentials[0].Name)
-		assert.NotEmpty(t, resp.LastLoginAt)
-	})
-
-	t.Run("returns error when GetByID fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.getByIDFunc = func(ctx context.Context, id []byte) (*user.User, error) {
-			return nil, fmt.Errorf("database error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dGVzdA", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-}
-
-// TestUpdateUserHandler tests updating a user
-func TestUpdateUserHandler(t *testing.T) {
-	t.Run("returns error for missing ID", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/", strings.NewReader(`{}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-
-	t.Run("returns error for invalid ID format", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/!!!invalid!!!", strings.NewReader(`{}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("returns error for invalid JSON", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dGVzdHVzZXI", strings.NewReader("invalid json"))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("returns error for non-existent user", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/bm9uZXhpc3RlbnQ", strings.NewReader(`{"display_name": "New Name"}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-
-	t.Run("returns error for invalid role", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dGVzdHVzZXI", strings.NewReader(`{"role": "superuser"}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("updates display name successfully", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:          []byte("testuser"),
-			Username:    "testuser",
-			DisplayName: "Old Name",
-			Role:        user.RoleUser,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dGVzdHVzZXI", strings.NewReader(`{"display_name": "New Name"}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UpdateUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, "New Name", resp.DisplayName)
-		assert.Contains(t, resp.Message, "successfully")
-	})
-
-	t.Run("updates role successfully", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dGVzdHVzZXI", strings.NewReader(`{"role": "operator"}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UpdateUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, string(user.RoleOperator), resp.Role)
-	})
-
-	t.Run("updates enabled status successfully", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-			Enabled:  true,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dGVzdHVzZXI", strings.NewReader(`{"enabled": false}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UpdateUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.False(t, resp.Enabled)
-	})
-
-	t.Run("returns error when Update fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-		})
-		store.updateFunc = func(ctx context.Context, u *user.User) error {
-			return fmt.Errorf("update error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dGVzdHVzZXI", strings.NewReader(`{"display_name": "New"}`))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-}
-
-// TestDeleteUserHandler tests deleting a user
-func TestDeleteUserHandler(t *testing.T) {
-	t.Run("returns error for missing ID", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-
-	t.Run("returns error for invalid ID format", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/!!!invalid!!!", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("returns error for non-existent user", func(t *testing.T) {
-		store := newMockUserStore()
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/bm9uZXhpc3RlbnQ", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-
-	t.Run("prevents deletion of last admin", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("admin"),
-			Username: "admin",
-			Role:     user.RoleAdmin,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/YWRtaW4", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
-
-	t.Run("allows deletion of admin when others exist", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("admin1"),
-			Username: "admin1",
-			Role:     user.RoleAdmin,
-		})
-		store.addUser(&user.User{
-			ID:       []byte("admin2"),
-			Username: "admin2",
-			Role:     user.RoleAdmin,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/YWRtaW4x", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp DeleteUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Contains(t, resp.Message, "successfully")
-	})
-
-	t.Run("deletes non-admin user successfully", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dGVzdHVzZXI", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp DeleteUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Contains(t, resp.Message, "successfully")
-	})
-
-	t.Run("returns error when CountAdmins fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("admin"),
-			Username: "admin",
-			Role:     user.RoleAdmin,
-		})
-		store.countAdmins = func(ctx context.Context) (int, error) {
-			return 0, fmt.Errorf("count error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/YWRtaW4", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-
-	t.Run("returns error when Delete fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-		})
-		store.deleteFunc = func(ctx context.Context, id []byte) error {
-			return fmt.Errorf("delete error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dGVzdHVzZXI", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-
-	t.Run("handles ErrLastAdmin from Delete", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("admin"),
-			Username: "admin",
-			Role:     user.RoleUser, // Not admin so CountAdmins check passes
-		})
-		store.deleteFunc = func(ctx context.Context, id []byte) error {
-			return user.ErrLastAdmin
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/YWRtaW4", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
-}
-
-// TestEncodeUserID tests user ID encoding
-func TestEncodeUserID(t *testing.T) {
-	t.Run("encodes user ID to base64url", func(t *testing.T) {
-		id := []byte("testuser")
-		encoded := encodeUserID(id)
-		assert.NotEmpty(t, encoded)
-	})
-
-	t.Run("encodes empty ID", func(t *testing.T) {
-		id := []byte("")
-		encoded := encodeUserID(id)
-		assert.Empty(t, encoded)
-	})
-}
-
-// TestDecodeUserID tests user ID decoding
-func TestDecodeUserID(t *testing.T) {
-	t.Run("decodes valid base64url", func(t *testing.T) {
-		encoded := "dGVzdHVzZXI" // base64url of "testuser"
-		decoded, err := decodeUserID(encoded)
-		require.NoError(t, err)
-		assert.Equal(t, []byte("testuser"), decoded)
-	})
-
-	t.Run("returns error for invalid base64", func(t *testing.T) {
-		_, err := decodeUserID("!!!invalid!!!")
-		assert.Error(t, err)
-	})
-
-	t.Run("decodes base64url with padding", func(t *testing.T) {
-		encoded := "dGVzdHVzZXI=" // base64url with padding
-		decoded, err := decodeUserID(encoded)
-		require.NoError(t, err)
-		assert.Equal(t, []byte("testuser"), decoded)
-	})
-}
-
-// TestEncodeBase64URL tests base64url encoding
-func TestEncodeBase64URL(t *testing.T) {
-	t.Run("encodes data correctly", func(t *testing.T) {
-		data := []byte("hello world")
-		encoded := encodeBase64URL(data)
-		assert.NotEmpty(t, encoded)
-		// Should not contain padding or non-URL-safe characters
-		assert.NotContains(t, encoded, "+")
-		assert.NotContains(t, encoded, "/")
-		assert.NotContains(t, encoded, "=")
-	})
-
-	t.Run("encodes empty data", func(t *testing.T) {
-		encoded := encodeBase64URL([]byte{})
-		assert.Empty(t, encoded)
-	})
-
-	t.Run("encodes binary data", func(t *testing.T) {
-		data := []byte{0x00, 0x01, 0x02, 0xff, 0xfe, 0xfd}
-		encoded := encodeBase64URL(data)
-		assert.NotEmpty(t, encoded)
-	})
-}
-
-// TestUserWriteJSONError tests error response writing
-func TestUserWriteJSONError(t *testing.T) {
-	t.Run("writes error response", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		userWriteJSONError(w, "test error", http.StatusBadRequest)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
-
-		var resp map[string]string
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, "test error", resp["error"])
-	})
-}
-
-// TestDeleteUserHandler_CountAdminsError tests error when CountAdmins fails
-func TestDeleteUserHandler_CountAdminsError(t *testing.T) {
-	t.Run("returns error when CountAdmins fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("admin"),
-			Username: "admin",
-			Role:     user.RoleAdmin,
-		})
-		store.countAdmins = func(ctx context.Context) (int, error) {
-			return 0, fmt.Errorf("database error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/YWRtaW4", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "Failed to count admins")
-	})
-}
-
-// TestDeleteUserHandler_GetByIDError tests error when GetByID fails
-func TestDeleteUserHandler_GetByIDError(t *testing.T) {
-	t.Run("returns error when GetByID fails with generic error", func(t *testing.T) {
-		store := newMockUserStore()
-		store.getByIDFunc = func(ctx context.Context, id []byte) (*user.User, error) {
-			return nil, fmt.Errorf("database error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dGVzdA", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-		assert.Contains(t, w.Body.String(), "Failed to get user")
-	})
-}
-
-// TestDeleteUserHandler_DeleteLastAdminError tests when Delete returns ErrLastAdmin
-func TestDeleteUserHandler_DeleteLastAdminError(t *testing.T) {
-	t.Run("returns forbidden when Delete returns ErrLastAdmin", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("regular"),
-			Username: "regular",
-			Role:     user.RoleUser,
-		})
-		store.deleteFunc = func(ctx context.Context, id []byte) error {
-			return user.ErrLastAdmin
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/cmVndWxhcg", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusForbidden, w.Code)
-	})
-}
-
-// TestDeleteUserHandler_DeleteGenericError tests when Delete returns generic error
-func TestDeleteUserHandler_DeleteGenericError(t *testing.T) {
-	t.Run("returns error when Delete fails with generic error", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("regular"),
-			Username: "regular",
-			Role:     user.RoleUser,
-		})
-		store.deleteFunc = func(ctx context.Context, id []byte) error {
-			return fmt.Errorf("database error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/cmVndWxhcg", nil)
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-}
-
-// TestUpdateUserHandler_UpdateError tests UpdateUserHandler when Update fails
-func TestUpdateUserHandler_UpdateError(t *testing.T) {
-	t.Run("returns error when Update fails", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("testuser"),
-			Username: "testuser",
-			Role:     user.RoleUser,
-		})
-		store.updateFunc = func(ctx context.Context, u *user.User) error {
-			return fmt.Errorf("update error")
-		}
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		body := `{"display_name": "New Name"}`
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dGVzdHVzZXI", strings.NewReader(body))
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusInternalServerError, w.Code)
-	})
-}
-
-// --- Tenant filtering tests ---
-
-// TestIsCrossTenantAccess tests the isCrossTenantAccess helper function.
-func TestIsCrossTenantAccess(t *testing.T) {
-	t.Run("nil identity allows access", func(t *testing.T) {
-		assert.False(t, isCrossTenantAccess(nil, "tenant-a"))
-	})
-
-	t.Run("system-level identity allows access", func(t *testing.T) {
-		identity := &auth.Identity{Subject: "so-user", TenantID: ""}
-		assert.False(t, isCrossTenantAccess(identity, "tenant-a"))
-	})
-
-	t.Run("same tenant allows access", func(t *testing.T) {
-		identity := &auth.Identity{Subject: "user1", TenantID: "tenant-a"}
-		assert.False(t, isCrossTenantAccess(identity, "tenant-a"))
-	})
-
-	t.Run("different tenant denies access", func(t *testing.T) {
-		identity := &auth.Identity{Subject: "user1", TenantID: "tenant-a"}
-		assert.True(t, isCrossTenantAccess(identity, "tenant-b"))
-	})
-
-	t.Run("target with no tenant allows access", func(t *testing.T) {
-		identity := &auth.Identity{Subject: "user1", TenantID: "tenant-a"}
-		assert.False(t, isCrossTenantAccess(identity, ""))
-	})
-}
-
-// TestListUsersHandler_TenantFiltering tests tenant-scoped filtering for ListUsersHandler.
-func TestListUsersHandler_TenantFiltering(t *testing.T) {
-	t.Run("SO sees all users", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-a"),
-			Username: "user-a",
-			Role:     user.RoleUser,
-			TenantID: "tenant-a",
-		})
-		store.addUser(&user.User{
-			ID:       []byte("user-b"),
-			Username: "user-b",
-			Role:     user.RoleUser,
-			TenantID: "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		// SO has empty TenantID
-		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		handlers.ListUsersHandler(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserListResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, 2, resp.Total)
-	})
-
-	t.Run("tenant user sees only own tenant", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-a1"),
-			Username: "user-a1",
-			Role:     user.RoleUser,
-			TenantID: "tenant-a",
-		})
-		store.addUser(&user.User{
-			ID:       []byte("user-a2"),
-			Username: "user-a2",
-			Role:     user.RoleUser,
-			TenantID: "tenant-a",
-		})
-		store.addUser(&user.User{
-			ID:       []byte("user-b1"),
-			Username: "user-b1",
-			Role:     user.RoleUser,
-			TenantID: "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		identity := &auth.Identity{Subject: "user-a1", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		handlers.ListUsersHandler(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserListResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, 2, resp.Total)
-		for _, u := range resp.Users {
-			assert.Contains(t, []string{"user-a1", "user-a2"}, u.Username)
-		}
-	})
-
-	t.Run("no identity returns all users", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-a"),
-			Username: "user-a",
-			Role:     user.RoleUser,
-			TenantID: "tenant-a",
-		})
-		store.addUser(&user.User{
-			ID:       []byte("user-b"),
-			Username: "user-b",
-			Role:     user.RoleUser,
-			TenantID: "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		// No identity in context
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		w := httptest.NewRecorder()
-		handlers.ListUsersHandler(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserListResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, 2, resp.Total)
-	})
-}
-
-// TestGetUserHandler_TenantFiltering tests tenant-scoped filtering for GetUserHandler.
-func TestGetUserHandler_TenantFiltering(t *testing.T) {
-	t.Run("SO can access any tenant user", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-b"),
-			Username: "user-b",
-			Role:     user.RoleUser,
-			TenantID: "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		// base64url of "user-b"
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dXNlci1i", nil)
-		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserDetailResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, "user-b", resp.Username)
-	})
-
-	t.Run("tenant user gets 404 for other tenant user", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-b"),
-			Username: "user-b",
-			Role:     user.RoleUser,
-			TenantID: "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dXNlci1i", nil)
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Contains(t, w.Body.String(), "User not found")
-	})
-
-	t.Run("tenant user can access own tenant user", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-a"),
-			Username: "user-a",
-			Role:     user.RoleUser,
-			TenantID: "tenant-a",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Get("/api/v1/users/{id}", handlers.GetUserHandler)
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/users/dXNlci1h", nil)
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UserDetailResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, "user-a", resp.Username)
-	})
-}
-
-// TestUpdateUserHandler_TenantFiltering tests tenant-scoped filtering for UpdateUserHandler.
-func TestUpdateUserHandler_TenantFiltering(t *testing.T) {
-	t.Run("tenant user gets 404 for cross-tenant update", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:          []byte("user-b"),
-			Username:    "user-b",
-			DisplayName: "User B",
-			Role:        user.RoleUser,
-			TenantID:    "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dXNlci1i", strings.NewReader(`{"display_name": "Hacked"}`))
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Contains(t, w.Body.String(), "User not found")
-	})
-
-	t.Run("tenant user can update own tenant user", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:          []byte("user-a"),
-			Username:    "user-a",
-			DisplayName: "User A",
-			Role:        user.RoleUser,
-			TenantID:    "tenant-a",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dXNlci1h", strings.NewReader(`{"display_name": "Updated A"}`))
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UpdateUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, "Updated A", resp.DisplayName)
-	})
-
-	t.Run("SO can update any tenant user", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:          []byte("user-b"),
-			Username:    "user-b",
-			DisplayName: "User B",
-			Role:        user.RoleUser,
-			TenantID:    "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Put("/api/v1/users/{id}", handlers.UpdateUserHandler)
-
-		req := httptest.NewRequest(http.MethodPut, "/api/v1/users/dXNlci1i", strings.NewReader(`{"display_name": "Updated by SO"}`))
-		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp UpdateUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, "Updated by SO", resp.DisplayName)
-	})
-}
-
-// TestDeleteUserHandler_TenantFiltering tests tenant-scoped filtering for DeleteUserHandler.
-func TestDeleteUserHandler_TenantFiltering(t *testing.T) {
-	t.Run("tenant user gets 404 for cross-tenant delete", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-b"),
-			Username: "user-b",
-			Role:     user.RoleUser,
-			TenantID: "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dXNlci1i", nil)
-		identity := &auth.Identity{Subject: "user-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-		assert.Contains(t, w.Body.String(), "User not found")
-	})
-
-	t.Run("tenant user can delete own tenant user", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-a"),
-			Username: "user-a",
-			Role:     user.RoleUser,
-			TenantID: "tenant-a",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dXNlci1h", nil)
-		identity := &auth.Identity{Subject: "admin-a", TenantID: "tenant-a"}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp DeleteUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Contains(t, resp.Message, "successfully")
-	})
-
-	t.Run("SO can delete any tenant user", func(t *testing.T) {
-		store := newMockUserStore()
-		store.addUser(&user.User{
-			ID:       []byte("user-b"),
-			Username: "user-b",
-			Role:     user.RoleUser,
-			TenantID: "tenant-b",
-		})
-		handlers := NewUserHandlers(store)
-
-		router := chi.NewRouter()
-		router.Delete("/api/v1/users/{id}", handlers.DeleteUserHandler)
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/dXNlci1i", nil)
-		identity := &auth.Identity{Subject: "so-admin", TenantID: ""}
-		ctx := auth.WithIdentity(req.Context(), identity)
-		req = req.WithContext(ctx)
-
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp DeleteUserResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Contains(t, resp.Message, "successfully")
-	})
+func TestHandleBindUserCert_Error(t *testing.T) {
+	users := &restMockUserClient{
+		getUserByUsername: func(_ context.Context, _, _ string) (*qrdbtransport.User, error) {
+			return nil, errors.New("nope")
+		},
+	}
+	r := setupUserHandlerTest(t, users, &restMockRoleClient{})
+
+	body, _ := json.Marshal(bindUserCertBody{Thumbprint: "abc"})
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/users/ghost/cert-bindings", bytes.NewReader(body)))
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 }

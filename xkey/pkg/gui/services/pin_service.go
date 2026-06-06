@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -32,18 +32,18 @@ type PINStatusInfo struct {
 }
 
 // PINService exposes PIN management to the frontend. It is a thin wrapper
-// over the unified pin.Service that adds Wails context and audit logging.
+// over the unified qrdbsdk.PINService that adds Wails context and audit logging.
 // It is bound to the Wails runtime so every exported method is callable
 // from the Svelte frontend.
 type PINService struct {
 	ctx        context.Context
 	log        *slog.Logger
 	auditLog   atomic.Pointer[audit.Logger]
-	pinSvc     atomic.Pointer[pin.Service]
+	pinSvc     atomic.Pointer[qrdbsdk.PINService]
 	barrierSvc atomic.Pointer[BarrierService]
 }
 
-// NewPINService creates a new PINService. The underlying pin.Service must
+// NewPINService creates a new PINService. The underlying qrdbsdk.PINService must
 // be wired via SetPINService before PIN operations are available.
 func NewPINService() *PINService {
 	return &PINService{
@@ -61,9 +61,9 @@ func (s *PINService) SetAuditLogger(logger audit.Logger) {
 	s.auditLog.Store(&logger)
 }
 
-// SetPINService wires the underlying pin.Service that handles all PIN
+// SetPINService wires the underlying qrdbsdk.PINService that handles all PIN
 // operations through the selected backend.
-func (s *PINService) SetPINService(svc *pin.Service) {
+func (s *PINService) SetPINService(svc *qrdbsdk.PINService) {
 	s.pinSvc.Store(svc)
 }
 
@@ -76,8 +76,8 @@ func (s *PINService) SetBarrierService(svc *BarrierService) {
 	s.barrierSvc.Store(svc)
 }
 
-// getPINService returns the underlying pin.Service or ErrPINServiceNotConfigured.
-func (s *PINService) getPINService() (*pin.Service, error) {
+// getPINService returns the underlying qrdbsdk.PINService or ErrPINServiceNotConfigured.
+func (s *PINService) getPINService() (*qrdbsdk.PINService, error) {
 	svc := s.pinSvc.Load()
 	if svc == nil {
 		return nil, ErrPINServiceNotConfigured
@@ -146,7 +146,7 @@ func (s *PINService) SetSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 
 // SetUserPIN sets the user PIN. Requires SO PIN authorization.
 // The FIDO2 PIN hash is pushed to the authenticator automatically
-// by the underlying pin.Service.
+// by the underlying qrdbsdk.PINService.
 func (s *PINService) SetUserPIN(soPIN, newUserPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -203,7 +203,7 @@ func (s *PINService) ChangeSOPIN(currentSOPIN, newSOPIN string) (retErr error) {
 }
 
 // ChangeUserPIN changes the user PIN. The FIDO2 PIN hash is updated
-// automatically by the underlying pin.Service.
+// automatically by the underlying qrdbsdk.PINService.
 func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -323,7 +323,7 @@ func (s *PINService) VerifySOPIN(soPIN string) (retErr error) {
 }
 
 // GetLockoutStatus returns the current lockout status from the backend.
-func (s *PINService) GetLockoutStatus() (result *pin.LockoutStatus, retErr error) {
+func (s *PINService) GetLockoutStatus() (result *qrdbsdk.PINLockoutStatus, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in GetLockoutStatus", "recover", r)

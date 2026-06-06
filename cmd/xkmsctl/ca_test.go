@@ -160,20 +160,6 @@ func (m *mockCAClient) Unseal(_ context.Context, req *client.UnsealRequest) (*cl
 func (m *mockCAClient) CanSeal(_ context.Context, b string) (*client.CanSealResponse, error) {
 	return &client.CanSealResponse{CanSeal: true, Backend: b}, nil
 }
-func (m *mockCAClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*client.ListUsersResponse, error) {
-	return nil, client.ErrNotSupported
-}
-func (m *mockCAClient) GetUser(_ context.Context, _ string) (*client.GetUserResponse, error) {
-	return nil, client.ErrNotSupported
-}
-func (m *mockCAClient) DeleteUser(_ context.Context, _ string) error { return client.ErrNotSupported }
-func (m *mockCAClient) EnableUser(_ context.Context, _ string) error { return client.ErrNotSupported }
-func (m *mockCAClient) DisableUser(_ context.Context, _ string) error {
-	return client.ErrNotSupported
-}
-func (m *mockCAClient) ListUserCredentials(_ context.Context, _ string) (*client.ListUserCredentialsResponse, error) {
-	return nil, client.ErrNotSupported
-}
 func (m *mockCAClient) BeginRegistration(_ context.Context, _ *client.BeginRegistrationRequest) (*client.BeginRegistrationResponse, error) {
 	return nil, client.ErrNotSupported
 }
@@ -321,16 +307,6 @@ func (m *mockCAClient) BarrierUnsealWithShare(_ context.Context, _ *transport.Ba
 func (m *mockCAClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
 	return client.ErrNotSupported
 }
-func (m *mockCAClient) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, client.ErrNotSupported
-}
-func (m *mockCAClient) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	return client.ErrNotSupported
-}
-func (m *mockCAClient) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return client.ErrNotSupported
-}
-func (m *mockCAClient) BarrierShamirVerify(_ context.Context) error { return client.ErrNotSupported }
 func (m *mockCAClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	return nil, client.ErrNotSupported
 }
@@ -513,6 +489,38 @@ func (m *mockCAClient) SubmitCredential(_ context.Context, _ *transport.Credenti
 	return nil, nil
 }
 func (m *mockCAClient) GetCredentialStrategy(_ context.Context) (*transport.CredentialStrategyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockCAClient) DeleteUser(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockCAClient) EnableUser(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockCAClient) DisableUser(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockCAClient) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+	return nil
+}
+
+func (m *mockCAClient) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
 	return nil, nil
 }
 

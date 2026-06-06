@@ -59,7 +59,7 @@ func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(status)
+	_ = json.NewEncoder(w).Encode(status)
 }
 
 // Ready handles HTTP readiness check requests. A service is considered
@@ -71,7 +71,7 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	if !h.service.Healthy(ctx) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(&healthStatus{
+		_ = json.NewEncoder(w).Encode(&healthStatus{
 			Status:  "not_ready",
 			Healthy: false,
 		})
@@ -84,7 +84,7 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(&healthStatus{
+		_ = json.NewEncoder(w).Encode(&healthStatus{
 			Status:  "not_ready",
 			Healthy: false,
 		})
@@ -97,7 +97,7 @@ func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(status)
+	_ = json.NewEncoder(w).Encode(status)
 }
 
 // RegisterHealthEndpoints registers the health and readiness check

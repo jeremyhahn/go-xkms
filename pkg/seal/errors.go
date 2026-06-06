@@ -14,7 +14,25 @@
 package seal
 
 import (
+	"errors"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+)
+
+// --- xkms-local seal errors ---
+
+var (
+	// ErrNoSealingKey is returned when a cloud KMS sealing strategy is asked
+	// to seal or unseal a root key but was constructed without the
+	// KeyAttributes that identify the cloud-managed sealing key. Every cloud
+	// KMS backend (AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault)
+	// requires this identity; without it the backend rejects the request.
+	ErrNoSealingKey = errors.New("seal: no sealing key configured for cloud KMS strategy")
+
+	// ErrNoStrategySpecified is returned when a sealer/barrier is constructed
+	// without an explicit strategy selection. There is no implicit default
+	// preference order — the caller must specify which strategy to use.
+	ErrNoStrategySpecified = errors.New("seal: no sealing strategy specified (explicit selection required)")
 )
 
 // --- Re-exported errors from go-qrdb/sdk/go seal ---

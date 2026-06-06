@@ -81,6 +81,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
@@ -1333,6 +1334,26 @@ func (ca *CA) SignCSR(csrPEM []byte, opts *SignOptions) (*x509.Certificate, erro
 		template.URIs = append(template.URIs, opts.SANS.ParseURIs()...)
 	}
 
+	// Synthesize a tenant-scoped SPIFFE URI SAN when requested. This binds the
+	// issued client certificate to its tenant so login can derive the tenant
+	// from the verified peer certificate (SPIFFE SAN -> tenant). The format is
+	// owned by pkg/spiffe; we never hand-assemble the path here.
+	if opts != nil && opts.SPIFFETrustDomain != "" && opts.TenantID != "" {
+		kind := opts.SPIFFEKind
+		if kind == "" {
+			kind = spiffe.KindUser
+		}
+		name := opts.SPIFFEName
+		if name == "" {
+			name = subject.CommonName
+		}
+		spiffeURI, err := spiffe.BuildURI(opts.SPIFFETrustDomain, opts.TenantID, kind, name)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrSigningFailed, err)
+		}
+		template.URIs = append(template.URIs, spiffeURI)
+	}
+
 	// Sign the certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, template, issuingCert, csr.PublicKey, signer)
 	if err != nil {
@@ -1411,13 +1432,20 @@ func (ca *CA) IssueCertificateWithProfile(request *CertificateRequest, profile s
 		return nil, err
 	}
 
-	// Build sign options
+	// Build sign options. The SPIFFE tenant-binding fields are forwarded so the
+	// keypair-issuance path stamps the same tenant-scoped SPIFFE URI SAN as the
+	// CSR-sign path. SignCSR owns the single synthesis site (spiffe.BuildURI),
+	// keeping both paths DRY.
 	opts := &SignOptions{
-		Profile:      profile,
-		ValidityDays: request.Valid,
-		KeyUsage:     request.KeyUsage,
-		ExtKeyUsage:  request.ExtKeyUsage,
-		SANS:         request.SANS,
+		Profile:           profile,
+		ValidityDays:      request.Valid,
+		KeyUsage:          request.KeyUsage,
+		ExtKeyUsage:       request.ExtKeyUsage,
+		SANS:              request.SANS,
+		SPIFFETrustDomain: request.SPIFFETrustDomain,
+		TenantID:          request.TenantID,
+		SPIFFEKind:        request.SPIFFEKind,
+		SPIFFEName:        request.SPIFFEName,
 	}
 
 	// Sign the CSR

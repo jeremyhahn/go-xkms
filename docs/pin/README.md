@@ -1,51 +1,108 @@
-# Unified PIN Service
+# PIN Management
 
-The `pkg/pin` package provides PIN management with two pluggable backend implementations: **TPM2** and **Software**. The `Service` type is the single entry point for all PIN operations. It delegates verification to the backend's native mechanism and manages the FIDO2 authenticator hash callback.
+PIN management is **owned by go-qrdb**. The `PINBackend` interface,
+`pin.Service`, `SoftwareBackend`, `FIDO2HashVerifier`, and every sentinel
+error live in `go-qrdb/pkg/pin`. xkms contributes hardware-backed
+implementations of that interface: `pkg/pintpm2` for TPM 2.0 platforms,
+which any binary composes into a qrdb server via
+`qrdbserver.WithPINBackend`.
+
+This document covers both sides of that boundary:
+
+- the qrdb-owned `PINBackend` contract and Service that consumers use;
+- the xkms-owned TPM2 backend (`pkg/pintpm2`) and its
+  `PlatformAuthProvider` hook.
+
+> Phase 2 moved the PIN service down to qrdb. Earlier revisions of this
+> document described `pkg/pin` as an xkms package; that package no longer
+> exists. The TPM 2.0 backend lives in `pkg/pintpm2` and the PIN service it
+> plugs into lives in `go-qrdb/pkg/pin`.
 
 ## Architecture
 
 ```
-Caller
-  |
-  v
-+------------------+     FIDO2PINHashSetter callback
-|    Service        |------------------------------> Authenticator
-|  (single entry    |                                (SHA-256(PIN)[:16])
-|   point)          |
-+--------+---------+
-         |
-         v
-+------------------+
-|   PINBackend     |  <-- interface
-+------------------+
-  |              |
-  v              v
-TPM2         Software
-(SRK auth)   (Argon2id/PBKDF2)
+Caller (xkmsd / quicbaasd / xkmsctl)
+   |
+   v
++--------------------+      FIDO2PINHashSetter callback
+|  pin.Service       |--------------------------------> Authenticator
+|  (qrdb, single     |                                  (SHA-256(PIN)[:16])
+|   entry point)     |
++----------+---------+
+           |
+           v
++--------------------+
+|   pin.PINBackend   |   interface defined in go-qrdb/pkg/pin
++--------------------+
+        |
+   +----+----------------------+
+   |                           |
+   v                           v
+SoftwareBackend          TPM2Backend (xkms/pkg/pintpm2)
+(Argon2id / PBKDF2)      delegates to PlatformAuthProvider
+qrdb-owned                xkms-owned
 ```
 
-**Service** (`service.go`) wraps a `PINBackend`, validates PIN length (minimum 6 characters), pushes FIDO2 hashes to the authenticator on set/change, and delegates all verification to the backend.
+`pin.Service` (qrdb) wraps a `PINBackend`, validates PIN length (minimum 6
+characters), pushes FIDO2 hashes to the authenticator on set/change, and
+delegates every verification call to the backend.
 
-**PINBackend** (`backend.go`) is the interface each backend implements. Methods cover SO PIN and user PIN lifecycle: `Set`, `Change`, `Verify`, plus `GetLockoutStatus` and `ResetLockout`.
+`PINBackend` (qrdb) is the interface each backend implements. Methods cover
+SO PIN and user PIN lifecycle: `Set`, `Change`, `Verify`, plus
+`GetLockoutStatus` and `ResetLockout`.
 
-All mutable state in backend implementations uses `sync/atomic` operations (`atomic.Bool`, `atomic.Pointer`) for lock-free concurrent access.
+All mutable state in xkms's TPM2 backend uses `sync/atomic` operations
+(`atomic.Bool`, `atomic.Pointer`) for lock-free concurrent access — see
+`pkg/pintpm2/backend.go:56`.
 
 ## Backend Comparison
 
-| Aspect | TPM2 | Software |
-|--------|------|----------|
-| Strategy ID | `tpm2` | `software` |
+| Aspect | TPM2 (xkms) | Software (qrdb) |
+|--------|-------------|-----------------|
+| Repository | `go-xkms/pkg/pintpm2` | `go-qrdb/pkg/pin` |
+| Strategy ID | `pin.StrategyTPM2` | `pin.StrategySoftware` |
 | PIN verification | PlatformSRK password auth via `PlatformAuthProvider` | Argon2id or PBKDF2 hash + constant-time compare |
-| SO PIN | Not supported (returns `ErrPINNotSet`) | Hash-based, persisted to `storage.Backend` |
+| SO PIN | Not supported (returns `pin.ErrPINNotSet`) | Hash-based, persisted to `storage.Backend` |
 | User PIN | PlatformSRK auth value | Hash-based, persisted to `storage.Backend` |
 | Lockout | TPM dictionary attack protection (hardware counters) | None (hash is the security boundary) |
 | FIDO2 hash | Cached in `mem.GuardedBuffer` on verify/set/change | Cached in `mem.GuardedBuffer` on verify/set/change |
 | Concurrency | `atomic.Bool` + `atomic.Pointer` | `atomic.Bool` + `atomic.Pointer` |
-| Constructor | `NewTPM2Backend(platformAuthProvider)` | `NewSoftwareBackend(store, hashConfig)` |
+| Constructor | `pintpm2.NewTPM2Backend(platformAuthProvider)` | `pin.NewSoftwareBackend(store, hashConfig)` |
 
-## TPM2 Backend
+## TPM2 Backend (`pkg/pintpm2`)
 
-The TPM2 backend delegates all user PIN verification to the TPM 2.0 hardware through the `PlatformAuthProvider` interface. The user PIN IS the PlatformSRK's password auth value.
+The TPM2 backend delegates all user PIN verification to the TPM 2.0
+hardware through the `PlatformAuthProvider` interface defined alongside it
+(`pkg/pintpm2/providers.go:22`). The user PIN IS the PlatformSRK's password
+auth value.
+
+```go
+import (
+    "github.com/jeremyhahn/go-qrdb/pkg/pin"
+    "github.com/jeremyhahn/go-xkms/pkg/pintpm2"
+)
+
+backend := pintpm2.NewTPM2Backend(platformKeyStore)
+svc := pin.NewService(backend, slog.Default())
+```
+
+The composing binary (xkmsd, quicbaasd) wires the backend into the qrdb
+server via `qrdbserver.WithPINBackend(backend)`. Source:
+`pkg/pintpm2/backend.go:68`.
+
+### Conformance
+
+```go
+// pkg/pintpm2/backend.go:35
+var (
+    _ pin.PINBackend        = (*TPM2Backend)(nil)
+    _ pin.FIDO2HashVerifier = (*TPM2Backend)(nil)
+)
+```
+
+The backend satisfies both the canonical qrdb `PINBackend` interface and
+the optional `FIDO2HashVerifier` extension, so `pin.Service` can verify
+incoming FIDO2 PIN hashes without ever holding the raw PIN.
 
 ### How it works
 
@@ -167,13 +224,14 @@ svc.SetFIDO2HashSetter(func(hash []byte) {
 import (
     "log/slog"
 
-    "github.com/jeremyhahn/go-xkms/pkg/pin"
+    "github.com/jeremyhahn/go-qrdb/pkg/pin"
+    "github.com/jeremyhahn/go-xkms/pkg/pintpm2"
     "github.com/jeremyhahn/go-xkms/pkg/storage"
     filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
 // --- TPM2 backend (via PlatformKeyStore) ---
-tpm2Backend := pin.NewTPM2Backend(platformKeyStore)
+tpm2Backend := pintpm2.NewTPM2Backend(platformKeyStore)
 svc := pin.NewService(tpm2Backend, slog.Default())
 
 // Verify user PIN (PlatformSRK auth)
@@ -247,16 +305,27 @@ svc = pin.NewService(swBackend, slog.Default())
 - **Lock-free concurrency**: All mutable state uses `atomic.Bool` and `atomic.Pointer` with no mutexes. The `fido2Guard` pointer is swapped atomically, and the old buffer is freed after replacement.
 - **Minimum PIN length**: 6 characters, enforced by both the Service and the backends.
 
-## Legacy Types
+## Composition into qrdb
 
-The package retains deprecated types for backward compatibility:
+The composing binary registers the chosen backend on the qrdb server:
 
-- `TPMPINManager` -- legacy TPM-based PIN manager using hierarchy auth. Use `NewService` with `TPM2Backend` instead.
-- `FilePINManager` -- legacy file-based PIN manager using Argon2id and file persistence. Use `NewService` with `SoftwareBackend` instead.
-- `PINManager` -- deprecated interface. Use `PINBackend` instead.
-- `PINManagerAdapter` -- wraps a `PINBackend` to satisfy the deprecated `PINManager` interface. `SetMaxAttempts` is a no-op.
+```go
+import (
+    qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
+    "github.com/jeremyhahn/go-xkms/pkg/pintpm2"
+)
 
-These types will be removed in a future release.
+backend := pintpm2.NewTPM2Backend(platformKeyStore)
+
+srv, err := qrdbserver.New(
+    qrdbserver.WithPINBackend(backend),
+    // ...
+)
+```
+
+`WithPINBackend` is the only seam xkms uses to hand its TPM2 implementation
+to qrdb. There is no global registration; every backend instance is
+explicitly composed by the binary that owns the process.
 
 ## See Also
 

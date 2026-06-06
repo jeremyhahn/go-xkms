@@ -21,21 +21,20 @@ import (
 	"sync"
 	"testing"
 
-	dberrors "github.com/jeremyhahn/go-qrdb/pkg/errors"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// memoryKVStore is an in-memory implementation of kvstore.KVStore for testing.
+// memoryKVStore is an in-memory implementation of qrdbsdk.KVStore for testing.
 type memoryKVStore struct {
 	mu   sync.RWMutex
 	data map[string][]byte
 }
 
-func newTestMemoryKVStore() kvstore.KVStore {
+func newTestMemoryKVStore() qrdbsdk.KVStore {
 	return &memoryKVStore{
 		data: make(map[string][]byte),
 	}
@@ -55,7 +54,7 @@ func (m *memoryKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	defer m.mu.RUnlock()
 	value, ok := m.data[key]
 	if !ok {
-		return nil, &dberrors.QRDBError{Code: dberrors.ErrNotFound, Op: "kv.get"}
+		return nil, &qrdbsdk.QRDBError{Code: qrdbsdk.ErrNotFound, Op: "kv.get"}
 	}
 	valueCopy := make([]byte, len(value))
 	copy(valueCopy, value)
@@ -113,7 +112,7 @@ func (m *memoryKVStore) Exists(_ context.Context, key string) (bool, error) {
 	return ok, nil
 }
 
-func (m *memoryKVStore) RegisterEntityIndexes(_ string, _ []kvstore.EntityIndex) error {
+func (m *memoryKVStore) RegisterEntityIndexes(_ string, _ []qrdbsdk.EntityIndex) error {
 	return nil
 }
 
@@ -133,7 +132,7 @@ func (m *memoryKVStore) ScanCompoundIndex(_ context.Context, _ string, _ [][]byt
 	return nil, nil
 }
 
-var _ kvstore.KVStore = (*memoryKVStore)(nil)
+var _ qrdbsdk.KVStore = (*memoryKVStore)(nil)
 
 func newTestFactory(t *testing.T) *Factory {
 	t.Helper()

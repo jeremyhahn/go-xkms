@@ -43,8 +43,8 @@ func NewSoftwareStrategy() *SoftwareStrategy {
 	}
 }
 
-// ID returns StrategySoftware.
-func (s *SoftwareStrategy) ID() StrategyID { return StrategySoftware }
+// ID returns StrategyPassphrase.
+func (s *SoftwareStrategy) ID() StrategyID { return StrategyPassphrase }
 
 // Available always returns true because the software strategy has no external
 // dependencies.

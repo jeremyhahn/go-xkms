@@ -25,12 +25,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
-// mockPINBackend implements pin.PINBackend for testing.
+// mockPINBackend implements qrdbsdk.PINBackend for testing.
 type mockPINBackend struct {
-	strategy    pin.StrategyID
+	strategy    qrdbsdk.PINStrategyID
 	soPINSet    bool
 	userPINSet  bool
 	initialized bool
@@ -42,14 +42,14 @@ type mockPINBackend struct {
 	verifyUserErr   error
 	resetLockoutErr error
 
-	lockoutStatus *pin.LockoutStatus
+	lockoutStatus *qrdbsdk.PINLockoutStatus
 }
 
-func (m *mockPINBackend) Strategy() pin.StrategyID             { return m.strategy }
-func (m *mockPINBackend) SOPINSet() bool                       { return m.soPINSet }
-func (m *mockPINBackend) UserPINSet() bool                     { return m.userPINSet }
-func (m *mockPINBackend) IsInitialized() bool                  { return m.initialized }
-func (m *mockPINBackend) GetLockoutStatus() *pin.LockoutStatus { return m.lockoutStatus }
+func (m *mockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
+func (m *mockPINBackend) SOPINSet() bool                              { return m.soPINSet }
+func (m *mockPINBackend) UserPINSet() bool                            { return m.userPINSet }
+func (m *mockPINBackend) IsInitialized() bool                         { return m.initialized }
+func (m *mockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
 
 func (m *mockPINBackend) SetSOPIN(_, _ string) error      { return m.setSOPINErr }
 func (m *mockPINBackend) SetUserPIN(_, _ string) error    { return m.setUserPINErr }
@@ -61,26 +61,26 @@ func (m *mockPINBackend) ResetLockout(_ string) error     { return m.resetLockou
 func (m *mockPINBackend) SetMaxAttempts(_ int)            {}
 
 // mockPINBackendWithFIDO2 extends mockPINBackend to implement the
-// pin.FIDO2HashVerifier interface. It stores a reference hash and compares
+// qrdbsdk.FIDO2HashVerifier interface. It stores a reference hash and compares
 // incoming hashes using constant-time comparison.
 type mockPINBackendWithFIDO2 struct {
 	mockPINBackend
 	fido2Hash []byte // the expected SHA-256(PIN)[:16]
 }
 
-// VerifyFIDO2Hash implements pin.FIDO2HashVerifier.
+// VerifyFIDO2Hash implements qrdbsdk.FIDO2HashVerifier.
 func (m *mockPINBackendWithFIDO2) VerifyFIDO2Hash(hash []byte) bool {
-	if len(hash) != pin.FIDO2PINHashSize || len(m.fido2Hash) != pin.FIDO2PINHashSize {
+	if len(hash) != qrdbsdk.FIDO2PINHashSize || len(m.fido2Hash) != qrdbsdk.FIDO2PINHashSize {
 		return false
 	}
 	return subtle.ConstantTimeCompare(hash, m.fido2Hash) == 1
 }
 
-func newTestPINService(backend pin.PINBackend) *PINService {
+func newTestPINService(backend qrdbsdk.PINBackend) *PINService {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
 	if backend != nil {
-		pinSvc := pin.NewService(backend, slog.Default())
+		pinSvc := qrdbsdk.NewPINService(backend, slog.Default())
 		svc.SetPINService(pinSvc)
 	}
 	return svc
@@ -88,7 +88,7 @@ func newTestPINService(backend pin.PINBackend) *PINService {
 
 func TestPINService_GetPINStatus(t *testing.T) {
 	backend := &mockPINBackend{
-		strategy:    pin.StrategySoftware,
+		strategy:    qrdbsdk.PINStrategySoftware,
 		soPINSet:    true,
 		userPINSet:  true,
 		initialized: true,
@@ -101,7 +101,7 @@ func TestPINService_GetPINStatus(t *testing.T) {
 	assert.True(t, status.SOPINSet)
 	assert.True(t, status.UserPINSet)
 	assert.True(t, status.Initialized)
-	assert.Equal(t, string(pin.StrategySoftware), status.Strategy)
+	assert.Equal(t, string(qrdbsdk.PINStrategySoftware), status.Strategy)
 }
 
 func TestPINService_GetPINStatus_NotConfigured(t *testing.T) {
@@ -113,7 +113,7 @@ func TestPINService_GetPINStatus_NotConfigured(t *testing.T) {
 }
 
 func TestPINService_SetSOPIN(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(backend)
 
 	err := svc.SetSOPIN("", "123456")
@@ -130,7 +130,7 @@ func TestPINService_SetSOPIN_NotConfigured(t *testing.T) {
 func TestPINService_SetSOPIN_ManagerError(t *testing.T) {
 	errTest := errors.New("test: so pin error")
 	backend := &mockPINBackend{
-		strategy:    pin.StrategySoftware,
+		strategy:    qrdbsdk.PINStrategySoftware,
 		setSOPINErr: errTest,
 	}
 	svc := newTestPINService(backend)
@@ -140,7 +140,7 @@ func TestPINService_SetSOPIN_ManagerError(t *testing.T) {
 }
 
 func TestPINService_SetUserPIN(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(backend)
 
 	err := svc.SetUserPIN("so-pin-123456", "user-pin-123456")
@@ -157,7 +157,7 @@ func TestPINService_SetUserPIN_NotConfigured(t *testing.T) {
 func TestPINService_SetUserPIN_ManagerError(t *testing.T) {
 	errTest := errors.New("test: user pin error")
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		setUserPINErr: errTest,
 	}
 	svc := newTestPINService(backend)
@@ -167,7 +167,7 @@ func TestPINService_SetUserPIN_ManagerError(t *testing.T) {
 }
 
 func TestPINService_ChangeSOPIN(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(backend)
 
 	err := svc.ChangeSOPIN("old-so-pin-123456", "new-so-pin-123456")
@@ -184,7 +184,7 @@ func TestPINService_ChangeSOPIN_NotConfigured(t *testing.T) {
 func TestPINService_ChangeSOPIN_ManagerError(t *testing.T) {
 	errTest := errors.New("test: change so pin error")
 	backend := &mockPINBackend{
-		strategy:       pin.StrategySoftware,
+		strategy:       qrdbsdk.PINStrategySoftware,
 		changeSOPINErr: errTest,
 	}
 	svc := newTestPINService(backend)
@@ -194,7 +194,7 @@ func TestPINService_ChangeSOPIN_ManagerError(t *testing.T) {
 }
 
 func TestPINService_ChangeUserPIN(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(backend)
 
 	err := svc.ChangeUserPIN("old-user-pin-123456", "new-user-pin-123456")
@@ -211,7 +211,7 @@ func TestPINService_ChangeUserPIN_NotConfigured(t *testing.T) {
 func TestPINService_ChangeUserPIN_ManagerError(t *testing.T) {
 	errTest := errors.New("test: change user pin error")
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		changeUserErr: errTest,
 	}
 	svc := newTestPINService(backend)
@@ -221,7 +221,7 @@ func TestPINService_ChangeUserPIN_ManagerError(t *testing.T) {
 }
 
 func TestPINService_VerifyUserPIN(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(backend)
 
 	err := svc.VerifyUserPIN("user-pin-123456")
@@ -237,17 +237,17 @@ func TestPINService_VerifyUserPIN_NotConfigured(t *testing.T) {
 
 func TestPINService_VerifyUserPIN_ManagerError(t *testing.T) {
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
-		verifyUserErr: pin.ErrPINInvalid,
+		strategy:      qrdbsdk.PINStrategySoftware,
+		verifyUserErr: qrdbsdk.ErrPINInvalid,
 	}
 	svc := newTestPINService(backend)
 
 	err := svc.VerifyUserPIN("wrong-pin")
-	assert.True(t, errors.Is(err, pin.ErrPINInvalid))
+	assert.True(t, errors.Is(err, qrdbsdk.ErrPINInvalid))
 }
 
 func TestPINService_GetLockoutStatus(t *testing.T) {
-	expected := &pin.LockoutStatus{
+	expected := &qrdbsdk.PINLockoutStatus{
 		FailedAttempts:  3,
 		MaxAttempts:     5,
 		IsLocked:        false,
@@ -255,7 +255,7 @@ func TestPINService_GetLockoutStatus(t *testing.T) {
 		RecoverySeconds: 300,
 	}
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		lockoutStatus: expected,
 	}
 	svc := newTestPINService(backend)
@@ -278,7 +278,7 @@ func TestPINService_GetLockoutStatus_NotConfigured(t *testing.T) {
 }
 
 func TestPINService_ResetLockout(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(backend)
 
 	err := svc.ResetLockout("so-pin-123456")
@@ -295,7 +295,7 @@ func TestPINService_ResetLockout_NotConfigured(t *testing.T) {
 func TestPINService_ResetLockout_ManagerError(t *testing.T) {
 	errTest := errors.New("test: reset lockout error")
 	backend := &mockPINBackend{
-		strategy:        pin.StrategySoftware,
+		strategy:        qrdbsdk.PINStrategySoftware,
 		resetLockoutErr: errTest,
 	}
 	svc := newTestPINService(backend)
@@ -306,7 +306,7 @@ func TestPINService_ResetLockout_ManagerError(t *testing.T) {
 
 func TestPINService_GetPINStatus_Uninitialized(t *testing.T) {
 	backend := &mockPINBackend{
-		strategy:    pin.StrategyTPM2,
+		strategy:    qrdbsdk.PINStrategyTPM2,
 		soPINSet:    false,
 		userPINSet:  false,
 		initialized: false,
@@ -319,7 +319,7 @@ func TestPINService_GetPINStatus_Uninitialized(t *testing.T) {
 	assert.False(t, status.SOPINSet)
 	assert.False(t, status.UserPINSet)
 	assert.False(t, status.Initialized)
-	assert.Equal(t, string(pin.StrategyTPM2), status.Strategy)
+	assert.Equal(t, string(qrdbsdk.PINStrategyTPM2), status.Strategy)
 }
 
 func TestPINService_SetContext(t *testing.T) {
@@ -336,13 +336,13 @@ func TestNewPINService(t *testing.T) {
 }
 
 func TestPINService_IsPINSet_True(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware, userPINSet: true}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: true}
 	svc := newTestPINService(backend)
 	assert.True(t, svc.IsPINSet())
 }
 
 func TestPINService_IsPINSet_False(t *testing.T) {
-	backend := &mockPINBackend{strategy: pin.StrategySoftware, userPINSet: false}
+	backend := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware, userPINSet: false}
 	svc := newTestPINService(backend)
 	assert.False(t, svc.IsPINSet())
 }
@@ -365,11 +365,11 @@ func TestPINService_VerifyFIDO2Hash_Success(t *testing.T) {
 
 	rawPIN := "my-secure-pin"
 	fullHash := sha256.Sum256([]byte(rawPIN))
-	expectedHash := fullHash[:pin.FIDO2PINHashSize]
+	expectedHash := fullHash[:qrdbsdk.FIDO2PINHashSize]
 
 	backend := &mockPINBackendWithFIDO2{
 		mockPINBackend: mockPINBackend{
-			strategy:   pin.StrategySoftware,
+			strategy:   qrdbsdk.PINStrategySoftware,
 			userPINSet: true,
 		},
 		fido2Hash: expectedHash,
@@ -387,14 +387,14 @@ func TestPINService_VerifyFIDO2Hash_InvalidHash(t *testing.T) {
 
 	rawPIN := "correct-pin"
 	fullHash := sha256.Sum256([]byte(rawPIN))
-	correctHash := fullHash[:pin.FIDO2PINHashSize]
+	correctHash := fullHash[:qrdbsdk.FIDO2PINHashSize]
 
 	wrongFullHash := sha256.Sum256([]byte("wrong-pin"))
-	wrongHash := wrongFullHash[:pin.FIDO2PINHashSize]
+	wrongHash := wrongFullHash[:qrdbsdk.FIDO2PINHashSize]
 
 	backend := &mockPINBackendWithFIDO2{
 		mockPINBackend: mockPINBackend{
-			strategy:   pin.StrategySoftware,
+			strategy:   qrdbsdk.PINStrategySoftware,
 			userPINSet: true,
 		},
 		fido2Hash: correctHash,
@@ -411,14 +411,14 @@ func TestPINService_VerifyFIDO2Hash_InvalidHash(t *testing.T) {
 
 func TestPINService_ChangeUserPIN_ResealsBarrier(t *testing.T) {
 	backend := &mockPINBackend{
-		strategy:   pin.StrategySoftware,
+		strategy:   qrdbsdk.PINStrategySoftware,
 		userPINSet: true,
 	}
 	svc := newTestPINService(backend)
 
 	// Create and initialize a real barrier service
 	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
-	require.NoError(t, barrierSvc.Initialize("old-pin", "software"))
+	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
 
 	svc.SetBarrierService(barrierSvc)
 
@@ -428,13 +428,13 @@ func TestPINService_ChangeUserPIN_ResealsBarrier(t *testing.T) {
 	// Verify the barrier can be unsealed with the new PIN
 	require.NoError(t, barrierSvc.Seal())
 	svc2 := NewBarrierService(barrierSvc.configDir, slog.Default())
-	require.NoError(t, svc2.Unseal("new-pin", "software"))
+	require.NoError(t, svc2.Unseal("new-pin", "passphrase"))
 	assert.True(t, svc2.IsUnsealed())
 }
 
 func TestPINService_ChangeUserPIN_BarrierResealFails(t *testing.T) {
 	backend := &mockPINBackend{
-		strategy:   pin.StrategySoftware,
+		strategy:   qrdbsdk.PINStrategySoftware,
 		userPINSet: true,
 	}
 	svc := newTestPINService(backend)
@@ -450,7 +450,7 @@ func TestPINService_ChangeUserPIN_BarrierResealFails(t *testing.T) {
 
 func TestPINService_ChangeUserPIN_NoBarrierService(t *testing.T) {
 	backend := &mockPINBackend{
-		strategy:   pin.StrategySoftware,
+		strategy:   qrdbsdk.PINStrategySoftware,
 		userPINSet: true,
 	}
 	svc := newTestPINService(backend)
@@ -468,7 +468,7 @@ func TestPINService_SetBarrierService_NilSafe(t *testing.T) {
 
 func TestPINService_ChangeSOPIN_DoesNotTouchBarrier(t *testing.T) {
 	backend := &mockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPINSet: true,
 	}
 	svc := newTestPINService(backend)

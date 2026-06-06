@@ -27,10 +27,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/health"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/verification"
@@ -46,7 +46,7 @@ type HandlerContext struct {
 	// Barrier is the optional barrier for seal/unseal lifecycle management
 	Barrier *seal.Barrier
 	// PINManager is the optional PIN backend for SO/User PIN operations
-	PINManager pin.PINBackend
+	PINManager qrdbsdk.PINBackend
 }
 
 // HealthChecker defines the interface for health checking.
@@ -75,7 +75,7 @@ func (h *HandlerContext) SetBarrier(barrier *seal.Barrier) {
 }
 
 // SetPINManager sets the PIN backend for the handler context.
-func (h *HandlerContext) SetPINManager(manager pin.PINBackend) {
+func (h *HandlerContext) SetPINManager(manager qrdbsdk.PINBackend) {
 	h.PINManager = manager
 }
 

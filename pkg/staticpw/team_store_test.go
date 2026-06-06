@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
@@ -493,7 +493,7 @@ func TestTeamStore_Page(t *testing.T) {
 		}))
 	}
 
-	result, err := store.Page(ctx, dao.PageQuery{Page: 1, PageSize: 2})
+	result, err := store.Page(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 2})
 	require.NoError(t, err)
 	assert.Len(t, result.Entities, 2)
 	assert.Equal(t, 5, result.Total)
@@ -512,7 +512,7 @@ func TestTeamStore_Page_SecondPage(t *testing.T) {
 		}))
 	}
 
-	result, err := store.Page(ctx, dao.PageQuery{Page: 3, PageSize: 2})
+	result, err := store.Page(ctx, qrdbsdk.PageQuery{Page: 3, PageSize: 2})
 	require.NoError(t, err)
 	assert.Len(t, result.Entities, 1)
 	assert.False(t, result.HasMore)
@@ -522,7 +522,7 @@ func TestTeamStore_Page_StoreClosed(t *testing.T) {
 	store := newTestTeamStore(t)
 	require.NoError(t, store.Close())
 
-	_, err := store.Page(context.Background(), dao.PageQuery{Page: 1, PageSize: 10})
+	_, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 10})
 	assert.ErrorIs(t, err, ErrStoreClosed)
 }
 

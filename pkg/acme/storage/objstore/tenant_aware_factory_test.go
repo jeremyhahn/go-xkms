@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/stretchr/testify/assert"
@@ -40,7 +40,7 @@ func TestNewTenantAwareFactory(t *testing.T) {
 func TestNewTenantAwareFactory_NilStore(t *testing.T) {
 	_, err := NewTenantAwareFactory(nil)
 	require.Error(t, err)
-	var cfgErr dao.InvalidConfigError
+	var cfgErr qrdbsdk.DAOInvalidConfigError
 	assert.True(t, errors.As(err, &cfgErr))
 	assert.Equal(t, "store", cfgErr.Field)
 }
@@ -112,7 +112,7 @@ func TestTenantAwareFactory_ForTenant_EmptyID(t *testing.T) {
 
 	_, err = factory.ForTenant("")
 	require.Error(t, err)
-	var cfgErr dao.InvalidConfigError
+	var cfgErr qrdbsdk.DAOInvalidConfigError
 	assert.True(t, errors.As(err, &cfgErr))
 	assert.Equal(t, "tenantID", cfgErr.Field)
 }
@@ -184,7 +184,7 @@ func TestTenantScopedFactory_OrderDAO_InvalidAccountID(t *testing.T) {
 
 	_, err = scoped.OrderDAO(0)
 	require.Error(t, err)
-	var idErr dao.InvalidEntityIDError
+	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
@@ -213,7 +213,7 @@ func TestTenantScopedFactory_AuthorizationDAO_InvalidAccountID(t *testing.T) {
 
 	_, err = scoped.AuthorizationDAO(0)
 	require.Error(t, err)
-	var idErr dao.InvalidEntityIDError
+	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
@@ -242,7 +242,7 @@ func TestTenantScopedFactory_ChallengeDAO_InvalidAccountID(t *testing.T) {
 
 	_, err = scoped.ChallengeDAO(0)
 	require.Error(t, err)
-	var idErr dao.InvalidEntityIDError
+	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
@@ -437,7 +437,7 @@ func TestTenantAwareFactory_EmbeddedFactoryDAOs(t *testing.T) {
 
 	t.Run("OrderDAO_InvalidAccountID", func(t *testing.T) {
 		_, err := factory.OrderDAO(0)
-		var idErr dao.InvalidEntityIDError
+		var idErr qrdbsdk.DAOInvalidEntityIDError
 		assert.True(t, errors.As(err, &idErr))
 	})
 
@@ -449,7 +449,7 @@ func TestTenantAwareFactory_EmbeddedFactoryDAOs(t *testing.T) {
 
 	t.Run("AuthorizationDAO_InvalidAccountID", func(t *testing.T) {
 		_, err := factory.AuthorizationDAO(0)
-		var idErr dao.InvalidEntityIDError
+		var idErr qrdbsdk.DAOInvalidEntityIDError
 		assert.True(t, errors.As(err, &idErr))
 	})
 
@@ -461,7 +461,7 @@ func TestTenantAwareFactory_EmbeddedFactoryDAOs(t *testing.T) {
 
 	t.Run("ChallengeDAO_InvalidAccountID", func(t *testing.T) {
 		_, err := factory.ChallengeDAO(0)
-		var idErr dao.InvalidEntityIDError
+		var idErr qrdbsdk.DAOInvalidEntityIDError
 		assert.True(t, errors.As(err, &idErr))
 	})
 

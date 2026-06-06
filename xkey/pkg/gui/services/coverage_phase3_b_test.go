@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -131,7 +131,7 @@ func TestP3B_ApplySetup_AutoUnseal_BarrierType(t *testing.T) {
 func TestP3B_ApplySetup_PINService_SetSOPINAndUserPIN(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: false})
 
-	mgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	mgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(mgr)
 	tw.svc.SetPINService(pinSvc)
 
@@ -159,7 +159,7 @@ func TestP3B_ApplySetup_PINService_SetSOPINError(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: false})
 
 	mgr := &mockPINBackend{
-		strategy:    pin.StrategySoftware,
+		strategy:    qrdbsdk.PINStrategySoftware,
 		setSOPINErr: errors.New("tpm failure"),
 	}
 	pinSvc := newTestPINService(mgr)
@@ -182,7 +182,7 @@ func TestP3B_ApplySetup_PINService_SetUserPINError(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: false})
 
 	mgr := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		setUserPINErr: errors.New("pin validation failed"),
 	}
 	pinSvc := newTestPINService(mgr)
@@ -256,7 +256,7 @@ func TestP3B_ApplySetup_BarrierAlreadyInit_WrongPassword(t *testing.T) {
 	barrierDir := filepath.Join(t.TempDir(), "barrier-err")
 	barrierSvc := NewBarrierService(barrierDir, slog.Default())
 	barrierSvc.SetContext(context.Background())
-	require.NoError(t, barrierSvc.Initialize("first-password", "software"))
+	require.NoError(t, barrierSvc.Initialize("first-password", "passphrase"))
 
 	// Create a fresh barrier service pointing at the same directory so
 	// Initialize sees the existing root key.
@@ -406,7 +406,7 @@ func TestP3B_GetStartupState_WithPINService(t *testing.T) {
 	})
 
 	mgr := &mockPINBackend{
-		strategy:   pin.StrategySoftware,
+		strategy:   qrdbsdk.PINStrategySoftware,
 		soPINSet:   true,
 		userPINSet: true,
 	}
@@ -610,17 +610,17 @@ func TestP3B_PINService_VerifyUserPIN_NotConfigured(t *testing.T) {
 // when the manager returns an error.
 func TestP3B_PINService_VerifyUserPIN_ManagerError(t *testing.T) {
 	mgr := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
-		verifyUserErr: pin.ErrPINInvalid,
+		strategy:      qrdbsdk.PINStrategySoftware,
+		verifyUserErr: qrdbsdk.ErrPINInvalid,
 	}
 	svc := newTestPINService(mgr)
 	err := svc.VerifyUserPIN("wrong-pin")
-	assert.ErrorIs(t, err, pin.ErrPINInvalid)
+	assert.ErrorIs(t, err, qrdbsdk.ErrPINInvalid)
 }
 
 // TestP3B_PINService_VerifyUserPIN_Success tests VerifyUserPIN success.
 func TestP3B_PINService_VerifyUserPIN_Success(t *testing.T) {
-	mgr := &mockPINBackend{strategy: pin.StrategySoftware}
+	mgr := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(mgr)
 	err := svc.VerifyUserPIN("correct-pin")
 	assert.NoError(t, err)
@@ -638,14 +638,14 @@ func TestP3B_PINService_GetLockoutStatus_NotConfigured(t *testing.T) {
 // TestP3B_PINService_GetLockoutStatus_Success tests GetLockoutStatus
 // when a lockout status is available.
 func TestP3B_PINService_GetLockoutStatus_Success(t *testing.T) {
-	lockoutSt := &pin.LockoutStatus{
+	lockoutSt := &qrdbsdk.PINLockoutStatus{
 		IsLocked:        false,
 		FailedAttempts:  2,
 		MaxAttempts:     5,
 		RecoverySeconds: 300,
 	}
 	mgr := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		lockoutStatus: lockoutSt,
 	}
 	svc := newTestPINService(mgr)
@@ -670,7 +670,7 @@ func TestP3B_PINService_ResetLockout_NotConfigured(t *testing.T) {
 // when the manager returns an error.
 func TestP3B_PINService_ResetLockout_ManagerError(t *testing.T) {
 	mgr := &mockPINBackend{
-		strategy:        pin.StrategySoftware,
+		strategy:        qrdbsdk.PINStrategySoftware,
 		resetLockoutErr: errors.New("lockout reset failed"),
 	}
 	svc := newTestPINService(mgr)
@@ -680,7 +680,7 @@ func TestP3B_PINService_ResetLockout_ManagerError(t *testing.T) {
 
 // TestP3B_PINService_ResetLockout_Success tests ResetLockout success.
 func TestP3B_PINService_ResetLockout_Success(t *testing.T) {
-	mgr := &mockPINBackend{strategy: pin.StrategySoftware}
+	mgr := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(mgr)
 	err := svc.ResetLockout("so-pin")
 	assert.NoError(t, err)
@@ -714,7 +714,7 @@ func TestP3B_BarrierService_Unseal_ReinitAfterSeal(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	pw := "test-barrier-pw"
-	require.NoError(t, svc.Initialize(pw, "software"))
+	require.NoError(t, svc.Initialize(pw, "passphrase"))
 	assert.True(t, svc.IsUnsealed())
 
 	require.NoError(t, svc.Seal())
@@ -723,7 +723,7 @@ func TestP3B_BarrierService_Unseal_ReinitAfterSeal(t *testing.T) {
 	// Create a fresh service pointing to the same directory.
 	svc2 := NewBarrierService(dir, slog.Default())
 	svc2.SetContext(context.Background())
-	require.NoError(t, svc2.Unseal(pw, "software"))
+	require.NoError(t, svc2.Unseal(pw, "passphrase"))
 	assert.True(t, svc2.IsUnsealed())
 }
 
@@ -739,7 +739,7 @@ func TestP3B_BarrierService_GetBackend_NilBarrier(t *testing.T) {
 // returns a non-nil backend after initialization.
 func TestP3B_BarrierService_GetBackend_Initialized(t *testing.T) {
 	svc := newTestBarrierService(t)
-	require.NoError(t, svc.Initialize("test-password", "software"))
+	require.NoError(t, svc.Initialize("test-password", "passphrase"))
 	backend := svc.GetBackend()
 	assert.NotNil(t, backend)
 }
@@ -747,7 +747,7 @@ func TestP3B_BarrierService_GetBackend_Initialized(t *testing.T) {
 // TestP3B_BarrierService_Status_Initialized tests barrier status after init.
 func TestP3B_BarrierService_Status_Initialized(t *testing.T) {
 	svc := newTestBarrierService(t)
-	require.NoError(t, svc.Initialize("test-password", "software"))
+	require.NoError(t, svc.Initialize("test-password", "passphrase"))
 
 	status := svc.Status()
 	require.NotNil(t, status)

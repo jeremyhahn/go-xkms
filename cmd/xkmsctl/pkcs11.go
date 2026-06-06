@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/manager"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pkcs11/manager"
 	"github.com/spf13/cobra"
 )
 

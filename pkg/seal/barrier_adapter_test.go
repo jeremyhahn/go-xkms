@@ -247,14 +247,12 @@ func TestBarrierRegistry_Close(t *testing.T) {
 }
 
 func TestNewShamirStrategy_Success(t *testing.T) {
-	store := NewMemoryBackend()
-	strategy, err := NewShamirStrategy(store, 2, 3)
+	strategy, err := NewShamirStrategy(2, 3)
 	require.NoError(t, err)
 	require.NotNil(t, strategy)
 }
 
 func TestNewShamirStrategy_InvalidThreshold(t *testing.T) {
-	store := NewMemoryBackend()
-	_, err := NewShamirStrategy(store, 0, 3)
+	_, err := NewShamirStrategy(0, 3)
 	assert.Error(t, err)
 }

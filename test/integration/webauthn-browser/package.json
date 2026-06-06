@@ -1,0 +1,15 @@
+{
+  "name": "xkms-webauthn-browser-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright integration tests driving Chrome's CDP virtual authenticator against the real xkmsd WebAuthn Relying Party (/api/v1/webauthn/*)",
+  "scripts": {
+    "test": "npx playwright test",
+    "test:headed": "npx playwright test --headed",
+    "test:debug": "npx playwright test --debug",
+    "install:browsers": "npx playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.0"
+  }
+}

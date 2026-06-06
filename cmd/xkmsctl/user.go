@@ -16,14 +16,118 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
+	"github.com/go-webauthn/webauthn/protocol"
+	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/spf13/cobra"
 )
+
+// webAuthnRegistration drives the server-side WebAuthn registration ceremony for
+// the given user. It creates the xkms user (in the embedded qrdb node), begins the
+// ceremony on the server, runs the local FIDO2 authenticator against the returned
+// options, and finishes the ceremony on the server. The returned attestation
+// carries the credential ID assigned by the authenticator.
+//
+// The role is resolved by the caller: admin enrollment always passes RoleAdmin,
+// while user registration passes RoleAdmin for the first user and the requested
+// role otherwise.
+func webAuthnRegistration(
+	ctx context.Context,
+	cl client.Client,
+	handler *fido2.FIDO2Handler,
+	printer *Printer,
+	username, displayName, role, origin string,
+	requireUV bool,
+	timeout time.Duration,
+) (*fido2.WebAuthnAttestation, error) {
+	// Create the xkms user in the embedded qrdb node behind the server.
+	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
+		Username:    username,
+		DisplayName: displayName,
+		Role:        role,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	// Begin the server-side registration ceremony.
+	beginResp, err := cl.BeginRegistration(ctx, &client.BeginRegistrationRequest{
+		Username:    username,
+		DisplayName: displayName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin registration: %w", err)
+	}
+
+	// Parse the server's PublicKeyCredentialCreationOptions.
+	var creation protocol.CredentialCreation
+	if err := json.Unmarshal([]byte(beginResp.OptionsJSON), &creation); err != nil {
+		return nil, fmt.Errorf("failed to parse registration options: %w", err)
+	}
+
+	rpID := creation.Response.RelyingParty.ID
+	rpName := creation.Response.RelyingParty.Name
+	userName := creation.Response.User.Name
+
+	userID, err := decodeWebAuthnUserID(creation.Response.User.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode user handle: %w", err)
+	}
+
+	if origin == "" {
+		origin = "https://" + rpID
+	}
+
+	if err := printer.PrintPrompt("\nPlease touch your security key to register..."); err != nil {
+		return nil, err
+	}
+
+	// Run the local FIDO2 authenticator against the server's challenge.
+	att, err := handler.RegisterWebAuthn(fido2.WebAuthnRegistrationOptions{
+		Challenge:               creation.Response.Challenge,
+		Origin:                  origin,
+		RPID:                    rpID,
+		RPName:                  rpName,
+		UserID:                  userID,
+		UserName:                userName,
+		UserDisplayName:         displayName,
+		RequireUserVerification: requireUV,
+		Timeout:                 timeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to register credential: %w", err)
+	}
+
+	// Finish the server-side ceremony with the authenticator's attestation.
+	if _, err := cl.FinishRegistration(ctx, &client.FinishRegistrationRequest{
+		SessionID:       beginResp.SessionID,
+		AttestationJSON: string(att.PublicKeyCredentialJSON),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to finish registration: %w", err)
+	}
+
+	return att, nil
+}
+
+// decodeWebAuthnUserID extracts the WebAuthn user handle bytes from the JSON-decoded
+// User.ID field of a CredentialCreation. The go-webauthn library serializes the
+// handle as a base64url string, so after json.Unmarshal it arrives as a Go string.
+func decodeWebAuthnUserID(id any) ([]byte, error) {
+	switch v := id.(type) {
+	case string:
+		return base64.RawURLEncoding.DecodeString(v)
+	case []byte:
+		return v, nil
+	case nil:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unexpected user handle type %T", id)
+	}
+}
 
 // userCmd represents the user command
 var userCmd = &cobra.Command{
@@ -57,11 +161,8 @@ Example:
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
 		displayName, _ := cmd.Flags().GetString("display-name")
-		storagePath, _ := cmd.Flags().GetString("storage-path")
 		devicePath, _ := cmd.Flags().GetString("device")
 		timeout, _ := cmd.Flags().GetDuration("timeout")
-		rpID, _ := cmd.Flags().GetString("rp-id")
-		rpName, _ := cmd.Flags().GetString("rp-name")
 		requireUV, _ := cmd.Flags().GetBool("user-verification")
 		roleStr, _ := cmd.Flags().GetString("role")
 
@@ -69,50 +170,48 @@ Example:
 			displayName = username
 		}
 
-		storagePath = resolveStoragePath(storagePath)
-		printVerbose("Using user store at: %s", storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		// Connect to the xkms service.
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
-		// Check if this is the first user (auto-assign admin)
 		ctx := context.Background()
-		hasUsers, err := userStore.HasAnyUsers(ctx)
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		// The first user registered becomes the administrator; otherwise use the
+		// requested role (defaulting to the standard user role).
+		role := string(RoleUser)
+		if roleStr != "" {
+			r := Role(roleStr)
+			if !IsValidRole(r) {
+				handleError(fmt.Errorf("invalid role: %s", roleStr))
+				return
+			}
+			role = roleStr
+		}
+
+		listResp, err := cl.ListUsers(ctx)
 		if err != nil {
 			handleError(fmt.Errorf("failed to check user status: %w", err))
 			return
 		}
-
-		// Determine role
-		var role user.Role
-		if !hasUsers {
-			role = user.RoleAdmin
+		firstUser := len(listResp.Users) == 0
+		if firstUser {
+			role = string(RoleAdmin)
 			if err := printer.PrintMessage("No users exist. First user will be administrator."); err != nil {
 				handleError(err)
 				return
 			}
-		} else if roleStr != "" {
-			role = user.Role(roleStr)
-			if !user.IsValidRole(role) {
-				handleError(fmt.Errorf("invalid role: %s", roleStr))
-				return
-			}
-		} else {
-			role = user.RoleUser
 		}
 
-		// Check if username already exists
-		_, err = userStore.GetByUsername(ctx, username)
-		if err == nil {
-			handleError(fmt.Errorf("user %s already exists", username))
-			return
-		}
-
-		// Create FIDO2 handler
+		// Create FIDO2 handler.
 		fidoConfig := fido2.DefaultConfig
 		fidoConfig.DevicePath = devicePath
 		fidoConfig.RequireUserVerification = requireUV
@@ -142,53 +241,13 @@ Example:
 			return
 		}
 
-		// Create enrollment config
-		enrollConfig := fido2.DefaultEnrollmentConfig(username)
-		enrollConfig.RelyingParty.ID = rpID
-		enrollConfig.RelyingParty.Name = rpName
-		enrollConfig.User.DisplayName = displayName
-		enrollConfig.Timeout = timeout
-		enrollConfig.RequireUserVerification = requireUV
-
-		if err := printer.PrintPrompt("\nPlease touch your security key to register..."); err != nil {
+		att, err := webAuthnRegistration(ctx, cl, handler, printer, username, displayName, role, "", requireUV, timeout)
+		if err != nil {
 			handleError(err)
 			return
 		}
 
-		// Register the credential
-		result, err := handler.EnrollKey(enrollConfig)
-		if err != nil {
-			handleError(fmt.Errorf("failed to register credential: %w", err))
-			return
-		}
-
 		printVerbose("FIDO2 credential registered successfully")
-
-		// Create the user
-		newUser, err := userStore.Create(ctx, username, displayName, role, "")
-		if err != nil {
-			handleError(fmt.Errorf("failed to create user: %w", err))
-			return
-		}
-
-		// Add the credential to the user
-		userCred := &user.Credential{
-			ID:              result.CredentialID,
-			PublicKey:       result.PublicKey,
-			AttestationType: "packed",
-			AAGUID:          result.AAGUID,
-			SignCount:       result.SignCount,
-			Name:            "Security Key",
-			CreatedAt:       time.Now().UTC(),
-			Salt:            result.Salt,
-		}
-		newUser.AddCredential(userCred)
-
-		// Save the user with credential
-		if err := userStore.Update(ctx, newUser); err != nil {
-			handleError(fmt.Errorf("failed to save user credential: %w", err))
-			return
-		}
 
 		if err := printer.PrintSuccess("\nUser registered successfully!"); err != nil {
 			handleError(err)
@@ -201,19 +260,18 @@ Example:
 				"success":       true,
 				"username":      username,
 				"display_name":  displayName,
-				"role":          string(role),
-				"user_id":       base64.URLEncoding.EncodeToString(newUser.ID),
-				"credential_id": base64.URLEncoding.EncodeToString(result.CredentialID),
-				"first_user":    !hasUsers,
+				"role":          role,
+				"auth_method":   "fido2",
+				"credential_id": base64.URLEncoding.EncodeToString(att.CredentialID),
+				"first_user":    firstUser,
 			}
 			if err := printer.PrintJSON(summary); err != nil {
 				handleError(err)
 			}
 		} else {
-			fmt.Printf("\nUser ID: %s\n", base64.URLEncoding.EncodeToString(newUser.ID))
-			fmt.Printf("Username: %s\n", newUser.Username)
-			fmt.Printf("Role: %s\n", newUser.Role)
-			fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(result.CredentialID))
+			fmt.Printf("\nUsername: %s\n", username)
+			fmt.Printf("Role: %s\n", role)
+			fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(att.CredentialID))
 			fmt.Printf("\nYou can now use this security key to authenticate.\n")
 		}
 	},
@@ -221,55 +279,76 @@ Example:
 
 // userLoginCmd authenticates using FIDO2 and gets a JWT token
 var userLoginCmd = &cobra.Command{
-	Use:   "login",
+	Use:   "login <username>",
 	Short: "Authenticate using FIDO2 and get a JWT token",
 	Long: `Authenticate to the xkms service using your FIDO2 security key.
 
-This command will:
-1. Touch your FIDO2 security key to authenticate
-2. Verify your credential with the server
-3. Return a JWT token for subsequent API calls
+This command drives the server-side WebAuthn authentication ceremony:
+1. The server issues an authentication challenge and the allow-list of
+   credentials registered for the user.
+2. You touch your FIDO2 security key to produce a signed assertion.
+3. The server verifies the assertion signature and returns a JWT token
+   for subsequent API calls.
 
-The token is printed to stdout for use with other commands.
-You can store it in an environment variable or config file.
+The token is printed to stdout for use with other commands. You can store
+it in an environment variable or config file.
 
 Example:
-  export XKMS_TOKEN=$(xkmsctl user login --credential-id <id> --salt <salt>)
+  export XKMS_TOKEN=$(xkmsctl user login admin@example.com)
   xkmsctl key list --token $XKMS_TOKEN`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		username := args[0]
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		credIDStr, _ := cmd.Flags().GetString("credential-id")
-		saltStr, _ := cmd.Flags().GetString("salt")
-		rpID, _ := cmd.Flags().GetString("rp-id")
 		timeout, _ := cmd.Flags().GetDuration("timeout")
 		devicePath, _ := cmd.Flags().GetString("device")
 		requireUV, _ := cmd.Flags().GetBool("user-verification")
 
-		if credIDStr == "" {
-			handleError(fmt.Errorf("credential-id is required"))
-			return
-		}
-		if saltStr == "" {
-			handleError(fmt.Errorf("salt is required"))
-			return
-		}
-
-		// Decode credential ID and salt
-		credID, err := decodeCredentialData(credIDStr)
+		// Connect to the xkms service.
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(fmt.Errorf("invalid credential-id: %w", err))
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
+		defer func() { _ = cl.Close() }()
 
-		salt, err := decodeCredentialData(saltStr)
+		ctx := context.Background()
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		// Step 1: Begin the server-side authentication ceremony. The server
+		// returns the challenge and the allow-list of registered credentials.
+		beginResp, err := cl.BeginAuthentication(ctx, &client.BeginAuthenticationRequest{
+			Username: username,
+		})
 		if err != nil {
-			handleError(fmt.Errorf("invalid salt: %w", err))
+			handleError(fmt.Errorf("failed to begin authentication: %w", err))
 			return
 		}
 
-		// Create FIDO2 handler
+		// Step 2: Parse the server's PublicKeyCredentialRequestOptions to recover
+		// the challenge, relying-party ID, and the allowed credential IDs.
+		var assertionOpts protocol.CredentialAssertion
+		if err := json.Unmarshal([]byte(beginResp.OptionsJSON), &assertionOpts); err != nil {
+			handleError(fmt.Errorf("failed to parse authentication options: %w", err))
+			return
+		}
+
+		challenge := []byte(assertionOpts.Response.Challenge)
+		rpID := assertionOpts.Response.RelyingPartyID
+		origin := "https://" + rpID
+
+		allowList := make([][]byte, 0, len(assertionOpts.Response.AllowedCredentials))
+		for _, cred := range assertionOpts.Response.AllowedCredentials {
+			allowList = append(allowList, cred.CredentialID)
+		}
+
+		// Step 3: Build the FIDO2 handler and drive the local authenticator.
 		fidoConfig := fido2.DefaultConfig
 		fidoConfig.DevicePath = devicePath
 		fidoConfig.RequireUserVerification = requireUV
@@ -282,34 +361,51 @@ Example:
 		}
 		defer func() { _ = handler.Close() }()
 
-		// Create authentication config
-		authConfig := fido2.DefaultAuthenticationConfig(credID, salt)
-		authConfig.RelyingPartyID = rpID
-		authConfig.Timeout = timeout
-		authConfig.RequireUserVerification = requireUV
-
-		if err := printer.PrintPrompt("Please touch your security key to authenticate..."); err != nil {
+		if err := printer.PrintPrompt("\nPlease touch your security key to authenticate..."); err != nil {
 			handleError(err)
 			return
 		}
 
-		// Authenticate locally to verify credential works
-		_, err = handler.UnlockWithKey(authConfig)
+		assertion, err := handler.AuthenticateWebAuthn(fido2.WebAuthnAuthenticationOptions{
+			Challenge:               challenge,
+			Origin:                  origin,
+			RPID:                    rpID,
+			AllowCredentialIDs:      allowList,
+			RequireUserVerification: requireUV,
+			Timeout:                 timeout,
+		})
 		if err != nil {
 			handleError(fmt.Errorf("authentication failed: %w", err))
 			return
 		}
 
+		// Step 4: Finish the ceremony. The server verifies the assertion
+		// signature and issues a JWT token on success.
+		finishResp, err := cl.FinishAuthentication(ctx, &client.FinishAuthenticationRequest{
+			SessionID:     beginResp.SessionID,
+			Username:      username,
+			AssertionJSON: string(assertion.PublicKeyCredentialJSON),
+		})
+		if err != nil {
+			handleError(fmt.Errorf("failed to finish authentication: %w", err))
+			return
+		}
+		if !finishResp.Success {
+			msg := finishResp.Message
+			if msg == "" {
+				msg = "authentication was rejected by the server"
+			}
+			handleError(fmt.Errorf("authentication failed: %s", msg))
+			return
+		}
+
 		printVerbose("FIDO2 authentication successful")
 
-		// For now, we print a message explaining the next step
-		// Full JWT generation will require server-side verification
 		if cfg.OutputFormat == "json" {
 			result := map[string]interface{}{
-				"success":        true,
-				"message":        "FIDO2 authentication successful. Use the server's /webauthn/login endpoint for JWT tokens.",
-				"credential_id":  credIDStr,
-				"requires_token": true,
+				"success":  true,
+				"username": username,
+				"token":    finishResp.Token,
 			}
 			if err := printer.PrintJSON(result); err != nil {
 				handleError(err)
@@ -318,9 +414,8 @@ Example:
 			if err := printer.PrintSuccess("FIDO2 authentication successful!"); err != nil {
 				handleError(err)
 			}
-			fmt.Println("\nTo get a JWT token, use the WebAuthn login endpoints:")
-			fmt.Println("  POST /api/v1/webauthn/login/begin")
-			fmt.Println("  POST /api/v1/webauthn/login/finish")
+			fmt.Printf("\nUsername: %s\n", username)
+			fmt.Printf("Token: %s\n", finishResp.Token)
 		}
 	},
 }
@@ -334,23 +429,26 @@ var userListCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
-		// List users
 		ctx := context.Background()
-		users, err := userStore.List(ctx)
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		resp, err := cl.ListUsers(ctx)
 		if err != nil {
 			handleError(fmt.Errorf("failed to list users: %w", err))
 			return
 		}
+		users := resp.Users
 
 		if len(users) == 0 {
 			if err := printer.PrintMessage("No users configured. Run 'xkmsctl user register' to create the first user."); err != nil {
@@ -364,16 +462,14 @@ var userListCmd = &cobra.Command{
 			userList := make([]map[string]interface{}, len(users))
 			for i, u := range users {
 				userList[i] = map[string]interface{}{
-					"id":               base64.URLEncoding.EncodeToString(u.ID),
-					"username":         u.Username,
-					"display_name":     u.DisplayName,
-					"role":             string(u.Role),
-					"enabled":          u.Enabled,
-					"credential_count": len(u.Credentials),
-					"created_at":       u.CreatedAt.Format(time.RFC3339),
+					"username":     u.Username,
+					"display_name": u.DisplayName,
+					"role":         u.Role,
+					"enabled":      u.Enabled,
+					"created_at":   u.CreatedAt.Format(time.RFC3339),
 				}
-				if u.LastLoginAt != nil {
-					userList[i]["last_login_at"] = u.LastLoginAt.Format(time.RFC3339)
+				if u.LastLogin != nil {
+					userList[i]["last_login"] = u.LastLogin.Format(time.RFC3339)
 				}
 			}
 			if err := printer.PrintJSON(map[string]interface{}{
@@ -383,19 +479,14 @@ var userListCmd = &cobra.Command{
 				handleError(err)
 			}
 		} else {
-			fmt.Printf("%-40s %-20s %-12s %-8s %-5s\n", "ID", "USERNAME", "ROLE", "ENABLED", "CREDS")
-			fmt.Println(repeatString("-", 90))
+			fmt.Printf("%-24s %-24s %-12s %-8s\n", "USERNAME", "DISPLAY NAME", "ROLE", "ENABLED")
+			fmt.Println(repeatString("-", 70))
 			for _, u := range users {
-				idStr := base64.URLEncoding.EncodeToString(u.ID)
-				if len(idStr) > 16 {
-					idStr = idStr[:16] + "..."
-				}
-				fmt.Printf("%-40s %-20s %-12s %-8t %-5d\n",
-					idStr,
-					truncateString(u.Username, 20),
+				fmt.Printf("%-24s %-24s %-12s %-8t\n",
+					truncateString(u.Username, 24),
+					truncateString(u.DisplayName, 24),
 					u.Role,
 					u.Enabled,
-					len(u.Credentials),
 				)
 			}
 			fmt.Printf("\nTotal: %d user(s)\n", len(users))
@@ -414,80 +505,77 @@ var userGetCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-		u, err := userStore.GetByUsername(ctx, username)
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		resp, err := cl.GetUser(ctx, username)
 		if err != nil {
 			handleError(fmt.Errorf("failed to get user: %w", err))
 			return
 		}
+		u := resp.User
+
+		// Fetch the user's credentials for display.
+		var creds []client.CredentialInfo
+		if credResp, credErr := cl.ListUserCredentials(ctx, username); credErr == nil {
+			creds = credResp.Credentials
+		} else {
+			printVerbose("failed to list credentials for %s: %v", username, credErr)
+		}
 
 		if cfg.OutputFormat == "json" {
 			userInfo := map[string]interface{}{
-				"id":               base64.URLEncoding.EncodeToString(u.ID),
-				"username":         u.Username,
-				"display_name":     u.DisplayName,
-				"role":             string(u.Role),
-				"enabled":          u.Enabled,
-				"credential_count": len(u.Credentials),
-				"created_at":       u.CreatedAt.Format(time.RFC3339),
+				"username":     u.Username,
+				"display_name": u.DisplayName,
+				"role":         u.Role,
+				"enabled":      u.Enabled,
+				"created_at":   u.CreatedAt.Format(time.RFC3339),
 			}
-			if u.LastLoginAt != nil {
-				userInfo["last_login_at"] = u.LastLoginAt.Format(time.RFC3339)
+			if u.LastLogin != nil {
+				userInfo["last_login"] = u.LastLogin.Format(time.RFC3339)
 			}
 
-			// Include credential details
-			creds := make([]map[string]interface{}, len(u.Credentials))
-			for i, c := range u.Credentials {
-				creds[i] = map[string]interface{}{
-					"id":         base64.URLEncoding.EncodeToString(c.ID),
-					"name":       c.Name,
-					"created_at": c.CreatedAt.Format(time.RFC3339),
-				}
-				if c.LastUsedAt != nil {
-					creds[i]["last_used_at"] = c.LastUsedAt.Format(time.RFC3339)
-				}
-				// Include salt for login command
-				if len(c.Salt) > 0 {
-					creds[i]["salt"] = base64.URLEncoding.EncodeToString(c.Salt)
+			credList := make([]map[string]interface{}, len(creds))
+			for i, c := range creds {
+				credList[i] = map[string]interface{}{
+					"id":           c.ID,
+					"display_name": c.DisplayName,
 				}
 			}
-			userInfo["credentials"] = creds
+			userInfo["credentials"] = credList
 
 			if err := printer.PrintJSON(userInfo); err != nil {
 				handleError(err)
 			}
 		} else {
 			fmt.Printf("User Details:\n")
-			fmt.Printf("  ID:           %s\n", base64.URLEncoding.EncodeToString(u.ID))
 			fmt.Printf("  Username:     %s\n", u.Username)
 			fmt.Printf("  Display Name: %s\n", u.DisplayName)
 			fmt.Printf("  Role:         %s\n", u.Role)
 			fmt.Printf("  Enabled:      %t\n", u.Enabled)
 			fmt.Printf("  Created:      %s\n", u.CreatedAt.Format(time.RFC3339))
-			if u.LastLoginAt != nil {
-				fmt.Printf("  Last Login:   %s\n", u.LastLoginAt.Format(time.RFC3339))
+			if u.LastLogin != nil {
+				fmt.Printf("  Last Login:   %s\n", u.LastLogin.Format(time.RFC3339))
 			}
-			fmt.Printf("\n  Credentials (%d):\n", len(u.Credentials))
-			for i, c := range u.Credentials {
-				fmt.Printf("    %d. %s\n", i+1, c.Name)
-				fmt.Printf("       ID: %s\n", base64.URLEncoding.EncodeToString(c.ID))
-				if len(c.Salt) > 0 {
-					fmt.Printf("       Salt: %s\n", base64.URLEncoding.EncodeToString(c.Salt))
+			fmt.Printf("\n  Credentials (%d):\n", len(creds))
+			for i, c := range creds {
+				name := c.DisplayName
+				if name == "" {
+					name = c.ID
 				}
-				fmt.Printf("       Created: %s\n", c.CreatedAt.Format(time.RFC3339))
-				if c.LastUsedAt != nil {
-					fmt.Printf("       Last Used: %s\n", c.LastUsedAt.Format(time.RFC3339))
-				}
+				fmt.Printf("    %d. %s\n", i+1, name)
+				fmt.Printf("       ID: %s\n", c.ID)
 			}
 		}
 	},
@@ -506,27 +594,21 @@ Note: You cannot delete the last administrator account.`,
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-
-		// Get the user by username to get the ID
-		u, err := userStore.GetByUsername(ctx, username)
-		if err != nil {
-			handleError(fmt.Errorf("failed to find user: %w", err))
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
 			return
 		}
+		printVerbose("Connected to xkms service")
 
-		// Delete the user
-		if err := userStore.Delete(ctx, u.ID); err != nil {
+		if err := cl.DeleteUser(ctx, username); err != nil {
 			handleError(fmt.Errorf("failed to delete user: %w", err))
 			return
 		}
@@ -556,26 +638,21 @@ var userDisableCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-
-		u, err := userStore.GetByUsername(ctx, username)
-		if err != nil {
-			handleError(fmt.Errorf("failed to find user: %w", err))
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
 			return
 		}
+		printVerbose("Connected to xkms service")
 
-		u.Enabled = false
-		if err := userStore.Update(ctx, u); err != nil {
+		if err := cl.DisableUser(ctx, username); err != nil {
 			handleError(fmt.Errorf("failed to disable user: %w", err))
 			return
 		}
@@ -606,26 +683,21 @@ var userEnableCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-
-		u, err := userStore.GetByUsername(ctx, username)
-		if err != nil {
-			handleError(fmt.Errorf("failed to find user: %w", err))
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
 			return
 		}
+		printVerbose("Connected to xkms service")
 
-		u.Enabled = true
-		if err := userStore.Update(ctx, u); err != nil {
+		if err := cl.EnableUser(ctx, username); err != nil {
 			handleError(fmt.Errorf("failed to enable user: %w", err))
 			return
 		}
@@ -654,35 +726,34 @@ var userStatusCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
-		// Check status
 		ctx := context.Background()
-		hasUsers, err := userStore.HasAnyUsers(ctx)
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		resp, err := cl.ListUsers(ctx)
 		if err != nil {
 			handleError(fmt.Errorf("failed to check user status: %w", err))
 			return
 		}
 
-		count, err := userStore.Count(ctx)
-		if err != nil {
-			handleError(fmt.Errorf("failed to count users: %w", err))
-			return
+		count := len(resp.Users)
+		adminCount := 0
+		for _, u := range resp.Users {
+			if u.Role == string(RoleAdmin) {
+				adminCount++
+			}
 		}
-
-		adminCount, err := userStore.CountAdmins(ctx)
-		if err != nil {
-			handleError(fmt.Errorf("failed to count admins: %w", err))
-			return
-		}
+		hasUsers := count > 0
 
 		if cfg.OutputFormat == "json" {
 			status := map[string]interface{}{
@@ -712,14 +783,14 @@ var userStatusCmd = &cobra.Command{
 	},
 }
 
-// userCredentialConfigCmd shows credential configuration for login
+// userCredentialConfigCmd lists the WebAuthn credentials registered for a user.
 var userCredentialConfigCmd = &cobra.Command{
 	Use:   "credentials <username>",
-	Short: "Get credential configuration for login",
-	Long: `Get the credential ID and salt needed for FIDO2 login.
+	Short: "List the FIDO2 credentials registered for a user",
+	Long: `List the FIDO2 credentials registered for a user.
 
-This information is needed when using 'xkmsctl user login' to authenticate.
-Store these values securely - they are needed to authenticate.
+The server supplies the allow-list automatically during 'xkmsctl user login',
+so the credential IDs shown here are informational.
 
 Example:
   xkmsctl user credentials admin@example.com`,
@@ -729,51 +800,57 @@ Example:
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := cfg.CreateUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-		u, err := userStore.GetByUsername(ctx, username)
-		if err != nil {
-			handleError(fmt.Errorf("failed to get user: %w", err))
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
 			return
 		}
+		printVerbose("Connected to xkms service")
 
-		if len(u.Credentials) == 0 {
+		resp, err := cl.ListUserCredentials(ctx, username)
+		if err != nil {
+			handleError(fmt.Errorf("failed to list credentials: %w", err))
+			return
+		}
+		creds := resp.Credentials
+
+		if len(creds) == 0 {
 			handleError(fmt.Errorf("user %s has no credentials", username))
 			return
 		}
 
-		// Get the first credential (most common case)
-		cred := u.Credentials[0]
-
 		if cfg.OutputFormat == "json" {
-			credInfo := map[string]interface{}{
-				"username":      username,
-				"credential_id": base64.URLEncoding.EncodeToString(cred.ID),
-				"salt":          base64.URLEncoding.EncodeToString(cred.Salt),
-				"name":          cred.Name,
-				"created_at":    cred.CreatedAt.Format(time.RFC3339),
+			credList := make([]map[string]interface{}, len(creds))
+			for i, c := range creds {
+				credList[i] = map[string]interface{}{
+					"id":           c.ID,
+					"display_name": c.DisplayName,
+				}
 			}
-			if err := printer.PrintJSON(credInfo); err != nil {
+			if err := printer.PrintJSON(map[string]interface{}{
+				"username":    username,
+				"credentials": credList,
+				"total":       len(credList),
+			}); err != nil {
 				handleError(err)
 			}
 		} else {
-			fmt.Printf("Credential configuration for %s:\n\n", username)
-			fmt.Printf("  Credential Name: %s\n", cred.Name)
-			fmt.Printf("  Credential ID:   %s\n", base64.URLEncoding.EncodeToString(cred.ID))
-			fmt.Printf("  Salt:            %s\n", base64.URLEncoding.EncodeToString(cred.Salt))
-			fmt.Printf("\nUse with login command:\n")
-			fmt.Printf("  xkmsctl user login --credential-id '%s' --salt '%s'\n",
-				base64.URLEncoding.EncodeToString(cred.ID),
-				base64.URLEncoding.EncodeToString(cred.Salt))
+			fmt.Printf("Credentials for %s (%d):\n\n", username, len(creds))
+			for i, c := range creds {
+				name := c.DisplayName
+				if name == "" {
+					name = c.ID
+				}
+				fmt.Printf("  %d. %s\n", i+1, name)
+				fmt.Printf("     ID: %s\n", c.ID)
+			}
 		}
 	},
 }
@@ -802,13 +879,9 @@ func init() {
 	userRegisterCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userRegisterCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
 
-	// login flags
-	userLoginCmd.Flags().String("credential-id", "", "credential ID (base64 or hex encoded)")
-	userLoginCmd.Flags().String("salt", "", "salt value (base64 or hex encoded)")
-	userLoginCmd.Flags().String("rp-id", "go-xkms", "relying party ID")
+	// login flags. The server supplies the credential allow-list during the
+	// authentication ceremony, so no credential-id/salt flags are needed.
 	userLoginCmd.Flags().Duration("timeout", 30*time.Second, "timeout for user presence")
 	userLoginCmd.Flags().String("device", "", "specific FIDO2 device path to use")
 	userLoginCmd.Flags().Bool("user-verification", false, "require user verification (PIN)")
-	_ = userLoginCmd.MarkFlagRequired("credential-id")
-	_ = userLoginCmd.MarkFlagRequired("salt")
 }

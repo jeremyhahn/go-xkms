@@ -414,55 +414,6 @@ export namespace oidc {
 
 }
 
-export namespace pcrpolicy {
-	
-	export class PCRPolicyEntity {
-	    id: number;
-	    name: string;
-	    bank: string;
-	    pcrs: Record<number, Array<number>>;
-	    auto_unseal: boolean;
-	    // Go type: time
-	    created_at: any;
-	    // Go type: time
-	    updated_at: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new PCRPolicyEntity(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.name = source["name"];
-	        this.bank = source["bank"];
-	        this.pcrs = source["pcrs"];
-	        this.auto_unseal = source["auto_unseal"];
-	        this.created_at = this.convertValues(source["created_at"], null);
-	        this.updated_at = this.convertValues(source["updated_at"], null);
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
-	}
-
-}
-
 export namespace pin {
 	
 	export class LockoutStatus {
@@ -648,6 +599,86 @@ export namespace seal {
 
 export namespace services {
 	
+	export class AddFactorRequest {
+	    type: string;
+	    label: string;
+	    cert_pem?: string;
+	    webauthn_response?: string;
+	    piv_cert_pem?: string;
+	    piv_slot?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AddFactorRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.label = source["label"];
+	        this.cert_pem = source["cert_pem"];
+	        this.webauthn_response = source["webauthn_response"];
+	        this.piv_cert_pem = source["piv_cert_pem"];
+	        this.piv_slot = source["piv_slot"];
+	    }
+	}
+	export class AuthFactor {
+	    id: string;
+	    user_id: string;
+	    type: string;
+	    label: string;
+	    metadata: Record<string, string>;
+	    registered_at: string;
+	    last_used_at?: string;
+	    revoked_at?: string;
+	    created_by: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthFactor(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.user_id = source["user_id"];
+	        this.type = source["type"];
+	        this.label = source["label"];
+	        this.metadata = source["metadata"];
+	        this.registered_at = source["registered_at"];
+	        this.last_used_at = source["last_used_at"];
+	        this.revoked_at = source["revoked_at"];
+	        this.created_by = source["created_by"];
+	    }
+	}
+	export class AddFactorResponse {
+	    factor: AuthFactor;
+	
+	    static createFrom(source: any = {}) {
+	        return new AddFactorResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.factor = this.convertValues(source["factor"], AuthFactor);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class AddPasswordParams {
 	    name: string;
 	    title: string;
@@ -1028,6 +1059,7 @@ export namespace services {
 		    return a;
 		}
 	}
+	
 	export class AutoUnsealResult {
 	    success: boolean;
 	    message: string;
@@ -2275,6 +2307,18 @@ export namespace services {
 	        this.blocked = source["blocked"];
 	    }
 	}
+	export class FactorLoginResult {
+	    token: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FactorLoginResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	    }
+	}
 	export class IdentityConfig {
 	    common_name: string;
 	    organization: string;
@@ -2783,6 +2827,38 @@ export namespace services {
 	        this.pid = source["pid"];
 	    }
 	}
+	export class ListFactorsResponse {
+	    factors: AuthFactor[];
+	    total: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ListFactorsResponse(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.factors = this.convertValues(source["factors"], AuthFactor);
+	        this.total = source["total"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class LockoutInfo {
 	    counter: number;
 	    max_fail: number;
@@ -2821,6 +2897,20 @@ export namespace services {
 	        this.policy_verified = source["policy_verified"];
 	        this.tamper_detected = source["tamper_detected"];
 	        this.error = source["error"];
+	    }
+	}
+	export class MFAPolicyRequest {
+	    tenant_id: string;
+	    require_factor_count: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new MFAPolicyRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.tenant_id = source["tenant_id"];
+	        this.require_factor_count = source["require_factor_count"];
 	    }
 	}
 	
@@ -3254,6 +3344,24 @@ export namespace services {
 	        this.user_pin_set = source["user_pin_set"];
 	        this.initialized = source["initialized"];
 	        this.strategy = source["strategy"];
+	    }
+	}
+	export class PIVCardInfo {
+	    reader_name: string;
+	    card_vendor: string;
+	    serial_number?: string;
+	    has_piv_applet: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PIVCardInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.reader_name = source["reader_name"];
+	        this.card_vendor = source["card_vendor"];
+	        this.serial_number = source["serial_number"];
+	        this.has_piv_applet = source["has_piv_applet"];
 	    }
 	}
 	export class PIVCertificate {
@@ -3970,6 +4078,26 @@ export namespace services {
 	        this.algorithm = source["algorithm"];
 	        this.backend = source["backend"];
 	        this.public_key_pem = source["public_key_pem"];
+	    }
+	}
+	export class RotateFactorRequest {
+	    factor_id: string;
+	    cert_pem?: string;
+	    webauthn_response?: string;
+	    piv_cert_pem?: string;
+	    piv_slot?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RotateFactorRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.factor_id = source["factor_id"];
+	        this.cert_pem = source["cert_pem"];
+	        this.webauthn_response = source["webauthn_response"];
+	        this.piv_cert_pem = source["piv_cert_pem"];
+	        this.piv_slot = source["piv_slot"];
 	    }
 	}
 	export class SealProtectionStatus {
@@ -4885,6 +5013,51 @@ export namespace staticpw {
 	        this.read_only = source["read_only"];
 	        this.owner_id = source["owner_id"];
 	        this.shared = source["shared"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
+export namespace tls {
+	
+	export class Certificate {
+	    Certificate: number[][];
+	    PrivateKey: any;
+	    SupportedSignatureAlgorithms: number[];
+	    OCSPStaple: number[];
+	    SignedCertificateTimestamps: number[][];
+	    Leaf?: x509.Certificate;
+	
+	    static createFrom(source: any = {}) {
+	        return new Certificate(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Certificate = source["Certificate"];
+	        this.PrivateKey = source["PrivateKey"];
+	        this.SupportedSignatureAlgorithms = source["SupportedSignatureAlgorithms"];
+	        this.OCSPStaple = source["OCSPStaple"];
+	        this.SignedCertificateTimestamps = source["SignedCertificateTimestamps"];
+	        this.Leaf = this.convertValues(source["Leaf"], x509.Certificate);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

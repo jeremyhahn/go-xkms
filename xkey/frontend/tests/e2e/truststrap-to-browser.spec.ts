@@ -11,10 +11,16 @@ import {
  * view reflects the new cert count and can launch a secure browser
  * pointed at the xkms web service URL.
  *
- * The Wails backend is stubbed so this runs hermetically against the
- * Vite dev server. SPKI/Noise requests are captured and the import
- * returns a pre-baked certificate count. The Browser view's secure
- * launch is captured so we can assert the xkms URL was passed through.
+ * Mock strategy — two-phase injection (same pattern as secure-browser.spec.ts):
+ *
+ * Phase 1 (addInitScript): Runs before page scripts load. Sets window-global
+ * recording state (__trustStrapCalls, __launchCalls, __certs) and installs a
+ * provisional window.go shim. The real Wails runtime overwrites window.go
+ * after load; the globals survive because they are on window directly.
+ *
+ * Phase 2 (patchTrustToBrowserServices, called after waitForAppReady):
+ * Patches window.go.services on the live object. Because the Svelte views
+ * navigate AFTER this patch, all service calls go to the recording closures.
  */
 
 interface TestCAEntry {
@@ -34,7 +40,12 @@ interface TrustStrapCall {
   spki_pin_sha256: string;
 }
 
-async function installBackend(page: Page): Promise<void> {
+/**
+ * Phase 1: Install window-global recording state and a provisional window.go
+ * shim via addInitScript. In real-Wails mode patchTrustToBrowserServices()
+ * re-installs the service mocks after app ready.
+ */
+async function installBackendInitScript(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const trustStrapCalls: TrustStrapCall[] = [];
     const launchCalls: Array<{ browserPath: string; url: string }> = [];
@@ -47,7 +58,10 @@ async function installBackend(page: Page): Promise<void> {
     (window as any).__trustStrapCalls = trustStrapCalls;
     (window as any).__launchCalls = launchCalls;
     (window as any).__certs = certs;
+    (window as any).__installedManifests = installedManifests;
 
+    // Provisional shim: active in Vite-only mode where no real Wails bridge
+    // exists. In real-Wails mode patchTrustToBrowserServices() overwrites this.
     (window as any).go = {
       main: {},
       services: {
@@ -100,8 +114,8 @@ async function installBackend(page: Page): Promise<void> {
             bundle_path: '',
           }),
           ImportFromTrustStrap: async (req: TrustStrapCall) => {
-            trustStrapCalls.push({ ...req });
-            const count = req.method === 'noise' ? 1 : 1;
+            (window as any).__trustStrapCalls.push({ ...req });
+            const count = 1;
             const list: TestCAEntry[] = (window as any).__certs;
             const fp =
               req.method === 'spki'
@@ -139,18 +153,18 @@ async function installBackend(page: Page): Promise<void> {
             ipc_running: true,
             ipc_socket_path: '/tmp/xkey.sock',
             paired_extensions: [],
-            manifests: Object.keys(installedManifests).map((b) => ({
+            manifests: Object.keys((window as any).__installedManifests).map((b) => ({
               browser: b,
               name: b,
-              installed: installedManifests[b],
+              installed: (window as any).__installedManifests[b],
               path: '',
             })),
           }),
           InstallManifest: async (b: string) => {
-            installedManifests[b] = true;
+            (window as any).__installedManifests[b] = true;
           },
           UninstallManifest: async (b: string) => {
-            installedManifests[b] = false;
+            (window as any).__installedManifests[b] = false;
           },
         },
         AutoFillService: {
@@ -163,7 +177,7 @@ async function installBackend(page: Page): Promise<void> {
             { name: 'Firefox', path: '/usr/bin/firefox' },
           ],
           LaunchBrowser: async (browserPath: string, url: string) => {
-            launchCalls.push({ browserPath, url });
+            (window as any).__launchCalls.push({ browserPath, url });
             return {
               browser: browserPath,
               family: browserPath.includes('chrome') ? 'chrome' : 'firefox',
@@ -179,10 +193,115 @@ async function installBackend(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Phase 2: Patch window.go.services after the real Wails runtime has injected
+ * window.go. Overwrites TrustService, SecureBrowserService, BrowserService,
+ * and PairingService with closures that record into the window-global arrays
+ * set in Phase 1.
+ */
+async function patchTrustToBrowserServices(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const svc = (window as any).go?.services;
+    if (!svc) return;
+
+    svc.TrustService = {
+      ...svc.TrustService,
+      AllCertificates: async () => [...(window as any).__certs],
+      CertificateCount: async () => (window as any).__certs.length,
+      ListCertificates: async () => [...(window as any).__certs],
+      GetBrowserBundleStatus: async () => ({
+        exists: false,
+        stale: false,
+        cert_count: 0,
+        last_generated: '',
+        bundle_path: '',
+      }),
+      ImportFromTrustStrap: async (req: TrustStrapCall) => {
+        (window as any).__trustStrapCalls.push({ ...req });
+        const count = 1;
+        const list: TestCAEntry[] = (window as any).__certs;
+        const fp =
+          req.method === 'spki'
+            ? 'spki-bootstrap-fingerprint'
+            : 'noise-bootstrap-fingerprint';
+        if (!list.some((c: TestCAEntry) => c.fingerprint === fp)) {
+          list.push({
+            id: fp,
+            subject: {
+              common_name:
+                req.method === 'spki'
+                  ? 'xkms Local Dev Root CA (via SPKI)'
+                  : 'xkms Local Dev Root CA (via Noise)',
+            },
+            fingerprint: fp,
+            tags: ['bootstrap-ca'],
+          });
+        }
+        return count;
+      },
+    };
+
+    svc.SecureBrowserService = {
+      ...svc.SecureBrowserService,
+      DetectBrowsers: async () => [
+        { name: 'Google Chrome', path: '/usr/bin/google-chrome' },
+        { name: 'Firefox', path: '/usr/bin/firefox' },
+      ],
+      LaunchBrowser: async (browserPath: string, url: string) => {
+        (window as any).__launchCalls.push({ browserPath, url });
+        return {
+          browser: browserPath,
+          family: browserPath.includes('chrome') ? 'chrome' : 'firefox',
+          mode: 'isolated',
+          cert_count: (window as any).__certs.length,
+          pid: 7777,
+        };
+      },
+      Rebuild: async () => {},
+    };
+
+    svc.BrowserService = {
+      ...svc.BrowserService,
+      GetConfig: async () => ({
+        default_browser: 'system',
+        custom_command: '',
+        include_trust_bundle: false,
+        chrome_profile_mode: 'isolated',
+        firefox_profile_mode: 'isolated',
+      }),
+      SetConfig: async () => {},
+      GetTrustBundlePath: async () => '',
+    };
+
+    svc.PairingService = {
+      ...svc.PairingService,
+      GetExtensionFullStatus: async () => ({
+        ipc_running: true,
+        ipc_socket_path: '/tmp/xkey.sock',
+        paired_extensions: [],
+        manifests: Object.keys((window as any).__installedManifests).map((b: string) => ({
+          browser: b,
+          name: b,
+          installed: (window as any).__installedManifests[b],
+          path: '',
+        })),
+      }),
+      InstallManifest: async (b: string) => {
+        (window as any).__installedManifests[b] = true;
+      },
+      UninstallManifest: async (b: string) => {
+        (window as any).__installedManifests[b] = false;
+      },
+    };
+  });
+}
+
 async function gotoTrustStore(page: Page): Promise<void> {
-  await installBackend(page);
+  await installBackendInitScript(page);
   await page.goto('/');
   await waitForAppReady(page);
+  // Patch services after Wails runtime has loaded (overrides real bindings).
+  await patchTrustToBrowserServices(page);
   await ensureSidebarExpanded(page);
   await navigateTo(page, 'trust-store');
 }

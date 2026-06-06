@@ -17,7 +17,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/md5"  //nolint:gosec // NSS requires MD5 hash for cert fingerprint
+	"crypto/md5" //nolint:gosec // NSS requires MD5 hash for cert fingerprint
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // NSS requires SHA1 hash for cert fingerprint
 	"crypto/sha256"
@@ -34,8 +34,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "modernc.org/sqlite" // pure-Go SQLite driver
 	"golang.org/x/crypto/pbkdf2"
+	_ "modernc.org/sqlite" // pure-Go SQLite driver
 )
 
 const (
@@ -53,8 +53,8 @@ const (
 	explicitNullByte2 byte = 0x5A
 
 	// Database file names.
-	cert9DBFile  = "cert9.db"
-	key4DBFile   = "key4.db"
+	cert9DBFile   = "cert9.db"
+	key4DBFile    = "key4.db"
 	pkcs11TxtFile = "pkcs11.txt"
 
 	// File permissions.
@@ -472,17 +472,17 @@ func marshalSerial(serial *big.Int) ([]byte, error) {
 // buildCertAttrs returns the attribute map for a certificate object.
 func (w *Writer) buildCertAttrs(cert *x509.Certificate, label string, serialDER []byte) map[string][]byte {
 	return map[string][]byte{
-		"a0":   encodeUint32(ckoCertificate),   // CKA_CLASS
-		"a1":   encodeBool(true),               // CKA_TOKEN
-		"a2":   encodeBool(false),              // CKA_PRIVATE
-		"a3":   []byte(label),                  // CKA_LABEL
-		"a11":  cert.Raw,                       // CKA_VALUE
-		"a80":  encodeUint32(0),                // CKA_CERTIFICATE_TYPE = CKC_X_509
-		"a81":  cert.RawIssuer,                 // CKA_ISSUER
-		"a82":  serialDER,                      // CKA_SERIAL_NUMBER
-		"a101": cert.RawSubject,                // CKA_SUBJECT
-		"a102": cert.SubjectKeyId,              // CKA_ID
-		"a170": encodeBool(true),               // CKA_NSS_OVERRIDE_EXTENSIONS
+		"a0":   encodeUint32(ckoCertificate), // CKA_CLASS
+		"a1":   encodeBool(true),             // CKA_TOKEN
+		"a2":   encodeBool(false),            // CKA_PRIVATE
+		"a3":   []byte(label),                // CKA_LABEL
+		"a11":  cert.Raw,                     // CKA_VALUE
+		"a80":  encodeUint32(0),              // CKA_CERTIFICATE_TYPE = CKC_X_509
+		"a81":  cert.RawIssuer,               // CKA_ISSUER
+		"a82":  serialDER,                    // CKA_SERIAL_NUMBER
+		"a101": cert.RawSubject,              // CKA_SUBJECT
+		"a102": cert.SubjectKeyId,            // CKA_ID
+		"a170": encodeBool(true),             // CKA_NSS_OVERRIDE_EXTENSIONS
 	}
 }
 
@@ -492,20 +492,20 @@ func (w *Writer) buildTrustAttrs(cert *x509.Certificate, serialDER []byte) map[s
 	md5Sum := md5.Sum(cert.Raw)   //nolint:gosec
 
 	return map[string][]byte{
-		"a0":        encodeUint32(ckoNSSTrust),             // CKA_CLASS
-		"a1":        encodeBool(true),                      // CKA_TOKEN
-		"a2":        encodeBool(false),                     // CKA_PRIVATE
-		"a3":        explicitNull(),                        // CKA_LABEL (explicit null)
-		"a81":       cert.RawIssuer,                        // CKA_ISSUER
-		"a82":       serialDER,                             // CKA_SERIAL_NUMBER
-		"a170":      encodeBool(true),                      // CKA_NSS_OVERRIDE_EXTENSIONS
-		"ace536358": encodeUint32(cktNSSTrustedDelegator),  // TRUST_SERVER_AUTH
-		"ace536359": encodeUint32(cktNSSTrustedDelegator),  // TRUST_CLIENT_AUTH
-		"ace53635a": encodeUint32(cktNSSTrustedDelegator),  // TRUST_CODE_SIGNING
-		"ace53635b": encodeUint32(cktNSSTrustedDelegator),  // TRUST_EMAIL_PROTECTION
-		"ace536360": encodeBool(false),                     // TRUST_STEP_UP_APPROVED
-		"ace5363b4": sha1Sum[:],                            // CERT_SHA1_HASH
-		"ace5363b5": md5Sum[:],                             // CERT_MD5_HASH
+		"a0":        encodeUint32(ckoNSSTrust),            // CKA_CLASS
+		"a1":        encodeBool(true),                     // CKA_TOKEN
+		"a2":        encodeBool(false),                    // CKA_PRIVATE
+		"a3":        explicitNull(),                       // CKA_LABEL (explicit null)
+		"a81":       cert.RawIssuer,                       // CKA_ISSUER
+		"a82":       serialDER,                            // CKA_SERIAL_NUMBER
+		"a170":      encodeBool(true),                     // CKA_NSS_OVERRIDE_EXTENSIONS
+		"ace536358": encodeUint32(cktNSSTrustedDelegator), // TRUST_SERVER_AUTH
+		"ace536359": encodeUint32(cktNSSTrustedDelegator), // TRUST_CLIENT_AUTH
+		"ace53635a": encodeUint32(cktNSSTrustedDelegator), // TRUST_CODE_SIGNING
+		"ace53635b": encodeUint32(cktNSSTrustedDelegator), // TRUST_EMAIL_PROTECTION
+		"ace536360": encodeBool(false),                    // TRUST_STEP_UP_APPROVED
+		"ace5363b4": sha1Sum[:],                           // CERT_SHA1_HASH
+		"ace5363b5": md5Sum[:],                            // CERT_MD5_HASH
 	}
 }
 

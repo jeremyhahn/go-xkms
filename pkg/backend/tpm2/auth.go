@@ -16,7 +16,7 @@ package tpm2
 import (
 	"errors"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // VerifyAuth verifies the auth value on the backend's SRK. The TPM validates
@@ -63,7 +63,7 @@ func (b *Backend) ChangeAuth(currentPIN, newPIN string) error {
 // querying the TPM's fixed properties. The returned LockoutStatus contains
 // the current failure counter, maximum allowed failures, lockout state, and
 // recovery interval.
-func (b *Backend) LockoutStatus() (*pin.LockoutStatus, error) {
+func (b *Backend) LockoutStatus() (*qrdbsdk.PINLockoutStatus, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -78,7 +78,7 @@ func (b *Backend) LockoutStatus() (*pin.LockoutStatus, error) {
 
 	isLocked := props.LockoutCounter >= props.MaxAuthFail && props.MaxAuthFail > 0
 
-	return &pin.LockoutStatus{
+	return &qrdbsdk.PINLockoutStatus{
 		FailedAttempts:  int(props.LockoutCounter),
 		MaxAttempts:     int(props.MaxAuthFail),
 		IsLocked:        isLocked,

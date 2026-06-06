@@ -511,7 +511,8 @@ type GetTLSCertificateResponse struct {
 	ChainPEM       string `json:"chain_pem,omitempty"`
 }
 
-// UserInfo contains information about a user.
+// UserInfo contains information about an xkms user. xkms presents its own
+// user model; the backing store is the embedded qrdb node.
 type UserInfo struct {
 	Username    string     `json:"username"`
 	DisplayName string     `json:"display_name,omitempty"`
@@ -527,6 +528,14 @@ type CredentialInfo struct {
 	DisplayName string     `json:"display_name,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	LastUsed    *time.Time `json:"last_used,omitempty"`
+}
+
+// CreateUserRequest contains parameters to create a new xkms user.
+type CreateUserRequest struct {
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role,omitempty"`
+	TenantID    string `json:"tenant_id,omitempty"`
 }
 
 // ListUsersRequest contains pagination parameters for listing users.
@@ -557,74 +566,100 @@ type ListUserCredentialsResponse struct {
 	PageResponse
 }
 
-// Authentication flow types for FIDO2/WebAuthn server-side operations
+// Authentication flow types for FIDO2/WebAuthn server-side operations.
+//
+// The registration ceremony is lossless: BeginRegistration returns the full
+// JSON-marshaled WebAuthn options (CredentialCreation) and an opaque session
+// ID, and FinishRegistration carries the full WebAuthn PublicKeyCredential
+// attestation JSON back to the server. This mirrors the browser ceremony
+// served by pkg/webauthn/http exactly, just transported over the SDK.
 
 // BeginRegistrationRequest contains parameters to begin a WebAuthn registration.
 type BeginRegistrationRequest struct {
 	Username    string `json:"username"`
 	DisplayName string `json:"display_name"`
-	RPID        string `json:"rp_id"`
-	RPName      string `json:"rp_name"`
 }
 
-// BeginRegistrationResponse contains the challenge and options for WebAuthn registration.
+// BeginRegistrationResponse carries the session ID and the JSON-marshaled
+// WebAuthn registration options produced by the relying party.
 type BeginRegistrationResponse struct {
-	Challenge        string            `json:"challenge"`         // base64 encoded
-	UserID           string            `json:"user_id"`           // base64 encoded
-	RPID             string            `json:"rp_id"`             // Relying Party ID
-	RPName           string            `json:"rp_name"`           // Relying Party Name
-	CredentialParams []CredentialParam `json:"credential_params"` // Allowed credential types
+	// SessionID is the opaque server-side session identifier that must be
+	// echoed back to FinishRegistration to correlate the ceremony.
+	SessionID string `json:"session_id"`
+
+	// OptionsJSON is the JSON-marshaled *protocol.CredentialCreation
+	// (PublicKeyCredentialCreationOptions) that the client hands to the
+	// authenticator via navigator.credentials.create().
+	OptionsJSON string `json:"options_json"`
 }
 
-// CredentialParam represents a WebAuthn credential type and algorithm.
-type CredentialParam struct {
-	Type string `json:"type"` // e.g., "public-key"
-	Alg  int    `json:"alg"`  // COSE algorithm identifier (e.g., -7 for ES256)
-}
-
-// FinishRegistrationRequest contains the authenticator response to complete registration.
+// FinishRegistrationRequest carries the authenticator attestation back to the
+// server to complete the registration ceremony.
 type FinishRegistrationRequest struct {
-	Username        string `json:"username"`
-	CredentialID    string `json:"credential_id"`    // base64 encoded
-	PublicKey       string `json:"public_key"`       // base64 encoded COSE key
-	AttestationData string `json:"attestation_data"` // base64 encoded
-	ClientDataJSON  string `json:"client_data_json"` // base64 encoded
+	// SessionID is the value returned by BeginRegistration.
+	SessionID string `json:"session_id"`
+
+	// AttestationJSON is the WebAuthn PublicKeyCredential JSON produced by the
+	// authenticator (the response from navigator.credentials.create()). It is
+	// the exact body that protocol.ParseCredentialCreationResponseBody expects.
+	AttestationJSON string `json:"attestation_json"`
 }
 
 // FinishRegistrationResponse contains the result of WebAuthn registration.
 type FinishRegistrationResponse struct {
 	Success      bool   `json:"success"`
 	CredentialID string `json:"credential_id"`
+	Token        string `json:"token,omitempty"`
 	Message      string `json:"message,omitempty"`
 }
 
+// The authentication (login) ceremony is lossless and symmetric to
+// registration: BeginAuthentication returns the full JSON-marshaled WebAuthn
+// options (CredentialAssertion) and an opaque session ID, and
+// FinishAuthentication carries the full WebAuthn PublicKeyCredential assertion
+// JSON back to the server. This mirrors the browser ceremony served by
+// pkg/webauthn/http exactly, just transported over the SDK.
+
 // BeginAuthenticationRequest contains parameters to begin a WebAuthn authentication.
 type BeginAuthenticationRequest struct {
+	// Username identifies the user whose registered credentials are challenged.
 	Username string `json:"username"`
-	RPID     string `json:"rp_id"`
 }
 
-// BeginAuthenticationResponse contains the challenge and options for WebAuthn authentication.
+// BeginAuthenticationResponse carries the session ID and the JSON-marshaled
+// WebAuthn authentication options produced by the relying party.
 type BeginAuthenticationResponse struct {
-	Challenge     string   `json:"challenge"`      // base64 encoded
-	RPID          string   `json:"rp_id"`          // Relying Party ID
-	CredentialIDs []string `json:"credential_ids"` // base64 encoded allowed credential IDs
+	// SessionID is the opaque server-side session identifier that must be
+	// echoed back to FinishAuthentication to correlate the ceremony.
+	SessionID string `json:"session_id"`
+
+	// OptionsJSON is the JSON-marshaled *protocol.CredentialAssertion
+	// (PublicKeyCredentialRequestOptions) that the client hands to the
+	// authenticator via navigator.credentials.get().
+	OptionsJSON string `json:"options_json"`
 }
 
-// FinishAuthenticationRequest contains the authenticator response to complete authentication.
+// FinishAuthenticationRequest carries the authenticator assertion back to the
+// server to complete the authentication ceremony.
 type FinishAuthenticationRequest struct {
-	Username          string `json:"username"`
-	CredentialID      string `json:"credential_id"`      // base64 encoded
-	Signature         string `json:"signature"`          // base64 encoded
-	AuthenticatorData string `json:"authenticator_data"` // base64 encoded
-	ClientDataJSON    string `json:"client_data_json"`   // base64 encoded
+	// SessionID is the value returned by BeginAuthentication.
+	SessionID string `json:"session_id"`
+
+	// Username identifies the user whose credentials are being asserted.
+	Username string `json:"username"`
+
+	// AssertionJSON is the WebAuthn PublicKeyCredential JSON produced by the
+	// authenticator (the response from navigator.credentials.get()). It is the
+	// exact body that protocol.ParseCredentialRequestResponseBody expects.
+	AssertionJSON string `json:"assertion_json"`
 }
 
 // FinishAuthenticationResponse contains the result of WebAuthn authentication.
 type FinishAuthenticationResponse struct {
-	Success bool   `json:"success"`
-	Token   string `json:"token,omitempty"` // JWT token
-	Message string `json:"message,omitempty"`
+	Success  bool   `json:"success"`
+	Token    string `json:"token,omitempty"`
+	Username string `json:"username,omitempty"`
+	Message  string `json:"message,omitempty"`
 }
 
 // DeriveKeyECDHRequest contains parameters for ECDH key agreement and derivation.
@@ -1219,18 +1254,6 @@ type BarrierUnsealShareResponse struct {
 // in a single request.
 type BarrierUnsealSharesRequest struct {
 	Shares []string `json:"shares"`
-}
-
-// BarrierShamirSharesResponse contains metadata about stored Shamir shares.
-type BarrierShamirSharesResponse struct {
-	Count     int `json:"count"`
-	Threshold int `json:"threshold"`
-	Total     int `json:"total"`
-}
-
-// BarrierShamirDeleteShareRequest identifies a Shamir share to delete by index.
-type BarrierShamirDeleteShareRequest struct {
-	Index int `json:"index"`
 }
 
 // BarrierRekeyRequest contains parameters for rekeying the barrier with

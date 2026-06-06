@@ -18,8 +18,8 @@ import (
 	"errors"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -70,22 +70,22 @@ var barrierErrorToGRPC = map[error]codes.Code{
 
 // pinErrorToGRPC maps PIN domain errors to gRPC status codes.
 var pinErrorToGRPC = map[error]codes.Code{
-	pin.ErrPINNotSet:         codes.FailedPrecondition,
-	pin.ErrPINLocked:         codes.ResourceExhausted,
-	pin.ErrPINInvalid:        codes.Unauthenticated,
-	pin.ErrSOPINRequired:     codes.Unauthenticated,
-	pin.ErrPINTooShort:       codes.InvalidArgument,
-	pin.ErrPINAlreadySet:     codes.AlreadyExists,
-	pin.ErrInvalidCurrentPIN: codes.Unauthenticated,
-	pin.ErrStateCorrupted:    codes.DataLoss,
-	pin.ErrStrategyNotSet:    codes.FailedPrecondition,
+	qrdbsdk.ErrPINNotSet:         codes.FailedPrecondition,
+	qrdbsdk.ErrPINLocked:         codes.ResourceExhausted,
+	qrdbsdk.ErrPINInvalid:        codes.Unauthenticated,
+	qrdbsdk.ErrSOPINRequired:     codes.Unauthenticated,
+	qrdbsdk.ErrPINTooShort:       codes.InvalidArgument,
+	qrdbsdk.ErrPINAlreadySet:     codes.AlreadyExists,
+	qrdbsdk.ErrInvalidCurrentPIN: codes.Unauthenticated,
+	qrdbsdk.ErrPINStateCorrupted: codes.DataLoss,
+	qrdbsdk.ErrPINStrategyNotSet: codes.FailedPrecondition,
 }
 
 // Package-level barrier and PIN backend references, set via their
 // respective setter functions.
 var (
 	barrier    *seal.Barrier
-	pinManager pin.PINBackend
+	pinManager qrdbsdk.PINBackend
 )
 
 // SetBarrier configures the barrier for the gRPC service.
@@ -101,12 +101,12 @@ func GetBarrier() *seal.Barrier {
 
 // SetPINManager configures the PIN backend for the gRPC service.
 // This must be called before any PIN RPCs can be used.
-func SetPINManager(pm pin.PINBackend) {
+func SetPINManager(pm qrdbsdk.PINBackend) {
 	pinManager = pm
 }
 
 // GetPINManager returns the configured PIN backend, or nil if not set.
-func GetPINManager() pin.PINBackend {
+func GetPINManager() qrdbsdk.PINBackend {
 	return pinManager
 }
 

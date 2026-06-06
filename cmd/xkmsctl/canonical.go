@@ -31,14 +31,15 @@ import (
 // validBarrierStrategies is the canonical --barrier-strategy set per
 // docs/08-bootstrap-auth-architecture.md §2.
 var validBarrierStrategies = map[string]struct{}{
-	"software": {},
-	"shamir":   {},
-	"pkcs11":   {},
-	"tpm2":     {},
-	"awskms":   {},
-	"gcpkms":   {},
-	"azurekv":  {},
-	"vault":    {},
+	"passphrase": {},
+	"software":   {}, // deprecated alias for "passphrase"
+	"shamir":     {},
+	"pkcs11":     {},
+	"tpm2":       {},
+	"awskms":     {},
+	"gcpkms":     {},
+	"azurekv":    {},
+	"vault":      {},
 }
 
 // canonicalInitFlags holds the canonical init flag set per
@@ -109,8 +110,8 @@ func wireCanonicalInitFlags(cmd *cobra.Command) {
 		"Security Officer PIN (required, FIPS 140-3 / PCI-DSS v4 SO credential)")
 	cmd.Flags().StringVar(&canonicalSurfaceFlags.userPin, "user-pin", "",
 		"User PIN (required, FIPS 140-3 / PCI-DSS v4 user credential)")
-	cmd.Flags().StringVar(&canonicalSurfaceFlags.barrierStrategy, "barrier-strategy", "software",
-		"Barrier sealing strategy: software | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
+	cmd.Flags().StringVar(&canonicalSurfaceFlags.barrierStrategy, "barrier-strategy", "passphrase",
+		"Barrier sealing strategy: passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault (software is a deprecated alias for passphrase)")
 	cmd.Flags().IntVar(&canonicalSurfaceFlags.shares, "shares", 0,
 		"Total Shamir shares (required when --barrier-strategy=shamir)")
 	cmd.Flags().IntVar(&canonicalSurfaceFlags.threshold, "threshold", 0,
@@ -205,23 +206,23 @@ func runCanonicalInit(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "=== xkmsctl init: Canonical Surface Validated ===")
-	fmt.Fprintf(out, "  BarrierStrategy: %s\n", f.barrierStrategy)
+	_, _ = fmt.Fprintln(out, "=== xkmsctl init: Canonical Surface Validated ===")
+	_, _ = fmt.Fprintf(out, "  BarrierStrategy: %s\n", f.barrierStrategy)
 	if f.barrierStrategy == "shamir" {
-		fmt.Fprintf(out, "  Shamir Mode:     %d-of-%d\n", f.threshold, f.shares)
+		_, _ = fmt.Fprintf(out, "  Shamir Mode:     %d-of-%d\n", f.threshold, f.shares)
 	}
-	fmt.Fprintf(out, "  Hostname:        %s\n", f.hostname)
+	_, _ = fmt.Fprintf(out, "  Hostname:        %s\n", f.hostname)
 	if f.sans != "" {
-		fmt.Fprintf(out, "  SANs:            %s\n", f.sans)
+		_, _ = fmt.Fprintf(out, "  SANs:            %s\n", f.sans)
 	}
 	bundlePath := f.adminBundle
 	if bundlePath == "" {
 		bundlePath = "-"
 	}
-	fmt.Fprintf(out, "  AdminBundle:     %s\n", bundlePath)
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Note: SDK ceremony delegation pending; xkmsctl init wires the canonical")
-	fmt.Fprintln(out, "shape that calls quicbaas SDK Ceremony().Initialize() once available.")
+	_, _ = fmt.Fprintf(out, "  AdminBundle:     %s\n", bundlePath)
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "Note: SDK ceremony delegation pending; xkmsctl init wires the canonical")
+	_, _ = fmt.Fprintln(out, "shape that calls quicbaas SDK Ceremony().Initialize() once available.")
 	return nil
 }
 
@@ -341,7 +342,7 @@ Example:
 			if info.IsDir() {
 				return fmt.Errorf("bootstrap direct: %s is a directory", bundlePath)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Direct CA bundle accepted: %s (%d bytes)\n", bundlePath, info.Size())
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Direct CA bundle accepted: %s (%d bytes)\n", bundlePath, info.Size())
 			return nil
 		},
 	}

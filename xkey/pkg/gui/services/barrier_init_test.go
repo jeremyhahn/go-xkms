@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +31,7 @@ import (
 func TestBarrierService_Initialize_GetSealInfo_ShowsInitialized(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	require.NoError(t, err)
 
 	info := svc.GetSealInfo()
@@ -40,7 +40,7 @@ func TestBarrierService_Initialize_GetSealInfo_ShowsInitialized(t *testing.T) {
 		"GetSealInfo must report Initialized=true after successful Initialize()")
 	assert.False(t, info.Sealed,
 		"barrier should be unsealed immediately after Initialize()")
-	assert.Equal(t, string(seal.StrategySoftware), info.Strategy,
+	assert.Equal(t, string(seal.StrategyPassphrase), info.Strategy,
 		"strategy must match what was passed to Initialize()")
 }
 
@@ -56,7 +56,7 @@ func TestBarrierService_Initialize_GetSealInfo_WithDataDir(t *testing.T) {
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetDataDir(dataDir)
 
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	require.NoError(t, err)
 
 	info := svc.GetSealInfo()
@@ -65,7 +65,7 @@ func TestBarrierService_Initialize_GetSealInfo_WithDataDir(t *testing.T) {
 		"GetSealInfo must report Initialized=true after Initialize() with dataDir set")
 	assert.False(t, info.Sealed,
 		"barrier should be unsealed immediately after Initialize()")
-	assert.Equal(t, string(seal.StrategySoftware), info.Strategy)
+	assert.Equal(t, string(seal.StrategyPassphrase), info.Strategy)
 }
 
 // TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit reproduces a
@@ -79,7 +79,7 @@ func TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit(t *testing.T)
 	svc := NewBarrierService(configDir, slog.Default())
 
 	// Initialize WITHOUT dataDir (root key goes to configDir/barrier/).
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	require.NoError(t, err)
 
 	// Now set dataDir (simulates app restart with new config).
@@ -100,7 +100,7 @@ func TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit(t *testing.T)
 func TestBarrierService_Initialize_Seal_GetSealInfo_ShowsSealed(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	require.NoError(t, err)
 
 	err = svc.Seal()
@@ -124,7 +124,7 @@ func TestBarrierService_Initialize_Seal_GetSealInfo_WithDataDir(t *testing.T) {
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetDataDir(dataDir)
 
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	require.NoError(t, err)
 
 	err = svc.Seal()
@@ -154,19 +154,19 @@ func TestAppLockService_Unlock_InitializesBarrier_WhenNotInitialized(t *testing.
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: nil,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	svc := NewAppLockService(pinSvc, barrierSvc)
 	svc.SetContext(context.Background())
-	svc.SetBarrierStrategy("software")
+	svc.SetBarrierStrategy("passphrase")
 	svc.LockForStartup()
 
 	assert.True(t, svc.IsLocked(), "app should be locked after LockForStartup")
@@ -197,7 +197,7 @@ func TestBarrierService_Initialize_FiresPostUnsealHook(t *testing.T) {
 		return nil
 	})
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	assert.True(t, hookCalled,
@@ -215,7 +215,7 @@ func TestBarrierService_Initialize_FiresPostUnsealHook_ErrorLogged(t *testing.T)
 		return ErrBarrierNotInitialized // arbitrary error
 	})
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err, "Initialize must succeed even if post-unseal hook returns error")
 	assert.True(t, hookCalled)
 }
@@ -261,7 +261,7 @@ func TestBarrierService_GetSealInfo_FreshServiceAfterInit(t *testing.T) {
 
 	// First session: initialize the barrier.
 	svc1 := NewBarrierService(configDir, slog.Default())
-	err := svc1.Initialize("password", "software")
+	err := svc1.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	// Second session: fresh service, barrier==nil.
@@ -284,7 +284,7 @@ func TestBarrierService_GetSealInfo_FreshServiceAfterInit_WithDataDir(t *testing
 	// First session: set dataDir and initialize.
 	svc1 := NewBarrierService(configDir, slog.Default())
 	svc1.SetDataDir(dataDir)
-	err := svc1.Initialize("password", "software")
+	err := svc1.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	// Second session: fresh service with same dataDir.
@@ -309,7 +309,7 @@ func TestBarrierService_GetSealInfo_FreshServiceAfterInit_DataDirMismatch(t *tes
 
 	// First session: initialize WITHOUT dataDir.
 	svc1 := NewBarrierService(configDir, slog.Default())
-	err := svc1.Initialize("password", "software")
+	err := svc1.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	// Second session: fresh service with dataDir set to a DIFFERENT dir.
@@ -333,20 +333,20 @@ func TestBarrierService_SetLastStrategy_ReflectedInGetSealInfo(t *testing.T) {
 
 	// Initialize to create root key.
 	svc1 := NewBarrierService(configDir, slog.Default())
-	err := svc1.Initialize("password", "software")
+	err := svc1.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	// Fresh service with lastStrategy set (simulates config-loaded strategy).
 	svc2 := NewBarrierService(configDir, slog.Default())
-	svc2.SetLastStrategy("software")
+	svc2.SetLastStrategy("passphrase")
 
 	info := svc2.GetSealInfo()
 	require.NotNil(t, info)
 	assert.True(t, info.Initialized)
 	assert.True(t, info.Sealed)
-	assert.Equal(t, "software", info.Strategy,
+	assert.Equal(t, "passphrase", info.Strategy,
 		"GetSealInfo should use lastStrategy when barrier object is nil")
-	assert.Equal(t, "Software (AES-256-GCM)", info.StrategyLabel)
+	assert.Equal(t, "Passphrase (AES-256-GCM)", info.StrategyLabel)
 }
 
 // ---------------------------------------------------------------------------
@@ -379,18 +379,18 @@ func TestAppLockService_Unlock_UninitializedBarrier_InitializesAndFiresHook(t *t
 	pinSvc := NewPINService()
 	pinSvc.SetContext(context.Background())
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: nil,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	appLock := NewAppLockService(pinSvc, svc)
-	appLock.SetBarrierStrategy("software")
+	appLock.SetBarrierStrategy("passphrase")
 	appLock.SetContext(context.Background())
 	appLock.LockForStartup()
 
@@ -425,7 +425,7 @@ func TestBarrierService_GetSealInfo_AfterInitAndSeal_StillInitialized(t *testing
 	// First session: initialize and seal.
 	svc1 := NewBarrierService(dir, slog.Default())
 	svc1.SetContext(context.Background())
-	require.NoError(t, svc1.Initialize("password", "software"))
+	require.NoError(t, svc1.Initialize("password", "passphrase"))
 	require.NoError(t, svc1.Seal())
 
 	// Simulate restart: new BarrierService, same dir.
@@ -452,7 +452,7 @@ func TestAppLockService_Unlock_SealedBarrier_Unseals(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	// Initialize barrier first.
-	require.NoError(t, svc.Initialize("my-password", "software"))
+	require.NoError(t, svc.Initialize("my-password", "passphrase"))
 	require.NoError(t, svc.Seal())
 
 	// Simulate fresh service (restart).
@@ -461,7 +461,7 @@ func TestAppLockService_Unlock_SealedBarrier_Unseals(t *testing.T) {
 
 	pinSvc := NewPINService()
 	appLock := NewAppLockService(pinSvc, svc2)
-	appLock.SetBarrierStrategy("software")
+	appLock.SetBarrierStrategy("passphrase")
 	appLock.SetContext(context.Background())
 	appLock.LockForStartup()
 
@@ -488,11 +488,11 @@ func TestAppLockService_Unlock_UninitializedBarrier_UsesProvidedPIN(t *testing.T
 	svc.SetContext(context.Background())
 
 	// Initialize the barrier explicitly with a known password.
-	require.NoError(t, svc.Initialize("first-pin", "software"))
+	require.NoError(t, svc.Initialize("first-pin", "passphrase"))
 
 	pinSvc := NewPINService()
 	appLock := NewAppLockService(pinSvc, svc)
-	appLock.SetBarrierStrategy("software")
+	appLock.SetBarrierStrategy("passphrase")
 	appLock.SetContext(context.Background())
 
 	// Seal the barrier and lock the app.

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
 // responseWriter wraps http.ResponseWriter to capture status code.
@@ -87,13 +88,27 @@ func (s *Server) LoggingMiddleware() func(http.Handler) http.Handler {
 	}
 }
 
+// corsAllowHeaders lists the request headers a cross-origin browser may send.
+// The WebAuthn RP correlates its begin/finish ceremonies through the
+// X-Session-Id (and, for login, X-User-Id) request headers, so they must be
+// permitted or the preflight for /api/v1/webauthn/*/finish fails.
+const corsAllowHeaders = "Content-Type, Authorization, " +
+	webauthnhttp.HeaderSessionID + ", " + webauthnhttp.HeaderUserID
+
+// corsExposeHeaders lists the response headers a cross-origin browser may read.
+// The WebAuthn RP returns the session correlation identifiers on its begin
+// responses; without exposing them a cross-origin client cannot complete the
+// ceremony.
+const corsExposeHeaders = webauthnhttp.HeaderSessionID + ", " + webauthnhttp.HeaderUserID
+
 // CORSMiddleware adds CORS headers to responses.
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", corsAllowHeaders)
+		w.Header().Set("Access-Control-Expose-Headers", corsExposeHeaders)
 		w.Header().Set("Access-Control-Max-Age", "3600")
 
 		// Handle preflight requests

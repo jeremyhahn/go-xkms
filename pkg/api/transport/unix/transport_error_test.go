@@ -171,18 +171,6 @@ func (s *errServer) BarrierUnsealShare(context.Context, *pb.BarrierUnsealShareRe
 func (s *errServer) BarrierUnsealShares(context.Context, *pb.BarrierUnsealSharesRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
-func (s *errServer) BarrierShamirListShares(context.Context, *emptypb.Empty) (*pb.BarrierShamirSharesResponse, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierShamirDeleteShare(context.Context, *pb.BarrierShamirDeleteShareRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierShamirDeleteAllShares(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
-func (s *errServer) BarrierShamirVerify(context.Context, *emptypb.Empty) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Internal, "fail")
-}
 func (s *errServer) BarrierRekey(context.Context, *pb.BarrierRekeyRequest) (*pb.BarrierShamirInitResponse, error) {
 	return nil, status.Error(codes.Internal, "fail")
 }
@@ -365,9 +353,7 @@ func newErrTransport(t *testing.T) (*Transport, func()) {
 	pb.RegisterKeystoreServiceServer(srv, &errServer{})
 
 	go func() {
-		if err := srv.Serve(lis); err != nil {
-			// Server stopped
-		}
+		_ = srv.Serve(lis)
 	}()
 
 	conn, err := grpc.NewClient(
@@ -381,7 +367,7 @@ func newErrTransport(t *testing.T) (*Transport, func()) {
 
 	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": "fail"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "fail"})
 	}))
 
 	cfg := transport.DefaultConfig()
@@ -413,7 +399,7 @@ func newHTTPOnlyTransport(t *testing.T) (*Transport, func()) {
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			rec := httptest.NewRecorder()
 			rec.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(rec).Encode(map[string]interface{}{
+			_ = json.NewEncoder(rec).Encode(map[string]interface{}{
 				"status": "initialized", "strategy": "manual",
 				"challenge_nonce": "abc123", "officer_name": "alice",
 				"share": "c2hhcmU=", "claimed": true, "accepted": true,

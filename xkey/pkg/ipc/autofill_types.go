@@ -19,14 +19,14 @@ import "fmt"
 // IPC message. Used for map-based O(1) dispatch.
 const (
 	ActionAutofillSearch       = "search"        // Search credentials by domain
-	ActionAutofillGet          = "get"            // Get credential + password for fill
-	ActionAutofillTOTP         = "totp"           // Get TOTP code for domain
-	ActionAutofillTOTPByID     = "totp_by_id"     // Get TOTP by account ID
-	ActionAutofillStatus       = "status"         // Check app lock state + policy
-	ActionAutofillPolicy       = "policy"         // Get current policy
-	ActionAutofillSave         = "save"           // Save new credential from form submission
-	ActionAutofillIgnoreDomain = "ignore_domain"  // Ignore domain (never prompt to save)
-	ActionAutofillFocus        = "focus"          // Bring the GUI window to the foreground
+	ActionAutofillGet          = "get"           // Get credential + password for fill
+	ActionAutofillTOTP         = "totp"          // Get TOTP code for domain
+	ActionAutofillTOTPByID     = "totp_by_id"    // Get TOTP by account ID
+	ActionAutofillStatus       = "status"        // Check app lock state + policy
+	ActionAutofillPolicy       = "policy"        // Get current policy
+	ActionAutofillSave         = "save"          // Save new credential from form submission
+	ActionAutofillIgnoreDomain = "ignore_domain" // Ignore domain (never prompt to save)
+	ActionAutofillFocus        = "focus"         // Bring the GUI window to the foreground
 )
 
 // validAutofillActions is the set of recognized autofill actions for O(1) lookup.

@@ -637,8 +637,8 @@ func TestSubError(t *testing.T) {
 		},
 	}
 
-	if se.TrustedCAError.Type != RejectedIdentifier {
-		t.Errorf("Type = %v, want %v", se.TrustedCAError.Type, RejectedIdentifier)
+	if se.Type != RejectedIdentifier {
+		t.Errorf("Type = %v, want %v", se.Type, RejectedIdentifier)
 	}
 	if se.Identifier.Value != "blocked.example.com" {
 		t.Errorf("Identifier.Value = %q, want 'blocked.example.com'", se.Identifier.Value)

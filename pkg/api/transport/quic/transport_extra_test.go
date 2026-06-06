@@ -49,11 +49,12 @@ func fullMockHandler() http.Handler {
 		case strings.Contains(path, "/piv/slots") && strings.HasSuffix(path, "/csr"):
 			respond(transport.GeneratePIVCSRResponse{CSR: []byte("csr"), Slot: "9a"})
 		case strings.Contains(path, "/piv/slots") && strings.HasSuffix(path, "/certificate"):
-			if r.Method == http.MethodDelete {
+			switch r.Method {
+			case http.MethodDelete:
 				w.WriteHeader(http.StatusOK)
-			} else if r.Method == http.MethodPost {
+			case http.MethodPost:
 				w.WriteHeader(http.StatusOK)
-			} else {
+			default:
 				respond(transport.GetPIVCertificateResponse{Certificate: []byte("cert"), Slot: "9a"})
 			}
 		case strings.Contains(path, "/piv/slots"):
@@ -62,12 +63,6 @@ func fullMockHandler() http.Handler {
 			})
 
 		// Barrier ops
-		case strings.Contains(path, "/barrier/shamir/shares") && r.Method == http.MethodDelete && strings.Contains(path, "/"):
-			w.WriteHeader(http.StatusOK)
-		case strings.Contains(path, "/barrier/shamir/shares"):
-			respond(transport.BarrierShamirSharesResponse{Count: 2, Threshold: 2, Total: 3})
-		case strings.Contains(path, "/barrier/shamir/verify"):
-			w.WriteHeader(http.StatusOK)
 		case strings.Contains(path, "/barrier/initialize-shamir"):
 			respond(transport.BarrierInitializeShamirResponse{Shares: []string{"s1", "s2"}, Threshold: 2, TotalShares: 3})
 		case strings.Contains(path, "/barrier/unseal-share") && !strings.HasSuffix(path, "s"):
@@ -422,35 +417,6 @@ func TestBarrierUnsealWithShares_Connected(t *testing.T) {
 	tr, cleanup := newFullMockTransport(t)
 	defer cleanup()
 	err := tr.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{Shares: []string{"s1", "s2"}})
-	require.NoError(t, err)
-}
-
-func TestBarrierShamirListShares_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	resp, err := tr.BarrierShamirListShares(context.Background())
-	require.NoError(t, err)
-	assert.Equal(t, 2, resp.Count)
-}
-
-func TestBarrierShamirDeleteShare_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{Index: 0})
-	require.NoError(t, err)
-}
-
-func TestBarrierShamirDeleteAllShares_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierShamirDeleteAllShares(context.Background())
-	require.NoError(t, err)
-}
-
-func TestBarrierShamirVerify_Connected(t *testing.T) {
-	tr, cleanup := newFullMockTransport(t)
-	defer cleanup()
-	err := tr.BarrierShamirVerify(context.Background())
 	require.NoError(t, err)
 }
 

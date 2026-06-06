@@ -970,7 +970,7 @@ func TestBoostDecrypt_AsymFallback_Success(t *testing.T) {
 		KeyAlgorithm: x509.RSA,
 	}
 
-	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, &rsaKey.PublicKey, []byte("secret"))
+	ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, &rsaKey.PublicKey, []byte("secret")) //nolint:staticcheck // test intentionally covers legacy PKCS#1 v1.5 encryption path
 	require.NoError(t, err)
 
 	resp, err := svc.Decrypt(context.Background(), &transport.DecryptRequest{

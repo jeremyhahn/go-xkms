@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -45,6 +46,7 @@ type TestXKMSService struct {
 	keys         map[string]*testKey
 	certificates map[string][]byte
 	users        map[string]*testUser
+	regSessions  map[string]string // session ID -> username (WebAuthn registration)
 	sealKey      []byte
 }
 
@@ -88,6 +90,7 @@ func NewTestXKMSService() (*TestXKMSService, error) {
 		keys:         make(map[string]*testKey),
 		certificates: make(map[string][]byte),
 		users:        make(map[string]*testUser),
+		regSessions:  make(map[string]string),
 		sealKey:      sealKey,
 	}, nil
 }
@@ -570,27 +573,29 @@ func (s *TestXKMSService) BeginRegistration(ctx context.Context, req *xkms.Begin
 		}
 	}
 
-	// Generate challenge
+	// Generate a session ID for the lossless ceremony.
+	sessionBytes := make([]byte, 16)
+	if _, err := rand.Read(sessionBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate session id: %w", err)
+	}
+	sessionID := base64.RawURLEncoding.EncodeToString(sessionBytes)
+
+	// Generate challenge and embed it in JSON-marshaled WebAuthn options.
 	challenge := make([]byte, 32)
 	if _, err := rand.Read(challenge); err != nil {
 		return nil, fmt.Errorf("failed to generate challenge: %w", err)
 	}
+	optionsJSON := fmt.Sprintf(
+		`{"publicKey":{"challenge":%q,"rp":{"name":%q},"pubKeyCredParams":[{"type":"public-key","alg":-7},{"type":"public-key","alg":-257}]}}`,
+		base64.RawURLEncoding.EncodeToString(challenge), req.Username,
+	)
 
-	// Generate user ID
-	userID := make([]byte, 16)
-	if _, err := rand.Read(userID); err != nil {
-		return nil, fmt.Errorf("failed to generate user ID: %w", err)
-	}
+	// Remember which user this ceremony session belongs to.
+	s.regSessions[sessionID] = req.Username
 
 	return &xkms.BeginRegistrationResponse{
-		Challenge: string(challenge),
-		UserID:    string(userID),
-		RPID:      req.RPID,
-		RPName:    req.RPName,
-		CredentialParams: []xkms.CredentialParam{
-			{Type: "public-key", Alg: -7},   // ES256
-			{Type: "public-key", Alg: -257}, // RS256
-		},
+		SessionID:   sessionID,
+		OptionsJSON: optionsJSON,
 	}, nil
 }
 
@@ -598,21 +603,32 @@ func (s *TestXKMSService) FinishRegistration(ctx context.Context, req *xkms.Fini
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	u, ok := s.users[req.Username]
+	username, ok := s.regSessions[req.SessionID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+	delete(s.regSessions, req.SessionID)
+
+	u, ok := s.users[username]
 	if !ok {
 		return nil, ErrUserNotFound
 	}
 
+	// Derive a stable credential ID from the attestation JSON.
+	credSum := sha256.Sum256([]byte(req.AttestationJSON))
+	credID := base64.RawURLEncoding.EncodeToString(credSum[:])
+
 	// Add credential
 	u.credentials = append(u.credentials, testCredential{
-		id:          req.CredentialID,
+		id:          credID,
 		displayName: "WebAuthn Credential",
 		createdAt:   time.Now(),
 	})
 
 	return &xkms.FinishRegistrationResponse{
 		Success:      true,
-		CredentialID: req.CredentialID,
+		CredentialID: credID,
+		Token:        "test-token",
 		Message:      "Registration successful",
 	}, nil
 }
@@ -912,26 +928,6 @@ func (s *TestXKMSService) BarrierUnsealWithShare(ctx context.Context, req *xkms.
 }
 
 func (s *TestXKMSService) BarrierUnsealWithShares(ctx context.Context, req *xkms.BarrierUnsealSharesRequest) error {
-	return nil
-}
-
-// BarrierShamirListShares returns Shamir share metadata.
-func (s *TestXKMSService) BarrierShamirListShares(_ context.Context) (*xkms.BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (s *TestXKMSService) BarrierShamirDeleteShare(_ context.Context, _ *xkms.BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (s *TestXKMSService) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return nil
-}
-
-// BarrierShamirVerify verifies Shamir share integrity.
-func (s *TestXKMSService) BarrierShamirVerify(_ context.Context) error {
 	return nil
 }
 

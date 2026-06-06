@@ -22,7 +22,10 @@ BASE_URL="${BASE_URL:-http://localhost:${WAILS_PORT}}"
 SWTPM_STATE="/tmp/swtpm"
 SWTPM_PORT=2321
 SWTPM_CTRL_PORT=2322
-MAX_WAIT_SECONDS=120
+# wails dev compiles the full GUI Go app on first boot; from a cold build cache
+# (e.g. right after `docker compose build`) this can exceed 6 minutes, so allow
+# generous headroom to avoid a false "failed to start" on a slow compile.
+MAX_WAIT_SECONDS=900
 CLEANUP_PIDS=()
 
 # ---------------------------------------------------------------------------
@@ -36,6 +39,11 @@ cleanup() {
             wait "$pid" 2>/dev/null || true
         fi
     done
+    # Restore the committed xkey/go.mod if we injected local-path replaces
+    # (the file is bind-mounted from the host, so leave it as committed).
+    if [ -f /tmp/xkey-go.mod.orig ]; then
+        cp /tmp/xkey-go.mod.orig /workspace/xkey/go.mod 2>/dev/null || true
+    fi
     echo "[entrypoint] Cleanup complete."
 }
 trap cleanup EXIT
@@ -111,29 +119,113 @@ echo "[entrypoint] Downloading Go module dependencies..."
 export GONOSUMCHECK='*'
 export GONOSUMDB='*'
 export GOFLAGS='-buildvcs=false'
+
+# Generate a Go workspace covering the in-house module closure so that not only
+# `go build` but also the wails binding generator (golang.org/x/tools/go/packages)
+# resolves the nested in-house modules with full type information. Without this,
+# wails dev fails with: internal error: package "github.com/jeremyhahn/go-qrdb/sdk/go"
+# without types was imported from ".../xkey/pkg/pcr_policy". The siblings are
+# bind-mounted at /go-<name> by docker-compose.yml.
+cat > /tmp/go.work <<'WORKEOF'
+go 1.26.4
+
+toolchain go1.26.4
+
+use (
+	/workspace
+	/workspace/sdk/go
+	/workspace/xkey
+	/go-codec
+	/go-frost
+	/go-objstore
+	/go-qrdb
+	/go-qrdb/sdk/go
+	/go-quicraft
+	/go-truststrap
+)
+
+// Mirror the host go.work replace directives (translated to the container's
+// bind-mount paths) so `go mod download all` can resolve the in-house modules'
+// fake versions (v0.0.0 / alpha tags) to the local workspace copies. `use`
+// alone covers `go build`, but the module-graph download needs these.
+replace (
+	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
+	github.com/jeremyhahn/go-frost v0.1.4-alpha => /go-frost
+	github.com/jeremyhahn/go-frost v0.1.5-alpha => /go-frost
+	github.com/jeremyhahn/go-frost v0.1.6-alpha => /go-frost
+	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
+	github.com/jeremyhahn/go-objstore v0.1.4-alpha => /go-objstore
+	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
+	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
+	github.com/jeremyhahn/go-xkms v0.0.0 => /workspace
+	github.com/jeremyhahn/go-xkms v0.2.2-alpha => /workspace
+	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /workspace/sdk/go
+)
+WORKEOF
+export GOWORK=/tmp/go.work
+
 # The upstream google/go-sev-guest v0.14.0 module was re-tagged, causing
 # checksum mismatches between local builds and Docker builds. Remove the
 # conflicting entries so go mod download accepts the proxy's archive.
-# Use temp copies to avoid modifying the host's go.sum via bind mount.
 for f in /workspace/go.sum /workspace/xkey/go.sum /workspace/sdk/go/go.sum; do
   if [ -f "$f" ]; then
     grep -v 'google/go-sev-guest' "$f" > "${f}.tmp" && mv "${f}.tmp" "$f"
   fi
 done
+
+# wails dev's binding generator (golang.org/x/tools/go/packages) does NOT honor
+# the /tmp/go.work workspace for in-house TRANSITIVE modules, so it tries to
+# fetch them (e.g. go-qrdb@v0.0.0) from GitHub and fails. xkey/go.mod already
+# carries committed replaces for go-xkms and go-xkms/sdk/go for this reason;
+# the rest became xkey transitive deps after the embedded-qrdb unification.
+# Inject the remaining local-path replaces directly into the main module's
+# go.mod (always honored by go, workspace or not). The relative paths resolve
+# to the bind-mounted siblings (/workspace/xkey/../../go-qrdb => /go-qrdb).
+# cleanup() restores the committed file on exit.
+cp /workspace/xkey/go.mod /tmp/xkey-go.mod.orig
+for repl in \
+    "github.com/jeremyhahn/go-qrdb=../../go-qrdb" \
+    "github.com/jeremyhahn/go-qrdb/sdk/go=../../go-qrdb/sdk/go" \
+    "github.com/jeremyhahn/go-truststrap=../../go-truststrap" \
+    "github.com/jeremyhahn/go-codec=../../go-codec" \
+    "github.com/jeremyhahn/go-frost=../../go-frost" \
+    "github.com/jeremyhahn/go-objstore=../../go-objstore" \
+    "github.com/jeremyhahn/go-quicraft=../../go-quicraft"; do
+    (cd /workspace/xkey && go mod edit -replace "$repl")
+done
+echo "[entrypoint] Injected in-house module replaces into xkey/go.mod."
+
+# Populate /tmp/go.work.sum for the workspace build list (in-house modules are
+# local workspace members, so only public dependencies are fetched).
 cd /workspace/xkey
-go mod download
-cd /workspace
-go mod download
-cd /workspace/sdk/go
-go mod download
-cd /workspace/xkey
+go mod download all
 echo "[entrypoint] Go modules downloaded."
+
+# Warm the build cache (compiled export data) for the full build graph with the
+# same tags wails uses. The wails binding generator loads packages with
+# golang.org/x/tools/go/packages in NeedTypes mode; against a COLD cache it
+# fails to obtain export data for the nested in-house generics module and aborts
+# with: internal error: package "github.com/jeremyhahn/go-qrdb/sdk/go" without
+# types was imported from ".../xkey/pkg/pcr_policy". Pre-building populates the
+# export data so the loader resolves types on the first pass.
+echo "[entrypoint] Warming Go build cache for wails binding generation..."
+go build -tags "ble production webkit2_41" ./... >/dev/null 2>&1 || true
+echo "[entrypoint] Build cache warmed."
 
 # ---------------------------------------------------------------------------
 # 6. Start wails dev server in background
 # ---------------------------------------------------------------------------
+# The wails CLI in this image is rebuilt against x/tools v0.45.0 (see Dockerfile),
+# which fixes the "package go-qrdb/sdk/go without types" binding-analysis abort,
+# so a plain `wails dev` works.
 echo "[entrypoint] Starting wails dev server..."
-GONOSUMCHECK='*' GONOSUMDB='*' wails dev -tags "ble,production,webkit2_41" &
+# Do NOT pass the `production` tag to `wails dev`: wails injects its own `dev`
+# build tag, and `production` would also compile wails' internal app_production.go,
+# colliding with app_dev.go (App.Run/CreateApp redeclared). xkey's GUI gate
+# (cmd/xkey/gui_enabled.go: //go:build production || dev || bindings) is satisfied
+# by the injected `dev` tag, so the GUI is still enabled.
+GONOSUMCHECK='*' GONOSUMDB='*' wails dev -tags "ble,codec_json,pkcs11,webkit2_41" &
 WAILS_PID=$!
 CLEANUP_PIDS+=("$WAILS_PID")
 
@@ -166,7 +258,22 @@ fi
 echo "[entrypoint] Running Playwright E2E tests..."
 cd /workspace/xkey/frontend
 TEST_EXIT=0
-npx playwright test || TEST_EXIT=$?
+# E2E_SPEC (optional) narrows the run to specific spec files for fast iteration,
+# e.g. `docker compose run -e E2E_SPEC="trust-store.spec.ts" e2e`. Empty = all.
+#
+# --workers=1: the real-backend harness drives ONE shared xkmsd backend (a
+# single-user desktop model — there is no per-session isolation, by design).
+# Parallel workers mutating that one backend race each other (e.g. one worker's
+# PIV slot-9A cleanup deleting a cert another worker is about to read). Serial
+# execution is the correct determinism guarantee for a shared single backend;
+# the fast Vite layout suite (window.go undefined, read-only) keeps 4 workers.
+#
+# --retries=2: tests run against a live `wails dev` server that recompiles and
+# GCs in the background; under a long serial sweep a single page.goto can stall
+# past navigationTimeout while the dev server is busy. Retries absorb that
+# environmental flake without masking real failures (a genuine bug fails all
+# attempts). Matches the playwright.config CI default.
+npx playwright test --workers=1 --retries=2 ${E2E_SPEC:-} || TEST_EXIT=$?
 
 # ---------------------------------------------------------------------------
 # 9. Report results

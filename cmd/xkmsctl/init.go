@@ -32,7 +32,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -600,7 +600,7 @@ func generateNoiseKeyPair() ([]byte, crypto.PrivateKey, error) {
 func newSPKIHTTPClient(pin string) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			TLSClientConfig: spki.NewPinnedTLSConfig(pin),
+			TLSClientConfig: xkmssdk.NewSPKIPinnedTLSConfig(pin),
 		},
 	}
 }
@@ -614,7 +614,7 @@ func newMTLSHTTPClient(certFile, keyFile, caFile string) (*http.Client, error) {
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	// Load CA certificate if provided

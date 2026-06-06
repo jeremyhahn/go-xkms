@@ -29,7 +29,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -174,7 +174,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				return pwErr
 			}
 			logger.Info("barrier not initialized, initializing with software strategy")
-			if err := barrierSvc.Initialize(password, string(seal.StrategySoftware)); err != nil {
+			if err := barrierSvc.Initialize(password, string(seal.StrategyPassphrase)); err != nil {
 				return fmt.Errorf("%w: %v", ErrServeBarrierUnsealFailed, err)
 			}
 		} else {
@@ -189,7 +189,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				slog.String("strategy", string(strategy)))
 
 			switch strategy {
-			case seal.StrategySoftware:
+			case seal.StrategyPassphrase:
 				// Software strategy: password required for Argon2id unseal.
 				password, pwErr := resolveBarrierPassword(cmd)
 				if pwErr != nil {
@@ -239,7 +239,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
 	}
-	hashConfig := pin.AutoDetectHashConfig()
+	hashConfig := qrdbsdk.AutoDetectHashConfig()
 	if epDir := config.ConfigDir(); epDir != "" && config.IsEnterpriseMode(epDir) {
 		ucfg, loadErr := config.Load()
 		if loadErr == nil && ucfg.Policy.PINMaxAttempts > 0 {
@@ -247,11 +247,11 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				"policy_max_attempts", ucfg.Policy.PINMaxAttempts)
 		}
 	}
-	pinBackend, err := pin.NewSoftwareBackend(fileStore, hashConfig)
+	pinBackend, err := qrdbsdk.NewSoftwareBackend(fileStore, hashConfig)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
 	}
-	pinBackendSvc := pin.NewService(pinBackend, logger)
+	pinBackendSvc := qrdbsdk.NewPINService(pinBackend, logger)
 	pinSvc.SetPINService(pinBackendSvc)
 
 	// Lock for startup if user PIN is set.

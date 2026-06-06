@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 )
 
@@ -67,7 +68,7 @@ func (m *mockHWCertStorage) GetCert(id string) (*x509.Certificate, error) {
 	defer m.mu.RUnlock()
 	cert, ok := m.certs[id]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, storage.ErrNotFound
 	}
 	return cert, nil
 }
@@ -76,7 +77,7 @@ func (m *mockHWCertStorage) DeleteCert(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.certs[id]; !ok {
-		return errors.New("not found")
+		return storage.ErrNotFound
 	}
 	delete(m.certs, id)
 	return nil

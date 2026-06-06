@@ -41,6 +41,14 @@ type CA interface {
 	// If profile and validityDays are both zero-values, CA defaults are used.
 	SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error)
 
+	// SignCSRWithSPIFFE signs a CSR and, when trustDomain and tenantID are
+	// both non-empty, synthesizes a tenant-scoped SPIFFE URI SAN of the form
+	// spiffe://<trustDomain>/tenant/<tenantID>/<kind>/<name> onto the issued
+	// certificate. kind defaults to "user" and name defaults to the subject
+	// CommonName when empty. When trustDomain or tenantID is empty this
+	// behaves exactly like SignCSRRaw.
+	SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error)
+
 	// IssueCertificateRaw issues a certificate using primitive parameter types.
 	// sans entries use prefix notation: "DNS:example.com", "IP:1.2.3.4".
 	// Returns certificate PEM, chain PEM, private key PEM, and hex serial.

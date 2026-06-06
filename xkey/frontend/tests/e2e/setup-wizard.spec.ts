@@ -16,10 +16,17 @@ import {
   getSecurityError,
   getFieldError,
   isWailsMode,
+  isRealWailsRuntime,
 } from './setup-helpers';
+
+const REAL_WAILS_SKIP_REASON =
+  'Setup wizard is a first-run-only flow; the mock cannot override the real Wails runtime ' +
+  'against an already-initialized backend — covered in the Vite UI suite (make playwright-test-vite).';
 
 test.describe('Setup Wizard - Navigation', () => {
   test.beforeEach(async ({ page }) => {
+    const realWails = await isRealWailsRuntime(page);
+    test.skip(realWails, REAL_WAILS_SKIP_REASON);
     await installWizardMock(page);
     await page.goto('/');
     await waitForSetupWizard(page);
@@ -92,6 +99,8 @@ test.describe('Setup Wizard - Navigation', () => {
 
 test.describe('Setup Wizard - Personal Mode PIN Validation', () => {
   test.beforeEach(async ({ page }) => {
+    const realWails = await isRealWailsRuntime(page);
+    test.skip(realWails, REAL_WAILS_SKIP_REASON);
     await installWizardMock(page);
     await page.goto('/');
     await waitForSetupWizard(page);
@@ -241,6 +250,8 @@ test.describe('Setup Wizard - Personal Mode PIN Validation', () => {
 
 test.describe('Setup Wizard - Password Store Mode Default', () => {
   test.beforeEach(async ({ page }) => {
+    const realWails = await isRealWailsRuntime(page);
+    test.skip(realWails, REAL_WAILS_SKIP_REASON);
     await installWizardMock(page);
     await page.goto('/');
     await waitForSetupWizard(page);
@@ -274,6 +285,8 @@ test.describe('Setup Wizard - Password Store Mode Default', () => {
 
 test.describe('Setup Wizard - Enterprise Mode SO PIN Confirm', () => {
   test.beforeEach(async ({ page }) => {
+    const realWails = await isRealWailsRuntime(page);
+    test.skip(realWails, REAL_WAILS_SKIP_REASON);
     await installWizardMock(page);
     await page.goto('/');
     await waitForSetupWizard(page);
@@ -334,6 +347,8 @@ test.describe('Setup Wizard - Enterprise Mode SO PIN Confirm', () => {
 
 test.describe('Setup Wizard - User Onboarding Flow', () => {
   test.beforeEach(async ({ page }) => {
+    const realWails = await isRealWailsRuntime(page);
+    test.skip(realWails, REAL_WAILS_SKIP_REASON);
     // Mock with enterprise_wizard_mode set to trigger onboarding flow
     await page.addInitScript(() => {
       (window as any).go = {

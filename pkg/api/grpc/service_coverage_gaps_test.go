@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -814,11 +814,11 @@ func TestResetLockout_NotConfiguredPath(t *testing.T) {
 
 // mockPINBackendWithLockout implements PINBackend with active lockout tracking.
 type mockPINBackendWithLockout struct {
-	pin.PINBackend
+	qrdbsdk.PINBackend
 }
 
-func (m *mockPINBackendWithLockout) GetLockoutStatus() *pin.LockoutStatus {
-	return &pin.LockoutStatus{
+func (m *mockPINBackendWithLockout) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
+	return &qrdbsdk.PINLockoutStatus{
 		FailedAttempts:  3,
 		MaxAttempts:     10,
 		IsLocked:        true,
@@ -3026,22 +3026,6 @@ func TestAuthzDeny_BarrierShamirMethods(t *testing.T) {
 		}},
 		{"BarrierUnsealShares", func() error {
 			_, err := svc.BarrierUnsealShares(ctx, &pb.BarrierUnsealSharesRequest{})
-			return err
-		}},
-		{"BarrierShamirListShares", func() error {
-			_, err := svc.BarrierShamirListShares(ctx, &emptypb.Empty{})
-			return err
-		}},
-		{"BarrierShamirDeleteShare", func() error {
-			_, err := svc.BarrierShamirDeleteShare(ctx, &pb.BarrierShamirDeleteShareRequest{Index: 1})
-			return err
-		}},
-		{"BarrierShamirDeleteAllShares", func() error {
-			_, err := svc.BarrierShamirDeleteAllShares(ctx, &emptypb.Empty{})
-			return err
-		}},
-		{"BarrierShamirVerify", func() error {
-			_, err := svc.BarrierShamirVerify(ctx, &emptypb.Empty{})
 			return err
 		}},
 		{"BarrierRekey", func() error {

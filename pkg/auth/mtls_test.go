@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,9 +37,13 @@ import (
 type mockUserStore struct {
 	user MTLSUser
 	err  error
+	// queriedFingerprint records the identifier the authenticator looked up,
+	// so tests can assert it is the canonical SPKI thumbprint.
+	queriedFingerprint string
 }
 
 func (m *mockUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (MTLSUser, error) {
+	m.queriedFingerprint = fingerprint
 	return m.user, m.err
 }
 
@@ -538,29 +543,35 @@ func TestMTLSAuthenticator_WithUserStore_NoRole(t *testing.T) {
 	assert.Empty(t, identity.Roles, "Roles should be empty when user has no role")
 }
 
-func TestComputeCertFingerprint(t *testing.T) {
+// TestMTLSAuthenticator_LooksUpBySPKIThumbprint verifies the cert-to-user lookup
+// uses qrdb's canonical SPKI thumbprint as the binding identifier, so xkms admin
+// mTLS bindings resolve consistently with qrdb and quicbaas.
+func TestMTLSAuthenticator_LooksUpBySPKIThumbprint(t *testing.T) {
 	ca, err := testutil.GenerateTestCA()
 	require.NoError(t, err)
 
-	clientCert, err := testutil.GenerateTestClientCert(ca, "fingerprint-test")
+	clientCert, err := testutil.GenerateTestClientCert(ca, "spki-lookup")
 	require.NoError(t, err)
 
-	fp := ComputeCertFingerprint(clientCert.Cert)
-	assert.NotEmpty(t, fp)
+	store := &mockUserStore{
+		user: MTLSUser{
+			Username: "spki-user",
+			Role:     "admin",
+			Enabled:  true,
+		},
+	}
 
-	// SHA-256 hex digest is always 64 characters
-	assert.Len(t, fp, 64)
+	a := NewMTLSAuthenticator(&MTLSConfig{UserStore: store})
 
-	// Same cert should produce same fingerprint (deterministic)
-	fp2 := ComputeCertFingerprint(clientCert.Cert)
-	assert.Equal(t, fp, fp2)
-
-	// Different cert should produce different fingerprint
-	clientCert2, err := testutil.GenerateTestClientCert(ca, "fingerprint-test-2")
+	identity, err := a.buildIdentity(context.Background(), clientCert.Cert)
 	require.NoError(t, err)
+	assert.Equal(t, "spki-user", identity.Subject)
 
-	fp3 := ComputeCertFingerprint(clientCert2.Cert)
-	assert.NotEqual(t, fp, fp3)
+	// The authenticator must have queried the store with the canonical SPKI
+	// thumbprint, not a full-cert SHA-256 fingerprint.
+	want := qrdbsdk.ComputeSPKIThumbprint(clientCert.Cert)
+	assert.Equal(t, want, store.queriedFingerprint)
+	assert.Equal(t, want, identity.Metadata["cert_fingerprint"])
 }
 
 func TestMTLSAuthenticator_WithUserStore_DisabledUser_GRPC(t *testing.T) {

@@ -128,10 +128,10 @@ func (m *mockSecureBrowserTrustStore) Metadata(_ string) (*truststore.CertMetada
 func (m *mockSecureBrowserTrustStore) SetPurpose(_ string, _ truststore.CertPurpose) error {
 	return nil
 }
-func (m *mockSecureBrowserTrustStore) SetSource(_ string, _ string) error       { return nil }
+func (m *mockSecureBrowserTrustStore) SetSource(_ string, _ string) error        { return nil }
 func (m *mockSecureBrowserTrustStore) SetSystemInstalled(_ string, _ bool) error { return nil }
-func (m *mockSecureBrowserTrustStore) SetTags(_ string, _ []string) error       { return nil }
-func (m *mockSecureBrowserTrustStore) Close() error                             { return nil }
+func (m *mockSecureBrowserTrustStore) SetTags(_ string, _ []string) error        { return nil }
+func (m *mockSecureBrowserTrustStore) Close() error                              { return nil }
 
 // newTestSecureBrowserService creates a SecureBrowserService with a mock
 // exec command for testing.
@@ -331,7 +331,7 @@ func TestChromeNSSDB(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify NSS database files exist.
-	nssdbDir := filepath.Join(baseDir, "chrome", "profile", "pki", "nssdb")
+	nssdbDir := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb")
 	_, err = os.Stat(filepath.Join(nssdbDir, "cert9.db"))
 	require.NoError(t, err)
 	_, err = os.Stat(filepath.Join(nssdbDir, "key4.db"))
@@ -539,25 +539,23 @@ func TestSyncIfChangedSkipsWhenUnchanged(t *testing.T) {
 	cert := testSecureBrowserCA(t, "Skip CA")
 	svc, baseDir := newTestSecureBrowserService(t, []*x509.Certificate{cert})
 
-	// Write the expected hash.
-	expectedHash := computeTrustHash([]*x509.Certificate{cert})
-	require.NoError(t, os.WriteFile(
-		filepath.Join(baseDir, trustHashFile),
-		[]byte(expectedHash),
-		0o600,
-	))
+	// The first sync establishes the trust hash AND the browser stores. (A skip
+	// requires BOTH: the hash matches and the stores are present — a matching
+	// hash with missing stores must still rebuild, which is why merely writing
+	// the hash is not enough to trigger a skip.)
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+	certDB := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb", "cert9.db")
+	require.FileExists(t, certDB, "nssdb cert DB should exist after first sync")
 
-	nssdbDir := filepath.Join(baseDir, "chrome", "profile", "pki", "nssdb")
-	_, statErr := os.Stat(nssdbDir)
-	assert.True(t, os.IsNotExist(statErr), "nssdb should not exist before sync")
+	// Mark the cert DB with a sentinel; a genuine skip leaves it untouched.
+	require.NoError(t, os.WriteFile(certDB, []byte("SENTINEL"), 0o600))
 
-	// syncIfChanged should be a no-op since hash matches.
-	err := svc.syncIfChanged("chrome", []*x509.Certificate{cert})
+	// A second sync with the same certs is a no-op (hash matches + stores
+	// present), so the cert DB is not rebuilt and the sentinel survives.
+	require.NoError(t, svc.syncIfChanged("chrome", []*x509.Certificate{cert}))
+	data, err := os.ReadFile(certDB)
 	require.NoError(t, err)
-
-	// nssdb should still not exist (sync was skipped).
-	_, statErr = os.Stat(nssdbDir)
-	assert.True(t, os.IsNotExist(statErr), "nssdb should not exist after skipped sync")
+	assert.Equal(t, []byte("SENTINEL"), data, "cert DB must not be rebuilt on an unchanged sync")
 }
 
 // TestSyncIfChangedTriggersOnNewHash verifies rebuild when hash differs.
@@ -576,7 +574,7 @@ func TestSyncIfChangedTriggersOnNewHash(t *testing.T) {
 	require.NoError(t, err)
 
 	// nssdb should now exist (sync was triggered).
-	nssdbDir := filepath.Join(baseDir, "chrome", "profile", "pki", "nssdb")
+	nssdbDir := filepath.Join(baseDir, "chrome", "profile", ".pki", "nssdb")
 	_, statErr := os.Stat(nssdbDir)
 	assert.NoError(t, statErr, "nssdb should exist after triggered sync")
 }
@@ -654,10 +652,14 @@ func TestBuildLaunchArgsChromeIsolated(t *testing.T) {
 
 	args, env, err := svc.buildLaunchArgs("chrome", ProfileModeIsolated, "/usr/bin/google-chrome", "https://example.com")
 	require.NoError(t, err)
-	assert.Empty(t, env)
+	// Isolated mode redirects HOME to the profile dir (so Chrome reads the
+	// in-profile NSS trust DB) and appends first-run-suppression flags; the URL
+	// is therefore the final argument, not a fixed index.
+	profileDir := filepath.Join(baseDir, "chrome", "profile")
+	assert.Contains(t, env, "HOME="+profileDir)
 	assert.Equal(t, "/usr/bin/google-chrome", args[0])
-	assert.Contains(t, args[1], "--user-data-dir="+filepath.Join(baseDir, "chrome", "profile"))
-	assert.Equal(t, "https://example.com", args[2])
+	assert.Contains(t, args[1], "--user-data-dir="+profileDir)
+	assert.Equal(t, "https://example.com", args[len(args)-1])
 }
 
 // TestBuildLaunchArgsChromeShared verifies Chrome shared launch args.

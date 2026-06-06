@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
@@ -85,14 +85,14 @@ func TestWebAuthnFactorVerifier_NilFactor(t *testing.T) {
 func TestWebAuthnFactorVerifier_RevokedFactor(t *testing.T) {
 	v := newStubVerifier(t)
 	now := time.Now().UTC()
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:        "f1",
 		UserID:    1,
-		Type:      qrdbauth.AuthFactorFIDO2,
+		Type:      qrdbsdk.AuthFactorFIDO2,
 		RevokedAt: &now,
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{})
-	var fre *qrdbauth.FactorRevokedError
+	var fre *qrdbsdk.FactorRevokedError
 	if !errors.As(err, &fre) {
 		t.Fatalf("expected *FactorRevokedError, got %T (%v)", err, err)
 	}
@@ -100,13 +100,13 @@ func TestWebAuthnFactorVerifier_RevokedFactor(t *testing.T) {
 
 func TestWebAuthnFactorVerifier_WrongType(t *testing.T) {
 	v := newStubVerifier(t)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:     "f1",
 		UserID: 1,
-		Type:   qrdbauth.AuthFactorMTLS, // wrong type
+		Type:   qrdbsdk.AuthFactorMTLS, // wrong type
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{})
-	var ftue *qrdbauth.FactorTypeUnsupportedError
+	var ftue *qrdbsdk.FactorTypeUnsupportedError
 	if !errors.As(err, &ftue) {
 		t.Fatalf("expected *FactorTypeUnsupportedError, got %T (%v)", err, err)
 	}
@@ -114,10 +114,10 @@ func TestWebAuthnFactorVerifier_WrongType(t *testing.T) {
 
 func TestWebAuthnFactorVerifier_MissingSessionID(t *testing.T) {
 	v := newStubVerifier(t)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f1",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorFIDO2,
+		Type:       qrdbsdk.AuthFactorFIDO2,
 		Credential: []byte("credential-id"),
 	}
 	// No method metadata at all — the verifier surfaces a typed error.
@@ -132,10 +132,10 @@ func TestWebAuthnFactorVerifier_MissingSessionID(t *testing.T) {
 
 func TestWebAuthnFactorVerifier_CredentialMismatch(t *testing.T) {
 	v := newStubVerifier(t)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f1",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorFIDO2,
+		Type:       qrdbsdk.AuthFactorFIDO2,
 		Credential: []byte("real-credential-id"),
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{
@@ -151,16 +151,16 @@ func TestWebAuthnFactorVerifier_CredentialMismatch(t *testing.T) {
 	}
 }
 
-// TestWebAuthnFactorVerifier_VerifyNotSupported confirms the documented
-// architectural decision: WebAuthn assertion verification flows through
-// the xkms HTTP handler path, not through the qrdb FactorClient.Verify
-// entry point.
-func TestWebAuthnFactorVerifier_VerifyNotSupported(t *testing.T) {
+// TestWebAuthnFactorVerifier_VerifyRequiresAssertion confirms that the unified
+// qrdb login path verifies the WebAuthn assertion: a challenge that carries a
+// session id but NO assertion is rejected (the verifier no longer punts to the
+// HTTP handler — it performs the verification itself via webauthn.Service).
+func TestWebAuthnFactorVerifier_VerifyRequiresAssertion(t *testing.T) {
 	v := newStubVerifier(t)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f1",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorFIDO2,
+		Type:       qrdbsdk.AuthFactorFIDO2,
 		Credential: []byte("cred"),
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{
@@ -170,12 +170,11 @@ func TestWebAuthnFactorVerifier_VerifyNotSupported(t *testing.T) {
 			"session_id":    "abc",
 		},
 	})
-	var vnse *VerifyNotSupportedError
-	if !errors.As(err, &vnse) {
-		t.Fatalf("expected *VerifyNotSupportedError, got %T (%v)", err, err)
+	var mme *MissingMethodMetadataError
+	if !errors.As(err, &mme) {
+		t.Fatalf("expected *MissingMethodMetadataError, got %T (%v)", err, err)
 	}
-	// The sentinel-like Is() match should also succeed.
-	if !errors.Is(err, errBadChallenge) {
-		t.Fatalf("expected errors.Is(err, errBadChallenge) to be true")
+	if mme.Field != "assertion" {
+		t.Fatalf("expected missing field %q, got %q", "assertion", mme.Field)
 	}
 }

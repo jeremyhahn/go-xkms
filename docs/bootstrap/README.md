@@ -1,10 +1,20 @@
 # Bootstrap Architecture
 
-go-xkms implements a secure bootstrap workflow for establishing trust between clients and servers without pre-existing PKI infrastructure.
+go-xkms implements a secure bootstrap workflow for establishing trust
+between clients and servers without pre-existing PKI infrastructure.
+
+> The mode-dispatch logic that backs every CLI command and SDK accessor
+> on this page lives in **one** canonical library:
+> `pkg/trust/bootstrap`. See [trust/bootstrap.md](../trust/bootstrap.md)
+> for the library surface (`Mode` enum, `Fetch`, `DeriveNoiseAddr`),
+> the typed config shape, and the four consumers that route through it
+> (`xkmsctl`, xkey GUI, QuicBaaS SDK, go-trusted-platform via the SDK).
 
 ## Trust Bootstrapping Methods
 
-Three methods are available, tried in priority order by `xkmsctl bootstrap auto`:
+Four methods are available, tried in priority order by
+`xkmsctl bootstrap auto`. Each maps directly to a `bootstrap.Mode` value
+in the canonical library.
 
 ### 1. DANE (DNS-Based Authentication of Named Entities)
 
@@ -32,9 +42,22 @@ Uses the SHA-256 hash of the server's Subject Public Key Info for certificate pi
 xkey auth register --server https://kms.example.com:8443 --spki-pin e5f6a7b8...
 ```
 
+### 4. Direct HTTPS (Fallback)
+
+Last-resort fallback using the system's default trust store. Requires the
+server to already have a publicly-trusted (or OS-installed) certificate.
+Enable with `--direct` so it participates in `ModeAuto`.
+
+```bash
+xkmsctl bootstrap auto --server-url https://kms.example.com:8443 --direct \
+  --bundle-output /etc/xkms/ca-bundle.pem
+```
+
 ## Auto-Bootstrap Flow
 
-The `bootstrap auto` command tries configured methods in priority order (DANE, Noise, SPKI). The first method that succeeds writes the CA bundle.
+The `bootstrap auto` command tries configured methods in priority order
+(DANE, Noise, SPKI, Direct). The first method that succeeds writes the CA
+bundle.
 
 ```bash
 xkmsctl bootstrap auto --server-url https://kms.example.com:8443 \

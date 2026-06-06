@@ -330,25 +330,25 @@ func TestNewFromEnvErrorPathsRoute53(t *testing.T) {
 	ctx := context.Background()
 
 	clearEnv := func() {
-		os.Unsetenv(envAWSAccessKeyID)
-		os.Unsetenv(envAWSSecretAccessKey)
-		os.Unsetenv(envAWSHostedZoneID)
-		os.Unsetenv(envAWSRegion)
-		os.Unsetenv(envAWSPropagationTimeout)
-		os.Unsetenv(envAWSPollingInterval)
-		os.Unsetenv(envAWSTTL)
-		os.Unsetenv(envRoute53PropagationTimeout)
-		os.Unsetenv(envRoute53PollingInterval)
-		os.Unsetenv(envRoute53TTL)
-		os.Unsetenv(envAWSAccessKeyID + "_FILE")
-		os.Unsetenv(envAWSSecretAccessKey + "_FILE")
+		_ = os.Unsetenv(envAWSAccessKeyID)
+		_ = os.Unsetenv(envAWSSecretAccessKey)
+		_ = os.Unsetenv(envAWSHostedZoneID)
+		_ = os.Unsetenv(envAWSRegion)
+		_ = os.Unsetenv(envAWSPropagationTimeout)
+		_ = os.Unsetenv(envAWSPollingInterval)
+		_ = os.Unsetenv(envAWSTTL)
+		_ = os.Unsetenv(envRoute53PropagationTimeout)
+		_ = os.Unsetenv(envRoute53PollingInterval)
+		_ = os.Unsetenv(envRoute53TTL)
+		_ = os.Unsetenv(envAWSAccessKeyID + "_FILE")
+		_ = os.Unsetenv(envAWSSecretAccessKey + "_FILE")
 	}
 
 	t.Run("returns error when access key file does not exist", func(t *testing.T) {
 		clearEnv()
 		defer clearEnv()
 
-		os.Setenv(envAWSAccessKeyID+"_FILE", "/nonexistent/path/to/access-key")
+		_ = os.Setenv(envAWSAccessKeyID+"_FILE", "/nonexistent/path/to/access-key")
 
 		_, err := NewFromEnv(ctx)
 		require.Error(t, err)
@@ -359,11 +359,11 @@ func TestNewFromEnvErrorPathsRoute53(t *testing.T) {
 		clearEnv()
 		defer clearEnv()
 
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Setenv(envRoute53TTL, "0") // Zero should fall back to AWS_TTL or default
-		os.Setenv(envAWSTTL, "600")
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Setenv(envRoute53TTL, "0") // Zero should fall back to AWS_TTL or default
+		_ = os.Setenv(envAWSTTL, "600")
 
 		provider, err := NewFromEnv(ctx)
 		require.NoError(t, err)
@@ -374,11 +374,11 @@ func TestNewFromEnvErrorPathsRoute53(t *testing.T) {
 		clearEnv()
 		defer clearEnv()
 
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Setenv(envRoute53PollingInterval, "0s") // Zero should fall back to AWS value
-		os.Setenv(envAWSPollingInterval, "5s")
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Setenv(envRoute53PollingInterval, "0s") // Zero should fall back to AWS value
+		_ = os.Setenv(envAWSPollingInterval, "5s")
 
 		provider, err := NewFromEnv(ctx)
 		require.NoError(t, err)

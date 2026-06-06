@@ -50,6 +50,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
+# PKCS#11 / PIV simulation (SoftHSM2 + OpenSC tools + openssl)
+# Required by test/e2e/setup-softhsm-piv.sh, which provisions a PIV token at
+# /usr/lib/softhsm/libsofthsm2.so so the PIV-via-PKCS#11 GUI workflows run.
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    softhsm2 \
+    opensc \
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
 # Virtual display + image manipulation (headless GUI rendering)
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -77,9 +88,18 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
 RUN npx playwright install --with-deps chromium
 
 # ---------------------------------------------------------------------------
-# Wails CLI (needed for `wails dev`)
-# ---------------------------------------------------------------------------
-RUN go install github.com/wailsapp/wails/v2/cmd/wails@latest
+# Wails CLI (needed for `wails dev`), rebuilt against a newer golang.org/x/tools.
+# wails v2.12.0 pins x/tools v0.30.0, whose go/packages type-checker aborts with
+# `internal error: package "github.com/jeremyhahn/go-qrdb/sdk/go" without types`
+# when the bound type graph transitively reaches go-qrdb/sdk/go's generic DAO
+# types (e.g. via xkey/pkg/pcr_policy). Bumping x/tools to v0.45.0 fixes the
+# binding analysis so `wails dev` starts. The app's linked wails lib is unchanged.
+RUN mkdir -p /tmp/wails-cli && cd /tmp/wails-cli && \
+    GOFLAGS=-mod=mod GOWORK=off go mod init wailscli && \
+    GOFLAGS=-mod=mod GOWORK=off go get github.com/wailsapp/wails/v2@v2.12.0 && \
+    GOFLAGS=-mod=mod GOWORK=off go get golang.org/x/tools@v0.45.0 && \
+    GOFLAGS=-mod=mod GOWORK=off go build -o /usr/local/bin/wails github.com/wailsapp/wails/v2/cmd/wails && \
+    cd / && rm -rf /tmp/wails-cli && wails version
 
 # ---------------------------------------------------------------------------
 # Container setup

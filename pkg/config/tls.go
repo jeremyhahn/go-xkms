@@ -33,12 +33,12 @@ func (cfg *TLSConfig) LoadTLSConfig() (*tls.Config, error) {
 	}
 
 	// Determine minimum TLS version
-	minVersion := uint16(tls.VersionTLS12) // Default to TLS 1.2
+	minVersion := uint16(tls.VersionTLS13) // Default to TLS 1.3
 	if cfg.MinVersion != "" {
 		minVersion = parseTLSVersion(cfg.MinVersion)
 	}
 
-	// #nosec G402 - MinVersion is set via variable with TLS 1.2 default, gosec cannot detect this pattern
+	// #nosec G402 - MinVersion is set via variable with TLS 1.3 default, gosec cannot detect this pattern
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   minVersion,
@@ -80,19 +80,17 @@ func (cfg *TLSConfig) LoadTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// parseTLSVersion converts a string to a tls version constant
+// parseTLSVersion converts a string to a tls version constant.
+// TLS 1.0 and 1.1 are not supported — unknown or insecure values fall
+// through to the TLS 1.3 default.
 func parseTLSVersion(version string) uint16 {
 	switch version {
-	case "TLS1.0":
-		return tls.VersionTLS10
-	case "TLS1.1":
-		return tls.VersionTLS11
 	case "TLS1.2":
 		return tls.VersionTLS12
 	case "TLS1.3":
 		return tls.VersionTLS13
 	default:
-		return tls.VersionTLS12 // Default
+		return tls.VersionTLS13 // Default
 	}
 }
 

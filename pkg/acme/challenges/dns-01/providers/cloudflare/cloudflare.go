@@ -572,7 +572,7 @@ func (p *Provider) makeRequest(ctx context.Context, method, uri string, body io.
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var apiResp apiResponse
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodySize)).Decode(&apiResp); err != nil {

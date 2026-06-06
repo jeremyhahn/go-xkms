@@ -1,6 +1,44 @@
 # Bootstrap Authentication
 
-The `pkg/bootstrap` package manages first-time server initialization with a secure state machine, one-time setup tokens, and optional M-of-N threshold ceremony for multi-admin deployments.
+The IAM half of bootstrap — system tenant creation, admin user creation,
+admin certificate issuance, role/permission seeding — runs inside the
+**embedded qrdb node** that xkms hosts in-process as its single datastore.
+xkms always embeds qrdb (never dials a remote one), so first-boot is a direct
+call into the embedded engine's first-boot path; there is no separate xkms
+`pkg/bootstrap` overlay package (it was removed). xkms contributes only the
+hardware/identity-specific concerns: setup tokens, the FIDO2/WebAuthn
+attestation binding for the first admin, and the M-of-N ceremony for
+multi-admin deployments. The user, role, and certificate records it creates
+live on the embedded qrdb node — the single source of identity that xkms then
+exposes as its **own** users over every transport.
+
+There is exactly one user/tenant/role creation path in the entire stack
+(qrdb's), and every binary that embeds the stack — xkms, quicbaas,
+trusted-platform — composes it. xkms does not duplicate that work.
+
+## Layering
+
+```
+                  +-------------------------------------+
+                  | xkms server (init/credential svc)   |
+                  | - setup token issuance + TTL        |
+                  | - FIDO2/WebAuthn attestation binding |
+                  | - M-of-N ceremony                   |
+                  +------------------+------------------+
+                                     |
+                                     v
+                  +-------------------------------------+
+                  | embedded qrdb node (first-boot)     |
+                  | - system tenant                     |
+                  | - admin user                        |
+                  | - admin certificate                 |
+                  | - role/permission seeding           |
+                  +-------------------------------------+
+```
+
+The xkms server surfaces the FIDO2/WebAuthn attestation hook and the
+invitation flow; tenant/user/role/cert creation is delegated to the embedded
+qrdb node.
 
 ## Server Startup Sequence
 
@@ -9,11 +47,11 @@ Bootstrap initializes as part of the server startup in `pkg/server/server.go`. T
 ```
  1. Backends         (software, PKCS#11, TPM2, cloud KMS, etc.)
  2. KeyStore         (per-backend key storage)
- 3. UserStore        (prerequisite for bootstrap -- stores admin accounts)
+ 3. Embedded qrdb    (in-process datastore + identity store; holds admin accounts)
  4. Authentication   (JWT, mTLS, adaptive auth)
  5. Authorization    (RBAC)
  6. AuditLogger      (structured audit trail)
- 7. Barrier          (AES-256-GCM at-rest encryption)
+ 7. Barrier          (AES-256-GCM at-rest encryption over the embedded node KV)
  8. BarrierRegistry  (multi-tenant barrier isolation)
  9. Bootstrap        <-- HERE
 10. PIN Manager      (SO PIN + User PIN)
@@ -23,7 +61,9 @@ Bootstrap initializes as part of the server startup in `pkg/server/server.go`. T
 14. Health           (health checks for all subsystems)
 ```
 
-On startup, `NewService` checks `userStore.HasAnyUsers()`. If users already exist, the state is set to `complete` immediately -- the system has already been initialized.
+On startup, the bootstrap check queries the embedded qrdb node for existing
+users. If any exist, the state is set to `complete` immediately -- the system
+has already been initialized.
 
 ## State Machine
 
@@ -82,12 +122,20 @@ On startup, `NewService` checks `userStore.HasAnyUsers()`. If users already exis
 
 ## Atomic Initialization
 
-`Initialize` is all-or-nothing:
+`Initialize` is all-or-nothing and delegates the heavy lifting to the
+embedded qrdb node's first-boot path. xkms only contributes the
+FIDO2/WebAuthn attestation hook and the setup-token bookkeeping:
+
 1. Validate state is `ready`
 2. Validate setup token (fail fast before side effects)
-3. Create admin user in user store
-4. If user creation fails, token is NOT consumed (retry safe)
-5. On success: consume token, transition to `complete` (or `ceremony` for threshold)
+3. Drive the embedded qrdb node's first-boot with the canonical params
+   (system tenant, admin username, admin role) and the FIDO2/WebAuthn
+   attestation hook
+4. The embedded node creates the admin user and admin certificate
+   atomically; if any step fails the function returns without mutating state
+   and the setup token is NOT consumed (retry safe)
+5. On success: consume token, transition to `complete` (or `ceremony` for
+   threshold)
 
 ## FIDO2 Integration
 
@@ -100,6 +148,15 @@ The `InitRequest.FIDO2Attestation` field carries a WebAuthn attestation response
 5. The FIDO2 credential is associated with the user account
 
 This binds the first admin account to a hardware security key, ensuring strong authentication from the very first operation.
+
+Both halves of the WebAuthn ceremony are wired end-to-end over the xkms SDK,
+not just registration: the SDK `XKMSService` drives `pkg/webauthn`'s relying-party
+service, which persists/loads credentials on the embedded qrdb node, while
+`pkg/fido2` emits attestations during enrollment and consumes assertions during
+login. Authentication (the login assertion ceremony) resolves the user from the
+qrdb-backed credential store and is integration-tested against xkey's virtual
+authenticator (`test/integration/fido2/{registration,authentication}_ceremony_test.go`),
+with a YubiKey-gated hardware path enabled by `XKMS_FIDO2_HARDWARE=1`.
 
 ## REST API
 
@@ -215,7 +272,7 @@ Validation: if `threshold_mode` is true, then `admin_threshold > 0` and `admin_t
 
 | Method | Description |
 |--------|-------------|
-| `NewService(config, userStore, logger)` | Creates bootstrap service |
+| `NewService(config, qrdbClient, logger)` | Creates bootstrap service backed by the embedded qrdb node |
 | `State()` | Returns current state |
 | `IsInitialized()` | Returns true if complete |
 | `GenerateSetupToken()` | Generates one-time token (uninitialized state only) |
@@ -255,6 +312,8 @@ Validation: if `threshold_mode` is true, then `admin_threshold > 0` and `admin_t
 ## Cross-References
 
 - [Initialization Guide](../usage/initialization.md) -- step-by-step CLI initialization
+- [Init System](../init/README.md) -- the KMS+CA half of the bootstrap state machine (this page is the IAM half)
 - [Barrier Architecture](../seal/README.md) -- at-rest encryption design
 - [MFA Policy Engine](mfa-policy.md) -- operation-level MFA requirements
 - [Bootstrap CA Configuration](../configuration/bootstrap.md) -- CA bundle bootstrap (separate from init bootstrap)
+- [Trust Bootstrap Library](../trust/bootstrap.md) -- the client-side library that fetches the CA bundle produced here

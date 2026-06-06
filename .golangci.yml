@@ -1,0 +1,21 @@
+# golangci-lint v2 configuration for go-xkms.
+#
+# Enables the standard linter set (errcheck, govet, ineffassign, staticcheck,
+# unused) — identical to golangci-lint's zero-config default — and adds one
+# scoped exclusion: errcheck is not enforced inside _test.go files.
+#
+# Rationale: the overwhelming majority of errcheck findings in tests are
+# unactionable cleanup/setup calls (Close, Setenv/Unsetenv, Write, Encode) whose
+# failure cannot meaningfully change a test outcome. errcheck stays strict for
+# all production code, where unchecked errors are a real defect.
+version: "2"
+
+linters:
+  default: standard
+  exclusions:
+    generated: lax
+    rules:
+      # Test files: cleanup/setup error returns are unactionable noise.
+      - path: _test\.go
+        linters:
+          - errcheck

@@ -27,22 +27,42 @@ var _ SealingStrategy = (*PKCS11Strategy)(nil)
 // PKCS11Strategy wraps an existing types.Sealer that uses a PKCS#11 HSM
 // token for root key protection.
 //
+// The PKCS#11 backend sealer requires a non-nil *types.SealOptions whose
+// KeyAttributes identify the HSM-resident symmetric key (CKA_LABEL / CKA_ID)
+// used to wrap the root key. PKCS11Strategy carries that sealing-key identity
+// and passes it through on both Seal and Unseal; without it the backend
+// rejects the request.
+//
 // When an optional types.SymmetricEncrypter is provided, barrier data
 // operations use hardware-backed symmetric encryption where keys never
 // leave the HSM. Without it, a software DEK is derived from the root key
 // as fallback.
 type PKCS11Strategy struct {
 	sealer    types.Sealer
+	keyAttrs  *types.KeyAttributes
 	encryptor types.SymmetricEncrypter
 }
 
 // NewPKCS11Strategy creates a PKCS11Strategy backed by the given sealer and
-// an optional hardware encryptor. The sealer may be nil; in that case,
-// Available() returns false. The encryptor may be nil; in that case,
-// BarrierEncryptor falls back to software-derived DEK encryption.
-func NewPKCS11Strategy(sealer types.Sealer, encryptor types.SymmetricEncrypter) *PKCS11Strategy {
+// an optional hardware encryptor.
+//
+// The sealer may be nil; in that case, Available() returns false.
+//
+// keyAttrs identifies the HSM-resident symmetric key used to seal and unseal
+// the root key. It is required by the PKCS#11 backend sealer; when nil,
+// SealRootKey and UnsealRootKey return ErrNoSealingKey rather than delegating
+// to a backend that would reject the request.
+//
+// The encryptor may be nil; in that case, BarrierEncryptor falls back to
+// software-derived DEK encryption.
+func NewPKCS11Strategy(
+	sealer types.Sealer,
+	keyAttrs *types.KeyAttributes,
+	encryptor types.SymmetricEncrypter,
+) *PKCS11Strategy {
 	return &PKCS11Strategy{
 		sealer:    sealer,
+		keyAttrs:  keyAttrs,
 		encryptor: encryptor,
 	}
 }
@@ -63,7 +83,9 @@ func (p *PKCS11Strategy) HardwareBacked() bool {
 }
 
 // SealRootKey delegates to the underlying types.Sealer and stores the
-// sealed payload as JSON in SealedRootKey.HardwarePayload.
+// sealed payload as JSON in SealedRootKey.HardwarePayload. The configured
+// sealing-key identity is passed through via SealOptions.KeyAttributes,
+// which the PKCS#11 backend requires.
 func (p *PKCS11Strategy) SealRootKey(
 	ctx context.Context,
 	rootKey []byte,
@@ -72,7 +94,13 @@ func (p *PKCS11Strategy) SealRootKey(
 	if p.sealer == nil {
 		return nil, ErrNoAvailableStrategy
 	}
-	sealed, err := p.sealer.Seal(ctx, rootKey, nil)
+	if p.keyAttrs == nil {
+		return nil, ErrNoSealingKey
+	}
+
+	sealed, err := p.sealer.Seal(ctx, rootKey, &types.SealOptions{
+		KeyAttributes: p.keyAttrs,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +119,9 @@ func (p *PKCS11Strategy) SealRootKey(
 }
 
 // UnsealRootKey deserializes the HardwarePayload into a types.SealedData
-// and delegates to the underlying types.Sealer.
+// and delegates to the underlying types.Sealer. The configured sealing-key
+// identity is passed through via UnsealOptions.KeyAttributes, which the
+// PKCS#11 backend requires.
 func (p *PKCS11Strategy) UnsealRootKey(
 	ctx context.Context,
 	sealed *SealedRootKey,
@@ -106,20 +136,25 @@ func (p *PKCS11Strategy) UnsealRootKey(
 	if p.sealer == nil {
 		return nil, ErrNoAvailableStrategy
 	}
+	if p.keyAttrs == nil {
+		return nil, ErrNoSealingKey
+	}
 
 	var sd types.SealedData
 	if err := json.Unmarshal(sealed.HardwarePayload, &sd); err != nil {
 		return nil, ErrCorruptRootKey
 	}
 
-	return p.sealer.Unseal(ctx, &sd, nil)
+	return p.sealer.Unseal(ctx, &sd, &types.UnsealOptions{
+		KeyAttributes: p.keyAttrs,
+	})
 }
 
 // BarrierEncryptor returns a SymmetricEncrypter for barrier data operations.
 // If a hardware encryptor was provided at construction time, it is wrapped
-// via hardwareEncryptorWrapper (keys never leave the HSM). Otherwise, a
-// software encryptor is derived from the root key using HKDF-SHA256 +
-// AES-256-GCM.
+// via hardwareEncryptorWrapper (keys never leave the HSM). Otherwise it
+// returns (nil, nil): the barrier manages its own epoch-based HKDF DEK —
+// the software-derivation path now lives in qrdb's barrier, not here.
 func (p *PKCS11Strategy) BarrierEncryptor(ctx context.Context, rootKey []byte) (SymmetricEncrypter, error) {
 	if p.encryptor != nil {
 		return &hardwareEncryptorWrapper{inner: p.encryptor}, nil

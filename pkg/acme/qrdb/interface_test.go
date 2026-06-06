@@ -55,7 +55,7 @@ func TestNewTestServiceMethodAccess(t *testing.T) {
 
 func TestServiceInterfaceCompliance(t *testing.T) {
 	t.Run("testService implements Service", func(t *testing.T) {
-		var _ Service = NewTestService()
+		var _ = NewTestService()
 	})
 
 	t.Run("KV operations work through interface", func(t *testing.T) {

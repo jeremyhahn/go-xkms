@@ -31,12 +31,12 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/ca"
-	caFixtures "github.com/jeremyhahn/go-xkms/test/integration/acme-ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	caFixtures "github.com/jeremyhahn/go-xkms/test/integration/acme-ca"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

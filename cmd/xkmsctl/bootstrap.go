@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
-	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
 )
 
 // bootstrapCmd represents the bootstrap parent command group
@@ -82,9 +82,10 @@ type autoBootstrapParams struct {
 	bundleOutput  string
 }
 
-// runAutoBootstrap delegates to truststrap.AutoFetch, which tries each
-// configured bootstrap method in DefaultMethodOrder (DANE, Noise, SPKI,
-// Direct) and returns the first successful result.
+// runAutoBootstrap dispatches via the canonical
+// xkms/pkg/trust/bootstrap library, which wraps go-truststrap's
+// AutoBootstrapper and tries each configured method in
+// DefaultMethodOrder (DANE, Noise, SPKI, Direct) until one succeeds.
 func runAutoBootstrap(params *autoBootstrapParams) error {
 	if params.serverURL == "" {
 		return ErrBootstrapServerURLRequired
@@ -98,63 +99,53 @@ func runAutoBootstrap(params *autoBootstrapParams) error {
 	printVerbose("Auto-bootstrap from: %s", params.serverURL)
 
 	ctx := context.Background()
-	resp, err := truststrap.AutoFetch(ctx, cfg)
+	bundle, err := bootstrap.Fetch(ctx, *cfg)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrAllBootstrapMethodsFailed, err)
 	}
 
-	printVerbose("Bootstrap succeeded (%d bytes)", len(resp.BundlePEM))
-	return writeCABundle(resp.BundlePEM, params.bundleOutput)
+	printVerbose("Bootstrap succeeded (%d bytes)", len(bundle.PEM))
+	return writeCABundle(bundle.PEM, params.bundleOutput)
 }
 
-// buildAutoConfig maps CLI flags to a truststrap.AutoConfig. Returns nil
-// if no methods are configured.
-func buildAutoConfig(params *autoBootstrapParams) *truststrap.AutoConfig {
+// buildAutoConfig maps CLI flags to a bootstrap.Config. Returns nil if
+// no methods are configured.
+func buildAutoConfig(params *autoBootstrapParams) *bootstrap.Config {
 	logger := bootstrapLogger()
-	cfg := &truststrap.AutoConfig{
-		Logger: logger,
+	cfg := &bootstrap.Config{
+		Mode:       bootstrap.ModeAuto,
+		ServerURL:  params.serverURL,
+		BundlePath: params.bundlePath,
+		Logger:     logger,
 	}
 
 	hasMethod := false
 
 	if params.daneHostname != "" {
-		cfg.DANE = &truststrap.DANEConfig{
-			ServerURL: params.serverURL,
+		cfg.DANE = &bootstrap.DANEConfig{
 			Hostname:  params.daneHostname,
 			DNSServer: params.daneDNSServer,
-			Logger:    logger,
 		}
 		hasMethod = true
 	}
 
 	if params.noiseKey != "" {
-		noiseAddr := params.noiseAddr
-		if noiseAddr == "" {
-			noiseAddr = deriveNoiseAddr(params.serverURL)
-		}
-		cfg.Noise = &truststrap.NoiseConfig{
-			ServerAddr:      noiseAddr,
+		cfg.Noise = &bootstrap.NoiseConfig{
+			ServerAddr:      params.noiseAddr,
 			ServerStaticKey: params.noiseKey,
-			Logger:          logger,
 		}
 		hasMethod = true
 	}
 
 	if params.spkiPin != "" {
-		cfg.SPKI = &truststrap.SPKIConfig{
-			ServerURL:     params.serverURL,
-			SPKIPinSHA256: params.spkiPin,
-			Logger:        logger,
+		cfg.SPKI = &bootstrap.SPKIConfig{
+			Pin: params.spkiPin,
 		}
 		hasMethod = true
 	}
 
 	if params.directEnabled {
-		cfg.Direct = &truststrap.DirectConfig{
-			ServerURL:  params.serverURL,
-			BundlePath: params.bundlePath,
-			Logger:     logger,
-		}
+		cfg.Direct = &bootstrap.DirectConfig{}
 		hasMethod = true
 	}
 
@@ -182,26 +173,6 @@ func writeCABundle(bundlePEM []byte, outputPath string) error {
 
 	fmt.Printf("CA bundle written to %s\n", outputPath)
 	return nil
-}
-
-// deriveNoiseAddr extracts host from a URL and appends the default Noise
-// bootstrap port (8445). For example, "https://kms.example.com:8443"
-// becomes "kms.example.com:8445".
-func deriveNoiseAddr(serverURL string) string {
-	// Strip the scheme prefix.
-	addr := serverURL
-	if idx := strings.Index(addr, "://"); idx >= 0 {
-		addr = addr[idx+3:]
-	}
-	// Strip any path.
-	if idx := strings.Index(addr, "/"); idx >= 0 {
-		addr = addr[:idx]
-	}
-	// Replace the port with the default Noise port (8445).
-	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
-		addr = addr[:idx]
-	}
-	return addr + ":8445"
 }
 
 // bootstrapLogger returns a slog.Logger configured for bootstrap operations.

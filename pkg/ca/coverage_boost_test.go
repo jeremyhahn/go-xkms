@@ -16,11 +16,9 @@ package ca
 import (
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -88,13 +86,6 @@ func setupTestCAWithRealIntermediate(t *testing.T) *CA {
 	err = ca.Init()
 	require.NoError(t, err)
 	return ca
-}
-
-// setupTestCAFlat creates a CA via NewFromMultiIdentityConfig (single identity).
-// This is used for TLS tests that need an initialized CA with cert issuance.
-func setupTestCAFlat(t *testing.T) *CA {
-	t.Helper()
-	return setupTestCA(t) // reuse existing helper
 }
 
 func TestCA_CreateIntermediateCertificates_Success(t *testing.T) {
@@ -486,229 +477,6 @@ func TestSignatureAlgorithmToName_AllAlgorithms(t *testing.T) {
 	}
 }
 
-// TLS Success Path Tests are covered by integration tests that use a fully
-// initialized CA with proper cert storage wiring (see test/integration/api/).
-
-func testTLSKeyAttrs(cn string) *types.KeyAttributes {
-	return &types.KeyAttributes{
-		CN:            cn,
-		StoreType:     types.StoreSoftware,
-		KeyType:       types.KeyTypeTLS,
-		KeyAlgorithm:  x509.ECDSA,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-	}
-}
-
-// TestCA_TLSCertificate_NotInitialized is retained — tests the not-initialized guard.
-func _skipTestCA_TLSCertificate_Success(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "tls-test.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"tls-test.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	attrs := testTLSKeyAttrs("tls-test.example.com")
-	tlsCert, err := ca.TLSCertificate(attrs)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tlsCert.Certificate)
-}
-
-func _skipTestCA_TLSConfigWithOptions_ServerConfig(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "server-config.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"server-config.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	attrs := testTLSKeyAttrs("server-config.example.com")
-	opts := &TLSConfigOptions{IsServer: true, RequireClientCert: true}
-
-	tlsConfig, err := ca.TLSConfigWithOptions(attrs, opts)
-	require.NoError(t, err)
-	assert.Equal(t, tls.RequireAndVerifyClientCert, tlsConfig.ClientAuth)
-	assert.NotNil(t, tlsConfig.ClientCAs)
-}
-
-func _skipTestCA_TLSConfigWithOptions_ClientConfig(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "client-config.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"client-config.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	attrs := testTLSKeyAttrs("client-config.example.com")
-	opts := &TLSConfigOptions{IsServer: false, ServerName: "api.example.com"}
-
-	tlsConfig, err := ca.TLSConfigWithOptions(attrs, opts)
-	require.NoError(t, err)
-	assert.NotNil(t, tlsConfig.RootCAs)
-	assert.Equal(t, "api.example.com", tlsConfig.ServerName)
-}
-
-func _skipTestCA_TLSConfigWithOptions_NilOpts(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "nil-opts.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"nil-opts.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	attrs := testTLSKeyAttrs("nil-opts.example.com")
-	tlsConfig, err := ca.TLSConfigWithOptions(attrs, nil)
-	require.NoError(t, err)
-	require.NotNil(t, tlsConfig)
-}
-
-func _skipTestCA_TLSConfigWithOptions_CustomCipherSuites(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "custom-cipher.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"custom-cipher.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	customSuites := []uint16{tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384}
-	opts := &TLSConfigOptions{IsServer: true, CipherSuites: customSuites}
-
-	tlsConfig, err := ca.TLSConfigWithOptions(
-		testTLSKeyAttrs("custom-cipher.example.com"), opts)
-	require.NoError(t, err)
-	assert.Equal(t, customSuites, tlsConfig.CipherSuites)
-}
-
-func _skipTestCA_TLSConfigWithOptions_CustomPools(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "custom-roots.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"custom-roots.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	customPool := x509.NewCertPool()
-	opts := &TLSConfigOptions{
-		IsServer:  false,
-		RootCAs:   customPool,
-		ClientCAs: customPool,
-	}
-
-	tlsConfig, err := ca.TLSConfigWithOptions(
-		testTLSKeyAttrs("custom-roots.example.com"), opts)
-	require.NoError(t, err)
-	assert.Equal(t, customPool, tlsConfig.RootCAs)
-}
-
-func _skipTestCA_TLSConfigWithOptions_ServerNoClientCert(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "no-client-cert.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"no-client-cert.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	opts := &TLSConfigOptions{IsServer: true, RequireClientCert: false}
-	tlsConfig, err := ca.TLSConfigWithOptions(
-		testTLSKeyAttrs("no-client-cert.example.com"), opts)
-	require.NoError(t, err)
-	assert.Equal(t, tls.NoClientCert, tlsConfig.ClientAuth)
-}
-
-func _skipTestCA_TLSConfigWithOptions_NextProtos(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "next-protos.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"next-protos.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	opts := &TLSConfigOptions{
-		IsServer:                 true,
-		NextProtos:               []string{"h2", "http/1.1"},
-		SessionTicketsDisabled:   true,
-		PreferServerCipherSuites: true,
-	}
-	tlsConfig, err := ca.TLSConfigWithOptions(
-		testTLSKeyAttrs("next-protos.example.com"), opts)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"h2", "http/1.1"}, tlsConfig.NextProtos)
-	assert.True(t, tlsConfig.SessionTicketsDisabled)
-	assert.True(t, tlsConfig.PreferServerCipherSuites)
-}
-
-func _skipTestCA_ServerTLSConfig_Success(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "server-tls.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"server-tls.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	tlsConfig, err := ca.ServerTLSConfig(testTLSKeyAttrs("server-tls.example.com"), true)
-	require.NoError(t, err)
-	assert.Equal(t, tls.RequireAndVerifyClientCert, tlsConfig.ClientAuth)
-}
-
-func _skipTestCA_ClientTLSConfig_Success(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "client-tls.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"client-tls.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	tlsConfig, err := ca.ClientTLSConfig(testTLSKeyAttrs("client-tls.example.com"), "api.example.com")
-	require.NoError(t, err)
-	assert.Equal(t, "api.example.com", tlsConfig.ServerName)
-}
-
-func _skipTestCA_MutualTLSConfig_Success(t *testing.T) {
-	ca := setupTestCA(t)
-
-	request := &CertificateRequest{
-		Subject: Subject{CommonName: "mtls.example.com", Organization: "Test"},
-		SANS:    &SubjectAlternativeNames{DNS: []string{"mtls.example.com"}},
-		Valid:   365,
-	}
-	_, err := ca.IssueCertificate(request)
-	require.NoError(t, err)
-
-	tlsConfig, err := ca.MutualTLSConfig(testTLSKeyAttrs("mtls.example.com"))
-	require.NoError(t, err)
-	assert.NotNil(t, tlsConfig)
-}
-
 // =============================================================================
 // Params.Validate Tests
 // =============================================================================
@@ -946,12 +714,6 @@ func TestDetermineSignatureAlgorithm_ECDSAP224(t *testing.T) {
 	assert.Equal(t, x509.ECDSAWithSHA256, determineSignatureAlgorithm(&key.PublicKey))
 }
 
-func _skipTestDetermineSignatureAlgorithm_Ed25519(t *testing.T) {
-	_, pub, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	assert.Equal(t, x509.PureEd25519, determineSignatureAlgorithm(pub))
-}
-
 func TestDetermineSignatureAlgorithm_Unknown(t *testing.T) {
 	assert.Equal(t, x509.UnknownSignatureAlgorithm, determineSignatureAlgorithm("not-a-key"))
 }
@@ -1027,12 +789,6 @@ func TestCA_IsRevoked_NotInitialized(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
-func _skipTestCA_IsRevoked_NilSerial(t *testing.T) {
-	ca := setupTestCA(t)
-	_, err := ca.IsRevoked(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
 func TestCA_IsRevoked_NotRevoked(t *testing.T) {
 	ca := setupTestCA(t)
 	revoked, err := ca.IsRevoked(big.NewInt(99999))
@@ -1061,12 +817,6 @@ func TestMergeSubjects_AllFieldsOverridden(t *testing.T) {
 	assert.Equal(t, []string{"DE"}, result.Country)
 	assert.Equal(t, []string{"Bavaria"}, result.Province)
 	assert.Equal(t, []string{"Munich"}, result.Locality)
-}
-
-func _skipTestMergeSubjects_NilOverride(t *testing.T) {
-	base := pkix.Name{CommonName: "base-cn", Organization: []string{"Base Org"}}
-	result := mergeSubjects(base, nil)
-	assert.Equal(t, "base-cn", result.CommonName)
 }
 
 // =============================================================================

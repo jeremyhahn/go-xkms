@@ -95,8 +95,8 @@ type TLSConfigOptions struct {
 	RequireClientCert bool
 
 	// MinVersion is the minimum TLS version to accept.
-	// Defaults to tls.VersionTLS12 if not specified.
-	// Valid values: tls.VersionTLS10, tls.VersionTLS11, tls.VersionTLS12, tls.VersionTLS13
+	// Defaults to tls.VersionTLS13 if not specified.
+	// Valid values: tls.VersionTLS12, tls.VersionTLS13. TLS 1.0/1.1 are not supported.
 	MinVersion uint16
 
 	// MaxVersion is the maximum TLS version to accept.
@@ -162,7 +162,7 @@ func (o *TLSConfigOptions) Validate() error {
 // applyDefaults fills in default values for unset options.
 func (o *TLSConfigOptions) applyDefaults() {
 	if o.MinVersion == 0 {
-		o.MinVersion = tls.VersionTLS12
+		o.MinVersion = tls.VersionTLS13
 	}
 	if o.MaxVersion == 0 {
 		o.MaxVersion = tls.VersionTLS13
@@ -657,11 +657,9 @@ func SecureCipherSuites() []uint16 {
 //	config.Certificates = []tls.Certificate{myCert}
 func DefaultTLSConfig() *tls.Config {
 	return &tls.Config{
-		MinVersion:               tls.VersionTLS12,
-		MaxVersion:               tls.VersionTLS13,
-		CipherSuites:             SecureCipherSuites(),
-		PreferServerCipherSuites: true,
-		SessionTicketsDisabled:   false,
+		MinVersion:             tls.VersionTLS13,
+		MaxVersion:             tls.VersionTLS13,
+		SessionTicketsDisabled: false,
 	}
 }
 

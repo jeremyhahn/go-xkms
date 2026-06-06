@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { navigateTo, waitForAppReady, ensureSidebarExpanded } from './helpers';
+import { navigateTo, waitForAppReady, ensureSidebarExpanded, isWailsMode } from './helpers';
+
+const REPO_ROOT = process.cwd().replace(/\/xkey\/frontend$/, '');
 
 test.describe('Admin YubiKey detection', () => {
   test.beforeEach(async ({ page }) => {
@@ -21,7 +23,7 @@ test.describe('Admin YubiKey detection', () => {
     // matching the Go struct JSON tags. We do this by checking the source
     // file content does NOT contain the wrong capitalized accessor pattern.
     const fs = await import('fs');
-    const path = '/home/jhahn/sources/go-xkms/xkey/frontend/src/views/Admin.svelte';
+    const path = `${REPO_ROOT}/xkey/frontend/src/views/Admin.svelte`;
     const content = fs.readFileSync(path, 'utf8');
 
     // The fix: should read result?.found, result?.library_path, result?.error
@@ -55,6 +57,12 @@ test.describe('OIDC empty template state', () => {
   });
 
   test('Add Provider dialog shows "Templates Unavailable" empty state in Vite mode', async ({ page }) => {
+    // In Wails mode the real backend populates OIDC templates, so the
+    // "Templates Unavailable" empty state is never shown. This test is
+    // Vite-only (no backend, window.go undefined).
+    const wails = await isWailsMode(page).catch(() => false);
+    test.skip(wails, 'Real Wails backend provides OIDC templates — empty state is Vite-only');
+
     // Click "Add Provider" button
     await page.getByRole('button', { name: 'Add Provider' }).first().click();
 
@@ -75,7 +83,7 @@ test.describe('YubiKey FIDO2 capability suppression', () => {
   test('admin_service.go suppresses FIDO2 for YubiKey libykcs11 backends', async () => {
     const fs = await import('fs');
     const adminService = fs.readFileSync(
-      '/home/jhahn/sources/go-xkms/xkey/pkg/gui/services/admin_service.go',
+      `${REPO_ROOT}/xkey/pkg/gui/services/admin_service.go`,
       'utf8'
     );
     // The fallback PKCS#11 builder must detect YubiKey by library path and
@@ -88,7 +96,7 @@ test.describe('YubiKey FIDO2 capability suppression', () => {
   test('pkcs11mgr registerSlotBackends never sets CapFIDO2 for slot backends', async () => {
     const fs = await import('fs');
     const mgr = fs.readFileSync(
-      '/home/jhahn/sources/go-xkms/xkey/pkg/pkcs11mgr/manager_impl.go',
+      `${REPO_ROOT}/xkey/pkg/pkcs11mgr/manager_impl.go`,
       'utf8'
     );
     // Extract the registerSlotBackends function body and assert CapFIDO2 is

@@ -786,10 +786,11 @@ func isValidDomainName(domain string) bool {
 
 		// Check for invalid characters and positioning
 		for i, ch := range label {
-			if !((ch >= 'a' && ch <= 'z') ||
+			allowed := (ch >= 'a' && ch <= 'z') ||
 				(ch >= 'A' && ch <= 'Z') ||
 				(ch >= '0' && ch <= '9') ||
-				ch == '-') {
+				ch == '-'
+			if !allowed {
 				return false
 			}
 

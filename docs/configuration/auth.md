@@ -236,9 +236,11 @@ resolution strategies, tried in order:
    - `Subject.Organization`, `Subject.OrganizationalUnit`, DNS SANs, and email
      addresses are added as claims
 
-The `MTLSUserStoreAdapter` (`pkg/user/mtls_adapter.go`) bridges the user store
-to the authenticator, translating `user.User` records into `auth.MTLSUser`
-values.
+The `auth.UserStore` interface bridges the identity store to the
+authenticator, translating user records into `auth.MTLSUser` values. The
+production implementation is `auth.QRDBUserStore` (`pkg/auth/qrdb_userstore.go`),
+which resolves users from the embedded qrdb node by their certificate SPKI
+thumbprint — there is no local xkms user package.
 
 ### Certificate Binding
 
@@ -265,8 +267,9 @@ Roles follow FIPS 140-2 separation of duties. Each user has exactly one role.
 | `auditor` | `audit:read/list`, `keys:list`, `certificates:list`, `users:list` |
 | `user` | `keys:sign/verify/encrypt/decrypt`, `secrets:read` |
 
-The `UserRBACAdapter` (`pkg/user/rbac.go`) resolves the user's role from the
-store and checks permissions against the role definitions in `MemoryRBACAdapter`.
+The user's role is resolved from the embedded qrdb identity store via
+`auth.QRDBUserStore`; key-domain permissions are then checked against the role
+definitions in `pkg/keyrbac` (`MemoryRBACAdapter`).
 
 ### Claim-to-Role Mapping (No UserStore)
 

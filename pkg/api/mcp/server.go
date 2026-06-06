@@ -62,9 +62,6 @@ var (
 	// than the threshold.
 	ErrBarrierTotalInvalid = errors.New("total must be >= threshold")
 
-	// ErrBarrierShareIndexInvalid is returned when a share index is less than 1.
-	ErrBarrierShareIndexInvalid = errors.New("share index must be >= 1")
-
 	// ErrBarrierRecoveryKeysRequired is returned when a recovery operation
 	// requires keys but none were provided.
 	ErrBarrierRecoveryKeysRequired = errors.New("recovery keys are required")
@@ -495,14 +492,6 @@ func (s *Server) handleRequest(ctx context.Context, req *JSONRPCRequest, conn ne
 		result, err = s.handleBarrierStatus(req)
 	case "barrier.rekey":
 		result, err = s.handleBarrierRekey(ctx, req)
-	case "barrier.shamirListShares":
-		result, err = s.handleBarrierShamirListShares(ctx, req)
-	case "barrier.shamirDeleteShare":
-		result, err = s.handleBarrierShamirDeleteShare(ctx, req)
-	case "barrier.shamirDeleteAllShares":
-		result, err = s.handleBarrierShamirDeleteAllShares(ctx, req)
-	case "barrier.shamirVerify":
-		result, err = s.handleBarrierShamirVerify(ctx, req)
 	case "barrier.generateRecoveryKeys":
 		result, err = s.handleBarrierGenerateRecoveryKeys(ctx, req)
 	case "barrier.recoverWithKeys":

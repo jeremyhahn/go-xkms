@@ -17,7 +17,7 @@ import (
 	"crypto/x509"
 	"errors"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -62,13 +62,9 @@ type PlatformKeyStorer interface {
 	// initialized with PINs and SRK.
 	IsInitialized() bool
 
-	// PINManager returns the integrated PIN manager for backward compatibility.
-	//
-	// Deprecated: Use PINBackend() instead.
-	PINManager() pin.PINManager //nolint:staticcheck // TODO: migrate to PINBackend
-
-	// PINBackend returns the modern PIN backend for this key store.
-	PINBackend() pin.PINBackend
+	// PINBackend returns the canonical PIN backend for this key store
+	// (qrdb/pkg/qrdbsdk.PINBackend implemented by xkms/pkg/pintpm2.TPM2Backend).
+	PINBackend() qrdbsdk.PINBackend
 
 	// PlatformPolicyEnabled returns true if TPM platform policy is enabled
 	// in the key store configuration.

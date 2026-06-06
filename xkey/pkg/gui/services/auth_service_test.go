@@ -23,13 +23,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
 // authMockPINBackend extends mockPINBackend with SO PIN verification support.
 type authMockPINBackend struct {
-	strategy    pin.StrategyID
+	strategy    qrdbsdk.PINStrategyID
 	soPINSet    bool
 	userPINSet  bool
 	initialized bool
@@ -37,30 +37,30 @@ type authMockPINBackend struct {
 	verifyUserErr error
 	verifySOErr   error
 
-	lockoutStatus *pin.LockoutStatus
+	lockoutStatus *qrdbsdk.PINLockoutStatus
 }
 
-func (m *authMockPINBackend) Strategy() pin.StrategyID             { return m.strategy }
-func (m *authMockPINBackend) SOPINSet() bool                       { return m.soPINSet }
-func (m *authMockPINBackend) UserPINSet() bool                     { return m.userPINSet }
-func (m *authMockPINBackend) IsInitialized() bool                  { return m.initialized }
-func (m *authMockPINBackend) GetLockoutStatus() *pin.LockoutStatus { return m.lockoutStatus }
-func (m *authMockPINBackend) SetSOPIN(_, _ string) error           { return nil }
-func (m *authMockPINBackend) SetUserPIN(_, _ string) error         { return nil }
-func (m *authMockPINBackend) ChangeSOPIN(_, _ string) error        { return nil }
-func (m *authMockPINBackend) ChangeUserPIN(_, _ string) error      { return nil }
-func (m *authMockPINBackend) VerifySOPIN(_ string) error           { return m.verifySOErr }
-func (m *authMockPINBackend) VerifyUserPIN(_ string) error         { return m.verifyUserErr }
-func (m *authMockPINBackend) ResetLockout(_ string) error          { return nil }
-func (m *authMockPINBackend) SetMaxAttempts(_ int)                 {}
+func (m *authMockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
+func (m *authMockPINBackend) SOPINSet() bool                              { return m.soPINSet }
+func (m *authMockPINBackend) UserPINSet() bool                            { return m.userPINSet }
+func (m *authMockPINBackend) IsInitialized() bool                         { return m.initialized }
+func (m *authMockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
+func (m *authMockPINBackend) SetSOPIN(_, _ string) error                  { return nil }
+func (m *authMockPINBackend) SetUserPIN(_, _ string) error                { return nil }
+func (m *authMockPINBackend) ChangeSOPIN(_, _ string) error               { return nil }
+func (m *authMockPINBackend) ChangeUserPIN(_, _ string) error             { return nil }
+func (m *authMockPINBackend) VerifySOPIN(_ string) error                  { return m.verifySOErr }
+func (m *authMockPINBackend) VerifyUserPIN(_ string) error                { return m.verifyUserErr }
+func (m *authMockPINBackend) ResetLockout(_ string) error                 { return nil }
+func (m *authMockPINBackend) SetMaxAttempts(_ int)                        {}
 
 // newTestAuthService creates an AuthService backed by a PINService with
 // the given mock PINBackend and a temporary config directory.
-func newTestAuthService(backend pin.PINBackend, configDir string) *AuthService {
+func newTestAuthService(backend qrdbsdk.PINBackend, configDir string) *AuthService {
 	pinSvc := NewPINService()
 	pinSvc.SetContext(context.Background())
 	if backend != nil {
-		pSvc := pin.NewService(backend, slog.Default())
+		pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 		pinSvc.SetPINService(pSvc)
 	}
 	svc := NewAuthService(pinSvc, configDir)
@@ -137,7 +137,7 @@ func TestLoginSO_NotConfigured(t *testing.T) {
 }
 
 func TestLogout(t *testing.T) {
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, t.TempDir())
 
 	// First login the user.
@@ -159,7 +159,7 @@ func TestSetModeUser(t *testing.T) {
 }
 
 func TestLoginUser_AlreadyLoggedIn(t *testing.T) {
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, t.TempDir())
 
 	// First login.
@@ -174,7 +174,7 @@ func TestLoginUser_AlreadyLoggedIn(t *testing.T) {
 }
 
 func TestLoginUser_Success(t *testing.T) {
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, t.TempDir())
 
 	result := svc.LoginUser("user-pin-123456")
@@ -187,8 +187,8 @@ func TestLoginUser_Success(t *testing.T) {
 
 func TestLoginUser_InvalidPIN(t *testing.T) {
 	backend := &authMockPINBackend{
-		strategy:      pin.StrategySoftware,
-		verifyUserErr: pin.ErrPINInvalid,
+		strategy:      qrdbsdk.PINStrategySoftware,
+		verifyUserErr: qrdbsdk.ErrPINInvalid,
 	}
 	svc := newTestAuthService(backend, t.TempDir())
 
@@ -201,7 +201,7 @@ func TestLoginUser_InvalidPIN(t *testing.T) {
 }
 
 func TestLoginSO_Success_NonEnterprise(t *testing.T) {
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, t.TempDir())
 
 	result := svc.LoginSO("so-pin-123456")
@@ -214,8 +214,8 @@ func TestLoginSO_Success_NonEnterprise(t *testing.T) {
 
 func TestLoginSO_InvalidPIN(t *testing.T) {
 	backend := &authMockPINBackend{
-		strategy:    pin.StrategySoftware,
-		verifySOErr: pin.ErrPINInvalid,
+		strategy:    qrdbsdk.PINStrategySoftware,
+		verifySOErr: qrdbsdk.ErrPINInvalid,
 	}
 	svc := newTestAuthService(backend, t.TempDir())
 
@@ -244,7 +244,7 @@ func TestAuthService_SetContext(t *testing.T) {
 }
 
 func TestLogout_FromSOAdmin(t *testing.T) {
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, t.TempDir())
 
 	// Login as SO.
@@ -283,7 +283,7 @@ func TestLoginSO_Enterprise_ValidHMAC(t *testing.T) {
 	err := config.WritePolicyHMAC(policy, soPIN, hmacPath)
 	require.NoError(t, err)
 
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, tmpDir)
 
 	result := svc.LoginSO(soPIN)
@@ -310,7 +310,7 @@ func TestLoginSO_Enterprise_TamperedHMAC(t *testing.T) {
 	err := config.WritePolicyHMAC(tamperedPolicy, soPIN, hmacPath)
 	require.NoError(t, err)
 
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, tmpDir)
 
 	result := svc.LoginSO(soPIN)
@@ -334,7 +334,7 @@ func TestLoginSO_Enterprise_CorruptedHMACFile(t *testing.T) {
 	err := os.WriteFile(hmacPath, []byte(`{"version":0}`), 0600)
 	require.NoError(t, err)
 
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, tmpDir)
 
 	result := svc.LoginSO("so-pin-123456")
@@ -361,7 +361,7 @@ func TestLoginSO_Enterprise_WrongSOPIN(t *testing.T) {
 	err := config.WritePolicyHMAC(policy, correctPIN, hmacPath)
 	require.NoError(t, err)
 
-	backend := &authMockPINBackend{strategy: pin.StrategySoftware}
+	backend := &authMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestAuthService(backend, tmpDir)
 
 	// Login with the wrong PIN. The mock PINBackend does not actually

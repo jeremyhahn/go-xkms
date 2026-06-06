@@ -14,15 +14,12 @@
 package main
 
 import (
-	"context"
 	"crypto"
 	"errors"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
@@ -45,8 +42,8 @@ func TestNewConfig_Defaults(t *testing.T) {
 	if cfg.Server != "" {
 		t.Errorf("Server should be empty by default, got %v", cfg.Server)
 	}
-	if cfg.Protocol != "" {
-		t.Errorf("Protocol should be empty by default, got %v", cfg.Protocol)
+	if cfg.Protocol != DefaultTransport {
+		t.Errorf("Protocol should default to %q, got %v", DefaultTransport, cfg.Protocol)
 	}
 }
 
@@ -596,157 +593,6 @@ func TestConfig_CreateClientFromProtocol_WithCustomServer(t *testing.T) {
 	if cl == nil {
 		t.Fatal("CreateClient() returned nil")
 	}
-}
-
-// ============================================================================
-// CreateUserStore tests
-// ============================================================================
-
-// configMockUserStore implements user.Store for config tests
-type configMockUserStore struct{}
-
-func (m *configMockUserStore) Create(_ context.Context, _, _ string, _ user.Role, _ string) (*user.User, error) {
-	return nil, nil
-}
-func (m *configMockUserStore) GetByID(_ context.Context, _ []byte) (*user.User, error) {
-	return nil, nil
-}
-func (m *configMockUserStore) GetByUsername(_ context.Context, _ string) (*user.User, error) {
-	return nil, nil
-}
-func (m *configMockUserStore) GetByCertFingerprint(_ context.Context, _ string) (*user.User, error) {
-	return nil, nil
-}
-func (m *configMockUserStore) Update(_ context.Context, _ *user.User) error {
-	return nil
-}
-func (m *configMockUserStore) Delete(_ context.Context, _ []byte) error {
-	return nil
-}
-func (m *configMockUserStore) List(_ context.Context) ([]*user.User, error) {
-	return nil, nil
-}
-func (m *configMockUserStore) ListByTenant(_ context.Context, _ string) ([]*user.User, error) {
-	return nil, nil
-}
-func (m *configMockUserStore) Count(_ context.Context) (int, error) {
-	return 0, nil
-}
-func (m *configMockUserStore) HasAnyUsers(_ context.Context) (bool, error) {
-	return false, nil
-}
-func (m *configMockUserStore) CountAdmins(_ context.Context) (int, error) {
-	return 0, nil
-}
-func (m *configMockUserStore) SaveSession(_ context.Context, _ string, _ []byte, _ time.Duration) error {
-	return nil
-}
-func (m *configMockUserStore) GetSession(_ context.Context, _ string) ([]byte, error) {
-	return nil, nil
-}
-func (m *configMockUserStore) DeleteSession(_ context.Context, _ string) error {
-	return nil
-}
-func (m *configMockUserStore) Close() error {
-	return nil
-}
-
-func TestConfig_CreateUserStore_WithFactory(t *testing.T) {
-	mockStore := &configMockUserStore{}
-
-	cfg := NewConfig()
-	cfg.UserStoreFactory = func(storagePath string) (user.Store, error) {
-		return mockStore, nil
-	}
-
-	store, err := cfg.CreateUserStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("CreateUserStore() returned error: %v", err)
-	}
-	if store != mockStore {
-		t.Error("CreateUserStore() should return the injected mock store")
-	}
-}
-
-func TestConfig_CreateUserStore_FactoryError(t *testing.T) {
-	expectedErr := errors.New("factory creation failed")
-
-	cfg := NewConfig()
-	cfg.UserStoreFactory = func(storagePath string) (user.Store, error) {
-		return nil, expectedErr
-	}
-
-	_, err := cfg.CreateUserStore(t.TempDir())
-	if err == nil {
-		t.Fatal("CreateUserStore() should return error from factory")
-	}
-	if err != expectedErr {
-		t.Errorf("CreateUserStore() error = %v, want %v", err, expectedErr)
-	}
-}
-
-func TestConfig_CreateUserStore_DefaultPath_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := NewConfig()
-	// No UserStoreFactory set - uses default openUserStore path
-
-	store, err := cfg.CreateUserStore(tmpDir)
-	if err != nil {
-		t.Fatalf("CreateUserStore() returned error: %v", err)
-	}
-	if store == nil {
-		t.Fatal("CreateUserStore() returned nil store")
-	}
-	defer func() { _ = store.Close() }()
-}
-
-func TestConfig_CreateUserStore_DefaultPath_InvalidPath(t *testing.T) {
-	cfg := NewConfig()
-	// No UserStoreFactory set - uses default openUserStore path
-
-	// Use an invalid path that cannot be created
-	invalidPath := "/dev/null/invalid/user/store/path"
-
-	_, err := cfg.CreateUserStore(invalidPath)
-	if err == nil {
-		t.Fatal("CreateUserStore() should return error for invalid path")
-	}
-}
-
-func TestConfig_CreateUserStore_FactoryReceivesPath(t *testing.T) {
-	expectedPath := "/expected/storage/path"
-	var receivedPath string
-
-	cfg := NewConfig()
-	cfg.UserStoreFactory = func(storagePath string) (user.Store, error) {
-		receivedPath = storagePath
-		return &configMockUserStore{}, nil
-	}
-
-	_, err := cfg.CreateUserStore(expectedPath)
-	if err != nil {
-		t.Fatalf("CreateUserStore() returned error: %v", err)
-	}
-	if receivedPath != expectedPath {
-		t.Errorf("Factory received path %q, want %q", receivedPath, expectedPath)
-	}
-}
-
-func TestConfig_CreateUserStore_NilFactory(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	cfg := NewConfig()
-	cfg.UserStoreFactory = nil // Explicitly nil
-
-	store, err := cfg.CreateUserStore(tmpDir)
-	if err != nil {
-		t.Fatalf("CreateUserStore() returned error: %v", err)
-	}
-	if store == nil {
-		t.Fatal("CreateUserStore() returned nil store")
-	}
-	defer func() { _ = store.Close() }()
 }
 
 // ============================================================================

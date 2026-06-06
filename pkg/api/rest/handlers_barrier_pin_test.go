@@ -23,16 +23,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockPINManager implements pin.PINBackend for testing.
+// mockPINManager implements qrdbsdk.PINBackend for testing.
 type mockPINManager struct {
-	strategy       pin.StrategyID
+	strategy       qrdbsdk.PINStrategyID
 	setSOPINErr    error
 	setUserPINErr  error
 	changeSOPINErr error
@@ -40,24 +40,24 @@ type mockPINManager struct {
 	verifySOPINErr error
 	verifyUserErr  error
 	resetErr       error
-	lockoutStatus  *pin.LockoutStatus
+	lockoutStatus  *qrdbsdk.PINLockoutStatus
 	initialized    bool
 	soPINSet       bool
 	userPINSet     bool
 }
 
-func (m *mockPINManager) Strategy() pin.StrategyID             { return m.strategy }
-func (m *mockPINManager) SetSOPIN(_, _ string) error           { return m.setSOPINErr }
-func (m *mockPINManager) SetUserPIN(_, _ string) error         { return m.setUserPINErr }
-func (m *mockPINManager) ChangeSOPIN(_, _ string) error        { return m.changeSOPINErr }
-func (m *mockPINManager) ChangeUserPIN(_, _ string) error      { return m.changeUserErr }
-func (m *mockPINManager) VerifySOPIN(_ string) error           { return m.verifySOPINErr }
-func (m *mockPINManager) VerifyUserPIN(_ string) error         { return m.verifyUserErr }
-func (m *mockPINManager) GetLockoutStatus() *pin.LockoutStatus { return m.lockoutStatus }
-func (m *mockPINManager) ResetLockout(_ string) error          { return m.resetErr }
-func (m *mockPINManager) IsInitialized() bool                  { return m.initialized }
-func (m *mockPINManager) SOPINSet() bool                       { return m.soPINSet }
-func (m *mockPINManager) UserPINSet() bool                     { return m.userPINSet }
+func (m *mockPINManager) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
+func (m *mockPINManager) SetSOPIN(_, _ string) error                  { return m.setSOPINErr }
+func (m *mockPINManager) SetUserPIN(_, _ string) error                { return m.setUserPINErr }
+func (m *mockPINManager) ChangeSOPIN(_, _ string) error               { return m.changeSOPINErr }
+func (m *mockPINManager) ChangeUserPIN(_, _ string) error             { return m.changeUserErr }
+func (m *mockPINManager) VerifySOPIN(_ string) error                  { return m.verifySOPINErr }
+func (m *mockPINManager) VerifyUserPIN(_ string) error                { return m.verifyUserErr }
+func (m *mockPINManager) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
+func (m *mockPINManager) ResetLockout(_ string) error                 { return m.resetErr }
+func (m *mockPINManager) IsInitialized() bool                         { return m.initialized }
+func (m *mockPINManager) SOPINSet() bool                              { return m.soPINSet }
+func (m *mockPINManager) UserPINSet() bool                            { return m.userPINSet }
 
 // newTestBarrierHandler creates a HandlerContext with a real barrier backed by memory storage.
 func newTestBarrierHandler(t *testing.T) (*HandlerContext, *seal.Barrier) {
@@ -336,7 +336,7 @@ func TestSetSOPINHandler_MissingNewSOPIN(t *testing.T) {
 
 func TestSetSOPINHandler_PINError(t *testing.T) {
 	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{setSOPINErr: pin.ErrPINTooShort})
+	h.SetPINManager(&mockPINManager{setSOPINErr: qrdbsdk.ErrPINTooShort})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin",
 		strings.NewReader(`{"new_so_pin":"123456"}`))
@@ -415,7 +415,7 @@ func TestSetUserPINHandler_MissingNewPIN(t *testing.T) {
 
 func TestSetUserPINHandler_Error(t *testing.T) {
 	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{setUserPINErr: pin.ErrSOPINRequired})
+	h.SetPINManager(&mockPINManager{setUserPINErr: qrdbsdk.ErrSOPINRequired})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin",
 		strings.NewReader(`{"so_pin":"wrong","new_user_pin":"123456"}`))
@@ -494,7 +494,7 @@ func TestChangeSOPINHandler_MissingNewSOPIN(t *testing.T) {
 
 func TestChangeSOPINHandler_Error(t *testing.T) {
 	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{changeSOPINErr: pin.ErrInvalidCurrentPIN})
+	h.SetPINManager(&mockPINManager{changeSOPINErr: qrdbsdk.ErrInvalidCurrentPIN})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/change",
 		strings.NewReader(`{"current_so_pin":"wrong","new_so_pin":"new123"}`))
@@ -573,7 +573,7 @@ func TestChangeUserPINHandler_MissingNewPIN(t *testing.T) {
 
 func TestChangeUserPINHandler_Error(t *testing.T) {
 	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{changeUserErr: pin.ErrPINLocked})
+	h.SetPINManager(&mockPINManager{changeUserErr: qrdbsdk.ErrPINLocked})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/change",
 		strings.NewReader(`{"current_user_pin":"old123","new_user_pin":"new123"}`))
@@ -639,7 +639,7 @@ func TestVerifySOPINHandler_MissingPIN(t *testing.T) {
 
 func TestVerifySOPINHandler_InvalidPIN(t *testing.T) {
 	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{verifySOPINErr: pin.ErrPINInvalid})
+	h.SetPINManager(&mockPINManager{verifySOPINErr: qrdbsdk.ErrPINInvalid})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/so-pin/verify",
 		strings.NewReader(`{"pin":"wrong1"}`))
@@ -705,7 +705,7 @@ func TestVerifyUserPINHandler_MissingPIN(t *testing.T) {
 
 func TestVerifyUserPINHandler_Error(t *testing.T) {
 	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{verifyUserErr: pin.ErrPINNotSet})
+	h.SetPINManager(&mockPINManager{verifyUserErr: qrdbsdk.ErrPINNotSet})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/user-pin/verify",
 		strings.NewReader(`{"pin":"123456"}`))
@@ -721,7 +721,7 @@ func TestVerifyUserPINHandler_Error(t *testing.T) {
 func TestGetLockoutStatusHandler_Success(t *testing.T) {
 	h := NewHandlerContext("test")
 	h.SetPINManager(&mockPINManager{
-		lockoutStatus: &pin.LockoutStatus{
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{
 			FailedAttempts: 2,
 			MaxAttempts:    10,
 			IsLocked:       false,
@@ -807,7 +807,7 @@ func TestResetLockoutHandler_MissingSOPIN(t *testing.T) {
 
 func TestResetLockoutHandler_Error(t *testing.T) {
 	h := NewHandlerContext("test")
-	h.SetPINManager(&mockPINManager{resetErr: pin.ErrPINInvalid})
+	h.SetPINManager(&mockPINManager{resetErr: qrdbsdk.ErrPINInvalid})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/pin/lockout/reset",
 		strings.NewReader(`{"so_pin":"wrong1"}`))
@@ -826,14 +826,14 @@ func TestHandlePINError_AllCases(t *testing.T) {
 		err        error
 		wantStatus int
 	}{
-		{"PINNotSet", pin.ErrPINNotSet, http.StatusBadRequest},
-		{"PINLocked", pin.ErrPINLocked, http.StatusTooManyRequests},
-		{"PINInvalid", pin.ErrPINInvalid, http.StatusUnauthorized},
-		{"SOPINRequired", pin.ErrSOPINRequired, http.StatusUnauthorized},
-		{"PINTooShort", pin.ErrPINTooShort, http.StatusBadRequest},
-		{"PINAlreadySet", pin.ErrPINAlreadySet, http.StatusConflict},
-		{"InvalidCurrentPIN", pin.ErrInvalidCurrentPIN, http.StatusUnauthorized},
-		{"StateCorrupted", pin.ErrStateCorrupted, http.StatusInternalServerError},
+		{"PINNotSet", qrdbsdk.ErrPINNotSet, http.StatusBadRequest},
+		{"PINLocked", qrdbsdk.ErrPINLocked, http.StatusTooManyRequests},
+		{"PINInvalid", qrdbsdk.ErrPINInvalid, http.StatusUnauthorized},
+		{"SOPINRequired", qrdbsdk.ErrSOPINRequired, http.StatusUnauthorized},
+		{"PINTooShort", qrdbsdk.ErrPINTooShort, http.StatusBadRequest},
+		{"PINAlreadySet", qrdbsdk.ErrPINAlreadySet, http.StatusConflict},
+		{"InvalidCurrentPIN", qrdbsdk.ErrInvalidCurrentPIN, http.StatusUnauthorized},
+		{"StateCorrupted", qrdbsdk.ErrPINStateCorrupted, http.StatusInternalServerError},
 		{"Unknown", errors.New("unknown"), http.StatusInternalServerError},
 	}
 

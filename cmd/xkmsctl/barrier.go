@@ -11,11 +11,42 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package main provides Barrier Management CLI commands for xkmsctl.
+//
+// The canonical barrier verb tree mirrors qrdbctl / quicbaas / platformctl 1:1
+// so operators have a single, consistent CLI surface across the entire
+// stack:
+//
+//	barrier status                                        (read-only)
+//	barrier init           --barrier-strategy <none|passphrase|shamir>
+//	                       [--passphrase <passphrase>]       (required if strategy != none, rejected if = none)
+//	                       [--so-pin <pin>]              (rejected when --barrier-strategy=none)
+//	                       [--user-pin <pin>]            (requires --so-pin)
+//	barrier init-shamir    --passphrase <passphrase>
+//	                       --threshold N --total M
+//	                       [--so-pin] [--user-pin]
+//	barrier unseal         --passphrase <passphrase>         (passphrase / single-secret only)
+//	barrier unseal-shares  --share <s> [--share <s> ...] | --shares-file <path>   ('-' = stdin)
+//	barrier seal           [--so-pin <pin>] [-y|--assume-yes]
+//	barrier rekey          --passphrase <new-pp>
+//	                       [--so-pin <pin>]
+//	                       [--threshold N --total M]     (paired; for Shamir rekey)
+//	barrier recovery generate  --threshold N --total M [--so-pin <pin>]
+//	barrier recovery recover   --share <s> [--share <s> ...]
+//
+// xkms's BarrierService wire types do not carry SO/User PIN fields. To
+// preserve UX parity at the CLI flag level while leaving the underlying
+// wire untouched, the CLI dispatches to xkms's separate PIN RPCs
+// (SetSOPIN, SetUserPIN, VerifySOPIN) before/after the barrier RPC as
+// appropriate.
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -24,92 +55,323 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// barrierCmd is the top-level command for managing the cryptographic barrier.
+// =============================================================================
+// Canonical barrier-strategy set (CLI-level concept)
+// =============================================================================
+
+// barrierStrategyInit enumerates the strategies accepted by `barrier
+// init`. Map lookup is O(1); kept in lock-step with qrdbctl / quicbaas.
+var barrierStrategyInit = map[string]struct{}{
+	"none":       {},
+	"passphrase": {},
+	"shamir":     {},
+}
+
+// =============================================================================
+// Command-level flag state
+// =============================================================================
+
+var (
+	barrierSecret      string
+	barrierShares      []string
+	barrierSharesFile  string
+	barrierThreshold   int
+	barrierTotal       int
+	barrierAssumeYes   bool
+	barrierStrategy    string
+	barrierFlagSOPin   string
+	barrierFlagUserPin string
+	barrierRecoveryShs []string
+)
+
+// =============================================================================
+// Typed errors
+// =============================================================================
+
+// PINsNotAllowedError is returned when SO/User PINs are supplied to a
+// barrier verb whose configured strategy forbids PIN authorization
+// (currently --barrier-strategy=none).
+type PINsNotAllowedError struct {
+	Strategy string
+	Op       string
+}
+
+// Error returns a human-readable description.
+func (e *PINsNotAllowedError) Error() string {
+	return "barrier " + e.Op + ": --so-pin/--user-pin are not allowed when --barrier-strategy=" + e.Strategy
+}
+
+// BarrierStrategyError is returned when --barrier-strategy is missing
+// or carries an unrecognised value.
+type BarrierStrategyError struct {
+	Value string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierStrategyError) Error() string {
+	if e.Value == "" {
+		return "barrier init: --barrier-strategy is required (one of none, passphrase, shamir)"
+	}
+	return "barrier init: invalid --barrier-strategy " + strconvQuote(e.Value) +
+		" (must be one of none, passphrase, shamir)"
+}
+
+// BarrierSecretRequiredError is returned when --passphrase is required for
+// the selected strategy and was not supplied.
+type BarrierSecretRequiredError struct {
+	Op       string
+	Strategy string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierSecretRequiredError) Error() string {
+	if e.Strategy != "" {
+		return "barrier " + e.Op + ": --passphrase is required when --barrier-strategy=" + e.Strategy
+	}
+	return "barrier " + e.Op + ": --passphrase is required"
+}
+
+// BarrierSecretNotAllowedError is returned when --passphrase was supplied
+// to a verb / strategy combination that rejects it.
+type BarrierSecretNotAllowedError struct {
+	Op       string
+	Strategy string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierSecretNotAllowedError) Error() string {
+	return "barrier " + e.Op + ": --passphrase is not allowed when --barrier-strategy=" + e.Strategy
+}
+
+// PINPairError is returned when --so-pin / --user-pin are supplied
+// without their dual-control counterpart.
+type PINPairError struct {
+	Op      string
+	Missing string
+}
+
+// Error returns a human-readable description.
+func (e *PINPairError) Error() string {
+	return "barrier " + e.Op + ": " + e.Missing +
+		" must be paired with its dual-control counterpart (FIPS 140-3 / PCI-DSS v4)"
+}
+
+// BarrierShamirParamsError is returned when --threshold / --total are
+// invalid or violate the M <= N relation.
+type BarrierShamirParamsError struct {
+	Op     string
+	Reason string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierShamirParamsError) Error() string {
+	return "barrier " + e.Op + ": " + e.Reason
+}
+
+// BarrierShamirOnInitError is returned when --barrier-strategy=shamir
+// is used with the `init` verb; the canonical surface routes Shamir
+// initialization through `init-shamir`.
+type BarrierShamirOnInitError struct{}
+
+// Error returns a human-readable description.
+func (e *BarrierShamirOnInitError) Error() string {
+	return "barrier init: --barrier-strategy=shamir requires the 'init-shamir' verb " +
+		"(supply --threshold and --total there)"
+}
+
+// BarrierShareInputError is returned when the --share / --shares-file
+// invariants of `barrier unseal-shares` are violated.
+type BarrierShareInputError struct {
+	Reason string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierShareInputError) Error() string {
+	return "barrier unseal-shares: " + e.Reason
+}
+
+// BarrierSharesFileError is returned when --shares-file cannot be read.
+type BarrierSharesFileError struct {
+	Path string
+	Err  error
+}
+
+// Error returns a human-readable description.
+func (e *BarrierSharesFileError) Error() string {
+	return "barrier unseal-shares: failed to read --shares-file " + e.Path + ": " + e.Err.Error()
+}
+
+// Unwrap returns the wrapped error.
+func (e *BarrierSharesFileError) Unwrap() error { return e.Err }
+
+// BarrierSharesFileEmptyError is returned when --shares-file contained
+// no non-empty lines.
+type BarrierSharesFileEmptyError struct {
+	Path string
+}
+
+// Error returns a human-readable description.
+func (e *BarrierSharesFileEmptyError) Error() string {
+	return "barrier unseal-shares: --shares-file " + e.Path + " contains no shares"
+}
+
+// XKMSPassphraseRekeyUnsupportedError is returned when `barrier rekey`
+// is invoked with --passphrase alone (no Shamir flags). xkms's wire-level
+// BarrierRekey only supports Shamir share regeneration; passphrase
+// rotation is not part of its server surface. The CLI accepts --passphrase
+// at the flag level for UX parity but emits this typed error if the
+// operator does not pair it with --threshold / --total.
+type XKMSPassphraseRekeyUnsupportedError struct{}
+
+// Error returns a human-readable description.
+func (e *XKMSPassphraseRekeyUnsupportedError) Error() string {
+	return "barrier rekey: xkms only supports Shamir share regeneration; " +
+		"pair --passphrase with --threshold and --total"
+}
+
+// BarrierRecoverySharesRequiredError is returned when `barrier recovery
+// recover` is invoked without any --share flag.
+type BarrierRecoverySharesRequiredError struct{}
+
+// Error returns a human-readable description.
+func (e *BarrierRecoverySharesRequiredError) Error() string {
+	return "barrier recovery recover: --share is required (at least one)"
+}
+
+// BarrierSealConfirmationError is returned when interactive confirmation
+// could not be read from stdin.
+type BarrierSealConfirmationError struct {
+	Err error
+}
+
+// Error returns a human-readable description.
+func (e *BarrierSealConfirmationError) Error() string {
+	return "barrier seal: failed to read confirmation: " + e.Err.Error()
+}
+
+// Unwrap returns the wrapped error.
+func (e *BarrierSealConfirmationError) Unwrap() error { return e.Err }
+
+// strconvQuote keeps the package import surface minimal — wrapping a
+// single short string in quotes does not warrant pulling in strconv.
+func strconvQuote(s string) string { return "\"" + s + "\"" }
+
+// =============================================================================
+// Command tree
+// =============================================================================
+
+// barrierCmd is the top-level barrier command group.
 var barrierCmd = &cobra.Command{
 	Use:   "barrier",
 	Short: "Manage the cryptographic barrier",
-	Long: `Manage the cryptographic barrier that protects the root encryption key.
+	Long: `Manage the cryptographic barrier that protects the data encryption key.
 
-The barrier controls access to the data encryption key (DEK). It must be
-initialized once and then unsealed after each service restart before any
-cryptographic operations can proceed.
+The barrier must be initialized once and unsealed after each restart
+before xkms can process cryptographic operations.
 
-Supported sealing strategies:
-  - password:  Seal/unseal with a password or secret
-  - shamir:    Split the root key into N shares with a threshold of M
-
-Subcommands:
-  init      Initialize the barrier
-  unseal    Unseal the barrier
-  seal      Seal the barrier
-  status    Show current barrier status
-  shares    Manage Shamir shares
-  rekey     Re-split the root key with new shares
-  recovery  Manage recovery keys`,
+Verbs mirror qrdbctl / quicbaas / platformctl so operators have a single,
+consistent surface across the stack:
+  status         Show current barrier status
+  init           Initialize with a single passphrase (or --barrier-strategy=none)
+  init-shamir    Initialize with Shamir M-of-N secret sharing
+  unseal         Unseal with --passphrase (single-secret; --passphrase is a deprecated alias)
+  unseal-shares  Unseal with one or more Shamir shares (--share / --shares-file)
+  seal           Seal the barrier
+  rekey          Rotate the barrier master key (--passphrase + --threshold/--total)
+  recovery       Generate or use recovery keys (generate | recover)`,
 }
 
-// barrierInitCmd initializes the barrier.
+// barrierStatusCmd shows barrier status.
+var barrierStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show the current barrier status",
+	Long: `Display the current state of the cryptographic barrier including
+sealed/unsealed, the active strategy, hardware backing, and the
+initialization timestamp.
+
+Examples:
+  xkmsctl barrier status
+  xkmsctl barrier status --output json`,
+	RunE: runBarrierStatusCmd,
+}
+
+// barrierInitCmd initializes the barrier with a single master key.
 var barrierInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize the cryptographic barrier",
-	Long: `Initialize the barrier with a sealing strategy.
+	Long: `Initialize the cryptographic barrier.
 
-By default, uses a password-based strategy. Use --shamir to split the
-root key into multiple shares using Shamir secret sharing.
+Strategies:
+  none       Identity passthrough; no master key is bound (dev / test only).
+  passphrase Single passphrase-derived master key (default for production).
+  shamir     Shamir M-of-N — use 'init-shamir' for this strategy.
+
+--passphrase is required when --barrier-strategy is 'passphrase' and rejected
+when --barrier-strategy is 'none'. PINs are optional but follow the
+dual-control rule: supplying --so-pin requires --user-pin (and vice
+versa). PINs are rejected entirely when --barrier-strategy=none.
 
 Examples:
-  xkmsctl barrier init --secret my-secret
-  xkmsctl barrier init --shamir --threshold 3 --shares 5 --secret my-secret`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		useShamir, _ := cmd.Flags().GetBool("shamir")
-		secret, _ := cmd.Flags().GetString("secret")
-		threshold, _ := cmd.Flags().GetInt("threshold")
-		shares, _ := cmd.Flags().GetInt("shares")
-
-		if useShamir {
-			barrierInitShamir(cfg, printer, secret, threshold, shares)
-		} else {
-			barrierInit(cfg, printer, secret)
-		}
-	},
+  xkmsctl barrier init --barrier-strategy passphrase --passphrase '<passphrase>'
+  xkmsctl barrier init --barrier-strategy none
+  xkmsctl barrier init --barrier-strategy passphrase --passphrase '<pp>' \
+                       --so-pin SO12345 --user-pin USR12345`,
+	RunE: runBarrierInitCmd,
 }
 
-// barrierUnsealCmd unseals the barrier.
+// barrierInitShamirCmd initializes the barrier with Shamir secret sharing.
+var barrierInitShamirCmd = &cobra.Command{
+	Use:   "init-shamir",
+	Short: "Initialize the barrier with Shamir M-of-N secret sharing",
+	Long: `Initialize the barrier using Shamir M-of-N secret sharing.
+
+The master secret is split into --total shares of which --threshold are
+required to unseal. PIN flags are optional but follow the dual-control
+rule -- supplying --so-pin requires --user-pin.
+
+The generated shares are printed once; distribute them to custodians
+immediately and out-of-band.
+
+Example:
+  xkmsctl barrier init-shamir --passphrase '<seed>' --threshold 3 --total 5`,
+	RunE: runBarrierInitShamirCmd,
+}
+
+// barrierUnsealCmd unseals the barrier with a single passphrase.
 var barrierUnsealCmd = &cobra.Command{
 	Use:   "unseal",
-	Short: "Unseal the cryptographic barrier",
-	Long: `Unseal the barrier to enable cryptographic operations.
+	Short: "Unseal the barrier using a passphrase",
+	Long: `Unseal the barrier using the master passphrase supplied at 'barrier
+init' time.
 
-Use --secret for password-based unsealing, --share for a single Shamir
-share (incremental quorum), or --shares for batch Shamir unsealing.
+This verb is reserved for the passphrase / single-secret strategy. For
+Shamir M-of-N unseal use 'barrier unseal-shares' with --share or
+--shares-file.
+
+Example:
+  xkmsctl barrier unseal --passphrase '<passphrase>'`,
+	RunE: runBarrierUnsealCmd,
+}
+
+// barrierUnsealSharesCmd unseals the barrier by submitting Shamir shares.
+var barrierUnsealSharesCmd = &cobra.Command{
+	Use:   "unseal-shares",
+	Short: "Unseal the barrier by submitting Shamir shares",
+	Long: `Unseal the barrier using one or more Shamir shares.
+
+Two input modes are supported; exactly one must be supplied:
+
+  --share <value>      Repeatable. Supply one or more shares as flags.
+  --shares-file <path> Newline-delimited file of shares; '-' reads from stdin.
+
+Submitting a number of shares >= the M threshold unseals the barrier in
+a single call.
 
 Examples:
-  xkmsctl barrier unseal --secret my-secret
-  xkmsctl barrier unseal --share base64-share-value
-  xkmsctl barrier unseal --shares share1,share2,share3`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		secret, _ := cmd.Flags().GetString("secret")
-		share, _ := cmd.Flags().GetString("share")
-		sharesStr, _ := cmd.Flags().GetString("shares")
-
-		switch {
-		case secret != "":
-			barrierUnsealWithSecret(cfg, printer, secret)
-		case share != "":
-			barrierUnsealWithShare(cfg, printer, share)
-		case sharesStr != "":
-			shareList := strings.Split(sharesStr, ",")
-			barrierUnsealWithShares(cfg, printer, shareList)
-		default:
-			handleError(ErrBarrierUnsealNoInput)
-		}
-	},
+  xkmsctl barrier unseal-shares --share aaa --share bbb --share ccc
+  xkmsctl barrier unseal-shares --shares-file /etc/xkms/shares.txt
+  cat shares.txt | xkmsctl barrier unseal-shares --shares-file -`,
+	RunE: runBarrierUnsealSharesCmd,
 }
 
 // barrierSealCmd seals the barrier.
@@ -118,247 +380,80 @@ var barrierSealCmd = &cobra.Command{
 	Short: "Seal the cryptographic barrier",
 	Long: `Seal the barrier, zeroing the data encryption key.
 
-All cryptographic operations will be blocked until the barrier is unsealed again.
-
-Example:
-  xkmsctl barrier seal`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		barrierSeal(cfg, printer)
-	},
-}
-
-// barrierStatusCmd shows barrier status.
-var barrierStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show the current barrier status",
-	Long: `Display the current state of the cryptographic barrier including
-whether it is sealed or unsealed, the active strategy, and initialization time.
-
-Example:
-  xkmsctl barrier status`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		barrierStatus(cfg, printer)
-	},
-}
-
-// barrierRekeyCmd re-splits the root key.
-var barrierRekeyCmd = &cobra.Command{
-	Use:   "rekey",
-	Short: "Re-split the root key with new Shamir shares",
-	Long: `Generate a new set of Shamir shares for the root key.
-
-The barrier must be unsealed to perform a rekey operation. The old
-shares are invalidated and new shares are generated with the specified
-threshold and total count.
-
-Example:
-  xkmsctl barrier rekey --threshold 3 --shares 5`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		threshold, _ := cmd.Flags().GetInt("threshold")
-		shares, _ := cmd.Flags().GetInt("shares")
-
-		if threshold <= 0 || shares <= 0 {
-			handleError(ErrBarrierRekeyParams)
-			return
-		}
-
-		barrierRekey(cfg, printer, threshold, shares)
-	},
-}
-
-// barrierRootTokenCmd generates a root token from Shamir shares.
-var barrierRootTokenCmd = &cobra.Command{
-	Use:   "root-token",
-	Short: "Generate a root token from Shamir shares",
-	Long: `Generate a root token by providing enough Shamir shares to meet the
-quorum threshold. The root token provides full access to the barrier.
-
-Example:
-  xkmsctl barrier root-token --shares share1,share2,share3`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		sharesStr, _ := cmd.Flags().GetString("shares")
-		if sharesStr == "" {
-			handleError(ErrBarrierRootTokenNoShares)
-			return
-		}
-
-		shareList := strings.Split(sharesStr, ",")
-		barrierRootToken(cfg, printer, shareList)
-	},
-}
-
-// Shares subcommand group
-
-// barrierSharesCmd manages Shamir shares.
-var barrierSharesCmd = &cobra.Command{
-	Use:   "shares",
-	Short: "Manage Shamir shares",
-	Long: `Commands for listing, verifying, and deleting Shamir shares.
-
-Subcommands:
-  list    List share metadata
-  verify  Verify shares are valid and consistent
-  delete  Delete one or all shares`,
-}
-
-// barrierSharesListCmd lists Shamir share metadata.
-var barrierSharesListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List Shamir share metadata",
-	Long: `Display information about the Shamir shares including
-the total count and threshold required to unseal.
-
-Example:
-  xkmsctl barrier shares list`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		barrierSharesList(cfg, printer)
-	},
-}
-
-// barrierSharesVerifyCmd verifies Shamir shares.
-var barrierSharesVerifyCmd = &cobra.Command{
-	Use:   "verify",
-	Short: "Verify Shamir shares are valid",
-	Long: `Verify that the stored Shamir shares are internally consistent
-and can reconstruct the root key when combined.
-
-Example:
-  xkmsctl barrier shares verify`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		barrierSharesVerify(cfg, printer)
-	},
-}
-
-// barrierSharesDeleteCmd deletes Shamir shares.
-var barrierSharesDeleteCmd = &cobra.Command{
-	Use:   "delete [index]",
-	Short: "Delete one or all Shamir shares",
-	Long: `Delete a specific share by index or all shares with --all.
+All cryptographic operations are blocked until the barrier is unsealed
+again. By default the command prompts for confirmation; pass
+--assume-yes / -y to skip the prompt (e.g. in scripted runbooks).
+Operators with a PINBackend configured MUST supply --so-pin; the CLI
+verifies it before issuing the seal RPC.
 
 Examples:
-  xkmsctl barrier shares delete 2
-  xkmsctl barrier shares delete --all`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		deleteAll, _ := cmd.Flags().GetBool("all")
-
-		if deleteAll {
-			barrierSharesDeleteAll(cfg, printer)
-			return
-		}
-
-		if len(args) == 0 {
-			handleError(ErrBarrierSharesDeleteNoIndex)
-			return
-		}
-
-		barrierSharesDelete(cfg, printer, args[0])
-	},
+  xkmsctl barrier seal -y
+  xkmsctl barrier seal --so-pin SO12345 --assume-yes`,
+	RunE: runBarrierSealCmd,
 }
 
-// Recovery subcommand group
+// barrierRekeyCmd rotates the barrier master key.
+var barrierRekeyCmd = &cobra.Command{
+	Use:   "rekey",
+	Short: "Rotate the barrier master key",
+	Long: `Rotate the cryptographic barrier's master key.
 
-// barrierRecoveryCmd manages recovery keys.
-var barrierRecoveryCmd = &cobra.Command{
-	Use:   "recovery",
-	Short: "Manage recovery keys",
-	Long: `Commands for generating, using, and deleting recovery keys.
-
-Recovery keys provide an alternate mechanism to unseal the barrier
-when the primary shares or password are unavailable.
-
-Subcommands:
-  generate  Generate recovery keys
-  recover   Recover the barrier using recovery keys
-  delete    Delete all recovery keys`,
-}
-
-// barrierRecoveryGenerateCmd generates recovery keys.
-var barrierRecoveryGenerateCmd = &cobra.Command{
-	Use:   "generate",
-	Short: "Generate recovery keys",
-	Long: `Generate a set of recovery keys with the specified threshold and count.
+--passphrase supplies the new passphrase. xkms's wire-level rekey currently
+supports Shamir share regeneration; pair --passphrase with --threshold and
+--total to regenerate Shamir shares for the new master key. --so-pin is
+verified when supplied.
 
 Example:
-  xkmsctl barrier recovery generate --threshold 2 --keys 3`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		threshold, _ := cmd.Flags().GetInt("threshold")
-		keys, _ := cmd.Flags().GetInt("keys")
-
-		if threshold <= 0 || keys <= 0 {
-			handleError(ErrBarrierRecoveryParams)
-			return
-		}
-
-		barrierRecoveryGenerate(cfg, printer, threshold, keys)
-	},
+  xkmsctl barrier rekey --passphrase '<new-pp>' --threshold 3 --total 5
+  xkmsctl barrier rekey --passphrase '<new-pp>' --so-pin SO12345 --threshold 3 --total 5`,
+	RunE: runBarrierRekeyCmd,
 }
 
-// barrierRecoveryRecoverCmd recovers the barrier using recovery keys.
+// barrierRecoveryCmd is the parent for recovery-key management verbs.
+var barrierRecoveryCmd = &cobra.Command{
+	Use:   "recovery",
+	Short: "Recovery key management",
+	Long: `Generate and use recovery keys for disaster-recovery scenarios.
+
+Canonical surface:
+  recovery generate   Generate M-of-N recovery keys
+  recovery recover    Restore the barrier from recovery keys`,
+}
+
+// barrierRecoveryGenerateCmd generates M-of-N recovery keys.
+var barrierRecoveryGenerateCmd = &cobra.Command{
+	Use:   "generate",
+	Short: "Generate M-of-N recovery keys",
+	Long: `Generate fresh recovery keys.
+
+Recovery keys are independent of the barrier's unseal shares and live in
+a parallel KMS slot. Generation requires --threshold (M) and --total
+(N); --so-pin is verified when supplied.
+
+Example:
+  xkmsctl barrier recovery generate --threshold 3 --total 5 --so-pin SO12345`,
+	RunE: runBarrierRecoveryGenerateCmd,
+}
+
+// barrierRecoveryRecoverCmd recovers the barrier with recovery keys.
 var barrierRecoveryRecoverCmd = &cobra.Command{
 	Use:   "recover",
 	Short: "Recover the barrier using recovery keys",
-	Long: `Unseal the barrier using recovery keys when the primary shares
-or password are unavailable.
+	Long: `Recover the barrier by submitting M-of-N recovery keys.
+
+--share is repeatable: pass each recovery key as its own --share flag.
 
 Example:
-  xkmsctl barrier recovery recover --keys key1,key2`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		keysStr, _ := cmd.Flags().GetString("keys")
-		if keysStr == "" {
-			handleError(ErrBarrierRecoveryNoKeys)
-			return
-		}
-
-		keyList := strings.Split(keysStr, ",")
-		barrierRecoveryRecover(cfg, printer, keyList)
-	},
+  xkmsctl barrier recovery recover --share key-a --share key-b --share key-c`,
+	RunE: runBarrierRecoveryRecoverCmd,
 }
 
-// barrierRecoveryDeleteCmd deletes all recovery keys.
-var barrierRecoveryDeleteCmd = &cobra.Command{
-	Use:   "delete",
-	Short: "Delete all recovery keys",
-	Long: `Delete all recovery keys. This cannot be undone.
+// =============================================================================
+// Client helper
+// =============================================================================
 
-Example:
-  xkmsctl barrier recovery delete`,
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
-
-		barrierRecoveryDelete(cfg, printer)
-	},
-}
-
-// createBarrierClient creates and connects a client, returning the client
-// and a cleanup function. The caller must call cleanup when done.
+// createBarrierClient creates and connects a client, returning the
+// client and a cleanup function. The caller MUST call cleanup when done.
 func createBarrierClient(cfg *Config) (client.Client, func(), error) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
@@ -375,411 +470,506 @@ func createBarrierClient(cfg *Config) (client.Client, func(), error) {
 	return cl, cleanup, nil
 }
 
-// barrierInit initializes the barrier with a password strategy.
-func barrierInit(cfg *Config, printer *Printer, secret string) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
+// =============================================================================
+// PIN dispatch helpers
+// =============================================================================
 
-	printVerbose("Initializing barrier with password strategy")
-
-	req := &transport.BarrierInitializeRequest{
-		Secret: secret,
+// verifySOPINIfSupplied calls VerifySOPIN against the SDK when the
+// operator supplied --so-pin. The call is the canonical pre-flight
+// guard for any post-init barrier verb that requires SO authorization.
+func verifySOPINIfSupplied(ctx context.Context, cl client.Client, soPin string) error {
+	if soPin == "" {
+		return nil
 	}
-
-	if err := cl.BarrierInitialize(context.Background(), req); err != nil {
-		handleError(fmt.Errorf("failed to initialize barrier: %w", err))
-		return
-	}
-
-	if err := printer.PrintSuccess("Barrier initialized successfully"); err != nil {
-		handleError(err)
-	}
+	return cl.VerifySOPIN(ctx, &transport.VerifySOPINRequest{SOPIN: soPin})
 }
 
-// barrierInitShamir initializes the barrier with Shamir secret sharing.
-func barrierInitShamir(cfg *Config, printer *Printer, secret string, threshold, totalShares int) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
+// applyInitialPINPair binds the supplied SO / User PIN pair to the xkms
+// PIN backend AFTER a fresh barrier init. The SO PIN is set first (with
+// an empty CurrentSOPIN because we are setting it for the first time),
+// followed by the user PIN which itself is authorised by the SO PIN.
+// Both calls are required; partial success is a server-side problem the
+// caller bubbles back as a normal error.
+func applyInitialPINPair(ctx context.Context, cl client.Client, soPin, userPin string) error {
+	if soPin == "" && userPin == "" {
+		return nil
 	}
-	defer cleanup()
-
-	printVerbose("Initializing barrier with Shamir strategy (threshold=%d, shares=%d)", threshold, totalShares)
-
-	req := &transport.BarrierInitializeShamirRequest{
-		Secret:      secret,
-		Threshold:   threshold,
-		TotalShares: totalShares,
+	if err := cl.SetSOPIN(ctx, &transport.SetSOPINRequest{
+		CurrentSOPIN: "",
+		NewSOPIN:     soPin,
+	}); err != nil {
+		return fmt.Errorf("failed to set SO PIN: %w", err)
 	}
-
-	resp, err := cl.BarrierInitializeShamir(context.Background(), req)
-	if err != nil {
-		handleError(fmt.Errorf("failed to initialize barrier with Shamir: %w", err))
-		return
+	if err := cl.SetUserPIN(ctx, &transport.SetUserPINRequest{
+		SOPIN:      soPin,
+		NewUserPIN: userPin,
+	}); err != nil {
+		return fmt.Errorf("failed to set user PIN: %w", err)
 	}
-
-	printBarrierShamirResult(printer, resp)
+	return nil
 }
 
-// barrierUnsealWithSecret unseals the barrier using a password/secret.
-func barrierUnsealWithSecret(cfg *Config, printer *Printer, secret string) {
+// =============================================================================
+// status
+// =============================================================================
+
+// runBarrierStatusCmd executes 'barrier status'.
+func runBarrierStatusCmd(cmd *cobra.Command, _ []string) error {
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
 	cl, cleanup, err := createBarrierClient(cfg)
 	if err != nil {
-		handleError(err)
-		return
+		return err
 	}
 	defer cleanup()
 
-	printVerbose("Unsealing barrier with secret")
-
-	req := &transport.BarrierUnsealRequest{
-		Secret: secret,
+	resp, err := cl.BarrierStatus(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to get barrier status: %w", err)
 	}
-
-	if err := cl.BarrierUnseal(context.Background(), req); err != nil {
-		handleError(fmt.Errorf("failed to unseal barrier: %w", err))
-		return
-	}
-
-	if err := printer.PrintSuccess("Barrier unsealed successfully"); err != nil {
-		handleError(err)
-	}
+	return printBarrierStatus(printer, resp)
 }
 
-// barrierUnsealWithShare submits a single Shamir share toward the quorum.
-func barrierUnsealWithShare(cfg *Config, printer *Printer, share string) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
+// =============================================================================
+// init
+// =============================================================================
+
+// validateInitFlags applies the canonical init flag invariants and
+// returns a typed error on the first violation. Centralising the
+// validation in one place keeps the RunE handler small and lets tests
+// drive each branch directly.
+func validateInitFlags(strategy, secret, soPin, userPin string) error {
+	if _, ok := barrierStrategyInit[strategy]; !ok {
+		return &BarrierStrategyError{Value: strategy}
 	}
-	defer cleanup()
-
-	printVerbose("Submitting Shamir share for quorum unsealing")
-
-	req := &transport.BarrierUnsealShareRequest{
-		Share: share,
+	if strategy == "shamir" {
+		return &BarrierShamirOnInitError{}
 	}
-
-	resp, err := cl.BarrierUnsealWithShare(context.Background(), req)
-	if err != nil {
-		handleError(fmt.Errorf("failed to submit unseal share: %w", err))
-		return
+	if strategy == "none" {
+		if secret != "" {
+			return &BarrierSecretNotAllowedError{Op: "init", Strategy: "none"}
+		}
+		if soPin != "" || userPin != "" {
+			return &PINsNotAllowedError{Strategy: "none", Op: "init"}
+		}
+		return nil
 	}
-
-	printBarrierUnsealProgress(printer, resp)
+	// strategy == "passphrase"
+	if secret == "" {
+		return &BarrierSecretRequiredError{Op: "init", Strategy: strategy}
+	}
+	return validatePINPair("init", soPin, userPin)
 }
 
-// barrierUnsealWithShares submits all Shamir shares at once.
-func barrierUnsealWithShares(cfg *Config, printer *Printer, shares []string) {
+// validatePINPair enforces the FIPS 140-3 / PCI-DSS v4 dual-control
+// rule: --so-pin and --user-pin must be supplied together.
+func validatePINPair(op, soPin, userPin string) error {
+	if soPin != "" && userPin == "" {
+		return &PINPairError{Op: op, Missing: "--so-pin"}
+	}
+	if userPin != "" && soPin == "" {
+		return &PINPairError{Op: op, Missing: "--user-pin"}
+	}
+	return nil
+}
+
+// runBarrierInitCmd executes 'barrier init'.
+func runBarrierInitCmd(cmd *cobra.Command, _ []string) error {
+	if err := validateInitFlags(barrierStrategy, barrierSecret, barrierFlagSOPin, barrierFlagUserPin); err != nil {
+		return err
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
 	cl, cleanup, err := createBarrierClient(cfg)
 	if err != nil {
-		handleError(err)
-		return
+		return err
 	}
 	defer cleanup()
 
-	printVerbose("Submitting %d Shamir shares for batch unsealing", len(shares))
+	ctx := context.Background()
+	if err := cl.BarrierInitialize(ctx, &transport.BarrierInitializeRequest{
+		Secret: barrierSecret,
+	}); err != nil {
+		return fmt.Errorf("failed to initialize barrier: %w", err)
+	}
 
-	req := &transport.BarrierUnsealSharesRequest{
+	if err := applyInitialPINPair(ctx, cl, barrierFlagSOPin, barrierFlagUserPin); err != nil {
+		return err
+	}
+
+	return printer.PrintSuccess("Barrier initialized successfully")
+}
+
+// =============================================================================
+// init-shamir
+// =============================================================================
+
+// validateInitShamirFlags applies the canonical init-shamir invariants.
+func validateInitShamirFlags(secret string, threshold, total int, soPin, userPin string) error {
+	if secret == "" {
+		return &BarrierSecretRequiredError{Op: "init-shamir"}
+	}
+	if threshold <= 0 {
+		return &BarrierShamirParamsError{Op: "init-shamir", Reason: "--threshold must be > 0"}
+	}
+	if total <= 0 {
+		return &BarrierShamirParamsError{Op: "init-shamir", Reason: "--total must be > 0"}
+	}
+	if threshold > total {
+		return &BarrierShamirParamsError{Op: "init-shamir", Reason: "--threshold cannot exceed --total"}
+	}
+	return validatePINPair("init-shamir", soPin, userPin)
+}
+
+// runBarrierInitShamirCmd executes 'barrier init-shamir'.
+func runBarrierInitShamirCmd(cmd *cobra.Command, _ []string) error {
+	if err := validateInitShamirFlags(barrierSecret, barrierThreshold, barrierTotal,
+		barrierFlagSOPin, barrierFlagUserPin); err != nil {
+		return err
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
+	cl, cleanup, err := createBarrierClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	ctx := context.Background()
+	resp, err := cl.BarrierInitializeShamir(ctx, &transport.BarrierInitializeShamirRequest{
+		Secret:      barrierSecret,
+		Threshold:   barrierThreshold,
+		TotalShares: barrierTotal,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize Shamir barrier: %w", err)
+	}
+
+	if err := applyInitialPINPair(ctx, cl, barrierFlagSOPin, barrierFlagUserPin); err != nil {
+		return err
+	}
+
+	return printBarrierShamirResult(printer, resp)
+}
+
+// =============================================================================
+// unseal
+// =============================================================================
+
+// runBarrierUnsealCmd executes 'barrier unseal'.
+func runBarrierUnsealCmd(cmd *cobra.Command, _ []string) error {
+	if barrierSecret == "" {
+		return &BarrierSecretRequiredError{Op: "unseal"}
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
+	cl, cleanup, err := createBarrierClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	if err := cl.BarrierUnseal(context.Background(), &transport.BarrierUnsealRequest{
+		Secret: barrierSecret,
+	}); err != nil {
+		return fmt.Errorf("failed to unseal barrier: %w", err)
+	}
+
+	return printer.PrintSuccess("Barrier unsealed successfully")
+}
+
+// =============================================================================
+// unseal-shares
+// =============================================================================
+
+// resolveUnsealShares enforces the --share / --shares-file invariants
+// and returns the flattened share list.
+func resolveUnsealShares(shares []string, sharesFile string, stdin io.Reader) ([]string, error) {
+	hasFlag := len(shares) > 0
+	hasFile := sharesFile != ""
+	if hasFlag && hasFile {
+		return nil, &BarrierShareInputError{
+			Reason: "exactly one of --share (repeatable) or --shares-file is allowed",
+		}
+	}
+	if !hasFlag && !hasFile {
+		return nil, &BarrierShareInputError{
+			Reason: "one of --share (repeatable) or --shares-file is required",
+		}
+	}
+	if hasFlag {
+		return shares, nil
+	}
+	return readSharesFile(sharesFile, stdin)
+}
+
+// readSharesFile reads one share per line from path. Blank lines and
+// '#' comments are skipped. The literal path "-" reads from the
+// supplied stdin reader (defaults to os.Stdin in production).
+func readSharesFile(path string, stdin io.Reader) ([]string, error) {
+	var src io.Reader
+	if path == "-" {
+		src = stdin
+		if src == nil {
+			src = os.Stdin
+		}
+	} else {
+		f, err := os.Open(path) // #nosec G304 - path supplied by operator
+		if err != nil {
+			return nil, &BarrierSharesFileError{Path: path, Err: err}
+		}
+		defer func() { _ = f.Close() }()
+		src = f
+	}
+
+	var shares []string
+	scanner := bufio.NewScanner(src)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		shares = append(shares, line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, &BarrierSharesFileError{Path: path, Err: err}
+	}
+	if len(shares) == 0 {
+		return nil, &BarrierSharesFileEmptyError{Path: path}
+	}
+	return shares, nil
+}
+
+// runBarrierUnsealSharesCmd executes 'barrier unseal-shares'.
+func runBarrierUnsealSharesCmd(cmd *cobra.Command, _ []string) error {
+	shares, err := resolveUnsealShares(barrierShares, barrierSharesFile, cmd.InOrStdin())
+	if err != nil {
+		return err
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
+	cl, cleanup, err := createBarrierClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	if err := cl.BarrierUnsealWithShares(context.Background(), &transport.BarrierUnsealSharesRequest{
 		Shares: shares,
+	}); err != nil {
+		return fmt.Errorf("failed to unseal barrier with shares: %w", err)
 	}
 
-	if err := cl.BarrierUnsealWithShares(context.Background(), req); err != nil {
-		handleError(fmt.Errorf("failed to unseal barrier with shares: %w", err))
-		return
-	}
-
-	if err := printer.PrintSuccess("Barrier unsealed successfully"); err != nil {
-		handleError(err)
-	}
+	return printer.PrintSuccess("Barrier unsealed successfully")
 }
 
-// barrierSeal seals the barrier.
-func barrierSeal(cfg *Config, printer *Printer) {
+// =============================================================================
+// seal
+// =============================================================================
+
+// confirmBarrierSeal reads a yes/no confirmation from stdin unless the
+// operator passed --assume-yes. Returns true when the operator confirmed.
+func confirmBarrierSeal(in io.Reader, out io.Writer, assumeYes bool) (bool, error) {
+	if assumeYes {
+		return true, nil
+	}
+	if _, err := fmt.Fprint(out, "Are you sure you want to seal the barrier? (yes/no): "); err != nil {
+		return false, &BarrierSealConfirmationError{Err: err}
+	}
+	reader := bufio.NewReader(in)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false, &BarrierSealConfirmationError{Err: err}
+	}
+	return strings.TrimSpace(strings.ToLower(response)) == "yes", nil
+}
+
+// runBarrierSealCmd executes 'barrier seal'.
+func runBarrierSealCmd(cmd *cobra.Command, _ []string) error {
+	ok, err := confirmBarrierSeal(cmd.InOrStdin(), cmd.OutOrStdout(), barrierAssumeYes)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Seal cancelled")
+		return nil
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
 	cl, cleanup, err := createBarrierClient(cfg)
 	if err != nil {
-		handleError(err)
-		return
+		return err
 	}
 	defer cleanup()
 
-	printVerbose("Sealing barrier")
-
-	if err := cl.BarrierSeal(context.Background()); err != nil {
-		handleError(fmt.Errorf("failed to seal barrier: %w", err))
-		return
+	ctx := context.Background()
+	if err := verifySOPINIfSupplied(ctx, cl, barrierFlagSOPin); err != nil {
+		return fmt.Errorf("failed to verify SO PIN: %w", err)
 	}
 
-	if err := printer.PrintSuccess("Barrier sealed successfully"); err != nil {
-		handleError(err)
+	if err := cl.BarrierSeal(ctx); err != nil {
+		return fmt.Errorf("failed to seal barrier: %w", err)
 	}
+
+	return printer.PrintSuccess("Barrier sealed successfully")
 }
 
-// barrierStatus shows the current barrier status.
-func barrierStatus(cfg *Config, printer *Printer) {
+// =============================================================================
+// rekey
+// =============================================================================
+
+// validateRekeyFlags enforces the canonical rekey invariants.
+//
+// xkms's wire-level BarrierRekey carries only Threshold/Total — it
+// regenerates Shamir shares. The CLI accepts --passphrase at the flag level
+// for UX parity but emits XKMSPassphraseRekeyUnsupportedError if the
+// operator does not pair it with --threshold/--total.
+func validateRekeyFlags(secret string, threshold, total int) error {
+	if secret == "" {
+		return &BarrierSecretRequiredError{Op: "rekey"}
+	}
+	hasThresh := threshold > 0
+	hasTotal := total > 0
+	if hasThresh != hasTotal {
+		return &BarrierShamirParamsError{
+			Op:     "rekey",
+			Reason: "--threshold and --total must be supplied together",
+		}
+	}
+	if !hasThresh && !hasTotal {
+		return &XKMSPassphraseRekeyUnsupportedError{}
+	}
+	if threshold > total {
+		return &BarrierShamirParamsError{Op: "rekey", Reason: "--threshold cannot exceed --total"}
+	}
+	return nil
+}
+
+// runBarrierRekeyCmd executes 'barrier rekey'.
+func runBarrierRekeyCmd(cmd *cobra.Command, _ []string) error {
+	if err := validateRekeyFlags(barrierSecret, barrierThreshold, barrierTotal); err != nil {
+		return err
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
 	cl, cleanup, err := createBarrierClient(cfg)
 	if err != nil {
-		handleError(err)
-		return
+		return err
 	}
 	defer cleanup()
 
-	printVerbose("Retrieving barrier status")
-
-	resp, err := cl.BarrierStatus(context.Background())
-	if err != nil {
-		handleError(fmt.Errorf("failed to get barrier status: %w", err))
-		return
+	ctx := context.Background()
+	if err := verifySOPINIfSupplied(ctx, cl, barrierFlagSOPin); err != nil {
+		return fmt.Errorf("failed to verify SO PIN: %w", err)
 	}
 
-	printBarrierStatus(printer, resp)
+	resp, err := cl.BarrierRekey(ctx, &transport.BarrierRekeyRequest{
+		Threshold: barrierThreshold,
+		Total:     barrierTotal,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to rekey barrier: %w", err)
+	}
+	return printBarrierRekeyResult(printer, resp)
 }
 
-// barrierRekey re-splits the root key with new Shamir shares.
-func barrierRekey(cfg *Config, printer *Printer, threshold, totalShares int) {
+// =============================================================================
+// recovery generate
+// =============================================================================
+
+// validateRecoveryGenerateFlags enforces the canonical recovery-gen invariants.
+func validateRecoveryGenerateFlags(threshold, total int) error {
+	if threshold < 2 {
+		return &BarrierShamirParamsError{
+			Op:     "recovery generate",
+			Reason: "--threshold must be >= 2",
+		}
+	}
+	if total < threshold {
+		return &BarrierShamirParamsError{
+			Op:     "recovery generate",
+			Reason: "--total must be >= --threshold",
+		}
+	}
+	return nil
+}
+
+// runBarrierRecoveryGenerateCmd executes 'barrier recovery generate'.
+func runBarrierRecoveryGenerateCmd(cmd *cobra.Command, _ []string) error {
+	if err := validateRecoveryGenerateFlags(barrierThreshold, barrierTotal); err != nil {
+		return err
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
 	cl, cleanup, err := createBarrierClient(cfg)
 	if err != nil {
-		handleError(err)
-		return
+		return err
 	}
 	defer cleanup()
 
-	printVerbose("Rekeying barrier (threshold=%d, shares=%d)", threshold, totalShares)
-
-	// Rekey uses the same Shamir init request with new parameters
-	req := &transport.BarrierInitializeShamirRequest{
-		Threshold:   threshold,
-		TotalShares: totalShares,
+	ctx := context.Background()
+	if err := verifySOPINIfSupplied(ctx, cl, barrierFlagSOPin); err != nil {
+		return fmt.Errorf("failed to verify SO PIN: %w", err)
 	}
 
-	resp, err := cl.BarrierInitializeShamir(context.Background(), req)
+	resp, err := cl.BarrierGenerateRecoveryKeys(ctx, &transport.BarrierGenerateRecoveryKeysRequest{
+		Threshold: barrierThreshold,
+		Total:     barrierTotal,
+	})
 	if err != nil {
-		handleError(fmt.Errorf("failed to rekey barrier: %w", err))
-		return
+		return fmt.Errorf("failed to generate recovery keys: %w", err)
 	}
-
-	printBarrierShamirResult(printer, resp)
+	return printBarrierRecoveryKeys(printer, resp)
 }
 
-// barrierRootToken generates a root token from Shamir shares.
-func barrierRootToken(cfg *Config, printer *Printer, shares []string) {
+// =============================================================================
+// recovery recover
+// =============================================================================
+
+// runBarrierRecoveryRecoverCmd executes 'barrier recovery recover'.
+func runBarrierRecoveryRecoverCmd(cmd *cobra.Command, _ []string) error {
+	if len(barrierRecoveryShs) == 0 {
+		return &BarrierRecoverySharesRequiredError{}
+	}
+
+	cfg := getConfig()
+	printer := NewPrinter(cfg.OutputFormat, cmd.OutOrStdout())
+
 	cl, cleanup, err := createBarrierClient(cfg)
 	if err != nil {
-		handleError(err)
-		return
+		return err
 	}
 	defer cleanup()
 
-	printVerbose("Generating root token from %d shares", len(shares))
-
-	// Root token generation uses batch unseal to reconstruct the key
-	req := &transport.BarrierUnsealSharesRequest{
-		Shares: shares,
+	if err := cl.BarrierRecoverWithKeys(context.Background(), &transport.BarrierRecoverWithKeysRequest{
+		Keys: barrierRecoveryShs,
+	}); err != nil {
+		return fmt.Errorf("failed to recover barrier: %w", err)
 	}
-
-	if err := cl.BarrierUnsealWithShares(context.Background(), req); err != nil {
-		handleError(fmt.Errorf("failed to generate root token: %w", err))
-		return
-	}
-
-	if err := printer.PrintSuccess("Root token generated: barrier unsealed successfully"); err != nil {
-		handleError(err)
-	}
+	return printer.PrintSuccess("Barrier recovered successfully")
 }
 
-// barrierSharesList lists Shamir share metadata.
-func barrierSharesList(cfg *Config, printer *Printer) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Listing Shamir shares")
-
-	resp, err := cl.BarrierStatus(context.Background())
-	if err != nil {
-		handleError(fmt.Errorf("failed to get barrier status: %w", err))
-		return
-	}
-
-	printBarrierStatus(printer, resp)
-}
-
-// barrierSharesVerify verifies Shamir shares are consistent.
-func barrierSharesVerify(cfg *Config, printer *Printer) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Verifying Shamir shares")
-
-	resp, err := cl.BarrierStatus(context.Background())
-	if err != nil {
-		handleError(fmt.Errorf("failed to verify shares: %w", err))
-		return
-	}
-
-	if resp.Strategy != "shamir" {
-		handleError(ErrBarrierNotShamir)
-		return
-	}
-
-	if err := printer.PrintSuccess("Shamir shares verified successfully"); err != nil {
-		handleError(err)
-	}
-}
-
-// barrierSharesDelete deletes a specific share by index.
-func barrierSharesDelete(cfg *Config, printer *Printer, indexStr string) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Deleting share at index %s", indexStr)
-
-	// Parse index
-	var index int
-	if _, err := fmt.Sscanf(indexStr, "%d", &index); err != nil {
-		handleError(fmt.Errorf("invalid share index %q: %w", indexStr, ErrBarrierInvalidShareIndex))
-		return
-	}
-
-	// Use barrier status to verify Shamir mode, then report success
-	// The actual deletion is handled server-side via the barrier API
-	resp, err := cl.BarrierStatus(context.Background())
-	if err != nil {
-		handleError(fmt.Errorf("failed to get barrier status: %w", err))
-		return
-	}
-
-	if resp.Strategy != "shamir" {
-		handleError(ErrBarrierNotShamir)
-		return
-	}
-
-	if err := printer.PrintSuccess(fmt.Sprintf("Share at index %d deleted", index)); err != nil {
-		handleError(err)
-	}
-}
-
-// barrierSharesDeleteAll deletes all Shamir shares.
-func barrierSharesDeleteAll(cfg *Config, printer *Printer) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Deleting all Shamir shares")
-
-	resp, err := cl.BarrierStatus(context.Background())
-	if err != nil {
-		handleError(fmt.Errorf("failed to get barrier status: %w", err))
-		return
-	}
-
-	if resp.Strategy != "shamir" {
-		handleError(ErrBarrierNotShamir)
-		return
-	}
-
-	if err := printer.PrintSuccess("All Shamir shares deleted"); err != nil {
-		handleError(err)
-	}
-}
-
-// barrierRecoveryGenerate generates recovery keys.
-func barrierRecoveryGenerate(cfg *Config, printer *Printer, threshold, totalKeys int) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Generating %d recovery keys (threshold=%d)", totalKeys, threshold)
-
-	// Recovery keys use the Shamir init mechanism with different semantics
-	req := &transport.BarrierInitializeShamirRequest{
-		Threshold:   threshold,
-		TotalShares: totalKeys,
-	}
-
-	resp, err := cl.BarrierInitializeShamir(context.Background(), req)
-	if err != nil {
-		handleError(fmt.Errorf("failed to generate recovery keys: %w", err))
-		return
-	}
-
-	printBarrierRecoveryKeys(printer, resp)
-}
-
-// barrierRecoveryRecover recovers the barrier using recovery keys.
-func barrierRecoveryRecover(cfg *Config, printer *Printer, keys []string) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Recovering barrier with %d recovery keys", len(keys))
-
-	req := &transport.BarrierUnsealSharesRequest{
-		Shares: keys,
-	}
-
-	if err := cl.BarrierUnsealWithShares(context.Background(), req); err != nil {
-		handleError(fmt.Errorf("failed to recover barrier: %w", err))
-		return
-	}
-
-	if err := printer.PrintSuccess("Barrier recovered successfully"); err != nil {
-		handleError(err)
-	}
-}
-
-// barrierRecoveryDelete deletes all recovery keys.
-func barrierRecoveryDelete(cfg *Config, printer *Printer) {
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		handleError(err)
-		return
-	}
-	defer cleanup()
-
-	printVerbose("Deleting all recovery keys")
-
-	// Sealing effectively invalidates recovery keys
-	if err := cl.BarrierSeal(context.Background()); err != nil {
-		handleError(fmt.Errorf("failed to delete recovery keys: %w", err))
-		return
-	}
-
-	if err := printer.PrintSuccess("Recovery keys deleted"); err != nil {
-		handleError(err)
-	}
-}
-
+// =============================================================================
 // Output helpers
+// =============================================================================
 
-// printBarrierStatus prints barrier status information.
-func printBarrierStatus(printer *Printer, resp *transport.BarrierStatusResponse) {
+// printBarrierStatus renders a BarrierStatusResponse.
+func printBarrierStatus(printer *Printer, resp *transport.BarrierStatusResponse) error {
 	switch printer.format {
 	case OutputFormatJSON:
 		result := map[string]interface{}{
@@ -790,139 +980,177 @@ func printBarrierStatus(printer *Printer, resp *transport.BarrierStatusResponse)
 		if resp.InitializedAt != "" {
 			result["initialized_at"] = resp.InitializedAt
 		}
-		if err := printer.PrintJSON(result); err != nil {
-			handleError(err)
-		}
+		return printer.PrintJSON(result)
 	case OutputFormatTable, OutputFormatText:
-		sealState := "unsealed"
+		state := "unsealed"
 		if resp.Sealed {
-			sealState = "sealed"
+			state = "sealed"
 		}
 		_, _ = fmt.Fprintf(printer.writer, "Barrier Status:\n")
-		_, _ = fmt.Fprintf(printer.writer, "  State:           %s\n", sealState)
+		_, _ = fmt.Fprintf(printer.writer, "  State:           %s\n", state)
 		_, _ = fmt.Fprintf(printer.writer, "  Strategy:        %s\n", resp.Strategy)
 		_, _ = fmt.Fprintf(printer.writer, "  Hardware Backed: %t\n", resp.HardwareBacked)
 		if resp.InitializedAt != "" {
 			_, _ = fmt.Fprintf(printer.writer, "  Initialized At:  %s\n", resp.InitializedAt)
 		}
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", printer.format)
 	}
 }
 
-// printBarrierShamirResult prints the result of a Shamir initialization or rekey.
-func printBarrierShamirResult(printer *Printer, resp *transport.BarrierInitializeShamirResponse) {
+// printBarrierShamirResult renders a Shamir initialization response.
+func printBarrierShamirResult(printer *Printer, resp *transport.BarrierInitializeShamirResponse) error {
 	switch printer.format {
 	case OutputFormatJSON:
-		result := map[string]interface{}{
+		return printer.PrintJSON(map[string]interface{}{
 			"shares":       resp.Shares,
 			"threshold":    resp.Threshold,
 			"total_shares": resp.TotalShares,
-		}
-		if err := printer.PrintJSON(result); err != nil {
-			handleError(err)
-		}
+		})
 	case OutputFormatTable, OutputFormatText:
 		_, _ = fmt.Fprintf(printer.writer, "Shamir Secret Sharing Initialized\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Threshold:    %d of %d shares required\n", resp.Threshold, resp.TotalShares)
+		_, _ = fmt.Fprintf(printer.writer, "  Threshold:    %d of %d shares required\n",
+			resp.Threshold, resp.TotalShares)
 		_, _ = fmt.Fprintf(printer.writer, "\nShares (store these securely):\n")
 		for i, share := range resp.Shares {
 			_, _ = fmt.Fprintf(printer.writer, "  Share %d: %s\n", i+1, share)
 		}
 		_, _ = fmt.Fprintf(printer.writer, "\nWARNING: Store each share in a separate secure location.\n")
 		_, _ = fmt.Fprintf(printer.writer, "These shares will not be displayed again.\n")
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", printer.format)
 	}
 }
 
-// printBarrierUnsealProgress prints quorum progress during share submission.
-func printBarrierUnsealProgress(printer *Printer, resp *transport.BarrierUnsealShareResponse) {
+// printBarrierRekeyResult renders a rekey response.
+func printBarrierRekeyResult(printer *Printer, resp *transport.BarrierRekeyResponse) error {
 	switch printer.format {
 	case OutputFormatJSON:
-		result := map[string]interface{}{
-			"required":  resp.Required,
-			"submitted": resp.Submitted,
-			"complete":  resp.Complete,
-		}
-		if err := printer.PrintJSON(result); err != nil {
-			handleError(err)
-		}
+		return printer.PrintJSON(map[string]interface{}{
+			"shares":       resp.Shares,
+			"threshold":    resp.Threshold,
+			"total_shares": resp.TotalShares,
+		})
 	case OutputFormatTable, OutputFormatText:
-		if resp.Complete {
-			_, _ = fmt.Fprintf(printer.writer, "Barrier unsealed successfully (%d/%d shares submitted)\n",
-				resp.Submitted, resp.Required)
-		} else {
-			_, _ = fmt.Fprintf(printer.writer, "Share accepted: %d/%d shares submitted (need %d more)\n",
-				resp.Submitted, resp.Required, resp.Required-resp.Submitted)
+		_, _ = fmt.Fprintf(printer.writer, "Barrier Rekey Complete\n")
+		_, _ = fmt.Fprintf(printer.writer, "  New Threshold: %d of %d\n", resp.Threshold, resp.TotalShares)
+		_, _ = fmt.Fprintf(printer.writer, "\nNew Shares (store these securely):\n")
+		for i, share := range resp.Shares {
+			_, _ = fmt.Fprintf(printer.writer, "  Share %d: %s\n", i+1, share)
 		}
+		_, _ = fmt.Fprintf(printer.writer, "\nWARNING: Store each new share in a separate secure location.\n")
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", printer.format)
 	}
 }
 
-// printBarrierRecoveryKeys prints recovery key generation results.
-func printBarrierRecoveryKeys(printer *Printer, resp *transport.BarrierInitializeShamirResponse) {
+// printBarrierRecoveryKeys renders a recovery-key generation response.
+func printBarrierRecoveryKeys(printer *Printer, resp *transport.BarrierRecoveryKeysResponse) error {
 	switch printer.format {
 	case OutputFormatJSON:
-		result := map[string]interface{}{
-			"recovery_keys": resp.Shares,
+		return printer.PrintJSON(map[string]interface{}{
+			"recovery_keys": resp.Keys,
 			"threshold":     resp.Threshold,
-			"total_keys":    resp.TotalShares,
-		}
-		if err := printer.PrintJSON(result); err != nil {
-			handleError(err)
-		}
+			"total_keys":    resp.Total,
+		})
 	case OutputFormatTable, OutputFormatText:
 		_, _ = fmt.Fprintf(printer.writer, "Recovery Keys Generated\n")
-		_, _ = fmt.Fprintf(printer.writer, "  Threshold: %d of %d keys required\n", resp.Threshold, resp.TotalShares)
+		_, _ = fmt.Fprintf(printer.writer, "  Threshold: %d of %d keys required\n",
+			resp.Threshold, resp.Total)
 		_, _ = fmt.Fprintf(printer.writer, "\nRecovery Keys (store these securely):\n")
-		for i, key := range resp.Shares {
+		for i, key := range resp.Keys {
 			_, _ = fmt.Fprintf(printer.writer, "  Key %d: %s\n", i+1, key)
 		}
 		_, _ = fmt.Fprintf(printer.writer, "\nWARNING: Store each key in a separate secure location.\n")
 		_, _ = fmt.Fprintf(printer.writer, "These keys will not be displayed again.\n")
+		return nil
+	default:
+		return fmt.Errorf("unknown output format: %s", printer.format)
 	}
 }
 
+// =============================================================================
+// Flag wiring
+// =============================================================================
+
 func init() {
-	// barrier init flags
-	barrierInitCmd.Flags().String("secret", "", "Password or authorization value for sealing")
-	barrierInitCmd.Flags().Bool("shamir", false, "Use Shamir secret sharing strategy")
-	barrierInitCmd.Flags().Int("threshold", 3, "Minimum shares required to unseal (Shamir mode)")
-	barrierInitCmd.Flags().Int("shares", 5, "Total number of shares to generate (Shamir mode)")
+	// init flags
+	barrierInitCmd.Flags().StringVar(&barrierStrategy, "barrier-strategy", "passphrase",
+		"Barrier strategy: none | passphrase | shamir")
+	barrierInitCmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+		"Master passphrase (required for passphrase strategy, rejected for none)")
+	barrierInitCmd.Flags().StringVar(&barrierFlagSOPin, "so-pin", "",
+		"Security Officer PIN (optional; requires --user-pin; rejected for --barrier-strategy=none)")
+	barrierInitCmd.Flags().StringVar(&barrierFlagUserPin, "user-pin", "",
+		"User PIN (optional; requires --so-pin; rejected for --barrier-strategy=none)")
 
-	// barrier unseal flags
-	barrierUnsealCmd.Flags().String("secret", "", "Password or authorization value for unsealing")
-	barrierUnsealCmd.Flags().String("share", "", "Single Shamir share value for incremental unsealing")
-	barrierUnsealCmd.Flags().String("shares", "", "Comma-separated Shamir shares for batch unsealing")
+	// init-shamir flags
+	barrierInitShamirCmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+		"Master passphrase (required)")
+	barrierInitShamirCmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
+		"Minimum shares required to unseal (M)")
+	barrierInitShamirCmd.Flags().IntVar(&barrierTotal, "total", 0,
+		"Total number of shares to generate (N)")
+	barrierInitShamirCmd.Flags().StringVar(&barrierFlagSOPin, "so-pin", "",
+		"Security Officer PIN (optional; requires --user-pin)")
+	barrierInitShamirCmd.Flags().StringVar(&barrierFlagUserPin, "user-pin", "",
+		"User PIN (optional; requires --so-pin)")
 
-	// barrier rekey flags
-	barrierRekeyCmd.Flags().Int("threshold", 0, "New minimum shares required to unseal")
-	barrierRekeyCmd.Flags().Int("shares", 0, "New total number of shares to generate")
+	// unseal flags
+	barrierUnsealCmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+		"Master passphrase (required)")
 
-	// barrier root-token flags
-	barrierRootTokenCmd.Flags().String("shares", "", "Comma-separated Shamir shares")
+	// unseal-shares flags
+	barrierUnsealSharesCmd.Flags().StringSliceVar(&barrierShares, "share", nil,
+		"Single Shamir share (repeatable: --share a --share b ...)")
+	barrierUnsealSharesCmd.Flags().StringVar(&barrierSharesFile, "shares-file", "",
+		"Path to a newline-delimited share file; '-' for stdin")
 
-	// barrier shares delete flags
-	barrierSharesDeleteCmd.Flags().Bool("all", false, "Delete all Shamir shares")
+	// seal flags
+	barrierSealCmd.Flags().StringVar(&barrierFlagSOPin, "so-pin", "",
+		"Security Officer PIN (verified before the seal RPC when supplied)")
+	barrierSealCmd.Flags().BoolVarP(&barrierAssumeYes, "assume-yes", "y", false,
+		"Skip the interactive confirmation prompt")
 
-	// barrier recovery generate flags
-	barrierRecoveryGenerateCmd.Flags().Int("threshold", 2, "Minimum recovery keys required")
-	barrierRecoveryGenerateCmd.Flags().Int("keys", 3, "Total number of recovery keys to generate")
+	// rekey flags
+	barrierRekeyCmd.Flags().StringVar(&barrierSecret, "passphrase", "",
+		"New master passphrase (required)")
+	barrierRekeyCmd.Flags().StringVar(&barrierFlagSOPin, "so-pin", "",
+		"Security Officer PIN (verified before the rekey RPC when supplied)")
+	barrierRekeyCmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
+		"New Shamir threshold (paired with --total)")
+	barrierRekeyCmd.Flags().IntVar(&barrierTotal, "total", 0,
+		"New Shamir total share count (paired with --threshold)")
 
-	// barrier recovery recover flags
-	barrierRecoveryRecoverCmd.Flags().String("keys", "", "Comma-separated recovery keys")
+	// recovery generate flags
+	barrierRecoveryGenerateCmd.Flags().IntVar(&barrierThreshold, "threshold", 0,
+		"Minimum keys required for recovery (M)")
+	barrierRecoveryGenerateCmd.Flags().IntVar(&barrierTotal, "total", 0,
+		"Total number of recovery keys (N)")
+	barrierRecoveryGenerateCmd.Flags().StringVar(&barrierFlagSOPin, "so-pin", "",
+		"Security Officer PIN (verified before the generate RPC when supplied)")
+
+	// recovery recover flags
+	barrierRecoveryRecoverCmd.Flags().StringSliceVar(&barrierRecoveryShs, "share", nil,
+		"Recovery key (repeatable: --share a --share b ...)")
 
 	// Build subcommand tree
-	barrierSharesCmd.AddCommand(barrierSharesListCmd)
-	barrierSharesCmd.AddCommand(barrierSharesVerifyCmd)
-	barrierSharesCmd.AddCommand(barrierSharesDeleteCmd)
-
 	barrierRecoveryCmd.AddCommand(barrierRecoveryGenerateCmd)
 	barrierRecoveryCmd.AddCommand(barrierRecoveryRecoverCmd)
-	barrierRecoveryCmd.AddCommand(barrierRecoveryDeleteCmd)
 
-	barrierCmd.AddCommand(barrierInitCmd)
-	barrierCmd.AddCommand(barrierUnsealCmd)
-	barrierCmd.AddCommand(barrierSealCmd)
 	barrierCmd.AddCommand(barrierStatusCmd)
-	barrierCmd.AddCommand(barrierSharesCmd)
+	barrierCmd.AddCommand(barrierInitCmd)
+	barrierCmd.AddCommand(barrierInitShamirCmd)
+	barrierCmd.AddCommand(barrierUnsealCmd)
+	barrierCmd.AddCommand(barrierUnsealSharesCmd)
+	barrierCmd.AddCommand(barrierSealCmd)
 	barrierCmd.AddCommand(barrierRekeyCmd)
-	barrierCmd.AddCommand(barrierRootTokenCmd)
 	barrierCmd.AddCommand(barrierRecoveryCmd)
+
+	// Quiet the unused import linter on errors.Is wrappers we expose
+	// through Unwrap() but do not call directly within this file.
+	_ = errors.Is
 }

@@ -12,4 +12,7 @@ ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
 
 WORKDIR /app
 
+# Materialize /tmp/go.work + GOWORK before running the test CMD passed as args.
+ENTRYPOINT ["bash", ".devcontainer/scripts/ensure-gowork.sh"]
+
 CMD ["sh", "-c", "echo 'Initializing SoftHSM2...'; softhsm2-util --init-token --slot 0 --label 'test-token' --so-pin 1234 --pin 1234; echo 'SoftHSM2 is ready, running tests...'; go test -v -tags='integration pkcs11 codec_cbor codec_json codec_msgpack' ./test/integration/pkcs11"]

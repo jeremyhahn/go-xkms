@@ -1032,7 +1032,7 @@ func TestFM_BarrierService_BestStrategy(t *testing.T) {
 func TestFM_BarrierService_Initialize_PasswordRequired(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierPasswordRequired)
 }
 
@@ -1058,7 +1058,7 @@ func TestFM_BarrierService_Initialize_ThenUnseal(t *testing.T) {
 	svc := NewBarrierService(dir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("strong-password-here", "software")
+	err := svc.Initialize("strong-password-here", "passphrase")
 	require.NoError(t, err)
 
 	err = svc.Seal()
@@ -1066,7 +1066,7 @@ func TestFM_BarrierService_Initialize_ThenUnseal(t *testing.T) {
 
 	svc2 := NewBarrierService(dir, slog.Default())
 	svc2.SetContext(context.Background())
-	err = svc2.Unseal("strong-password-here", "software")
+	err = svc2.Unseal("strong-password-here", "passphrase")
 	require.NoError(t, err)
 
 	status := svc2.Status()
@@ -1080,12 +1080,12 @@ func TestFM_BarrierService_Initialize_AlreadyInit(t *testing.T) {
 	svc := NewBarrierService(dir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("strong-password-here", "software")
+	err := svc.Initialize("strong-password-here", "passphrase")
 	require.NoError(t, err)
 
 	svc2 := NewBarrierService(dir, slog.Default())
 	svc2.SetContext(context.Background())
-	err = svc2.Initialize("another-password", "software")
+	err = svc2.Initialize("another-password", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierAlreadyInit)
 }
 

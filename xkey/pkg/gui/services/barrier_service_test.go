@@ -64,7 +64,7 @@ func TestBarrierService_ProbeStrategies(t *testing.T) {
 	strategies := svc.ProbeStrategies()
 
 	require.Len(t, strategies, 1, "without TPM sealer, only software strategy expected")
-	assert.Equal(t, string(seal.StrategySoftware), strategies[0].ID)
+	assert.Equal(t, string(seal.StrategyPassphrase), strategies[0].ID)
 	assert.True(t, strategies[0].Available, "software strategy must always be available")
 	assert.False(t, strategies[0].HardwareBacked, "software strategy must not be hardware-backed")
 	assert.NotEmpty(t, strategies[0].Label)
@@ -81,7 +81,7 @@ func TestBarrierService_ProbeStrategies_WithTPM(t *testing.T) {
 	require.Len(t, strategies, 2, "with TPM sealer, both software and TPM2 expected")
 
 	// First entry is software.
-	assert.Equal(t, string(seal.StrategySoftware), strategies[0].ID)
+	assert.Equal(t, string(seal.StrategyPassphrase), strategies[0].ID)
 	assert.True(t, strategies[0].Available)
 	assert.False(t, strategies[0].HardwareBacked)
 
@@ -101,7 +101,7 @@ func TestBarrierService_BestStrategy(t *testing.T) {
 	best, err := svc.BestStrategy()
 	require.NoError(t, err)
 	require.NotNil(t, best)
-	assert.Equal(t, string(seal.StrategySoftware), best.ID,
+	assert.Equal(t, string(seal.StrategyPassphrase), best.ID,
 		"without TPM, best strategy should be software")
 	assert.False(t, best.HardwareBacked)
 }
@@ -118,7 +118,7 @@ func TestBarrierService_BestStrategy_TPMCanSealFalse_FallsToSoftware(t *testing.
 	require.NotNil(t, best)
 
 	// TPM2 should NOT be selected when CanSeal is false.
-	assert.Equal(t, string(seal.StrategySoftware), best.ID,
+	assert.Equal(t, string(seal.StrategyPassphrase), best.ID,
 		"TPM with CanSeal=false should fall back to software")
 	assert.False(t, best.HardwareBacked)
 }
@@ -161,7 +161,7 @@ func TestBarrierService_BestStrategy_PrefersTPM(t *testing.T) {
 func TestBarrierService_Initialize_SoftwareStrategy(t *testing.T) {
 	svc := newTestBarrierService(t)
 
-	err := svc.Initialize("test-password-123", "software")
+	err := svc.Initialize("test-password-123", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc.IsUnsealed(), "barrier should be unsealed after initialization")
 }
@@ -169,7 +169,7 @@ func TestBarrierService_Initialize_SoftwareStrategy(t *testing.T) {
 func TestBarrierService_Initialize_NoPassword_Error(t *testing.T) {
 	svc := newTestBarrierService(t)
 
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBarrierPasswordRequired,
 		"software strategy requires a password")
@@ -178,10 +178,10 @@ func TestBarrierService_Initialize_NoPassword_Error(t *testing.T) {
 func TestBarrierService_Initialize_AlreadyInit_Error(t *testing.T) {
 	svc := newTestBarrierService(t)
 
-	err := svc.Initialize("first-password", "software")
+	err := svc.Initialize("first-password", "passphrase")
 	require.NoError(t, err)
 
-	err = svc.Initialize("second-password", "software")
+	err = svc.Initialize("second-password", "passphrase")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBarrierAlreadyInit,
 		"initializing twice should return ErrBarrierAlreadyInit")
@@ -197,7 +197,7 @@ func TestBarrierService_UnsealAfterInitialize(t *testing.T) {
 	password := "my-barrier-password"
 
 	// Initialize.
-	err := svc.Initialize(password, "software")
+	err := svc.Initialize(password, "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc.IsUnsealed())
 
@@ -207,7 +207,7 @@ func TestBarrierService_UnsealAfterInitialize(t *testing.T) {
 	assert.False(t, svc.IsUnsealed(), "barrier should be sealed after Seal()")
 
 	// Unseal with same password.
-	err = svc.Unseal(password, "software")
+	err = svc.Unseal(password, "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc.IsUnsealed(), "barrier should be unsealed after Unseal()")
 }
@@ -217,7 +217,7 @@ func TestBarrierService_Unseal_TransparentInit(t *testing.T) {
 
 	// With the new behavior, Unseal on an uninitialized barrier
 	// transparently calls Initialize, creating the barrier on the fly.
-	err := svc.Unseal("some-password", "software")
+	err := svc.Unseal("some-password", "passphrase")
 	require.NoError(t, err, "unseal should transparently initialize the barrier")
 	assert.True(t, svc.IsUnsealed(), "barrier should be unsealed after transparent init")
 }
@@ -235,7 +235,7 @@ func TestBarrierService_SealAndStatus(t *testing.T) {
 	assert.True(t, status.Sealed, "uninitialized barrier should report sealed")
 
 	// Initialize.
-	err := svc.Initialize("status-test-pw", "software")
+	err := svc.Initialize("status-test-pw", "passphrase")
 	require.NoError(t, err)
 
 	// After initialization, status should show unsealed.
@@ -276,7 +276,7 @@ func TestBarrierService_GetBackend_Nil(t *testing.T) {
 func TestBarrierService_GetBackend_AfterInit(t *testing.T) {
 	svc := newTestBarrierService(t)
 
-	err := svc.Initialize("backend-test-pw", "software")
+	err := svc.Initialize("backend-test-pw", "passphrase")
 	require.NoError(t, err)
 
 	backend := svc.GetBackend()
@@ -320,14 +320,14 @@ func TestBarrierService_GetSealInfo_NotInitialized(t *testing.T) {
 func TestBarrierService_GetSealInfo_AfterInitialize(t *testing.T) {
 	svc := newTestBarrierService(t)
 
-	err := svc.Initialize("seal-info-password", "software")
+	err := svc.Initialize("seal-info-password", "passphrase")
 	require.NoError(t, err)
 
 	info := svc.GetSealInfo()
 	require.NotNil(t, info)
 	assert.True(t, info.Initialized, "barrier should be initialized after Initialize()")
 	assert.False(t, info.Sealed, "barrier should be unsealed after Initialize()")
-	assert.Equal(t, string(seal.StrategySoftware), info.Strategy)
+	assert.Equal(t, string(seal.StrategyPassphrase), info.Strategy)
 	assert.NotEmpty(t, info.StrategyLabel)
 	assert.False(t, info.HardwareBacked, "software strategy should not be hardware-backed")
 	assert.Contains(t, info.RootKeyPath, "barrier/root_key")
@@ -336,7 +336,7 @@ func TestBarrierService_GetSealInfo_AfterInitialize(t *testing.T) {
 func TestBarrierService_GetSealInfo_AfterSeal(t *testing.T) {
 	svc := newTestBarrierService(t)
 
-	err := svc.Initialize("seal-info-sealed-pw", "software")
+	err := svc.Initialize("seal-info-sealed-pw", "passphrase")
 	require.NoError(t, err)
 
 	err = svc.Seal()
@@ -352,12 +352,12 @@ func TestBarrierService_GetSealInfo_AfterSeal(t *testing.T) {
 func TestBarrierService_GetSealInfo_SoftwareStrategyLabel(t *testing.T) {
 	svc := newTestBarrierService(t)
 
-	err := svc.Initialize("label-test-pw", "software")
+	err := svc.Initialize("label-test-pw", "passphrase")
 	require.NoError(t, err)
 
 	info := svc.GetSealInfo()
 	require.NotNil(t, info)
-	assert.Equal(t, "Software (AES-256-GCM)", info.StrategyLabel,
+	assert.Equal(t, "Passphrase (AES-256-GCM)", info.StrategyLabel,
 		"software strategy should have the expected human-readable label")
 }
 
@@ -367,7 +367,7 @@ func TestBarrierService_GetSealInfo_FallbackStrategy_WhenBarrierNil(t *testing.T
 	// but the root key exists on disk.
 	tmpDir := t.TempDir()
 	svc1 := NewBarrierService(tmpDir, slog.Default())
-	err := svc1.Initialize("fallback-test-pw", "software")
+	err := svc1.Initialize("fallback-test-pw", "passphrase")
 	require.NoError(t, err)
 
 	// Create a new service pointing at the same config dir (barrier == nil).
@@ -395,7 +395,7 @@ func TestBarrierService_CheckInitialized_PrimaryPath(t *testing.T) {
 	svc.SetDataDir(dataDir)
 
 	// Initialize writes the root key to dataDir (primary).
-	err := svc.Initialize("primary-path-pw", "software")
+	err := svc.Initialize("primary-path-pw", "passphrase")
 	require.NoError(t, err)
 
 	// Create a fresh service with the same config to probe.
@@ -414,7 +414,7 @@ func TestBarrierService_CheckInitialized_PrimaryPath_NoDataDir(t *testing.T) {
 	configDir := t.TempDir()
 
 	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize("no-datadir-pw", "software")
+	err := svc.Initialize("no-datadir-pw", "passphrase")
 	require.NoError(t, err)
 
 	probe := NewBarrierService(configDir, slog.Default())
@@ -435,7 +435,7 @@ func TestBarrierService_CheckInitialized_FallbackPath(t *testing.T) {
 
 	// Initialize without dataDir -- root key goes to configDir/barrier/.
 	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize("fallback-path-pw", "software")
+	err := svc.Initialize("fallback-path-pw", "passphrase")
 	require.NoError(t, err)
 
 	// Create a new service with dataDir set (primary path is now dataDir,
@@ -500,7 +500,7 @@ func TestBarrierService_ProbeRootKey_WithRootKey(t *testing.T) {
 
 	// Initialize to create the root key.
 	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize("probe-key-pw", "software")
+	err := svc.Initialize("probe-key-pw", "passphrase")
 	require.NoError(t, err)
 
 	// Probe the configDir/barrier/ path.
@@ -522,7 +522,7 @@ func TestBarrierService_GetSealInfo_InitializedViaFallback(t *testing.T) {
 
 	// Initialize without dataDir.
 	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize("seal-info-fallback-pw", "software")
+	err := svc.Initialize("seal-info-fallback-pw", "passphrase")
 	require.NoError(t, err)
 
 	// Create a new service with dataDir set (primary has no root key).
@@ -581,7 +581,7 @@ func TestBarrierService_Unseal_ViaFallbackPath(t *testing.T) {
 
 	// Initialize without dataDir.
 	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize(password, "software")
+	err := svc.Initialize(password, "passphrase")
 	require.NoError(t, err)
 
 	// Create a new service with dataDir pointing somewhere else.
@@ -589,7 +589,7 @@ func TestBarrierService_Unseal_ViaFallbackPath(t *testing.T) {
 	svc2.SetDataDir(dataDir)
 
 	// Unseal should find the root key in configDir/barrier/ fallback.
-	err = svc2.Unseal(password, "software")
+	err = svc2.Unseal(password, "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc2.IsUnsealed(),
 		"barrier should be unsealed after finding root key in fallback path")
@@ -604,7 +604,7 @@ func TestBarrierService_Unseal_ViaFallbackPath_TransparentInit(t *testing.T) {
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetDataDir(dataDir)
 
-	err := svc.Unseal("no-root-key-pw", "software")
+	err := svc.Unseal("no-root-key-pw", "passphrase")
 	require.NoError(t, err, "unseal should transparently initialize when no root key exists")
 	assert.True(t, svc.IsUnsealed(), "barrier should be unsealed after transparent init")
 }
@@ -615,7 +615,7 @@ func TestBarrierService_Unseal_ViaFallbackPath_TransparentInit(t *testing.T) {
 
 func TestBarrierService_ChangePassword_Success(t *testing.T) {
 	svc := newTestBarrierService(t)
-	require.NoError(t, svc.Initialize("oldpass", "software"))
+	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
 	require.NoError(t, svc.ChangePassword("newpass"))
 }
 
@@ -628,13 +628,13 @@ func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 
 func TestBarrierService_ChangePassword_RoundTrip(t *testing.T) {
 	svc := newTestBarrierService(t)
-	require.NoError(t, svc.Initialize("oldpass", "software"))
+	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
 	require.NoError(t, svc.ChangePassword("newpass"))
 	require.NoError(t, svc.Seal())
 
 	// Must unseal from scratch - new BarrierService uses same configDir
 	svc2 := NewBarrierService(svc.configDir, slog.Default())
-	err := svc2.Unseal("newpass", "software")
+	err := svc2.Unseal("newpass", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc2.IsUnsealed())
 }

@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsofthsm2 \
     softhsm2 \
     opensc \
+    openssl \
     swtpm \
     swtpm-tools \
     libtss2-dev \
@@ -64,8 +65,10 @@ RUN echo "directories.tokendir = /var/lib/softhsm/tokens" > /etc/softhsm/softhsm
 
 ENV SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
 
-# Initialize SoftHSM token
-RUN softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 1234 --pin 1234
+# Initialize SoftHSM token. The SO PIN matches what pkg/backend/pkcs11's
+# real-SoftHSM tests pass to Initialize ("12345678"), so the SO-login path in
+# ImportKey succeeds deterministically regardless of test ordering under -race.
+RUN softhsm2-util --init-token --slot 0 --label "test-token" --so-pin 12345678 --pin 1234
 
 # Configure SWTPM environment
 ENV SWTPM_STATE_DIR=/var/lib/swtpm
@@ -104,6 +107,14 @@ fi\n\
 echo "SWTPM started with PID: ${SWTPM_PID}"\n\
 \n\
 trap "kill ${SWTPM_PID} 2>/dev/null || true" EXIT\n\
+\n\
+# Provision the e2e-piv-test SoftHSM token (PIV slots 9A/9C/9D/9E) required by\n\
+# the pkcs11-tagged pivcert tests in the race gate. Source is mounted at\n\
+# /workspace at runtime, so this must run here rather than at image build.\n\
+if [ -f /workspace/xkey/test/e2e/setup-softhsm-piv.sh ]; then\n\
+  echo "Provisioning e2e-piv-test SoftHSM token..."\n\
+  bash /workspace/xkey/test/e2e/setup-softhsm-piv.sh || { echo "ERROR: PIV token provisioning failed"; exit 1; }\n\
+fi\n\
 \n\
 # Run the command passed as arguments\n\
 exec "$@"\n' > /usr/local/bin/ci-entrypoint.sh && chmod +x /usr/local/bin/ci-entrypoint.sh

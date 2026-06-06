@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
@@ -51,7 +50,7 @@ func (m *MockEABDAO) Save(_ context.Context, binding *entities.ExternalAccountBi
 	return nil
 }
 
-func (m *MockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAccountBinding, _ qrdbdao.Condition) error {
+func (m *MockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAccountBinding, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -64,7 +63,7 @@ func (m *MockEABDAO) Get(_ context.Context, id uint64) (*entities.ExternalAccoun
 			return binding, nil
 		}
 	}
-	return nil, qrdbdao.NotFoundError{EntityType: "eab"}
+	return nil, qrdbsdk.DAONotFoundError{EntityType: "eab"}
 }
 
 func (m *MockEABDAO) Delete(_ context.Context, binding *entities.ExternalAccountBinding) error {
@@ -83,7 +82,7 @@ func (m *MockEABDAO) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsdk.PageR
 	panic("not implemented")
 }
 
-func (m *MockEABDAO) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbdao.PagerFunc[*entities.ExternalAccountBinding]) error {
+func (m *MockEABDAO) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbsdk.PagerFunc[*entities.ExternalAccountBinding]) error {
 	panic("not implemented")
 }
 
@@ -123,7 +122,7 @@ func (m *MockEABDAO) QueryOneByIndex(_ context.Context, fieldName string, value 
 			}
 		}
 	}
-	return nil, qrdbdao.NotFoundError{EntityType: "eab"}
+	return nil, qrdbsdk.DAONotFoundError{EntityType: "eab"}
 }
 
 func (m *MockEABDAO) ScanByIndex(_ context.Context, _ string, _, _ interface{}) ([]*entities.ExternalAccountBinding, error) {
@@ -138,7 +137,7 @@ func (m *MockEABDAO) CountByIndex(_ context.Context, _ string, _ interface{}) (i
 	panic("not implemented")
 }
 
-func (m *MockEABDAO) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ExternalAccountBinding] {
+func (m *MockEABDAO) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ExternalAccountBinding] {
 	panic("not implemented")
 }
 

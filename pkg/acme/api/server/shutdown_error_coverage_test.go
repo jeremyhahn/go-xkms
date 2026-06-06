@@ -166,7 +166,7 @@ func TestShutdown_MultipleShutdownErrors(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err = server.Shutdown(ctx)
+	_ = server.Shutdown(ctx)
 
 	// Server should be stopped regardless of errors
 	assert.False(t, server.Running())
@@ -242,7 +242,7 @@ func TestShutdown_ErrorsJoined(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 
-	err = server.Shutdown(ctx)
+	_ = server.Shutdown(ctx)
 
 	// Should have errors from both REST and MCP
 	// Whether errors.Join creates a single error or multiple depends on implementation

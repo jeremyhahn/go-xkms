@@ -386,9 +386,11 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 					overrides[arg.Description] = uniqueID
 				}
 			}
-			// Make CA issue CN unique per run to avoid "certificate already exists"
+			// Make CA issue CN unique per protocol+run to avoid "certificate
+			// already exists". Including the protocol prevents collisions when two
+			// RunAllCommandsForProtocol calls share a runID (coarse clock).
 			if arg.Flag == "cn" && cmd.Category == CategoryCA {
-				overrides[arg.Description] = fmt.Sprintf("%s-%d", arg.Value, runID)
+				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
 			}
 		}
 

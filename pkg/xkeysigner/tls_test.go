@@ -118,7 +118,7 @@ func TestTLSClientConfig_Success(t *testing.T) {
 	require.NotNil(t, tlsConfig)
 
 	assert.Len(t, tlsConfig.Certificates, 1)
-	assert.Equal(t, uint16(tls.VersionTLS12), tlsConfig.MinVersion)
+	assert.Equal(t, uint16(tls.VersionTLS13), tlsConfig.MinVersion)
 }
 
 func TestTLSClientConfig_WithCACert(t *testing.T) {

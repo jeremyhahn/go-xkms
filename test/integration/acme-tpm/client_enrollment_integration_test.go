@@ -28,8 +28,8 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

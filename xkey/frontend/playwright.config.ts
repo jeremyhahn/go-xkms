@@ -13,6 +13,10 @@ const baseURL = process.env.BASE_URL || 'http://localhost:5199';
 
 export default defineConfig({
   testDir: './tests/e2e',
+  /* Real-backend (Wails) runs: complete the first-run setup wizard once so the
+     shared backend is initialized + unlocked before the workers start. No-op in
+     Vite UI-only mode (no BASE_URL). */
+  globalSetup: './tests/e2e/global-setup.ts',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

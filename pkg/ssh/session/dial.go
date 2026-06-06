@@ -141,13 +141,13 @@ func Dial(ctx context.Context, req DialRequest) (Session, error) {
 		deadline = d
 	}
 	if derr := netConn.SetDeadline(deadline); derr != nil {
-		netConn.Close()
+		_ = netConn.Close()
 		return nil, &DialError{Host: req.Host, Err: derr}
 	}
 
 	sshConn, chans, reqs, hsErr := ssh.NewClientConn(netConn, addr, cfg)
 	if hsErr != nil {
-		netConn.Close()
+		_ = netConn.Close()
 		if ctx.Err() != nil {
 			return nil, &TimeoutError{Host: req.Host, Duration: timeout, Err: ctx.Err()}
 		}
@@ -157,7 +157,7 @@ func Dial(ctx context.Context, req DialRequest) (Session, error) {
 	// Handshake complete — clear the deadline so long-lived channels
 	// are not affected by it.
 	if derr := netConn.SetDeadline(time.Time{}); derr != nil {
-		sshConn.Close()
+		_ = sshConn.Close()
 		return nil, &DialError{Host: req.Host, Err: derr}
 	}
 

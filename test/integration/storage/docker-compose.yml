@@ -8,6 +8,10 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=1
       - GOTOOLCHAIN=auto
@@ -15,6 +19,7 @@ services:
       - GOPATH=/tmp/go
     command: >
       sh -c "
+      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       apt-get update && apt-get install -y --no-install-recommends build-essential &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/... -timeout 30m
       "
@@ -30,6 +35,10 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=0
       - GOTOOLCHAIN=auto
@@ -37,6 +46,7 @@ services:
       - GOPATH=/tmp/go
     command: >
       sh -c "
+      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/...
       -run 'TestFileStorage' -timeout 15m
       "
@@ -52,6 +62,10 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=0
       - GOTOOLCHAIN=auto
@@ -59,6 +73,7 @@ services:
       - GOPATH=/tmp/go
     command: >
       sh -c "
+      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       go test -v -tags='integration codec_cbor codec_json codec_msgpack' ./test/integration/storage/...
       -run 'TestMemoryStorage' -timeout 15m
       "
@@ -74,6 +89,10 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
       - softhsm-tokens:/var/lib/softhsm/tokens
     environment:
       - CGO_ENABLED=1
@@ -83,9 +102,11 @@ services:
       - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
       - PKCS11_LIB=/usr/lib/softhsm/libsofthsm2.so
     depends_on:
-      - softhsm-init
+      softhsm-init:
+        condition: service_completed_successfully
     command: >
       sh -c "
+      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       apt-get update && apt-get install -y --no-install-recommends build-essential softhsm2 libsofthsm2 &&
       go test -v -tags='integration,pkcs11,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage/...
       -run 'TestHardwareStorage' -timeout 30m
@@ -102,6 +123,10 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
     environment:
       - CGO_ENABLED=1
       - GOTOOLCHAIN=auto
@@ -114,6 +139,7 @@ services:
         condition: service_healthy
     command: >
       sh -c "
+      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       apt-get update && apt-get install -y --no-install-recommends build-essential libtss2-dev &&
       sleep 3 &&
       go test -v -tags='integration,tpm2,codec_cbor,codec_json,codec_msgpack' ./test/integration/storage/...
@@ -131,8 +157,13 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
     environment:
       - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
+    # No Go workspace needed here — this init service only provisions the token.
     command: >
       sh -c "
       apt-get update && apt-get install -y --no-install-recommends softhsm2 &&

@@ -29,7 +29,3 @@ export function SetTPMAccessor(arg1) {
 export function TryAutoUnseal(arg1) {
   return window['go']['services']['BarrierAutoUnsealService']['TryAutoUnseal'](arg1);
 }
-
-export function VerifyPCRs(arg1, arg2) {
-  return window['go']['services']['BarrierAutoUnsealService']['VerifyPCRs'](arg1, arg2);
-}

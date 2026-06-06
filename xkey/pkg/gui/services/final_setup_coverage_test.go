@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -115,8 +115,8 @@ func TestFSC_ProbeEnvironment_BarrierStrategies(t *testing.T) {
 	probe, err := svc.ProbeEnvironment()
 	require.NoError(t, err)
 	assert.NotEmpty(t, probe.BarrierStrategies)
-	// Software strategy should always be available.
-	assert.Equal(t, "software", probe.BarrierStrategies[0].ID)
+	// Passphrase strategy should always be available.
+	assert.Equal(t, "passphrase", probe.BarrierStrategies[0].ID)
 }
 
 func TestFSC_ProbeEnvironment_ConfigFunc(t *testing.T) {
@@ -271,7 +271,7 @@ func TestFSC_ApplySetup_BarrierUseUserPinAsMaster(t *testing.T) {
 		UserPin:            testUserPin,
 		StorageType:        "barrier",
 		UseUserPinAsMaster: true, // L351: triggers barrierPW = choices.UserPin
-		SealerBackend:      "software",
+		SealerBackend:      "passphrase",
 		// BarrierPassword left empty so UserPin is used instead.
 	})
 	require.NoError(t, err)
@@ -279,7 +279,7 @@ func TestFSC_ApplySetup_BarrierUseUserPinAsMaster(t *testing.T) {
 	// Check that barrier was initialized (setup saved BarrierInitialized=true).
 	savedCfg := tw.configFunc()
 	assert.True(t, savedCfg.BarrierInitialized)
-	assert.Equal(t, "software", savedCfg.BarrierStrategy)
+	assert.Equal(t, "passphrase", savedCfg.BarrierStrategy)
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +296,7 @@ func TestFSC_ApplySetup_BarrierAlreadyInit_UnsealSucceeds(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	// First, initialize barrier to trigger ErrBarrierAlreadyInit on the second call.
-	err := barrierSvc.Initialize("test-password", "software")
+	err := barrierSvc.Initialize("test-password", "passphrase")
 	require.NoError(t, err)
 
 	// Create a fresh barrier service pointing at the same directory (already initialized).
@@ -520,7 +520,7 @@ func TestFSC_FactoryReset_EmitsEvent(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: true})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -543,7 +543,7 @@ func TestFSC_FactoryReset_NoEventEmitter(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -572,7 +572,7 @@ func TestFSC_FactoryReset_RemovesHMACFile(t *testing.T) {
 	tw.svc.SetConfigDir(tmpDir)
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -600,7 +600,7 @@ func TestFSC_FactoryReset_ResetsGUIConfig(t *testing.T) {
 	})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -626,7 +626,7 @@ func TestFSC_FactoryReset_AccumulatedErrors(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: true})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -654,7 +654,7 @@ func TestFSC_ApplySOProvisioning_EnterprisePolicyFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	tw := newTestSetupWizard(&GUIConfigData{})
 
-	pinMgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	pinMgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(pinMgr)
 	tw.svc.SetPINService(pinSvc)
 
@@ -696,7 +696,7 @@ func TestFSC_ApplySOProvisioning_EnterprisePolicyFields(t *testing.T) {
 func TestFSC_ApplySOProvisioning_PolicyHMACWriteError(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{})
 
-	pinMgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	pinMgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(pinMgr)
 	tw.svc.SetPINService(pinSvc)
 
@@ -738,7 +738,7 @@ func TestFSC_ApplySOProvisioning_ConfigLoadError(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{})
 	tw.svc.SetConfigDir(t.TempDir())
 
-	pinMgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	pinMgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(pinMgr)
 	tw.svc.SetPINService(pinSvc)
 
@@ -780,7 +780,7 @@ func TestFSC_ApplySOProvisioning_ConfigSaveError(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{})
 	tw.svc.SetConfigDir(t.TempDir())
 
-	pinMgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	pinMgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(pinMgr)
 	tw.svc.SetPINService(pinSvc)
 
@@ -811,7 +811,7 @@ func TestFSC_ApplyUserOnboarding_BarrierUnsealSucceeds(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -822,7 +822,7 @@ func TestFSC_ApplyUserOnboarding_BarrierUnsealSucceeds(t *testing.T) {
 	barrierSvc := NewBarrierService(tmpDir, slog.Default())
 	barrierSvc.SetContext(context.Background())
 	// Initialize the barrier first so unseal can succeed.
-	require.NoError(t, barrierSvc.Initialize(testUserPin, "software"))
+	require.NoError(t, barrierSvc.Initialize(testUserPin, "passphrase"))
 
 	// Create a fresh barrier service that points at the same directory.
 	barrierSvc2 := NewBarrierService(tmpDir, slog.Default())
@@ -862,7 +862,7 @@ func TestFSC_ApplyUserOnboarding_BarrierUnsealFailsInitSucceeds(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -912,7 +912,7 @@ func TestFSC_ApplyUserOnboarding_BarrierBothUnsealAndInitFail(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -924,7 +924,7 @@ func TestFSC_ApplyUserOnboarding_BarrierBothUnsealAndInitFail(t *testing.T) {
 	barrierDir := filepath.Join(tmpDir, "barrier-init")
 	barrierSvc := NewBarrierService(barrierDir, slog.Default())
 	barrierSvc.SetContext(context.Background())
-	require.NoError(t, barrierSvc.Initialize("correct-password", "software"))
+	require.NoError(t, barrierSvc.Initialize("correct-password", "passphrase"))
 
 	// Create a fresh barrier service pointing at the same directory.
 	// Unseal will fail with wrong password, Initialize will fail with ErrBarrierAlreadyInit.
@@ -979,7 +979,7 @@ func TestFSC_ApplyUserOnboarding_GUIConfigSaveError(t *testing.T) {
 	})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -1069,7 +1069,7 @@ func TestFSC_FactoryReset_HMACRemovalError(t *testing.T) {
 	tw.svc.SetConfigDir(tmpDir)
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -1103,7 +1103,7 @@ func TestFSC_FactoryReset_ConfigRemovalError(t *testing.T) {
 	tw.svc.SetConfigDir(t.TempDir()) // Empty config dir for HMAC (no error there)
 
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    testSOPin,
 		soPINSet: true,
 	}
@@ -1134,7 +1134,7 @@ func TestFSC_ApplySetup_BarrierSuccessWithBestStrategy(t *testing.T) {
 		UserPin:         testUserPin,
 		StorageType:     "barrier",
 		BarrierPassword: "test-barrier-pw",
-		SealerBackend:   "software",
+		SealerBackend:   "passphrase",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1142,7 +1142,7 @@ func TestFSC_ApplySetup_BarrierSuccessWithBestStrategy(t *testing.T) {
 
 	savedCfg := tw.configFunc()
 	assert.True(t, savedCfg.BarrierInitialized)
-	assert.Equal(t, "software", savedCfg.BarrierStrategy)
+	assert.Equal(t, "passphrase", savedCfg.BarrierStrategy)
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,7 +1153,7 @@ func TestFSC_ApplySetup_SetupCompletedEventPayload(t *testing.T) {
 	tmpDir := t.TempDir()
 	tw := newTestSetupWizard(&GUIConfigData{})
 
-	pinMgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	pinMgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(pinMgr)
 	tw.svc.SetPINService(pinSvc)
 
@@ -1170,7 +1170,7 @@ func TestFSC_ApplySetup_SetupCompletedEventPayload(t *testing.T) {
 		ServerProtocol:   "rest",
 		StorageType:      "barrier",
 		BarrierPassword:  "test-pw",
-		SealerBackend:    "software",
+		SealerBackend:    "passphrase",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1182,7 +1182,7 @@ func TestFSC_ApplySetup_SetupCompletedEventPayload(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "server", payload.Mode)
 	assert.True(t, payload.BarrierInitialized)
-	assert.Equal(t, "software", payload.BarrierStrategy)
+	assert.Equal(t, "passphrase", payload.BarrierStrategy)
 	assert.True(t, payload.UserPINSet)
 	assert.True(t, payload.SOPINSet)
 }
@@ -1438,7 +1438,7 @@ func TestSetupCov_GetStartupState_WithPINStatus(t *testing.T) {
 	})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy:   pin.StrategySoftware,
+		strategy:   qrdbsdk.PINStrategySoftware,
 		soPINSet:   true,
 		userPINSet: true,
 	}

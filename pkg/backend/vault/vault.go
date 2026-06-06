@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -72,6 +73,8 @@ func NewBackend(config *Config) (*Backend, error) {
 	vaultConfig.Address = config.Address
 
 	if config.TLSSkipVerify {
+		slog.Warn("vault: TLS certificate verification disabled via TLSSkipVerify; do not use in production",
+			"address", config.Address)
 		tlsConfig := &vault.TLSConfig{
 			Insecure: true,
 		}

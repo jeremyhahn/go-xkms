@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"math/big"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -629,8 +630,8 @@ func (s *TenantAwareAdminService) CreateTenantIntermediateCA(ctx context.Context
 		parentCert = entry.rootCA
 	} else {
 		// Use global CA as parent (default)
-		parentCert, _ = s.AdminService.ca.TrustedRoot()
-		parentSigner = s.AdminService.ca
+		parentCert, _ = s.ca.TrustedRoot()
+		parentSigner = s.ca
 	}
 
 	// Parse key algorithm
@@ -980,8 +981,8 @@ func (s *TenantAwareAdminService) GetTenantCAStatus(ctx context.Context, tenantI
 
 	if !exists {
 		// Even without tenant CA, can still use global CA
-		if s.AdminService != nil && s.AdminService.ca != nil {
-			root, err := s.AdminService.ca.TrustedRoot()
+		if s.AdminService != nil && s.ca != nil {
+			root, err := s.ca.TrustedRoot()
 			if err == nil && root != nil {
 				result.CanIssueCerts = true
 			}
@@ -1035,8 +1036,8 @@ func (s *TenantAwareAdminService) GetTenantCAStatus(ctx context.Context, tenantI
 
 	// Can issue certs if any CA is active or global CA is available
 	result.CanIssueCerts = result.ActiveCACount > 0
-	if !result.CanIssueCerts && s.AdminService != nil && s.AdminService.ca != nil {
-		root, err := s.AdminService.ca.TrustedRoot()
+	if !result.CanIssueCerts && s.AdminService != nil && s.ca != nil {
+		root, err := s.ca.TrustedRoot()
 		if err == nil && root != nil {
 			result.CanIssueCerts = true
 		}
@@ -1359,7 +1360,11 @@ func (s *TenantAwareAdminService) GetTenantUser(ctx context.Context, tenantID st
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
 		return nil, ErrRBACNotAvailable
 	}
-	return s.qrdbService.Users().GetUser(ctx, userID)
+	id, err := parseUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.qrdbService.Users().GetUser(ctx, id)
 }
 
 // UpdateTenantUser updates an existing user within a tenant.
@@ -1381,7 +1386,11 @@ func (s *TenantAwareAdminService) DeleteTenantUser(ctx context.Context, tenantID
 	if s.qrdbService == nil || s.qrdbService.Users() == nil {
 		return ErrRBACNotAvailable
 	}
-	return s.qrdbService.Users().DeleteUser(ctx, userID)
+	id, err := parseUserID(userID)
+	if err != nil {
+		return err
+	}
+	return s.qrdbService.Users().DeleteUser(ctx, id)
 }
 
 // ListTenantUsers lists users for a tenant.
@@ -1394,6 +1403,19 @@ func (s *TenantAwareAdminService) ListTenantUsers(ctx context.Context, tenantID 
 	}
 	req.TenantID = tenantID
 	return s.qrdbService.Users().ListUsers(ctx, req)
+}
+
+// parseUserID converts the admin-API string user identifier into qrdb's
+// canonical uint64 user ID. The admin API surface (REST/gRPC/QUIC/MCP) exposes
+// the identifier as a decimal string; qrdb assigns numeric IDs via its
+// Snowflake generator. Returns a MalformedError when the value is not a valid
+// unsigned integer.
+func parseUserID(userID string) (uint64, error) {
+	id, err := strconv.ParseUint(userID, 10, 64)
+	if err != nil {
+		return 0, caerrors.MalformedError("admin: invalid user id %q: %s", userID, err)
+	}
+	return id, nil
 }
 
 // parseKeyAlgorithm converts a key algorithm string to x509.PublicKeyAlgorithm.
@@ -1439,9 +1461,9 @@ func (s *TenantAwareAdminService) generateKeyPair(algo x509.PublicKeyAlgorithm) 
 // storeKeyAndCert stores a key and certificate in the keystore and KV.
 func (s *TenantAwareAdminService) storeKeyAndCert(ctx context.Context, tenantID, caType string, key crypto.PrivateKey, cert *x509.Certificate) error {
 	// Store in keystore if available
-	if s.AdminService != nil && s.AdminService.ca != nil {
-		ks, ok := s.AdminService.ca.KeyStore().(xkmssdk.ServiceBackend)
-		if ok && ks != nil {
+	if s.AdminService != nil && s.ca != nil {
+		ks := s.ca.KeyStore()
+		if ks != nil {
 			keyID := fmt.Sprintf("tenant:%s:%s-ca", tenantID, caType)
 			attrs := &xkmssdk.KeyAttributes{
 				CN:      keyID,
@@ -1528,21 +1550,21 @@ func (s *TenantAwareAdminService) GetTenantSigningCA(ctx context.Context, tenant
 	}
 
 	// Priority 4: Global default intermediate CA
-	if s.AdminService == nil || s.AdminService.ca == nil {
+	if s.AdminService == nil || s.ca == nil {
 		return nil, nil, ErrNoSigningCAAvailable
 	}
 
 	// Get the signer from the global CA
-	signer, err := s.AdminService.ca.Signer()
+	signer, err := s.ca.Signer()
 	if err != nil {
 		return nil, nil, ErrNoSigningCAAvailable
 	}
 
 	// Get the intermediate CA certificate (preferred for signing end-entity certs)
-	intermediate, err := s.AdminService.ca.TrustedIntermediate()
+	intermediate, err := s.ca.TrustedIntermediate()
 	if err != nil {
 		// If no intermediate exists, fall back to root CA certificate
-		root, rootErr := s.AdminService.ca.TrustedRoot()
+		root, rootErr := s.ca.TrustedRoot()
 		if rootErr != nil {
 			return nil, nil, ErrNoSigningCAAvailable
 		}
@@ -1554,12 +1576,12 @@ func (s *TenantAwareAdminService) GetTenantSigningCA(ctx context.Context, tenant
 
 // getTenantEABDAO returns a tenant-scoped EAB DAO.
 func (s *TenantAwareAdminService) getTenantEABDAO(tenantID string) (qrdbsdk.GenericDAO[*entities.ExternalAccountBinding], error) {
-	if s.AdminService == nil || s.AdminService.storageFactory == nil {
+	if s.AdminService == nil || s.storageFactory == nil {
 		return nil, caerrors.StorageFailureError("storage factory not available")
 	}
 
 	// Check if storage factory supports tenant-aware operations
-	tenantAwareFactory, ok := s.AdminService.storageFactory.(storage.TenantAwareFactory)
+	tenantAwareFactory, ok := s.storageFactory.(storage.TenantAwareFactory)
 	if ok {
 		scopedFactory, err := tenantAwareFactory.ForTenant(tenantID)
 		if err != nil {
@@ -1569,7 +1591,7 @@ func (s *TenantAwareAdminService) getTenantEABDAO(tenantID string) (qrdbsdk.Gene
 	}
 
 	// Fall back to global EAB DAO
-	return s.AdminService.storageFactory.ExternalAccountBindingDAO()
+	return s.storageFactory.ExternalAccountBindingDAO()
 }
 
 // generateEABKeyID generates a unique key identifier for an EAB.

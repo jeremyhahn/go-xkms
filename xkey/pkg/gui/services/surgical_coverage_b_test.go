@@ -320,8 +320,8 @@ func TestSB_Barrier_BestStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if best.ID != "software" {
-		t.Fatalf("expected software strategy, got %s", best.ID)
+	if best.ID != "passphrase" {
+		t.Fatalf("expected passphrase strategy, got %s", best.ID)
 	}
 }
 
@@ -330,11 +330,11 @@ func TestSB_Barrier_Initialize_AlreadyInit(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	if err := svc.Initialize("test-password", "software"); err != nil {
+	if err := svc.Initialize("test-password", "passphrase"); err != nil {
 		t.Fatalf("first Initialize failed: %v", err)
 	}
 
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	if !errors.Is(err, ErrBarrierAlreadyInit) {
 		t.Fatalf("expected ErrBarrierAlreadyInit, got %v", err)
 	}
@@ -343,7 +343,7 @@ func TestSB_Barrier_Initialize_AlreadyInit(t *testing.T) {
 // TestSB_Barrier_Initialize_EmptyPassword covers L170-171: password required.
 func TestSB_Barrier_Initialize_EmptyPassword(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	if !errors.Is(err, ErrBarrierPasswordRequired) {
 		t.Fatalf("expected ErrBarrierPasswordRequired, got %v", err)
 	}
@@ -352,7 +352,7 @@ func TestSB_Barrier_Initialize_EmptyPassword(t *testing.T) {
 // TestSB_Barrier_Initialize_BadDir covers L175 or L179-182: MkdirAll/New failure.
 func TestSB_Barrier_Initialize_BadDir(t *testing.T) {
 	svc := NewBarrierService("/dev/null", slog.Default())
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	if err == nil {
 		t.Fatal("expected error from invalid config dir")
 	}
@@ -363,7 +363,7 @@ func TestSB_Barrier_Initialize_Success(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	if err := svc.Initialize("test-password", "software"); err != nil {
+	if err := svc.Initialize("test-password", "passphrase"); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 	if !svc.IsUnsealed() {
@@ -384,7 +384,7 @@ func TestSB_Barrier_Unseal_FilestorageFail(t *testing.T) {
 	}
 
 	svc := NewBarrierService(dir, slog.Default())
-	err := svc.Unseal("test", "software")
+	err := svc.Unseal("test", "passphrase")
 	if err == nil {
 		t.Fatal("expected error from file-as-directory")
 	}
@@ -395,11 +395,11 @@ func TestSB_Barrier_Unseal_WrongPassword(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	if err := svc.Initialize("correct-password", "software"); err != nil {
+	if err := svc.Initialize("correct-password", "passphrase"); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 	svc.barrier = nil
-	err := svc.Unseal("wrong-password", "software")
+	err := svc.Unseal("wrong-password", "passphrase")
 	if err == nil {
 		t.Fatal("expected error from wrong password")
 	}
@@ -410,7 +410,7 @@ func TestSB_Barrier_Unseal_Success(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	if err := svc.Initialize("correct-password", "software"); err != nil {
+	if err := svc.Initialize("correct-password", "passphrase"); err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
 	if err := svc.Seal(); err != nil {
@@ -418,7 +418,7 @@ func TestSB_Barrier_Unseal_Success(t *testing.T) {
 	}
 	svc.barrier = nil
 
-	if err := svc.Unseal("correct-password", "software"); err != nil {
+	if err := svc.Unseal("correct-password", "passphrase"); err != nil {
 		t.Fatalf("Unseal failed: %v", err)
 	}
 }
@@ -499,10 +499,10 @@ func TestSB_Barrier_Context(t *testing.T) {
 func TestSB_Barrier_AssembleStrategy(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 
-	// Software always works.
-	strategy, err := svc.assembleStrategy("software")
+	// Passphrase always works.
+	strategy, err := svc.assembleStrategy("passphrase")
 	require.NoError(t, err)
-	assert.Equal(t, seal.StrategySoftware, strategy.ID())
+	assert.Equal(t, seal.StrategyPassphrase, strategy.ID())
 
 	// TPM2 with nil-returning sealer → error.
 	svc.SetTPMSealerFunc(func() types.Sealer { return nil })

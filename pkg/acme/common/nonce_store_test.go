@@ -23,8 +23,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 )
 
 // mockNonceDAO is a thread-safe mock implementation of GenericDAO[*entities.ACMENonce] for testing.
@@ -46,7 +44,7 @@ func (m *mockNonceDAO) Save(_ context.Context, nonce *entities.ACMENonce) error 
 	return nil
 }
 
-func (m *mockNonceDAO) SaveWithCondition(_ context.Context, _ *entities.ACMENonce, _ qrdbdao.Condition) error {
+func (m *mockNonceDAO) SaveWithCondition(_ context.Context, _ *entities.ACMENonce, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -77,7 +75,7 @@ func (m *mockNonceDAO) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsdk.Pag
 	panic("not implemented")
 }
 
-func (m *mockNonceDAO) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbdao.PagerFunc[*entities.ACMENonce]) error {
+func (m *mockNonceDAO) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbsdk.PagerFunc[*entities.ACMENonce]) error {
 	m.mu.Lock()
 	nonces := make([]*entities.ACMENonce, 0, len(m.nonces))
 	for _, n := range m.nonces {
@@ -124,7 +122,7 @@ func (m *mockNonceDAO) CountByIndex(_ context.Context, _ string, _ interface{}) 
 	panic("not implemented")
 }
 
-func (m *mockNonceDAO) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ACMENonce] {
+func (m *mockNonceDAO) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ACMENonce] {
 	panic("not implemented")
 }
 

@@ -1,0 +1,200 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package grpc
+
+import (
+	"context"
+
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// userInfoToProto projects a transport.UserInfo onto its protobuf form.
+func userInfoToProto(u transport.UserInfo) *pb.UserInfo {
+	return &pb.UserInfo{
+		Username:    u.Username,
+		DisplayName: u.DisplayName,
+		Role:        u.Role,
+		Enabled:     u.Enabled,
+	}
+}
+
+// CreateUser creates a new xkms user, backed by the embedded qrdb node.
+func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.UserResponse, error) {
+	if req == nil || req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if err := s.authorize(ctx, "users", "create", req.Username); err != nil {
+		return nil, err
+	}
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	resp, cErr := svc.CreateUser(ctx, &transport.CreateUserRequest{
+		Username:    req.Username,
+		DisplayName: req.DisplayName,
+		Role:        req.Role,
+		TenantID:    req.TenantId,
+	})
+	if cErr != nil {
+		return nil, status.Error(codes.Internal, cErr.Error())
+	}
+	return &pb.UserResponse{User: userInfoToProto(resp.User)}, nil
+}
+
+// ListUsers lists xkms users.
+func (s *Service) ListUsers(ctx context.Context, _ *pb.ListUsersRequest) (*pb.ListUsersResponse, error) {
+	if err := s.authorize(ctx, "users", "list", ""); err != nil {
+		return nil, err
+	}
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	resp, lErr := svc.ListUsers(ctx)
+	if lErr != nil {
+		return nil, status.Error(codes.Internal, lErr.Error())
+	}
+	users := make([]*pb.UserInfo, len(resp.Users))
+	for i, u := range resp.Users {
+		users[i] = userInfoToProto(u)
+	}
+	return &pb.ListUsersResponse{Users: users}, nil
+}
+
+// GetUser resolves an xkms user by username.
+func (s *Service) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.UserResponse, error) {
+	if req == nil || req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if err := s.authorize(ctx, "users", "read", req.Username); err != nil {
+		return nil, err
+	}
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	resp, gErr := svc.GetUser(ctx, req.Username)
+	if gErr != nil {
+		return nil, status.Error(codes.NotFound, gErr.Error())
+	}
+	return &pb.UserResponse{User: userInfoToProto(resp.User)}, nil
+}
+
+// DeleteUser removes an xkms user by username.
+func (s *Service) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb.DeleteUserResponse, error) {
+	if req == nil || req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if err := s.authorize(ctx, "users", "delete", req.Username); err != nil {
+		return nil, err
+	}
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	if dErr := svc.DeleteUser(ctx, req.Username); dErr != nil {
+		return nil, status.Error(codes.Internal, dErr.Error())
+	}
+	return &pb.DeleteUserResponse{Username: req.Username, Deleted: true}, nil
+}
+
+// EnableUser enables an xkms user by username.
+func (s *Service) EnableUser(ctx context.Context, req *pb.EnableUserRequest) (*pb.UserResponse, error) {
+	return s.setUserEnabled(ctx, req.GetUsername(), true)
+}
+
+// DisableUser disables an xkms user by username.
+func (s *Service) DisableUser(ctx context.Context, req *pb.DisableUserRequest) (*pb.UserResponse, error) {
+	return s.setUserEnabled(ctx, req.GetUsername(), false)
+}
+
+// setUserEnabled toggles a user's enabled state and returns the updated user.
+func (s *Service) setUserEnabled(ctx context.Context, username string, enabled bool) (*pb.UserResponse, error) {
+	if username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if err := s.authorize(ctx, "users", "update", username); err != nil {
+		return nil, err
+	}
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	if enabled {
+		err = svc.EnableUser(ctx, username)
+	} else {
+		err = svc.DisableUser(ctx, username)
+	}
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	resp, gErr := svc.GetUser(ctx, username)
+	if gErr != nil {
+		return nil, status.Error(codes.Internal, gErr.Error())
+	}
+	return &pb.UserResponse{User: userInfoToProto(resp.User)}, nil
+}
+
+// BindUserCert binds an mTLS certificate SPKI thumbprint to an xkms user.
+func (s *Service) BindUserCert(ctx context.Context, req *pb.BindUserCertRequest) (*pb.UserResponse, error) {
+	if req == nil || req.GetUsername() == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if req.GetThumbprint() == "" {
+		return nil, status.Error(codes.InvalidArgument, "thumbprint is required")
+	}
+	if err := s.authorize(ctx, "users", "update", req.GetUsername()); err != nil {
+		return nil, err
+	}
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	if bErr := svc.BindUserCert(ctx, req.GetUsername(), req.GetThumbprint(), req.GetNotAfterUnix()); bErr != nil {
+		return nil, status.Error(codes.Internal, bErr.Error())
+	}
+	resp, gErr := svc.GetUser(ctx, req.GetUsername())
+	if gErr != nil {
+		return nil, status.Error(codes.Internal, gErr.Error())
+	}
+	return &pb.UserResponse{User: userInfoToProto(resp.User)}, nil
+}
+
+// ListUserCredentials lists the credentials registered to an xkms user.
+func (s *Service) ListUserCredentials(ctx context.Context, req *pb.ListUserCredentialsRequest) (*pb.ListUserCredentialsResponse, error) {
+	if req == nil || req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "username is required")
+	}
+	if err := s.authorize(ctx, "users", "read", req.Username); err != nil {
+		return nil, err
+	}
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	resp, lErr := svc.ListUserCredentials(ctx, req.Username)
+	if lErr != nil {
+		return nil, status.Error(codes.NotFound, lErr.Error())
+	}
+	creds := make([]*pb.UserCredential, len(resp.Credentials))
+	for i, c := range resp.Credentials {
+		creds[i] = &pb.UserCredential{Id: c.ID, Name: c.DisplayName}
+	}
+	return &pb.ListUserCredentialsResponse{Credentials: creds}, nil
+}

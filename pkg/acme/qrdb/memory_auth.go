@@ -111,8 +111,8 @@ func (c *memoryRoleClient) ListRoles(_ context.Context, req *db.ListRolesRequest
 	}, nil
 }
 
-func (c *memoryRoleClient) AssignRole(_ context.Context, _, _ string) error   { return nil }
-func (c *memoryRoleClient) UnassignRole(_ context.Context, _, _ string) error { return nil }
+func (c *memoryRoleClient) AssignRole(_ context.Context, _ uint64, _ string) error   { return nil }
+func (c *memoryRoleClient) UnassignRole(_ context.Context, _ uint64, _ string) error { return nil }
 
 func (c *memoryRoleClient) ListPermissions(_ context.Context) (*db.ListPermissionsResponse, error) {
 	return &db.ListPermissionsResponse{}, nil
@@ -121,13 +121,13 @@ func (c *memoryRoleClient) ListPermissions(_ context.Context) (*db.ListPermissio
 // memoryUserClient is an in-memory UserClient implementation.
 type memoryUserClient struct {
 	mu     sync.RWMutex
-	users  map[string]*db.User
+	users  map[uint64]*db.User
 	nextID atomic.Uint64
 }
 
 func newMemoryUserClient() *memoryUserClient {
 	return &memoryUserClient{
-		users: make(map[string]*db.User),
+		users: make(map[uint64]*db.User),
 	}
 }
 
@@ -135,7 +135,7 @@ func (c *memoryUserClient) CreateUser(_ context.Context, req *db.CreateUserReque
 	id := c.nextID.Add(1)
 	now := time.Now().UTC().Format(time.RFC3339)
 	user := &db.User{
-		ID:        "user-" + strconv.FormatUint(id, 10),
+		ID:        id,
 		Username:  req.Username,
 		TenantID:  req.TenantID,
 		RoleIDs:   req.RoleIDs,
@@ -149,7 +149,7 @@ func (c *memoryUserClient) CreateUser(_ context.Context, req *db.CreateUserReque
 	return user, nil
 }
 
-func (c *memoryUserClient) GetUser(_ context.Context, id string) (*db.User, error) {
+func (c *memoryUserClient) GetUser(_ context.Context, id uint64) (*db.User, error) {
 	c.mu.RLock()
 	user, ok := c.users[id]
 	c.mu.RUnlock()
@@ -174,6 +174,14 @@ func (c *memoryUserClient) GetUserByUsername(_ context.Context, tenantID, userna
 	return nil, errUserNotFound
 }
 
+// GetUserByCertThumbprint satisfies the transport.UserClient contract. This
+// in-memory test client does not track mTLS cert bindings (the transport-layer
+// User carries no binding data), so it reports no match — the ACME tests that
+// use this client authenticate by username, not by cert thumbprint.
+func (c *memoryUserClient) GetUserByCertThumbprint(_ context.Context, _ string) (*db.User, error) {
+	return nil, errUserNotFound
+}
+
 func (c *memoryUserClient) UpdateUser(_ context.Context, req *db.UpdateUserRequest) (*db.User, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -191,7 +199,7 @@ func (c *memoryUserClient) UpdateUser(_ context.Context, req *db.UpdateUserReque
 	return user, nil
 }
 
-func (c *memoryUserClient) DeleteUser(_ context.Context, id string) error {
+func (c *memoryUserClient) DeleteUser(_ context.Context, id uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if _, ok := c.users[id]; !ok {
@@ -216,7 +224,7 @@ func (c *memoryUserClient) ListUsers(_ context.Context, req *db.ListUsersRequest
 	}, nil
 }
 
-func (c *memoryUserClient) EnableUser(_ context.Context, id string) error {
+func (c *memoryUserClient) EnableUser(_ context.Context, id uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	user, ok := c.users[id]
@@ -227,7 +235,7 @@ func (c *memoryUserClient) EnableUser(_ context.Context, id string) error {
 	return nil
 }
 
-func (c *memoryUserClient) DisableUser(_ context.Context, id string) error {
+func (c *memoryUserClient) DisableUser(_ context.Context, id uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	user, ok := c.users[id]
@@ -236,4 +244,18 @@ func (c *memoryUserClient) DisableUser(_ context.Context, id string) error {
 	}
 	user.Enabled = false
 	return nil
+}
+
+// AddCertBinding satisfies the transport.UserClient contract. This in-memory
+// test client does not track mTLS cert bindings (the transport-layer User
+// carries no binding data), so it simply returns the resolved user — the ACME
+// tests that use this client authenticate by username, not by cert thumbprint.
+func (c *memoryUserClient) AddCertBinding(_ context.Context, userID uint64, _ string, _ int64) (*db.User, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	user, ok := c.users[userID]
+	if !ok {
+		return nil, errUserNotFound
+	}
+	return user, nil
 }

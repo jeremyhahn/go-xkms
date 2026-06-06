@@ -50,6 +50,11 @@ func TestKeyToLogID(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, 32, len(logID))
+
+		// Same key should produce same ID
+		logID2, err := KeyToLogID(&key.PublicKey)
+		require.NoError(t, err)
+		assert.Equal(t, logID, logID2)
 	})
 
 	t.Run("different keys produce different IDs", func(t *testing.T) {

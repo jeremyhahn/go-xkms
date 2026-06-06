@@ -534,8 +534,8 @@ func TestClient_RegisterAccount(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"newNonce":   server.URL + "/new-nonce",
@@ -544,9 +544,9 @@ func TestClient_RegisterAccount(t *testing.T) {
 					"revokeCert": server.URL + "/revoke-cert",
 					"keyChange":  server.URL + "/key-change",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/new-account":
+			case "/new-account":
 				w.Header().Set("Location", server.URL+"/acct/1")
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -718,8 +718,8 @@ func TestClient_RevokeCertificate(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"newNonce":   server.URL + "/new-nonce",
@@ -728,9 +728,9 @@ func TestClient_RevokeCertificate(t *testing.T) {
 					"revokeCert": server.URL + "/revoke-cert",
 					"keyChange":  server.URL + "/key-change",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/revoke-cert":
+			case "/revoke-cert":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{})
 			default:
@@ -840,8 +840,8 @@ func TestClient_FetchCertificate(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"newNonce":   server.URL + "/new-nonce",
@@ -850,9 +850,9 @@ func TestClient_FetchCertificate(t *testing.T) {
 					"revokeCert": server.URL + "/revoke-cert",
 					"keyChange":  server.URL + "/key-change",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/cert/1":
+			case "/cert/1":
 				w.Header().Set("Content-Type", "application/pem-certificate-chain")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write(certPEM)
@@ -1000,8 +1000,8 @@ func TestClient_AccountKeyRollover(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"newNonce":   server.URL + "/new-nonce",
@@ -1010,16 +1010,16 @@ func TestClient_AccountKeyRollover(t *testing.T) {
 					"revokeCert": server.URL + "/revoke-cert",
 					"keyChange":  server.URL + "/key-change",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/new-account":
+			case "/new-account":
 				w.Header().Set("Location", server.URL+"/acct/1")
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":  "valid",
 					"contact": []string{"mailto:test@example.com"},
 				})
-			case r.URL.Path == "/key-change":
+			case "/key-change":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":  "valid",
@@ -1525,17 +1525,17 @@ func TestImprove_FetchCertificate_WithBundle(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"newNonce":   server.URL + "/new-nonce",
 					"newAccount": server.URL + "/new-account",
 					"newOrder":   server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/cert/1":
+			case "/cert/1":
 				w.Header().Set("Content-Type", "application/pem-certificate-chain")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write(bundlePEM)
@@ -1725,8 +1725,8 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newNonce":   server.URL + "/new-nonce",
@@ -1736,10 +1736,10 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 					"keyChange":  server.URL + "/key-change",
 				})
 
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
 
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.Header().Set("Location", server.URL+"/order/1")
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1752,7 +1752,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 					"finalize": server.URL + "/order/1/finalize",
 				})
 
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				status := "pending"
 				if authzCompleted {
 					status = "valid"
@@ -1772,7 +1772,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 					},
 				})
 
-			case r.URL.Path == "/challenge/1":
+			case "/challenge/1":
 				challengeAccepted = true
 				authzCompleted = true
 				w.WriteHeader(http.StatusOK)
@@ -1783,7 +1783,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 					"token":  "test-token",
 				})
 
-			case r.URL.Path == "/order/1/finalize":
+			case "/order/1/finalize":
 				w.Header().Set("Location", server.URL+"/order/1")
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1794,7 +1794,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 					"certificate": server.URL + "/cert/1",
 				})
 
-			case r.URL.Path == "/cert/1":
+			case "/cert/1":
 				w.Header().Set("Content-Type", "application/pem-certificate-chain")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
@@ -1893,14 +1893,14 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newNonce":   server.URL + "/new-nonce",
 					"newAccount": server.URL + "/new-account",
 					"newOrder":   server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.Header().Set("Location", server.URL+"/order/1")
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1912,7 +1912,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 					},
 					"finalize": server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"identifier": map[string]string{"type": "dns", "value": "example.com"},
 					"status":     "valid",
@@ -1925,20 +1925,20 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 						},
 					},
 				})
-			case r.URL.Path == "/challenge/1":
+			case "/challenge/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"type":   "http-01",
 					"status": "valid",
 					"url":    server.URL + "/challenge/1",
 					"token":  "test-token",
 				})
-			case r.URL.Path == "/order/1/finalize":
+			case "/order/1/finalize":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":      "valid",
 					"certificate": server.URL + "/cert/1",
 					"finalize":    server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/cert/1":
+			case "/cert/1":
 				w.Header().Set("Content-Type", "application/pem-certificate-chain")
 				_, _ = w.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
 			}
@@ -1993,19 +1993,19 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce")
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newOrder": server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":         "pending",
 					"authorizations": []string{server.URL + "/authz/1"},
 					"finalize":       server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status": "valid",
 					"challenges": []map[string]interface{}{
@@ -2016,7 +2016,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 						},
 					},
 				})
-			case r.URL.Path == "/challenge/1":
+			case "/challenge/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status": "valid",
 				})
@@ -2068,19 +2068,19 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce")
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newOrder": server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":         "pending",
 					"authorizations": []string{server.URL + "/authz/1"},
 					"finalize":       server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status": "pending",
 					"challenges": []map[string]interface{}{
@@ -2139,19 +2139,19 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce")
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newOrder": server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":         "pending",
 					"authorizations": []string{server.URL + "/authz/1"},
 					"finalize":       server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status": "invalid", // Invalid status
 					"challenges": []map[string]interface{}{
@@ -2162,7 +2162,7 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 						},
 					},
 				})
-			case r.URL.Path == "/challenge/1":
+			case "/challenge/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status": "invalid",
 				})
@@ -2228,19 +2228,19 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce")
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newOrder": server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":         "pending",
 					"authorizations": []string{server.URL + "/authz/1"},
 					"finalize":       server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status": "valid",
 					"challenges": []map[string]interface{}{
@@ -2251,16 +2251,16 @@ func TestClient_RequestCertificate_FullWorkflow(t *testing.T) {
 						},
 					},
 				})
-			case r.URL.Path == "/challenge/1":
+			case "/challenge/1":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status": "valid",
 				})
-			case r.URL.Path == "/order/1/finalize":
+			case "/order/1/finalize":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"status":      "valid",
 					"certificate": server.URL + "/cert/1",
 				})
-			case r.URL.Path == "/cert/1":
+			case "/cert/1":
 				w.Header().Set("Content-Type", "application/pem-certificate-chain")
 				_, _ = w.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER}))
 			}
@@ -4550,17 +4550,17 @@ func TestClient_RequestCertificate_ChallengeNotOffered(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   server.URL + "/new-nonce",
 				"newAccount": server.URL + "/new-account",
 				"newOrder":   server.URL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -4570,7 +4570,7 @@ func TestClient_RequestCertificate_ChallengeNotOffered(t *testing.T) {
 				"authorizations": []string{server.URL + "/authz/1"},
 				"finalize":       server.URL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			w.WriteHeader(http.StatusOK)
 			// Only offer http-01 challenge
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -4650,17 +4650,17 @@ func TestClient_RequestCertificate_ChallengeSetupError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   server.URL + "/new-nonce",
 				"newAccount": server.URL + "/new-account",
 				"newOrder":   server.URL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -4670,7 +4670,7 @@ func TestClient_RequestCertificate_ChallengeSetupError(t *testing.T) {
 				"authorizations": []string{server.URL + "/authz/1"},
 				"finalize":       server.URL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -4746,17 +4746,17 @@ func TestClient_RequestCertificate_MissingCSR(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   server.URL + "/new-nonce",
 				"newAccount": server.URL + "/new-account",
 				"newOrder":   server.URL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -4766,7 +4766,7 @@ func TestClient_RequestCertificate_MissingCSR(t *testing.T) {
 				"authorizations": []string{server.URL + "/authz/1"},
 				"finalize":       server.URL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -4781,7 +4781,7 @@ func TestClient_RequestCertificate_MissingCSR(t *testing.T) {
 					},
 				},
 			})
-		case r.URL.Path == "/challenge/1":
+		case "/challenge/1":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "http-01",
@@ -4867,17 +4867,17 @@ func TestClient_RequestCertificate_WithChallengeCleanup(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   server.URL + "/new-nonce",
 				"newAccount": server.URL + "/new-account",
 				"newOrder":   server.URL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusOK)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -4887,7 +4887,7 @@ func TestClient_RequestCertificate_WithChallengeCleanup(t *testing.T) {
 				"authorizations": []string{server.URL + "/authz/1"},
 				"finalize":       server.URL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -4902,7 +4902,7 @@ func TestClient_RequestCertificate_WithChallengeCleanup(t *testing.T) {
 					},
 				},
 			})
-		case r.URL.Path == "/challenge/1":
+		case "/challenge/1":
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "http-01",
@@ -4910,7 +4910,7 @@ func TestClient_RequestCertificate_WithChallengeCleanup(t *testing.T) {
 				"url":    server.URL + "/challenge/1",
 				"token":  "test-token",
 			})
-		case r.URL.Path == "/order/1/finalize":
+		case "/order/1/finalize":
 			w.Header().Set("Location", server.URL+"/order/1")
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -4919,7 +4919,7 @@ func TestClient_RequestCertificate_WithChallengeCleanup(t *testing.T) {
 				"finalize":    server.URL + "/order/1/finalize",
 				"certificate": server.URL + "/cert/1",
 			})
-		case r.URL.Path == "/cert/1":
+		case "/cert/1":
 			w.Header().Set("Content-Type", "application/pem-certificate-chain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(certPEM)
@@ -5604,16 +5604,16 @@ func TestRequestCert_GetAuthorizationError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5623,7 +5623,7 @@ func TestRequestCert_GetAuthorizationError(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			// Return error for authorization
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5688,16 +5688,16 @@ func TestRequestCert_ChallengeTypeNotOffered(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5707,7 +5707,7 @@ func TestRequestCert_ChallengeTypeNotOffered(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			// Return only dns-01, not http-01
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -5778,16 +5778,16 @@ func TestRequestCert_ChallengeSetupError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5797,7 +5797,7 @@ func TestRequestCert_ChallengeSetupError(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
 				"status":     "pending",
@@ -5870,16 +5870,16 @@ func TestRequestCert_AcceptChallengeError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5889,7 +5889,7 @@ func TestRequestCert_AcceptChallengeError(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
 				"status":     "pending",
@@ -5902,7 +5902,7 @@ func TestRequestCert_AcceptChallengeError(t *testing.T) {
 					},
 				},
 			})
-		case r.URL.Path == "/challenge/1":
+		case "/challenge/1":
 			// Return error for challenge accept
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5968,16 +5968,16 @@ func TestRequestCert_AuthorizationStatusNotValid(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -5987,7 +5987,7 @@ func TestRequestCert_AuthorizationStatusNotValid(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			if atomic.LoadInt32(&acceptCalled) > 0 {
 				// After challenge accept, return invalid status
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -6018,7 +6018,7 @@ func TestRequestCert_AuthorizationStatusNotValid(t *testing.T) {
 					},
 				})
 			}
-		case r.URL.Path == "/challenge/1":
+		case "/challenge/1":
 			atomic.StoreInt32(&acceptCalled, 1)
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -6085,16 +6085,16 @@ func TestRequestCert_WithChallengeCleanup(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -6104,7 +6104,7 @@ func TestRequestCert_WithChallengeCleanup(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			if atomic.LoadInt32(&challengeAccepted) > 0 {
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -6134,7 +6134,7 @@ func TestRequestCert_WithChallengeCleanup(t *testing.T) {
 					},
 				})
 			}
-		case r.URL.Path == "/challenge/1":
+		case "/challenge/1":
 			atomic.StoreInt32(&challengeAccepted, 1)
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -6143,7 +6143,7 @@ func TestRequestCert_WithChallengeCleanup(t *testing.T) {
 				"url":    serverURL + "/challenge/1",
 				"token":  "test-token",
 			})
-		case r.URL.Path == "/order/1/finalize":
+		case "/order/1/finalize":
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "urn:ietf:params:acme:error:badCSR",
@@ -6382,16 +6382,16 @@ func TestCrossSignWithChal_SetupFails(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -6401,7 +6401,7 @@ func TestCrossSignWithChal_SetupFails(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
 				"status":     "pending",
@@ -6473,16 +6473,16 @@ func TestCrossSignWithChal_NoSuitableChallenge(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -6492,7 +6492,7 @@ func TestCrossSignWithChal_NoSuitableChallenge(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			// Return no supported challenges
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -6560,16 +6560,16 @@ func TestCrossSignWithChal_AlreadyValidAuthz(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -6579,7 +6579,7 @@ func TestCrossSignWithChal_AlreadyValidAuthz(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			// Return already valid authorization
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -6594,7 +6594,7 @@ func TestCrossSignWithChal_AlreadyValidAuthz(t *testing.T) {
 					},
 				},
 			})
-		case r.URL.Path == "/order/1/finalize":
+		case "/order/1/finalize":
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "urn:ietf:params:acme:error:badCSR",
@@ -7130,16 +7130,16 @@ func TestCrossSign_AuthorizeOrderError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "urn:ietf:params:acme:error:malformed",
@@ -7195,16 +7195,16 @@ func TestCrossSign_ProcessAuthorizationError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7214,7 +7214,7 @@ func TestCrossSign_ProcessAuthorizationError(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			// Return error
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7271,16 +7271,16 @@ func TestProcessAuthz_NoSuitableChallenge(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7290,7 +7290,7 @@ func TestProcessAuthz_NoSuitableChallenge(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			// Return only unsupported challenge types
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -7429,16 +7429,16 @@ func TestCrossSignWithChal_AcceptChallengeError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7448,7 +7448,7 @@ func TestCrossSignWithChal_AcceptChallengeError(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"identifier": map[string]string{"type": "dns", "value": "example.com"},
 				"status":     "pending",
@@ -7462,7 +7462,7 @@ func TestCrossSignWithChal_AcceptChallengeError(t *testing.T) {
 					},
 				},
 			})
-		case r.URL.Path == "/challenge/1":
+		case "/challenge/1":
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "urn:ietf:params:acme:error:unauthorized",
@@ -7523,16 +7523,16 @@ func TestCrossSignWithChal_WaitAuthorizationError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7542,7 +7542,7 @@ func TestCrossSignWithChal_WaitAuthorizationError(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			if atomic.LoadInt32(&challengeAccepted) > 0 {
 				// After challenge accept, return invalid (causing WaitAuthorization to fail)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7577,7 +7577,7 @@ func TestCrossSignWithChal_WaitAuthorizationError(t *testing.T) {
 					},
 				})
 			}
-		case r.URL.Path == "/challenge/1":
+		case "/challenge/1":
 			atomic.StoreInt32(&challengeAccepted, 1)
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7751,16 +7751,16 @@ func TestCrossSignWithChal_GetAuthorizationError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.Header().Set("Location", serverURL+"/order/1")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -7770,7 +7770,7 @@ func TestCrossSignWithChal_GetAuthorizationError(t *testing.T) {
 				"authorizations": []string{serverURL + "/authz/1"},
 				"finalize":       serverURL + "/order/1/finalize",
 			})
-		case r.URL.Path == "/authz/1":
+		case "/authz/1":
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "urn:ietf:params:acme:error:malformed",
@@ -7830,16 +7830,16 @@ func TestCrossSignWithChal_OrderError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/new-order":
+		case "/new-order":
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"type":   "urn:ietf:params:acme:error:malformed",
@@ -7901,16 +7901,16 @@ func TestFetchCertificate_ParseError(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-		switch {
-		case r.URL.Path == "/directory":
+		switch r.URL.Path {
+		case "/directory":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"newNonce":   serverURL + "/new-nonce",
 				"newAccount": serverURL + "/new-account",
 				"newOrder":   serverURL + "/new-order",
 			})
-		case r.URL.Path == "/new-nonce":
+		case "/new-nonce":
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/cert/1":
+		case "/cert/1":
 			// Return invalid certificate data
 			w.Header().Set("Content-Type", "application/pem-certificate-chain")
 			_, _ = w.Write([]byte("invalid-cert-data"))
@@ -11023,17 +11023,17 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newNonce":   server.URL + "/new-nonce",
 					"newAccount": server.URL + "/new-account",
 					"newOrder":   server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				w.Header().Set("Location", server.URL+"/order/1")
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -11045,7 +11045,7 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 					},
 					"finalize": server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				w.WriteHeader(http.StatusOK)
 				// Return only dns-01 challenge, not http-01
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -11117,17 +11117,17 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newNonce":   server.URL + "/new-nonce",
 					"newAccount": server.URL + "/new-account",
 					"newOrder":   server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				w.Header().Set("Location", server.URL+"/order/1")
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -11139,7 +11139,7 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 					},
 					"finalize": server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -11154,7 +11154,7 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 						},
 					},
 				})
-			case r.URL.Path == "/challenge/1":
+			case "/challenge/1":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"type":   "http-01",
@@ -11216,17 +11216,17 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Replay-Nonce", "test-nonce-"+time.Now().String())
 
-			switch {
-			case r.URL.Path == "/directory":
+			switch r.URL.Path {
+			case "/directory":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]string{
 					"newNonce":   server.URL + "/new-nonce",
 					"newAccount": server.URL + "/new-account",
 					"newOrder":   server.URL + "/new-order",
 				})
-			case r.URL.Path == "/new-nonce":
+			case "/new-nonce":
 				w.WriteHeader(http.StatusOK)
-			case r.URL.Path == "/new-order":
+			case "/new-order":
 				w.WriteHeader(http.StatusCreated)
 				w.Header().Set("Location", server.URL+"/order/1")
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -11238,7 +11238,7 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 					},
 					"finalize": server.URL + "/order/1/finalize",
 				})
-			case r.URL.Path == "/authz/1":
+			case "/authz/1":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"identifier": map[string]string{"type": "dns", "value": "example.com"},
@@ -11253,7 +11253,7 @@ func TestClient_RequestCertificate_EdgeCases(t *testing.T) {
 						},
 					},
 				})
-			case r.URL.Path == "/challenge/1":
+			case "/challenge/1":
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"type":   "http-01",

@@ -322,6 +322,23 @@ var (
 	// ErrBarrierRegistryNotConfigured is returned when tenant operations are attempted
 	// but the barrier registry has not been configured.
 	ErrBarrierRegistryNotConfigured = errors.New("keystore: barrier registry not configured")
+
+	// ErrTenantPassphraseRequired is returned when a tenant barrier is
+	// initialized or unsealed with the passphrase (software) strategy but the
+	// caller supplied no passphrase. The server never generates a tenant
+	// secret on the caller's behalf, so an empty passphrase is a hard error
+	// rather than a derived fallback (§3.6).
+	ErrTenantPassphraseRequired = errors.New("keystore: tenant passphrase is required")
+
+	// ErrTenantSharesRequired is returned when a tenant barrier is unsealed
+	// with the shamir strategy but the caller supplied no recovery share.
+	ErrTenantSharesRequired = errors.New("keystore: tenant recovery share is required")
+
+	// ErrTenantStrategyConflict is returned when the strategy named in a
+	// TenantBarrierInit request does not match the strategy the tenant
+	// barrier was registered with. The seal strategy is fixed at registration
+	// time and cannot be changed at initialization time.
+	ErrTenantStrategyConflict = errors.New("keystore: tenant barrier strategy conflict")
 )
 
 // ========================================================================
@@ -534,6 +551,34 @@ func (e *ErrUserOperation) Error() string {
 
 // Unwrap returns the underlying error.
 func (e *ErrUserOperation) Unwrap() error { return e.Err }
+
+// ErrWebAuthnCeremony represents a failure during a WebAuthn/FIDO2 ceremony
+// (registration or authentication) carried out through the WebAuthn service.
+type ErrWebAuthnCeremony struct {
+	// Operation names the ceremony step that failed (e.g., "begin registration",
+	// "parse attestation", "finish registration").
+	Operation string
+	Err       error
+}
+
+// Error returns the error message.
+func (e *ErrWebAuthnCeremony) Error() string {
+	return fmt.Sprintf("keystore: webauthn %s: %v", e.Operation, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrWebAuthnCeremony) Unwrap() error { return e.Err }
+
+// ErrUnknownRole is returned when a role name cannot be resolved to a role
+// defined in the embedded qrdb node.
+type ErrUnknownRole struct {
+	Role string
+}
+
+// Error returns the error message.
+func (e *ErrUnknownRole) Error() string {
+	return fmt.Sprintf("keystore: unknown role %q", e.Role)
+}
 
 // ErrSealOperation represents a sealing/unsealing operation error.
 type ErrSealOperation struct {

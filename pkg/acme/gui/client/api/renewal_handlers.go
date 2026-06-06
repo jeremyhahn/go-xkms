@@ -145,12 +145,12 @@ func formatThreshold(threshold float64) string {
 		return string(rune('0'+int(pct)/10)) + string(rune('0'+int(pct)%10)) + "%"
 	}
 	// Use simple formatting for typical values
-	switch {
-	case threshold == 0.33:
+	switch threshold {
+	case 0.33:
 		return "33%"
-	case threshold == 0.25:
+	case 0.25:
 		return "25%"
-	case threshold == 0.5:
+	case 0.5:
 		return "50%"
 	default:
 		return formatFloat(pct) + "%"

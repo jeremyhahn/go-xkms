@@ -112,8 +112,8 @@ func (m *mockTrustedCA) CertStore() certstore.CertStore        { return nil }
 func (m *mockTrustedCA) Config() *ca.Identity                  { return nil }
 func (m *mockTrustedCA) Identity() string                      { return "mock-ca" }
 
-func (m *mockTrustedCA) Blob(_ []byte) ([]byte, error)         { return nil, nil }
-func (m *mockTrustedCA) ImportBlob(_, _ []byte) error          { return nil }
+func (m *mockTrustedCA) Blob(_ []byte) ([]byte, error) { return nil, nil }
+func (m *mockTrustedCA) ImportBlob(_, _ []byte) error  { return nil }
 func (m *mockTrustedCA) CABundleFiltered(_ types.StoreType, _ x509.PublicKeyAlgorithm) ([]byte, error) {
 	return nil, nil
 }
@@ -282,8 +282,8 @@ func TestBuildTLSConfig_CABacked(t *testing.T) {
 	if len(tlsConfig.Certificates) != 1 {
 		t.Fatalf("expected 1 certificate, got %d", len(tlsConfig.Certificates))
 	}
-	if tlsConfig.MinVersion != tls.VersionTLS12 {
-		t.Fatalf("expected TLS 1.2 minimum, got %d", tlsConfig.MinVersion)
+	if tlsConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("expected TLS 1.3 minimum, got %d", tlsConfig.MinVersion)
 	}
 }
 

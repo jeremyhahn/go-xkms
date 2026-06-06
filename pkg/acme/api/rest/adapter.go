@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -71,9 +72,13 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 	}
 
 	if config.TLSConfig != nil {
+		if config.TLSConfig.InsecureSkipVerify { //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
+			slog.Warn("acme/rest: TLS certificate verification disabled via InsecureSkipVerify; do not use in production",
+				"base_url", config.BaseURL)
+		}
 		tlsConfig := &tls.Config{
 			MinVersion:         tls.VersionTLS13,
-			InsecureSkipVerify: config.TLSConfig.InsecureSkipVerify,
+			InsecureSkipVerify: config.TLSConfig.InsecureSkipVerify, //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
 		}
 
 		// Load client certificate if provided
@@ -606,7 +611,7 @@ func (a *Adapter) GetTenantUser(ctx context.Context, tenantID, userID string) (*
 
 // UpdateTenantUser updates an existing user.
 func (a *Adapter) UpdateTenantUser(ctx context.Context, tenantID string, req *db.UpdateUserRequest) (*db.User, error) {
-	resp, err := a.doRequest(ctx, http.MethodPut, fmt.Sprintf("/api/v1/tenants/%s/users/%s", tenantID, req.ID), req)
+	resp, err := a.doRequest(ctx, http.MethodPut, fmt.Sprintf("/api/v1/tenants/%s/users/%d", tenantID, req.ID), req)
 	if err != nil {
 		return nil, err
 	}

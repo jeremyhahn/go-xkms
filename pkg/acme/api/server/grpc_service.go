@@ -370,8 +370,12 @@ func (s *adminServiceServer) UpdateTenantUser(ctx context.Context, req *adminv1.
 		return nil, status.Error(codes.Unimplemented, "tenant service not available")
 	}
 
+	userID, err := parseUserID(req.UserId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 	dbReq := &db.UpdateUserRequest{
-		ID:       req.UserId,
+		ID:       userID,
 		Username: req.Username,
 		RoleIDs:  req.RoleIds,
 	}
@@ -590,7 +594,7 @@ func convertDBUserToProto(u *db.User) *adminv1.User {
 		return nil
 	}
 	return &adminv1.User{
-		Id:        u.ID,
+		Id:        formatUserID(u.ID),
 		Username:  u.Username,
 		TenantId:  u.TenantID,
 		RoleIds:   u.RoleIDs,

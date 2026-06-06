@@ -109,11 +109,11 @@ func (m *mockACMEServer) handleDirectory(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 
 	directory := map[string]interface{}{
-		"newNonce":   m.Server.URL + "/acme/new-nonce",
-		"newAccount": m.Server.URL + "/acme/new-account",
-		"newOrder":   m.Server.URL + "/acme/new-order",
-		"revokeCert": m.Server.URL + "/acme/revoke-cert",
-		"keyChange":  m.Server.URL + "/acme/key-change",
+		"newNonce":   m.URL + "/acme/new-nonce",
+		"newAccount": m.URL + "/acme/new-account",
+		"newOrder":   m.URL + "/acme/new-order",
+		"revokeCert": m.URL + "/acme/revoke-cert",
+		"keyChange":  m.URL + "/acme/key-change",
 		"meta": map[string]interface{}{
 			"termsOfService":          "https://example.com/terms",
 			"externalAccountRequired": false,
@@ -132,12 +132,12 @@ func (m *mockACMEServer) handleNewNonce(w http.ResponseWriter, r *http.Request) 
 func (m *mockACMEServer) handleNewAccount(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Replay-Nonce", m.nonce)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", m.Server.URL+"/acme/account/1")
+	w.Header().Set("Location", m.URL+"/acme/account/1")
 
 	account := map[string]interface{}{
 		"status":  "valid",
 		"contact": []string{"mailto:test@example.com"},
-		"orders":  m.Server.URL + "/acme/account/1/orders",
+		"orders":  m.URL + "/acme/account/1/orders",
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -148,16 +148,16 @@ func (m *mockACMEServer) handleNewOrder(w http.ResponseWriter, r *http.Request) 
 	m.orderCount++
 	w.Header().Set("Replay-Nonce", m.nonce)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", m.Server.URL+"/acme/order/1")
+	w.Header().Set("Location", m.URL+"/acme/order/1")
 
 	order := map[string]interface{}{
 		"status":      m.orderStatus,
 		"expires":     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"identifiers": []map[string]string{{"type": "dns", "value": "example.com"}},
 		"authorizations": []string{
-			m.Server.URL + "/acme/authz/1",
+			m.URL + "/acme/authz/1",
 		},
-		"finalize": m.Server.URL + "/acme/finalize/1",
+		"finalize": m.URL + "/acme/finalize/1",
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -173,10 +173,10 @@ func (m *mockACMEServer) handleOrder(w http.ResponseWriter, r *http.Request) {
 		"expires":     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"identifiers": []map[string]string{{"type": "dns", "value": "example.com"}},
 		"authorizations": []string{
-			m.Server.URL + "/acme/authz/1",
+			m.URL + "/acme/authz/1",
 		},
-		"finalize":    m.Server.URL + "/acme/finalize/1",
-		"certificate": m.Server.URL + "/acme/cert/1",
+		"finalize":    m.URL + "/acme/finalize/1",
+		"certificate": m.URL + "/acme/cert/1",
 	}
 
 	_ = json.NewEncoder(w).Encode(order)
@@ -196,19 +196,19 @@ func (m *mockACMEServer) handleAuthz(w http.ResponseWriter, r *http.Request) {
 		"challenges": []map[string]interface{}{
 			{
 				"type":   "http-01",
-				"url":    m.Server.URL + "/acme/challenge/1",
+				"url":    m.URL + "/acme/challenge/1",
 				"token":  "mock-challenge-token-12345",
 				"status": m.chalStatus,
 			},
 			{
 				"type":   "enroll-01",
-				"url":    m.Server.URL + "/acme/challenge/2",
+				"url":    m.URL + "/acme/challenge/2",
 				"token":  "mock-enroll-token-12345",
 				"status": m.chalStatus,
 			},
 			{
 				"type":   "device-attest-01",
-				"url":    m.Server.URL + "/acme/challenge/3",
+				"url":    m.URL + "/acme/challenge/3",
 				"token":  "mock-attest-token-12345",
 				"status": m.chalStatus,
 			},
@@ -233,7 +233,7 @@ func (m *mockACMEServer) handleChallenge(w http.ResponseWriter, r *http.Request)
 
 	challenge := map[string]interface{}{
 		"type":   "http-01",
-		"url":    m.Server.URL + "/acme/challenge/1",
+		"url":    m.URL + "/acme/challenge/1",
 		"token":  "mock-challenge-token-12345",
 		"status": m.chalStatus,
 	}
@@ -253,10 +253,10 @@ func (m *mockACMEServer) handleFinalize(w http.ResponseWriter, r *http.Request) 
 		"expires":     time.Now().Add(24 * time.Hour).Format(time.RFC3339),
 		"identifiers": []map[string]string{{"type": "dns", "value": "example.com"}},
 		"authorizations": []string{
-			m.Server.URL + "/acme/authz/1",
+			m.URL + "/acme/authz/1",
 		},
-		"finalize":    m.Server.URL + "/acme/finalize/1",
-		"certificate": m.Server.URL + "/acme/cert/1",
+		"finalize":    m.URL + "/acme/finalize/1",
+		"certificate": m.URL + "/acme/cert/1",
 	}
 
 	_ = json.NewEncoder(w).Encode(order)

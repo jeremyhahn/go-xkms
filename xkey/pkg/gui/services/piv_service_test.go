@@ -173,6 +173,12 @@ func (m *mockPIVClient) CanSeal(_ context.Context, _ string) (*transport.CanSeal
 func (m *mockPIVClient) AttestKey(_ context.Context, _ *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
 	return nil, errMockNotImplemented
 }
+func (m *mockPIVClient) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, errMockNotImplemented
+}
+func (m *mockPIVClient) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+	return errMockNotImplemented
+}
 func (m *mockPIVClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
 	return nil, errMockNotImplemented
 }
@@ -293,18 +299,6 @@ func (m *mockPIVClient) BarrierUnsealWithShare(_ context.Context, _ *transport.B
 	return nil, errMockNotImplemented
 }
 func (m *mockPIVClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return errMockNotImplemented
-}
-func (m *mockPIVClient) BarrierShamirVerify(_ context.Context) error {
 	return errMockNotImplemented
 }
 func (m *mockPIVClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
@@ -846,7 +840,7 @@ func TestPIVService_ExportCertificate_Success(t *testing.T) {
 
 	data, err := svc.ExportCertificate("9a")
 	require.NoError(t, err)
-	assert.Equal(t, certPEM, data)
+	assert.Equal(t, string(certPEM), data)
 }
 
 // --- GenerateCSR ---
@@ -891,7 +885,7 @@ func TestPIVService_GenerateCSR_Success(t *testing.T) {
 		Organization: "Test Org",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, csrPEM, data)
+	assert.Equal(t, string(csrPEM), data)
 }
 
 func TestPIVService_GenerateCSR_ServerError(t *testing.T) {

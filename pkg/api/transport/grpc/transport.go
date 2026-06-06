@@ -83,7 +83,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 	if t.config.TLSEnabled {
 		tlsConfig := &tls.Config{
-			MinVersion: tls.VersionTLS12,
+			MinVersion: tls.VersionTLS13,
 		}
 
 		// Load CA certificate if specified
@@ -1142,68 +1142,6 @@ func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.
 	})
 	if err != nil {
 		return fmt.Errorf("barrier unseal with shares failed: %w", err)
-	}
-
-	return nil
-}
-
-// BarrierShamirListShares returns metadata about stored Shamir shares.
-func (t *Transport) BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-
-	resp, err := t.client.BarrierShamirListShares(ctx, &emptypb.Empty{})
-	if err != nil {
-		return nil, fmt.Errorf("barrier shamir list shares failed: %w", err)
-	}
-
-	return &transport.BarrierShamirSharesResponse{
-		Count:     int(resp.Count),
-		Threshold: int(resp.Threshold),
-		Total:     int(resp.Total),
-	}, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (t *Transport) BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	_, err := t.client.BarrierShamirDeleteShare(ctx, &pb.BarrierShamirDeleteShareRequest{
-		Index: int32(req.Index),
-	})
-	if err != nil {
-		return fmt.Errorf("barrier shamir delete share failed: %w", err)
-	}
-
-	return nil
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (t *Transport) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	_, err := t.client.BarrierShamirDeleteAllShares(ctx, &emptypb.Empty{})
-	if err != nil {
-		return fmt.Errorf("barrier shamir delete all shares failed: %w", err)
-	}
-
-	return nil
-}
-
-// BarrierShamirVerify verifies the integrity of stored Shamir shares.
-func (t *Transport) BarrierShamirVerify(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	_, err := t.client.BarrierShamirVerify(ctx, &emptypb.Empty{})
-	if err != nil {
-		return fmt.Errorf("barrier shamir verify failed: %w", err)
 	}
 
 	return nil
@@ -2275,47 +2213,130 @@ func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.Crede
 }
 
 // ==================== User Operations ====================
+//
+// xkms presents its own user model; the backing store is the embedded qrdb
+// node, reached over gRPC.
 
-// ListUsers returns a list of all users.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return nil, ErrNotSupported
+// protoToUserInfo projects a protobuf UserInfo onto its transport form.
+func protoToUserInfo(u *pb.UserInfo) transport.UserInfo {
+	if u == nil {
+		return transport.UserInfo{}
+	}
+	return transport.UserInfo{
+		Username:    u.GetUsername(),
+		DisplayName: u.GetDisplayName(),
+		Role:        u.GetRole(),
+		Enabled:     u.GetEnabled(),
+	}
 }
 
-// GetUser returns information about a specific user.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
-	return nil, ErrNotSupported
+// CreateUser creates a new xkms user.
+func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.CreateUser(ctx, &pb.CreateUserRequest{
+		Username:    req.Username,
+		DisplayName: req.DisplayName,
+		Role:        req.Role,
+		TenantId:    req.TenantID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create user failed: %w", err)
+	}
+	return &transport.GetUserResponse{User: protoToUserInfo(resp.GetUser())}, nil
 }
 
-// DeleteUser deletes a user.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) DeleteUser(_ context.Context, _ string) error {
-	return ErrNotSupported
+// ListUsers lists xkms users.
+func (t *Transport) ListUsers(ctx context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.ListUsers(ctx, &pb.ListUsersRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("list users failed: %w", err)
+	}
+	users := make([]transport.UserInfo, len(resp.GetUsers()))
+	for i, u := range resp.GetUsers() {
+		users[i] = protoToUserInfo(u)
+	}
+	return &transport.ListUsersResponse{Users: users}, nil
 }
 
-// EnableUser enables a user account.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) EnableUser(_ context.Context, _ string) error {
-	return ErrNotSupported
+// GetUser resolves an xkms user by username.
+func (t *Transport) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.GetUser(ctx, &pb.GetUserRequest{Username: username})
+	if err != nil {
+		return nil, fmt.Errorf("get user failed: %w", err)
+	}
+	return &transport.GetUserResponse{User: protoToUserInfo(resp.GetUser())}, nil
 }
 
-// DisableUser disables a user account.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) DisableUser(_ context.Context, _ string) error {
-	return ErrNotSupported
+// DeleteUser removes an xkms user by username.
+func (t *Transport) DeleteUser(ctx context.Context, username string) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	if _, err := t.client.DeleteUser(ctx, &pb.DeleteUserRequest{Username: username}); err != nil {
+		return fmt.Errorf("delete user failed: %w", err)
+	}
+	return nil
 }
 
-// ListUserCredentials returns a list of credentials for a user.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// User management will be implemented in a future version.
-func (t *Transport) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, ErrNotSupported
+// EnableUser enables an xkms user by username.
+func (t *Transport) EnableUser(ctx context.Context, username string) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	if _, err := t.client.EnableUser(ctx, &pb.EnableUserRequest{Username: username}); err != nil {
+		return fmt.Errorf("enable user failed: %w", err)
+	}
+	return nil
+}
+
+// DisableUser disables an xkms user by username.
+func (t *Transport) DisableUser(ctx context.Context, username string) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	if _, err := t.client.DisableUser(ctx, &pb.DisableUserRequest{Username: username}); err != nil {
+		return fmt.Errorf("disable user failed: %w", err)
+	}
+	return nil
+}
+
+// BindUserCert binds an mTLS certificate SPKI thumbprint to an xkms user.
+func (t *Transport) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	if t.client == nil {
+		return ErrNotConnected
+	}
+	if _, err := t.client.BindUserCert(ctx, &pb.BindUserCertRequest{
+		Username:     username,
+		Thumbprint:   thumbprint,
+		NotAfterUnix: notAfterUnix,
+	}); err != nil {
+		return fmt.Errorf("bind user cert failed: %w", err)
+	}
+	return nil
+}
+
+// ListUserCredentials lists the credentials registered to an xkms user.
+func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.ListUserCredentials(ctx, &pb.ListUserCredentialsRequest{Username: username})
+	if err != nil {
+		return nil, fmt.Errorf("list user credentials failed: %w", err)
+	}
+	creds := make([]transport.CredentialInfo, len(resp.GetCredentials()))
+	for i, c := range resp.GetCredentials() {
+		creds[i] = transport.CredentialInfo{ID: c.GetId(), DisplayName: c.GetName()}
+	}
+	return &transport.ListUserCredentialsResponse{Credentials: creds}, nil
 }
 
 // ==================== Password Store Operations ====================
@@ -2608,32 +2629,88 @@ func (t *Transport) PolicyExport(_ context.Context, _ *transport.PolicyExportReq
 
 // ==================== WebAuthn Operations ====================
 
-// BeginRegistration begins a WebAuthn registration flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) BeginRegistration(_ context.Context, _ *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
-	return nil, ErrNotSupported
+// BeginRegistration begins a WebAuthn registration flow. It returns the
+// JSON-marshaled WebAuthn options plus an opaque session ID, mirroring the
+// lossless SDK ceremony served over REST.
+func (t *Transport) BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.BeginRegistration(ctx, &pb.BeginRegistrationRequest{
+		Username:    req.Username,
+		DisplayName: req.DisplayName,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.BeginRegistrationResponse{
+		SessionID:   resp.SessionId,
+		OptionsJSON: resp.OptionsJson,
+	}, nil
 }
 
-// FinishRegistration completes a WebAuthn registration flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) FinishRegistration(_ context.Context, _ *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
-	return nil, ErrNotSupported
+// FinishRegistration completes a WebAuthn registration flow. The request
+// carries the session ID from BeginRegistration and the authenticator
+// attestation as WebAuthn PublicKeyCredential JSON.
+func (t *Transport) FinishRegistration(ctx context.Context, req *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.FinishRegistration(ctx, &pb.FinishRegistrationRequest{
+		SessionId:       req.SessionID,
+		AttestationJson: req.AttestationJSON,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.FinishRegistrationResponse{
+		Success:      resp.Success,
+		CredentialID: resp.CredentialId,
+		Token:        resp.Token,
+		Message:      resp.Message,
+	}, nil
 }
 
-// BeginAuthentication begins a WebAuthn authentication flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) BeginAuthentication(_ context.Context, _ *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
-	return nil, ErrNotSupported
+// BeginAuthentication begins a WebAuthn authentication (login) flow. It returns
+// the JSON-marshaled WebAuthn assertion options plus an opaque session ID,
+// mirroring the lossless SDK ceremony served over REST.
+func (t *Transport) BeginAuthentication(ctx context.Context, req *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.BeginAuthentication(ctx, &pb.BeginAuthenticationRequest{
+		Username: req.Username,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.BeginAuthenticationResponse{
+		SessionID:   resp.SessionId,
+		OptionsJSON: resp.OptionsJson,
+	}, nil
 }
 
-// FinishAuthentication completes a WebAuthn authentication flow.
-// Note: This is a stub implementation that returns ErrNotSupported.
-// Authentication flow will be implemented in a future version.
-func (t *Transport) FinishAuthentication(_ context.Context, _ *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
-	return nil, ErrNotSupported
+// FinishAuthentication completes a WebAuthn authentication (login) flow. The
+// request carries the session ID from BeginAuthentication and the authenticator
+// assertion as WebAuthn PublicKeyCredential JSON.
+func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	resp, err := t.client.FinishAuthentication(ctx, &pb.FinishAuthenticationRequest{
+		SessionId:     req.SessionID,
+		Username:      req.Username,
+		AssertionJson: req.AssertionJSON,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.FinishAuthenticationResponse{
+		Success:  resp.Success,
+		Token:    resp.Token,
+		Username: resp.Username,
+		Message:  resp.Message,
+	}, nil
 }
 
 // ==================== Helper Functions ====================

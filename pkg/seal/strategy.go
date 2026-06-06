@@ -81,30 +81,41 @@ var NewNamespacedBackend = qrdbsdk.NewNamespacedBackend
 
 // --- Re-exported constants ---
 
+// Hardware/cloud strategy IDs are OWNED by go-xkms — it is the layer that
+// implements them (strategy_tpm2.go / strategy_pkcs11.go / strategy_cloud.go).
+// They are canonical string values (type StrategyID, aliased from the qrdb/
+// quicraft namespace). go-qrdb owns `shamir`; go-quicraft owns `none`/
+// `passphrase`. There is no implicit preference-order default — strategy
+// selection is always explicit.
 const (
 	// StrategyTPM2 uses TPM 2.0 hardware for root key protection.
-	StrategyTPM2 = qrdbsdk.StrategyTPM2
+	StrategyTPM2 StrategyID = "tpm2"
 
 	// StrategyPKCS11 uses PKCS#11 HSM tokens for root key protection.
-	StrategyPKCS11 = qrdbsdk.StrategyPKCS11
+	StrategyPKCS11 StrategyID = "pkcs11"
 
 	// StrategyAWSKMS uses AWS Key Management Service for root key protection.
-	StrategyAWSKMS = qrdbsdk.StrategyAWSKMS
+	StrategyAWSKMS StrategyID = "awskms"
 
 	// StrategyGCPKMS uses Google Cloud KMS for root key protection.
-	StrategyGCPKMS = qrdbsdk.StrategyGCPKMS
+	StrategyGCPKMS StrategyID = "gcpkms"
 
 	// StrategyAzureKV uses Azure Key Vault for root key protection.
-	StrategyAzureKV = qrdbsdk.StrategyAzureKV
+	StrategyAzureKV StrategyID = "azurekv"
 
 	// StrategyVault uses HashiCorp Vault for root key protection.
-	StrategyVault = qrdbsdk.StrategyVault
+	StrategyVault StrategyID = "vault"
+)
 
-	// StrategyShamir splits the root key itself into M-of-N Shamir shares.
+const (
+	// StrategyShamir splits the root key into M-of-N Shamir shares (owned by go-qrdb).
 	StrategyShamir = qrdbsdk.StrategyShamir
 
-	// StrategySoftware uses password-based encryption (Argon2id + AES-256-GCM).
-	StrategySoftware = qrdbsdk.StrategySoftware
+	// StrategyPassphrase uses password-based encryption (owned by go-quicraft L1).
+	StrategyPassphrase = qrdbsdk.StrategyPassphrase
+
+	// StrategyNone disables barrier encryption entirely (owned by go-quicraft L1).
+	StrategyNone = qrdbsdk.StrategyNone
 
 	// DefaultQuorumTTL is the default time-to-live for a quorum accumulator
 	// session, re-exported from go-quicraft via go-qrdb.
@@ -113,16 +124,3 @@ const (
 
 // sealedRootKeyVersion is the format version for SealedRootKey blobs.
 const sealedRootKeyVersion = 1
-
-// DefaultPreferenceOrder defines the default strategy selection order.
-// Hardware-backed strategies are preferred over software-only fallback.
-var DefaultPreferenceOrder = []StrategyID{
-	StrategyTPM2,
-	StrategyPKCS11,
-	StrategyAWSKMS,
-	StrategyGCPKMS,
-	StrategyAzureKV,
-	StrategyVault,
-	StrategyShamir,
-	StrategySoftware,
-}

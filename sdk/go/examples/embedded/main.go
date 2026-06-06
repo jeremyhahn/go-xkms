@@ -151,61 +151,35 @@ func (m *MockXKMSService) AttestKey(ctx context.Context, req *xkms.AttestKeyRequ
 	return nil, fmt.Errorf("attestation not supported in mock")
 }
 
-// User management methods
-
-func (m *MockXKMSService) ListUsers(ctx context.Context, opts ...xkms.ListOption) (*xkms.ListUsersResponse, error) {
-	return &xkms.ListUsersResponse{Users: []xkms.UserInfo{}}, nil
-}
-
-func (m *MockXKMSService) GetUser(ctx context.Context, username string) (*xkms.GetUserResponse, error) {
-	return &xkms.GetUserResponse{User: xkms.UserInfo{Username: username}}, nil
-}
-
-func (m *MockXKMSService) DeleteUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *MockXKMSService) EnableUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *MockXKMSService) DisableUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *MockXKMSService) ListUserCredentials(ctx context.Context, username string) (*xkms.ListUserCredentialsResponse, error) {
-	return &xkms.ListUserCredentialsResponse{Credentials: []xkms.CredentialInfo{}}, nil
-}
-
 // Authentication flow methods
 
 func (m *MockXKMSService) BeginRegistration(ctx context.Context, req *xkms.BeginRegistrationRequest) (*xkms.BeginRegistrationResponse, error) {
 	return &xkms.BeginRegistrationResponse{
-		Challenge: "mock-challenge",
-		UserID:    "mock-user-id",
-		RPID:      req.RPID,
-		RPName:    req.RPName,
+		SessionID:   "mock-session-id",
+		OptionsJSON: `{"publicKey":{"challenge":"bW9jay1jaGFsbGVuZ2U"}}`,
 	}, nil
 }
 
 func (m *MockXKMSService) FinishRegistration(ctx context.Context, req *xkms.FinishRegistrationRequest) (*xkms.FinishRegistrationResponse, error) {
 	return &xkms.FinishRegistrationResponse{
 		Success:      true,
-		CredentialID: req.CredentialID,
+		CredentialID: "mock-credential-id",
+		Token:        "mock-jwt-token",
 	}, nil
 }
 
 func (m *MockXKMSService) BeginAuthentication(ctx context.Context, req *xkms.BeginAuthenticationRequest) (*xkms.BeginAuthenticationResponse, error) {
 	return &xkms.BeginAuthenticationResponse{
-		Challenge: "mock-challenge",
-		RPID:      req.RPID,
+		SessionID:   "mock-session-id",
+		OptionsJSON: `{"publicKey":{"challenge":"bW9jay1jaGFsbGVuZ2U"}}`,
 	}, nil
 }
 
 func (m *MockXKMSService) FinishAuthentication(ctx context.Context, req *xkms.FinishAuthenticationRequest) (*xkms.FinishAuthenticationResponse, error) {
 	return &xkms.FinishAuthenticationResponse{
-		Success: true,
-		Token:   "mock-jwt-token",
+		Success:  true,
+		Token:    "mock-jwt-token",
+		Username: req.Username,
 	}, nil
 }
 
@@ -352,6 +326,38 @@ func (m *MockXKMSService) GetCredentialStrategy(ctx context.Context) (*transport
 	return nil, fmt.Errorf("credentials not supported in mock")
 }
 
+func (m *MockXKMSService) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, fmt.Errorf("users not supported in mock")
+}
+
+func (m *MockXKMSService) ListUsers(ctx context.Context, opts ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	return nil, fmt.Errorf("users not supported in mock")
+}
+
+func (m *MockXKMSService) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
+	return nil, fmt.Errorf("users not supported in mock")
+}
+
+func (m *MockXKMSService) DeleteUser(ctx context.Context, username string) error {
+	return fmt.Errorf("users not supported in mock")
+}
+
+func (m *MockXKMSService) EnableUser(ctx context.Context, username string) error {
+	return fmt.Errorf("users not supported in mock")
+}
+
+func (m *MockXKMSService) DisableUser(ctx context.Context, username string) error {
+	return fmt.Errorf("users not supported in mock")
+}
+
+func (m *MockXKMSService) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	return fmt.Errorf("users not supported in mock")
+}
+
+func (m *MockXKMSService) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, fmt.Errorf("users not supported in mock")
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -458,22 +464,6 @@ func (m *MockXKMSService) BarrierUnsealWithShare(ctx context.Context, req *trans
 }
 
 func (m *MockXKMSService) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
-	return fmt.Errorf("barrier not supported in mock")
-}
-
-func (m *MockXKMSService) BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, fmt.Errorf("barrier not supported in mock")
-}
-
-func (m *MockXKMSService) BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	return fmt.Errorf("barrier not supported in mock")
-}
-
-func (m *MockXKMSService) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	return fmt.Errorf("barrier not supported in mock")
-}
-
-func (m *MockXKMSService) BarrierShamirVerify(ctx context.Context) error {
 	return fmt.Errorf("barrier not supported in mock")
 }
 

@@ -1010,7 +1010,12 @@ func (h *TenantHandlers) UpdateTenantUser(w http.ResponseWriter, r *http.Request
 		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Invalid request body: "+err.Error())
 		return
 	}
-	req.ID = userID
+	parsedID, err := strconv.ParseUint(userID, 10, 64)
+	if err != nil {
+		writeProblem(w, http.StatusBadRequest, "urn:trusted-ca:error:bad-request", "Invalid user ID: "+err.Error())
+		return
+	}
+	req.ID = parsedID
 
 	user, err := h.service.UpdateTenantUser(r.Context(), tenantID, &req)
 	if err != nil {

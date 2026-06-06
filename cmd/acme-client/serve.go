@@ -193,6 +193,6 @@ func buildTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 	}, nil
 }

@@ -114,11 +114,11 @@ func NewTenantDEKManager(
 	return qrdbdek.NewTenantDEKManager(clusterDEK, storage, logger, config)
 }
 
-// BootstrapDefaultTenant is the re-export of qrdbdek.BootstrapDefaultTenant.
-// This is the SINGLE canonical default-tenant bootstrap function. Do not
+// BootstrapSystemTenant is the re-export of qrdbdek.BootstrapSystemTenant.
+// This is the SINGLE canonical system-tenant bootstrap function. Do not
 // reimplement it; call this instead.
-func BootstrapDefaultTenant(ctx context.Context, svc TenantServicer, opts ...BootstrapOption) *BootstrapResult {
-	return qrdbdek.BootstrapDefaultTenant(ctx, svc, opts...)
+func BootstrapSystemTenant(ctx context.Context, svc TenantServicer, opts ...BootstrapOption) *BootstrapResult {
+	return qrdbdek.BootstrapSystemTenant(ctx, svc, opts...)
 }
 
 // WithBootstrapTimeout is the re-export of qrdbdek.WithBootstrapTimeout.

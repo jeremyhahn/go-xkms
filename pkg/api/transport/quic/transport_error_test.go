@@ -25,13 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// roundTripFunc adapts a function to http.RoundTripper.
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
-	return f(r)
-}
-
 // newErrTransport creates a QUIC transport backed by a server returning 500 errors.
 func newErrTransport(t *testing.T) (*Transport, func()) {
 	t.Helper()

@@ -168,8 +168,7 @@ func (r *BarrierRegistry) Close() error {
 }
 
 // NewShamirStrategy creates a new Shamir secret sharing strategy with
-// M-of-N threshold reconstruction. Since storage.Backend and StorageBackend
-// are now interface-compatible, the store is passed directly.
-func NewShamirStrategy(store storage.Backend, threshold, total int) (*qrdbsdk.ShamirStrategy, error) {
-	return qrdbsdk.NewShamirStrategy(store, threshold, total)
+// M-of-N threshold reconstruction. Shares are never persisted.
+func NewShamirStrategy(threshold, total int) (*qrdbsdk.ShamirStrategy, error) {
+	return qrdbsdk.NewShamirStrategy(threshold, total)
 }

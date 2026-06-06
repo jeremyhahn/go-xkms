@@ -17,7 +17,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -186,7 +186,7 @@ func TestIsCrossTenant_NilIdentity(t *testing.T) {
 }
 
 func TestIsCrossTenant_SystemTenant(t *testing.T) {
-	id := &Identity{Subject: "platform-admin", TenantID: tenant.SystemTenantID}
+	id := &Identity{Subject: "platform-admin", TenantID: qrdbsdk.SystemTenantID}
 	assert.True(t, IsCrossTenant(id),
 		"identities anchored in the system tenant get platform/cross-tenant scope")
 }

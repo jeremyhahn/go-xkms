@@ -21,8 +21,10 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -84,6 +86,10 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 	} else {
 		// TCP connection - configure TLS if provided
 		if config.TLSConfig != nil {
+			if config.TLSConfig.InsecureSkipVerify {
+				slog.Warn("acme/grpc: TLS certificate verification disabled via InsecureSkipVerify; do not use in production",
+					"address", config.GRPCAddr)
+			}
 			tlsConfig := &tls.Config{
 				MinVersion:         tls.VersionTLS13,
 				InsecureSkipVerify: config.TLSConfig.InsecureSkipVerify,
@@ -398,7 +404,7 @@ func (a *Adapter) CreateTenantUser(ctx context.Context, tenantID string, req *db
 	if err != nil {
 		return nil, err
 	}
-	return pbToUser(resp), nil
+	return pbToUser(resp)
 }
 
 // GetTenantUser retrieves a user by ID.
@@ -410,21 +416,21 @@ func (a *Adapter) GetTenantUser(ctx context.Context, tenantID, userID string) (*
 	if err != nil {
 		return nil, err
 	}
-	return pbToUser(resp), nil
+	return pbToUser(resp)
 }
 
 // UpdateTenantUser updates an existing user.
 func (a *Adapter) UpdateTenantUser(ctx context.Context, tenantID string, req *db.UpdateUserRequest) (*db.User, error) {
 	resp, err := a.client.UpdateTenantUser(a.withAuth(ctx), &pb.UpdateTenantUserRequest{
 		TenantId: tenantID,
-		UserId:   req.ID,
+		UserId:   strconv.FormatUint(req.ID, 10),
 		Username: req.Username,
 		RoleIds:  req.RoleIDs,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return pbToUser(resp), nil
+	return pbToUser(resp)
 }
 
 // DeleteTenantUser deletes a user.
@@ -449,7 +455,11 @@ func (a *Adapter) ListTenantUsers(ctx context.Context, tenantID string, req *db.
 
 	users := make([]*db.User, len(resp.Users))
 	for i, u := range resp.Users {
-		users[i] = pbToUser(u)
+		converted, cErr := pbToUser(u)
+		if cErr != nil {
+			return nil, cErr
+		}
+		users[i] = converted
 	}
 
 	return &db.ListUsersResponse{
@@ -656,12 +666,20 @@ func pbToRole(r *pb.Role) *db.Role {
 	}
 }
 
-func pbToUser(u *pb.User) *db.User {
+func pbToUser(u *pb.User) (*db.User, error) {
 	if u == nil {
-		return nil
+		return nil, nil
+	}
+	var id uint64
+	if u.Id != "" {
+		parsed, err := strconv.ParseUint(u.Id, 10, 64)
+		if err != nil {
+			return nil, caerrors.NewValidationError("user_id", "not a uint64", u.Id)
+		}
+		id = parsed
 	}
 	return &db.User{
-		ID:        u.Id,
+		ID:        id,
 		Username:  u.Username,
 		TenantID:  u.TenantId,
 		RoleIDs:   u.RoleIds,
@@ -669,7 +687,7 @@ func pbToUser(u *pb.User) *db.User {
 		System:    u.System,
 		CreatedAt: u.CreatedAt,
 		UpdatedAt: u.UpdatedAt,
-	}
+	}, nil
 }
 
 func pbToTenantInfo(t *pb.TenantInfo) *admin.TenantInfo {

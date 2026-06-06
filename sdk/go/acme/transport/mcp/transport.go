@@ -41,6 +41,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -447,6 +448,8 @@ func NewTransport(cfg *transport.Config, opts ...Option) (transport.Transport, e
 	// Configure HTTP transport with TLS if needed.
 	tlsConfig := cfg.TLSConfig
 	if tlsConfig == nil && cfg.Insecure {
+		slog.Warn("acme/mcp: TLS certificate verification disabled via Insecure=true; do not use in production",
+			"address", cfg.Address)
 		tlsConfig = &tls.Config{
 			MinVersion:         tls.VersionTLS13,
 			InsecureSkipVerify: true, //nolint:gosec // Intentional for dev/testing

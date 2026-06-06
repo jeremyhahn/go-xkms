@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -106,12 +106,6 @@ func (s *Server) handleBarrierOperations(w http.ResponseWriter, r *http.Request)
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/barrier/")
 	path = strings.TrimSuffix(path, "/")
 
-	// Handle prefix-matched paths first (variable path segments).
-	if strings.HasPrefix(path, "shamir/shares/") {
-		s.handleBarrierShamirDeleteShare(w, r, path)
-		return
-	}
-
 	// Map-based dispatch for O(1) constant-time lookup.
 	type barrierHandler func(w http.ResponseWriter, r *http.Request)
 	handlers := map[string]barrierHandler{
@@ -127,10 +121,6 @@ func (s *Server) handleBarrierOperations(w http.ResponseWriter, r *http.Request)
 		"unseal-shares":     s.handleBarrierUnsealShares,
 		"rekey":             s.handleBarrierRekey,
 		"root-token":        s.handleBarrierGenerateRootToken,
-
-		// Shamir share management
-		"shamir/shares": s.handleBarrierShamirShares,
-		"shamir/verify": s.handleBarrierShamirVerify,
 
 		// Recovery key operations
 		"recovery-keys/generate": s.handleBarrierGenerateRecoveryKeys,
@@ -674,21 +664,21 @@ func sendBarrierError(s *Server, w http.ResponseWriter, err error) {
 // sendPINError maps PIN-specific errors to HTTP status codes.
 func sendPINError(s *Server, w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, pin.ErrPINNotSet):
+	case errors.Is(err, qrdbsdk.ErrPINNotSet):
 		s.sendError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, pin.ErrPINLocked):
+	case errors.Is(err, qrdbsdk.ErrPINLocked):
 		s.sendError(w, http.StatusTooManyRequests, err.Error())
-	case errors.Is(err, pin.ErrPINInvalid):
+	case errors.Is(err, qrdbsdk.ErrPINInvalid):
 		s.sendError(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, pin.ErrSOPINRequired):
+	case errors.Is(err, qrdbsdk.ErrSOPINRequired):
 		s.sendError(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, pin.ErrPINTooShort):
+	case errors.Is(err, qrdbsdk.ErrPINTooShort):
 		s.sendError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, pin.ErrPINAlreadySet):
+	case errors.Is(err, qrdbsdk.ErrPINAlreadySet):
 		s.sendError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, pin.ErrInvalidCurrentPIN):
+	case errors.Is(err, qrdbsdk.ErrInvalidCurrentPIN):
 		s.sendError(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, pin.ErrStateCorrupted):
+	case errors.Is(err, qrdbsdk.ErrPINStateCorrupted):
 		s.sendError(w, http.StatusInternalServerError, err.Error())
 	default:
 		s.sendError(w, http.StatusInternalServerError, err.Error())

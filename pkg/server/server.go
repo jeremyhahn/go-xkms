@@ -38,6 +38,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	grpcinternal "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
@@ -48,20 +50,19 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/unix"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	"github.com/jeremyhahn/go-xkms/pkg/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/custodian"
+	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	"github.com/jeremyhahn/go-xkms/pkg/health"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
-	"github.com/jeremyhahn/go-xkms/pkg/metrics"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
+	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -69,11 +70,17 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	pinadapter "github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
+
+// webAuthnSystemTenant is the qrdb tenant scope used to persist WebAuthn users
+// and credentials when xkms hosts or dials the qrdb engine. WebAuthn identities
+// are system-scoped; per-tenant WebAuthn enrollment is handled through the
+// tenant barrier subsystem, not through a separate relying party.
+const webAuthnSystemTenant = "system"
 
 // Server represents the unified xkms server that runs all protocols
 type Server struct {
@@ -91,12 +98,14 @@ type Server struct {
 	mcpServer            *mcp.Server
 	noiseBootstrapServer *noiseboot.Server
 
-	// User management
-	userStore user.Store
-
 	// Authentication
 	authenticator  auth.Authenticator
 	webauthnConfig *webauthn.Config
+
+	// webauthnService is the single WebAuthn relying-party service shared
+	// between the REST browser ceremony and the SDK ceremony (via
+	// XKMSService.SetWebAuthn). It is non-nil only when WebAuthn is enabled.
+	webauthnService *webauthn.Service
 
 	// Authorization
 	authorizer keyauthz.Authorizer
@@ -110,11 +119,8 @@ type Server struct {
 	// Barrier registry (multi-tenant)
 	barrierRegistry *seal.BarrierRegistry
 
-	// Bootstrap service (server initialization)
-	bootstrapService *bootstrap.Service
-
 	// PIN backend
-	pinManager pin.PINBackend
+	pinManager qrdbsdk.PINBackend
 
 	// Password store
 	passwordStore *staticpw.BackendStore
@@ -146,6 +152,30 @@ type Server struct {
 	// Ceremony service for init ceremony
 	ceremonyService *initialize.CeremonyService
 
+	// Factor registry for hardware auth factors (PIV, PKCS#11, FIDO2)
+	factorRegistry *qrdbsdk.AuthFactorRegistry
+
+	// qrdbStorage is the single shared qrdb-backed storage backend used when
+	// the configured storage backend is "qrdb". All per-subdir storage views
+	// are key-prefixed views over this one backend (see createStorage). It is
+	// nil for non-qrdb backends and is the sole owner of the qrdb lifecycle:
+	// only the server closes it, during Shutdown.
+	qrdbStorage storage.Backend
+
+	// qrdbNode is the in-process qrdb engine that xkms hosts as its single
+	// core: storage, barrier, bootstrap, and clustering all come from this
+	// node. xkms contributes hardware seal strategies and auth factors on
+	// top via the node builder. It is non-nil only for the embedded qrdb
+	// transport (standalone/clustered hosting); remote deployments dial an
+	// external cluster instead. The server owns its lifecycle and closes it
+	// during Shutdown.
+	qrdbNode *qrdbnode.Node
+
+	// qrdbClient is the SDK client exposing the node's services (KV, Users,
+	// Roles, factors, barrier). For embedded hosting it is node.Client(); for
+	// remote deployments it is the dialed cluster client.
+	qrdbClient *qrdbsdk.Client
+
 	// Lifecycle
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -171,9 +201,18 @@ func New(cfg *config.Config) (*Server, error) {
 		shutdownCh:   make(chan struct{}),
 	}
 
+	// Initialize the shared qrdb storage backend (when configured). This must
+	// happen before initializeBackends, because per-subdir storage views are
+	// key-prefixed views over this single shared backend.
+	if err := s.initializeQRDBStorage(); err != nil {
+		cancel()
+		return nil, &ErrServiceInit{Service: "qrdb storage", Err: err}
+	}
+
 	// Initialize backends
 	if err := s.initializeBackends(); err != nil {
 		cancel()
+		s.closeQRDBStorage()
 		return nil, &ErrServiceInit{Service: "backends", Err: err}
 	}
 
@@ -184,18 +223,21 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "keystore", Err: err}
 	}
 
-	// Initialize user store
-	if err := s.initializeUserStore(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "user store", Err: err}
-	}
-
 	// Initialize authentication
 	if err := s.initializeAuthentication(); err != nil {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "authentication", Err: err}
+	}
+
+	// Initialize the shared WebAuthn relying-party service (when enabled). This
+	// single instance is wired into both the XKMSService (SDK ceremony) and the
+	// REST server (browser ceremony) so sessions and credentials live in one
+	// place.
+	if err := s.initializeWebAuthnService(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "webauthn service", Err: err}
 	}
 
 	// Initialize authorization
@@ -238,13 +280,6 @@ func New(cfg *config.Config) (*Server, error) {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "share store", Err: err}
-	}
-
-	// Initialize bootstrap service
-	if err := s.initializeBootstrapService(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "bootstrap service", Err: err}
 	}
 
 	// Initialize PIN manager
@@ -296,19 +331,29 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "CA", Err: err}
 	}
 
+	// Initialize hardware auth-factor registry (PIV, PKCS#11, FIDO2)
+	if err := s.initializeFactorRegistry(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "factor registry", Err: err}
+	}
+
 	// Wire all subsystems into the XKMSService singleton so it implements
 	// the full embedded.XKMSServicer interface for in-process SDK access.
 	if svc, err := xkms.Get(); err == nil {
 		if s.barrier != nil {
 			svc.SetBarrier(s.barrier)
 		}
+		if s.webauthnService != nil {
+			svc.SetWebAuthn(s.webauthnService)
+		}
 		if s.pinManager != nil {
 			svc.SetPINManager(s.pinManager)
 		}
-		if s.userStore != nil {
-			svc.SetUserStore(s.userStore)
-		}
 		if s.passwordStore != nil {
+			if s.qrdbClient != nil {
+				svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
+			}
 			svc.SetPasswordStore(s.passwordStore)
 			// Wire tenant password store manager if barrier registry is available
 			if s.barrierRegistry != nil {
@@ -554,37 +599,6 @@ func (s *Server) initializeKeyStore() error {
 	return nil
 }
 
-// initializeUserStore creates the user store.
-func (s *Server) initializeUserStore() error {
-	s.logger.Info("Initializing user store...")
-
-	// Storage path for logging
-	userStoragePath := s.config.Storage.Path + "/users"
-	userStorage, err := s.createStorage("users")
-	if err != nil {
-		return &ErrStorageCreate{Resource: "user storage", Err: err}
-	}
-
-	// Create user store
-	userStore, err := user.NewFileStore(userStorage)
-	if err != nil {
-		return &ErrServiceInit{Service: "user store", Err: err}
-	}
-
-	s.userStore = userStore
-	s.logger.Info("User store initialized", "path", userStoragePath)
-
-	// Check if bootstrap is required
-	hasUsers, err := userStore.HasAnyUsers(s.ctx)
-	if err != nil {
-		s.logger.Warn("Failed to check user status", slog.Any("error", err))
-	} else if !hasUsers {
-		s.logger.Info("No users configured - first user registration required")
-	}
-
-	return nil
-}
-
 // initializeAuthentication sets up the authentication subsystem.
 // It configures adaptive authentication that automatically switches between:
 // - NoOp mode (when no users exist) - allows all requests for bootstrap
@@ -605,7 +619,16 @@ func (s *Server) initializeAuthentication() error {
 			UserVerification:        s.config.WebAuthn.UserVerification,
 		}
 
-		// Set defaults for any unset values
+		// Set defaults for any unset values. The relying-party display name and
+		// at least one origin are required by the WebAuthn service; default the
+		// display name to the RP identifier and derive an HTTPS origin from the
+		// RP identifier when the operator did not configure them.
+		if s.webauthnConfig.RPDisplayName == "" {
+			s.webauthnConfig.RPDisplayName = s.webauthnConfig.RPID
+		}
+		if len(s.webauthnConfig.RPOrigins) == 0 && s.webauthnConfig.RPID != "" {
+			s.webauthnConfig.RPOrigins = []string{"https://" + s.webauthnConfig.RPID}
+		}
 		s.webauthnConfig.SetDefaults()
 
 		s.logger.Info("WebAuthn configured",
@@ -642,8 +665,8 @@ func (s *Server) initializeAuthentication() error {
 			return ErrMTLSRequiresTLS
 		}
 		mtlsConfig := &auth.MTLSConfig{}
-		if s.userStore != nil {
-			mtlsConfig.UserStore = user.NewMTLSUserStoreAdapter(s.userStore)
+		if us := s.mtlsUserStore(); us != nil {
+			mtlsConfig.UserStore = us
 		}
 		mtlsAuth := auth.NewMTLSAuthenticator(mtlsConfig)
 		requiredAuth = mtlsAuth
@@ -694,7 +717,7 @@ func (s *Server) initializeAuthentication() error {
 		}
 
 		adaptiveAuth, err := auth.NewAdaptiveAuthenticator(&auth.AdaptiveConfig{
-			UserChecker:           s.userStore,
+			UserChecker:           s.userChecker(),
 			RequiredAuthenticator: requiredAuth,
 			CacheExpiry:           30 * time.Second,
 			Logger:                s.logger.With("component", "auth"),
@@ -738,8 +761,8 @@ func (s *Server) createCompositeAuthenticator() (*auth.CompositeAuthenticator, e
 				return nil, ErrCompositeMTLSRequiresTLS
 			}
 			mtlsConfig := &auth.MTLSConfig{}
-			if s.userStore != nil {
-				mtlsConfig.UserStore = user.NewMTLSUserStoreAdapter(s.userStore)
+			if us := s.mtlsUserStore(); us != nil {
+				mtlsConfig.UserStore = us
 			}
 			return auth.NewMTLSAuthenticator(mtlsConfig), nil
 		},
@@ -764,6 +787,61 @@ func (s *Server) createCompositeAuthenticator() (*auth.CompositeAuthenticator, e
 
 	s.logger.Info("Composite authentication configured", "methods", s.config.Auth.Composite.Methods)
 	return compositeAuth, nil
+}
+
+// initializeWebAuthnService builds the single WebAuthn relying-party service
+// shared between the REST browser ceremony and the SDK ceremony. It is a no-op
+// when WebAuthn is not enabled (webauthnConfig is nil).
+//
+// When xkms hosts or dials the qrdb engine, users and credentials are persisted
+// on the qrdb node — the single source of identity. Otherwise it falls back to
+// in-memory stores for development and testing. Sessions are always ephemeral
+// and live in memory.
+func (s *Server) initializeWebAuthnService() error {
+	if s.webauthnConfig == nil {
+		return nil
+	}
+
+	s.logger.Info("Initializing WebAuthn service...")
+
+	var (
+		userStore webauthn.UserStore
+		credStore webauthn.CredentialStore
+	)
+	sessionStore := webauthn.NewMemorySessionStore()
+
+	if s.qrdbClient != nil {
+		qrdbUsers, qrdbCreds, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
+			Users:    s.qrdbClient.Users(),
+			KV:       s.qrdbClient.KV(),
+			TenantID: webAuthnSystemTenant,
+		})
+		if err != nil {
+			return &ErrServiceInit{Service: "webauthn qrdb stores", Err: err}
+		}
+		userStore = qrdbUsers
+		credStore = qrdbCreds
+		s.logger.Info("WebAuthn using qrdb stores for persistence")
+	} else {
+		userStore = webauthn.NewMemoryUserStore()
+		credStore = webauthn.NewMemoryCredentialStore()
+		s.logger.Info("WebAuthn using in-memory stores")
+	}
+
+	svc, err := webauthn.NewService(webauthn.ServiceParams{
+		Config:          s.webauthnConfig,
+		UserStore:       userStore,
+		SessionStore:    sessionStore,
+		CredentialStore: credStore,
+		Logger:          s.logger,
+	})
+	if err != nil {
+		return &ErrServiceInit{Service: "webauthn service", Err: err}
+	}
+
+	s.webauthnService = svc
+	s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID)
+	return nil
 }
 
 // initializeAuthorization sets up the authorization subsystem.
@@ -810,6 +888,55 @@ func (s *Server) initializeAuditLogger() error {
 	return nil
 }
 
+// mtlsUserStore returns the UserStore the mTLS authenticator uses to resolve a
+// client certificate's SPKI thumbprint to a user. When xkms hosts (or dials)
+// the qrdb engine, identity is resolved against qrdb's user store — the single
+// source of identity for the stack — via the GetUserByCertThumbprint index,
+// with role ids resolved to names through the role client. Absent a qrdb
+// client (non-qrdb storage backends), the mTLS authenticator falls back to
+// certificate-field extraction (handled in buildIdentity when the store is
+// nil).
+func (s *Server) mtlsUserStore() auth.UserStore {
+	if qs := s.qrdbUserStore(); qs != nil {
+		return qs
+	}
+	return nil
+}
+
+// qrdbUserStore builds the qrdb-backed identity store (cert-thumbprint
+// resolution + user existence checks) when xkms hosts or dials the qrdb
+// engine. It returns nil when no qrdb client is configured, so callers can
+// distinguish "no identity plane" from a usable store.
+func (s *Server) qrdbUserStore() *auth.QRDBUserStore {
+	if s.qrdbClient == nil {
+		return nil
+	}
+	return auth.NewQRDBUserStore(s.qrdbClient.Users(), s.qrdbClient.Roles())
+}
+
+// userChecker returns the UserChecker the adaptive authenticator uses to gate
+// first-boot enrollment. When xkms hosts the qrdb identity plane it is the
+// qrdb-backed store. Absent a qrdb client (e.g. a non-qrdb storage backend),
+// it fails closed: a static checker reports that users exist so the adaptive
+// authenticator always requires strong auth rather than offering open
+// first-boot enrollment.
+func (s *Server) userChecker() auth.UserChecker {
+	if qs := s.qrdbUserStore(); qs != nil {
+		return qs
+	}
+	return staticUserChecker{hasUsers: true}
+}
+
+// staticUserChecker is a fail-closed UserChecker fallback used when no qrdb
+// identity plane is available. It reports a fixed user-existence value so the
+// adaptive authenticator can still be constructed.
+type staticUserChecker struct{ hasUsers bool }
+
+// HasAnyUsers reports the static user-existence value.
+func (c staticUserChecker) HasAnyUsers(context.Context) (bool, error) {
+	return c.hasUsers, nil
+}
+
 // initializeBarrier creates and configures the barrier (seal/unseal) subsystem.
 // The barrier wraps storage with transparent AES-256-GCM encryption.
 func (s *Server) initializeBarrier() error {
@@ -826,9 +953,12 @@ func (s *Server) initializeBarrier() error {
 		return &ErrStorageCreate{Resource: "barrier storage", Err: err}
 	}
 
-	// Build sealing strategies
-	strategies := []seal.SealingStrategy{
-		seal.NewSoftwareStrategy(),
+	// Build sealing strategies. Hardware/cloud strategies whose backend was
+	// configured in the preference order are composed from the already-
+	// initialized backends; software is always appended as the baseline.
+	strategies, err := s.buildHardwareSealStrategies()
+	if err != nil {
+		return &ErrServiceInit{Service: "barrier", Err: err}
 	}
 
 	// Determine root key path
@@ -897,36 +1027,6 @@ func (s *Server) initializeShareStore() error {
 	return nil
 }
 
-// initializeBootstrapService creates the bootstrap service for server initialization.
-func (s *Server) initializeBootstrapService() error {
-	if !s.config.InitBootstrap.Enabled {
-		s.logger.Info("Bootstrap service disabled")
-		return nil
-	}
-
-	if s.userStore == nil {
-		return ErrBootstrapRequiresUserStore
-	}
-
-	bsCfg := bootstrap.Config{
-		TokenTTL:       s.config.InitBootstrap.TokenTTL,
-		ThresholdMode:  s.config.InitBootstrap.ThresholdMode,
-		AdminThreshold: s.config.InitBootstrap.AdminThreshold,
-		AdminTotal:     s.config.InitBootstrap.AdminTotal,
-	}
-
-	svc, err := bootstrap.NewService(bsCfg, s.userStore, s.logger)
-	if err != nil {
-		return &ErrServiceInit{Service: "bootstrap service", Err: err}
-	}
-
-	s.bootstrapService = svc
-	s.logger.Info("Bootstrap service initialized",
-		"threshold_mode", bsCfg.ThresholdMode)
-
-	return nil
-}
-
 // initializePINManager creates and configures the PIN management subsystem.
 func (s *Server) initializePINManager() error {
 	if !s.config.PIN.Enabled {
@@ -950,8 +1050,12 @@ func (s *Server) initializePINManager() error {
 		if err != nil {
 			return &ErrStorageCreate{Resource: "PIN state directory", Err: err}
 		}
-		hashConfig := pin.AutoDetectHashConfig()
-		backend, err := pin.NewSoftwareBackend(fileStore, hashConfig)
+		pinStore, err := pinadapter.New(fileStore)
+		if err != nil {
+			return &ErrServiceInit{Service: "software PIN manager", Err: err}
+		}
+		hashConfig := qrdbsdk.AutoDetectHashConfig()
+		backend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
 		if err != nil {
 			return &ErrServiceInit{Service: "software PIN manager", Err: err}
 		}
@@ -1021,6 +1125,26 @@ func (s *Server) initializePolicyManager() error {
 	return nil
 }
 
+// initializeFactorRegistry composes the canonical go-xkms hardware auth
+// factors (PIV, PKCS#11, FIDO2) into a qrdb AuthFactorRegistry. The registry is
+// exposed via FactorRegistry() so downstream binaries can inject it into the
+// qrdb server constructor (WithFactorRegistry) for server-side challenge
+// verification during custodian enrollment and Shamir unseal ceremonies.
+func (s *Server) initializeFactorRegistry() error {
+	registry, err := factor.NewDefaultRegistry(factor.Config{})
+	if err != nil {
+		return &ErrServiceInit{Service: "factor registry", Err: err}
+	}
+	s.factorRegistry = registry
+	s.logger.Info("Auth-factor registry initialized", "factors", registry.List())
+	return nil
+}
+
+// FactorRegistry returns the hardware auth-factor registry.
+func (s *Server) FactorRegistry() *qrdbsdk.AuthFactorRegistry {
+	return s.factorRegistry
+}
+
 // Barrier returns the barrier instance.
 func (s *Server) Barrier() *seal.Barrier {
 	return s.barrier
@@ -1031,13 +1155,8 @@ func (s *Server) BarrierRegistry() *seal.BarrierRegistry {
 	return s.barrierRegistry
 }
 
-// BootstrapService returns the bootstrap service instance.
-func (s *Server) BootstrapService() *bootstrap.Service {
-	return s.bootstrapService
-}
-
 // PINBackend returns the PIN backend instance.
-func (s *Server) PINBackend() pin.PINBackend {
+func (s *Server) PINBackend() qrdbsdk.PINBackend {
 	return s.pinManager
 }
 
@@ -1580,7 +1699,6 @@ func (s *Server) startREST() {
 		Port:              s.config.Server.RESTPort,
 		Backends:          s.backends,
 		Version:           getBuildVersion(),
-		UserStore:         s.userStore,
 		Authenticator:     s.authenticator,
 		EnableRBAC:        s.config.Auth.EnableRBAC,
 		Authorizer:        s.authorizer,
@@ -1590,12 +1708,18 @@ func (s *Server) startREST() {
 		PasswordStore:     s.passwordStore,
 		PlatformStore:     s.platformStore,
 		PolicyManager:     s.policyManager,
-		BootstrapService:  s.bootstrapService,
 		BarrierRegistry:   s.barrierRegistry,
 		CustodianService:  s.custodianService,
 		ShareStore:        s.shareStore,
 		CeremonyService:   s.ceremonyService,
 		CredentialService: s.credentialService,
+	}
+
+	// When xkms hosts/dials the qrdb engine, persist WebAuthn users and
+	// credentials on qrdb — the single source of identity.
+	if s.qrdbClient != nil {
+		restConfig.WebAuthnUsers = s.qrdbClient.Users()
+		restConfig.WebAuthnKV = s.qrdbClient.KV()
 	}
 
 	// Pass the XKMSService as CA servicer. The XKMSService wraps the raw CA
@@ -1607,9 +1731,12 @@ func (s *Server) startREST() {
 		}
 	}
 
-	// Add WebAuthn config if enabled
+	// Add WebAuthn config if enabled, sharing the single service instance so the
+	// REST browser ceremony and the SDK ceremony operate on the same sessions
+	// and credentials.
 	if s.webauthnConfig != nil {
 		restConfig.WebAuthnConfig = s.webauthnConfig
+		restConfig.WebAuthnService = s.webauthnService
 		s.logger.Info("WebAuthn enabled for REST server",
 			"rp_id", s.webauthnConfig.RPID)
 	}
@@ -1966,7 +2093,7 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12, // Default to TLS 1.2
+		MinVersion:   tls.VersionTLS13, // Default to TLS 1.3; operators may opt down via config
 	}
 
 	// Set TLS version based on configuration
@@ -2221,13 +2348,18 @@ func (s *Server) Shutdown() error {
 	return nil
 }
 
-// closeBackends closes all key provider connections
+// closeBackends closes all key provider connections and, when in use, the
+// shared qrdb storage backend. closeQRDBStorage is idempotent, so callers may
+// invoke closeBackends on any error path without double-close concerns.
 func (s *Server) closeBackends() {
 	for name, backend := range s.keyProviders {
 		s.logger.Info("Closing key provider...", "key_provider", name)
 		if err := backend.Close(); err != nil {
 			s.logger.Error("Error closing backend", slog.Any("error", err), "backend", name)
 		}
+	}
+	if err := s.closeQRDBStorage(); err != nil {
+		s.logger.Error("Error closing qrdb storage", slog.Any("error", err))
 	}
 }
 

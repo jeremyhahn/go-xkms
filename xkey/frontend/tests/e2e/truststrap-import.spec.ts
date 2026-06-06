@@ -8,10 +8,23 @@ import {
 /**
  * Playwright coverage for the go-truststrap import dialog in Trust Store.
  *
- * The tests mock TrustService.ImportFromTrustStrap via addInitScript so
- * the frontend flow can be exercised without a real bootstrap server. Each
- * call to the mocked method is captured in window.__truststrapImportCalls
- * so tests can assert on the exact payload the frontend sent.
+ * Mock strategy — two-phase injection (same pattern as secure-browser.spec.ts):
+ *
+ * Phase 1 (addInitScript): Runs before page scripts load. Sets
+ * window-global recording state (__truststrapImportCalls) and installs a
+ * provisional window.go shim for Vite-only runs. In the real Wails container
+ * the runtime overwrites window.go after load, so this shim only acts as
+ * a fallback.
+ *
+ * Phase 2 (patchTrustStrapServices, called after waitForAppReady): Patches
+ * window.go.services.TrustService on the live object. Because the Svelte
+ * component navigates to the Trust Store view AFTER this patch, every
+ * ImportFromTrustStrap call goes to the recording closure regardless of
+ * whether the real Wails bridge is present.
+ *
+ * The window-global arrays (__truststrapImportCalls, __truststrapCertStore)
+ * are set in Phase 1 and survive the Wails overwrite of window.go — the
+ * Phase 2 closures close over them by reference.
  */
 
 interface TrustStrapTestBackend {
@@ -33,7 +46,12 @@ interface TrustStrapTestBackend {
   importError?: string;
 }
 
-async function installTrustStrapMock(
+/**
+ * Phase 1: Install window-global recording state and a provisional window.go
+ * shim via addInitScript. The shim handles Vite-only mode; in real-Wails mode
+ * patchTrustStrapServices() re-installs the TrustService mock after app ready.
+ */
+async function installTrustStrapInitScript(
   page: Page,
   backend: TrustStrapTestBackend,
 ): Promise<void> {
@@ -43,9 +61,11 @@ async function installTrustStrapMock(
     const data = JSON.parse(serialized);
     const calls: Array<Record<string, unknown>> = [];
     (window as any).__truststrapImportCalls = calls;
+    (window as any).__truststrapBackendData = data;
+    (window as any).__truststrapCertStore = [...data.certs];
 
-    let certStore = [...data.certs];
-
+    // Provisional shim: active in Vite-only mode where no real Wails bridge
+    // exists. In real-Wails mode patchTrustStrapServices() overwrites this.
     (window as any).go = {
       main: {},
       services: {
@@ -65,25 +85,26 @@ async function installTrustStrapMock(
           }),
         },
         TrustService: {
-          ListCertificates: async () => certStore,
-          CertificateCount: async () => certStore.length,
+          ListCertificates: async () => [...(window as any).__truststrapCertStore],
+          CertificateCount: async () => (window as any).__truststrapCertStore.length,
           AddCertificatesPEM: async () => 0,
           RemoveCertificate: async () => {},
           GetCertificatePEM: async () => '',
           ImportCertificateFile: async () => 0,
           SetBrowserExport: async () => {},
           ImportFromTrustStrap: async (req: Record<string, unknown>) => {
-            calls.push(req);
-            if (data.importError) {
-              throw new Error(data.importError);
+            (window as any).__truststrapImportCalls.push(req);
+            const d = (window as any).__truststrapBackendData;
+            if (d.importError) {
+              throw new Error(d.importError);
             }
-            const added = data.importResult ?? 1;
-            // Simulate cert store mutation so the refresh shows new rows.
+            const added = d.importResult ?? 1;
+            const certStore: Array<Record<string, unknown>> = (window as any).__truststrapCertStore;
             for (let i = 0; i < added; i++) {
               certStore.push({
-                fingerprint: 'imported-' + calls.length + '-' + i,
-                subject: 'CN=TrustStrap Imported ' + calls.length + ' ' + i,
-                issuer: 'CN=TrustStrap Imported ' + calls.length + ' ' + i,
+                fingerprint: 'imported-' + (window as any).__truststrapImportCalls.length + '-' + i,
+                subject: 'CN=TrustStrap Imported',
+                issuer: 'CN=TrustStrap Imported',
                 algorithm: 'ECDSA',
                 not_before: '2026-01-01T00:00:00Z',
                 not_after: '2027-01-01T00:00:00Z',
@@ -103,6 +124,56 @@ async function installTrustStrapMock(
   }, payload);
 }
 
+/**
+ * Phase 2: Patch window.go.services.TrustService after the real Wails runtime
+ * has injected window.go. This overwrites only ImportFromTrustStrap and the
+ * certificate list/count methods with closures that record into the
+ * window-global arrays set in Phase 1.
+ */
+async function patchTrustStrapServices(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const svc = (window as any).go?.services;
+    if (!svc) return;
+
+    svc.TrustService = {
+      ...svc.TrustService,
+      ListCertificates: async () => [...(window as any).__truststrapCertStore],
+      CertificateCount: async () => (window as any).__truststrapCertStore.length,
+      AddCertificatesPEM: async () => 0,
+      RemoveCertificate: async () => {},
+      GetCertificatePEM: async () => '',
+      ImportCertificateFile: async () => 0,
+      SetBrowserExport: async () => {},
+      ImportFromTrustStrap: async (req: Record<string, unknown>) => {
+        (window as any).__truststrapImportCalls.push(req);
+        const d = (window as any).__truststrapBackendData;
+        if (d.importError) {
+          throw new Error(d.importError);
+        }
+        const added = d.importResult ?? 1;
+        const certStore: Array<Record<string, unknown>> = (window as any).__truststrapCertStore;
+        for (let i = 0; i < added; i++) {
+          certStore.push({
+            fingerprint: 'imported-' + (window as any).__truststrapImportCalls.length + '-' + i,
+            subject: 'CN=TrustStrap Imported',
+            issuer: 'CN=TrustStrap Imported',
+            algorithm: 'ECDSA',
+            not_before: '2026-01-01T00:00:00Z',
+            not_after: '2027-01-01T00:00:00Z',
+            is_ca: true,
+            is_expired: false,
+            purpose: 'user-ca',
+            source: 'truststrap',
+            tags: [],
+            system_installed: false,
+          });
+        }
+        return added;
+      },
+    };
+  });
+}
+
 const emptyBackend: TrustStrapTestBackend = {
   certs: [],
   importResult: 1,
@@ -112,9 +183,11 @@ async function gotoTrustStore(
   page: Page,
   backend: TrustStrapTestBackend = emptyBackend,
 ): Promise<void> {
-  await installTrustStrapMock(page, backend);
+  await installTrustStrapInitScript(page, backend);
   await page.goto('/');
   await waitForAppReady(page);
+  // Patch services after Wails runtime has loaded (overrides real bindings).
+  await patchTrustStrapServices(page);
   await ensureSidebarExpanded(page);
   await navigateTo(page, 'trust-store');
   // Wait for the primary toolbar Import button to mount.

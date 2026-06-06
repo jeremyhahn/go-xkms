@@ -22,10 +22,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/fido2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/spf13/cobra"
 )
 
@@ -88,24 +87,31 @@ Example (mTLS with PKCS#11 token):
 	},
 }
 
-// enrollFIDO2Admin performs FIDO2-based admin enrollment (existing flow).
+// enrollFIDO2Admin performs FIDO2-based admin enrollment by driving the
+// server-side WebAuthn registration ceremony through the SDK. The admin role is
+// always assigned.
 func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
 	displayName, _ := cmd.Flags().GetString("display-name")
 	devicePath, _ := cmd.Flags().GetString("device")
 	timeout, _ := cmd.Flags().GetDuration("timeout")
-	rpID, _ := cmd.Flags().GetString("rp-id")
-	rpName, _ := cmd.Flags().GetString("rp-name")
 	requireUV, _ := cmd.Flags().GetBool("user-verification")
 
 	if displayName == "" {
 		displayName = username
 	}
 
-	userStore, err := openUserStore(storagePath)
+	// Connect to the xkms service.
+	cl, err := cfg.CreateClient()
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-	defer func() { _ = userStore.Close() }()
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+	printVerbose("Connected to xkms service")
 
 	// Create FIDO2 handler
 	fidoConfig := fido2.DefaultConfig
@@ -131,50 +137,12 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 		return err
 	}
 
-	// Create enrollment config
-	enrollConfig := fido2.DefaultEnrollmentConfig(username)
-	enrollConfig.RelyingParty.ID = rpID
-	enrollConfig.RelyingParty.Name = rpName
-	enrollConfig.User.DisplayName = displayName
-	enrollConfig.Timeout = timeout
-	enrollConfig.RequireUserVerification = requireUV
-
-	if err := printer.PrintPrompt("\nPlease touch your security key to register..."); err != nil {
+	att, err := webAuthnRegistration(ctx, cl, handler, printer, username, displayName, string(RoleAdmin), "", requireUV, timeout)
+	if err != nil {
 		return err
 	}
 
-	// Register the credential
-	result, err := handler.EnrollKey(enrollConfig)
-	if err != nil {
-		return fmt.Errorf("failed to register credential: %w", err)
-	}
-
 	printVerbose("FIDO2 credential registered successfully")
-
-	// Create the admin user
-	ctx := context.Background()
-	newAdmin, err := userStore.Create(ctx, username, displayName, user.RoleAdmin, "")
-	if err != nil {
-		return fmt.Errorf("failed to create admin: %w", err)
-	}
-
-	// Add the credential to the user
-	userCred := &user.Credential{
-		ID:              result.CredentialID,
-		PublicKey:       result.PublicKey,
-		AttestationType: "packed",
-		AAGUID:          result.AAGUID,
-		SignCount:       result.SignCount,
-		Name:            "Security Key",
-		CreatedAt:       time.Now().UTC(),
-		Salt:            result.Salt,
-	}
-	newAdmin.AddCredential(userCred)
-
-	// Save the user with credential
-	if err := userStore.Update(ctx, newAdmin); err != nil {
-		return fmt.Errorf("failed to save user credential: %w", err)
-	}
 
 	if err := printer.PrintSuccess("\nAdministrator created successfully!"); err != nil {
 		return err
@@ -188,16 +156,15 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 			"display_name":  displayName,
 			"role":          "admin",
 			"auth_method":   "fido2",
-			"credential_id": base64.URLEncoding.EncodeToString(result.CredentialID),
+			"credential_id": base64.URLEncoding.EncodeToString(att.CredentialID),
 		}
 		if err := printer.PrintJSON(summary); err != nil {
 			return err
 		}
 	} else {
-		fmt.Printf("\nAdmin ID: %s\n", base64.URLEncoding.EncodeToString(newAdmin.ID))
-		fmt.Printf("Username: %s\n", newAdmin.Username)
-		fmt.Printf("Role: %s\n", newAdmin.Role)
-		fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(result.CredentialID))
+		fmt.Printf("\nUsername: %s\n", username)
+		fmt.Printf("Role: %s\n", string(RoleAdmin))
+		fmt.Printf("Credential ID: %s\n", base64.URLEncoding.EncodeToString(att.CredentialID))
 		fmt.Printf("\nYou can now use this security key to authenticate to the xkms web UI.\n")
 	}
 
@@ -206,8 +173,8 @@ func enrollFIDO2Admin(cmd *cobra.Command, username string, cfg *Config, printer 
 
 // enrollMTLSAdmin performs mTLS certificate-based admin enrollment. It reads a
 // client certificate from either a PEM file (--cert-file) or a PKCS#11 token
-// (--pkcs11-module), computes the SHA-256 fingerprint, and creates an admin user
-// with a CertBinding.
+// (--pkcs11-module), computes the canonical SPKI thumbprint, and creates an admin
+// user with a CertBinding.
 func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *Printer, storagePath string) error {
 	displayName, _ := cmd.Flags().GetString("display-name")
 	if displayName == "" {
@@ -219,14 +186,11 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 		return err
 	}
 
-	// Compute SHA-256 fingerprint for the cert binding
-	fingerprint := auth.ComputeCertFingerprint(cert)
-
-	userStore, err := openUserStore(storagePath)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = userStore.Close() }()
+	// Compute the canonical mTLS identity (qrdb SPKI thumbprint) for the cert
+	// binding. Using the same algorithm qrdb/quicbaas use keeps cert bindings
+	// consistent across the stack and makes re-issued certs for the same key
+	// resolve to the same bound identifier.
+	fingerprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 
 	if err := printer.PrintMessage("Creating administrator account (mTLS)..."); err != nil {
 		return err
@@ -244,28 +208,33 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 		return err
 	}
 
-	// Create the admin user
-	ctx := context.Background()
-	newAdmin, err := userStore.Create(ctx, username, displayName, user.RoleAdmin, "")
+	// Create the admin user and bind the mTLS certificate through the SDK,
+	// persisting both in the embedded qrdb node behind the xkms server.
+	cl, err := cfg.CreateClient()
 	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer func() { _ = cl.Close() }()
+
+	ctx := context.Background()
+	if err := cl.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+
+	if _, err := cl.CreateUser(ctx, &client.CreateUserRequest{
+		Username:    username,
+		DisplayName: displayName,
+		Role:        string(RoleAdmin),
+	}); err != nil {
 		return fmt.Errorf("failed to create admin: %w", err)
 	}
 
-	// Add the certificate binding
-	binding := &user.CertBinding{
-		Fingerprint: fingerprint,
-		Subject:     cert.Subject.String(),
-		Issuer:      cert.Issuer.String(),
-		Serial:      cert.SerialNumber.String(),
-		NotAfter:    cert.NotAfter,
-		Name:        "mTLS Client Certificate",
-		CreatedAt:   time.Now().UTC(),
+	var notAfterUnix int64
+	if !cert.NotAfter.IsZero() {
+		notAfterUnix = cert.NotAfter.Unix()
 	}
-	newAdmin.AddCertBinding(binding)
-
-	// Save the user with cert binding
-	if err := userStore.Update(ctx, newAdmin); err != nil {
-		return fmt.Errorf("failed to save user cert binding: %w", err)
+	if err := cl.BindUserCert(ctx, username, fingerprint, notAfterUnix); err != nil {
+		return fmt.Errorf("failed to bind cert: %w", err)
 	}
 
 	if err := printer.PrintSuccess("\nAdministrator created successfully!"); err != nil {
@@ -289,9 +258,8 @@ func enrollMTLSAdmin(cmd *cobra.Command, username string, cfg *Config, printer *
 			return err
 		}
 	} else {
-		fmt.Printf("\nAdmin ID: %s\n", base64.URLEncoding.EncodeToString(newAdmin.ID))
-		fmt.Printf("Username: %s\n", newAdmin.Username)
-		fmt.Printf("Role: %s\n", newAdmin.Role)
+		fmt.Printf("\nUsername: %s\n", username)
+		fmt.Printf("Role: %s\n", string(RoleAdmin))
 		fmt.Printf("Auth Method: mTLS\n")
 		fmt.Printf("Fingerprint: %s\n", fingerprint)
 		fmt.Printf("Subject: %s\n", cert.Subject.String())
@@ -313,7 +281,7 @@ func loadEnrollmentCert(cmd *cobra.Command, cfg *Config) (*x509.Certificate, err
 	}
 
 	if cfg.PKCS11Module != "" {
-		tlsCfg, cleanup, err := auth.NewPKCS11TLSConfig(&auth.PKCS11TLSConfig{
+		tlsCfg, cleanup, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
 			ModulePath: cfg.PKCS11Module,
 			SlotID:     cfg.PKCS11Slot,
 			PIN:        cfg.PKCS11PIN,
@@ -362,22 +330,32 @@ var adminListCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := openUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
-		// List admins
 		ctx := context.Background()
-		admins, err := userStore.List(ctx)
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		resp, err := cl.ListUsers(ctx)
 		if err != nil {
 			handleError(fmt.Errorf("failed to list admins: %w", err))
 			return
+		}
+
+		// Filter to administrator accounts only.
+		admins := make([]client.UserInfo, 0, len(resp.Users))
+		for _, u := range resp.Users {
+			if u.Role == string(RoleAdmin) {
+				admins = append(admins, u)
+			}
 		}
 
 		if len(admins) == 0 {
@@ -392,16 +370,14 @@ var adminListCmd = &cobra.Command{
 			adminList := make([]map[string]interface{}, len(admins))
 			for i, a := range admins {
 				adminList[i] = map[string]interface{}{
-					"id":               base64.URLEncoding.EncodeToString(a.ID),
-					"username":         a.Username,
-					"display_name":     a.DisplayName,
-					"role":             string(a.Role),
-					"enabled":          a.Enabled,
-					"credential_count": len(a.Credentials),
-					"created_at":       a.CreatedAt.Format(time.RFC3339),
+					"username":     a.Username,
+					"display_name": a.DisplayName,
+					"role":         a.Role,
+					"enabled":      a.Enabled,
+					"created_at":   a.CreatedAt.Format(time.RFC3339),
 				}
-				if a.LastLoginAt != nil {
-					adminList[i]["last_login_at"] = a.LastLoginAt.Format(time.RFC3339)
+				if a.LastLogin != nil {
+					adminList[i]["last_login"] = a.LastLogin.Format(time.RFC3339)
 				}
 			}
 			if err := printer.PrintJSON(map[string]interface{}{
@@ -411,19 +387,14 @@ var adminListCmd = &cobra.Command{
 				handleError(err)
 			}
 		} else {
-			fmt.Printf("%-40s %-20s %-12s %-8s %-5s\n", "ID", "USERNAME", "ROLE", "ENABLED", "CREDS")
-			fmt.Println(repeatString("-", 90))
+			fmt.Printf("%-24s %-24s %-12s %-8s\n", "USERNAME", "DISPLAY NAME", "ROLE", "ENABLED")
+			fmt.Println(repeatString("-", 70))
 			for _, a := range admins {
-				idStr := base64.URLEncoding.EncodeToString(a.ID)
-				if len(idStr) > 16 {
-					idStr = idStr[:16] + "..."
-				}
-				fmt.Printf("%-40s %-20s %-12s %-8t %-5d\n",
-					idStr,
-					truncateString(a.Username, 20),
+				fmt.Printf("%-24s %-24s %-12s %-8t\n",
+					truncateString(a.Username, 24),
+					truncateString(a.DisplayName, 24),
 					a.Role,
 					a.Enabled,
-					len(a.Credentials),
 				)
 			}
 			fmt.Printf("\nTotal: %d administrator(s)\n", len(admins))
@@ -442,77 +413,77 @@ var adminGetCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := openUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-		a, err := userStore.GetByUsername(ctx, username)
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		resp, err := cl.GetUser(ctx, username)
 		if err != nil {
 			handleError(fmt.Errorf("failed to get admin: %w", err))
 			return
 		}
+		a := resp.User
+
+		// Fetch the admin's credentials for display.
+		var creds []client.CredentialInfo
+		if credResp, credErr := cl.ListUserCredentials(ctx, username); credErr == nil {
+			creds = credResp.Credentials
+		} else {
+			printVerbose("failed to list credentials for %s: %v", username, credErr)
+		}
 
 		if cfg.OutputFormat == "json" {
 			adminInfo := map[string]interface{}{
-				"id":               base64.URLEncoding.EncodeToString(a.ID),
-				"username":         a.Username,
-				"display_name":     a.DisplayName,
-				"role":             string(a.Role),
-				"enabled":          a.Enabled,
-				"credential_count": len(a.Credentials),
-				"created_at":       a.CreatedAt.Format(time.RFC3339),
+				"username":     a.Username,
+				"display_name": a.DisplayName,
+				"role":         a.Role,
+				"enabled":      a.Enabled,
+				"created_at":   a.CreatedAt.Format(time.RFC3339),
 			}
-			if a.LastLoginAt != nil {
-				adminInfo["last_login_at"] = a.LastLoginAt.Format(time.RFC3339)
+			if a.LastLogin != nil {
+				adminInfo["last_login"] = a.LastLogin.Format(time.RFC3339)
 			}
 
-			// Include credential details
-			creds := make([]map[string]interface{}, len(a.Credentials))
-			for i, c := range a.Credentials {
-				creds[i] = map[string]interface{}{
-					"id":         base64.URLEncoding.EncodeToString(c.ID),
-					"name":       c.Name,
-					"created_at": c.CreatedAt.Format(time.RFC3339),
-				}
-				if c.LastUsedAt != nil {
-					creds[i]["last_used_at"] = c.LastUsedAt.Format(time.RFC3339)
+			credList := make([]map[string]interface{}, len(creds))
+			for i, c := range creds {
+				credList[i] = map[string]interface{}{
+					"id":           c.ID,
+					"display_name": c.DisplayName,
 				}
 			}
-			adminInfo["credentials"] = creds
+			adminInfo["credentials"] = credList
 
 			if err := printer.PrintJSON(adminInfo); err != nil {
 				handleError(err)
 			}
 		} else {
 			fmt.Printf("Administrator Details:\n")
-			fmt.Printf("  ID:           %s\n", base64.URLEncoding.EncodeToString(a.ID))
 			fmt.Printf("  Username:     %s\n", a.Username)
 			fmt.Printf("  Display Name: %s\n", a.DisplayName)
 			fmt.Printf("  Role:         %s\n", a.Role)
 			fmt.Printf("  Enabled:      %t\n", a.Enabled)
 			fmt.Printf("  Created:      %s\n", a.CreatedAt.Format(time.RFC3339))
-			if a.LastLoginAt != nil {
-				fmt.Printf("  Last Login:   %s\n", a.LastLoginAt.Format(time.RFC3339))
+			if a.LastLogin != nil {
+				fmt.Printf("  Last Login:   %s\n", a.LastLogin.Format(time.RFC3339))
 			}
-			fmt.Printf("\n  Credentials (%d):\n", len(a.Credentials))
-			for i, c := range a.Credentials {
-				fmt.Printf("    %d. %s\n", i+1, c.Name)
-				credIDStr := base64.URLEncoding.EncodeToString(c.ID)
-				if len(credIDStr) > 16 {
-					credIDStr = credIDStr[:16] + "..."
+			fmt.Printf("\n  Credentials (%d):\n", len(creds))
+			for i, c := range creds {
+				name := c.DisplayName
+				if name == "" {
+					name = c.ID
 				}
-				fmt.Printf("       ID: %s\n", credIDStr)
-				fmt.Printf("       Created: %s\n", c.CreatedAt.Format(time.RFC3339))
-				if c.LastUsedAt != nil {
-					fmt.Printf("       Last Used: %s\n", c.LastUsedAt.Format(time.RFC3339))
-				}
+				fmt.Printf("    %d. %s\n", i+1, name)
+				fmt.Printf("       ID: %s\n", c.ID)
 			}
 		}
 	},
@@ -531,27 +502,21 @@ Note: You cannot delete the last administrator account.`,
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := openUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-
-		// Get the user by username to get the ID
-		a, err := userStore.GetByUsername(ctx, username)
-		if err != nil {
-			handleError(fmt.Errorf("failed to find admin: %w", err))
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
 			return
 		}
+		printVerbose("Connected to xkms service")
 
-		// Delete the user
-		if err := userStore.Delete(ctx, a.ID); err != nil {
+		if err := cl.DeleteUser(ctx, username); err != nil {
 			handleError(fmt.Errorf("failed to delete admin: %w", err))
 			return
 		}
@@ -581,26 +546,21 @@ var adminDisableCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := openUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-
-		a, err := userStore.GetByUsername(ctx, username)
-		if err != nil {
-			handleError(fmt.Errorf("failed to find admin: %w", err))
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
 			return
 		}
+		printVerbose("Connected to xkms service")
 
-		a.Enabled = false
-		if err := userStore.Update(ctx, a); err != nil {
+		if err := cl.DisableUser(ctx, username); err != nil {
 			handleError(fmt.Errorf("failed to disable admin: %w", err))
 			return
 		}
@@ -631,26 +591,21 @@ var adminEnableCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := openUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
 		ctx := context.Background()
-
-		a, err := userStore.GetByUsername(ctx, username)
-		if err != nil {
-			handleError(fmt.Errorf("failed to find admin: %w", err))
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
 			return
 		}
+		printVerbose("Connected to xkms service")
 
-		a.Enabled = true
-		if err := userStore.Update(ctx, a); err != nil {
+		if err := cl.EnableUser(ctx, username); err != nil {
 			handleError(fmt.Errorf("failed to enable admin: %w", err))
 			return
 		}
@@ -679,34 +634,39 @@ var adminStatusCmd = &cobra.Command{
 		cfg := getConfig()
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 
-		storagePath, _ := cmd.Flags().GetString("storage-path")
-		storagePath = resolveStoragePath(storagePath)
-
-		userStore, err := openUserStore(storagePath)
+		cl, err := cfg.CreateClient()
 		if err != nil {
-			handleError(err)
+			handleError(fmt.Errorf("failed to create client: %w", err))
 			return
 		}
-		defer func() { _ = userStore.Close() }()
+		defer func() { _ = cl.Close() }()
 
-		// Check status
 		ctx := context.Background()
-		hasAdmins, err := userStore.HasAnyUsers(ctx)
+		if err := cl.Connect(ctx); err != nil {
+			handleError(fmt.Errorf("failed to connect: %w", err))
+			return
+		}
+		printVerbose("Connected to xkms service")
+
+		resp, err := cl.ListUsers(ctx)
 		if err != nil {
 			handleError(fmt.Errorf("failed to check admin status: %w", err))
 			return
 		}
 
-		count, err := userStore.Count(ctx)
-		if err != nil {
-			handleError(fmt.Errorf("failed to count admins: %w", err))
-			return
+		adminCount := 0
+		for _, u := range resp.Users {
+			if u.Role == string(RoleAdmin) {
+				adminCount++
+			}
 		}
+		hasAdmins := adminCount > 0
 
 		if cfg.OutputFormat == "json" {
 			status := map[string]interface{}{
 				"requires_setup": !hasAdmins,
-				"admin_count":    count,
+				"admin_count":    adminCount,
+				"user_count":     len(resp.Users),
 			}
 			if !hasAdmins {
 				status["message"] = "No administrators configured. Run 'xkmsctl admin create' to create an administrator."
@@ -723,7 +683,8 @@ var adminStatusCmd = &cobra.Command{
 				fmt.Println("Run 'xkmsctl admin create <username>' to create an administrator.")
 			} else {
 				fmt.Println("Status: CONFIGURED")
-				fmt.Printf("Administrator accounts: %d\n", count)
+				fmt.Printf("Administrator accounts: %d\n", adminCount)
+				fmt.Printf("Total user accounts: %d\n", len(resp.Users))
 			}
 		}
 	},
@@ -769,21 +730,6 @@ func resolveStoragePath(storagePath string) string {
 		}
 	}
 	return storagePath
-}
-
-func openUserStore(storagePath string) (user.Store, error) {
-	userStoragePath := storagePath + "/users"
-	userStorage, err := file.New(userStoragePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create user storage: %w", err)
-	}
-
-	userStore, err := user.NewFileStore(userStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create user store: %w", err)
-	}
-
-	return userStore, nil
 }
 
 func repeatString(s string, count int) string {

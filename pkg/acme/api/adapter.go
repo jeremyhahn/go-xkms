@@ -232,6 +232,9 @@ type TLSConfig struct {
 	// CAFile is the path to the CA certificate.
 	CAFile string
 	// InsecureSkipVerify disables server certificate verification.
-	// Only use for integration testing with self-signed certificates.
+	//
+	// Deprecated: Use a properly issued certificate or pin the server's SPKI via
+	// pkg/crypto/spki. This field is retained for integration testing with
+	// self-signed certificates; production code paths must leave it false.
 	InsecureSkipVerify bool
 }

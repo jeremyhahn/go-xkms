@@ -18,21 +18,37 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 )
 
 // Compile-time interface check.
 var _ qrdbsdk.CeremonyCA = (*CAAdapter)(nil)
+
+// systemTenantID is the control-plane tenant. The SO / bootstrap certificate
+// is always scoped to this tenant so the control plane functions before any
+// tenant barrier unseals.
+const systemTenantID = "system"
 
 // CAAdapter implements go-qrdb CeremonyCA using go-xkms ca.TrustedCA.
 // This bridges the go-xkms CA interface to the go-qrdb ceremony's expected
 // CA interface, translating types at the boundary.
 type CAAdapter struct {
 	ca ca.TrustedCA
+
+	// spiffeTrustDomain, when non-empty, causes the adapter to stamp a
+	// system-tenant SPIFFE SAN (spiffe://<td>/tenant/system/user/<CN>) onto
+	// the SO / bootstrap certificates issued during the init ceremony. This is
+	// the control-plane exception in the login tenant-derivation order: the SO
+	// cert explicitly carries tenant/system so the control plane works before
+	// any tenant barrier unseals.
+	spiffeTrustDomain string
 }
 
 // NewCAAdapter creates a new CAAdapter wrapping the given TrustedCA instance.
-func NewCAAdapter(xkmsCA ca.TrustedCA) *CAAdapter {
-	return &CAAdapter{ca: xkmsCA}
+// trustDomain is the operator-configured SPIFFE trust domain; when empty no
+// SPIFFE SAN is stamped (legacy behavior).
+func NewCAAdapter(xkmsCA ca.TrustedCA, trustDomain string) *CAAdapter {
+	return &CAAdapter{ca: xkmsCA, spiffeTrustDomain: trustDomain}
 }
 
 // SignCSR signs a PEM-encoded CSR using the go-xkms CA with the given options.
@@ -42,6 +58,11 @@ func (a *CAAdapter) SignCSR(csrPEM []byte, opts *qrdbsdk.SignCSROptions) (*x509.
 		ValidityDays: opts.ValidityDays,
 		KeyUsage:     opts.KeyUsage,
 		ExtKeyUsage:  opts.ExtKeyUsage,
+	}
+	if a.spiffeTrustDomain != "" {
+		xkmsOpts.SPIFFETrustDomain = a.spiffeTrustDomain
+		xkmsOpts.TenantID = systemTenantID
+		xkmsOpts.SPIFFEKind = spiffe.KindUser
 	}
 	return a.ca.SignCSR(csrPEM, xkmsOpts)
 }
@@ -74,6 +95,19 @@ func (a *CAAdapter) IssueCertificate(req *qrdbsdk.IssueCertRequest) (*qrdbsdk.Is
 		xkmsReq.SANS = &ca.SubjectAlternativeNames{
 			DNS: req.SANs,
 		}
+	}
+
+	// Stamp the system-tenant SPIFFE SAN onto the directly-issued SO /
+	// bootstrap certificate so login derives the system tenant from it.
+	if a.spiffeTrustDomain != "" {
+		spiffeURI, err := spiffe.BuildURI(a.spiffeTrustDomain, systemTenantID, spiffe.KindUser, req.CommonName)
+		if err != nil {
+			return nil, err
+		}
+		if xkmsReq.SANS == nil {
+			xkmsReq.SANS = &ca.SubjectAlternativeNames{}
+		}
+		xkmsReq.SANS.URIs = append(xkmsReq.SANS.URIs, spiffeURI.String())
 	}
 
 	issued, err := a.ca.IssueCertificate(xkmsReq)

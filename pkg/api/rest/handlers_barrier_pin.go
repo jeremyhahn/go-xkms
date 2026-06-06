@@ -19,8 +19,8 @@ import (
 	"net/http"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/secureio"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
@@ -520,21 +520,21 @@ func handleBarrierError(w http.ResponseWriter, err error) {
 // handlePINError maps PIN-specific errors to HTTP status codes.
 func handlePINError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, pin.ErrPINNotSet):
+	case errors.Is(err, qrdbsdk.ErrPINNotSet):
 		writeError(w, err, http.StatusBadRequest)
-	case errors.Is(err, pin.ErrPINLocked):
+	case errors.Is(err, qrdbsdk.ErrPINLocked):
 		writeError(w, err, http.StatusTooManyRequests)
-	case errors.Is(err, pin.ErrPINInvalid):
+	case errors.Is(err, qrdbsdk.ErrPINInvalid):
 		writeError(w, err, http.StatusUnauthorized)
-	case errors.Is(err, pin.ErrSOPINRequired):
+	case errors.Is(err, qrdbsdk.ErrSOPINRequired):
 		writeError(w, err, http.StatusUnauthorized)
-	case errors.Is(err, pin.ErrPINTooShort):
+	case errors.Is(err, qrdbsdk.ErrPINTooShort):
 		writeError(w, err, http.StatusBadRequest)
-	case errors.Is(err, pin.ErrPINAlreadySet):
+	case errors.Is(err, qrdbsdk.ErrPINAlreadySet):
 		writeError(w, err, http.StatusConflict)
-	case errors.Is(err, pin.ErrInvalidCurrentPIN):
+	case errors.Is(err, qrdbsdk.ErrInvalidCurrentPIN):
 		writeError(w, err, http.StatusUnauthorized)
-	case errors.Is(err, pin.ErrStateCorrupted):
+	case errors.Is(err, qrdbsdk.ErrPINStateCorrupted):
 		writeError(w, err, http.StatusInternalServerError)
 	default:
 		writeError(w, err, http.StatusInternalServerError)

@@ -522,7 +522,7 @@ func (t *Transport) buildTLSConfig() (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion: tls.VersionTLS13,
 	}
 
 	// Load CA certificate if specified
@@ -1021,131 +1021,6 @@ func (t *Transport) CanSeal(_ context.Context, backend string) (*transport.CanSe
 	return &result, nil
 }
 
-// ListUsers returns a list of all users.
-func (t *Transport) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-
-	var serverResp struct {
-		Users []struct {
-			ID              string `json:"id"`
-			Username        string `json:"username"`
-			DisplayName     string `json:"display_name"`
-			Role            string `json:"role"`
-			Enabled         bool   `json:"enabled"`
-			CredentialCount int    `json:"credential_count"`
-			CreatedAt       string `json:"created_at"`
-			LastLoginAt     string `json:"last_login_at,omitempty"`
-		} `json:"users"`
-		Total int `json:"total"`
-	}
-	if err := t.rpcCall(context.TODO(), "xkms.listUsers", nil, &serverResp); err != nil {
-		return nil, err
-	}
-
-	users := make([]transport.UserInfo, len(serverResp.Users))
-	for i, u := range serverResp.Users {
-		users[i] = transport.UserInfo{
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			Role:        u.Role,
-			Enabled:     u.Enabled,
-		}
-	}
-
-	return &transport.ListUsersResponse{
-		Users: users,
-	}, nil
-}
-
-// GetUser returns information about a specific user.
-func (t *Transport) GetUser(_ context.Context, userID string) (*transport.GetUserResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-
-	params := map[string]string{"user_id": userID}
-	var serverResp struct {
-		ID          string `json:"id"`
-		Username    string `json:"username"`
-		DisplayName string `json:"display_name"`
-		Role        string `json:"role"`
-		Enabled     bool   `json:"enabled"`
-	}
-	if err := t.rpcCall(context.TODO(), "xkms.getUser", params, &serverResp); err != nil {
-		return nil, err
-	}
-
-	return &transport.GetUserResponse{
-		User: transport.UserInfo{
-			Username:    serverResp.Username,
-			DisplayName: serverResp.DisplayName,
-			Role:        serverResp.Role,
-			Enabled:     serverResp.Enabled,
-		},
-	}, nil
-}
-
-// DeleteUser deletes a user.
-func (t *Transport) DeleteUser(_ context.Context, userID string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	params := map[string]string{"user_id": userID}
-	return t.rpcCall(context.TODO(), "xkms.deleteUser", params, nil)
-}
-
-// EnableUser enables a user account.
-func (t *Transport) EnableUser(_ context.Context, userID string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	params := map[string]interface{}{"user_id": userID, "enabled": true}
-	return t.rpcCall(context.TODO(), "xkms.updateUser", params, nil)
-}
-
-// DisableUser disables a user account.
-func (t *Transport) DisableUser(_ context.Context, userID string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	params := map[string]interface{}{"user_id": userID, "enabled": false}
-	return t.rpcCall(context.TODO(), "xkms.updateUser", params, nil)
-}
-
-// ListUserCredentials returns a list of credentials for a user.
-func (t *Transport) ListUserCredentials(_ context.Context, userID string) (*transport.ListUserCredentialsResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-
-	params := map[string]string{"user_id": userID}
-	var serverResp struct {
-		Credentials []struct {
-			ID         string `json:"id"`
-			Name       string `json:"name"`
-			CreatedAt  string `json:"created_at"`
-			LastUsedAt string `json:"last_used_at,omitempty"`
-		} `json:"credentials"`
-	}
-	if err := t.rpcCall(context.TODO(), "xkms.listUserCredentials", params, &serverResp); err != nil {
-		return nil, err
-	}
-
-	credentials := make([]transport.CredentialInfo, len(serverResp.Credentials))
-	for i, cred := range serverResp.Credentials {
-		credentials[i] = transport.CredentialInfo{
-			ID:          cred.ID,
-			DisplayName: cred.Name,
-		}
-	}
-
-	return &transport.ListUserCredentialsResponse{
-		Credentials: credentials,
-	}, nil
-}
-
 // WebAuthn/FIDO2 Operations
 
 // BeginRegistration begins a WebAuthn registration flow.
@@ -1425,42 +1300,6 @@ func (t *Transport) BarrierUnsealWithShares(_ context.Context, req *transport.Ba
 		return ErrNotConnected
 	}
 	return t.rpcCall(context.TODO(), "barrier.unsealShares", req, nil)
-}
-
-// BarrierShamirListShares returns metadata about stored Shamir shares.
-func (t *Transport) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	var result transport.BarrierShamirSharesResponse
-	if err := t.rpcCall(context.TODO(), "barrier.shamirListShares", nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (t *Transport) BarrierShamirDeleteShare(_ context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.rpcCall(context.TODO(), "barrier.shamirDeleteShare", req, nil)
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (t *Transport) BarrierShamirDeleteAllShares(_ context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.rpcCall(context.TODO(), "barrier.shamirDeleteAllShares", nil, nil)
-}
-
-// BarrierShamirVerify verifies the integrity of stored Shamir shares.
-func (t *Transport) BarrierShamirVerify(_ context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.rpcCall(context.TODO(), "barrier.shamirVerify", nil, nil)
 }
 
 // BarrierRekey rotates Shamir shares while keeping the same root key.
@@ -1968,6 +1807,52 @@ func (t *Transport) GetCredentialStrategy(_ context.Context) (*transport.Credent
 		return nil, err
 	}
 	return &result, nil
+}
+
+// ==================== User Operations ====================
+//
+// User management over the MCP transport is not yet wired; the CLI/webui
+// reach xkms user management via the REST transport. These stubs keep the
+// Client interface satisfied.
+
+// CreateUser is not supported over the MCP transport.
+func (t *Transport) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// ListUsers is not supported over the MCP transport.
+func (t *Transport) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// GetUser is not supported over the MCP transport.
+func (t *Transport) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
+	return nil, ErrNotSupported
+}
+
+// DeleteUser is not supported over the MCP transport.
+func (t *Transport) DeleteUser(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+// EnableUser is not supported over the MCP transport.
+func (t *Transport) EnableUser(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+// DisableUser is not supported over the MCP transport.
+func (t *Transport) DisableUser(_ context.Context, _ string) error {
+	return ErrNotSupported
+}
+
+// BindUserCert is not supported over the MCP transport.
+func (t *Transport) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+	return ErrNotSupported
+}
+
+// ListUserCredentials is not supported over the MCP transport.
+func (t *Transport) ListUserCredentials(_ context.Context, _ string) (*transport.ListUserCredentialsResponse, error) {
+	return nil, ErrNotSupported
 }
 
 // Compile-time interface assertion.

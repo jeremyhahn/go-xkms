@@ -572,8 +572,8 @@ func TestReadBarrierStrategy_Software(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strategy != seal.StrategySoftware {
-		t.Fatalf("expected %q, got %q", seal.StrategySoftware, strategy)
+	if strategy != seal.StrategyPassphrase {
+		t.Fatalf("expected %q, got %q", seal.StrategyPassphrase, strategy)
 	}
 }
 

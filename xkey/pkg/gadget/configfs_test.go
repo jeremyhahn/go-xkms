@@ -19,8 +19,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -33,19 +33,19 @@ type fsCall struct {
 
 // mockFileSystem records all calls and returns configurable results.
 type mockFileSystem struct {
-	mu           sync.Mutex
-	calls        []fsCall
-	mkdirErr     error
-	writeErr     error
+	mu            sync.Mutex
+	calls         []fsCall
+	mkdirErr      error
+	writeErr      error
 	writeErrPaths map[string]error // fail WriteFile for paths containing these substrings
-	symlinkErr   error
-	removeErr    error
-	readDirMap   map[string]readDirResult
-	readFileData []byte
-	readFileErr  error
-	mountErr     error
-	unmountErr   error
-	writtenFiles map[string][]byte
+	symlinkErr    error
+	removeErr     error
+	readDirMap    map[string]readDirResult
+	readFileData  []byte
+	readFileErr   error
+	mountErr      error
+	unmountErr    error
+	writtenFiles  map[string][]byte
 }
 
 type readDirResult struct {
@@ -56,8 +56,8 @@ type readDirResult struct {
 func newMockFileSystem() *mockFileSystem {
 	return &mockFileSystem{
 		writeErrPaths: make(map[string]error),
-		writtenFiles: make(map[string][]byte),
-		readDirMap:   make(map[string]readDirResult),
+		writtenFiles:  make(map[string][]byte),
+		readDirMap:    make(map[string]readDirResult),
 	}
 }
 
@@ -147,7 +147,7 @@ type mockDirEntry struct {
 	isDir bool
 }
 
-func (d *mockDirEntry) Name() string              { return d.name }
+func (d *mockDirEntry) Name() string               { return d.name }
 func (d *mockDirEntry) IsDir() bool                { return d.isDir }
 func (d *mockDirEntry) Type() fs.FileMode          { return 0 }
 func (d *mockDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
@@ -1209,10 +1209,10 @@ func TestConfigFS_Create_VerifyCallOrder(t *testing.T) {
 
 func TestConfigFS_Bind_VerifyUDCValue(t *testing.T) {
 	tests := []struct {
-		name     string
-		udc      string
-		autoUDC  string
-		wantUDC  string
+		name    string
+		udc     string
+		autoUDC string
+		wantUDC string
 	}{
 		{
 			name:    "explicit UDC",

@@ -477,3 +477,23 @@ func TestTeamHandlers_RemoveMember_NilStore(t *testing.T) {
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
+
+// TestTeamEntityToInfo verifies the entity->wire projection handles both the
+// populated-members and nil-members cases (nil normalizes to an empty slice so
+// JSON encodes "members":[] rather than null).
+func TestTeamEntityToInfo(t *testing.T) {
+	withMembers := teamEntityToInfo(&staticpw.TeamEntity{
+		Name:     "dev",
+		TenantID: "t1",
+		OwnerID:  "alice",
+		Members:  []string{"alice", "bob"},
+	})
+	assert.Equal(t, "dev", withMembers.Name)
+	assert.Equal(t, "t1", withMembers.TenantID)
+	assert.Equal(t, "alice", withMembers.OwnerID)
+	assert.Equal(t, []string{"alice", "bob"}, withMembers.Members)
+
+	nilMembers := teamEntityToInfo(&staticpw.TeamEntity{Name: "ops"})
+	assert.NotNil(t, nilMembers.Members)
+	assert.Empty(t, nilMembers.Members)
+}

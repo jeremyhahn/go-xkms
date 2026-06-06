@@ -16,7 +16,6 @@ package qrdb
 import (
 	"context"
 
-	sdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -58,7 +57,7 @@ func NewPebble(path string) (*Backend, error) {
 // newEmbedded builds the full QRDB embedded stack from a storage engine:
 //
 //	Storage -> FastStateMachine -> LocalBackend -> KVService + AdminService
-//	-> embedded.Transport -> sdk.Client -> Backend
+//	-> embedded.Transport -> qrdbsdk.Client -> Backend
 //
 // FastStateMachine is used instead of SimpleStateMachine because it
 // supports PrefixQuery lookups required by the Scan operation.
@@ -76,7 +75,7 @@ func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
 		return nil, &FactoryError{Engine: engine, Err: err}
 	}
 
-	client, err := sdk.NewClient(t)
+	client, err := qrdbsdk.NewClient(t)
 	if err != nil {
 		return nil, &FactoryError{Engine: engine, Err: err}
 	}

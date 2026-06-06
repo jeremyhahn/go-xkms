@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/local"
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
@@ -1398,7 +1397,7 @@ func (d *mockEABDAO) Save(_ context.Context, eab *entities.ExternalAccountBindin
 	return nil
 }
 
-func (d *mockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAccountBinding, _ qrdbdao.Condition) error {
+func (d *mockEABDAO) SaveWithCondition(_ context.Context, _ *entities.ExternalAccountBinding, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -1428,7 +1427,7 @@ func (d *mockEABDAO) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdbsdk.PageR
 	panic("not implemented")
 }
 
-func (d *mockEABDAO) ForEachPage(_ context.Context, query qrdbsdk.PageQuery, fn qrdbdao.PagerFunc[*entities.ExternalAccountBinding]) error {
+func (d *mockEABDAO) ForEachPage(_ context.Context, query qrdbsdk.PageQuery, fn qrdbsdk.PagerFunc[*entities.ExternalAccountBinding]) error {
 	if d.listErr != nil {
 		return d.listErr
 	}
@@ -1518,7 +1517,7 @@ func (d *mockEABDAO) CountByIndex(_ context.Context, _ string, _ interface{}) (i
 	panic("not implemented")
 }
 
-func (d *mockEABDAO) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.ExternalAccountBinding] {
+func (d *mockEABDAO) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.ExternalAccountBinding] {
 	panic("not implemented")
 }
 

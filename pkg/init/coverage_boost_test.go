@@ -229,7 +229,7 @@ func TestMapSPKIPinError_UnknownError(t *testing.T) {
 
 func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 	mCA := newMockCA(t)
-	adapter := NewCAAdapter(mCA)
+	adapter := NewCAAdapter(mCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
 		CommonName:   "test-cn",
@@ -247,7 +247,7 @@ func TestCAAdapter_IssueCertificate_WithSANs(t *testing.T) {
 
 func TestCAAdapter_IssueCertificate_WithoutSANs(t *testing.T) {
 	mCA := newMockCA(t)
-	adapter := NewCAAdapter(mCA)
+	adapter := NewCAAdapter(mCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
 		CommonName:   "no-sans",
@@ -265,7 +265,7 @@ func TestCAAdapter_IssueCertificate_Error(t *testing.T) {
 		mockCA:       newMockCA(t),
 		issueCertErr: errors.New("issuance failed"),
 	}
-	adapter := NewCAAdapter(errCA)
+	adapter := NewCAAdapter(errCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
 		CommonName:   "fail-cn",
@@ -285,7 +285,7 @@ func TestCAAdapter_SignCSR_Error(t *testing.T) {
 		mockCA:     newMockCA(t),
 		signCSRErr: errors.New("sign failed"),
 	}
-	adapter := NewCAAdapter(errCA)
+	adapter := NewCAAdapter(errCA, "")
 
 	csrPEM, _ := generateTestCSR(t, "test-cn")
 	_, err := adapter.SignCSR(csrPEM, &qrdbsdk.SignCSROptions{
@@ -299,7 +299,7 @@ func TestCAAdapter_CACertificate_Error(t *testing.T) {
 		mockCA:    newMockCA(t),
 		caCertErr: errors.New("cert unavailable"),
 	}
-	adapter := NewCAAdapter(errCA)
+	adapter := NewCAAdapter(errCA, "")
 
 	_, err := adapter.CACertificate()
 	assert.Error(t, err)
@@ -310,7 +310,7 @@ func TestCAAdapter_CABundle_Error(t *testing.T) {
 		mockCA:      newMockCA(t),
 		caBundleErr: errors.New("bundle unavailable"),
 	}
-	adapter := NewCAAdapter(errCA)
+	adapter := NewCAAdapter(errCA, "")
 
 	_, err := adapter.CABundle()
 	assert.Error(t, err)
@@ -333,7 +333,7 @@ func (m *mockCAWithSANs) IssueCertificate(req *ca.CertificateRequest) (*ca.Issue
 func TestCAAdapter_IssueCertificate_SANsPassedThrough(t *testing.T) {
 	base := newMockCA(t)
 	sanCA := &mockCAWithSANs{mockCA: base}
-	adapter := NewCAAdapter(sanCA)
+	adapter := NewCAAdapter(sanCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
 		CommonName: "with-sans",
@@ -349,7 +349,7 @@ func TestCAAdapter_IssueCertificate_SANsPassedThrough(t *testing.T) {
 func TestCAAdapter_IssueCertificate_EmptySANsNotMapped(t *testing.T) {
 	base := newMockCA(t)
 	sanCA := &mockCAWithSANs{mockCA: base}
-	adapter := NewCAAdapter(sanCA)
+	adapter := NewCAAdapter(sanCA, "")
 
 	req := &qrdbsdk.IssueCertRequest{
 		CommonName: "no-sans",

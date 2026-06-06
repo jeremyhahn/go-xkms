@@ -127,3 +127,16 @@ func IsSessionExpired(err error) bool {
 func IsVerificationFailed(err error) bool {
 	return errors.Is(err, ErrVerificationFailed)
 }
+
+// NewVerificationError wraps a credential-verification failure (a go-webauthn
+// protocol error from attestation or assertion validation) so that it satisfies
+// errors.Is(err, ErrVerificationFailed). Transports use this classification to
+// return 401 Unauthorized for a forged or invalid credential rather than a 500.
+// Errors that are NOT protocol-level verification failures (for example a
+// storage fault) must not be passed here; wrap those with WrapError instead.
+func NewVerificationError(op string, err error) error {
+	return &WebAuthnError{
+		Op:  op,
+		Err: errors.Join(ErrVerificationFailed, err),
+	}
+}

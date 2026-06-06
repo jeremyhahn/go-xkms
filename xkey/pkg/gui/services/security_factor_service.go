@@ -64,12 +64,12 @@ type ListFactorsResponse struct {
 
 // AddFactorRequest carries the payload for enrolling a new factor.
 type AddFactorRequest struct {
-	Type            string `json:"type"`
-	Label           string `json:"label"`
-	CertPEM         string `json:"cert_pem,omitempty"`
-	FIDO2Response   string `json:"webauthn_response,omitempty"`
-	PIVCertPEM      string `json:"piv_cert_pem,omitempty"`
-	PIVSlot         string `json:"piv_slot,omitempty"`
+	Type          string `json:"type"`
+	Label         string `json:"label"`
+	CertPEM       string `json:"cert_pem,omitempty"`
+	FIDO2Response string `json:"webauthn_response,omitempty"`
+	PIVCertPEM    string `json:"piv_cert_pem,omitempty"`
+	PIVSlot       string `json:"piv_slot,omitempty"`
 }
 
 // AddFactorResponse carries the newly created factor.
@@ -297,8 +297,8 @@ func (s *SecurityFactorService) EnumeratePIVCards() ([]PIVCardInfo, error) {
 		}
 		vendor := inferPIVVendor(slot.Subject)
 		cards = append(cards, PIVCardInfo{
-			ReaderName:  slot.Backend,
-			CardVendor:  vendor,
+			ReaderName:   slot.Backend,
+			CardVendor:   vendor,
 			HasPIVApplet: true,
 		})
 	}

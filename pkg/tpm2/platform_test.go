@@ -540,7 +540,7 @@ func TestPlatformKeyStore_NewAndDefaults(t *testing.T) {
 
 	assert.NotNil(t, pks.SRKAttributes(), "SRK attributes must not be nil")
 	assert.NotNil(t, pks.Backend(), "backend must not be nil")
-	assert.NotNil(t, pks.PINManager(), "PINManager must not be nil")
+	assert.NotNil(t, pks.PINBackend(), "PINBackend must not be nil")
 	assert.False(t, pks.IsInitialized(), "must not be initialized before Initialize")
 	assert.True(t, pks.PlatformPolicyEnabled(), "platform policy should be enabled")
 }
@@ -730,14 +730,14 @@ func TestPlatformKeyStore_InitializeNVDefinedSuccess(t *testing.T) {
 	assert.True(t, mock.createSRKCalled.Load(), "CreateSRK should have been called")
 }
 
-func TestPlatformKeyStore_PINManager(t *testing.T) {
+func TestPlatformKeyStore_PINBackend(t *testing.T) {
 	mock := &mockTPMForPKS{config: testConfigForPKS(false)}
 	pks := newTestPlatformKeyStore(t, mock)
 
-	pm := pks.PINManager()
-	require.NotNil(t, pm, "PINManager must not be nil")
-	assert.Equal(t, "tpm2", string(pm.Strategy()),
-		"PINManager strategy must be tpm2")
+	pb := pks.PINBackend()
+	require.NotNil(t, pb, "PINBackend must not be nil")
+	assert.Equal(t, "tpm2", string(pb.Strategy()),
+		"PINBackend strategy must be tpm2")
 }
 
 func TestPlatformKeyStore_SRKAttributes(t *testing.T) {

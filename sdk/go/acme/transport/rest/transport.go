@@ -36,6 +36,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -152,6 +153,8 @@ func (t *Transport) initHTTPClient() error {
 	tlsConfig := t.cfg.TLSConfig
 	if tlsConfig == nil {
 		if t.cfg.Insecure {
+			slog.Warn("acme/rest: TLS certificate verification disabled via Insecure=true; do not use in production",
+				"address", t.cfg.Address)
 			tlsConfig = &tls.Config{
 				MinVersion:         tls.VersionTLS13,
 				InsecureSkipVerify: true, //nolint:gosec // Intentional for dev/testing

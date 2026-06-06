@@ -969,7 +969,10 @@ func TestPKCS11Service_Coverage_TestConnection_Success(t *testing.T) {
 	svc := newPKCS11ServiceWithMock(mock)
 	err := svc.TestConnection("/path/to/lib.so", 0, "pin")
 	assert.NoError(t, err)
-	assert.True(t, unregistered, "module should be unregistered after test")
+	// A successful test retains (caches) the module registration so a subsequent
+	// RegisterModule for the same library reuses it without re-paying the
+	// C_Initialize cost; it is only unregistered on failure.
+	assert.False(t, unregistered, "successful test retains the module for reuse")
 }
 
 // ---------------------------------------------------------------------------

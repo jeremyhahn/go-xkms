@@ -127,25 +127,6 @@ func TestAllMethods_NotConnected(t *testing.T) {
 	_, err = tr.CanSeal(ctx, "sw")
 	assert.ErrorIs(t, err, ErrNotConnected)
 
-	// User service
-	_, err = tr.ListUsers(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.GetUser(ctx, "admin")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.DeleteUser(ctx, "admin")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.EnableUser(ctx, "admin")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.DisableUser(ctx, "admin")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.ListUserCredentials(ctx, "admin")
-	assert.ErrorIs(t, err, ErrNotConnected)
-
 	// CA service
 	_, err = tr.GetCABundle(ctx, &transport.GetCABundleRequest{})
 	assert.ErrorIs(t, err, ErrNotConnected)
@@ -225,18 +206,6 @@ func TestAllMethods_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 
 	err = tr.BarrierUnsealWithShares(ctx, &transport.BarrierUnsealSharesRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	_, err = tr.BarrierShamirListShares(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierShamirDeleteShare(ctx, &transport.BarrierShamirDeleteShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierShamirDeleteAllShares(ctx)
-	assert.ErrorIs(t, err, ErrNotConnected)
-
-	err = tr.BarrierShamirVerify(ctx)
 	assert.ErrorIs(t, err, ErrNotConnected)
 
 	_, err = tr.BarrierRekey(ctx, &transport.BarrierRekeyRequest{})

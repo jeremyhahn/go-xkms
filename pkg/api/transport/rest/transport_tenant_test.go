@@ -25,8 +25,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // newTenantTestTransport creates a REST transport connected to an httptest
@@ -41,7 +43,7 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 		base,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)
@@ -59,6 +61,37 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Initialize the global XKMS service backed by an in-memory software
+	// backend and wire it to the SAME barrier registry the handlers use.
+	// The §3.6 TenantBarrierInit invariant (the server never generates a
+	// tenant secret) lives in the service layer, so the REST handler delegates
+	// to xkms.Get(). Production wires the identical registry to both the
+	// service and the handlers (pkg/server/server.go); this mirrors it.
+	swBackend, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks, err := xkms.New(&xkms.BackendConfig{
+		Backend:     swBackend,
+		CertStorage: storage.NewMemory(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	xkms.Reset()
+	if err := xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"software": ks},
+		DefaultBackend: "software",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(xkms.Reset)
+	svc, err := xkms.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.SetBarrierRegistry(registry)
 
 	handlers := restapi.NewTenantHandlers(registry)
 
@@ -275,10 +308,11 @@ func TestTransport_TenantBarrierInit_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// §3.6: the tenant admin supplies the passphrase; the server never
+	// generates a secret. Empty/"passphrase" strategy requires it.
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID:  "init-tenant",
-		Threshold: 2,
-		Shares:    3,
+		TenantID:   "init-tenant",
+		Passphrase: "tenant-admin-secret",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -310,21 +344,26 @@ func TestTransport_TenantBarrierUnseal_AlreadyUnsealed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Initialize the tenant barrier (software strategy auto-unseals)
+	// Initialize the tenant barrier with the tenant admin's passphrase
+	// (§3.6: the server never generates the secret). Passphrase init leaves
+	// the barrier unsealed.
 	err = tr.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID: "unseal-tenant",
+		TenantID:   "unseal-tenant",
+		Passphrase: "tenant-admin-secret",
 	})
 	if err != nil {
 		t.Fatalf("barrier init failed: %v", err)
 	}
 
-	// Unseal on an already-unsealed barrier should return an error
+	// Unsealing an already-unsealed barrier is idempotent: the service layer
+	// short-circuits with success (TenantBarrierUnseal returns nil when the
+	// barrier is not sealed), so no credentials are evaluated.
 	err = tr.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
 		TenantID: "unseal-tenant",
 		Key:      []byte("test-key"),
 	})
-	if err == nil {
-		t.Fatal("expected error when unsealing already-unsealed barrier")
+	if err != nil {
+		t.Fatalf("unsealing an already-unsealed barrier should be idempotent, got: %v", err)
 	}
 }
 

@@ -23,7 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -48,7 +48,18 @@ func setupShareStore(t *testing.T) sharestore.ShareStore {
 // setupBarrierRegistry creates an initialized barrier registry.
 func setupBarrierRegistry(t *testing.T) *seal.BarrierRegistry {
 	t.Helper()
-	return testTenantRegistry(t)
+	reg := testTenantRegistry(t)
+
+	// The tenant barrier init/unseal RPCs delegate to the XKMSService servicer
+	// (so the §3.6 invariant lives in one place). Wire the singleton with the
+	// SAME registry, mirroring production wiring in pkg/server/server.go.
+	setupXKMSForTest(t)
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	svc.SetBarrierRegistry(reg)
+	t.Cleanup(func() { xkms.Reset() })
+
+	return reg
 }
 
 func TestSetCustodianService_GetCustodianService(t *testing.T) {
@@ -1033,37 +1044,4 @@ func TestTenantBarrierUnseal(t *testing.T) {
 		_, err := svc.TenantBarrierUnseal(context.Background(), &pb.TenantBarrierUnsealRequest{TenantId: "unseal-tenant"})
 		require.NoError(t, err)
 	})
-}
-
-// --- Barrier Registry helper with in-memory storage ---
-
-func testBarrierRegistryWithTenant(t *testing.T) (*seal.BarrierRegistry, string) {
-	t.Helper()
-	base := storage.NewMemory()
-	b, err := seal.NewBarrier(
-		discardLogger(),
-		base,
-		seal.BarrierConfig{
-			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
-		},
-		seal.NewSoftwareStrategy(),
-	)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	err = b.Initialize(ctx, seal.Credentials{Secret: "test-password"})
-	require.NoError(t, err)
-
-	reg, err := seal.NewBarrierRegistry(b)
-	require.NoError(t, err)
-
-	// Register tenant
-	tenantID := "test-tenant"
-	_, err = reg.RegisterTenant(tenantID)
-	require.NoError(t, err)
-	err = reg.InitializeTenant(ctx, tenantID, seal.Credentials{Secret: "tenant-pw"})
-	require.NoError(t, err)
-
-	return reg, tenantID
 }

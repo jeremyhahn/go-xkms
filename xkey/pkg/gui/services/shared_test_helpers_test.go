@@ -24,7 +24,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
 
@@ -34,9 +34,9 @@ const (
 	testUserPin = "654321"
 )
 
-// wizardMockPINBackend implements pin.PINBackend for setup wizard tests.
+// wizardMockPINBackend implements qrdbsdk.PINBackend for setup wizard tests.
 type wizardMockPINBackend struct {
-	strategy    pin.StrategyID
+	strategy    qrdbsdk.PINStrategyID
 	soPINSet    bool
 	userPINSet  bool
 	initialized bool
@@ -48,14 +48,14 @@ type wizardMockPINBackend struct {
 	verifySOErr   error
 	verifyUserErr error
 
-	lockoutStatus *pin.LockoutStatus
+	lockoutStatus *qrdbsdk.PINLockoutStatus
 }
 
-func (m *wizardMockPINBackend) Strategy() pin.StrategyID             { return m.strategy }
-func (m *wizardMockPINBackend) SOPINSet() bool                       { return m.soPINSet }
-func (m *wizardMockPINBackend) UserPINSet() bool                     { return m.userPINSet }
-func (m *wizardMockPINBackend) IsInitialized() bool                  { return m.initialized }
-func (m *wizardMockPINBackend) GetLockoutStatus() *pin.LockoutStatus { return m.lockoutStatus }
+func (m *wizardMockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
+func (m *wizardMockPINBackend) SOPINSet() bool                              { return m.soPINSet }
+func (m *wizardMockPINBackend) UserPINSet() bool                            { return m.userPINSet }
+func (m *wizardMockPINBackend) IsInitialized() bool                         { return m.initialized }
+func (m *wizardMockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
 
 func (m *wizardMockPINBackend) SetSOPIN(_, newSOPIN string) error {
 	if m.setSOPINErr != nil {
@@ -93,11 +93,11 @@ func (m *wizardMockPINBackend) VerifyUserPIN(_ string) error { return m.verifyUs
 func (m *wizardMockPINBackend) ResetLockout(_ string) error  { return nil }
 
 // newWizardPINService creates a PINService backed by the given PINBackend.
-func newWizardPINService(backend pin.PINBackend) *PINService {
+func newWizardPINService(backend qrdbsdk.PINBackend) *PINService {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
 	if backend != nil {
-		pinSvc := pin.NewService(backend, slog.Default())
+		pinSvc := qrdbsdk.NewPINService(backend, slog.Default())
 		svc.SetPINService(pinSvc)
 	}
 	return svc

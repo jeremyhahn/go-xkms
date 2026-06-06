@@ -44,7 +44,7 @@ func testTenantMiddlewareRegistry(t *testing.T) *seal.BarrierRegistry {
 		base,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)
@@ -142,7 +142,7 @@ func TestTenantMiddleware_SORole(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "security-officer",
 			TenantID: "nonexistent-tenant",
-			Roles: []string{"so"},
+			Roles:    []string{"so"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -164,7 +164,7 @@ func TestTenantMiddleware_SORole(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "security-officer",
 			TenantID: "any-tenant",
-			Roles: []string{"so", "admin"},
+			Roles:    []string{"so", "admin"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -188,7 +188,7 @@ func TestTenantMiddleware_TenantNotFound(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "nonexistent-tenant",
-			Roles: []string{"user"},
+			Roles:    []string{"user"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -223,7 +223,7 @@ func TestTenantMiddleware_TenantSealed(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "sealed-tenant",
-			Roles: []string{"operator"},
+			Roles:    []string{"operator"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -264,7 +264,7 @@ func TestTenantMiddleware_TenantBarrierInjected(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "active-tenant",
-			Roles: []string{"operator"},
+			Roles:    []string{"operator"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -293,7 +293,7 @@ func TestTenantMiddleware_NoRegistry(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-user",
 			TenantID: "some-tenant",
-			Roles: []string{"user"},
+			Roles:    []string{"user"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 
@@ -318,7 +318,7 @@ func TestTenantMiddleware_NonSORoleNotCrossTenant(t *testing.T) {
 		identity := &auth.Identity{
 			Subject:  "tenant-admin",
 			TenantID: "missing-tenant",
-			Roles: []string{"admin"},
+			Roles:    []string{"admin"},
 		}
 		ctx := auth.WithIdentity(context.Background(), identity)
 

@@ -2981,10 +2981,10 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_Success(t *testing.T) {
 	// Build UV with permissions request.
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:     platformCOSEMap,
-		clientPINKeyPermissions:      PINPermissionMakeCredential | PINPermissionGetAssertion,
-		clientPINKeyPermissionsRPID:  "example.com",
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyKeyAgreement:      platformCOSEMap,
+		clientPINKeyPermissions:       PINPermissionMakeCredential | PINPermissionGetAssertion,
+		clientPINKeyPermissionsRPID:   "example.com",
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3041,9 +3041,9 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_V2(t *testing.T) {
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol2,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:     platformCOSEMap,
-		clientPINKeyPermissions:      PINPermissionGetAssertion,
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyKeyAgreement:      platformCOSEMap,
+		clientPINKeyPermissions:       PINPermissionGetAssertion,
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3075,8 +3075,8 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_NoUVBackend(t *testing.T) {
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyPermissions:      PINPermissionGetAssertion,
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyPermissions:       PINPermissionGetAssertion,
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3094,8 +3094,8 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_NilBackend(t *testing.T) {
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyPermissions:      PINPermissionGetAssertion,
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyPermissions:       PINPermissionGetAssertion,
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3113,8 +3113,8 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_ZeroPermissions(t *testing.T) {
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyPermissions:      uint8(0),
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyPermissions:       uint8(0),
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3132,8 +3132,8 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_MissingKeyAgreement(t *testing.
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyPermissions:      PINPermissionGetAssertion,
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyPermissions:       PINPermissionGetAssertion,
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3173,9 +3173,9 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_UVBlocked(t *testing.T) {
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:     platformCOSEMap,
-		clientPINKeyPermissions:      PINPermissionGetAssertion,
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyKeyAgreement:      platformCOSEMap,
+		clientPINKeyPermissions:       PINPermissionGetAssertion,
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3214,9 +3214,9 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_ResetsUVRetries(t *testing.T) {
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: PINProtocol1,
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyKeyAgreement:     platformCOSEMap,
-		clientPINKeyPermissions:      PINPermissionGetAssertion,
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyKeyAgreement:      platformCOSEMap,
+		clientPINKeyPermissions:       PINPermissionGetAssertion,
 	}
 
 	reqBytes, err := cbor.Marshal(req)
@@ -3263,9 +3263,9 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_TokenIsRandom(t *testing.T) {
 
 		req := map[int]interface{}{
 			clientPINKeyPinUvAuthProtocol: PINProtocol1,
-			clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-			clientPINKeyKeyAgreement:     platformCOSEMap,
-			clientPINKeyPermissions:      PINPermissionGetAssertion,
+			clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+			clientPINKeyKeyAgreement:      platformCOSEMap,
+			clientPINKeyPermissions:       PINPermissionGetAssertion,
 		}
 		reqBytes, err := cbor.Marshal(req)
 		require.NoError(t, err)
@@ -3293,8 +3293,8 @@ func TestGetPinUvAuthTokenUsingUvWithPermissions_UnsupportedProtocol(t *testing.
 
 	req := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: uint8(99),
-		clientPINKeySubCommand:       ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
-		clientPINKeyPermissions:      PINPermissionGetAssertion,
+		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
+		clientPINKeyPermissions:       PINPermissionGetAssertion,
 	}
 
 	reqBytes, err := cbor.Marshal(req)

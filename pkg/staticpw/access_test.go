@@ -18,28 +18,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockPINManager implements pin.PINBackend for testing.
+// mockPINManager implements qrdbsdk.PINBackend for testing.
 type mockPINManager struct {
 	userPIN string
 	soPIN   string
 }
 
-func (m *mockPINManager) Strategy() pin.StrategyID             { return "mock" }
-func (m *mockPINManager) SetSOPIN(_, _ string) error           { return nil }
-func (m *mockPINManager) SetUserPIN(_, _ string) error         { return nil }
-func (m *mockPINManager) ChangeSOPIN(_, _ string) error        { return nil }
-func (m *mockPINManager) ChangeUserPIN(_, _ string) error      { return nil }
-func (m *mockPINManager) GetLockoutStatus() *pin.LockoutStatus { return &pin.LockoutStatus{} }
-func (m *mockPINManager) ResetLockout(_ string) error          { return nil }
-func (m *mockPINManager) IsInitialized() bool                  { return true }
-func (m *mockPINManager) SOPINSet() bool                       { return m.soPIN != "" }
-func (m *mockPINManager) UserPINSet() bool                     { return m.userPIN != "" }
+func (m *mockPINManager) Strategy() qrdbsdk.PINStrategyID { return "mock" }
+func (m *mockPINManager) SetSOPIN(_, _ string) error      { return nil }
+func (m *mockPINManager) SetUserPIN(_, _ string) error    { return nil }
+func (m *mockPINManager) ChangeSOPIN(_, _ string) error   { return nil }
+func (m *mockPINManager) ChangeUserPIN(_, _ string) error { return nil }
+func (m *mockPINManager) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
+	return &qrdbsdk.PINLockoutStatus{}
+}
+func (m *mockPINManager) ResetLockout(_ string) error { return nil }
+func (m *mockPINManager) IsInitialized() bool         { return true }
+func (m *mockPINManager) SOPINSet() bool              { return m.soPIN != "" }
+func (m *mockPINManager) UserPINSet() bool            { return m.userPIN != "" }
 
 var errInvalidPIN = errors.New("mock: invalid PIN")
 

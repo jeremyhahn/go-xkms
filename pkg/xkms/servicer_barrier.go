@@ -30,10 +30,6 @@ type BarrierServicer interface {
 	BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error)
 	BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error)
 	BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error
-	BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error)
-	BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error
-	BarrierShamirDeleteAllShares(ctx context.Context) error
-	BarrierShamirVerify(ctx context.Context) error
 	BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error)
 	BarrierGenerateRecoveryKeys(ctx context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error)
 	BarrierRecoverWithKeys(ctx context.Context, req *transport.BarrierRecoverWithKeysRequest) error
@@ -148,65 +144,6 @@ func (s *XKMSService) BarrierUnsealWithShares(ctx context.Context, req *transpor
 		return ErrNilRequest
 	}
 	return s.barrier.UnsealWithShares(ctx, req.Shares)
-}
-
-// BarrierShamirListShares returns metadata about the current Shamir shares.
-func (s *XKMSService) BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	if s.barrier == nil {
-		return nil, ErrNotConfigured
-	}
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return nil, seal.ErrShamirNotConfigured
-	}
-	count, err := shamirStrat.ShareCount(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &transport.BarrierShamirSharesResponse{
-		Count:     count,
-		Threshold: shamirStrat.Threshold(),
-		Total:     shamirStrat.TotalShares(),
-	}, nil
-}
-
-// BarrierShamirDeleteShare deletes a specific Shamir share by index.
-func (s *XKMSService) BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	if s.barrier == nil {
-		return ErrNotConfigured
-	}
-	if req == nil {
-		return ErrNilRequest
-	}
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return seal.ErrShamirNotConfigured
-	}
-	return shamirStrat.DeleteShare(ctx, req.Index)
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (s *XKMSService) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	if s.barrier == nil {
-		return ErrNotConfigured
-	}
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return seal.ErrShamirNotConfigured
-	}
-	return shamirStrat.DeleteAllShares(ctx)
-}
-
-// BarrierShamirVerify verifies the integrity of the Shamir share configuration.
-func (s *XKMSService) BarrierShamirVerify(ctx context.Context) error {
-	if s.barrier == nil {
-		return ErrNotConfigured
-	}
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		return seal.ErrShamirNotConfigured
-	}
-	return shamirStrat.VerifyShares(ctx)
 }
 
 // BarrierRekey generates new Shamir shares with a new threshold configuration.

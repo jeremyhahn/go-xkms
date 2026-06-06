@@ -46,7 +46,7 @@ func TestSurg_BarrierInitialize_FileStorageNewFails(t *testing.T) {
 	barrierDir := filepath.Join(tmpDir, "barrier")
 	require.NoError(t, os.WriteFile(barrierDir, []byte("not a dir"), 0600))
 
-	err := svc.Initialize("password123", "software")
+	err := svc.Initialize("password123", "passphrase")
 	assert.Error(t, err)
 }
 
@@ -57,10 +57,10 @@ func TestSurg_BarrierInitialize_AlreadyInitialized(t *testing.T) {
 	svc := NewBarrierService(tmpDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password123", "software")
+	err := svc.Initialize("password123", "passphrase")
 	require.NoError(t, err)
 
-	err = svc.Initialize("password123", "software")
+	err = svc.Initialize("password123", "passphrase")
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrBarrierAlreadyInit))
 }
@@ -72,13 +72,13 @@ func TestSurg_BarrierUnseal_BadPassword(t *testing.T) {
 	svc := NewBarrierService(tmpDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("correctpassword", "software")
+	err := svc.Initialize("correctpassword", "passphrase")
 	require.NoError(t, err)
 
 	svc2 := NewBarrierService(tmpDir, slog.Default())
 	svc2.SetContext(context.Background())
 
-	err = svc2.Unseal("wrongpassword", "software")
+	err = svc2.Unseal("wrongpassword", "passphrase")
 	assert.Error(t, err)
 }
 
@@ -89,7 +89,7 @@ func TestSurg_BarrierUnseal_FileStorageNewFails(t *testing.T) {
 	svc := NewBarrierService(tmpDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password123", "software")
+	err := svc.Initialize("password123", "passphrase")
 	require.NoError(t, err)
 
 	// Corrupt the barrier directory by replacing it with a file.
@@ -100,7 +100,7 @@ func TestSurg_BarrierUnseal_FileStorageNewFails(t *testing.T) {
 	svc2 := NewBarrierService(tmpDir, slog.Default())
 	svc2.SetContext(context.Background())
 
-	err = svc2.Unseal("password123", "software")
+	err = svc2.Unseal("password123", "passphrase")
 	assert.Error(t, err)
 }
 
@@ -649,5 +649,5 @@ func TestSurg_ZeroBytes(t *testing.T) {
 }
 
 // Ensure unused imports are referenced.
-var _ = seal.DefaultPreferenceOrder
+var _ = seal.StrategyPassphrase
 var _ types.SealedData

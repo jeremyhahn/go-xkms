@@ -17,21 +17,17 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 
 // Shamir barrier handler typed errors.
 var (
-	ErrMissingShare       = errors.New("rest: missing share")
-	ErrMissingShares      = errors.New("rest: missing shares")
-	ErrMissingThreshold   = errors.New("rest: missing or invalid threshold")
-	ErrMissingTotal       = errors.New("rest: missing or invalid total")
-	ErrMissingKeys        = errors.New("rest: missing keys")
-	ErrInvalidShareIndex  = errors.New("rest: invalid share index")
-	ErrShamirNotAvailable = errors.New("rest: shamir strategy not available on this barrier")
+	ErrMissingShare     = errors.New("rest: missing share")
+	ErrMissingShares    = errors.New("rest: missing shares")
+	ErrMissingThreshold = errors.New("rest: missing or invalid threshold")
+	ErrMissingTotal     = errors.New("rest: missing or invalid total")
+	ErrMissingKeys      = errors.New("rest: missing keys")
 )
 
 // --- Shamir barrier request/response types ---
@@ -78,14 +74,6 @@ type BarrierRecoverWithKeysRequest struct {
 // by proving knowledge of the master key through Shamir shares.
 type BarrierGenerateRootTokenRequest struct {
 	Shares []string `json:"shares"`
-}
-
-// BarrierShamirSharesResponse represents the share count and configuration
-// information for the Shamir strategy.
-type BarrierShamirSharesResponse struct {
-	Count     int `json:"count"`
-	Threshold int `json:"threshold,omitempty"`
-	Total     int `json:"total,omitempty"`
 }
 
 // --- Shamir barrier handlers ---
@@ -171,115 +159,6 @@ func (h *HandlerContext) BarrierUnsealSharesHandler(w http.ResponseWriter, r *ht
 	writeJSON(w, &SuccessResponse{
 		Success: true,
 		Message: "barrier unsealed with shares",
-	}, http.StatusOK)
-}
-
-// BarrierShamirListSharesHandler handles GET /api/v1/barrier/shamir/shares requests.
-// Returns the count and configuration of stored Shamir shares.
-func (h *HandlerContext) BarrierShamirListSharesHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
-		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
-		return
-	}
-
-	shamirStrat := h.Barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		writeError(w, ErrShamirNotAvailable, http.StatusBadRequest)
-		return
-	}
-
-	count, err := shamirStrat.ShareCount(r.Context())
-	if err != nil {
-		handleBarrierError(w, err)
-		return
-	}
-
-	writeJSON(w, &BarrierShamirSharesResponse{
-		Count:     count,
-		Threshold: shamirStrat.Threshold(),
-		Total:     shamirStrat.TotalShares(),
-	}, http.StatusOK)
-}
-
-// BarrierShamirDeleteShareHandler handles DELETE /api/v1/barrier/shamir/shares/{index} requests.
-// Deletes a single Shamir share by its 1-based index.
-func (h *HandlerContext) BarrierShamirDeleteShareHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
-		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
-		return
-	}
-
-	shamirStrat := h.Barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		writeError(w, ErrShamirNotAvailable, http.StatusBadRequest)
-		return
-	}
-
-	indexStr := chi.URLParam(r, "index")
-	index, err := strconv.Atoi(indexStr)
-	if err != nil || index < 1 {
-		writeError(w, ErrInvalidShareIndex, http.StatusBadRequest)
-		return
-	}
-
-	if err := shamirStrat.DeleteShare(r.Context(), index); err != nil {
-		handleBarrierError(w, err)
-		return
-	}
-
-	writeJSON(w, &SuccessResponse{
-		Success: true,
-		Message: "share deleted",
-	}, http.StatusOK)
-}
-
-// BarrierShamirDeleteAllSharesHandler handles DELETE /api/v1/barrier/shamir/shares requests.
-// Deletes all Shamir shares from storage. This is a destructive operation.
-func (h *HandlerContext) BarrierShamirDeleteAllSharesHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
-		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
-		return
-	}
-
-	shamirStrat := h.Barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		writeError(w, ErrShamirNotAvailable, http.StatusBadRequest)
-		return
-	}
-
-	if err := shamirStrat.DeleteAllShares(r.Context()); err != nil {
-		handleBarrierError(w, err)
-		return
-	}
-
-	writeJSON(w, &SuccessResponse{
-		Success: true,
-		Message: "all shares deleted",
-	}, http.StatusOK)
-}
-
-// BarrierShamirVerifyHandler handles POST /api/v1/barrier/shamir/verify requests.
-// Verifies the integrity and consistency of all stored Shamir shares.
-func (h *HandlerContext) BarrierShamirVerifyHandler(w http.ResponseWriter, r *http.Request) {
-	if h.Barrier == nil {
-		writeError(w, ErrBarrierNotConfigured, http.StatusServiceUnavailable)
-		return
-	}
-
-	shamirStrat := h.Barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		writeError(w, ErrShamirNotAvailable, http.StatusBadRequest)
-		return
-	}
-
-	if err := shamirStrat.VerifyShares(r.Context()); err != nil {
-		handleBarrierError(w, err)
-		return
-	}
-
-	writeJSON(w, &SuccessResponse{
-		Success: true,
-		Message: "shares verified",
 	}, http.StatusOK)
 }
 

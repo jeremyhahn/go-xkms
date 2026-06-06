@@ -157,18 +157,6 @@ func (s *stubClient) BarrierUnsealWithShare(context.Context, *BarrierUnsealShare
 func (s *stubClient) BarrierUnsealWithShares(context.Context, *BarrierUnsealSharesRequest) error {
 	panic("stub")
 }
-func (s *stubClient) BarrierShamirListShares(context.Context) (*BarrierShamirSharesResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) BarrierShamirDeleteShare(context.Context, *BarrierShamirDeleteShareRequest) error {
-	panic("stub")
-}
-func (s *stubClient) BarrierShamirDeleteAllShares(context.Context) error {
-	panic("stub")
-}
-func (s *stubClient) BarrierShamirVerify(context.Context) error {
-	panic("stub")
-}
 func (s *stubClient) BarrierRekey(context.Context, *BarrierRekeyRequest) (*BarrierRekeyResponse, error) {
 	panic("stub")
 }
@@ -274,19 +262,6 @@ func (s *stubClient) GetLockoutStatus(context.Context) (*LockoutStatusResponse, 
 	panic("stub")
 }
 func (s *stubClient) ResetLockout(context.Context, *ResetLockoutRequest) error { panic("stub") }
-
-func (s *stubClient) ListUsers(context.Context, ...ListOption) (*ListUsersResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) GetUser(context.Context, string) (*GetUserResponse, error) {
-	panic("stub")
-}
-func (s *stubClient) DeleteUser(context.Context, string) error  { panic("stub") }
-func (s *stubClient) EnableUser(context.Context, string) error  { panic("stub") }
-func (s *stubClient) DisableUser(context.Context, string) error { panic("stub") }
-func (s *stubClient) ListUserCredentials(context.Context, string) (*ListUserCredentialsResponse, error) {
-	panic("stub")
-}
 
 func (s *stubClient) PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error) {
 	panic("stub")
@@ -421,6 +396,38 @@ func (s *stubClient) GetCredentialStrategy(context.Context) (*CredentialStrategy
 	panic("stub")
 }
 
+func (s *stubClient) CreateUser(context.Context, *CreateUserRequest) (*GetUserResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) ListUsers(context.Context, ...ListOption) (*ListUsersResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) GetUser(context.Context, string) (*GetUserResponse, error) {
+	panic("stub")
+}
+
+func (s *stubClient) DeleteUser(context.Context, string) error {
+	panic("stub")
+}
+
+func (s *stubClient) EnableUser(context.Context, string) error {
+	panic("stub")
+}
+
+func (s *stubClient) DisableUser(context.Context, string) error {
+	panic("stub")
+}
+
+func (s *stubClient) BindUserCert(context.Context, string, string, int64) error {
+	panic("stub")
+}
+
+func (s *stubClient) ListUserCredentials(context.Context, string) (*ListUserCredentialsResponse, error) {
+	panic("stub")
+}
+
 // Compile-time assertions: stubClient must satisfy Client and every sub-interface.
 var (
 	_ Client                      = (*stubClient)(nil)
@@ -467,7 +474,6 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 		{"FIDO2Service", func() bool { var v FIDO2Service = c; return v != nil }},
 		{"CAService", func() bool { var v CAService = c; return v != nil }},
 		{"PINService", func() bool { var v PINService = c; return v != nil }},
-		{"UserService", func() bool { var v UserService = c; return v != nil }},
 		{"PasswordService", func() bool { var v PasswordService = c; return v != nil }},
 		{"SealStoreService", func() bool { var v SealStoreService = c; return v != nil }},
 		{"PolicyService", func() bool { var v PolicyService = c; return v != nil }},
@@ -490,11 +496,11 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 	}
 }
 
-// TestSubInterfaceCount verifies that Client composes exactly 20 sub-interfaces.
+// TestSubInterfaceCount verifies that Client composes exactly 19 sub-interfaces.
 // This test serves as a safeguard: if a sub-interface is added or removed from
 // Client, this test must be updated to reflect the new count.
 func TestSubInterfaceCount(t *testing.T) {
-	const expectedCount = 20
+	const expectedCount = 19
 	// Each sub-interface is represented in the compile-time assertions above.
 	// We track the count here explicitly to catch accidental additions or removals.
 	subinterfaceNames := []string{
@@ -509,7 +515,6 @@ func TestSubInterfaceCount(t *testing.T) {
 		"FIDO2Service",
 		"CAService",
 		"PINService",
-		"UserService",
 		"PasswordService",
 		"SealStoreService",
 		"PolicyService",
@@ -569,13 +574,6 @@ func TestSubInterfaceIndependence(t *testing.T) {
 		var svc CAService = stub
 		if svc == nil {
 			t.Error("CAService assignment failed")
-		}
-	})
-
-	t.Run("UserServiceOnly", func(t *testing.T) {
-		var svc UserService = stub
-		if svc == nil {
-			t.Error("UserService assignment failed")
 		}
 	})
 

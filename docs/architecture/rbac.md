@@ -14,7 +14,7 @@ The RBAC system consists of three main components:
 
 ## Interface
 
-Located in `pkg/rbac/rbac.go`:
+Located in `pkg/keyrbac/rbac.go` (renamed from `pkg/rbac`):
 
 ```go
 type RBACAdapter interface {
@@ -190,7 +190,7 @@ package main
 
 import (
     "context"
-    "github.com/jeremyhahn/go-xkms/pkg/rbac"
+    rbac "github.com/jeremyhahn/go-xkms/pkg/keyrbac"
 )
 
 func main() {
@@ -305,60 +305,36 @@ func permissionForRoute(method, path string) rbac.Permission {
 
 ### Integrating with User Management
 
-When using WebAuthn authentication with users, sync the user role to RBAC:
+There is **no local xkms user store**. The former `pkg/user` package (with its
+`FileStore` and `UserRBACAdapter`) was deleted. Users, roles, and role bindings
+live on the **embedded qrdb node** that xkms always hosts in-process as its
+single datastore. xkms presents these as its own users and exposes the full CRUD
+surface (create / list / get / delete / enable / disable / credentials) over
+every transport (gRPC, unix, REST, QUIC, MCP, embedded); the CLI and web UI
+reach it through the xkms SDK.
+
+Identity-domain authorization (tenant/user CRUD, role membership) is qrdb's RBAC.
+Key-domain authorization (sign, encrypt, issue-cert, ...) is xkms's `pkg/keyrbac`
+(the package described above, renamed from `pkg/rbac`). The two are layered, not
+duplicated — see [../auth/layering.md](../auth/layering.md).
 
 ```go
-import (
-    "github.com/jeremyhahn/go-xkms/pkg/user"
-    "github.com/jeremyhahn/go-xkms/pkg/rbac"
-)
+import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
-// After successful WebAuthn login
-func onUserLogin(ctx context.Context, u *user.User, rbacAdapter rbac.RBACAdapter) error {
-    // Map user.Role to RBAC role
-    return rbacAdapter.AssignRole(ctx, u.Username, user.RoleToRBAC(u.Role))
-}
+ac := xkms.Auth(qrdbClient) // qrdbClient backed by the embedded node
 
-// Create an authorization service that combines both
-type AuthzService struct {
-    rbac      rbac.RBACAdapter
-    userStore user.Store
-}
+// User lifecycle (delegated to the embedded qrdb node)
+ac.Users().CreateUser(ctx, &xkms.CreateUserRequest{Username: "alice@example.com", Role: "operator"})
+ac.Users().ListUsers(ctx)
 
-func (s *AuthzService) CanPerform(ctx context.Context, userID []byte, perm rbac.Permission) (bool, error) {
-    u, err := s.userStore.GetByID(ctx, userID)
-    if err != nil {
-        return false, err
-    }
-
-    if !u.Enabled {
-        return false, nil
-    }
-
-    return s.rbac.CheckPermission(ctx, u.Username, perm)
-}
+// mTLS admin enrollment: create the user, then bind the client cert's SPKI
+// thumbprint so login resolves the user via the cert-thumbprint index.
+ac.Users().BindUserCert(ctx, "alice@example.com", spkiThumbprint, notAfterUnix)
 ```
 
-The `pkg/user` package provides a `UserRBACAdapter` that wraps the user store and implements the `RBACAdapter` interface:
-
-```go
-import (
-    "github.com/jeremyhahn/go-xkms/pkg/user"
-    "github.com/jeremyhahn/go-xkms/pkg/storage"
-)
-
-// Create storage backend
-backend, _ := storage.NewMemoryBackend()
-
-// Create user store
-userStore, _ := user.NewFileStore(backend)
-
-// Create RBAC adapter backed by user store
-rbacAdapter := user.NewUserRBACAdapter(userStore)
-
-// Now use rbacAdapter for permission checks
-allowed, _ := rbacAdapter.CheckPermission(ctx, "alice@example.com", rbac.NewPermission(rbac.ResourceKeys, rbac.ActionSign))
-```
+After login the identity carries its qrdb roles; key-domain checks then run
+through `keyrbac.CheckPermission(roles, perm)` (e.g. `keys:sign`). No separate
+xkms user record or `RoleToRBAC` mapping exists anymore.
 
 ## Implementing Custom Adapters
 

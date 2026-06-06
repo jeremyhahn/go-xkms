@@ -30,4 +30,11 @@ var (
 
 	// ErrInvalidData is returned when data is invalid or malformed.
 	ErrInvalidData = errors.New("storage: invalid data")
+
+	// ErrEnginePathRequired is returned by OpenEngine when the selected engine
+	// needs a filesystem path but none was provided.
+	ErrEnginePathRequired = errors.New("storage: engine path required")
+
+	// ErrUnknownEngine is returned by OpenEngine for an unrecognized engine kind.
+	ErrUnknownEngine = errors.New("storage: unknown engine kind")
 )

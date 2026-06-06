@@ -68,6 +68,10 @@ func TestRootCmd_PersistentFlags(t *testing.T) {
 		{"key-dir", true},
 		{"output", true},
 		{"verbose", true},
+		// Both --transport (canonical) and --protocol (deprecated alias)
+		// must remain registered so existing scripts and integration tests
+		// continue to function while users migrate.
+		{"transport", true},
 		{"protocol", true},
 		{"server", true},
 		{"tls-cert", true},
@@ -83,6 +87,61 @@ func TestRootCmd_PersistentFlags(t *testing.T) {
 				t.Errorf("expected flag %q to exist", tt.name)
 			}
 		})
+	}
+}
+
+func TestRootCmd_TransportFlagIsCanonical(t *testing.T) {
+	// --transport must be the canonical, undeprecated flag; --protocol
+	// remains as a deprecated alias.
+	flags := rootCmd.PersistentFlags()
+
+	transportFlag := flags.Lookup("transport")
+	if transportFlag == nil {
+		t.Fatal("--transport flag must exist")
+	}
+	if transportFlag.Deprecated != "" {
+		t.Errorf("--transport flag must not be deprecated, got Deprecated=%q", transportFlag.Deprecated)
+	}
+
+	protocolFlag := flags.Lookup("protocol")
+	if protocolFlag == nil {
+		t.Fatal("--protocol flag must exist as deprecated alias")
+	}
+	if protocolFlag.Deprecated == "" {
+		t.Error("--protocol flag must be marked deprecated")
+	}
+}
+
+func TestRootCmd_TransportFlagAliasesShareTarget(t *testing.T) {
+	// Read the flag *.Value through the cobra flag layer so the test
+	// remains correct even if a previous test has reassigned the
+	// globalConfig pointer without restoring it. The flag is bound to
+	// the original Config struct's Protocol field address; reading
+	// .Value.String() returns whatever Set() last wrote to that pointer.
+	flags := rootCmd.PersistentFlags()
+	transportFlag := flags.Lookup("transport")
+	protocolFlag := flags.Lookup("protocol")
+	if transportFlag == nil || protocolFlag == nil {
+		t.Fatal("--transport and --protocol flags must both exist")
+	}
+
+	// Save and restore the bound flag value so the test stays isolated.
+	original := transportFlag.Value.String()
+	defer func() { _ = transportFlag.Value.Set(original) }()
+
+	// Setting via --protocol must populate the same bound target as --transport.
+	if err := flags.Set("protocol", "grpc"); err != nil {
+		t.Fatalf("failed to set --protocol: %v", err)
+	}
+	if got := transportFlag.Value.String(); got != "grpc" {
+		t.Errorf("transport flag value = %q after --protocol=grpc, want %q", got, "grpc")
+	}
+
+	if err := flags.Set("transport", "rest"); err != nil {
+		t.Fatalf("failed to set --transport: %v", err)
+	}
+	if got := protocolFlag.Value.String(); got != "rest" {
+		t.Errorf("protocol flag value = %q after --transport=rest, want %q", got, "rest")
 	}
 }
 

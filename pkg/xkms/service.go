@@ -22,11 +22,12 @@ import (
 	"log"
 	"sync"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/custodian"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
@@ -34,7 +35,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
 	"github.com/jeremyhahn/go-xkms/pkg/validation"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
@@ -66,11 +66,16 @@ type XKMSService struct {
 	// Optional subsystems — when set via Set* methods, XKMSService implements
 	// the full transport.XKMSServicer interface. Each field starts nil (returning
 	// ErrNotConfigured) until wired by the server or application.
-	barrier           *seal.Barrier
-	barrierRegistry   *seal.BarrierRegistry
-	pinManager        pin.PINBackend
-	userStore         user.Store
-	passwordStore     *staticpw.BackendStore
+	barrier         *seal.Barrier
+	barrierRegistry *seal.BarrierRegistry
+	pinManager      qrdbsdk.PINBackend
+	passwordStore   *staticpw.BackendStore
+
+	// users and roles are the embedded qrdb node's identity clients. xkms
+	// presents its own user-management API on top of them, so callers only
+	// ever see xkms users; qrdb is an internal implementation detail.
+	users             qrdbtransport.UserClient
+	roles             qrdbtransport.RoleClient
 	platformStore     seal.PlatformStore
 	policyManager     *policy.Manager
 	webauthnService   *webauthn.Service
@@ -92,6 +97,12 @@ type XKMSService struct {
 	// The concrete type is *ca.CA which implements provider.CA (and optionally
 	// provider.TCGCA for TCG operations).
 	ca provider.CA
+
+	// spiffeTrustDomain is the operator-configured SPIFFE trust domain used to
+	// stamp tenant-scoped SPIFFE SANs onto broker-issued client certificates.
+	// When empty, no SPIFFE SAN is synthesized (legacy behavior). Set via
+	// SetSPIFFETrustDomain at server startup from operator config.
+	spiffeTrustDomain string
 }
 
 // ServiceConfig configures the xkms service
@@ -121,17 +132,37 @@ func Get() (*XKMSService, error) {
 	return service, nil
 }
 
+// SetSPIFFETrustDomain sets the operator-configured SPIFFE trust domain used
+// to stamp tenant-scoped SPIFFE SANs onto broker-issued client certificates.
+// An empty trust domain disables SPIFFE SAN synthesis.
+func (s *XKMSService) SetSPIFFETrustDomain(trustDomain string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.spiffeTrustDomain = trustDomain
+}
+
+// SPIFFETrustDomain returns the configured SPIFFE trust domain.
+func (s *XKMSService) SPIFFETrustDomain() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.spiffeTrustDomain
+}
+
 // SetBarrier sets the barrier subsystem for seal/unseal operations.
 func (s *XKMSService) SetBarrier(b *seal.Barrier) { s.barrier = b }
 
 // SetPINManager sets the PIN backend subsystem.
-func (s *XKMSService) SetPINManager(p pin.PINBackend) { s.pinManager = p }
-
-// SetUserStore sets the user management subsystem.
-func (s *XKMSService) SetUserStore(u user.Store) { s.userStore = u }
+func (s *XKMSService) SetPINManager(p qrdbsdk.PINBackend) { s.pinManager = p }
 
 // SetPasswordStore sets the static password management subsystem.
 func (s *XKMSService) SetPasswordStore(p *staticpw.BackendStore) { s.passwordStore = p }
+
+// SetUserClients wires the embedded qrdb node's user and role clients into the
+// service so xkms can present its own user-management API backed by qrdb.
+func (s *XKMSService) SetUserClients(users qrdbtransport.UserClient, roles qrdbtransport.RoleClient) {
+	s.users = users
+	s.roles = roles
+}
 
 // SetPlatformStore sets the sealed platform credential store subsystem.
 func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore = p }

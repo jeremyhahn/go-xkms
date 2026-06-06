@@ -50,5 +50,5 @@ func TestBuildTLSConfig_DefaultPath(t *testing.T) {
 
 	result, err := tr.buildTLSConfig()
 	require.NoError(t, err)
-	assert.Equal(t, uint16(tls.VersionTLS12), result.MinVersion)
+	assert.Equal(t, uint16(tls.VersionTLS13), result.MinVersion)
 }

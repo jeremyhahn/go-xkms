@@ -75,7 +75,7 @@ func (s *session) Run(ctx context.Context, cmd string) ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, &SessionError{Host: s.host, Err: err}
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	var stdout, stderr bytes.Buffer
 	sess.Stdout = &stdout
@@ -89,7 +89,7 @@ func (s *session) Run(ctx context.Context, cmd string) ([]byte, []byte, error) {
 		case <-ctx.Done():
 			// Closing the ssh.Session on cancellation is the supported
 			// cancellation path in x/crypto/ssh.
-			sess.Close()
+			_ = sess.Close()
 		case <-done:
 		}
 	}()
@@ -133,7 +133,7 @@ func (s *session) Shell(ctx context.Context) error {
 	if err != nil {
 		return &SessionError{Host: s.host, Err: err}
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	sess.Stdin = stdin
 	sess.Stdout = stdout
@@ -151,7 +151,7 @@ func (s *session) Shell(ctx context.Context) error {
 	go func() {
 		select {
 		case <-ctx.Done():
-			sess.Close()
+			_ = sess.Close()
 		case <-done:
 		}
 	}()

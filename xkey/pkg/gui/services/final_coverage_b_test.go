@@ -880,7 +880,7 @@ func TestFB_BarrierService_BestStrategy_NoStrategies(t *testing.T) {
 func TestFB_BarrierService_Initialize_NoStrategies(t *testing.T) {
 	// Software strategy is always available, so Initialize succeeds
 	// when given a password and a writable temp directory.
-	assert.NoError(t, NewBarrierService(t.TempDir(), slog.Default()).Initialize("pw", "software"))
+	assert.NoError(t, NewBarrierService(t.TempDir(), slog.Default()).Initialize("pw", "passphrase"))
 }
 
 func TestFB_BarrierService_Status_NotInitialized(t *testing.T) {
@@ -949,7 +949,7 @@ func TestFB_ZeroBytes(t *testing.T) {
 
 func TestFB_PIVService_GenerateCSR_NoClient(t *testing.T) {
 	r, err := NewPIVService(nil, "software").GenerateCSR("9a", &CSRSubject{CommonName: "test"})
-	assert.Nil(t, r)
+	assert.Empty(t, r)
 	assert.ErrorIs(t, err, ErrPIVClientNotSet)
 }
 

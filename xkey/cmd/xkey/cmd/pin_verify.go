@@ -18,7 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 var (
@@ -50,7 +50,7 @@ Examples:
 }
 
 // pinVerifyHandler is a function that verifies a specific PIN type.
-type pinVerifyHandler func(cmd *cobra.Command, svc *pin.Service) error
+type pinVerifyHandler func(cmd *cobra.Command, svc *qrdbsdk.PINService) error
 
 // pinVerifyHandlers maps PIN type strings to their verification handlers.
 var pinVerifyHandlers = map[string]pinVerifyHandler{
@@ -87,7 +87,7 @@ func runPINVerify(cmd *cobra.Command, args []string) error {
 	return handler(cmd, svc)
 }
 
-func handleVerifySO(cmd *cobra.Command, svc *pin.Service) error {
+func handleVerifySO(cmd *cobra.Command, svc *qrdbsdk.PINService) error {
 	out := cmd.OutOrStdout()
 
 	pinValue, err := readPIN(out, "Enter SO PIN: ")
@@ -107,7 +107,7 @@ func handleVerifySO(cmd *cobra.Command, svc *pin.Service) error {
 	return nil
 }
 
-func handleVerifyUser(cmd *cobra.Command, svc *pin.Service) error {
+func handleVerifyUser(cmd *cobra.Command, svc *qrdbsdk.PINService) error {
 	out := cmd.OutOrStdout()
 
 	pinValue, err := readPIN(out, "Enter User PIN: ")

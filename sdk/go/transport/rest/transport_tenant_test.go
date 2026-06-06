@@ -41,7 +41,7 @@ func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 		base,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)

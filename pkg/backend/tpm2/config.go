@@ -115,13 +115,19 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ToTPMConfig converts the backend config to the TPM2 library config
+// ToTPMConfig converts the backend config to the TPM2 library config.
+//
+// When UseSimulator is true AND SimulatorHost is non-empty, the config maps
+// the simulator address to CommandAddress / PlatformAddress so NewTPM2 opens
+// a TCP connection to the external simulator (e.g. swtpm). When SimulatorHost
+// is empty, UseSimulator passes through to NewTPM2 which uses the in-memory
+// go-tpm-tools simulator (requires the tpm_simulator build tag).
 func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 	if c.TPMConfig != nil {
 		return c.TPMConfig
 	}
 
-	return &pkgtpm2.Config{
+	cfg := &pkgtpm2.Config{
 		Device:          c.Device,
 		UseSimulator:    c.UseSimulator,
 		EncryptSession:  c.EncryptSession,
@@ -145,4 +151,23 @@ func (c *Config) ToTPMConfig() *pkgtpm2.Config {
 			},
 		},
 	}
+
+	// When a SimulatorHost is provided alongside UseSimulator, the backend
+	// targets an external TPM daemon (e.g. swtpm) over TCP rather than the
+	// in-memory go-tpm-tools simulator. Wire the address into CommandAddress
+	// so pkgtpm2.NewTPM2 selects the TCP transport path.
+	if c.UseSimulator && c.SimulatorHost != "" {
+		port := c.SimulatorPort
+		if port <= 0 {
+			port = 2321 // swtpm convention
+		}
+		cfg.CommandAddress = fmt.Sprintf("%s:%d", c.SimulatorHost, port)
+		// PlatformAddress defaults to CommandAddress port+1 inside NewTPM2;
+		// explicit assignment here makes the intent visible to readers.
+		cfg.PlatformAddress = fmt.Sprintf("%s:%d", c.SimulatorHost, port+1)
+		// Clear UseSimulator so NewTPM2 uses the TCP path, not simulatorOpener.
+		cfg.UseSimulator = false
+	}
+
+	return cfg
 }

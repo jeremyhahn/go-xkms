@@ -461,7 +461,7 @@ func TestFilePermissions(t *testing.T) {
 				t.Fatalf("Put() error = %v", err)
 			}
 
-			// Check file permissions
+			// Check file permissions (stored at <root>/<key>)
 			filePath := filepath.Join(dir, tt.key)
 			info, err := os.Stat(filePath)
 			if err != nil {
@@ -500,6 +500,35 @@ func TestFilePermissionsKeyPrefixBased(t *testing.T) {
 
 	if info.Mode().Perm() != 0600 {
 		t.Errorf("File permissions for keys/ = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+// TestPrefixCollisionRejected documents the flat-namespace contract of the file
+// backend: a key and a sub-key under it cannot coexist on a filesystem (the same
+// path cannot be both a file holding a value and a directory holding sub-keys).
+// Writing a child of an existing key returns an error rather than corrupting
+// state, and the parent is left intact. Callers must use namespace discipline —
+// e.g. the qrdb barrier stores its metadata as a SIBLING key ("root_key.meta"),
+// never a child ("root_key/meta") — see go-qrdb/pkg/seal/barrier.go.
+func TestPrefixCollisionRejected(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	store, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	if err := store.Put(ctx, "barrier/root_key", []byte("blob")); err != nil {
+		t.Fatalf("Put(parent) error = %v", err)
+	}
+	// A child of an existing key cannot be stored on a flat-file backend.
+	if err := store.Put(ctx, "barrier/root_key/meta", []byte("meta")); err == nil {
+		t.Errorf("Put(child of existing key) should return an error on a flat-file backend")
+	}
+	// The parent remains intact and readable.
+	if got, err := store.Get(ctx, "barrier/root_key"); err != nil || string(got) != "blob" {
+		t.Fatalf("Get(parent) = %q, %v; want \"blob\", nil", got, err)
 	}
 }
 
@@ -1096,18 +1125,14 @@ func TestErrorConditions(t *testing.T) {
 		}
 		defer func() { _ = store.Close() }()
 
-		// Create a file in a read-only directory
-		subdir := filepath.Join(dir, "rodir")
-		if err := os.MkdirAll(subdir, 0700); err != nil {
-			t.Fatalf("Failed to create dir: %v", err)
-		}
-
 		key := "rodir/file"
 		if err := store.Put(ctx, key, []byte("data")); err != nil {
 			t.Fatalf("Put() error = %v", err)
 		}
 
-		// Make directory read-only
+		// Make the key's PARENT directory (<root>/rodir) read-only so removing
+		// the file (<root>/rodir/file) fails.
+		subdir := filepath.Join(dir, "rodir")
 		if err := os.Chmod(subdir, 0500); err != nil {
 			t.Fatalf("Failed to chmod dir: %v", err)
 		}
@@ -1191,14 +1216,14 @@ func TestErrorConditions(t *testing.T) {
 		dir := setupTestDir(t)
 		fs := &FileStorage{rootDir: dir}
 
-		// Try to convert a valid path
+		// Try to convert a valid stored file path (<root>/test/key).
 		path := filepath.Join(dir, "test", "key")
 		key, err := fs.pathToKey(path)
 		if err != nil {
 			t.Errorf("pathToKey() error = %v", err)
 		}
-		if key != "test/key" && key != "test\\key" {
-			t.Errorf("pathToKey() = %q, want test/key or test\\key", key)
+		if key != "test/key" {
+			t.Errorf("pathToKey() = %q, want test/key", key)
 		}
 	})
 }

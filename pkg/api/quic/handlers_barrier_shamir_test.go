@@ -50,9 +50,8 @@ func createTestServerWithShamirBarrier(t *testing.T) (*Server, []string, *seal.B
 	require.NoError(t, err)
 
 	barrierStore := storage.NewMemory()
-	shareStore := storage.NewMemory()
 
-	shamirStrat, err := seal.NewShamirStrategy(shareStore, 2, 3)
+	shamirStrat, err := seal.NewShamirStrategy(2, 3)
 	require.NoError(t, err)
 
 	barrier, err := seal.NewBarrier(
@@ -144,7 +143,7 @@ func createTestServerWithCredentialShamirBarrier(t *testing.T) (*Server, *seal.B
 		barrierStore,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 			Shamir:          &seal.ShamirConfig{Threshold: 2, TotalShares: 3},
 		},
 		seal.NewSoftwareStrategy(),
@@ -623,219 +622,6 @@ func TestBarrierShamirGenerateRootToken(t *testing.T) {
 	})
 }
 
-// --- Shamir Shares (list/delete all) tests ---
-
-func TestBarrierShamirShares(t *testing.T) {
-	t.Run("GET lists share count and configuration", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/barrier/shamir/shares", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp BarrierShamirSharesResponse
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, 3, resp.Count)
-		assert.Equal(t, 2, resp.Threshold)
-		assert.Equal(t, 3, resp.Total)
-	})
-
-	t.Run("DELETE removes all shares", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]interface{}
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, true, resp["success"])
-
-		// Verify shares are gone by listing
-		req2 := httptest.NewRequest(http.MethodGet, "/api/v1/barrier/shamir/shares", nil)
-		w2 := httptest.NewRecorder()
-		server.handler.ServeHTTP(w2, req2)
-
-		assert.Equal(t, http.StatusOK, w2.Code)
-
-		var resp2 BarrierShamirSharesResponse
-		err = json.NewDecoder(w2.Body).Decode(&resp2)
-		require.NoError(t, err)
-		assert.Equal(t, 0, resp2.Count)
-	})
-
-	t.Run("POST method not allowed", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/barrier/shamir/shares", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("barrier not configured returns service unavailable", func(t *testing.T) {
-		server := createTestServerNoBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/barrier/shamir/shares", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	})
-
-	t.Run("no Shamir strategy returns bad request", func(t *testing.T) {
-		server, _ := createTestServerWithCredentialShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/barrier/shamir/shares", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		// Credential mode barrier has no ShamirStrategy registered
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
-// --- Shamir Delete Specific Share tests ---
-
-func TestBarrierShamirDeleteShare(t *testing.T) {
-	t.Run("DELETE removes specific share by index", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares/1", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]interface{}
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, true, resp["success"])
-		assert.Equal(t, float64(1), resp["index"])
-	})
-
-	t.Run("invalid index returns bad request", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares/abc", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("GET method not allowed", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/barrier/shamir/shares/1", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("barrier not configured returns service unavailable", func(t *testing.T) {
-		server := createTestServerNoBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares/1", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	})
-
-	t.Run("no Shamir strategy returns bad request", func(t *testing.T) {
-		server, _ := createTestServerWithCredentialShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares/1", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-
-	t.Run("nonexistent share index returns not found", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares/999", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusNotFound, w.Code)
-	})
-}
-
-// --- Shamir Verify tests ---
-
-func TestBarrierShamirVerify(t *testing.T) {
-	t.Run("POST verifies shares successfully", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/barrier/shamir/verify", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code)
-
-		var resp map[string]interface{}
-		err := json.NewDecoder(w.Body).Decode(&resp)
-		require.NoError(t, err)
-		assert.Equal(t, true, resp["success"])
-	})
-
-	t.Run("GET method not allowed", func(t *testing.T) {
-		server, _, _ := createTestServerWithShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/barrier/shamir/verify", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("barrier not configured returns service unavailable", func(t *testing.T) {
-		server := createTestServerNoBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/barrier/shamir/verify", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-	})
-
-	t.Run("no Shamir strategy returns bad request", func(t *testing.T) {
-		server, _ := createTestServerWithCredentialShamirBarrier(t)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/barrier/shamir/verify", nil)
-		w := httptest.NewRecorder()
-		server.handler.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
-}
-
 // --- Recovery Keys Generate tests ---
 
 func TestBarrierShamirGenerateRecoveryKeys(t *testing.T) {
@@ -1234,13 +1020,10 @@ func TestBarrierShamirRouteDispatch(t *testing.T) {
 			{http.MethodPost, "/api/v1/barrier/unseal-shares"},
 			{http.MethodPost, "/api/v1/barrier/rekey"},
 			{http.MethodPost, "/api/v1/barrier/root-token"},
-			{http.MethodGet, "/api/v1/barrier/shamir/shares"},
-			{http.MethodPost, "/api/v1/barrier/shamir/verify"},
 			{http.MethodPost, "/api/v1/barrier/recovery-keys/generate"},
 			{http.MethodPost, "/api/v1/barrier/recovery-keys/recover"},
 			{http.MethodGet, "/api/v1/barrier/recovery-keys"},
 			{http.MethodDelete, "/api/v1/barrier/recovery-keys"},
-			{http.MethodDelete, "/api/v1/barrier/shamir/shares/1"},
 		}
 
 		for _, route := range routes {
@@ -1352,16 +1135,4 @@ func TestBarrierShamirRequestResponseTypes(t *testing.T) {
 		assert.Equal(t, req.Shares, decoded.Shares)
 	})
 
-	t.Run("BarrierShamirSharesResponse JSON round trip", func(t *testing.T) {
-		resp := BarrierShamirSharesResponse{Count: 5, Threshold: 3, Total: 5}
-		data, err := json.Marshal(resp)
-		require.NoError(t, err)
-
-		var decoded BarrierShamirSharesResponse
-		err = json.Unmarshal(data, &decoded)
-		require.NoError(t, err)
-		assert.Equal(t, resp.Count, decoded.Count)
-		assert.Equal(t, resp.Threshold, decoded.Threshold)
-		assert.Equal(t, resp.Total, decoded.Total)
-	})
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -1182,34 +1183,49 @@ func TestImportFromTrustStrap_UnsupportedMethod(t *testing.T) {
 }
 
 func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
-	// Exercise the constructor for each supported method and confirm the
-	// dispatch chooses the right factory. The underlying bootstrappers
-	// validate their configs at construction, so we feed them the minimum
-	// required fields per method and just confirm the unsupported-method
-	// branch is the only way to hit ErrTrustStrapUnsupportedMethod.
+	// Exercise the config builder for each supported method and
+	// confirm the resulting bootstrap.Config carries the right Mode
+	// and per-mode sub-config. The actual fetch is exercised in
+	// xkms/pkg/trust/bootstrap tests; here we only assert the
+	// GUI→library projection.
 	svc := NewTrustService(newTestFileStore(t))
 
-	cases := []TrustStrapImportRequest{
-		{Method: "dane", Server: "https://kms.example.com:8443"},
+	cases := []struct {
+		req      TrustStrapImportRequest
+		wantMode bootstrap.Mode
+	}{
 		{
-			Method:          "noise",
-			Server:          "kms.example.com:8445",
-			ServerStaticKey: strings.Repeat("ab", 32),
+			req:      TrustStrapImportRequest{Method: "dane", Server: "https://kms.example.com:8443"},
+			wantMode: bootstrap.ModeDANE,
 		},
 		{
-			Method:        "spki",
-			Server:        "https://kms.example.com:8443",
-			SPKIPinSHA256: strings.Repeat("cd", 32),
+			req: TrustStrapImportRequest{
+				Method:          "noise",
+				Server:          "kms.example.com:8445",
+				ServerStaticKey: strings.Repeat("ab", 32),
+			},
+			wantMode: bootstrap.ModeNoise,
 		},
-		{Method: "direct", Server: "https://kms.example.com:8443"},
+		{
+			req: TrustStrapImportRequest{
+				Method:        "spki",
+				Server:        "https://kms.example.com:8443",
+				SPKIPinSHA256: strings.Repeat("cd", 32),
+			},
+			wantMode: bootstrap.ModeSPKI,
+		},
+		{
+			req:      TrustStrapImportRequest{Method: "direct", Server: "https://kms.example.com:8443"},
+			wantMode: bootstrap.ModeDirect,
+		},
 	}
-	for _, req := range cases {
-		req := req
-		t.Run(req.Method, func(t *testing.T) {
-			boot, err := svc.newTrustStrapBootstrapper(req)
-			require.NoError(t, err, "method %q must construct a bootstrapper", req.Method)
-			require.NotNil(t, boot)
-			_ = boot.Close()
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.req.Method, func(t *testing.T) {
+			cfg, err := svc.buildBootstrapConfig(tc.req)
+			require.NoError(t, err, "method %q must build a config", tc.req.Method)
+			require.Equal(t, tc.wantMode, cfg.Mode)
+			require.Equal(t, tc.req.Server, cfg.ServerURL)
 		})
 	}
 }

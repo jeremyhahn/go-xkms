@@ -16,7 +16,7 @@ package nssdb
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/md5"  //nolint:gosec
+	"crypto/md5" //nolint:gosec
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec
 	"crypto/x509"

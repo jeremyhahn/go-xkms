@@ -28,27 +28,26 @@ import (
 
 // Config represents the complete server configuration
 type Config struct {
-	Server        ServerConfig              `yaml:"server"`
-	Protocols     ProtocolsConfig           `yaml:"protocols"`
-	Unix          UnixConfig                `yaml:"unix"`
-	Logging       LoggingConfig             `yaml:"logging"`
-	TLS           TLSConfig                 `yaml:"tls"`
-	Auth          AuthConfig                `yaml:"auth"`
-	WebAuthn      *WebAuthnConfig           `yaml:"webauthn,omitempty"`
-	RateLimit     RateLimitConfig           `yaml:"ratelimit"`
-	Metrics       MetricsConfig             `yaml:"metrics"`
-	Health        HealthConfig              `yaml:"health"`
-	Storage       StorageConfig             `yaml:"storage"`
-	RNG           RNGConfig                 `yaml:"rng"`
-	Default       DefaultConfig             `yaml:"default_backend"`
-	Backends      BackendsConfig            `yaml:"backends"`
-	Bootstrap     BootstrapConfig           `yaml:"bootstrap"`
-	Barrier       BarrierConfig             `yaml:"barrier"`
-	PIN           PINConfig                 `yaml:"pin"`
-	InitBootstrap InitBootstrapConfig       `yaml:"init_bootstrap"`
-	Credentials   CredentialsConfig         `yaml:"credentials"`
-	CA            *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
-	ACME          *ACMEConfig               `yaml:"acme,omitempty"`
+	Server      ServerConfig              `yaml:"server"`
+	Protocols   ProtocolsConfig           `yaml:"protocols"`
+	Unix        UnixConfig                `yaml:"unix"`
+	Logging     LoggingConfig             `yaml:"logging"`
+	TLS         TLSConfig                 `yaml:"tls"`
+	Auth        AuthConfig                `yaml:"auth"`
+	WebAuthn    *WebAuthnConfig           `yaml:"webauthn,omitempty"`
+	RateLimit   RateLimitConfig           `yaml:"ratelimit"`
+	Metrics     MetricsConfig             `yaml:"metrics"`
+	Health      HealthConfig              `yaml:"health"`
+	Storage     StorageConfig             `yaml:"storage"`
+	RNG         RNGConfig                 `yaml:"rng"`
+	Default     DefaultConfig             `yaml:"default_backend"`
+	Backends    BackendsConfig            `yaml:"backends"`
+	Bootstrap   BootstrapConfig           `yaml:"bootstrap"`
+	Barrier     BarrierConfig             `yaml:"barrier"`
+	PIN         PINConfig                 `yaml:"pin"`
+	Credentials CredentialsConfig         `yaml:"credentials"`
+	CA          *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
+	ACME        *ACMEConfig               `yaml:"acme,omitempty"`
 }
 
 // BarrierConfig configures the barrier (seal/unseal) subsystem.
@@ -64,15 +63,6 @@ type PINConfig struct {
 	Strategy        string `yaml:"strategy"`
 	MaxAttempts     int    `yaml:"max_attempts"`
 	LockoutDuration string `yaml:"lockout_duration"`
-}
-
-// InitBootstrapConfig configures the server initialization bootstrap (setup token + admin ceremony).
-type InitBootstrapConfig struct {
-	Enabled        bool          `yaml:"enabled"`
-	TokenTTL       time.Duration `yaml:"token_ttl"`
-	ThresholdMode  bool          `yaml:"threshold_mode"`
-	AdminThreshold int           `yaml:"admin_threshold"`
-	AdminTotal     int           `yaml:"admin_total"`
 }
 
 // CredentialsConfig configures how backend credentials (PKCS#11 User PIN, TPM2 auth, etc.)
@@ -855,8 +845,25 @@ func (c *Config) Validate() error {
 	}
 	switch strings.ToLower(c.Storage.Backend) {
 	case "qrdb":
-		if c.Storage.QRDB.Address == "" {
-			return fmt.Errorf("qrdb storage address is required when backend is qrdb")
+		// Default the transport to "embedded" so a standalone qrdb backend
+		// works without specifying a transport.
+		if c.Storage.QRDB.Transport == "" {
+			c.Storage.QRDB.Transport = "embedded"
+		}
+		switch strings.ToLower(c.Storage.QRDB.Transport) {
+		case "embedded":
+			// Embedded qrdb persists data under the storage path, so a path
+			// is required but a cluster address is not.
+			if c.Storage.Path == "" {
+				return fmt.Errorf("storage path must be specified for embedded qrdb")
+			}
+		case "rest", "grpc":
+			// Remote qrdb dials a cluster endpoint, so an address is required.
+			if c.Storage.QRDB.Address == "" {
+				return fmt.Errorf("qrdb storage address is required for remote qrdb transport")
+			}
+		default:
+			return fmt.Errorf("invalid qrdb transport: %s (must be embedded, rest, or grpc)", c.Storage.QRDB.Transport)
 		}
 	default:
 		if c.Storage.Path == "" {

@@ -44,8 +44,8 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

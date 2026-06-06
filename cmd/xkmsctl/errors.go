@@ -49,37 +49,14 @@ var (
 	// ErrTLSAInvalidMatchingType is returned when an unsupported TLSA matching type is encountered.
 	ErrTLSAInvalidMatchingType = errors.New("unsupported TLSA matching type")
 
-	// ErrBarrierUnsealNoInput is returned when no secret, share, or shares are provided
-	// for the barrier unseal command.
-	ErrBarrierUnsealNoInput = errors.New("one of --secret, --share, or --shares is required")
-
-	// ErrBarrierRekeyParams is returned when invalid threshold or shares parameters
-	// are provided for the barrier rekey command.
-	ErrBarrierRekeyParams = errors.New("--threshold and --shares must be positive integers")
-
-	// ErrBarrierRootTokenNoShares is returned when no shares are provided for
-	// root token generation.
-	ErrBarrierRootTokenNoShares = errors.New("--shares is required for root token generation")
-
-	// ErrBarrierNotShamir is returned when a Shamir-specific operation is attempted
-	// on a barrier that does not use the Shamir strategy.
-	ErrBarrierNotShamir = errors.New("barrier is not using Shamir strategy")
-
-	// ErrBarrierInvalidShareIndex is returned when an invalid share index is
-	// provided for share deletion.
-	ErrBarrierInvalidShareIndex = errors.New("share index must be a non-negative integer")
-
-	// ErrBarrierSharesDeleteNoIndex is returned when no index is provided and
-	// --all is not set for share deletion.
-	ErrBarrierSharesDeleteNoIndex = errors.New("provide a share index or use --all to delete all shares")
-
-	// ErrBarrierRecoveryParams is returned when invalid threshold or keys parameters
-	// are provided for recovery key generation.
-	ErrBarrierRecoveryParams = errors.New("--threshold and --keys must be positive integers")
-
-	// ErrBarrierRecoveryNoKeys is returned when no recovery keys are provided
-	// for barrier recovery.
-	ErrBarrierRecoveryNoKeys = errors.New("--keys is required for barrier recovery")
+	// Canonical barrier errors are defined as typed errors (with structured
+	// fields) in barrier.go: PINsNotAllowedError, BarrierStrategyError,
+	// BarrierSecretRequiredError, BarrierSecretNotAllowedError, PINPairError,
+	// BarrierShamirParamsError, BarrierShamirOnInitError, BarrierShareInputError,
+	// BarrierSharesFileError, BarrierSharesFileEmptyError,
+	// XKMSPassphraseRekeyUnsupportedError, BarrierRecoverySharesRequiredError,
+	// BarrierSealConfirmationError. Sentinel-style flag-validation errors
+	// for barrier verbs have been retired in favour of those typed forms.
 
 	// Custodian group errors
 

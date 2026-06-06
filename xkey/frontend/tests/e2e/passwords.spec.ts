@@ -822,8 +822,10 @@ test.describe('Passwords View', () => {
       const dialog = page.locator('[role="dialog"]');
       await expect(dialog).not.toBeVisible();
 
-      // The entry should appear in the password list
-      await expect(page.getByText('E2E Test Entry')).toBeVisible();
+      // The entry should appear in the password list.
+      // Use the list panel scope to avoid matching the toast notification.
+      const passwordList = page.locator('.panel-center .list-content');
+      await expect(passwordList.getByText('E2E Test Entry', { exact: true })).toBeVisible();
     });
 
     test('click an entry to view details in the right panel', async ({
@@ -908,8 +910,10 @@ test.describe('Passwords View', () => {
       await saveBtn.click();
       await page.waitForTimeout(500);
 
-      // Verify the updated name appears in the list
-      await expect(page.getByText('Edited Entry Name')).toBeVisible();
+      // Verify the updated name appears in the list.
+      // Scope to the list panel to avoid matching the toast notification.
+      const passwordList = page.locator('.panel-center .list-content');
+      await expect(passwordList.getByText('Edited Entry Name', { exact: true })).toBeVisible();
     });
 
     test('delete a password entry and verify it is removed from the list', async ({
@@ -934,8 +938,10 @@ test.describe('Passwords View', () => {
       await page.locator('.modal-actions').getByRole('button', { name: 'Add' }).click();
       await page.waitForTimeout(500);
 
-      // Verify the entry exists
-      await expect(page.getByText('Delete Me Entry')).toBeVisible();
+      // Verify the entry exists in the list panel.
+      // Scope to avoid matching the toast notification.
+      const passwordList = page.locator('.panel-center .list-content');
+      await expect(passwordList.getByText('Delete Me Entry', { exact: true })).toBeVisible();
 
       // Select the entry to show it in the detail panel
       const listItem = page.locator('.list-item', { hasText: 'Delete Me Entry' });
@@ -950,17 +956,22 @@ test.describe('Passwords View', () => {
       // The confirmation dialog should appear
       const confirmDialog = page.locator('.confirm-dialog');
       await expect(confirmDialog).toBeVisible();
-      await expect(page.getByText('Delete Password')).toBeVisible();
       await expect(
-        page.getByText('Are you sure you want to delete "Delete Me Entry"?'),
+        confirmDialog.getByRole('heading', { name: 'Delete Password' }),
+      ).toBeVisible();
+      await expect(
+        confirmDialog.getByText('Are you sure you want to delete "Delete Me Entry"?'),
       ).toBeVisible();
 
       // Confirm the deletion
       await confirmDialog.getByRole('button', { name: 'Delete' }).click();
       await page.waitForTimeout(500);
 
-      // The entry should no longer appear in the list
-      await expect(page.getByText('Delete Me Entry')).not.toBeVisible();
+      // The entry should no longer appear in the LIST. Scope to the list panel: the
+      // success toast ("Password \"Delete Me Entry\" deleted") also contains the name.
+      await expect(
+        page.locator('.panel-center .list-content').getByText('Delete Me Entry', { exact: true }),
+      ).not.toBeVisible();
     });
 
     test('delete confirmation dialog has Cancel and Delete buttons', async ({
@@ -1004,9 +1015,11 @@ test.describe('Passwords View', () => {
       await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
       await page.waitForTimeout(300);
 
-      // Confirm dialog should close and entry should still exist
+      // Confirm dialog should close and entry should still exist in the list.
+      // Scope to the list panel to avoid matching any lingering toast notification.
       await expect(confirmDialog).not.toBeVisible();
-      await expect(page.getByText('Confirm Dialog Entry')).toBeVisible();
+      const passwordList = page.locator('.panel-center .list-content');
+      await expect(passwordList.getByText('Confirm Dialog Entry', { exact: true })).toBeVisible();
     });
   });
 

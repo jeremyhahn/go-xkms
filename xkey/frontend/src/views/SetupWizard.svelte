@@ -192,7 +192,7 @@
     if (probe && (probe.tpm_available || probe.tpm_device_exists)) {
       setChoice('sealer_backend', 'tpm2');
     } else {
-      setChoice('sealer_backend', 'software');
+      setChoice('sealer_backend', 'passphrase');
     }
     if (choices.deployment_mode === 'personal') {
       // Deployment already chosen, skip to credentials step
@@ -352,7 +352,7 @@
     // the barrier will use the same backend — show its label.
     if (choices.sealer_backend === 'tpm2') return 'TPM 2.0 Hardware';
     if (choices.sealer_backend === 'pkcs11') return 'PKCS#11 Hardware';
-    if (choices.sealer_backend === 'software') return 'Software (AES-256-GCM)';
+    if (choices.sealer_backend === 'passphrase') return 'Passphrase (AES-256-GCM)';
 
     // No explicit choice: auto-detect from probe, preferring hardware.
     const best = probe?.barrier_strategies?.find(s => s.available && s.hardware_backed);

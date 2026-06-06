@@ -46,6 +46,21 @@ func main() {
 	}
 
 	if !forceCLI && (forceGUI || hasGUIEnvironment()) {
+		if !guiBuildTagPresent {
+			fmt.Fprintln(os.Stderr, "xkey: this binary was built without GUI support.")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "The Wails GUI requires one of the build tags 'production', 'dev', or 'bindings'.")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Rebuild with:")
+			fmt.Fprintln(os.Stderr, "  make -C xkey build-local           # recommended; installs frontend + GUI")
+			fmt.Fprintln(os.Stderr, "  make -C xkey build                 # builds inside the Docker builder image")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Or pass tags directly:")
+			fmt.Fprintln(os.Stderr, "  cd xkey && go build -tags 'ble production codec_json' -o xkey ./cmd/xkey")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Or run the CLI explicitly with --no-gui.")
+			os.Exit(2)
+		}
 		// Initialize logging from CLI flags before starting the GUI so
 		// that --log-level and --log-file take effect for all slog output.
 		if err := initGUILogging(args); err != nil {

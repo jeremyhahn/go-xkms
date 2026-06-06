@@ -462,19 +462,53 @@ func TestApplySetup_ExplicitSealerBackend_Preserved(t *testing.T) {
 		UserPin:         testUserPin,
 		StorageType:     "barrier",
 		BarrierPassword: "testbarrier123",
-		SealerBackend:   "software", // Explicit choice
+		SealerBackend:   "passphrase", // Explicit choice
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	// Verify the explicit choice was applied to SealService.
+	// The wizard's "passphrase" choice is a BARRIER strategy; the seal feature
+	// uses its own backend namespace, so it must be mapped to the "software"
+	// seal backend. Pinning the seal service to the raw "passphrase" strategy
+	// made CanSeal reject an unknown backend and disabled sealing entirely.
 	assert.Equal(t, "software", sealSvc.DefaultBackend(),
-		"SealService default should match the explicit choice")
+		"SealService default should be the seal backend mapped from the barrier sealer")
 
-	// Verify the explicit value was persisted to config.
+	// The raw choice is still preserved verbatim in persisted config.
 	saved := tw.configFunc()
-	assert.Equal(t, "software", saved.SealerBackend,
+	assert.Equal(t, "passphrase", saved.SealerBackend,
 		"persisted config should contain the explicit sealer backend")
+}
+
+func TestApplySetup_TPM2SealerBackend_Preserved(t *testing.T) {
+	tw := newTestSetupWizard(&GUIConfigData{})
+
+	sealSvc := NewSealService(t.TempDir())
+	wireSealMockClient(sealSvc, &sealMockTPM{mockTPM: *defaultMockTPM(), canSeal: true})
+	sealSvc.SetContext(context.Background())
+	tw.svc.SetSealService(sealSvc)
+
+	_, err := tw.svc.ApplySetup(&SetupChoices{
+		Mode:            "standalone",
+		SOPin:           testSOPin,
+		UserPin:         testUserPin,
+		StorageType:     "barrier",
+		BarrierPassword: "testbarrier123",
+		SealerBackend:   "tpm2",
+	})
+	require.NoError(t, err)
+
+	// "tpm2" is valid in both namespaces, so it maps through unchanged.
+	assert.Equal(t, "tpm2", sealSvc.DefaultBackend(),
+		"a tpm2 barrier sealer maps to the tpm2 seal backend")
+}
+
+func TestSealBackendForBarrierSealer(t *testing.T) {
+	assert.Equal(t, "software", sealBackendForBarrierSealer("passphrase"))
+	assert.Equal(t, "software", sealBackendForBarrierSealer("software"))
+	assert.Equal(t, "tpm2", sealBackendForBarrierSealer("tpm2"))
+	assert.Equal(t, "", sealBackendForBarrierSealer("pkcs11"), "hardware-token strategy has no seal backend; caller auto-selects")
+	assert.Equal(t, "", sealBackendForBarrierSealer(""))
 }
 
 // TestApplySetup_EmptySealerBackend_NoSealService verifies that when no
@@ -498,7 +532,7 @@ func TestApplySetup_EmptySealerBackend_NoSealService(t *testing.T) {
 	// SealerBackend should fall back to "software" as the last-resort default
 	// so the barrier strategy is always valid.
 	saved := tw.configFunc()
-	assert.Equal(t, "software", saved.SealerBackend,
+	assert.Equal(t, "passphrase", saved.SealerBackend,
 		"SealerBackend should fall back to software when no SealService is configured")
 }
 
@@ -528,7 +562,7 @@ func TestApplySetup_EmptySealerBackend_NoAvailableSealers(t *testing.T) {
 	// BestSealer returns nil when no sealer is available, so SealerBackend
 	// should fall back to "software" as the last-resort default.
 	saved := tw.configFunc()
-	assert.Equal(t, "software", saved.SealerBackend,
+	assert.Equal(t, "passphrase", saved.SealerBackend,
 		"SealerBackend should fall back to software when no sealers are available")
 }
 
@@ -582,7 +616,7 @@ func TestSetupWizard_ApplySetup_PersistsBarrierFields(t *testing.T) {
 		UserPin:         testUserPin,
 		StorageType:     "barrier",
 		BarrierPassword: "testbarrier123",
-		SealerBackend:   "software",
+		SealerBackend:   "passphrase",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -596,7 +630,7 @@ func TestSetupWizard_ApplySetup_PersistsBarrierFields(t *testing.T) {
 		"persisted config.SetupComplete should be true")
 	assert.True(t, saved.BarrierInitialized,
 		"persisted config.BarrierInitialized should be true when barrier init succeeds")
-	assert.Equal(t, "software", saved.BarrierStrategy,
+	assert.Equal(t, "passphrase", saved.BarrierStrategy,
 		"persisted config.BarrierStrategy should match the sealer backend used")
 	assert.Equal(t, "barrier", saved.StorageType,
 		"persisted config.StorageType should be 'barrier' when barrier init succeeds")

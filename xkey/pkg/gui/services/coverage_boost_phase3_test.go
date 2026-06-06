@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -193,7 +193,7 @@ func TestCoverageBoostPhase3_BarrierService_LogBarrierEvent_Success(t *testing.T
 
 func TestCoverageBoostPhase3_BarrierService_AssembleStrategy_Software(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
-	strategy, err := svc.assembleStrategy("software")
+	strategy, err := svc.assembleStrategy("passphrase")
 	require.NoError(t, err)
 	assert.NotNil(t, strategy)
 }
@@ -243,14 +243,14 @@ func TestCoverageBoostPhase3_BarrierService_Unseal_PostUnsealHook_Error(t *testi
 	})
 
 	// Initialize the barrier first so Unseal finds it.
-	err := svc.Initialize("test-pass", "software")
+	err := svc.Initialize("test-pass", "passphrase")
 	require.NoError(t, err)
 
 	// Seal it, then unseal to trigger hook.
 	err = svc.Seal()
 	require.NoError(t, err)
 
-	err = svc.Unseal("test-pass", "software")
+	err = svc.Unseal("test-pass", "passphrase")
 	require.NoError(t, err) // Hook errors are logged but don't fail Unseal.
 	assert.True(t, hookCalled)
 }
@@ -266,13 +266,13 @@ func TestCoverageBoostPhase3_BarrierService_Unseal_PostUnsealHook_Success(t *tes
 		return nil
 	})
 
-	err := svc.Initialize("test-pass", "software")
+	err := svc.Initialize("test-pass", "passphrase")
 	require.NoError(t, err)
 
 	err = svc.Seal()
 	require.NoError(t, err)
 
-	err = svc.Unseal("test-pass", "software")
+	err = svc.Unseal("test-pass", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, hookCalled)
 }
@@ -606,16 +606,16 @@ func TestCoverageBoostPhase3_PINService_LogPINOperation_WithLoggerAndPINService(
 	logger := &phase3AuditLogger{}
 	svc.SetAuditLogger(logger)
 
-	// Create a real pin.Service and set it.
-	backend := &wizardMockPINBackend{strategy: pin.StrategySoftware}
-	pinSvc := pin.NewService(backend, slog.Default())
+	// Create a real qrdbsdk.PINService and set it.
+	backend := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	pinSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pinSvc)
 
 	svc.logPINOperation(audit.OpPINChanged, true, nil, nil)
 
 	require.Len(t, logger.entries, 1)
 	assert.Equal(t, audit.OpPINChanged, logger.entries[0].Operation)
-	// Backend should be populated from the pin.Service strategy.
+	// Backend should be populated from the qrdbsdk.PINService strategy.
 	assert.NotEmpty(t, logger.entries[0].Backend)
 }
 
@@ -641,8 +641,8 @@ func TestCoverageBoostPhase3_PINService_VerifyFIDO2Hash_NoService(t *testing.T) 
 
 func TestCoverageBoostPhase3_PINService_IsPINSet_WithService(t *testing.T) {
 	svc := NewPINService()
-	backend := &wizardMockPINBackend{strategy: pin.StrategySoftware}
-	pinSvc := pin.NewService(backend, slog.Default())
+	backend := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
+	pinSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pinSvc)
 	// Backend starts with no PIN set.
 	assert.False(t, svc.IsPINSet())

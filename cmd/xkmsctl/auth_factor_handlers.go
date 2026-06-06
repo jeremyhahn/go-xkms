@@ -23,7 +23,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -34,6 +33,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -402,16 +402,16 @@ func runXKMSAuthFactorList(ctx context.Context, user string) error {
 
 	out := os.Stdout
 	if len(resp.Factors) == 0 {
-		fmt.Fprintln(out, "(no enrolled factors)")
+		_, _ = fmt.Fprintln(out, "(no enrolled factors)")
 		return nil
 	}
-	fmt.Fprintln(out, "ID\tTYPE\tUSER\tLABEL\tREGISTERED\tREVOKED")
+	_, _ = fmt.Fprintln(out, "ID\tTYPE\tUSER\tLABEL\tREGISTERED\tREVOKED")
 	for _, f := range resp.Factors {
 		revoked := "-"
 		if f.RevokedAt != nil {
 			revoked = f.RevokedAt.Format("2006-01-02T15:04:05Z")
 		}
-		fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(out, "%s\t%s\t%d\t%s\t%s\t%s\n",
 			f.ID,
 			f.Type,
 			f.UserID,
@@ -467,7 +467,7 @@ func runXKMSAuthFactorRemove(ctx context.Context, factorID string, force bool) e
 	}); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, "OK")
+	_, _ = fmt.Fprintln(os.Stdout, "OK")
 	return nil
 }
 
@@ -503,7 +503,7 @@ func runXKMSAuthFactorRotate(ctx context.Context, oldID string, f *authFactorAdd
 		return err
 	}
 	out := os.Stdout
-	fmt.Fprintf(out, "Old factor revoked: %s\n", oldID)
+	_, _ = fmt.Fprintf(out, "Old factor revoked: %s\n", oldID)
 	printXKMSFactorRecord(&resp.NewFactor)
 	return nil
 }
@@ -556,20 +556,20 @@ func runXKMSAuthLogin(ctx context.Context, method, certPath, credHex string) err
 		return err
 	}
 	out := os.Stdout
-	fmt.Fprintf(out, "User ID:   %d\n", resp.UserID)
-	fmt.Fprintf(out, "Username:  %s\n", resp.Username)
+	_, _ = fmt.Fprintf(out, "User ID:   %d\n", resp.UserID)
+	_, _ = fmt.Fprintf(out, "Username:  %s\n", resp.Username)
 	if resp.Email != "" {
-		fmt.Fprintf(out, "Email:     %s\n", resp.Email)
+		_, _ = fmt.Fprintf(out, "Email:     %s\n", resp.Email)
 	}
 	if resp.TenantID != "" {
-		fmt.Fprintf(out, "Tenant:    %s\n", resp.TenantID)
+		_, _ = fmt.Fprintf(out, "Tenant:    %s\n", resp.TenantID)
 	}
-	fmt.Fprintf(out, "Active:    %t\n", resp.Active)
+	_, _ = fmt.Fprintf(out, "Active:    %t\n", resp.Active)
 	if len(resp.Roles) > 0 {
-		fmt.Fprintf(out, "Roles:     %v\n", resp.Roles)
+		_, _ = fmt.Fprintf(out, "Roles:     %v\n", resp.Roles)
 	}
-	fmt.Fprintf(out, "Factor ID: %s\n", resp.Factor.ID)
-	fmt.Fprintf(out, "Factor:    %s (%s)\n", resp.Factor.Label, resp.Factor.Type)
+	_, _ = fmt.Fprintf(out, "Factor ID: %s\n", resp.Factor.ID)
+	_, _ = fmt.Fprintf(out, "Factor:    %s (%s)\n", resp.Factor.Label, resp.Factor.Type)
 	return nil
 }
 
@@ -580,18 +580,18 @@ func runXKMSAuthLogin(ctx context.Context, method, certPath, credHex string) err
 // printXKMSFactorRecord renders an AuthFactorRecord to stdout.
 func printXKMSFactorRecord(rec *qrdbtransport.AuthFactorRecord) {
 	out := os.Stdout
-	fmt.Fprintf(out, "ID:            %s\n", rec.ID)
-	fmt.Fprintf(out, "Type:          %s\n", rec.Type)
-	fmt.Fprintf(out, "User:          %d\n", rec.UserID)
+	_, _ = fmt.Fprintf(out, "ID:            %s\n", rec.ID)
+	_, _ = fmt.Fprintf(out, "Type:          %s\n", rec.Type)
+	_, _ = fmt.Fprintf(out, "User:          %d\n", rec.UserID)
 	if rec.Label != "" {
-		fmt.Fprintf(out, "Label:         %s\n", rec.Label)
+		_, _ = fmt.Fprintf(out, "Label:         %s\n", rec.Label)
 	}
-	fmt.Fprintf(out, "Registered At: %s\n", rec.RegisteredAt.Format("2006-01-02T15:04:05Z"))
+	_, _ = fmt.Fprintf(out, "Registered At: %s\n", rec.RegisteredAt.Format("2006-01-02T15:04:05Z"))
 	if rec.RevokedAt != nil {
-		fmt.Fprintf(out, "Revoked At:    %s\n", rec.RevokedAt.Format("2006-01-02T15:04:05Z"))
+		_, _ = fmt.Fprintf(out, "Revoked At:    %s\n", rec.RevokedAt.Format("2006-01-02T15:04:05Z"))
 	}
 	if rec.CreatedBy != "" {
-		fmt.Fprintf(out, "Created By:    %s\n", rec.CreatedBy)
+		_, _ = fmt.Fprintf(out, "Created By:    %s\n", rec.CreatedBy)
 	}
 }
 
@@ -695,9 +695,13 @@ func buildXKMSLoginLookupKey(method, certPath, credHex string) ([]byte, error) {
 	return nil, &InvalidAuthMethodError{Method: method}
 }
 
-// xkmsLoadCertCredentialAndMetadata reads a PEM certificate from path,
-// returns the SHA-256 of the DER bytes (the canonical mTLS lookup key)
-// plus selected metadata.
+// xkmsLoadCertCredentialAndMetadata reads a PEM certificate from path and
+// returns the canonical mTLS lookup key — qrdb's SPKI SHA-256 thumbprint
+// (base64url) — plus selected metadata. The SPKI thumbprint is the single
+// stack-wide mTLS identifier: it binds to the public key, so it is stable
+// across certificate renewal and matches the binding written by the admin
+// enrollment path (cmd/xkmsctl/admin.go). It is computed via the qrdb SDK,
+// never reimplemented locally (a full-cert SHA-256 would diverge).
 func xkmsLoadCertCredentialAndMetadata(path string) ([]byte, map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -711,15 +715,15 @@ func xkmsLoadCertCredentialAndMetadata(path string) ([]byte, map[string]string, 
 	if err != nil {
 		return nil, nil, &CertReadError{Path: path, Cause: err}
 	}
-	sum := sha256.Sum256(cert.Raw)
+	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 	meta := map[string]string{
-		"cert_cn":          cert.Subject.CommonName,
-		"cert_serial":      cert.SerialNumber.String(),
-		"cert_not_after":   cert.NotAfter.UTC().Format("2006-01-02T15:04:05Z"),
-		"cert_not_before":  cert.NotBefore.UTC().Format("2006-01-02T15:04:05Z"),
-		"cert_fingerprint": hex.EncodeToString(sum[:]),
+		"cert_cn":              cert.Subject.CommonName,
+		"cert_serial":          cert.SerialNumber.String(),
+		"cert_not_after":       cert.NotAfter.UTC().Format("2006-01-02T15:04:05Z"),
+		"cert_not_before":      cert.NotBefore.UTC().Format("2006-01-02T15:04:05Z"),
+		"cert_spki_thumbprint": thumbprint,
 	}
-	return sum[:], meta, nil
+	return []byte(thumbprint), meta, nil
 }
 
 // invokeClose calls a closer callback if non-nil.

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -239,7 +239,7 @@ func TestGetLockoutStatus_WithLockout(t *testing.T) {
 	svc, pm := setupServiceWithPIN(t)
 
 	lockoutTime := time.Now().Add(5 * time.Minute)
-	pm.lockStatus = &pin.LockoutStatus{
+	pm.lockStatus = &qrdbsdk.PINLockoutStatus{
 		FailedAttempts:  5,
 		MaxAttempts:     5,
 		IsLocked:        true,

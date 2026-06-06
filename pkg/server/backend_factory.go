@@ -340,6 +340,11 @@ func (s *Server) createStorage(subdir string) (storage.Backend, error) {
 	case "file", "":
 		path := filepath.Join(cfg.Path, subdir)
 		return file.New(path)
+	case "qrdb":
+		// All subdirs share the single qrdb backend built in New; the subdir
+		// becomes a key namespace via a prefixed view. The view's Close is a
+		// no-op on the shared inner backend, which only the server closes.
+		return storage.NewPrefixBackend(s.qrdbStorage, subdir+"/")
 	default:
 		return nil, &ErrUnsupportedStorageBackend{Backend: cfg.Backend}
 	}
@@ -358,6 +363,11 @@ func (s *Server) createStorageAt(path string) (storage.Backend, error) {
 		return storage.NewPebble(path)
 	case "file", "":
 		return file.New(path)
+	case "qrdb":
+		// File-style absolute paths map to a qrdb key namespace derived from
+		// the final path segment, sharing the single qrdb backend from New.
+		base := filepath.Base(path)
+		return storage.NewPrefixBackend(s.qrdbStorage, base+"/")
 	default:
 		return nil, &ErrUnsupportedStorageBackend{Backend: cfg.Backend}
 	}

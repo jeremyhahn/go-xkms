@@ -164,14 +164,14 @@ type FIDO2ToggleFunc func(enabled bool) error
 
 // SealStatusFunc returns the current seal status.
 // sealed indicates whether sealed data exists, strategy is the seal
-// strategy name (e.g. "tpm2", "software"), and hardwareBacked indicates
+// strategy name (e.g. "tpm2", "passphrase"), and hardwareBacked indicates
 // whether the seal strategy uses hardware-backed keys.
 type SealStatusFunc func() (sealed bool, strategy string, hardwareBacked bool)
 
 // PINStatusFunc returns the current PIN configuration status.
 // configured indicates whether a PIN has been set, locked indicates
 // whether the PIN is currently locked out, and strategy is the PIN
-// strategy name (e.g. "software", "tpm2", "pkcs11").
+// strategy name (e.g. "passphrase", "tpm2", "pkcs11").
 type PINStatusFunc func() (configured bool, locked bool, strategy string)
 
 // PhoneStatusFunc returns the current phone connection status.

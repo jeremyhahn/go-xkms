@@ -171,12 +171,14 @@ func newMockKeyProvider() *mockKeyProvider {
 	}
 }
 
-func (m *mockKeyProvider) Type() types.BackendType        { return types.BackendTypeSoftware }
-func (m *mockKeyProvider) Capabilities() types.Capabilities { return m.capabilities }
-func (m *mockKeyProvider) Close() error                     { return nil }
-func (m *mockKeyProvider) ListKeys() ([]*types.KeyAttributes, error) { return nil, nil }
+func (m *mockKeyProvider) Type() types.BackendType                    { return types.BackendTypeSoftware }
+func (m *mockKeyProvider) Capabilities() types.Capabilities           { return m.capabilities }
+func (m *mockKeyProvider) Close() error                               { return nil }
+func (m *mockKeyProvider) ListKeys() ([]*types.KeyAttributes, error)  { return nil, nil }
 func (m *mockKeyProvider) RotateKey(attrs *types.KeyAttributes) error { return nil }
-func (m *mockKeyProvider) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) { return nil, nil }
+func (m *mockKeyProvider) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+	return nil, nil
+}
 
 func (m *mockKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
 	var key crypto.PrivateKey
@@ -265,8 +267,8 @@ func TestWebAuthnVerification_TPM2Backend(t *testing.T) {
 	// Use a mock KeyProvider with HardwareBacked=true to simulate TPM2.
 	provider := newMockKeyProvider()
 	provider.capabilities = types.Capabilities{
-		Signing:       true,
-		Keys:          true,
+		Signing:        true,
+		Keys:           true,
 		HardwareBacked: true,
 	}
 	adapter := keybackend.NewBackendAdapter(provider, types.BackendTypeTPM2)

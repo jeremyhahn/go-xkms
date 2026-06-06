@@ -22,8 +22,8 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
@@ -136,7 +136,7 @@ func TestAuthz_AuthorizeAllowed(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "user-1",
-		Roles: []string{"admin"},
+		Roles:   []string{"admin"},
 	})
 
 	err := svc.authorize(ctx, "keys", "read", "test-key")
@@ -195,7 +195,7 @@ func TestAuthz_AuthorizeDenied(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "user-2",
-		Roles: []string{"reader"},
+		Roles:   []string{"reader"},
 	})
 
 	err := svc.authorize(ctx, "keys", "write", "my-key")
@@ -715,7 +715,7 @@ func TestAuthz_AuditLogOnAllow(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "audited-user",
-		Roles: []string{"operator"},
+		Roles:   []string{"operator"},
 	})
 
 	_, _ = svc.ListBackends(ctx, &pb.ListBackendsRequest{})
@@ -757,7 +757,7 @@ func TestAuthz_AuditLogOnDeny(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "denied-user",
-		Roles: []string{"guest"},
+		Roles:   []string{"guest"},
 	})
 
 	_, _ = svc.GenerateKey(ctx, &pb.GenerateKeyRequest{

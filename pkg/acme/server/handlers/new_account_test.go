@@ -124,16 +124,22 @@ func TestNewAccountHandler_OnlyReturnExisting_AccountDoesNotExist(t *testing.T) 
 	assertErrorType(t, resp, common.ErrTypeAccountDoesNotExist, http.StatusNotFound)
 }
 
+// TestNewAccountHandler_AccountAlreadyExists exercises idempotent
+// re-registration: per RFC 8555 §7.3, when the server already has an
+// account registered with the supplied public key it MUST respond 200
+// (OK) and return the existing account URL — regardless of whether the
+// client set onlyReturnExisting. This is what stock ACME clients (e.g.
+// golang.org/x/crypto/acme) rely on to recover the KID on retry.
 func TestNewAccountHandler_AccountAlreadyExists(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
 	key := generateTestKey(t)
 
-	// Create an existing account first
-	createTestAccount(t, service, key)
+	// Create an existing account first.
+	existing := createTestAccount(t, service, key)
 
-	// Try to create the same account again
+	// Re-register without onlyReturnExisting.
 	payload := NewAccountRequest{
 		Contact:              []string{"mailto:test@example.com"},
 		TermsOfServiceAgreed: true,
@@ -142,12 +148,11 @@ func TestNewAccountHandler_AccountAlreadyExists(t *testing.T) {
 	url := service.baseRESTURI + "/acme/new-account"
 	req := createJWSRequest(t, service, key, url, payload, false, 0)
 
-	// Execute request
 	resp := httptest.NewRecorder()
 	service.NewAccountHandler(resp, req)
 
-	// Should return accountExists error
-	assertErrorType(t, resp, common.ErrTypeAccountExists, http.StatusConflict)
+	require.Equal(t, http.StatusOK, resp.Code, "RFC 8555 §7.3 requires 200 for idempotent re-registration")
+	assert.Equal(t, existing.URL, resp.Header().Get("Location"), "Location header must point to the existing account")
 }
 
 func TestNewAccountHandler_InvalidContact_UnsupportedScheme(t *testing.T) {

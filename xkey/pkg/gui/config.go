@@ -119,7 +119,7 @@ type GUIConfig struct {
 	// AutoUnsealPolicyName is the human-readable name of the policy used for auto-unseal.
 	AutoUnsealPolicyName string `mapstructure:"auto_unseal_policy_name" json:"auto_unseal_policy_name"`
 
-	// AutoUnsealBackend is the seal backend used for auto-unseal (e.g., "tpm2", "software").
+	// AutoUnsealBackend is the seal backend used for auto-unseal (e.g., "tpm2", "passphrase").
 	AutoUnsealBackend string `mapstructure:"auto_unseal_backend" json:"auto_unseal_backend"`
 
 	// FIDO2AuthenticatorEnabled enables the virtual FIDO2 HID authenticator on startup.
@@ -147,7 +147,7 @@ type GUIConfig struct {
 	// BarrierInitialized indicates whether the barrier has been initialized.
 	BarrierInitialized bool `mapstructure:"barrier_initialized" json:"barrier_initialized"`
 
-	// BarrierStrategy is the active barrier strategy ID (e.g., "software", "tpm2").
+	// BarrierStrategy is the active barrier strategy ID (e.g., "passphrase", "tpm2").
 	BarrierStrategy string `mapstructure:"barrier_strategy" json:"barrier_strategy"`
 
 	// BarrierAutoUnsealBlobID is the sealed blob ID containing the barrier password for auto-unseal.
@@ -158,7 +158,7 @@ type GUIConfig struct {
 	// must enter their PIN to unseal the barrier.
 	BarrierAutoUnsealEnabled bool `mapstructure:"barrier_auto_unseal_enabled" json:"barrier_auto_unseal_enabled"`
 
-	// SealerBackend is the user-selected default sealing backend (e.g., "tpm2", "software").
+	// SealerBackend is the user-selected default sealing backend (e.g., "tpm2", "passphrase").
 	// Empty means auto-select the best available.
 	SealerBackend string `mapstructure:"sealer_backend" json:"sealer_backend,omitempty"`
 

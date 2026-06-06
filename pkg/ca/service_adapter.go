@@ -49,6 +49,28 @@ func (ca *CA) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509
 	return ca.SignCSR(csrPEM, opts)
 }
 
+// SignCSRWithSPIFFE signs a CSR and optionally stamps a tenant-scoped SPIFFE
+// URI SAN onto the issued certificate. When trustDomain and tenantID are both
+// non-empty, the SAN spiffe://<trustDomain>/tenant/<tenantID>/<kind>/<name> is
+// appended (kind defaults to "user", name defaults to the subject CN). When
+// either is empty, this is identical to SignCSRRaw.
+//
+// This satisfies the provider.CA interface so pkg/xkms can request SPIFFE-bound
+// certificates without importing ca types.
+//
+// Thread-safe: Yes
+func (ca *CA) SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
+	opts := &SignOptions{
+		Profile:           profile,
+		ValidityDays:      validityDays,
+		SPIFFETrustDomain: trustDomain,
+		TenantID:          tenantID,
+		SPIFFEKind:        kind,
+		SPIFFEName:        name,
+	}
+	return ca.SignCSR(csrPEM, opts)
+}
+
 // IssueCertificateRaw issues a certificate using only primitive parameter types,
 // enabling cross-package duck typing without importing ca types.
 //

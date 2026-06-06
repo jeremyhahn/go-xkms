@@ -16,13 +16,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -30,14 +23,16 @@ import (
 // This allows dependency injection for testing.
 type ClientFactory func(cfg *Config) (client.Client, error)
 
-// UserStoreFactory is a function that creates a user.Store.
-// This allows dependency injection for testing user commands.
-type UserStoreFactory func(storagePath string) (user.Store, error)
-
 // BackendFactory is a function that creates a types.KeyProvider.
 // Deprecated: Use ClientFactory with Protocol="embedded" instead.
 // This allows dependency injection for testing backend operations.
-type BackendFactory func(cfg *Config) (types.KeyProvider, error)
+type BackendFactory func(cfg *Config) (client.KeyProvider, error)
+
+// DefaultTransport is the canonical default transport for xkmsctl. The
+// value is "unix" so the CLI talks to the local xkmsd via the Unix
+// domain socket out of the box, mirroring qrdbctl / quicbaas /
+// platformctl per docs/08-bootstrap-auth-architecture.md §6.
+const DefaultTransport = "unix"
 
 // Config holds global CLI configuration
 type Config struct {
@@ -120,25 +115,23 @@ type Config struct {
 	// If nil, the default client creation logic is used.
 	ClientFactory ClientFactory
 
-	// UserStoreFactory allows injecting a custom user store factory for testing user commands.
-	// If nil, the default user store creation logic is used.
-	UserStoreFactory UserStoreFactory
-
 	// BackendFactory allows injecting a custom backend factory for testing.
 	// Deprecated: Use ClientFactory with Protocol="embedded" instead for SDK-based access.
 	// If nil, the default backend creation logic is used.
 	BackendFactory BackendFactory
 }
 
-// NewConfig creates a new Config with default values
+// NewConfig creates a new Config with default values. The transport
+// defaults to DefaultTransport ("unix") so the CLI talks to the local
+// xkmsd Unix socket out of the box.
 func NewConfig() *Config {
 	return &Config{
 		Backend:      "software",
 		KeyDir:       "xkms-data/keys",
 		OutputFormat: "text",
 		Verbose:      false,
-		Protocol:     "", // Empty means use default Unix socket
-		Server:       "", // Empty means use default Unix socket
+		Protocol:     DefaultTransport,
+		Server:       "",
 	}
 }
 
@@ -152,24 +145,22 @@ func (c *Config) IsLocal() bool {
 // CreateBackend creates a backend for embedded mode operations.
 // Deprecated: Use CreateClient() with Protocol="embedded" instead for SDK-based access.
 // If BackendFactory is set, it uses that factory instead.
-func (c *Config) CreateBackend() (types.KeyProvider, error) {
+func (c *Config) CreateBackend() (client.KeyProvider, error) {
 	// Use injected backend factory if available (for testing)
 	if c.BackendFactory != nil {
 		return c.BackendFactory(c)
 	}
 
-	// Create file-based storage backend
-	storageBackend, err := file.New(c.KeyDir)
+	// Create file-based storage backend via the SDK.
+	storageBackend, err := client.NewFileStorageBackend(c.KeyDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage backend: %w", err)
 	}
 
 	// Create software backend (unified asymmetric + symmetric with import/export support)
-	backendConfig := &software.Config{
+	softwareBackend, err := client.NewSoftwareBackend(&client.SoftwareBackendConfig{
 		KeyStorage: storageBackend,
-	}
-
-	softwareBackend, err := software.NewBackend(backendConfig)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create software backend: %w", err)
 	}
@@ -178,26 +169,15 @@ func (c *Config) CreateBackend() (types.KeyProvider, error) {
 }
 
 // CreateCertStorage creates certificate storage based on the configuration
-func (c *Config) CreateCertStorage() (*storage.CertAdapter, error) {
-	// Create file-based storage backend
-	storageBackend, err := file.New(c.KeyDir)
+func (c *Config) CreateCertStorage() (*client.StorageCertAdapter, error) {
+	// Create file-based storage backend via the SDK.
+	storageBackend, err := client.NewFileStorageBackend(c.KeyDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage backend: %w", err)
 	}
 
 	// Wrap in a CertAdapter for certificate-specific operations
-	return storage.NewCertAdapter(storageBackend), nil
-}
-
-// CreateUserStore creates a user store based on the configuration.
-// If UserStoreFactory is set, it uses that factory instead.
-func (c *Config) CreateUserStore(storagePath string) (user.Store, error) {
-	// Use injected user store factory if available (for testing)
-	if c.UserStoreFactory != nil {
-		return c.UserStoreFactory(storagePath)
-	}
-
-	return openUserStore(storagePath)
+	return client.NewStorageCertAdapter(storageBackend), nil
 }
 
 // IsRemote returns true if the configuration specifies an explicit server URL.
@@ -209,63 +189,20 @@ func (c *Config) IsRemote() bool {
 // createXKMSService creates a xkms.Backend for embedded mode.
 // This initializes the global xkms service with the configured backend.
 func (c *Config) createXKMSService() (client.XKMSServicer, error) {
-	// Create file-based storage backend
-	storageBackend, err := file.New(c.KeyDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create storage backend: %w", err)
-	}
-
-	// Create certificate storage
-	certPath := c.KeyDir + "/certs"
-	certStorage, err := file.New(certPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create certificate storage: %w", err)
-	}
-
-	// Create software backend (unified asymmetric + symmetric with import/export support)
-	backendConfig := &software.Config{
-		KeyStorage: storageBackend,
-	}
-
-	softwareBackend, err := software.NewBackend(backendConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create software backend: %w", err)
-	}
-
-	// Create keystore for the backend
-	ks, err := xkms.New(&xkms.BackendConfig{
-		Backend:     softwareBackend,
-		CertStorage: certStorage,
+	// Build the in-process service entirely through the SDK. The SDK factory
+	// assembles file storage + software backend + keystore and initializes the
+	// service singleton — no pkg/* imports required of the CLI.
+	return client.NewEmbeddedService(client.EmbeddedServiceConfig{
+		KeyDir:      c.KeyDir,
+		BackendName: c.Backend,
 	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create keystore: %w", err)
-	}
-
-	// Initialize global xkms service
-	backends := map[string]xkms.Backend{
-		c.Backend: ks,
-	}
-
-	serviceConfig := &xkms.ServiceConfig{
-		Backends:       backends,
-		DefaultBackend: c.Backend,
-	}
-
-	// Reset any existing service first (in case of reinitialize)
-	xkms.Reset()
-
-	if err := xkms.Initialize(serviceConfig); err != nil {
-		return nil, fmt.Errorf("failed to initialize xkms service: %w", err)
-	}
-
-	// Return the XKMSService singleton which implements XKMSServicer directly
-	return xkms.Get()
 }
 
 // CreateClient creates a client for communicating with xkmsd.
 // If Protocol is "embedded", it creates a direct in-process client.
-// If Server is empty and Protocol is not "embedded", it defaults to the local Unix socket with gRPC.
-// If ClientFactory is set, it uses that factory instead.
+// Otherwise the configured transport is selected (defaults to
+// DefaultTransport in NewConfig). If ClientFactory is set, it uses that
+// factory instead.
 func (c *Config) CreateClient() (client.Client, error) {
 	// Use injected client factory if available (for testing)
 	if c.ClientFactory != nil {
@@ -281,8 +218,13 @@ func (c *Config) CreateClient() (client.Client, error) {
 		return client.NewEmbedded(svc)
 	}
 
-	// Map protocol string to SDK Protocol type
-	if c.Protocol != "" {
+	// Map protocol string to SDK Protocol type. An explicit scheme in --server
+	// (e.g. grpcs://, https://, quic://, unix://) selects the protocol and takes
+	// precedence over the (possibly defaulted) --protocol flag; bare host:port or
+	// socket-path servers use the configured protocol. Without this, the default
+	// transport ("unix") would route every scheme'd URL through the Unix socket
+	// transport, producing "unix://grpcs://…" dial targets.
+	if c.Protocol != "" && !hasScheme(c.Server) {
 		return c.createClientFromProtocol()
 	}
 
@@ -320,7 +262,7 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 
 	// Wire PKCS#11-backed mTLS if --pkcs11-module is set
 	if c.PKCS11Module != "" {
-		tlsCfg, cleanup, err := auth.NewPKCS11TLSConfig(&auth.PKCS11TLSConfig{
+		tlsCfg, cleanup, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
 			ModulePath: c.PKCS11Module,
 			SlotID:     c.PKCS11Slot,
 			PIN:        c.PKCS11PIN,
@@ -338,7 +280,10 @@ func (c *Config) createClientFromProtocol() (client.Client, error) {
 	switch c.Protocol {
 	case "unix":
 		cfg.Protocol = client.ProtocolUnix
-		cfg.Address = c.Server
+		// Strip the unix:// scheme — the unix transport prepends it when dialing,
+		// so passing it through here yields "unix://unix:///path" (gRPC rejects it
+		// with "invalid (non-empty) authority: unix:"). Matches the NewFromURL path.
+		cfg.Address = trimPrefix(c.Server, "unix://")
 		if cfg.Address == "" {
 			cfg.Address = client.DefaultUnixSocketPath
 		}
@@ -385,7 +330,7 @@ func (c *Config) createClientWithTLS() (client.Client, error) {
 
 	// Wire PKCS#11-backed mTLS if --pkcs11-module is set
 	if c.PKCS11Module != "" {
-		tlsCfg, cleanup, err := auth.NewPKCS11TLSConfig(&auth.PKCS11TLSConfig{
+		tlsCfg, cleanup, err := client.NewPKCS11TLSConfig(&client.PKCS11TLSConfig{
 			ModulePath: c.PKCS11Module,
 			SlotID:     c.PKCS11Slot,
 			PIN:        c.PKCS11PIN,
@@ -455,6 +400,16 @@ func (c *Config) createClientWithTLS() (client.Client, error) {
 // Helper functions for string manipulation
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+// hasScheme reports whether s carries a URL scheme (contains "://").
+func hasScheme(s string) bool {
+	for i := 0; i+3 <= len(s); i++ {
+		if s[i:i+3] == "://" {
+			return true
+		}
+	}
+	return false
 }
 
 func trimPrefix(s, prefix string) string {

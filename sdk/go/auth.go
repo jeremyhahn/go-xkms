@@ -16,8 +16,8 @@ package xkms
 import (
 	"context"
 	"crypto/x509"
+	"time"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
 	qrdb "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	embedded "github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
@@ -180,9 +180,21 @@ func (v verifierAdapter) Type() qrdbtransport.FactorType {
 }
 
 // Verify routes to the underlying verifier.
-func (v verifierAdapter) Verify(ctx context.Context, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
+func (v verifierAdapter) Verify(ctx context.Context, factor *qrdb.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
 	if v.webauthn != nil {
 		return v.webauthn.Verify(ctx, factor, challenge)
 	}
 	return v.piv.Verify(ctx, factor, challenge)
+}
+
+// BeginChallenge implements qrdb's embedded.FactorChallenger so the unified
+// login ceremony can obtain a per-method challenge during BeginLogin. WebAuthn
+// returns an RP-bound assertion ceremony (options + session); PIV — and any
+// nonce-based factor — returns a nil challenge to signal that qrdb should use
+// its generic server nonce (which the PIV verifier signs over at Verify time).
+func (v verifierAdapter) BeginChallenge(ctx context.Context, tenantID string, ft qrdbtransport.FactorType, hint string) ([]byte, map[string]string, time.Time, error) {
+	if v.webauthn != nil {
+		return v.webauthn.BeginChallenge(ctx, tenantID, ft, hint)
+	}
+	return nil, nil, time.Time{}, nil
 }

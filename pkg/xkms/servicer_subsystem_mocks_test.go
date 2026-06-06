@@ -5,12 +5,10 @@ import (
 	"crypto"
 	"errors"
 	"testing"
-	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
 	"github.com/stretchr/testify/require"
 )
 
@@ -75,15 +73,15 @@ func setupServiceWithProviders(t *testing.T) (*XKMSService, *mockKeyStore, *mock
 	return svc, software, pkcs11Mock
 }
 
-// mockPINManager implements pin.PINBackend for testing.
+// mockPINManager implements qrdbsdk.PINBackend for testing.
 type mockPINManager struct {
 	soPin      string
 	userPin    string
-	lockStatus *pin.LockoutStatus
+	lockStatus *qrdbsdk.PINLockoutStatus
 	err        error
 }
 
-func (m *mockPINManager) Strategy() pin.StrategyID { return "mock" }
+func (m *mockPINManager) Strategy() qrdbsdk.PINStrategyID { return "mock" }
 
 func (m *mockPINManager) SetSOPIN(current, newPin string) error {
 	if m.err != nil {
@@ -131,11 +129,11 @@ func (m *mockPINManager) VerifyUserPIN(p string) error {
 	return nil
 }
 
-func (m *mockPINManager) GetLockoutStatus() *pin.LockoutStatus {
+func (m *mockPINManager) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
 	if m.lockStatus != nil {
 		return m.lockStatus
 	}
-	return &pin.LockoutStatus{MaxAttempts: 3}
+	return &qrdbsdk.PINLockoutStatus{MaxAttempts: 3}
 }
 
 func (m *mockPINManager) ResetLockout(soPin string) error {
@@ -148,122 +146,6 @@ func (m *mockPINManager) ResetLockout(soPin string) error {
 func (m *mockPINManager) IsInitialized() bool { return m.soPin != "" }
 func (m *mockPINManager) SOPINSet() bool      { return m.soPin != "" }
 func (m *mockPINManager) UserPINSet() bool    { return m.userPin != "" }
-
-// mockUserStore implements user.Store for testing.
-type mockUserStore struct {
-	users map[string]*user.User
-	err   error
-}
-
-func newMockUserStore() *mockUserStore {
-	return &mockUserStore{users: make(map[string]*user.User)}
-}
-
-func (m *mockUserStore) Create(ctx context.Context, username, displayName string, role user.Role, tenantID string) (*user.User, error) {
-	u := &user.User{
-		ID:          []byte(username),
-		Username:    username,
-		DisplayName: displayName,
-		Role:        role,
-		TenantID:    tenantID,
-		Enabled:     true,
-		CreatedAt:   time.Now(),
-	}
-	m.users[username] = u
-	return u, nil
-}
-
-func (m *mockUserStore) GetByID(ctx context.Context, id []byte) (*user.User, error) {
-	for _, u := range m.users {
-		if string(u.ID) == string(id) {
-			return u, nil
-		}
-	}
-	return nil, errors.New("user not found")
-}
-
-func (m *mockUserStore) GetByUsername(ctx context.Context, username string) (*user.User, error) {
-	u, ok := m.users[username]
-	if !ok {
-		return nil, errors.New("user not found")
-	}
-	return u, nil
-}
-
-func (m *mockUserStore) GetByCertFingerprint(ctx context.Context, fingerprint string) (*user.User, error) {
-	return nil, errors.New("not implemented")
-}
-
-func (m *mockUserStore) Update(ctx context.Context, u *user.User) error {
-	m.users[u.Username] = u
-	return nil
-}
-
-func (m *mockUserStore) Delete(ctx context.Context, id []byte) error {
-	for k, u := range m.users {
-		if string(u.ID) == string(id) {
-			delete(m.users, k)
-			return nil
-		}
-	}
-	return errors.New("user not found")
-}
-
-func (m *mockUserStore) List(ctx context.Context) ([]*user.User, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	result := make([]*user.User, 0, len(m.users))
-	for _, u := range m.users {
-		result = append(result, u)
-	}
-	return result, nil
-}
-
-func (m *mockUserStore) ListByTenant(ctx context.Context, tenantID string) ([]*user.User, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	result := make([]*user.User, 0)
-	for _, u := range m.users {
-		if u.TenantID == tenantID {
-			result = append(result, u)
-		}
-	}
-	return result, nil
-}
-
-func (m *mockUserStore) Count(ctx context.Context) (int, error) {
-	return len(m.users), nil
-}
-
-func (m *mockUserStore) HasAnyUsers(ctx context.Context) (bool, error) {
-	return len(m.users) > 0, nil
-}
-
-func (m *mockUserStore) CountAdmins(ctx context.Context) (int, error) {
-	count := 0
-	for _, u := range m.users {
-		if u.Role == user.RoleAdmin {
-			count++
-		}
-	}
-	return count, nil
-}
-
-func (m *mockUserStore) SaveSession(_ context.Context, _ string, _ []byte, _ time.Duration) error {
-	return nil
-}
-
-func (m *mockUserStore) GetSession(_ context.Context, _ string) ([]byte, error) {
-	return nil, errors.New("session not found")
-}
-
-func (m *mockUserStore) DeleteSession(_ context.Context, _ string) error {
-	return nil
-}
-
-func (m *mockUserStore) Close() error { return nil }
 
 // mockPlatformStore implements seal.PlatformStore for testing.
 type mockPlatformStore struct {

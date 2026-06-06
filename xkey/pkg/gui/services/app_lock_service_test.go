@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,14 +37,14 @@ func newTestAppLockService(t *testing.T, verifyErr error) *AppLockService {
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: verifyErr,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	svc := NewAppLockService(pinSvc, nil)
@@ -242,14 +242,14 @@ func TestAppLockService_Unlock_EmptyPIN(t *testing.T) {
 }
 
 func TestAppLockService_Unlock_BadPIN(t *testing.T) {
-	svc := newTestAppLockService(t, pin.ErrPINInvalid)
+	svc := newTestAppLockService(t, qrdbsdk.ErrPINInvalid)
 
 	err := svc.Lock()
 	require.NoError(t, err)
 
 	err = svc.Unlock("wrong-pin")
 	assert.Error(t, err)
-	assert.True(t, errors.Is(err, pin.ErrPINInvalid))
+	assert.True(t, errors.Is(err, qrdbsdk.ErrPINInvalid))
 	assert.True(t, svc.IsLocked())
 }
 
@@ -349,14 +349,14 @@ func TestAppLockService_Unlock_BarrierPath(t *testing.T) {
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
-		verifyUserErr: pin.ErrPINNotSet, // PINService would fail
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		verifyUserErr: qrdbsdk.ErrPINNotSet, // PINService would fail
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	barrierSvc := &mockBarrierService{initialized: true, sealed: true}
@@ -379,14 +379,14 @@ func TestAppLockService_Unlock_PINInvalid_BarrierPath(t *testing.T) {
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: nil,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	barrierSvc := &mockBarrierService{initialized: true, sealed: true, unsealErr: errors.New("bad password")}
@@ -409,14 +409,14 @@ func TestAppLockService_Unlock_BarrierAlreadyUnsealed_UsesPINService(t *testing.
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: nil, // PIN verification succeeds
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	barrierSvc := &mockBarrierService{initialized: true, sealed: false} // Already unsealed
@@ -443,14 +443,14 @@ func TestAppLockService_Unlock_BarrierNotInitialized_VerifiesPINAndInitializes(t
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: nil,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	// Barrier is configured but NOT initialized (directory doesn't exist).
@@ -478,14 +478,14 @@ func TestAppLockService_Unlock_SetupIncomplete_BarrierNotInitializedAndPINNotSet
 	pinSvc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      false,
 		userPINSet:    false, // PIN not set - setup incomplete
 		initialized:   false,
 		verifyUserErr: errors.New("pin not set"),
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	// Barrier is configured but NOT initialized.

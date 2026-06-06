@@ -51,8 +51,8 @@ const pemMediaType = "application/x-pem-file"
 // only depend on the bundle bytes; remaining fields are decoded for forward
 // compatibility but ignored.
 type jsonBundleResponse struct {
-	Bundle  []byte               `json:"bundle"`
-	Payload *jsonBundlePayload   `json:"payload,omitempty"`
+	Bundle  []byte             `json:"bundle"`
+	Payload *jsonBundlePayload `json:"payload,omitempty"`
 }
 
 // jsonBundlePayload mirrors the inner payload of the platform envelope.
@@ -206,7 +206,8 @@ func newClient(opts Options, timeout time.Duration) (*http.Client, *leafObserver
 
 	observer := newLeafObserver()
 	wrapped := observer.wrap(tlsConfig.VerifyPeerCertificate)
-	tlsConfig.VerifyPeerCertificate = wrapped
+	// #nosec G123 -- resumption disabled via SessionTicketsDisabled in BuildTLSConfig, so VerifyPeerCertificate is never bypassed on a resumed session.
+	tlsConfig.VerifyPeerCertificate = wrapped //nolint:gosec // G123 handled by SessionTicketsDisabled in BuildTLSConfig
 
 	transport := &http.Transport{
 		TLSClientConfig:       tlsConfig,

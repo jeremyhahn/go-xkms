@@ -791,7 +791,7 @@ func TestSignCSR_RBAC_AdminRole(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "admin-user",
-		Roles:  []string{"admin"},
+		Roles:   []string{"admin"},
 	})
 
 	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
@@ -815,7 +815,7 @@ func TestSignCSR_RBAC_UserRole(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "regular-user",
-		Roles:  []string{"user"},
+		Roles:   []string{"user"},
 	})
 
 	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{
@@ -832,7 +832,7 @@ func TestSignCSR_RBAC_DeniedRole(t *testing.T) {
 
 	ctx := auth.WithIdentity(context.Background(), &auth.Identity{
 		Subject: "viewer-user",
-		Roles:  []string{"viewer"},
+		Roles:   []string{"viewer"},
 	})
 
 	resp, err := svc.SignCSR(ctx, &transport.SignCSRRequest{

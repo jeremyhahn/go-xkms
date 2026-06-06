@@ -1,0 +1,228 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package server
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"testing"
+
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// newQRDBTestServer builds a minimal *Server configured for embedded qrdb
+// storage rooted at a temp dir, with the shared qrdb backend initialized.
+func newQRDBTestServer(t *testing.T) *Server {
+	t.Helper()
+
+	s := &Server{
+		config: &config.Config{
+			Storage: config.StorageConfig{
+				Backend: "qrdb",
+				Path:    t.TempDir(),
+				QRDB: config.QRDBConfig{
+					Transport: "embedded",
+				},
+			},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	require.NoError(t, s.initializeQRDBStorage())
+	require.NotNil(t, s.qrdbStorage)
+	return s
+}
+
+// TestCreateStorage_QRDBEmbeddedRoundTrip verifies that createStorage("qrdb")
+// returns a working prefixed view over the shared embedded qrdb backend and
+// that round-trip Put/Get succeeds.
+func TestCreateStorage_QRDBEmbeddedRoundTrip(t *testing.T) {
+	s := newQRDBTestServer(t)
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+
+	ctx := context.Background()
+
+	users, err := s.createStorage("users")
+	require.NoError(t, err)
+	require.NoError(t, users.Put(ctx, "alice", []byte("alice-value")))
+
+	got, err := users.Get(ctx, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("alice-value"), got)
+}
+
+// TestCreateStorage_QRDBNamespaceIsolation verifies that two subdir views over
+// the same shared qrdb backend are isolated: a key written to one namespace is
+// not visible via another namespace's prefixed view.
+func TestCreateStorage_QRDBNamespaceIsolation(t *testing.T) {
+	s := newQRDBTestServer(t)
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+
+	ctx := context.Background()
+
+	users, err := s.createStorage("users")
+	require.NoError(t, err)
+	caView, err := s.createStorage("ca")
+	require.NoError(t, err)
+
+	// Same logical key in each namespace, different values.
+	require.NoError(t, users.Put(ctx, "shared-key", []byte("from-users")))
+	require.NoError(t, caView.Put(ctx, "shared-key", []byte("from-ca")))
+
+	uVal, err := users.Get(ctx, "shared-key")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("from-users"), uVal)
+
+	cVal, err := caView.Get(ctx, "shared-key")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("from-ca"), cVal)
+
+	// A key written only to "users" must not be visible via the "ca" view.
+	// The qrdb node KV returns storage.ErrNotFound for a missing key (the
+	// single, consistent backend contract; qrdb's sentinel is aligned to
+	// storage.ErrNotFound), so isolation is asserted via the not-found error
+	// and via List, which is correctly prefix-scoped.
+	require.NoError(t, users.Put(ctx, "users-only", []byte("secret")))
+
+	_, err = caView.Get(ctx, "users-only")
+	require.ErrorIs(t, err, storage.ErrNotFound, "users-only must not be readable via the ca namespace")
+
+	usersHit, err := users.Get(ctx, "users-only")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("secret"), usersHit)
+
+	// List in each namespace returns only that namespace's keys (prefix stripped).
+	// This is the authoritative isolation signal: the ca namespace must not
+	// enumerate any users-namespace key.
+	userKeys, err := users.List(ctx, "")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"shared-key", "users-only"}, userKeys)
+
+	caKeys, err := caView.List(ctx, "")
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"shared-key"}, caKeys)
+	assert.NotContains(t, caKeys, "users-only")
+}
+
+// TestCreateStorage_QRDBPrefixViewCloseDoesNotBreakSharedBackend verifies the
+// ownership contract: closing one prefixed view is a no-op on the shared inner
+// backend, so other views and the shared backend keep working.
+func TestCreateStorage_QRDBPrefixViewCloseDoesNotBreakSharedBackend(t *testing.T) {
+	s := newQRDBTestServer(t)
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+
+	ctx := context.Background()
+
+	users, err := s.createStorage("users")
+	require.NoError(t, err)
+	caView, err := s.createStorage("ca")
+	require.NoError(t, err)
+
+	require.NoError(t, users.Put(ctx, "k", []byte("u")))
+	require.NoError(t, caView.Put(ctx, "k", []byte("c")))
+
+	// Closing the users view must not tear down the shared backend.
+	require.NoError(t, users.Close())
+
+	// The ca view still works after the users view was closed.
+	cVal, err := caView.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("c"), cVal)
+
+	// And the users view itself still reads, because Close was a no-op on inner.
+	uVal, err := users.Get(ctx, "k")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("u"), uVal)
+}
+
+// TestCreateStorageAt_QRDBDerivesPrefixFromBase verifies that createStorageAt
+// derives a qrdb key namespace from the final path segment and round-trips.
+func TestCreateStorageAt_QRDBDerivesPrefixFromBase(t *testing.T) {
+	s := newQRDBTestServer(t)
+	t.Cleanup(func() { _ = s.closeQRDBStorage() })
+
+	ctx := context.Background()
+
+	soft, err := s.createStorageAt("/var/lib/xkms/software")
+	require.NoError(t, err)
+	pkcs8View, err := s.createStorageAt("/var/lib/xkms/pkcs8")
+	require.NoError(t, err)
+
+	require.NoError(t, soft.Put(ctx, "key1", []byte("soft")))
+	require.NoError(t, pkcs8View.Put(ctx, "key1", []byte("pkcs8")))
+
+	sVal, err := soft.Get(ctx, "key1")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("soft"), sVal)
+
+	// Namespaces are isolated by base segment.
+	_, err = pkcs8View.Get(ctx, "key1")
+	require.NoError(t, err)
+	pVal, err := pkcs8View.Get(ctx, "key1")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("pkcs8"), pVal)
+
+	assert.NotEqual(t, sVal, pVal)
+}
+
+// TestInitializeQRDBStorage_NonQRDBBackendNoop verifies the initializer is a
+// no-op when the configured storage backend is not qrdb.
+func TestInitializeQRDBStorage_NonQRDBBackendNoop(t *testing.T) {
+	s := &Server{
+		config: &config.Config{
+			Storage: config.StorageConfig{
+				Backend: "file",
+				Path:    t.TempDir(),
+			},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	require.NoError(t, s.initializeQRDBStorage())
+	assert.Nil(t, s.qrdbStorage)
+}
+
+// TestInitializeQRDBStorage_UnsupportedTransport verifies an unknown qrdb
+// transport is rejected.
+func TestInitializeQRDBStorage_UnsupportedTransport(t *testing.T) {
+	s := &Server{
+		config: &config.Config{
+			Storage: config.StorageConfig{
+				Backend: "qrdb",
+				Path:    t.TempDir(),
+				QRDB:    config.QRDBConfig{Transport: "carrier-pigeon"},
+			},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	err := s.initializeQRDBStorage()
+	require.Error(t, err)
+	assert.Nil(t, s.qrdbStorage)
+}
+
+// TestCloseQRDBStorage_Idempotent verifies closeQRDBStorage can be called
+// multiple times safely.
+func TestCloseQRDBStorage_Idempotent(t *testing.T) {
+	s := newQRDBTestServer(t)
+
+	require.NoError(t, s.closeQRDBStorage())
+	assert.Nil(t, s.qrdbStorage)
+	// Second call is a no-op.
+	require.NoError(t, s.closeQRDBStorage())
+}

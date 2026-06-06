@@ -16,8 +16,6 @@ package quic
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
@@ -66,14 +64,6 @@ type BarrierRecoverWithKeysRequest struct {
 // root token by providing Shamir shares.
 type BarrierGenerateRootTokenRequest struct {
 	Shares []string `json:"shares"`
-}
-
-// BarrierShamirSharesResponse represents the response for Shamir share
-// listing operations.
-type BarrierShamirSharesResponse struct {
-	Count     int `json:"count"`
-	Threshold int `json:"threshold,omitempty"`
-	Total     int `json:"total,omitempty"`
 }
 
 // --- Shamir barrier handlers ---
@@ -282,141 +272,6 @@ func (s *Server) handleBarrierGenerateRootToken(w http.ResponseWriter, r *http.R
 		"success":    true,
 		"token":      token.Token,
 		"created_at": token.CreatedAt,
-	})
-}
-
-// handleBarrierShamirShares handles GET and DELETE /api/v1/barrier/shamir/shares requests.
-// GET returns the share count and configuration. DELETE removes all shares.
-func (s *Server) handleBarrierShamirShares(w http.ResponseWriter, r *http.Request) {
-	if s.barrier == nil {
-		s.sendError(w, http.StatusServiceUnavailable, ErrBarrierNotConfigured.Error())
-		return
-	}
-
-	switch r.Method {
-	case http.MethodGet:
-		if !s.authorize(w, r, "barrier", "read") {
-			return
-		}
-
-		shamirStrat := s.barrier.ShamirStrategy()
-		if shamirStrat == nil {
-			s.sendError(w, http.StatusBadRequest, seal.ErrShamirNotConfigured.Error())
-			return
-		}
-
-		count, err := shamirStrat.ShareCount(r.Context())
-		if err != nil {
-			sendBarrierError(s, w, err)
-			return
-		}
-
-		s.sendJSON(w, http.StatusOK, BarrierShamirSharesResponse{
-			Count:     count,
-			Threshold: shamirStrat.Threshold(),
-			Total:     shamirStrat.TotalShares(),
-		})
-
-	case http.MethodDelete:
-		if !s.authorize(w, r, "barrier", "use") {
-			return
-		}
-
-		shamirStrat := s.barrier.ShamirStrategy()
-		if shamirStrat == nil {
-			s.sendError(w, http.StatusBadRequest, seal.ErrShamirNotConfigured.Error())
-			return
-		}
-
-		if err := shamirStrat.DeleteAllShares(r.Context()); err != nil {
-			sendBarrierError(s, w, err)
-			return
-		}
-
-		s.sendJSON(w, http.StatusOK, map[string]interface{}{
-			"success": true,
-			"message": "all shares deleted",
-		})
-
-	default:
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-	}
-}
-
-// handleBarrierShamirDeleteShare handles DELETE /api/v1/barrier/shamir/shares/{index} requests.
-// It removes a specific share by its 1-based index.
-func (s *Server) handleBarrierShamirDeleteShare(w http.ResponseWriter, r *http.Request, path string) {
-	if r.Method != http.MethodDelete {
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	if s.barrier == nil {
-		s.sendError(w, http.StatusServiceUnavailable, ErrBarrierNotConfigured.Error())
-		return
-	}
-
-	if !s.authorize(w, r, "barrier", "use") {
-		return
-	}
-
-	// Parse share index from path suffix: "shamir/shares/{index}"
-	indexStr := strings.TrimPrefix(path, "shamir/shares/")
-	index, err := strconv.Atoi(indexStr)
-	if err != nil {
-		s.sendError(w, http.StatusBadRequest, "invalid share index: "+indexStr)
-		return
-	}
-
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		s.sendError(w, http.StatusBadRequest, seal.ErrShamirNotConfigured.Error())
-		return
-	}
-
-	if err := shamirStrat.DeleteShare(r.Context(), index); err != nil {
-		sendBarrierError(s, w, err)
-		return
-	}
-
-	s.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "share deleted",
-		"index":   index,
-	})
-}
-
-// handleBarrierShamirVerify handles POST /api/v1/barrier/shamir/verify requests.
-// It verifies the integrity and consistency of all stored Shamir shares.
-func (s *Server) handleBarrierShamirVerify(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	if s.barrier == nil {
-		s.sendError(w, http.StatusServiceUnavailable, ErrBarrierNotConfigured.Error())
-		return
-	}
-
-	if !s.authorize(w, r, "barrier", "use") {
-		return
-	}
-
-	shamirStrat := s.barrier.ShamirStrategy()
-	if shamirStrat == nil {
-		s.sendError(w, http.StatusBadRequest, seal.ErrShamirNotConfigured.Error())
-		return
-	}
-
-	if err := shamirStrat.VerifyShares(r.Context()); err != nil {
-		sendBarrierError(s, w, err)
-		return
-	}
-
-	s.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"message": "all shares verified",
 	})
 }
 

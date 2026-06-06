@@ -36,7 +36,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ import (
 
 // p5aMockPINBackend adds configurable VerifySOPIN support.
 type p5aMockPINBackend struct {
-	strategy        pin.StrategyID
+	strategy        qrdbsdk.PINStrategyID
 	soPINSet        bool
 	userPINSet      bool
 	initialized     bool
@@ -56,29 +56,29 @@ type p5aMockPINBackend struct {
 	verifyUserErr   error
 	verifySOPINErr  error
 	resetLockoutErr error
-	lockoutStatus   *pin.LockoutStatus
+	lockoutStatus   *qrdbsdk.PINLockoutStatus
 }
 
-func (m *p5aMockPINBackend) Strategy() pin.StrategyID             { return m.strategy }
-func (m *p5aMockPINBackend) SOPINSet() bool                       { return m.soPINSet }
-func (m *p5aMockPINBackend) UserPINSet() bool                     { return m.userPINSet }
-func (m *p5aMockPINBackend) IsInitialized() bool                  { return m.initialized }
-func (m *p5aMockPINBackend) GetLockoutStatus() *pin.LockoutStatus { return m.lockoutStatus }
-func (m *p5aMockPINBackend) SetSOPIN(_, _ string) error           { return m.setSOPINErr }
-func (m *p5aMockPINBackend) SetUserPIN(_, _ string) error         { return m.setUserPINErr }
-func (m *p5aMockPINBackend) ChangeSOPIN(_, _ string) error        { return m.changeSOPINErr }
-func (m *p5aMockPINBackend) ChangeUserPIN(_, _ string) error      { return m.changeUserErr }
-func (m *p5aMockPINBackend) VerifySOPIN(_ string) error           { return m.verifySOPINErr }
-func (m *p5aMockPINBackend) VerifyUserPIN(_ string) error         { return m.verifyUserErr }
-func (m *p5aMockPINBackend) ResetLockout(_ string) error          { return m.resetLockoutErr }
-func (m *p5aMockPINBackend) SetMaxAttempts(_ int)                 {}
+func (m *p5aMockPINBackend) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
+func (m *p5aMockPINBackend) SOPINSet() bool                              { return m.soPINSet }
+func (m *p5aMockPINBackend) UserPINSet() bool                            { return m.userPINSet }
+func (m *p5aMockPINBackend) IsInitialized() bool                         { return m.initialized }
+func (m *p5aMockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
+func (m *p5aMockPINBackend) SetSOPIN(_, _ string) error                  { return m.setSOPINErr }
+func (m *p5aMockPINBackend) SetUserPIN(_, _ string) error                { return m.setUserPINErr }
+func (m *p5aMockPINBackend) ChangeSOPIN(_, _ string) error               { return m.changeSOPINErr }
+func (m *p5aMockPINBackend) ChangeUserPIN(_, _ string) error             { return m.changeUserErr }
+func (m *p5aMockPINBackend) VerifySOPIN(_ string) error                  { return m.verifySOPINErr }
+func (m *p5aMockPINBackend) VerifyUserPIN(_ string) error                { return m.verifyUserErr }
+func (m *p5aMockPINBackend) ResetLockout(_ string) error                 { return m.resetLockoutErr }
+func (m *p5aMockPINBackend) SetMaxAttempts(_ int)                        {}
 
 // p5aNewPINService creates a PINService with the given backend and context.
-func p5aNewPINService(backend pin.PINBackend) *PINService {
+func p5aNewPINService(backend qrdbsdk.PINBackend) *PINService {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
 	if backend != nil {
-		pSvc := pin.NewService(backend, slog.Default())
+		pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 		svc.SetPINService(pSvc)
 	}
 	return svc
@@ -206,7 +206,7 @@ func (m *p5aMockTrustStore) Close() error                                       
 // always returns nil from VerifySOPIN, so this explicitly tests with our p5a mock.
 func TestP5A_PINService_VerifySOPIN_SuccessPath(t *testing.T) {
 	mgr := &p5aMockPINBackend{
-		strategy:       pin.StrategySoftware,
+		strategy:       qrdbsdk.PINStrategySoftware,
 		verifySOPINErr: nil,
 	}
 	svc := p5aNewPINService(mgr)
@@ -219,20 +219,20 @@ func TestP5A_PINService_VerifySOPIN_SuccessPath(t *testing.T) {
 // manager returns an error.
 func TestP5A_PINService_VerifySOPIN_FailurePath(t *testing.T) {
 	mgr := &p5aMockPINBackend{
-		strategy:       pin.StrategySoftware,
-		verifySOPINErr: pin.ErrPINInvalid,
+		strategy:       qrdbsdk.PINStrategySoftware,
+		verifySOPINErr: qrdbsdk.ErrPINInvalid,
 	}
 	svc := p5aNewPINService(mgr)
 
 	err := svc.VerifySOPIN("wrong-pin")
-	assert.ErrorIs(t, err, pin.ErrPINInvalid)
+	assert.ErrorIs(t, err, qrdbsdk.ErrPINInvalid)
 }
 
 // TestP5A_PINService_GetLockoutStatus_NilStatus tests GetLockoutStatus when
 // the PINManager returns a nil LockoutStatus.
 func TestP5A_PINService_GetLockoutStatus_NilStatus(t *testing.T) {
 	mgr := &p5aMockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		lockoutStatus: nil,
 	}
 	svc := p5aNewPINService(mgr)
@@ -246,7 +246,7 @@ func TestP5A_PINService_GetLockoutStatus_NilStatus(t *testing.T) {
 // full success path including the manager returning nil.
 func TestP5A_PINService_ResetLockout_SuccessWithMgr(t *testing.T) {
 	mgr := &p5aMockPINBackend{
-		strategy:        pin.StrategySoftware,
+		strategy:        qrdbsdk.PINStrategySoftware,
 		resetLockoutErr: nil,
 	}
 	svc := p5aNewPINService(mgr)
@@ -258,7 +258,7 @@ func TestP5A_PINService_ResetLockout_SuccessWithMgr(t *testing.T) {
 // TestP5A_PINService_SetSOPIN_SuccessPath tests SetSOPIN success path
 // with the mock manager returning no error.
 func TestP5A_PINService_SetSOPIN_SuccessPath(t *testing.T) {
-	mgr := &p5aMockPINBackend{strategy: pin.StrategySoftware}
+	mgr := &p5aMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := p5aNewPINService(mgr)
 
 	err := svc.SetSOPIN("current-sopin", "new-sopin")
@@ -270,7 +270,7 @@ func TestP5A_PINService_SetSOPIN_SuccessPath(t *testing.T) {
 func TestP5A_PINService_ChangeSOPIN_ErrorPath(t *testing.T) {
 	testErr := errors.New("p5a: change sopin failed")
 	mgr := &p5aMockPINBackend{
-		strategy:       pin.StrategySoftware,
+		strategy:       qrdbsdk.PINStrategySoftware,
 		changeSOPINErr: testErr,
 	}
 	svc := p5aNewPINService(mgr)
@@ -283,20 +283,20 @@ func TestP5A_PINService_ChangeSOPIN_ErrorPath(t *testing.T) {
 // manager returns an error.
 func TestP5A_PINService_VerifyUserPIN_ErrorPath(t *testing.T) {
 	mgr := &p5aMockPINBackend{
-		strategy:      pin.StrategySoftware,
-		verifyUserErr: pin.ErrPINInvalid,
+		strategy:      qrdbsdk.PINStrategySoftware,
+		verifyUserErr: qrdbsdk.ErrPINInvalid,
 	}
 	svc := p5aNewPINService(mgr)
 
 	err := svc.VerifyUserPIN("wrong-pin")
-	assert.ErrorIs(t, err, pin.ErrPINInvalid)
+	assert.ErrorIs(t, err, qrdbsdk.ErrPINInvalid)
 }
 
 // TestP5A_PINService_GetPINStatus_MixedState tests GetPINStatus with partial
 // initialization (SO PIN set but user PIN not set).
 func TestP5A_PINService_GetPINStatus_MixedState(t *testing.T) {
 	mgr := &p5aMockPINBackend{
-		strategy:    pin.StrategyTPM2,
+		strategy:    qrdbsdk.PINStrategyTPM2,
 		soPINSet:    true,
 		userPINSet:  false,
 		initialized: true,
@@ -309,7 +309,7 @@ func TestP5A_PINService_GetPINStatus_MixedState(t *testing.T) {
 	assert.True(t, status.SOPINSet)
 	assert.False(t, status.UserPINSet)
 	assert.True(t, status.Initialized)
-	assert.Equal(t, string(pin.StrategyTPM2), status.Strategy)
+	assert.Equal(t, string(qrdbsdk.PINStrategyTPM2), status.Strategy)
 }
 
 // ---------------------------------------------------------------------------

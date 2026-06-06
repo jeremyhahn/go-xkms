@@ -104,8 +104,8 @@ func (s *sdkPIVStore) Export(slot pivcert.PIVSlot, format pivcert.CertFormat) ([
 	}
 	return c.Raw, nil
 }
-func (s *sdkPIVStore) Close() error                  { return nil }
-func (s *sdkPIVStore) Type() pivcert.PIVStorageType  { return "sdk-test" }
+func (s *sdkPIVStore) Close() error                 { return nil }
+func (s *sdkPIVStore) Type() pivcert.PIVStorageType { return "sdk-test" }
 
 // makeSDKTestCert mints a throwaway self-signed cert for the SDK tests.
 func makeSDKTestCert(t *testing.T, cn string) *x509.Certificate {

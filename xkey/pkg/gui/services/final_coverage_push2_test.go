@@ -645,7 +645,7 @@ func TestFinalCoveragePush4_BarrierService_Seal_Success(t *testing.T) {
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	err = svc.Seal()
@@ -660,7 +660,7 @@ func TestFinalCoveragePush4_BarrierService_Seal_WithAuditLogger(t *testing.T) {
 	logger := &fcpMockAuditLogger{}
 	svc.SetAuditLogger(logger)
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	err = svc.Seal()
@@ -692,7 +692,7 @@ func TestFinalCoveragePush4_BarrierService_GetBackend_AfterInitialize(t *testing
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	backend := svc.GetBackend()
@@ -738,7 +738,7 @@ func TestFinalCoveragePush4_BarrierService_CheckInitialized_FindsKey(t *testing.
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	result := svc.checkInitialized()
@@ -754,7 +754,7 @@ func TestFinalCoveragePush4_BarrierService_UnsealSealCycle(t *testing.T) {
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc.IsUnsealed())
 
@@ -762,7 +762,7 @@ func TestFinalCoveragePush4_BarrierService_UnsealSealCycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, svc.IsUnsealed())
 
-	err = svc.Unseal("password", "software")
+	err = svc.Unseal("password", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc.IsUnsealed())
 }
@@ -785,7 +785,7 @@ func TestFinalCoveragePush4_BarrierService_Status_AfterInitialize(t *testing.T) 
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	status := svc.Status()

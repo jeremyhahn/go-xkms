@@ -994,7 +994,7 @@ func TestCreateTenantUser_Success(t *testing.T) {
 			assert.Equal(t, "testuser", in.Username)
 			assert.Equal(t, []string{"role-1"}, in.RoleIds)
 			return &pb.User{
-				Id:        "user-1",
+				Id:        "1",
 				Username:  in.Username,
 				TenantId:  in.TenantId,
 				RoleIds:   in.RoleIds,
@@ -1013,7 +1013,7 @@ func TestCreateTenantUser_Success(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", result.ID)
+	assert.Equal(t, uint64(1), result.ID)
 	assert.Equal(t, "testuser", result.Username)
 	assert.Equal(t, "tenant-1", result.TenantID)
 	assert.Equal(t, []string{"role-1"}, result.RoleIDs)
@@ -1044,7 +1044,7 @@ func TestGetTenantUser_Success(t *testing.T) {
 			assert.Equal(t, "tenant-1", in.TenantId)
 			assert.Equal(t, "user-1", in.UserId)
 			return &pb.User{
-				Id:        "user-1",
+				Id:        "1",
 				Username:  "testuser",
 				TenantId:  "tenant-1",
 				RoleIds:   []string{"role-1", "role-2"},
@@ -1060,7 +1060,7 @@ func TestGetTenantUser_Success(t *testing.T) {
 	result, err := adapter.GetTenantUser(context.Background(), "tenant-1", "user-1")
 
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", result.ID)
+	assert.Equal(t, uint64(1), result.ID)
 	assert.Equal(t, "testuser", result.Username)
 	assert.Equal(t, []string{"role-1", "role-2"}, result.RoleIDs)
 	assert.True(t, result.Enabled)
@@ -1083,11 +1083,11 @@ func TestUpdateTenantUser_Success(t *testing.T) {
 	mockClient := &mockAdminServiceClient{
 		updateTenantUserFunc: func(ctx context.Context, in *pb.UpdateTenantUserRequest, opts ...grpc.CallOption) (*pb.User, error) {
 			assert.Equal(t, "tenant-1", in.TenantId)
-			assert.Equal(t, "user-1", in.UserId)
+			assert.Equal(t, "1", in.UserId)
 			assert.Equal(t, "updated-user", in.Username)
 			assert.Equal(t, []string{"role-2"}, in.RoleIds)
 			return &pb.User{
-				Id:       "user-1",
+				Id:       "1",
 				Username: in.Username,
 				TenantId: in.TenantId,
 				RoleIds:  in.RoleIds,
@@ -1098,13 +1098,13 @@ func TestUpdateTenantUser_Success(t *testing.T) {
 
 	adapter := newTestAdapter(mockClient, "")
 	result, err := adapter.UpdateTenantUser(context.Background(), "tenant-1", &db.UpdateUserRequest{
-		ID:       "user-1",
+		ID:       1,
 		Username: "updated-user",
 		RoleIDs:  []string{"role-2"},
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "user-1", result.ID)
+	assert.Equal(t, uint64(1), result.ID)
 	assert.Equal(t, "updated-user", result.Username)
 	assert.Equal(t, []string{"role-2"}, result.RoleIDs)
 }
@@ -1118,7 +1118,7 @@ func TestUpdateTenantUser_Error(t *testing.T) {
 
 	adapter := newTestAdapter(mockClient, "")
 	_, err := adapter.UpdateTenantUser(context.Background(), "tenant-1", &db.UpdateUserRequest{
-		ID:       "user-1",
+		ID:       1,
 		Username: "updated-user",
 		RoleIDs:  []string{"role-2"},
 	})
@@ -1162,8 +1162,8 @@ func TestListTenantUsers_Success(t *testing.T) {
 			assert.Equal(t, int32(10), in.PageSize)
 			return &pb.ListTenantUsersResponse{
 				Users: []*pb.User{
-					{Id: "user-1", Username: "alice", TenantId: "tenant-1", RoleIds: []string{"role-1"}, Enabled: true},
-					{Id: "user-2", Username: "bob", TenantId: "tenant-1", RoleIds: []string{"role-2"}, Enabled: true},
+					{Id: "1", Username: "alice", TenantId: "tenant-1", RoleIds: []string{"role-1"}, Enabled: true},
+					{Id: "2", Username: "bob", TenantId: "tenant-1", RoleIds: []string{"role-2"}, Enabled: true},
 				},
 				Total:   2,
 				HasMore: false,
@@ -1179,9 +1179,9 @@ func TestListTenantUsers_Success(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, result.Users, 2)
-	assert.Equal(t, "user-1", result.Users[0].ID)
+	assert.Equal(t, uint64(1), result.Users[0].ID)
 	assert.Equal(t, "alice", result.Users[0].Username)
-	assert.Equal(t, "user-2", result.Users[1].ID)
+	assert.Equal(t, uint64(2), result.Users[1].ID)
 	assert.Equal(t, "bob", result.Users[1].Username)
 	assert.Equal(t, 2, result.Total)
 	assert.False(t, result.HasMore)
@@ -1676,13 +1676,14 @@ func TestPbToRole_AllFields(t *testing.T) {
 }
 
 func TestPbToUser_Nil(t *testing.T) {
-	result := pbToUser(nil)
+	result, err := pbToUser(nil)
+	assert.NoError(t, err)
 	assert.Nil(t, result)
 }
 
 func TestPbToUser_AllFields(t *testing.T) {
 	pbUser := &pb.User{
-		Id:        "user-1",
+		Id:        "1",
 		Username:  "alice",
 		TenantId:  "tenant-1",
 		RoleIds:   []string{"role-1", "role-2"},
@@ -1692,10 +1693,11 @@ func TestPbToUser_AllFields(t *testing.T) {
 		UpdatedAt: "2026-03-11T12:00:00Z",
 	}
 
-	result := pbToUser(pbUser)
+	result, err := pbToUser(pbUser)
 
+	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "user-1", result.ID)
+	assert.Equal(t, uint64(1), result.ID)
 	assert.Equal(t, "alice", result.Username)
 	assert.Equal(t, "tenant-1", result.TenantID)
 	assert.Equal(t, []string{"role-1", "role-2"}, result.RoleIDs)

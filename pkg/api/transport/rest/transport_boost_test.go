@@ -743,36 +743,6 @@ func TestAttestKey_InvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
 
-func TestListUsers_InvalidJSON(t *testing.T) {
-	srv, tr := newInvalidJSONServer(t)
-	defer srv.Close()
-	defer tr.Close()
-
-	_, err := tr.ListUsers(context.Background())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse response")
-}
-
-func TestGetUser_InvalidJSON(t *testing.T) {
-	srv, tr := newInvalidJSONServer(t)
-	defer srv.Close()
-	defer tr.Close()
-
-	_, err := tr.GetUser(context.Background(), "user1")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse response")
-}
-
-func TestListUserCredentials_InvalidJSON(t *testing.T) {
-	srv, tr := newInvalidJSONServer(t)
-	defer srv.Close()
-	defer tr.Close()
-
-	_, err := tr.ListUserCredentials(context.Background(), "user1")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse response")
-}
-
 // --- WebAuthn InvalidJSON ---
 
 func TestBeginRegistration_InvalidJSON(t *testing.T) {
@@ -792,7 +762,7 @@ func TestFinishRegistration_InvalidJSON(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{
-		CredentialID: "cred1", Username: "test",
+		SessionID: "sess1", AttestationJSON: "{}",
 	})
 	require.Error(t, err)
 }
@@ -814,7 +784,7 @@ func TestFinishAuthentication_InvalidJSON(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{
-		CredentialID: "cred1", Username: "test",
+		SessionID: "sess1", Username: "test",
 	})
 	require.Error(t, err)
 }
@@ -1033,16 +1003,6 @@ func TestBarrierUnsealWithShare_InvalidJSON(t *testing.T) {
 	defer tr.Close()
 
 	_, err := tr.BarrierUnsealWithShare(context.Background(), &transport.BarrierUnsealShareRequest{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse response")
-}
-
-func TestBarrierShamirListShares_InvalidJSON(t *testing.T) {
-	srv, tr := newInvalidJSONServer(t)
-	defer srv.Close()
-	defer tr.Close()
-
-	_, err := tr.BarrierShamirListShares(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse response")
 }
@@ -2206,34 +2166,6 @@ func TestBarrierUnsealWithShares_NotConnected(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestBarrierShamirListShares_NotConnected(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-	_, err = tr.BarrierShamirListShares(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirDeleteShare_NotConnected(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-	err = tr.BarrierShamirDeleteShare(context.Background(), &transport.BarrierShamirDeleteShareRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirDeleteAllShares_NotConnected(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-	err = tr.BarrierShamirDeleteAllShares(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestBarrierShamirVerify_NotConnected(t *testing.T) {
-	tr, err := NewWithConfig(nil)
-	require.NoError(t, err)
-	err = tr.BarrierShamirVerify(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestBarrierRekey_NotConnected(t *testing.T) {
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)
@@ -2499,33 +2431,31 @@ func newWebAuthnMockServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		path := r.URL.Path
 
-		switch {
-		case path == "/health":
+		switch path {
+		case "/health":
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": "1.0.0"})
-		case path == "/api/v1/webauthn/registration/begin":
-			w.Header().Set("X-Session-Id", "sess-123")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"challenge": "Y2hhbGxlbmdl",
-				"user":      map[string]string{"id": "uid1", "name": "test", "displayName": "Test User"},
-				"rp":        map[string]string{"id": "localhost", "name": "Test RP"},
-				"pubKeyCredParams": []map[string]interface{}{
-					{"type": "public-key", "alg": -7},
-				},
+		case "/api/v1/webauthn/sdk/registration/begin":
+			json.NewEncoder(w).Encode(map[string]string{
+				"session_id":   "sess-123",
+				"options_json": `{"publicKey":{"challenge":"Y2hhbGxlbmdl"}}`,
 			})
-		case path == "/api/v1/webauthn/registration/finish":
-			json.NewEncoder(w).Encode(map[string]string{"token": "jwt-token", "user_id": "uid1"})
-		case path == "/api/v1/webauthn/login/begin":
-			w.Header().Set("X-Session-Id", "sess-456")
-			w.Header().Set("X-User-Id", "uid1")
+		case "/api/v1/webauthn/sdk/registration/finish":
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"challenge": "Y2hhbGxlbmdl",
-				"rpId":      "localhost",
-				"allowCredentials": []map[string]string{
-					{"id": "cred1", "type": "public-key"},
-				},
+				"success":       true,
+				"credential_id": "cred1",
+				"token":         "jwt-token",
 			})
-		case path == "/api/v1/webauthn/login/finish":
-			json.NewEncoder(w).Encode(map[string]string{"token": "jwt-auth", "user_id": "uid1"})
+		case "/api/v1/webauthn/sdk/authentication/begin":
+			json.NewEncoder(w).Encode(map[string]string{
+				"session_id":   "sess-456",
+				"options_json": `{"publicKey":{"challenge":"Y2hhbGxlbmdl"}}`,
+			})
+		case "/api/v1/webauthn/sdk/authentication/finish":
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"success":  true,
+				"token":    "jwt-auth",
+				"username": "test@example.com",
+			})
 		default:
 			json.NewEncoder(w).Encode(map[string]string{"result": "ok"})
 		}
@@ -2546,10 +2476,8 @@ func TestBeginRegistration_Success(t *testing.T) {
 		DisplayName: "Test User",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "Y2hhbGxlbmdl", resp.Challenge)
-	assert.Equal(t, "uid1", resp.UserID)
-	assert.Equal(t, "localhost", resp.RPID)
-	assert.Len(t, resp.CredentialParams, 1)
+	assert.Equal(t, "sess-123", resp.SessionID)
+	assert.Contains(t, resp.OptionsJSON, "Y2hhbGxlbmdl")
 }
 
 func TestFinishRegistration_Success(t *testing.T) {
@@ -2562,14 +2490,13 @@ func TestFinishRegistration_Success(t *testing.T) {
 	defer tr.Close()
 
 	resp, err := tr.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{
-		Username:        "test@example.com",
-		CredentialID:    "cred1",
-		ClientDataJSON:  "cdj",
-		AttestationData: "att",
+		SessionID:       "sess-123",
+		AttestationJSON: `{"id":"cred1","type":"public-key"}`,
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	assert.Equal(t, "cred1", resp.CredentialID)
+	assert.Equal(t, "jwt-token", resp.Token)
 }
 
 func TestBeginAuthentication_Success(t *testing.T) {
@@ -2585,9 +2512,8 @@ func TestBeginAuthentication_Success(t *testing.T) {
 		Username: "test@example.com",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "Y2hhbGxlbmdl", resp.Challenge)
-	assert.Equal(t, "localhost", resp.RPID)
-	assert.Len(t, resp.CredentialIDs, 1)
+	assert.Equal(t, "sess-456", resp.SessionID)
+	assert.Contains(t, resp.OptionsJSON, "Y2hhbGxlbmdl")
 }
 
 func TestFinishAuthentication_Success(t *testing.T) {
@@ -2600,15 +2526,14 @@ func TestFinishAuthentication_Success(t *testing.T) {
 	defer tr.Close()
 
 	resp, err := tr.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{
-		Username:          "test@example.com",
-		CredentialID:      "cred1",
-		ClientDataJSON:    "cdj",
-		AuthenticatorData: "authdata",
-		Signature:         "sig",
+		SessionID:     "sess-456",
+		Username:      "test@example.com",
+		AssertionJSON: `{"id":"cred1","type":"public-key"}`,
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
 	assert.Equal(t, "jwt-auth", resp.Token)
+	assert.Equal(t, "test@example.com", resp.Username)
 }
 
 // --- BeginAuthentication with empty username ---
@@ -2625,37 +2550,6 @@ func TestBeginAuthentication_EmptyUsername(t *testing.T) {
 	resp, err := tr.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{})
 	require.NoError(t, err)
 	assert.NotNil(t, resp)
-}
-
-// --- ListUserCredentials with credentials ---
-
-func TestListUserCredentials_WithCredentials(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": "1.0.0"})
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"credentials": []map[string]string{
-				{"id": "cred1", "name": "My Key", "created_at": "2025-01-01"},
-				{"id": "cred2", "name": "Backup Key", "created_at": "2025-02-01", "last_used_at": "2025-03-01"},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	tr, err := New(transport.WithAddress(srv.URL))
-	require.NoError(t, err)
-	require.NoError(t, tr.Connect(context.Background()))
-	defer tr.Close()
-
-	resp, err := tr.ListUserCredentials(context.Background(), "user1")
-	require.NoError(t, err)
-	require.Len(t, resp.Credentials, 2)
-	assert.Equal(t, "cred1", resp.Credentials[0].ID)
-	assert.Equal(t, "My Key", resp.Credentials[0].DisplayName)
 }
 
 // --- Healthy with request error (closed server) ---

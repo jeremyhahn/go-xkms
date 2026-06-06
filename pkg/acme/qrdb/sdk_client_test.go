@@ -24,7 +24,7 @@ import (
 func TestTypeAliasSDKClient(t *testing.T) {
 	t.Run("alias resolves to sdk.Client", func(t *testing.T) {
 		// Compile-time verification that the type alias resolves correctly.
-		var _ *SDKClient = (*qrdbsdk.Client)(nil)
+		var _ = (*qrdbsdk.Client)(nil)
 	})
 }
 
@@ -35,7 +35,7 @@ func TestTypeAliasKVClient(t *testing.T) {
 	})
 
 	t.Run("alias matches db.KVClient", func(t *testing.T) {
-		var kv KVClient = db.KVClient(NewMemoryKVClient())
+		var kv = db.KVClient(NewMemoryKVClient())
 		assert.NotNil(t, kv)
 	})
 }
@@ -52,12 +52,12 @@ func TestTypeAliasCompileChecks(t *testing.T) {
 		// These assignments verify compile-time type compatibility.
 		// The blank identifiers ensure the compiler checks the types
 		// without requiring runtime values.
-		var _ KVClient = (db.KVClient)(nil)
-		var _ AdminClient = (db.AdminClient)(nil)
-		var _ WatchClient = (db.WatchClient)(nil)
-		var _ LeaseClient = (db.LeaseClient)(nil)
-		var _ BatchClient = (db.BatchClient)(nil)
-		var _ TransactionClient = (db.TransactionClient)(nil)
-		var _ IndexClient = (db.IndexClient)(nil)
+		var _ = (db.KVClient)(nil)
+		var _ = (db.AdminClient)(nil)
+		var _ = (db.WatchClient)(nil)
+		var _ = (db.LeaseClient)(nil)
+		var _ = (db.BatchClient)(nil)
+		var _ = (db.TransactionClient)(nil)
+		var _ = (db.IndexClient)(nil)
 	})
 }

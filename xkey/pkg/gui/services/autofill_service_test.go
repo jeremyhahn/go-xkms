@@ -19,8 +19,8 @@ import (
 	"log/slog"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/autofill"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -41,18 +41,20 @@ type autofillMockPINBackend struct {
 	validPIN string
 }
 
-func (m *autofillMockPINBackend) SOPINSet() bool                       { return true }
-func (m *autofillMockPINBackend) UserPINSet() bool                     { return true }
-func (m *autofillMockPINBackend) IsInitialized() bool                  { return true }
-func (m *autofillMockPINBackend) Strategy() pin.StrategyID             { return pin.StrategySoftware }
-func (m *autofillMockPINBackend) SetSOPIN(_, _ string) error           { return nil }
-func (m *autofillMockPINBackend) SetUserPIN(_, _ string) error         { return nil }
-func (m *autofillMockPINBackend) ChangeSOPIN(_, _ string) error        { return nil }
-func (m *autofillMockPINBackend) ChangeUserPIN(_, _ string) error      { return nil }
-func (m *autofillMockPINBackend) VerifySOPIN(_ string) error           { return nil }
-func (m *autofillMockPINBackend) ResetLockout(_ string) error          { return nil }
-func (m *autofillMockPINBackend) SetMaxAttempts(_ int)                 {}
-func (m *autofillMockPINBackend) GetLockoutStatus() *pin.LockoutStatus { return &pin.LockoutStatus{} }
+func (m *autofillMockPINBackend) SOPINSet() bool                  { return true }
+func (m *autofillMockPINBackend) UserPINSet() bool                { return true }
+func (m *autofillMockPINBackend) IsInitialized() bool             { return true }
+func (m *autofillMockPINBackend) Strategy() qrdbsdk.PINStrategyID { return qrdbsdk.PINStrategySoftware }
+func (m *autofillMockPINBackend) SetSOPIN(_, _ string) error      { return nil }
+func (m *autofillMockPINBackend) SetUserPIN(_, _ string) error    { return nil }
+func (m *autofillMockPINBackend) ChangeSOPIN(_, _ string) error   { return nil }
+func (m *autofillMockPINBackend) ChangeUserPIN(_, _ string) error { return nil }
+func (m *autofillMockPINBackend) VerifySOPIN(_ string) error      { return nil }
+func (m *autofillMockPINBackend) ResetLockout(_ string) error     { return nil }
+func (m *autofillMockPINBackend) SetMaxAttempts(_ int)            {}
+func (m *autofillMockPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
+	return &qrdbsdk.PINLockoutStatus{}
+}
 
 func (m *autofillMockPINBackend) VerifyUserPIN(userPIN string) error {
 	if userPIN == m.validPIN {
@@ -121,7 +123,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 	// PIN service with a mock backend (for AppLockService).
 	pinSvc := NewPINService()
 	backend := &autofillMockPINBackend{validPIN: "123456"}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	// App lock service starts unlocked.

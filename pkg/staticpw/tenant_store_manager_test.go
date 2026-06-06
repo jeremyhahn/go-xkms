@@ -29,7 +29,7 @@ import (
 func testBarrierConfig() seal.BarrierConfig {
 	return seal.BarrierConfig{
 		RootKeyPath:     "core/seal",
-		PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+		PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 	}
 }
 

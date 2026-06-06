@@ -898,32 +898,6 @@ func (m *mockXKMSService) AttestKey(ctx context.Context, req *transport.AttestKe
 	return nil, errors.New("attestation not supported in mock")
 }
 
-// User management methods
-
-func (m *mockXKMSService) ListUsers(ctx context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return &transport.ListUsersResponse{}, nil
-}
-
-func (m *mockXKMSService) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
-	return &transport.GetUserResponse{}, nil
-}
-
-func (m *mockXKMSService) DeleteUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *mockXKMSService) EnableUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *mockXKMSService) DisableUser(ctx context.Context, username string) error {
-	return nil
-}
-
-func (m *mockXKMSService) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
-	return &transport.ListUserCredentialsResponse{}, nil
-}
-
 // Authentication flow methods
 
 func (m *mockXKMSService) BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
@@ -1222,22 +1196,6 @@ func (m *mockXKMSService) PolicyExport(ctx context.Context, req *transport.Polic
 
 // Extended barrier operations
 
-func (m *mockXKMSService) BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-
-func (m *mockXKMSService) BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-
-func (m *mockXKMSService) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	return nil
-}
-
-func (m *mockXKMSService) BarrierShamirVerify(ctx context.Context) error {
-	return nil
-}
-
 func (m *mockXKMSService) BarrierRekey(ctx context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	return nil, nil
 }
@@ -1361,5 +1319,37 @@ func (m *mockXKMSService) SubmitCredential(ctx context.Context, req *transport.C
 }
 
 func (m *mockXKMSService) GetCredentialStrategy(ctx context.Context) (*transport.CredentialStrategyResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) ListUsers(ctx context.Context, opts ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (m *mockXKMSService) DeleteUser(ctx context.Context, username string) error {
+	return nil
+}
+
+func (m *mockXKMSService) EnableUser(ctx context.Context, username string) error {
+	return nil
+}
+
+func (m *mockXKMSService) DisableUser(ctx context.Context, username string) error {
+	return nil
+}
+
+func (m *mockXKMSService) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	return nil
+}
+
+func (m *mockXKMSService) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
 	return nil, nil
 }

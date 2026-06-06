@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { isRealWailsRuntime } from './setup-helpers';
 
 /**
  * Setup → Unlock Regression Tests
@@ -174,7 +175,18 @@ async function completeSetupWizard(page: Page): Promise<void> {
   }
 }
 
+const REAL_WAILS_SKIP_REASON =
+  'Setup/lock flow uses addInitScript mocks that cannot override the real Wails runtime against ' +
+  'an already-initialized backend. Covered in the Vite UI suite.';
+
 test.describe('Setup → Unlock Regression', () => {
+  test.beforeEach(async ({ page }) => {
+    // These tests mock window.go via addInitScript. Against the real Wails backend
+    // the native runtime re-injects the real bindings after load, bypassing the
+    // mock and causing the wizard/lock overlay to never appear.
+    const realWails = await isRealWailsRuntime(page);
+    test.skip(realWails, REAL_WAILS_SKIP_REASON);
+  });
 
   test('User PIN from setup wizard unlocks the app after restart', async ({ page }) => {
     await installSetupThenLockMock(page);

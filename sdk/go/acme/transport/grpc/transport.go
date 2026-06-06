@@ -41,6 +41,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -269,6 +270,8 @@ func (t *Transport) buildDialOptions() ([]grpc.DialOption, error) {
 
 	// Configure TLS or insecure mode.
 	if t.cfg.Insecure {
+		slog.Warn("acme/grpc: TLS certificate verification disabled via Insecure=true; do not use in production",
+			"address", t.cfg.Address)
 		// Use TLS with InsecureSkipVerify for self-signed certs in dev/testing.
 		opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{
 			MinVersion:         tls.VersionTLS13,

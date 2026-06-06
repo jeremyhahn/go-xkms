@@ -132,6 +132,12 @@ func (m *MockCA) TLSCertificate(_ *types.KeyAttributes) (tls.Certificate, error)
 	return tls.Certificate{}, nil
 }
 func (m *MockCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) { return &tls.Config{}, nil }
+func (m *MockCA) ServerTLSConfig(_ *types.KeyAttributes, _ bool) (*tls.Config, error) {
+	return &tls.Config{}, nil
+}
+func (m *MockCA) ClientTLSConfig(_ *types.KeyAttributes, _ string) (*tls.Config, error) {
+	return &tls.Config{}, nil
+}
 func (m *MockCA) QuantumSafeTLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
 	return &tls.Config{}, nil
 }

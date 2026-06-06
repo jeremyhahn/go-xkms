@@ -327,8 +327,8 @@ func TestNewMTLSHTTPClient_WithValidCA(t *testing.T) {
 	if transport.TLSClientConfig.RootCAs == nil {
 		t.Fatal("expected non-nil RootCAs")
 	}
-	if transport.TLSClientConfig.MinVersion != tls.VersionTLS12 {
-		t.Fatal("expected MinVersion TLS 1.2")
+	if transport.TLSClientConfig.MinVersion != tls.VersionTLS13 {
+		t.Fatal("expected MinVersion TLS 1.3")
 	}
 }
 

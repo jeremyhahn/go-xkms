@@ -574,13 +574,51 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 	slot = strings.ToLower(slot)
 
 	if s.client != nil {
-		err := s.client.DeletePIVCertificate(s.ctx, &transport.DeletePIVCertificateRequest{
+		certErr := s.client.DeletePIVCertificate(s.ctx, &transport.DeletePIVCertificateRequest{
 			Backend: s.backend,
 			Slot:    slot,
 		})
-		if err != nil {
-			slog.Error("PIV delete certificate failed", "slot", slot, "backend", s.backend, "error", err)
-			return fmt.Errorf("pivcert: delete slot %s: %w", slot, err)
+		// A "certificate not found" error is expected for key-only slots and
+		// must not block key deletion. Any other error is a real failure.
+		certNotFound := certErr != nil && strings.Contains(certErr.Error(), "not found")
+		if certErr != nil && !certNotFound {
+			slog.Error("PIV delete certificate failed", "slot", slot, "backend", s.backend, "error", certErr)
+			return fmt.Errorf("pivcert: delete slot %s: %w", slot, certErr)
+		}
+
+		// Delete the underlying key too so the slot becomes fully empty (the
+		// contract removes BOTH cert and key). The remote KeyInfo only exposes
+		// KeyID, so match the software-backend "piv-<slot>" convention used by
+		// key generation and ExportPublicKey.
+		cn := "piv-" + slot
+		listResp, listErr := s.client.ListKeys(s.ctx, s.backend)
+		if listErr != nil {
+			slog.Error("PIV delete: remote list keys failed", "slot", slot, "backend", s.backend, "error", listErr)
+			if certNotFound {
+				return fmt.Errorf("pivcert: delete slot %s: cert absent, key listing failed: %v: %w", slot, listErr, ErrPIVNoCertificate)
+			}
+			return nil
+		}
+		keyDeleted := false
+		for _, k := range listResp.Keys {
+			if !strings.EqualFold(k.KeyID, cn) {
+				continue
+			}
+			if _, delErr := s.client.DeleteKey(s.ctx, s.backend, k.KeyID); delErr != nil {
+				slog.Error("PIV delete key failed", "slot", slot, "keyID", k.KeyID, "error", delErr)
+				return fmt.Errorf("pivcert: delete key for slot %s: %w", slot, delErr)
+			}
+			keyDeleted = true
+			slog.Info("audit", "component", "audit",
+				"operation", "piv_key_deleted", "success", true,
+				"timestamp", time.Now().Format(time.RFC3339),
+				"slot", slot, "backend", s.backend)
+			break
+		}
+		// Nothing in the slot at all — report not found only when both cert
+		// and key were absent.
+		if certNotFound && !keyDeleted {
+			return fmt.Errorf("pivcert: slot %s has neither certificate nor key: %w", slot, ErrPIVNoCertificate)
 		}
 		return nil
 	}
@@ -605,7 +643,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 			slog.Error("PIV delete: list keys failed", "slot", slot, "backend", backend, "error", listErr)
 			// If the cert was deleted but we cannot list keys, surface partial success.
 			if certNotFound {
-				return fmt.Errorf("pivcert: delete slot %s: %w", slot, listErr)
+				return fmt.Errorf("pivcert: delete slot %s: cert absent, key listing failed: %v: %w", slot, listErr, ErrPIVNoCertificate)
 			}
 			return nil
 		}
@@ -630,7 +668,7 @@ func (s *PIVService) DeleteCertificate(slot string) error {
 		// Nothing in the slot at all — report not found only when both cert
 		// and key were absent.
 		if certNotFound && !keyDeleted {
-			return fmt.Errorf("pivcert: slot %s has neither certificate nor key", slot)
+			return fmt.Errorf("pivcert: slot %s has neither certificate nor key: %w", slot, ErrPIVNoCertificate)
 		}
 		return nil
 	}

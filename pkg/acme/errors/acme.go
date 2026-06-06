@@ -180,8 +180,8 @@ func ToProblemDocument(err error) *ProblemDocument {
 	// Convert sub-errors to sub-problems
 	for _, se := range tce.SubErrors {
 		sp := SubProblemDoc{
-			Type:   acmeURNPrefix + errorTypeToACMEType(se.TrustedCAError.Type),
-			Detail: se.TrustedCAError.Detail,
+			Type:   acmeURNPrefix + errorTypeToACMEType(se.Type),
+			Detail: se.Detail,
 		}
 		if se.Identifier.Type != "" || se.Identifier.Value != "" {
 			sp.Identifier = &ProblemIdentifier{

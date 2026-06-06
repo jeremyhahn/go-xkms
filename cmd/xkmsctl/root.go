@@ -20,6 +20,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// transportFlagUsage is the canonical help text for the --transport flag,
+// kept identical across xkmsctl, qrdbctl, quicbaas, and platformctl.
+const transportFlagUsage = "Client transport: rest, grpc, quic, mcp, unix, embedded"
+
 var (
 	// Global configuration
 	globalConfig *Config
@@ -38,7 +42,7 @@ cryptographic keys across multiple backends including software,
 hardware, and cloud-based key management systems.
 
 By default, the CLI communicates with the xkmsd daemon via Unix socket.
-Use --protocol to specify the communication protocol:
+Use --transport to specify the client transport:
   - embedded: Direct backend access without daemon (local mode)
   - rest:     REST API over HTTP/HTTPS
   - grpc:     gRPC protocol
@@ -79,15 +83,19 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&globalConfig.Verbose, "verbose", "v", false,
 		"verbose output")
 
-	// Protocol flag - specifies communication protocol with daemon
-	rootCmd.PersistentFlags().StringVarP(&globalConfig.Protocol, "protocol", "P", "",
-		"communication protocol (embedded, rest, grpc, quic, mcp, unix)\n"+
-			"  embedded: direct backend access without daemon\n"+
-			"  rest:     REST API over HTTP/HTTPS\n"+
-			"  grpc:     gRPC protocol\n"+
-			"  quic:     QUIC/HTTP3 protocol\n"+
-			"  mcp:      Model Context Protocol\n"+
-			"  unix:     Unix domain socket (default)")
+	// Transport flag - selects the SDK transport used to reach xkmsd.
+	// This is the canonical flag; --protocol (-P) is retained below as a
+	// deprecated alias for backwards compatibility with existing scripts
+	// and integration tests.
+	rootCmd.PersistentFlags().StringVar(&globalConfig.Protocol, "transport", DefaultTransport,
+		transportFlagUsage)
+	rootCmd.PersistentFlags().StringVarP(&globalConfig.Protocol, "protocol", "P", DefaultTransport,
+		transportFlagUsage+" (deprecated: use --transport)")
+	if err := rootCmd.PersistentFlags().MarkDeprecated("protocol", "use --transport instead"); err != nil {
+		// MarkDeprecated only errors when the flag does not exist; we
+		// just registered it, so a panic here indicates a programmer error.
+		panic(fmt.Sprintf("xkmsctl: failed to deprecate --protocol: %v", err))
+	}
 
 	// Server connection flags
 	rootCmd.PersistentFlags().StringVarP(&globalConfig.Server, "server", "s", "",

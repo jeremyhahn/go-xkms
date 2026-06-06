@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/ca"
-	caFixtures "github.com/jeremyhahn/go-xkms/test/integration/acme-ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	caFixtures "github.com/jeremyhahn/go-xkms/test/integration/acme-ca"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/local"
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -69,7 +69,7 @@ func TestFactory_OrderDAO_InvalidAccountID(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = factory.OrderDAO(0)
-	var idErr dao.InvalidEntityIDError
+	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
@@ -101,7 +101,7 @@ func TestFactory_AuthorizationDAO_InvalidAccountID(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = factory.AuthorizationDAO(0)
-	var idErr dao.InvalidEntityIDError
+	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
@@ -133,7 +133,7 @@ func TestFactory_ChallengeDAO_InvalidAccountID(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = factory.ChallengeDAO(0)
-	var idErr dao.InvalidEntityIDError
+	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
@@ -187,7 +187,7 @@ func TestFactory_ExternalAccountBindingDAO(t *testing.T) {
 
 func TestNewFactory_NilStore(t *testing.T) {
 	_, err := NewFactory(nil)
-	var cfgErr dao.InvalidConfigError
+	var cfgErr qrdbsdk.DAOInvalidConfigError
 	assert.True(t, errors.As(err, &cfgErr))
 }
 
@@ -219,7 +219,7 @@ func TestFactory_MockStorage_OrderDAO_InvalidAccountID(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = factory.OrderDAO(0)
-	var idErr dao.InvalidEntityIDError
+	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 

@@ -73,7 +73,7 @@ type adapterKeyHandle struct {
 	backendType  types.BackendType
 }
 
-func (h *adapterKeyHandle) CredentialID() []byte        { return h.credentialID }
+func (h *adapterKeyHandle) CredentialID() []byte         { return h.credentialID }
 func (h *adapterKeyHandle) Algorithm() int               { return h.algorithm }
 func (h *adapterKeyHandle) BackendID() types.BackendType { return h.backendType }
 
@@ -91,9 +91,15 @@ func (a *BackendAdapter) Capabilities() FIDO2KeyCapabilities {
 	// PKCS#11 and software backends support all standard EC curves.
 	algorithms := algorithmsForBackend(a.backendType)
 
+	// Hardware-backed FIDO2 credential keys never leave the device, so the
+	// capability flag must report them as non-exportable regardless of the
+	// provider's general export capability (e.g. the PKCS#11 provider reports
+	// Export=true for extractable keys, but FIDO2 credential keys are bound to
+	// hardware). ExportPrivateKey enforces this per-key at runtime; this keeps
+	// the advertised capability consistent with that behavior.
 	return FIDO2KeyCapabilities{
 		SupportedAlgorithms: algorithms,
-		SupportsExport:      caps.Export,
+		SupportsExport:      caps.Export && !caps.HardwareBacked,
 		SupportsImport:      caps.Import,
 		SupportsAttestation: false,
 		HardwareBacked:      caps.HardwareBacked,

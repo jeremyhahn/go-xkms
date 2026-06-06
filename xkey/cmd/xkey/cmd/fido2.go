@@ -34,12 +34,12 @@ import (
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/keyboard"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -155,8 +155,8 @@ const (
 // FIDO2Config holds the configuration for the virtual FIDO2 device.
 type FIDO2Config struct {
 	// Storage configuration
-	StorageType     FIDO2StorageType
-	StoragePath     string
+	StorageType         FIDO2StorageType
+	StoragePath         string
 	BarrierPassword     string
 	BarrierPasswordFile string
 

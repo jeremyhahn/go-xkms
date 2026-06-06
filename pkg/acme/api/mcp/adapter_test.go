@@ -1262,7 +1262,7 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("CreateTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.createUser"] = db.User{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice",
 			TenantID: "tenant-1",
 			RoleIDs:  []string{"role-1"},
@@ -1287,8 +1287,8 @@ func TestAdapterUserOperations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("CreateTenantUser() failed: %v", err)
 		}
-		if user.ID != "user-1" {
-			t.Errorf("Expected user ID 'user-1', got '%s'", user.ID)
+		if user.ID != 1 {
+			t.Errorf("Expected user ID 1, got %d", user.ID)
 		}
 		if user.Username != "alice" {
 			t.Errorf("Expected username 'alice', got '%s'", user.Username)
@@ -1325,7 +1325,7 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("GetTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.getUser"] = db.User{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice",
 			TenantID: "tenant-1",
 			Enabled:  true,
@@ -1358,8 +1358,8 @@ func TestAdapterUserOperations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetTenantUser() failed: %v", err)
 		}
-		if user.ID != "user-1" {
-			t.Errorf("Expected user ID 'user-1', got '%s'", user.ID)
+		if user.ID != 1 {
+			t.Errorf("Expected user ID 1, got %d", user.ID)
 		}
 		if user.Username != "alice" {
 			t.Errorf("Expected username 'alice', got '%s'", user.Username)
@@ -1392,7 +1392,7 @@ func TestAdapterUserOperations(t *testing.T) {
 	t.Run("UpdateTenantUser success", func(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.updateUser"] = db.User{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice-updated",
 			TenantID: "tenant-1",
 			RoleIDs:  []string{"role-1", "role-2"},
@@ -1410,7 +1410,7 @@ func TestAdapterUserOperations(t *testing.T) {
 
 		ctx := context.Background()
 		req := &db.UpdateUserRequest{
-			ID:       "user-1",
+			ID:       1,
 			Username: "alice-updated",
 			RoleIDs:  []string{"role-1", "role-2"},
 		}
@@ -1443,7 +1443,7 @@ func TestAdapterUserOperations(t *testing.T) {
 		defer adapter.Close()
 
 		ctx := context.Background()
-		req := &db.UpdateUserRequest{ID: "nonexistent", Username: "updated"}
+		req := &db.UpdateUserRequest{ID: 999, Username: "updated"}
 		_, err = adapter.UpdateTenantUser(ctx, "tenant-1", req)
 		if err == nil {
 			t.Error("Expected error for UpdateTenantUser")
@@ -1497,8 +1497,8 @@ func TestAdapterUserOperations(t *testing.T) {
 		handler := newMockMCPHandler(t)
 		handler.responses["admin.listUsers"] = db.ListUsersResponse{
 			Users: []*db.User{
-				{ID: "user-1", Username: "alice", TenantID: "tenant-1"},
-				{ID: "user-2", Username: "bob", TenantID: "tenant-1"},
+				{ID: 1, Username: "alice", TenantID: "tenant-1"},
+				{ID: 2, Username: "bob", TenantID: "tenant-1"},
 			},
 			Total:   2,
 			HasMore: false,

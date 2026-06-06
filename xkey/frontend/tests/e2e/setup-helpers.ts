@@ -3,6 +3,37 @@ import { type Page, expect } from '@playwright/test';
 export { isWailsMode } from './helpers';
 
 /**
+ * Detect the REAL Wails runtime (not a test mock).
+ *
+ * The genuine Wails desktop runtime injects window.runtime into the WebView
+ * before any page scripts execute. The wizard mock (installWizardMock) only
+ * sets window.go, never window.runtime, so this check reliably separates the
+ * real Wails context from both Vite-dev mode and mock-Wails mode.
+ *
+ * Implementation: we register an addInitScript that snapshots the runtime flag
+ * at the earliest possible moment (before application JS runs), navigate to the
+ * blank origin, then read the captured flag. Must be called BEFORE
+ * installWizardMock and BEFORE the page.goto('/') that loads the application.
+ *
+ * Returns true only when the real Wails runtime bridge is present.
+ */
+export async function isRealWailsRuntime(page: Page): Promise<boolean> {
+  // The real Wails runtime injects `window.runtime` (and overwrites `window.go`
+  // with the real bindings) asynchronously AFTER the page loads — in dev mode it
+  // is fetched from the dev server, so an init script runs too early to observe
+  // it. Navigate, then poll for `window.runtime`. The wizard mock only ever sets
+  // `window.go`, never `window.runtime`, so its presence reliably distinguishes
+  // the real backend (skip these mock tests) from Vite UI-only mode.
+  await page.goto('/');
+  return page
+    .waitForFunction(() => typeof (window as { runtime?: unknown }).runtime !== 'undefined', undefined, {
+      timeout: 5000,
+    })
+    .then(() => true)
+    .catch(() => false);
+}
+
+/**
  * Install a minimal mock of window.go so the Svelte app sees
  * isWailsAvailable() === true and receives a startup state with
  * setup_complete: false, which causes the SetupWizard to render

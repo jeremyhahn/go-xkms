@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
@@ -415,7 +414,7 @@ type MockOrderDAOListFailure90 struct {
 	listError error
 }
 
-func (m *MockOrderDAOListFailure90) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbdao.PagerFunc[*entities.ACMEOrder]) error {
+func (m *MockOrderDAOListFailure90) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbsdk.PagerFunc[*entities.ACMEOrder]) error {
 	return m.listError
 }
 
@@ -513,7 +512,7 @@ type MockAuthzDAOListFailure90 struct {
 	listError error
 }
 
-func (m *MockAuthzDAOListFailure90) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbdao.PagerFunc[*entities.ACMEAuthorization]) error {
+func (m *MockAuthzDAOListFailure90) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbsdk.PagerFunc[*entities.ACMEAuthorization]) error {
 	return m.listError
 }
 

@@ -33,7 +33,7 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -46,7 +46,7 @@ import (
 // =============================================================================
 
 func TestMapDAONotFound_AllEntityTypes(t *testing.T) {
-	notFoundErr := qrdbdao.NotFoundError{EntityType: "test", ID: 1}
+	notFoundErr := qrdbsdk.DAONotFoundError{EntityType: "test", ID: 1}
 
 	tests := []struct {
 		name       string

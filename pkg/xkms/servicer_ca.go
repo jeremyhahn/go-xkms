@@ -144,7 +144,12 @@ func (s *XKMSService) SignCSR(ctx context.Context, req *transport.SignCSRRequest
 		return nil, err
 	}
 
-	cert, err := ca.SignCSRRaw(req.CSRPEM, req.Profile, req.ValidityDays)
+	// When a trust domain is configured and the request carries a tenant, the
+	// issued client certificate is stamped with a tenant-scoped SPIFFE SAN so
+	// login can derive the tenant from the verified peer certificate. The
+	// SPIFFE kind defaults to "user" and the name defaults to the CSR subject
+	// CommonName (resolved inside the CA).
+	cert, err := ca.SignCSRWithSPIFFE(req.CSRPEM, req.Profile, req.ValidityDays, s.SPIFFETrustDomain(), req.TenantID, "", "")
 	if err != nil {
 		return nil, &ErrCAOperation{Operation: "sign csr", Err: err}
 	}

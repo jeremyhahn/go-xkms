@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
@@ -44,10 +44,10 @@ import (
 // Mock prefix: p6b (phase 6 batch)
 // ---------------------------------------------------------------------------
 
-// p6bMockPINManager implements pin.PINBackend for testing panic recovery
+// p6bMockPINManager implements qrdbsdk.PINBackend for testing panic recovery
 // and coordinator notification paths.
 type p6bMockPINManager struct {
-	strategy    pin.StrategyID
+	strategy    qrdbsdk.PINStrategyID
 	soPINSet    bool
 	userPINSet  bool
 	initialized bool
@@ -59,21 +59,21 @@ type p6bMockPINManager struct {
 	verifyUserErr   error
 	verifySOErr     error
 	resetLockoutErr error
-	lockoutStatus   *pin.LockoutStatus
+	lockoutStatus   *qrdbsdk.PINLockoutStatus
 }
 
-func (m *p6bMockPINManager) Strategy() pin.StrategyID             { return m.strategy }
-func (m *p6bMockPINManager) SOPINSet() bool                       { return m.soPINSet }
-func (m *p6bMockPINManager) UserPINSet() bool                     { return m.userPINSet }
-func (m *p6bMockPINManager) IsInitialized() bool                  { return m.initialized }
-func (m *p6bMockPINManager) GetLockoutStatus() *pin.LockoutStatus { return m.lockoutStatus }
-func (m *p6bMockPINManager) SetSOPIN(_, _ string) error           { return m.setSOPINErr }
-func (m *p6bMockPINManager) SetUserPIN(_, _ string) error         { return m.setUserPINErr }
-func (m *p6bMockPINManager) ChangeSOPIN(_, _ string) error        { return m.changeSOPINErr }
-func (m *p6bMockPINManager) ChangeUserPIN(_, _ string) error      { return m.changeUserErr }
-func (m *p6bMockPINManager) VerifySOPIN(_ string) error           { return m.verifySOErr }
-func (m *p6bMockPINManager) VerifyUserPIN(_ string) error         { return m.verifyUserErr }
-func (m *p6bMockPINManager) ResetLockout(_ string) error { return m.resetLockoutErr }
+func (m *p6bMockPINManager) Strategy() qrdbsdk.PINStrategyID             { return m.strategy }
+func (m *p6bMockPINManager) SOPINSet() bool                              { return m.soPINSet }
+func (m *p6bMockPINManager) UserPINSet() bool                            { return m.userPINSet }
+func (m *p6bMockPINManager) IsInitialized() bool                         { return m.initialized }
+func (m *p6bMockPINManager) GetLockoutStatus() *qrdbsdk.PINLockoutStatus { return m.lockoutStatus }
+func (m *p6bMockPINManager) SetSOPIN(_, _ string) error                  { return m.setSOPINErr }
+func (m *p6bMockPINManager) SetUserPIN(_, _ string) error                { return m.setUserPINErr }
+func (m *p6bMockPINManager) ChangeSOPIN(_, _ string) error               { return m.changeSOPINErr }
+func (m *p6bMockPINManager) ChangeUserPIN(_, _ string) error             { return m.changeUserErr }
+func (m *p6bMockPINManager) VerifySOPIN(_ string) error                  { return m.verifySOErr }
+func (m *p6bMockPINManager) VerifyUserPIN(_ string) error                { return m.verifyUserErr }
+func (m *p6bMockPINManager) ResetLockout(_ string) error                 { return m.resetLockoutErr }
 
 // p6bMockSealer implements types.Sealer for seal service testing.
 type p6bMockSealer struct {
@@ -358,13 +358,13 @@ func TestP6B_PINService_ResetLockout_PanicRecovery(t *testing.T) {
 
 func TestP6B_PINService_SetUserPIN_ManagerError(t *testing.T) {
 	mgr := &p6bMockPINManager{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		initialized:   true,
 		setUserPINErr: errors.New("mgr error"),
 	}
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pinSvc := pin.NewService(mgr, slog.Default())
+	pinSvc := qrdbsdk.NewPINService(mgr, slog.Default())
 	svc.SetPINService(pinSvc)
 
 	err := svc.SetUserPIN("sopin", "newpin")
@@ -374,13 +374,13 @@ func TestP6B_PINService_SetUserPIN_ManagerError(t *testing.T) {
 
 func TestP6B_PINService_ChangeUserPIN_ManagerError(t *testing.T) {
 	mgr := &p6bMockPINManager{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		initialized:   true,
 		changeUserErr: errors.New("change error"),
 	}
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pinSvc := pin.NewService(mgr, slog.Default())
+	pinSvc := qrdbsdk.NewPINService(mgr, slog.Default())
 	svc.SetPINService(pinSvc)
 
 	err := svc.ChangeUserPIN("oldpin", "newpin")
@@ -1589,7 +1589,7 @@ func TestP6B_SetupWizard_ApplySOProvisioning_PINSetupError(t *testing.T) {
 		setSOPINErr: errors.New("pin error"),
 	}
 	pinSvc := NewPINService()
-	backendSvc := pin.NewService(mgr, slog.Default())
+	backendSvc := qrdbsdk.NewPINService(mgr, slog.Default())
 	pinSvc.SetPINService(backendSvc)
 
 	svc := NewSetupWizardService()

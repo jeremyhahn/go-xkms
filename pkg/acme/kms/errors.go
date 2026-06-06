@@ -47,17 +47,17 @@ const (
 // Error implements the error interface.
 func (e *Error) Error() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%s: %s", e.Code, e.Message))
+	fmt.Fprintf(&sb, "%s: %s", e.Code, e.Message)
 
 	// Include context in error message for debugging
 	if len(e.Context) > 0 {
 		for k, v := range e.Context {
-			sb.WriteString(fmt.Sprintf(" [%s=%v]", k, v))
+			fmt.Fprintf(&sb, " [%s=%v]", k, v)
 		}
 	}
 
 	if e.Cause != nil {
-		sb.WriteString(fmt.Sprintf(": %v", e.Cause))
+		fmt.Fprintf(&sb, ": %v", e.Cause)
 	}
 
 	return sb.String()

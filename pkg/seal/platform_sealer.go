@@ -48,16 +48,14 @@ func NewPlatformSealer(
 		return nil, ErrNoAvailableStrategy
 	}
 
-	prefOrder := config.PreferenceOrder
-	if len(prefOrder) == 0 {
-		prefOrder = DefaultPreferenceOrder
-	}
-
+	// No implicit default preference order. Explicit-strategy operations
+	// (SealWith/Unseal) work without one; only the auto-select path
+	// (BestStrategy/Seal) requires an explicit PreferenceOrder.
 	return &PlatformSealer{
 		logger:    logger,
 		config:    config,
 		sealers:   sealers,
-		prefOrder: prefOrder,
+		prefOrder: config.PreferenceOrder,
 	}, nil
 }
 
@@ -135,8 +133,13 @@ func (p *PlatformSealer) SealWith(
 	return p.sealWith(ctx, id, data, opts)
 }
 
-// BestStrategy returns the first available strategy in preference order.
+// BestStrategy returns the first available strategy in the explicitly
+// configured preference order. Auto-selection requires an explicit
+// PreferenceOrder — there is no implicit default.
 func (p *PlatformSealer) BestStrategy() (StrategyID, error) {
+	if len(p.prefOrder) == 0 {
+		return "", ErrNoStrategySpecified
+	}
 	for _, id := range p.prefOrder {
 		if sealer, ok := p.sealers[id]; ok && sealer.CanSeal() {
 			return id, nil

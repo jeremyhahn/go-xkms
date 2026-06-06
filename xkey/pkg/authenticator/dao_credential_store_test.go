@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
@@ -507,14 +507,14 @@ func TestDAOCredentialStore_Page(t *testing.T) {
 	}
 
 	// Page with size 2.
-	result, err := store.Page(context.Background(), dao.PageQuery{Page: 1, PageSize: 2})
+	result, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 2})
 	require.NoError(t, err)
 	assert.Len(t, result.Entities, 2)
 	assert.Equal(t, 5, result.Total)
 	assert.True(t, result.HasMore)
 
 	// Last page.
-	result3, err := store.Page(context.Background(), dao.PageQuery{Page: 3, PageSize: 2})
+	result3, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 3, PageSize: 2})
 	require.NoError(t, err)
 	assert.Len(t, result3.Entities, 1)
 	assert.False(t, result3.HasMore)
@@ -524,7 +524,7 @@ func TestDAOCredentialStore_Page_Closed(t *testing.T) {
 	store := newTestDAOCredentialStore(t)
 	require.NoError(t, store.Close())
 
-	_, err := store.Page(context.Background(), dao.PageQuery{Page: 1, PageSize: 10})
+	_, err := store.Page(context.Background(), qrdbsdk.PageQuery{Page: 1, PageSize: 10})
 	require.ErrorIs(t, err, ErrStorageClosed)
 }
 
@@ -565,7 +565,7 @@ func TestDAOCredentialStore_EmptyOptionalFields(t *testing.T) {
 	assert.Nil(t, loaded.PrivateKey)
 	assert.Nil(t, loaded.PublicKeyCOSE)
 	assert.Nil(t, loaded.HMACSecretKey)
-	assert.Equal(t, "", loaded.BackendID)
+	assert.Empty(t, loaded.BackendID)
 }
 
 func TestDAOCredentialStore_Concurrency(t *testing.T) {

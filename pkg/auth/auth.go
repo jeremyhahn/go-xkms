@@ -25,20 +25,19 @@ import (
 	"context"
 	"net/http"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
-	"github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"google.golang.org/grpc/metadata"
 )
 
 // Identity is the qrdb-shaped authenticated principal. It is intentionally
 // a type alias so identity values flow between xkms and qrdb without a
-// translation step. The fields are documented on qrdbauth.Identity:
+// translation step. The fields are documented on qrdbsdk.Identity:
 //
 //   - Subject  — principal id (CN, JWT sub, ...)
 //   - TenantID — owning tenant; never empty for a well-formed identity
 //   - Roles    — assigned role names
 //   - Metadata — additional auth attributes (auth_method, cert_serial, ...)
-type Identity = qrdbauth.Identity
+type Identity = qrdbsdk.Identity
 
 // Authenticator is the xkms authentication adapter interface. It is
 // transport-aware (HTTP and gRPC) and is therefore distinct from
@@ -74,13 +73,13 @@ const (
 // WithIdentity stores an Identity in the context. It delegates to qrdb's
 // auth.WithIdentity so xkms and qrdb share the same context-key implementation.
 func WithIdentity(ctx context.Context, id *Identity) context.Context {
-	return qrdbauth.WithIdentity(ctx, id)
+	return qrdbsdk.WithIdentity(ctx, id)
 }
 
 // GetIdentity retrieves the Identity stored in the context. Returns nil
 // when no identity is present.
 func GetIdentity(ctx context.Context) *Identity {
-	return qrdbauth.IdentityFromContext(ctx)
+	return qrdbsdk.IdentityFromContext(ctx)
 }
 
 // IsCrossTenant reports whether the identity has cross-tenant scope under
@@ -92,7 +91,7 @@ func IsCrossTenant(id *Identity) bool {
 	if id == nil {
 		return true
 	}
-	return id.TenantID == tenant.SystemTenantID || id.TenantID == ""
+	return id.TenantID == qrdbsdk.SystemTenantID || id.TenantID == ""
 }
 
 // FirstRole returns the first role on the identity, or "" if the identity

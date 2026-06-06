@@ -199,7 +199,7 @@ func TestShutdown_WithShutdownContextTimeout(t *testing.T) {
 	defer cancel()
 
 	// Shutdown might return an error due to context deadline
-	err = server.Shutdown(ctx)
+	_ = server.Shutdown(ctx)
 
 	// The shutdown was attempted (running flag should be false)
 	assert.False(t, server.Running())
@@ -247,7 +247,7 @@ func TestShutdown_WithErrsJoin(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Already cancelled
 
-	err = server.Shutdown(ctx)
+	_ = server.Shutdown(ctx)
 
 	// Errors may or may not be returned depending on timing
 	// The important thing is the server stopped
@@ -318,7 +318,7 @@ func TestShutdown_WithMultipleServersActive(t *testing.T) {
 	defer cancel()
 
 	// Shutdown all servers
-	err = server.Shutdown(ctx)
+	_ = server.Shutdown(ctx)
 
 	// Should complete without hanging
 	assert.False(t, server.Running())
@@ -358,7 +358,7 @@ func TestShutdown_ReturnMultipleErrors(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err = server.Shutdown(ctx)
+	_ = server.Shutdown(ctx)
 
 	// Errors should be joined if both fail
 	// But the server should still stop

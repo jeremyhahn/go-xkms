@@ -441,7 +441,7 @@ func TestAuthzDeny_BarrierPINMethods(t *testing.T) {
 		nil,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)

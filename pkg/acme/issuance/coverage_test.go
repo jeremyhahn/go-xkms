@@ -15,7 +15,6 @@ package issuance
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -404,12 +403,6 @@ func TestGenerateSerialEntropyCheck(t *testing.T) {
 }
 
 // Additional mock implementations for edge cases
-
-type failingKeyValidator struct{}
-
-func (f *failingKeyValidator) CheckKey(ctx context.Context, key crypto.PublicKey) error {
-	return errors.New("key validation always fails")
-}
 
 func TestIssuer_AlgorithmNotAllowed(t *testing.T) {
 	signer := newMockSigner(t)

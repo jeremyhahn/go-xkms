@@ -310,14 +310,8 @@ type (
 	SaveCertificateChainRequest  = transport.SaveCertificateChainRequest
 	GetCertificateChainResponse  = transport.GetCertificateChainResponse
 	GetTLSCertificateResponse    = transport.GetTLSCertificateResponse
-	UserInfo                     = transport.UserInfo
-	CredentialInfo               = transport.CredentialInfo
-	ListUsersResponse            = transport.ListUsersResponse
-	GetUserResponse              = transport.GetUserResponse
-	ListUserCredentialsResponse  = transport.ListUserCredentialsResponse
 	BeginRegistrationRequest     = transport.BeginRegistrationRequest
 	BeginRegistrationResponse    = transport.BeginRegistrationResponse
-	CredentialParam              = transport.CredentialParam
 	FinishRegistrationRequest    = transport.FinishRegistrationRequest
 	FinishRegistrationResponse   = transport.FinishRegistrationResponse
 	BeginAuthenticationRequest   = transport.BeginAuthenticationRequest
@@ -385,8 +379,6 @@ type (
 	BarrierUnsealShareRequest          = transport.BarrierUnsealShareRequest
 	BarrierUnsealShareResponse         = transport.BarrierUnsealShareResponse
 	BarrierUnsealSharesRequest         = transport.BarrierUnsealSharesRequest
-	BarrierShamirSharesResponse        = transport.BarrierShamirSharesResponse
-	BarrierShamirDeleteShareRequest    = transport.BarrierShamirDeleteShareRequest
 	BarrierRekeyRequest                = transport.BarrierRekeyRequest
 	BarrierRekeyResponse               = transport.BarrierRekeyResponse
 	BarrierGenerateRecoveryKeysRequest = transport.BarrierGenerateRecoveryKeysRequest
@@ -405,6 +397,14 @@ type (
 	VerifyUserPINRequest  = transport.VerifyUserPINRequest
 	LockoutStatusResponse = transport.LockoutStatusResponse
 	ResetLockoutRequest   = transport.ResetLockoutRequest
+
+	// User Operations
+	UserInfo                    = transport.UserInfo
+	CredentialInfo              = transport.CredentialInfo
+	CreateUserRequest           = transport.CreateUserRequest
+	ListUsersResponse           = transport.ListUsersResponse
+	GetUserResponse             = transport.GetUserResponse
+	ListUserCredentialsResponse = transport.ListUserCredentialsResponse
 
 	// Password Store Operations
 	PasswordAddRequest                = transport.PasswordAddRequest

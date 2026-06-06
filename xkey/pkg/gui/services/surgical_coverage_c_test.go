@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -189,10 +189,10 @@ func (m *scMockOIDCTokenStore) Close() error            { return m.closeErr }
 // using in-memory storage. The caller can then call SetSOPIN / SetUserPIN on the service.
 func scNewPINServiceWithManager(t *testing.T) *PINService {
 	t.Helper()
-	backend, err := pin.NewSoftwareBackend(nil, pin.DefaultHashConfig())
+	backend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
 	require.NoError(t, err)
 	svc := NewPINService()
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 	return svc
 }

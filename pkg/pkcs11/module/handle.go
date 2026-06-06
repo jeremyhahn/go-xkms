@@ -321,7 +321,7 @@ func isNil[T any](value T) bool {
 	switch v.Kind() {
 	case reflect.Invalid:
 		return true
-	case reflect.Ptr, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
 		return v.IsNil()
 	default:
 		return false

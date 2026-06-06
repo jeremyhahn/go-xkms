@@ -24,10 +24,10 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/admin"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

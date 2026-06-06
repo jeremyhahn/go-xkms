@@ -125,10 +125,6 @@ type BarrierServicer interface {
 	BarrierInitializeShamir(ctx context.Context, req *BarrierInitializeShamirRequest) (*BarrierInitializeShamirResponse, error)
 	BarrierUnsealWithShare(ctx context.Context, req *BarrierUnsealShareRequest) (*BarrierUnsealShareResponse, error)
 	BarrierUnsealWithShares(ctx context.Context, req *BarrierUnsealSharesRequest) error
-	BarrierShamirListShares(ctx context.Context) (*BarrierShamirSharesResponse, error)
-	BarrierShamirDeleteShare(ctx context.Context, req *BarrierShamirDeleteShareRequest) error
-	BarrierShamirDeleteAllShares(ctx context.Context) error
-	BarrierShamirVerify(ctx context.Context) error
 	BarrierRekey(ctx context.Context, req *BarrierRekeyRequest) (*BarrierRekeyResponse, error)
 	BarrierGenerateRecoveryKeys(ctx context.Context, req *BarrierGenerateRecoveryKeysRequest) (*BarrierRecoveryKeysResponse, error)
 	BarrierRecoverWithKeys(ctx context.Context, req *BarrierRecoverWithKeysRequest) error
@@ -188,13 +184,16 @@ type PINServicer interface {
 	ResetLockout(ctx context.Context, req *ResetLockoutRequest) error
 }
 
-// UserServicer handles user management operations.
+// UserServicer handles xkms user management. xkms presents its own user
+// model and API; the backing store is the embedded qrdb node.
 type UserServicer interface {
+	CreateUser(ctx context.Context, req *CreateUserRequest) (*GetUserResponse, error)
 	ListUsers(ctx context.Context, opts ...ListOption) (*ListUsersResponse, error)
 	GetUser(ctx context.Context, username string) (*GetUserResponse, error)
 	DeleteUser(ctx context.Context, username string) error
 	EnableUser(ctx context.Context, username string) error
 	DisableUser(ctx context.Context, username string) error
+	BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error
 	ListUserCredentials(ctx context.Context, username string) (*ListUserCredentialsResponse, error)
 }
 

@@ -80,7 +80,7 @@ func newAccountOpsMockServer(t *testing.T) *accountOpsMockServer {
 	mux.HandleFunc("/ca-bundle", m.handleCABundle)
 
 	m.Server = httptest.NewTLSServer(mux)
-	m.accountURI = m.Server.URL + "/acme/account/1"
+	m.accountURI = m.URL + "/acme/account/1"
 	return m
 }
 
@@ -89,11 +89,11 @@ func (m *accountOpsMockServer) handleDirectory(w http.ResponseWriter, _ *http.Re
 	w.Header().Set("Content-Type", "application/json")
 
 	directory := map[string]interface{}{
-		"newNonce":   m.Server.URL + "/acme/new-nonce",
-		"newAccount": m.Server.URL + "/acme/new-account",
-		"newOrder":   m.Server.URL + "/acme/new-order",
-		"revokeCert": m.Server.URL + "/acme/revoke-cert",
-		"keyChange":  m.Server.URL + "/acme/key-change",
+		"newNonce":   m.URL + "/acme/new-nonce",
+		"newAccount": m.URL + "/acme/new-account",
+		"newOrder":   m.URL + "/acme/new-order",
+		"revokeCert": m.URL + "/acme/revoke-cert",
+		"keyChange":  m.URL + "/acme/key-change",
 		"meta": map[string]interface{}{
 			"termsOfService":          "https://example.com/terms",
 			"externalAccountRequired": false,
@@ -117,7 +117,7 @@ func (m *accountOpsMockServer) handleNewAccount(w http.ResponseWriter, _ *http.R
 	account := map[string]interface{}{
 		"status":  m.accountStatus,
 		"contact": m.accountContact,
-		"orders":  m.Server.URL + "/acme/account/1/orders",
+		"orders":  m.URL + "/acme/account/1/orders",
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -147,7 +147,7 @@ func (m *accountOpsMockServer) handleAccount(w http.ResponseWriter, r *http.Requ
 	account := map[string]interface{}{
 		"status":  m.accountStatus,
 		"contact": m.accountContact,
-		"orders":  m.Server.URL + "/acme/account/1/orders",
+		"orders":  m.URL + "/acme/account/1/orders",
 	}
 
 	_ = json.NewEncoder(w).Encode(account)
@@ -190,7 +190,7 @@ func createTestClientWithMockServer(t *testing.T, server *accountOpsMockServer) 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	config := DefaultConfig()
-	config.DirectoryURL = server.Server.URL + "/directory"
+	config.DirectoryURL = server.URL + "/directory"
 	config.SystemCertPool = false
 	config.RequestServerBundle = false
 
@@ -443,7 +443,7 @@ func TestUpdateAccount_NilStorage(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	config := DefaultConfig()
-	config.DirectoryURL = server.Server.URL + "/directory"
+	config.DirectoryURL = server.URL + "/directory"
 	config.SystemCertPool = false
 	config.RequestServerBundle = false
 
@@ -490,7 +490,7 @@ func TestDeactivateAccount_NilStorage(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	config := DefaultConfig()
-	config.DirectoryURL = server.Server.URL + "/directory"
+	config.DirectoryURL = server.URL + "/directory"
 	config.SystemCertPool = false
 	config.RequestServerBundle = false
 
@@ -574,7 +574,7 @@ func TestDeactivateAccount_LogsWarning(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultConfig()
-	config.DirectoryURL = server.Server.URL + "/directory"
+	config.DirectoryURL = server.URL + "/directory"
 	config.SystemCertPool = false
 	config.RequestServerBundle = false
 

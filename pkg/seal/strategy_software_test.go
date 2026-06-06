@@ -15,7 +15,7 @@ import (
 
 func TestSoftwareStrategy_ID(t *testing.T) {
 	s := NewSoftwareStrategy()
-	assert.Equal(t, StrategySoftware, s.ID())
+	assert.Equal(t, StrategyPassphrase, s.ID())
 }
 
 func TestSoftwareStrategy_Available(t *testing.T) {

@@ -141,8 +141,8 @@ func (e *TrustedCAError) ToGRPCMetadata() ([]byte, error) {
 	for _, se := range e.SubErrors {
 		if se.TrustedCAError != nil {
 			data.SubErrors = append(data.SubErrors, grpcSubErrorData{
-				Type:       se.TrustedCAError.Type,
-				Detail:     se.TrustedCAError.Detail,
+				Type:       se.Type,
+				Detail:     se.Detail,
 				Identifier: se.Identifier,
 			})
 		}

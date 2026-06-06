@@ -45,7 +45,7 @@ func setupServiceWithRegistry(t *testing.T) *XKMSService {
 		base,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)
@@ -317,12 +317,113 @@ func TestTenantBarrierInit_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Phase 2: the tenant admin supplies their OWN passphrase.
 	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
-		TenantID:  "init-tenant",
-		Threshold: 2,
-		Shares:    3,
+		TenantID:   "init-tenant",
+		Passphrase: "tenant-admin-secret",
 	})
 	require.NoError(t, err)
+}
+
+// TestCreateTenant_LeavesBarrierSealed proves Phase 1 of the §3.6 two-phase
+// model: after CreateTenant the tenant barrier is registered but NOT
+// initialized — it is sealed and the server holds no secret for it.
+func TestCreateTenant_LeavesBarrierSealed(t *testing.T) {
+	svc := setupServiceWithRegistry(t)
+	ctx := context.Background()
+
+	_, err := svc.CreateTenant(ctx, &transport.CreateTenantRequest{
+		ID:   "sealed-shell",
+		Name: "Sealed Shell",
+	})
+	require.NoError(t, err)
+
+	tb, err := svc.barrierRegistry.Tenant("sealed-shell")
+	require.NoError(t, err)
+	assert.True(t, tb.IsSealed(), "tenant barrier must be sealed after CreateTenant")
+
+	// The barrier is uninitialized: storage operations must fail until Phase 2.
+	_, err = tb.Get(ctx, "any-key")
+	require.Error(t, err, "uninitialized tenant barrier must reject operations")
+}
+
+// TestTenantBarrierInit_EmptyPassphraseRejected proves the §3.6 security
+// invariant: with the passphrase strategy an empty passphrase is a hard error.
+// The server must NEVER fall back to a server-generated secret.
+func TestTenantBarrierInit_EmptyPassphraseRejected(t *testing.T) {
+	svc := setupServiceWithRegistry(t)
+	ctx := context.Background()
+
+	_, err := svc.CreateTenant(ctx, &transport.CreateTenantRequest{
+		ID:   "no-pw-tenant",
+		Name: "No Passphrase Tenant",
+	})
+	require.NoError(t, err)
+
+	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
+		TenantID:   "no-pw-tenant",
+		Passphrase: "",
+	})
+	assert.ErrorIs(t, err, ErrTenantPassphraseRequired)
+
+	// The barrier must remain sealed — no server-generated init happened.
+	tb, err := svc.barrierRegistry.Tenant("no-pw-tenant")
+	require.NoError(t, err)
+	assert.True(t, tb.IsSealed(), "barrier must stay sealed after rejected init")
+}
+
+// TestTenantBarrierInit_SamePassphraseUnseals proves the round trip: a
+// tenant-supplied passphrase initializes the barrier and the SAME passphrase
+// unseals it after a reseal.
+func TestTenantBarrierInit_SamePassphraseUnseals(t *testing.T) {
+	svc := setupServiceWithRegistry(t)
+	ctx := context.Background()
+
+	_, err := svc.CreateTenant(ctx, &transport.CreateTenantRequest{
+		ID:   "roundtrip-tenant",
+		Name: "Roundtrip Tenant",
+	})
+	require.NoError(t, err)
+
+	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
+		TenantID:   "roundtrip-tenant",
+		Passphrase: "shared-secret-123",
+	})
+	require.NoError(t, err)
+
+	tb, err := svc.barrierRegistry.Tenant("roundtrip-tenant")
+	require.NoError(t, err)
+	assert.False(t, tb.IsSealed(), "barrier must be unsealed after init")
+
+	require.NoError(t, svc.barrierRegistry.SealTenant("roundtrip-tenant"))
+	assert.True(t, tb.IsSealed())
+
+	err = svc.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
+		TenantID: "roundtrip-tenant",
+		Key:      []byte("shared-secret-123"),
+	})
+	require.NoError(t, err)
+	assert.False(t, tb.IsSealed())
+}
+
+// TestTenantBarrierInit_Idempotent proves repeated init calls with the
+// caller's passphrase are idempotent.
+func TestTenantBarrierInit_Idempotent(t *testing.T) {
+	svc := setupServiceWithRegistry(t)
+	ctx := context.Background()
+
+	_, err := svc.CreateTenant(ctx, &transport.CreateTenantRequest{
+		ID:   "idem-tenant",
+		Name: "Idempotent Tenant",
+	})
+	require.NoError(t, err)
+
+	req := &transport.TenantBarrierInitRequest{
+		TenantID:   "idem-tenant",
+		Passphrase: "idem-pw",
+	}
+	require.NoError(t, svc.TenantBarrierInit(ctx, req))
+	require.NoError(t, svc.TenantBarrierInit(ctx, req), "init must be idempotent")
 }
 
 func TestTenantBarrierInit_NilRequest(t *testing.T) {
@@ -378,62 +479,59 @@ func TestTenantBarrierUnseal_Success(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// System barrier is already unsealed (initialized in setupServiceWithRegistry),
-	// so the tenant barrier should report unsealed too.
+	// Phase 2 init leaves the tenant barrier unsealed. Calling unseal on an
+	// already-unsealed barrier is a no-op that returns nil.
+	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
+		TenantID:   "unseal-tenant",
+		Passphrase: "unseal-pw",
+	})
+	require.NoError(t, err)
+
 	err = svc.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
 		TenantID: "unseal-tenant",
 	})
 	require.NoError(t, err)
 }
 
-func TestTenantBarrierUnseal_Sealed(t *testing.T) {
+func TestTenantBarrierUnseal_WrongPassphraseFails(t *testing.T) {
 	svc := setupServiceWithRegistry(t)
 	ctx := context.Background()
 
 	_, err := svc.CreateTenant(ctx, &transport.CreateTenantRequest{
-		ID:   "sealed-tenant",
-		Name: "Sealed Tenant",
+		ID:   "wrong-pw-tenant",
+		Name: "Wrong PW Tenant",
 	})
 	require.NoError(t, err)
 
-	// Seal the system barrier so the tenant barrier reports sealed.
-	svc.barrier = nil // not needed for this path, the barrier is inside the registry
-
-	// We need access to the actual barrier. Recreate the scenario by creating
-	// a separate barrier that we seal.
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	base := storage.NewMemory()
-	barrier, err := seal.NewBarrier(
-		logger,
-		base,
-		seal.BarrierConfig{
-			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
-		},
-		seal.NewSoftwareStrategy(),
-	)
+	// Phase 2: initialize with the tenant admin's passphrase.
+	err = svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
+		TenantID:   "wrong-pw-tenant",
+		Passphrase: "correct-horse",
+	})
 	require.NoError(t, err)
 
-	creds := seal.Credentials{Secret: "test-pw"}
-	err = barrier.Initialize(ctx, creds)
-	require.NoError(t, err)
+	// Seal the tenant barrier so it must be re-unsealed.
+	require.NoError(t, svc.barrierRegistry.SealTenant("wrong-pw-tenant"))
 
-	registry, err := seal.NewBarrierRegistry(barrier)
-	require.NoError(t, err)
-
-	_, err = registry.RegisterTenant("sealed-test")
-	require.NoError(t, err)
-
-	svc.SetBarrierRegistry(registry)
-
-	// Now seal the barrier.
-	err = barrier.Seal()
-	require.NoError(t, err)
-
+	// A WRONG passphrase must fail to unseal.
 	err = svc.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
-		TenantID: "sealed-test",
+		TenantID: "wrong-pw-tenant",
+		Key:      []byte("battery-staple"),
 	})
-	assert.ErrorIs(t, err, seal.ErrSealed)
+	require.Error(t, err)
+
+	// The barrier must remain sealed after the failed attempt.
+	tb, err := svc.barrierRegistry.Tenant("wrong-pw-tenant")
+	require.NoError(t, err)
+	assert.True(t, tb.IsSealed(), "barrier must stay sealed after wrong passphrase")
+
+	// The SAME passphrase the tenant supplied at init must unseal it.
+	err = svc.TenantBarrierUnseal(ctx, &transport.TenantBarrierUnsealRequest{
+		TenantID: "wrong-pw-tenant",
+		Key:      []byte("correct-horse"),
+	})
+	require.NoError(t, err)
+	assert.False(t, tb.IsSealed(), "barrier must be unsealed by the correct passphrase")
 }
 
 func TestTenantBarrierUnseal_NilRequest(t *testing.T) {

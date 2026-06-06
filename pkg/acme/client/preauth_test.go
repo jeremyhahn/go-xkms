@@ -76,11 +76,11 @@ func (m *preAuthMockServer) handleDirectory(w http.ResponseWriter, _ *http.Reque
 	w.Header().Set("Content-Type", "application/json")
 
 	directory := map[string]interface{}{
-		"newNonce":   m.Server.URL + "/acme/new-nonce",
-		"newAccount": m.Server.URL + "/acme/new-account",
-		"newOrder":   m.Server.URL + "/acme/new-order",
-		"revokeCert": m.Server.URL + "/acme/revoke-cert",
-		"keyChange":  m.Server.URL + "/acme/key-change",
+		"newNonce":   m.URL + "/acme/new-nonce",
+		"newAccount": m.URL + "/acme/new-account",
+		"newOrder":   m.URL + "/acme/new-order",
+		"revokeCert": m.URL + "/acme/revoke-cert",
+		"keyChange":  m.URL + "/acme/key-change",
 		"meta": map[string]interface{}{
 			"termsOfService":          "https://example.com/terms",
 			"externalAccountRequired": false,
@@ -89,7 +89,7 @@ func (m *preAuthMockServer) handleDirectory(w http.ResponseWriter, _ *http.Reque
 
 	// Only include newAuthz if pre-auth is supported
 	if m.supportsPreAuth {
-		directory["newAuthz"] = m.Server.URL + "/acme/new-authz"
+		directory["newAuthz"] = m.URL + "/acme/new-authz"
 	}
 
 	_ = json.NewEncoder(w).Encode(directory)
@@ -104,12 +104,12 @@ func (m *preAuthMockServer) handleNewNonce(w http.ResponseWriter, _ *http.Reques
 func (m *preAuthMockServer) handleNewAccount(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Replay-Nonce", m.nonce)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", m.Server.URL+"/acme/account/1")
+	w.Header().Set("Location", m.URL+"/acme/account/1")
 
 	account := map[string]interface{}{
 		"status":  "valid",
 		"contact": []string{"mailto:test@example.com"},
-		"orders":  m.Server.URL + "/acme/account/1/orders",
+		"orders":  m.URL + "/acme/account/1/orders",
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -119,12 +119,12 @@ func (m *preAuthMockServer) handleNewAccount(w http.ResponseWriter, _ *http.Requ
 func (m *preAuthMockServer) handleAccount(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Replay-Nonce", m.nonce)
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Location", m.Server.URL+"/acme/account/1")
+	w.Header().Set("Location", m.URL+"/acme/account/1")
 
 	account := map[string]interface{}{
 		"status":  "valid",
 		"contact": []string{"mailto:test@example.com"},
-		"orders":  m.Server.URL + "/acme/account/1/orders",
+		"orders":  m.URL + "/acme/account/1/orders",
 	}
 
 	_ = json.NewEncoder(w).Encode(account)
@@ -155,7 +155,7 @@ func (m *preAuthMockServer) handleNewAuthz(w http.ResponseWriter, r *http.Reques
 
 	// Generate a unique authz ID
 	authzID := strings.ReplaceAll(req.Identifier.Value, ".", "-")
-	authzURL := m.Server.URL + "/acme/authz/" + authzID
+	authzURL := m.URL + "/acme/authz/" + authzID
 
 	w.Header().Set("Location", authzURL)
 	w.WriteHeader(http.StatusCreated)
@@ -170,13 +170,13 @@ func (m *preAuthMockServer) handleNewAuthz(w http.ResponseWriter, r *http.Reques
 		"challenges": []map[string]interface{}{
 			{
 				"type":   "http-01",
-				"url":    m.Server.URL + "/acme/challenge/" + authzID + "/http-01",
+				"url":    m.URL + "/acme/challenge/" + authzID + "/http-01",
 				"token":  "test-token-http-01",
 				"status": "pending",
 			},
 			{
 				"type":   "dns-01",
-				"url":    m.Server.URL + "/acme/challenge/" + authzID + "/dns-01",
+				"url":    m.URL + "/acme/challenge/" + authzID + "/dns-01",
 				"token":  "test-token-dns-01",
 				"status": "pending",
 			},
@@ -204,7 +204,7 @@ func (m *preAuthMockServer) handleAuthz(w http.ResponseWriter, r *http.Request) 
 		"challenges": []map[string]interface{}{
 			{
 				"type":   "http-01",
-				"url":    m.Server.URL + "/acme/challenge/" + authzID + "/http-01",
+				"url":    m.URL + "/acme/challenge/" + authzID + "/http-01",
 				"token":  "test-token-http-01",
 				"status": "pending",
 			},
@@ -251,7 +251,7 @@ func createPreAuthTestClient(t *testing.T, server *preAuthMockServer) *Client {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	config := DefaultConfig()
-	config.DirectoryURL = server.Server.URL + "/directory"
+	config.DirectoryURL = server.URL + "/directory"
 	config.SystemCertPool = false
 	config.RequestServerBundle = false
 
@@ -603,9 +603,9 @@ func TestPreAuthorizeMany_PartialFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// After first request, configure server to fail
-	originalHandler := server.Server.Config.Handler
+	originalHandler := server.Config.Handler
 	requestCount := 0
-	server.Server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/acme/new-authz" {
 			requestCount++
 			if requestCount > 1 {

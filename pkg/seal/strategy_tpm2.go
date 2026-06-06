@@ -118,9 +118,9 @@ func (t *TPM2Strategy) UnsealRootKey(
 
 // BarrierEncryptor returns a SymmetricEncrypter for barrier data operations.
 // If a hardware encryptor was provided at construction time, it is wrapped
-// via hardwareEncryptorWrapper (keys never leave the TPM). Otherwise, a
-// software encryptor is derived from the root key using HKDF-SHA256 +
-// AES-256-GCM.
+// via hardwareEncryptorWrapper (keys never leave the TPM). Otherwise it
+// returns (nil, nil): the barrier manages its own epoch-based HKDF DEK —
+// the software-derivation path now lives in qrdb's barrier, not here.
 func (t *TPM2Strategy) BarrierEncryptor(ctx context.Context, rootKey []byte) (SymmetricEncrypter, error) {
 	if t.encryptor != nil {
 		return &hardwareEncryptorWrapper{inner: t.encryptor}, nil

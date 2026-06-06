@@ -600,14 +600,6 @@ func (n *noopClient) BarrierUnsealWithShare(context.Context, *transport.BarrierU
 func (n *noopClient) BarrierUnsealWithShares(context.Context, *transport.BarrierUnsealSharesRequest) error {
 	return nil
 }
-func (n *noopClient) BarrierShamirListShares(context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) BarrierShamirDeleteShare(context.Context, *transport.BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-func (n *noopClient) BarrierShamirDeleteAllShares(context.Context) error { return nil }
-func (n *noopClient) BarrierShamirVerify(context.Context) error          { return nil }
 func (n *noopClient) BarrierRekey(context.Context, *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	return nil, nil
 }
@@ -707,18 +699,6 @@ func (n *noopClient) GetLockoutStatus(context.Context) (*transport.LockoutStatus
 	return nil, nil
 }
 func (n *noopClient) ResetLockout(context.Context, *transport.ResetLockoutRequest) error { return nil }
-func (n *noopClient) ListUsers(context.Context, ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) GetUser(context.Context, string) (*transport.GetUserResponse, error) {
-	return nil, nil
-}
-func (n *noopClient) DeleteUser(context.Context, string) error  { return nil }
-func (n *noopClient) EnableUser(context.Context, string) error  { return nil }
-func (n *noopClient) DisableUser(context.Context, string) error { return nil }
-func (n *noopClient) ListUserCredentials(context.Context, string) (*transport.ListUserCredentialsResponse, error) {
-	return nil, nil
-}
 func (n *noopClient) PasswordAdd(context.Context, *transport.PasswordAddRequest) (*transport.PasswordAddResponse, error) {
 	return nil, nil
 }
@@ -847,5 +827,37 @@ func (n *noopClient) SubmitCredential(context.Context, *transport.CredentialSubm
 	return nil, nil
 }
 func (n *noopClient) GetCredentialStrategy(context.Context) (*transport.CredentialStrategyResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) CreateUser(context.Context, *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) ListUsers(context.Context, ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) GetUser(context.Context, string) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+
+func (n *noopClient) DeleteUser(context.Context, string) error {
+	return nil
+}
+
+func (n *noopClient) EnableUser(context.Context, string) error {
+	return nil
+}
+
+func (n *noopClient) DisableUser(context.Context, string) error {
+	return nil
+}
+
+func (n *noopClient) BindUserCert(context.Context, string, string, int64) error {
+	return nil
+}
+
+func (n *noopClient) ListUserCredentials(context.Context, string) (*transport.ListUserCredentialsResponse, error) {
 	return nil, nil
 }

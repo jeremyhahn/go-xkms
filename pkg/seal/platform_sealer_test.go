@@ -31,9 +31,16 @@ type mockSealer struct {
 	unsealErr error
 	sealData  *types.SealedData
 	lastData  []byte
+
+	// lastSealOpts and lastUnsealOpts capture the options passed to the most
+	// recent Seal/Unseal call so tests can assert that a strategy forwards the
+	// configured sealing-key identity (KeyAttributes) to the backend.
+	lastSealOpts   *types.SealOptions
+	lastUnsealOpts *types.UnsealOptions
 }
 
 func (m *mockSealer) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	m.lastSealOpts = opts
 	if m.sealErr != nil {
 		return nil, m.sealErr
 	}
@@ -48,6 +55,7 @@ func (m *mockSealer) Seal(ctx context.Context, data []byte, opts *types.SealOpti
 }
 
 func (m *mockSealer) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	m.lastUnsealOpts = opts
 	if m.unsealErr != nil {
 		return nil, m.unsealErr
 	}
@@ -64,11 +72,11 @@ var _ types.Sealer = (*mockSealer)(nil)
 func TestPlatformSealer_AutoSelectBest(t *testing.T) {
 	softwareSealer := &mockSealer{canSeal: true}
 	sealers := map[StrategyID]types.Sealer{
-		StrategySoftware: softwareSealer,
+		StrategyPassphrase: softwareSealer,
 	}
 
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		PreferenceOrder: []StrategyID{StrategySoftware},
+		PreferenceOrder: []StrategyID{StrategyPassphrase},
 	}, sealers)
 	require.NoError(t, err)
 
@@ -82,7 +90,7 @@ func TestPlatformSealer_AutoSelectBest(t *testing.T) {
 	// Strategy tag must be present.
 	stratTag, ok := sealed.Metadata[strategyMetadataKey]
 	assert.True(t, ok)
-	assert.Equal(t, string(StrategySoftware), string(stratTag))
+	assert.Equal(t, string(StrategyPassphrase), string(stratTag))
 }
 
 func TestPlatformSealer_Fallback(t *testing.T) {
@@ -91,39 +99,39 @@ func TestPlatformSealer_Fallback(t *testing.T) {
 	swSealer := &mockSealer{canSeal: true}
 
 	sealers := map[StrategyID]types.Sealer{
-		StrategyTPM2:     tpmSealer,
-		StrategySoftware: swSealer,
+		StrategyTPM2:       tpmSealer,
+		StrategyPassphrase: swSealer,
 	}
 
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		PreferenceOrder: []StrategyID{StrategyTPM2, StrategySoftware},
+		PreferenceOrder: []StrategyID{StrategyTPM2, StrategyPassphrase},
 	}, sealers)
 	require.NoError(t, err)
 
 	best, err := ps.BestStrategy()
 	require.NoError(t, err)
-	assert.Equal(t, StrategySoftware, best)
+	assert.Equal(t, StrategyPassphrase, best)
 }
 
 func TestPlatformSealer_SealWith(t *testing.T) {
 	swSealer := &mockSealer{canSeal: true}
 
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: swSealer,
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: swSealer,
 	})
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	sealed, err := ps.SealWith(ctx, StrategySoftware, []byte("explicit"), nil)
+	sealed, err := ps.SealWith(ctx, StrategyPassphrase, []byte("explicit"), nil)
 	require.NoError(t, err)
 
 	tag := sealed.Metadata[strategyMetadataKey]
-	assert.Equal(t, string(StrategySoftware), string(tag))
+	assert.Equal(t, string(StrategyPassphrase), string(tag))
 }
 
 func TestPlatformSealer_SealWithUnknownStrategy(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 
@@ -132,16 +140,16 @@ func TestPlatformSealer_SealWithUnknownStrategy(t *testing.T) {
 }
 
 func TestPlatformSealer_CanSeal(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 	assert.True(t, ps.CanSeal())
 }
 
 func TestPlatformSealer_CanSealAllUnavailable(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: false},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: false},
 	})
 	require.NoError(t, err)
 	assert.False(t, ps.CanSeal())
@@ -150,8 +158,8 @@ func TestPlatformSealer_CanSealAllUnavailable(t *testing.T) {
 func TestPlatformSealer_UnsealByMetadata(t *testing.T) {
 	swSealer := &mockSealer{canSeal: true}
 
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: swSealer,
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: swSealer,
 	})
 	require.NoError(t, err)
 
@@ -168,8 +176,8 @@ func TestPlatformSealer_UnsealByMetadata(t *testing.T) {
 }
 
 func TestPlatformSealer_UnsealNilData(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 
@@ -178,8 +186,8 @@ func TestPlatformSealer_UnsealNilData(t *testing.T) {
 }
 
 func TestPlatformSealer_UnsealMissingMetadata(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 
@@ -193,8 +201,8 @@ func TestPlatformSealer_UnsealMissingMetadata(t *testing.T) {
 }
 
 func TestPlatformSealer_UnsealUnknownStrategy(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 
@@ -207,8 +215,8 @@ func TestPlatformSealer_UnsealUnknownStrategy(t *testing.T) {
 }
 
 func TestPlatformSealer_NoAvailableStrategy(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: false},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: false},
 	})
 	require.NoError(t, err)
 
@@ -220,26 +228,26 @@ func TestPlatformSealer_NoAvailableStrategy(t *testing.T) {
 }
 
 func TestNewPlatformSealer_EmptySealers(t *testing.T) {
-	_, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{})
+	_, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{})
 	assert.ErrorIs(t, err, ErrNoAvailableStrategy)
 }
 
 func TestPlatformSealer_AvailableStrategies(t *testing.T) {
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
-		StrategyTPM2:     &mockSealer{canSeal: false},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true},
+		StrategyTPM2:       &mockSealer{canSeal: false},
 	})
 	require.NoError(t, err)
 
 	available := ps.AvailableStrategies()
-	assert.Contains(t, available, StrategySoftware)
+	assert.Contains(t, available, StrategyPassphrase)
 	assert.NotContains(t, available, StrategyTPM2)
 }
 
 func TestPlatformSealer_SealError(t *testing.T) {
 	sealErr := errors.New("seal failed")
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true, sealErr: sealErr},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true, sealErr: sealErr},
 	})
 	require.NoError(t, err)
 
@@ -249,14 +257,14 @@ func TestPlatformSealer_SealError(t *testing.T) {
 
 func TestPlatformSealer_UnsealError(t *testing.T) {
 	unsealErr := errors.New("unseal failed")
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true, unsealErr: unsealErr},
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: &mockSealer{canSeal: true, unsealErr: unsealErr},
 	})
 	require.NoError(t, err)
 
 	sealed := &types.SealedData{
 		Ciphertext: []byte("data"),
-		Metadata:   map[string][]byte{strategyMetadataKey: []byte(StrategySoftware)},
+		Metadata:   map[string][]byte{strategyMetadataKey: []byte(StrategyPassphrase)},
 	}
 	_, err = ps.Unseal(context.Background(), sealed, nil)
 	assert.ErrorIs(t, err, unsealErr)
@@ -275,8 +283,8 @@ func TestPlatformSealer_SealWith_NilMetadata(t *testing.T) {
 		},
 	}
 
-	ps, err := NewPlatformSealer(testLogger(), SealerConfig{}, map[StrategyID]types.Sealer{
-		StrategySoftware: nilMetaSealer,
+	ps, err := NewPlatformSealer(testLogger(), SealerConfig{PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2}}, map[StrategyID]types.Sealer{
+		StrategyPassphrase: nilMetaSealer,
 	})
 	require.NoError(t, err)
 
@@ -288,16 +296,17 @@ func TestPlatformSealer_SealWith_NilMetadata(t *testing.T) {
 	// Strategy tag should still be set.
 	tag, ok := sealed.Metadata[strategyMetadataKey]
 	assert.True(t, ok, "strategy metadata key must be present even when sealer returns nil metadata")
-	assert.Equal(t, string(StrategySoftware), string(tag))
+	assert.Equal(t, string(StrategyPassphrase), string(tag))
 }
 
 // TestPlatformSealer_SealWith_WithAuditLogger verifies that sealWith emits
 // audit events through a non-nil audit logger on success.
 func TestPlatformSealer_SealWith_WithAuditLogger(t *testing.T) {
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger: &audit.NoOpLogger{},
+		AuditLogger:     &audit.NoOpLogger{},
+		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 
@@ -311,9 +320,10 @@ func TestPlatformSealer_SealWith_WithAuditLogger(t *testing.T) {
 func TestPlatformSealer_SealError_WithAuditLogger(t *testing.T) {
 	sealErr := errors.New("seal failed with audit")
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger: &audit.NoOpLogger{},
+		AuditLogger:     &audit.NoOpLogger{},
+		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true, sealErr: sealErr},
+		StrategyPassphrase: &mockSealer{canSeal: true, sealErr: sealErr},
 	})
 	require.NoError(t, err)
 
@@ -325,9 +335,10 @@ func TestPlatformSealer_SealError_WithAuditLogger(t *testing.T) {
 // audit events through a non-nil audit logger.
 func TestPlatformSealer_Unseal_WithAuditLogger(t *testing.T) {
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger: &audit.NoOpLogger{},
+		AuditLogger:     &audit.NoOpLogger{},
+		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 
@@ -344,9 +355,10 @@ func TestPlatformSealer_Unseal_WithAuditLogger(t *testing.T) {
 // a deny audit event when the strategy is not found.
 func TestPlatformSealer_UnsealUnknown_WithAuditLogger(t *testing.T) {
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger: &audit.NoOpLogger{},
+		AuditLogger:     &audit.NoOpLogger{},
+		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true},
+		StrategyPassphrase: &mockSealer{canSeal: true},
 	})
 	require.NoError(t, err)
 
@@ -363,15 +375,16 @@ func TestPlatformSealer_UnsealUnknown_WithAuditLogger(t *testing.T) {
 func TestPlatformSealer_UnsealError_WithAuditLogger(t *testing.T) {
 	unsealErr := errors.New("unseal failed with audit")
 	ps, err := NewPlatformSealer(testLogger(), SealerConfig{
-		AuditLogger: &audit.NoOpLogger{},
+		AuditLogger:     &audit.NoOpLogger{},
+		PreferenceOrder: []StrategyID{StrategyPassphrase, StrategyTPM2},
 	}, map[StrategyID]types.Sealer{
-		StrategySoftware: &mockSealer{canSeal: true, unsealErr: unsealErr},
+		StrategyPassphrase: &mockSealer{canSeal: true, unsealErr: unsealErr},
 	})
 	require.NoError(t, err)
 
 	sealed := &types.SealedData{
 		Ciphertext: []byte("data"),
-		Metadata:   map[string][]byte{strategyMetadataKey: []byte(StrategySoftware)},
+		Metadata:   map[string][]byte{strategyMetadataKey: []byte(StrategyPassphrase)},
 	}
 	_, err = ps.Unseal(context.Background(), sealed, nil)
 	assert.ErrorIs(t, err, unsealErr)

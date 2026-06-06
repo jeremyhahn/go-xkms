@@ -87,7 +87,7 @@ func (s *spaFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.serveIndex(w, r)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	stat, err := f.Stat()
 	if err != nil {
@@ -96,14 +96,14 @@ func (s *spaFileServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if stat.IsDir() {
-		f.Close()
+		_ = f.Close()
 		// Try index.html in the directory, then fall back to root index.html
 		dirIndex, dirErr := s.fs.Open(path + "/index.html")
 		if dirErr != nil {
 			s.serveIndex(w, r)
 			return
 		}
-		defer dirIndex.Close()
+		defer func() { _ = dirIndex.Close() }()
 
 		stat, err = dirIndex.Stat()
 		if err != nil {
@@ -126,7 +126,7 @@ func (s *spaFileServer) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index.html not found", http.StatusNotFound)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// If apiBaseURL is configured, inject it into the HTML.
 	if s.apiBaseURL != "" {

@@ -226,7 +226,7 @@ func TestGetKey_MockConnected(t *testing.T) {
 
 	resp, err := tr.GetKey(context.Background(), "software", "key-1")
 	require.NoError(t, err)
-	assert.Equal(t, "key-1", resp.KeyInfo.KeyID)
+	assert.Equal(t, "key-1", resp.KeyID)
 }
 
 func TestDeleteKey_MockConnected(t *testing.T) {
@@ -500,12 +500,6 @@ func TestErrNotSupported_StubMethods(t *testing.T) {
 		name string
 		fn   func() error
 	}{
-		{"ListUsers", func() error { _, err := tr.ListUsers(context.Background()); return err }},
-		{"GetUser", func() error { _, err := tr.GetUser(context.Background(), "u"); return err }},
-		{"DeleteUser", func() error { return tr.DeleteUser(context.Background(), "u") }},
-		{"EnableUser", func() error { return tr.EnableUser(context.Background(), "u") }},
-		{"DisableUser", func() error { return tr.DisableUser(context.Background(), "u") }},
-		{"ListUserCredentials", func() error { _, err := tr.ListUserCredentials(context.Background(), "u"); return err }},
 		{"BeginRegistration", func() error {
 			_, err := tr.BeginRegistration(context.Background(), &transport.BeginRegistrationRequest{})
 			return err

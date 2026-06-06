@@ -23,8 +23,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
@@ -81,8 +79,8 @@ func generateKey(cfg *Config, printer *Printer, keyID, keyType, algorithm, keyAl
 	// For symmetric keys, don't set algorithm - handlers use defaults based on key_size
 	// For asymmetric keys, use the provided algorithm
 	algoForRequest := keyAlgorithm
-	isSymmetric := types.AlgorithmSymmetric.Equals(keyType) || types.AlgorithmAES.Equals(keyType) ||
-		types.AEADAES128GCM.Equals(algorithm) || types.AEADAES192GCM.Equals(algorithm) || types.AEADAES256GCM.Equals(algorithm)
+	isSymmetric := client.AlgorithmSymmetric.Equals(keyType) || client.AlgorithmAES.Equals(keyType) ||
+		client.AEADAES128GCM.Equals(algorithm) || client.AEADAES192GCM.Equals(algorithm) || client.AEADAES256GCM.Equals(algorithm)
 	if isSymmetric {
 		// Let the server handlers determine the algorithm based on key_size
 		algoForRequest = ""
@@ -154,12 +152,12 @@ func listKeys(cfg *Config, printer *Printer) {
 
 	printVerbose("Found %d keys", len(resp.Keys))
 
-	// Convert client.KeyInfo to types.KeyAttributes for printing
-	keys := make([]*types.KeyAttributes, len(resp.Keys))
+	// Convert client.KeyInfo to client.KeyAttributes for printing
+	keys := make([]*client.KeyAttributes, len(resp.Keys))
 	for i, key := range resp.Keys {
-		keys[i] = &types.KeyAttributes{
+		keys[i] = &client.KeyAttributes{
 			CN:      key.KeyID,
-			KeyType: types.ParseKeyType(key.KeyType),
+			KeyType: client.ParseKeyType(key.KeyType),
 		}
 	}
 
@@ -209,9 +207,9 @@ func getKey(cfg *Config, printer *Printer, keyID string) {
 	}
 
 	// Convert to KeyAttributes for printing
-	attrs := &types.KeyAttributes{
+	attrs := &client.KeyAttributes{
 		CN:      resp.KeyID,
-		KeyType: types.ParseKeyType(resp.KeyType),
+		KeyType: client.ParseKeyType(resp.KeyType),
 	}
 
 	if err := printer.PrintKeyInfo(attrs); err != nil {
@@ -447,7 +445,7 @@ func encrypt(cfg *Config, printer *Printer, keyID, plaintext, aad string) {
 	printVerbose("Encrypted data: ciphertext=%d bytes, nonce=%d bytes, tag=%d bytes",
 		len(resp.Ciphertext), len(resp.Nonce), len(resp.Tag))
 
-	encrypted := &types.EncryptedData{
+	encrypted := &client.EncryptedData{
 		Ciphertext: resp.Ciphertext,
 		Nonce:      resp.Nonce,
 		Tag:        resp.Tag,
@@ -678,7 +676,7 @@ var keyImportCmd = &cobra.Command{
 		printVerbose("Wrapped key file size: %d bytes", len(wrappedKeyData))
 
 		// Deserialize WrappedKeyMaterial from JSON
-		var wrapped backend.WrappedKeyMaterial
+		var wrapped client.WrappedKeyMaterial
 		if err := json.Unmarshal(wrappedKeyData, &wrapped); err != nil {
 			handleError(fmt.Errorf("failed to deserialize wrapped key material: %w", err))
 			return
@@ -691,7 +689,7 @@ var keyImportCmd = &cobra.Command{
 }
 
 // importKey imports a wrapped key using the SDK client
-func importKey(cfg *Config, printer *Printer, keyID string, wrapped *backend.WrappedKeyMaterial) {
+func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.WrappedKeyMaterial) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(fmt.Errorf("failed to create client: %w", err))
@@ -741,7 +739,7 @@ var keyExportCmd = &cobra.Command{
 
 		printVerbose("Exporting key: %s to file: %s", keyID, outputFile)
 
-		algorithm := backend.WrappingAlgorithm(algorithmStr)
+		algorithm := client.WrappingAlgorithm(algorithmStr)
 		printVerbose("Using wrapping algorithm: %s", algorithm)
 
 		exportKey(cfg, printer, keyID, outputFile, algorithm)
@@ -749,7 +747,7 @@ var keyExportCmd = &cobra.Command{
 }
 
 // exportKey exports a key using the SDK client
-func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorithm backend.WrappingAlgorithm) {
+func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorithm client.WrappingAlgorithm) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(fmt.Errorf("failed to create client: %w", err))
@@ -780,7 +778,7 @@ func exportKey(cfg *Config, printer *Printer, keyID, outputFile string, algorith
 	printVerbose("Wrapped key size: %d bytes", len(resp.WrappedKeyMaterial))
 
 	// Create WrappedKeyMaterial structure for file output
-	wrapped := &backend.WrappedKeyMaterial{
+	wrapped := &client.WrappedKeyMaterial{
 		WrappedKey: resp.WrappedKeyMaterial,
 		Algorithm:  algorithm,
 	}
@@ -827,7 +825,7 @@ var keyCopyCmd = &cobra.Command{
 
 		printVerbose("Copying key: %s -> %s (backend: %s -> %s)", sourceKeyID, destKeyID, cfg.Backend, destBackend)
 
-		algorithm := backend.WrappingAlgorithm(algorithmStr)
+		algorithm := client.WrappingAlgorithm(algorithmStr)
 		printVerbose("Using wrapping algorithm: %s", algorithm)
 
 		copyKey(cfg, printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm, keySize, curve, algorithm)
@@ -835,7 +833,7 @@ var keyCopyCmd = &cobra.Command{
 }
 
 // copyKey copies a key using the SDK client
-func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm string, keySize int, curve string, algorithm backend.WrappingAlgorithm) {
+func copyKey(cfg *Config, printer *Printer, sourceKeyID, destKeyID, destBackend, keyType, keyAlgorithm string, keySize int, curve string, algorithm client.WrappingAlgorithm) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(fmt.Errorf("failed to create client: %w", err))
@@ -900,7 +898,7 @@ var keyGetImportParamsCmd = &cobra.Command{
 
 		printVerbose("Getting import parameters for key: %s", keyID)
 
-		algorithm := backend.WrappingAlgorithm(algorithmStr)
+		algorithm := client.WrappingAlgorithm(algorithmStr)
 		printVerbose("Requesting parameters for algorithm: %s", algorithm)
 
 		getImportParams(cfg, printer, keyID, keyType, keyAlgorithm, keySize, curve, algorithm, outputFile)
@@ -908,7 +906,7 @@ var keyGetImportParamsCmd = &cobra.Command{
 }
 
 // getImportParams gets import parameters using the SDK client
-func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string, algorithm backend.WrappingAlgorithm, outputFile string) {
+func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm string, keySize int, curve string, algorithm client.WrappingAlgorithm, outputFile string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(fmt.Errorf("failed to create client: %w", err))
@@ -950,8 +948,8 @@ func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 		printVerbose("Parameters expire at: %s", resp.ExpiresAt)
 	}
 
-	// Convert to backend.ImportParameters for output
-	params := &backend.ImportParameters{
+	// Convert to client.ImportParameters for output
+	params := &client.ImportParameters{
 		WrappingPublicKey: resp.WrappingPublicKey,
 		Algorithm:         algorithm,
 	}
@@ -1013,7 +1011,7 @@ var keyWrapCmd = &cobra.Command{
 			return
 		}
 
-		var params backend.ImportParameters
+		var params client.ImportParameters
 		if err := json.Unmarshal(paramsData, &params); err != nil {
 			handleError(fmt.Errorf("failed to deserialize import parameters: %w", err))
 			return
@@ -1026,7 +1024,7 @@ var keyWrapCmd = &cobra.Command{
 }
 
 // wrapKey wraps key material using the SDK client
-func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *backend.ImportParameters, outputFile string) {
+func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.ImportParameters, outputFile string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(fmt.Errorf("failed to create client: %w", err))
@@ -1067,7 +1065,7 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *backend.
 	printVerbose("Wrapped key size: %d bytes", len(resp.WrappedKeyMaterial))
 
 	// Create WrappedKeyMaterial structure for file output
-	wrapped := &backend.WrappedKeyMaterial{
+	wrapped := &client.WrappedKeyMaterial{
 		WrappedKey: resp.WrappedKeyMaterial,
 		Algorithm:  params.Algorithm,
 	}
@@ -1112,7 +1110,7 @@ var keyUnwrapCmd = &cobra.Command{
 			return
 		}
 
-		var wrapped backend.WrappedKeyMaterial
+		var wrapped client.WrappedKeyMaterial
 		if err := json.Unmarshal(wrappedData, &wrapped); err != nil {
 			handleError(fmt.Errorf("failed to deserialize wrapped key: %w", err))
 			return
@@ -1128,7 +1126,7 @@ var keyUnwrapCmd = &cobra.Command{
 			return
 		}
 
-		var params backend.ImportParameters
+		var params client.ImportParameters
 		if err := json.Unmarshal(paramsData, &params); err != nil {
 			handleError(fmt.Errorf("failed to deserialize import parameters: %w", err))
 			return
@@ -1141,7 +1139,7 @@ var keyUnwrapCmd = &cobra.Command{
 }
 
 // unwrapKey unwraps key material using the SDK client
-func unwrapKey(cfg *Config, printer *Printer, wrapped *backend.WrappedKeyMaterial, params *backend.ImportParameters, outputFile string) {
+func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial, params *client.ImportParameters, outputFile string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(fmt.Errorf("failed to create client: %w", err))
@@ -1262,22 +1260,22 @@ func init() {
 // buildKeyAttributesFromFlags creates KeyAttributes from separate key type and algorithm flags.
 // This helper function is used by tests and other commands (e.g., tls.go) that need to build
 // KeyAttributes from command-line flags.
-func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize int, curve string, exportable bool) (*types.KeyAttributes, error) {
+func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize int, curve string, exportable bool) (*client.KeyAttributes, error) {
 	// Parse key type and algorithm
-	kt := types.ParseKeyType(keyType)
+	kt := client.ParseKeyType(keyType)
 	if kt == 0 {
 		return nil, fmt.Errorf("invalid key type: %s", keyType)
 	}
 
-	ka, err := types.ParseKeyAlgorithm(keyAlgorithm)
+	ka, err := client.ParseKeyAlgorithm(keyAlgorithm)
 	if err != nil {
 		return nil, fmt.Errorf("invalid key algorithm: %s", keyAlgorithm)
 	}
 
-	attrs := &types.KeyAttributes{
+	attrs := &client.KeyAttributes{
 		CN:           keyID,
 		KeyType:      kt,
-		StoreType:    types.StoreSoftware,
+		StoreType:    client.StoreSoftware,
 		KeyAlgorithm: ka,
 		Hash:         crypto.SHA256,
 		Exportable:   exportable,
@@ -1289,16 +1287,16 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 		if keySize < 2048 {
 			return nil, fmt.Errorf("RSA key size must be at least 2048 bits")
 		}
-		attrs.RSAAttributes = &types.RSAAttributes{
+		attrs.RSAAttributes = &client.RSAAttributes{
 			KeySize: keySize,
 		}
 
 	case x509.ECDSA:
-		parsedCurve, err := types.ParseCurve(curve)
+		parsedCurve, err := client.ParseCurve(curve)
 		if err != nil {
 			return nil, fmt.Errorf("invalid curve: %s", curve)
 		}
-		attrs.ECCAttributes = &types.ECCAttributes{
+		attrs.ECCAttributes = &client.ECCAttributes{
 			Curve: parsedCurve,
 		}
 
@@ -1316,13 +1314,13 @@ func buildKeyAttributesFromFlags(keyID, keyType, keyAlgorithm string, keySize in
 
 // buildSymmetricKeyAttributes creates KeyAttributes for symmetric (AES) keys.
 // This helper function is used by tests that need to build KeyAttributes for symmetric keys.
-func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*types.KeyAttributes, error) {
+func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*client.KeyAttributes, error) {
 	// Determine algorithm from either algorithm flag or keySize
-	var symmetricAlgorithm types.SymmetricAlgorithm
+	var symmetricAlgorithm client.SymmetricAlgorithm
 
 	if algorithm != "" {
 		// Parse algorithm string
-		symmetricAlgorithm = types.SymmetricAlgorithm(algorithm)
+		symmetricAlgorithm = client.SymmetricAlgorithm(algorithm)
 		if !symmetricAlgorithm.IsValid() {
 			return nil, fmt.Errorf("invalid algorithm: %s", algorithm)
 		}
@@ -1330,20 +1328,20 @@ func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*types.K
 		// Derive from key size
 		switch keySize {
 		case 128:
-			symmetricAlgorithm = types.SymmetricAES128GCM
+			symmetricAlgorithm = client.SymmetricAES128GCM
 		case 192:
-			symmetricAlgorithm = types.SymmetricAES192GCM
+			symmetricAlgorithm = client.SymmetricAES192GCM
 		case 256:
-			symmetricAlgorithm = types.SymmetricAES256GCM
+			symmetricAlgorithm = client.SymmetricAES256GCM
 		default:
 			return nil, fmt.Errorf("invalid AES key size: %d (valid: 128, 192, 256)", keySize)
 		}
 	}
 
-	attrs := &types.KeyAttributes{
+	attrs := &client.KeyAttributes{
 		CN:                 keyID,
-		KeyType:            types.KeyTypeSecret, // Symmetric keys use KeyTypeSecret
-		StoreType:          types.StoreSoftware,
+		KeyType:            client.KeyTypeSecret, // Symmetric keys use KeyTypeSecret
+		StoreType:          client.StoreSoftware,
 		SymmetricAlgorithm: symmetricAlgorithm,
 	}
 
@@ -1358,6 +1356,6 @@ func buildSymmetricKeyAttributes(keyID, algorithm string, keySize int) (*types.K
 // isSymmetricAlgorithm checks if the algorithm string is a symmetric (AES) algorithm.
 // This helper function is used by tests to determine if an algorithm is symmetric.
 func isSymmetricAlgorithm(algorithm string) bool {
-	symAlg := types.SymmetricAlgorithm(algorithm)
+	symAlg := client.SymmetricAlgorithm(algorithm)
 	return symAlg.IsValid()
 }

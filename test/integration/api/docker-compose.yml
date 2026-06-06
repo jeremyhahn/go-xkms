@@ -7,6 +7,10 @@ services:
       additional_contexts:
         go-qrdb: ../../../../go-qrdb
         go-quicraft: ../../../../go-quicraft
+        go-codec: ../../../../go-codec
+        go-frost: ../../../../go-frost
+        go-objstore: ../../../../go-objstore
+        go-truststrap: ../../../../go-truststrap
       args:
         - VERSION=${VERSION:-0.0.1-alpha}
     image: go-xkms-integration:latest
@@ -123,6 +127,10 @@ services:
       additional_contexts:
         go-qrdb: ../../../../go-qrdb
         go-quicraft: ../../../../go-quicraft
+        go-codec: ../../../../go-codec
+        go-frost: ../../../../go-frost
+        go-objstore: ../../../../go-objstore
+        go-truststrap: ../../../../go-truststrap
     image: go-xkms-integration:latest
     container_name: xkms-integration-tests
     # Required for QUIC UDP buffer settings
@@ -136,6 +144,10 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
       - cli-build:/app/build
@@ -160,6 +172,7 @@ services:
       - xkms-integration
     command: >
       sh -c "
+      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       echo 'Configuring UDP buffers for QUIC...' &&
       echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo 'Warning: Could not set rmem_max' &&
       echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo 'Warning: Could not set wmem_max' &&

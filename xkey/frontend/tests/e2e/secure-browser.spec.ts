@@ -10,9 +10,20 @@ import {
  * Browser). The view renders a summary card plus one card per detected
  * Chrome/Firefox family browser. Each card exposes a secure launch pane
  * (URL + profile mode + Launch) and an extension pane (manifest
- * install/uninstall). The tests install a mocked Wails backend via
- * addInitScript before navigating so the exposed services are
- * deterministic and launch/manifest calls can be captured.
+ * install/uninstall).
+ *
+ * Mock strategy — two-phase injection:
+ *
+ * Phase 1 (addInitScript): Runs before the page scripts load. Sets
+ * window-global state arrays (__browserViewLaunchCalls, etc.) and installs
+ * a provisional window.go shim for Vite-only runs (no real Wails bridge).
+ *
+ * Phase 2 (page.evaluate after waitForAppReady): Patches
+ * window.go.services with the test service implementations. This runs
+ * AFTER the real Wails runtime has injected window.go, so it correctly
+ * overrides the live bindings regardless of whether the real Wails bridge
+ * is present. The Browser component's onMount(load) fires on navigation
+ * (after this patch), so every backend call goes to the mock.
  */
 
 interface BrowserViewTestBackend {
@@ -36,7 +47,13 @@ interface BrowserViewTestBackend {
   launchError?: string;
 }
 
-async function installBrowserViewMock(
+/**
+ * Phase 1: Install window-global state and a provisional window.go shim
+ * via addInitScript (runs before page JS). In Wails mode the real runtime
+ * will overwrite window.go; patchBrowserViewServices() re-installs the
+ * service mocks after app ready.
+ */
+async function installBrowserViewInitScript(
   page: Page,
   backend: BrowserViewTestBackend,
 ): Promise<void> {
@@ -52,7 +69,10 @@ async function installBrowserViewMock(
     (window as any).__browserViewManifests = data.manifests.map(
       (m: { browser: string; installed: boolean }) => ({ ...m }),
     );
+    (window as any).__browserViewData = data;
 
+    // Provisional shim: active in Vite-only mode where no real Wails bridge
+    // exists. In real-Wails mode patchBrowserViewServices() overwrites this.
     (window as any).go = {
       main: {},
       services: {
@@ -90,8 +110,9 @@ async function installBrowserViewMock(
             developer_tools: true,
             browser_extension_enabled: false,
           }),
+          GetDeveloperTools: async () => true,
         },
-        AppLockService: { RecordActivity: async () => {} },
+        AppLockService: { RecordActivity: async () => {}, GetStatus: async () => ({ is_locked: false }) },
         PairingService: {
           GetExtensionFullStatus: async () => ({
             ipc_running: true,
@@ -107,18 +128,16 @@ async function installBrowserViewMock(
             ),
           }),
           InstallManifest: async (browser: string) => {
-            manifestCalls.push({ action: 'install', browser });
-            const list = (window as any).__browserViewManifests;
-            const entry = list.find(
-              (m: { browser: string; installed: boolean }) => m.browser === browser,
+            (window as any).__browserViewManifestCalls.push({ action: 'install', browser });
+            const entry = (window as any).__browserViewManifests.find(
+              (m: { browser: string }) => m.browser === browser,
             );
             if (entry) entry.installed = true;
           },
           UninstallManifest: async (browser: string) => {
-            manifestCalls.push({ action: 'uninstall', browser });
-            const list = (window as any).__browserViewManifests;
-            const entry = list.find(
-              (m: { browser: string; installed: boolean }) => m.browser === browser,
+            (window as any).__browserViewManifestCalls.push({ action: 'uninstall', browser });
+            const entry = (window as any).__browserViewManifests.find(
+              (m: { browser: string }) => m.browser === browser,
             );
             if (entry) entry.installed = false;
           },
@@ -130,21 +149,22 @@ async function installBrowserViewMock(
           },
         },
         TrustService: {
-          CertificateCount: async () => data.certCount,
+          CertificateCount: async () => (window as any).__browserViewData.certCount,
         },
         SecureBrowserService: {
-          DetectBrowsers: async () => data.browsers,
+          DetectBrowsers: async () => (window as any).__browserViewData.browsers,
           LaunchBrowser: async (browserPath: string, url: string) => {
-            launchCalls.push({ browserPath, url });
-            if (data.launchError) {
-              throw new Error(data.launchError);
+            (window as any).__browserViewLaunchCalls.push({ browserPath, url });
+            const d = (window as any).__browserViewData;
+            if (d.launchError) {
+              throw new Error(d.launchError);
             }
             return (
-              data.launchResult ?? {
+              d.launchResult ?? {
                 browser: browserPath,
                 family: browserPath.includes('chrome') ? 'chrome' : 'firefox',
                 mode: 'isolated',
-                cert_count: data.certCount,
+                cert_count: d.certCount,
                 pid: 12345,
               }
             );
@@ -153,6 +173,85 @@ async function installBrowserViewMock(
       },
     };
   }, payload);
+}
+
+/**
+ * Phase 2: Patch window.go.services with mock implementations. Called after
+ * waitForAppReady so this runs after the real Wails runtime has injected
+ * window.go. Overwrites only the services the Browser view uses, leaving
+ * any other real services intact (auth, TPM, app-lock, etc. already ran
+ * during app init and do not need re-mocking here).
+ */
+async function patchBrowserViewServices(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const svc = (window as any).go?.services;
+    if (!svc) return;
+
+    svc.TrustService = {
+      ...svc.TrustService,
+      CertificateCount: async () => (window as any).__browserViewData.certCount,
+    };
+
+    svc.SecureBrowserService = {
+      ...svc.SecureBrowserService,
+      DetectBrowsers: async () => (window as any).__browserViewData.browsers,
+      LaunchBrowser: async (browserPath: string, url: string) => {
+        (window as any).__browserViewLaunchCalls.push({ browserPath, url });
+        const d = (window as any).__browserViewData;
+        if (d.launchError) {
+          throw new Error(d.launchError);
+        }
+        return (
+          d.launchResult ?? {
+            browser: browserPath,
+            family: browserPath.includes('chrome') ? 'chrome' : 'firefox',
+            mode: 'isolated',
+            cert_count: d.certCount,
+            pid: 12345,
+          }
+        );
+      },
+    };
+
+    svc.BrowserService = {
+      ...svc.BrowserService,
+      GetConfig: async () => ({ ...((window as any).__browserViewConfig) }),
+      SetConfig: async (cfg: any) => {
+        (window as any).__browserViewConfig = { ...cfg };
+      },
+    };
+
+    svc.PairingService = {
+      ...svc.PairingService,
+      GetExtensionFullStatus: async () => ({
+        ipc_running: true,
+        ipc_socket_path: '/tmp/xkey.sock',
+        paired_extensions: [],
+        manifests: (window as any).__browserViewManifests.map(
+          (m: { browser: string; installed: boolean }) => ({
+            browser: m.browser,
+            name: m.browser,
+            installed: m.installed,
+            path: `/tmp/${m.browser}.json`,
+          }),
+        ),
+      }),
+      InstallManifest: async (browser: string) => {
+        (window as any).__browserViewManifestCalls.push({ action: 'install', browser });
+        const entry = (window as any).__browserViewManifests.find(
+          (m: { browser: string }) => m.browser === browser,
+        );
+        if (entry) entry.installed = true;
+      },
+      UninstallManifest: async (browser: string) => {
+        (window as any).__browserViewManifestCalls.push({ action: 'uninstall', browser });
+        const entry = (window as any).__browserViewManifests.find(
+          (m: { browser: string }) => m.browser === browser,
+        );
+        if (entry) entry.installed = false;
+      },
+    };
+  });
 }
 
 const defaultBackend: BrowserViewTestBackend = {
@@ -178,16 +277,20 @@ async function gotoBrowserView(
   page: Page,
   backend: BrowserViewTestBackend = defaultBackend,
 ): Promise<void> {
-  await installBrowserViewMock(page, backend);
+  await installBrowserViewInitScript(page, backend);
   await page.goto('/');
   await waitForAppReady(page);
   await ensureSidebarExpanded(page);
+  // Patch services after Wails runtime has loaded (overrides real bindings).
+  await patchBrowserViewServices(page);
   await navigateTo(page, 'browser');
+  // Wait for the Browser view heading to confirm it has mounted and loaded.
+  await expect(page.getByRole('heading', { name: 'Browser', level: 1 })).toBeVisible();
 }
 
 test.describe('Browser view — navigation', () => {
   test('Browser nav item appears under Applications', async ({ page }) => {
-    await installBrowserViewMock(page, defaultBackend);
+    await installBrowserViewInitScript(page, defaultBackend);
     await page.goto('/');
     await waitForAppReady(page);
     await ensureSidebarExpanded(page);
@@ -209,9 +312,13 @@ test.describe('Browser view — summary card', () => {
     page,
   }) => {
     await gotoBrowserView(page, { ...defaultBackend, certCount: 7 });
-    // Wait for mocked data to populate.
     await expect(page.getByText('7 certificates', { exact: true })).toBeVisible();
-    await expect(page.getByText(/^2$/, { exact: true }).first()).toBeVisible();
+    // Browser count: the mock returns 2 browsers; verify the "Detected browsers"
+    // summary item shows 2. Scope to the summary info div that follows the label.
+    const detectedItem = page.locator('.summary-item', {
+      has: page.locator('.field-label', { hasText: 'Detected browsers' }),
+    });
+    await expect(detectedItem.getByText('2', { exact: true })).toBeVisible();
   });
 
   test('singular certificate label when count is 1', async ({ page }) => {
@@ -224,7 +331,9 @@ test.describe('Browser view — summary card', () => {
   }) => {
     await gotoBrowserView(page);
 
-    // Flip Chrome manifest state, then refresh — view should reflect install.
+    // Flip Chrome manifest state in the in-memory mock, then click Refresh —
+    // the view re-calls PairingService.GetExtensionFullStatus and should
+    // render the updated install state.
     await page.evaluate(() => {
       const list = (window as any).__browserViewManifests;
       const entry = list.find(
@@ -314,6 +423,7 @@ test.describe('Browser view — launch', () => {
     await gotoBrowserView(page);
 
     const firefoxCard = page.locator('[data-testid="browser-card-firefox"]');
+    // Input default is 'about:blank'; clear it then launch.
     await firefoxCard.locator('input[type="text"]').fill('');
 
     await firefoxCard

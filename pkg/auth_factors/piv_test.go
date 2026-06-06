@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -128,10 +128,10 @@ func TestPIVHardwareFactorVerifier_Success(t *testing.T) {
 	}
 
 	sum := sha256.Sum256(fx.leafCert.Raw)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f-piv-1",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorPIV,
+		Type:       qrdbsdk.AuthFactorPIV,
 		Credential: sum[:],
 		Metadata: map[string]string{
 			"cert_pem": fx.leafPEM,
@@ -170,11 +170,11 @@ func TestPIVHardwareFactorVerifier_Revoked(t *testing.T) {
 	fx := newPIVTestFixture(t)
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
 	now := time.Now().UTC()
-	factor := &qrdbauth.AuthFactor{
-		ID: "f", UserID: 1, Type: qrdbauth.AuthFactorPIV, RevokedAt: &now,
+	factor := &qrdbsdk.AuthFactor{
+		ID: "f", UserID: 1, Type: qrdbsdk.AuthFactorPIV, RevokedAt: &now,
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{})
-	var fre *qrdbauth.FactorRevokedError
+	var fre *qrdbsdk.FactorRevokedError
 	if !errors.As(err, &fre) {
 		t.Fatalf("expected *FactorRevokedError, got %T (%v)", err, err)
 	}
@@ -183,13 +183,13 @@ func TestPIVHardwareFactorVerifier_Revoked(t *testing.T) {
 func TestPIVHardwareFactorVerifier_WrongType(t *testing.T) {
 	fx := newPIVTestFixture(t)
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
-	factor := &qrdbauth.AuthFactor{
-		ID: "f", UserID: 1, Type: qrdbauth.AuthFactorMTLS,
+	factor := &qrdbsdk.AuthFactor{
+		ID: "f", UserID: 1, Type: qrdbsdk.AuthFactorMTLS,
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{
 		Nonce: []byte("n"), Signature: []byte("s"),
 	})
-	var fte *qrdbauth.FactorTypeUnsupportedError
+	var fte *qrdbsdk.FactorTypeUnsupportedError
 	if !errors.As(err, &fte) {
 		t.Fatalf("expected *FactorTypeUnsupportedError, got %T (%v)", err, err)
 	}
@@ -198,8 +198,8 @@ func TestPIVHardwareFactorVerifier_WrongType(t *testing.T) {
 func TestPIVHardwareFactorVerifier_MissingNonce(t *testing.T) {
 	fx := newPIVTestFixture(t)
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
-	factor := &qrdbauth.AuthFactor{
-		ID: "f", UserID: 1, Type: qrdbauth.AuthFactorPIV,
+	factor := &qrdbsdk.AuthFactor{
+		ID: "f", UserID: 1, Type: qrdbsdk.AuthFactorPIV,
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{
 		Signature: []byte("s"),
@@ -213,8 +213,8 @@ func TestPIVHardwareFactorVerifier_MissingNonce(t *testing.T) {
 func TestPIVHardwareFactorVerifier_MissingSignature(t *testing.T) {
 	fx := newPIVTestFixture(t)
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
-	factor := &qrdbauth.AuthFactor{
-		ID: "f", UserID: 1, Type: qrdbauth.AuthFactorPIV,
+	factor := &qrdbsdk.AuthFactor{
+		ID: "f", UserID: 1, Type: qrdbsdk.AuthFactorPIV,
 	}
 	err := v.Verify(context.Background(), factor, qrdbtransport.VerifyChallenge{
 		Nonce: []byte("n"),
@@ -229,10 +229,10 @@ func TestPIVHardwareFactorVerifier_CredentialMismatch(t *testing.T) {
 	fx := newPIVTestFixture(t)
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
 
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorPIV,
+		Type:       qrdbsdk.AuthFactorPIV,
 		Credential: []byte("not-the-real-sha256-of-cert"),
 		Metadata: map[string]string{
 			"cert_pem": fx.leafPEM,
@@ -252,10 +252,10 @@ func TestPIVHardwareFactorVerifier_BadSignature(t *testing.T) {
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
 
 	sum := sha256.Sum256(fx.leafCert.Raw)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorPIV,
+		Type:       qrdbsdk.AuthFactorPIV,
 		Credential: sum[:],
 		Metadata:   map[string]string{"cert_pem": fx.leafPEM},
 	}
@@ -273,10 +273,10 @@ func TestPIVHardwareFactorVerifier_BadSignature(t *testing.T) {
 func TestPIVHardwareFactorVerifier_MissingCert(t *testing.T) {
 	fx := newPIVTestFixture(t)
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorPIV,
+		Type:       qrdbsdk.AuthFactorPIV,
 		Credential: []byte("any"),
 		// No Metadata at all
 	}
@@ -292,10 +292,10 @@ func TestPIVHardwareFactorVerifier_MissingCert(t *testing.T) {
 func TestPIVHardwareFactorVerifier_BadPEM(t *testing.T) {
 	fx := newPIVTestFixture(t)
 	v, _ := NewPIVHardwareFactorVerifier(fx.rootsPool, nil)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorPIV,
+		Type:       qrdbsdk.AuthFactorPIV,
 		Credential: []byte("any"),
 		Metadata:   map[string]string{"cert_pem": "not a pem"},
 	}
@@ -315,10 +315,10 @@ func TestPIVHardwareFactorVerifier_ChainNotTrusted(t *testing.T) {
 	v, _ := NewPIVHardwareFactorVerifier(otherRoots, nil)
 
 	sum := sha256.Sum256(fx.leafCert.Raw)
-	factor := &qrdbauth.AuthFactor{
+	factor := &qrdbsdk.AuthFactor{
 		ID:         "f",
 		UserID:     1,
-		Type:       qrdbauth.AuthFactorPIV,
+		Type:       qrdbsdk.AuthFactorPIV,
 		Credential: sum[:],
 		Metadata:   map[string]string{"cert_pem": fx.leafPEM},
 	}

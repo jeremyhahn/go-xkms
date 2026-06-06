@@ -311,7 +311,7 @@ func NewPKCS11TLSConfig(cfg *PKCS11TLSConfig) (*tls.Config, func(), error) {
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	if cfg.CACerts != nil {

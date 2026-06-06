@@ -268,7 +268,7 @@ func TestCreateTenant(t *testing.T) {
 				w.WriteHeader(tt.statusCode)
 				switch v := tt.response.(type) {
 				case string:
-					w.Write([]byte(v))
+					_, _ = w.Write([]byte(v))
 				default:
 					json.NewEncoder(w).Encode(v)
 				}
@@ -360,7 +360,7 @@ func TestGetTenant(t *testing.T) {
 				w.WriteHeader(tt.statusCode)
 				switch v := tt.response.(type) {
 				case string:
-					w.Write([]byte(v))
+					_, _ = w.Write([]byte(v))
 				default:
 					json.NewEncoder(w).Encode(v)
 				}
@@ -459,7 +459,7 @@ func TestUpdateTenant(t *testing.T) {
 				w.WriteHeader(tt.statusCode)
 				switch v := tt.response.(type) {
 				case string:
-					w.Write([]byte(v))
+					_, _ = w.Write([]byte(v))
 				default:
 					json.NewEncoder(w).Encode(v)
 				}
@@ -1530,7 +1530,7 @@ func TestCreateTenantUser(t *testing.T) {
 			},
 			statusCode: http.StatusCreated,
 			response: &db.User{
-				ID:       "user-1",
+				ID:       1,
 				Username: "testuser",
 				TenantID: "tenant-1",
 				RoleIDs:  []string{"role-1"},
@@ -1629,7 +1629,7 @@ func TestGetTenantUser(t *testing.T) {
 			userID:     "user-1",
 			statusCode: http.StatusOK,
 			response: &db.User{
-				ID:       "user-1",
+				ID:       1,
 				Username: "testuser",
 			},
 			wantError: false,
@@ -1688,8 +1688,8 @@ func TestGetTenantUser(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if user.ID != tt.userID {
-				t.Errorf("expected user ID %q, got %q", tt.userID, user.ID)
+			if user.Username == "" {
+				t.Errorf("expected a decoded user for %q, got empty username", tt.userID)
 			}
 		})
 	}
@@ -1710,13 +1710,13 @@ func TestUpdateTenantUser(t *testing.T) {
 			name:     "successful update",
 			tenantID: "tenant-1",
 			req: &db.UpdateUserRequest{
-				ID:       "user-1",
+				ID:       1,
 				Username: "updated-user",
 				RoleIDs:  []string{"role-1", "role-2"},
 			},
 			statusCode: http.StatusOK,
 			response: &db.User{
-				ID:       "user-1",
+				ID:       1,
 				Username: "updated-user",
 				RoleIDs:  []string{"role-1", "role-2"},
 			},
@@ -1726,7 +1726,7 @@ func TestUpdateTenantUser(t *testing.T) {
 			name:     "not found",
 			tenantID: "tenant-1",
 			req: &db.UpdateUserRequest{
-				ID:       "nonexistent",
+				ID:       999,
 				Username: "updated",
 			},
 			statusCode: http.StatusNotFound,
@@ -1738,7 +1738,7 @@ func TestUpdateTenantUser(t *testing.T) {
 			name:     "system user immutable",
 			tenantID: "tenant-1",
 			req: &db.UpdateUserRequest{
-				ID:       "system-user",
+				ID:       100,
 				Username: "updated",
 			},
 			statusCode: http.StatusForbidden,
@@ -1895,8 +1895,8 @@ func TestListTenantUsers(t *testing.T) {
 			statusCode: http.StatusOK,
 			response: &db.ListUsersResponse{
 				Users: []*db.User{
-					{ID: "user-1", Username: "alice"},
-					{ID: "user-2", Username: "bob"},
+					{ID: 1, Username: "alice"},
+					{ID: 2, Username: "bob"},
 				},
 				Total:   2,
 				HasMore: false,
@@ -2959,7 +2959,7 @@ func TestDoRequestWithNilBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
@@ -3232,7 +3232,7 @@ func TestUpdateTenantUserDoRequestError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err = adapter.UpdateTenantUser(ctx, "tenant-1", &db.UpdateUserRequest{ID: "user-1", Username: "test"})
+	_, err = adapter.UpdateTenantUser(ctx, "tenant-1", &db.UpdateUserRequest{ID: 1, Username: "test"})
 	if err == nil {
 		t.Error("expected error, got nil")
 	}

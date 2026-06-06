@@ -20,7 +20,8 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/pintpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -79,7 +80,7 @@ var (
 var tpmRCNVDefined = tpm2.TPMRC(0x14c)
 
 // PlatformKeyStore provides TPM-backed key storage with integrated PIN management.
-// It implements pin.PlatformAuthProvider so the pin.TPM2Backend can delegate
+// It implements pin.PlatformAuthProvider so the pintpm2.TPM2Backend can delegate
 // all PIN verification to the PlatformSRK's password auth.
 //
 // The Platform SRK (at tpSRKIndex = 0x81000002) is the only key used for PIN
@@ -92,18 +93,18 @@ type PlatformKeyStore struct {
 	tpm         TrustedPlatformModule
 	backend     store.KeyBackend
 	config      *Config
-	pinBackend  *pin.TPM2Backend
+	pinBackend  *pintpm2.TPM2Backend
 	srkAttrs    *types.KeyAttributes
 	initialized atomic.Bool
 	authReady   atomic.Bool
 }
 
 // Compile-time interface check: PlatformKeyStore implements PlatformAuthProvider.
-var _ pin.PlatformAuthProvider = (*PlatformKeyStore)(nil)
+var _ pintpm2.PlatformAuthProvider = (*PlatformKeyStore)(nil)
 
 // NewPlatformKeyStore creates a new PlatformKeyStore with integrated TPM PIN
 // management. The PlatformKeyStore itself serves as the PlatformAuthProvider
-// for the pin.TPM2Backend, delegating PIN verification to the PlatformSRK's
+// for the pintpm2.TPM2Backend, delegating PIN verification to the PlatformSRK's
 // password auth value.
 func NewPlatformKeyStore(
 	logger *slog.Logger,
@@ -139,7 +140,7 @@ func NewPlatformKeyStore(
 
 	// Create the PIN backend using the PlatformKeyStore itself as provider.
 	// The TPM2Backend delegates PIN verification to PlatformSRK password auth.
-	pks.pinBackend = pin.NewTPM2Backend(pks)
+	pks.pinBackend = pintpm2.NewTPM2Backend(pks)
 
 	// Probe the TPM for a previously created SRK to determine initialization
 	// state. Note: initialized means "SRK exists", NOT "auth is in a known
@@ -343,12 +344,9 @@ func (pks *PlatformKeyStore) IsInitialized() bool {
 // New code should use PINBackend() instead.
 //
 // Deprecated: Use PINBackend() instead.
-func (pks *PlatformKeyStore) PINManager() pin.PINManager { //nolint:staticcheck // TODO: migrate to PINBackend
-	return &pin.PINManagerAdapter{PINBackend: pks.pinBackend} //nolint:staticcheck // TODO: migrate to PINBackend
-}
 
 // PINBackend returns the modern PIN backend for this key store.
-func (pks *PlatformKeyStore) PINBackend() pin.PINBackend {
+func (pks *PlatformKeyStore) PINBackend() qrdbsdk.PINBackend {
 	return pks.pinBackend
 }
 

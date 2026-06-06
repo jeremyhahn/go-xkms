@@ -27,7 +27,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/term"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 )
 
@@ -128,9 +128,9 @@ func resolvePINDataDir() (string, error) {
 	return filepath.Join(homeDir, ".xkey"), nil
 }
 
-// createPINService creates a pin.Service backed by a SoftwareBackend using
+// createPINService creates a qrdbsdk.PINService backed by a SoftwareBackend using
 // file-based storage from the resolved data directory.
-func createPINService(dataDir string) (*pin.Service, error) {
+func createPINService(dataDir string) (*qrdbsdk.PINService, error) {
 	pinDir := filepath.Join(dataDir, defaultPINStateSubdir)
 	if err := os.MkdirAll(pinDir, 0700); err != nil {
 		return nil, &PINCommandError{
@@ -147,8 +147,8 @@ func createPINService(dataDir string) (*pin.Service, error) {
 		}
 	}
 
-	hashConfig := pin.AutoDetectHashConfig()
-	backend, err := pin.NewSoftwareBackend(fileStore, hashConfig)
+	hashConfig := qrdbsdk.AutoDetectHashConfig()
+	backend, err := qrdbsdk.NewSoftwareBackend(fileStore, hashConfig)
 	if err != nil {
 		return nil, &PINCommandError{
 			Operation: "create_service",
@@ -160,7 +160,7 @@ func createPINService(dataDir string) (*pin.Service, error) {
 		Level: slog.LevelWarn,
 	}))
 
-	return pin.NewService(backend, logger), nil
+	return qrdbsdk.NewPINService(backend, logger), nil
 }
 
 // readPIN reads a PIN from terminal or piped stdin.

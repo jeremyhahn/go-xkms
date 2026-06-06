@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -96,7 +97,7 @@ var (
 	// ErrInvalidBarrierStrategy is returned when --barrier-strategy is not
 	// one of the canonical values per
 	// docs/08-bootstrap-auth-architecture.md §6.
-	ErrInvalidBarrierStrategy = errors.New("init: --barrier-strategy must be one of software, shamir, pkcs11, tpm2, awskms, gcpkms, azurekv, vault")
+	ErrInvalidBarrierStrategy = errors.New("init: --barrier-strategy must be one of passphrase, shamir, pkcs11, tpm2, awskms, gcpkms, azurekv, vault")
 
 	// ErrShamirSharesRequired is returned when --barrier-strategy=shamir
 	// but --shares is missing or invalid.
@@ -114,14 +115,14 @@ var (
 // validBarrierStrategies is the set of canonical --barrier-strategy
 // values per docs/08-bootstrap-auth-architecture.md §2.
 var validBarrierStrategies = map[string]struct{}{
-	"software": {},
-	"shamir":   {},
-	"pkcs11":   {},
-	"tpm2":     {},
-	"awskms":   {},
-	"gcpkms":   {},
-	"azurekv":  {},
-	"vault":    {},
+	"passphrase": {},
+	"shamir":     {},
+	"pkcs11":     {},
+	"tpm2":       {},
+	"awskms":     {},
+	"gcpkms":     {},
+	"azurekv":    {},
+	"vault":      {},
 }
 
 // stringSlice implements flag.Value for repeatable string flags.
@@ -288,7 +289,7 @@ func runInit(args []string) {
 	// Create in-memory storage backend for the barrier and platform store.
 	memBackend := storage.NewMemory()
 
-	// Create barrier with software strategy. The strategy implementation
+	// Create barrier with the passphrase strategy. The strategy implementation
 	// remains software-backed in this validation pass; the canonical
 	// --barrier-strategy flag flows through to the ceremony layer where
 	// it selects the correct sealing strategy at the SDK boundary.
@@ -345,8 +346,9 @@ func runInit(args []string) {
 		DataDir:                dataDir,
 	}
 
-	// Create the ceremony service to validate the full configuration.
-	_, err = initialize.NewCeremonyService(
+	// Create the ceremony service. Constructor performs config validation,
+	// surfacing structural errors before any state-mutating ceremony step.
+	cs, err := initialize.NewCeremonyService(
 		ceremonyCfg,
 		barrier,
 		credService,
@@ -369,8 +371,30 @@ func runInit(args []string) {
 		slog.Int("shares", flags.shares),
 		slog.Int("officers", len(officers)))
 
-	// TODO(phase-3b): Wire CA integration and call ceremony.Initialize(ctx, ca).
-	fmt.Fprintln(os.Stderr, "\nNote: CA integration pending (Phase 3b). Configuration validated; initialization ceremony will be executed when CA is wired.")
+	// Execute the ceremony end-to-end: construct a software-backed CA in
+	// the same in-memory tier the rest of init uses, run
+	// CeremonyService.Initialize against it via the CAAdapter (built by
+	// the wrapper at the qrdb boundary), and persist the durable
+	// artifacts (CA bundle, SPKI pin, and — in single-admin mode — the
+	// SO admin client bundle).
+	env := &ceremonyEnv{
+		logger:          logger,
+		hostname:        hostname,
+		dataDir:         dataDir,
+		adminBundlePath: flags.adminBundle,
+	}
+	result, err := executeCeremony(context.Background(), cs, env)
+	if err != nil {
+		logger.Error("ceremony execution failed", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	printCeremonyOutcome(env, result)
+
+	logger.Info("initialization ceremony completed",
+		slog.String("state", string(result.State)),
+		slog.String("spki_pin", result.SPKIPin),
+		slog.Int("shares_generated", result.ShareCount))
 }
 
 // parseInitFlags creates and parses the init subcommand FlagSet.
@@ -381,22 +405,22 @@ func parseInitFlags(args []string) (*initFlags, error) {
 	// Help text documents the canonical XKMS_* env var bindings per
 	// docs/08-bootstrap-auth-architecture.md §6.
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: xkmsd init [flags]")
-		fmt.Fprintln(fs.Output(), "")
-		fmt.Fprintln(fs.Output(), "Bootstrap an xkms server in one call. Canonical surface per")
-		fmt.Fprintln(fs.Output(), "docs/08-bootstrap-auth-architecture.md §6.")
-		fmt.Fprintln(fs.Output(), "")
-		fmt.Fprintln(fs.Output(), "Canonical environment variables (Viper-bound):")
-		fmt.Fprintln(fs.Output(), "  XKMS_SO_PIN              equivalent to --so-pin")
-		fmt.Fprintln(fs.Output(), "  XKMS_USER_PIN            equivalent to --user-pin")
-		fmt.Fprintln(fs.Output(), "  XKMS_BARRIER_STRATEGY    equivalent to --barrier-strategy")
-		fmt.Fprintln(fs.Output(), "  XKMS_SHARES              equivalent to --shares")
-		fmt.Fprintln(fs.Output(), "  XKMS_THRESHOLD           equivalent to --threshold")
-		fmt.Fprintln(fs.Output(), "  XKMS_HOSTNAME            equivalent to --hostname")
-		fmt.Fprintln(fs.Output(), "  XKMS_SANS                equivalent to --sans")
-		fmt.Fprintln(fs.Output(), "  XKMS_ADMIN_BUNDLE        equivalent to --admin-bundle")
-		fmt.Fprintln(fs.Output(), "")
-		fmt.Fprintln(fs.Output(), "Flags:")
+		_, _ = fmt.Fprintln(fs.Output(), "Usage: xkmsd init [flags]")
+		_, _ = fmt.Fprintln(fs.Output(), "")
+		_, _ = fmt.Fprintln(fs.Output(), "Bootstrap an xkms server in one call. Canonical surface per")
+		_, _ = fmt.Fprintln(fs.Output(), "docs/08-bootstrap-auth-architecture.md §6.")
+		_, _ = fmt.Fprintln(fs.Output(), "")
+		_, _ = fmt.Fprintln(fs.Output(), "Canonical environment variables (Viper-bound):")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_SO_PIN              equivalent to --so-pin")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_USER_PIN            equivalent to --user-pin")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_BARRIER_STRATEGY    equivalent to --barrier-strategy")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_SHARES              equivalent to --shares")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_THRESHOLD           equivalent to --threshold")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_HOSTNAME            equivalent to --hostname")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_SANS                equivalent to --sans")
+		_, _ = fmt.Fprintln(fs.Output(), "  XKMS_ADMIN_BUNDLE        equivalent to --admin-bundle")
+		_, _ = fmt.Fprintln(fs.Output(), "")
+		_, _ = fmt.Fprintln(fs.Output(), "Flags:")
 		fs.PrintDefaults()
 	}
 
@@ -405,8 +429,8 @@ func parseInitFlags(args []string) (*initFlags, error) {
 		"Security Officer PIN (required, FIPS 140-3 / PCI-DSS v4 SO credential)")
 	fs.StringVar(&flags.userPin, "user-pin", "",
 		"User PIN (required, FIPS 140-3 / PCI-DSS v4 user credential)")
-	fs.StringVar(&flags.barrierStrategy, "barrier-strategy", "software",
-		"Barrier sealing strategy: software | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
+	fs.StringVar(&flags.barrierStrategy, "barrier-strategy", "passphrase",
+		"Barrier sealing strategy: passphrase | shamir | pkcs11 | tpm2 | awskms | gcpkms | azurekv | vault")
 	fs.IntVar(&flags.shares, "shares", 0,
 		"Total Shamir shares (required when --barrier-strategy=shamir)")
 	fs.IntVar(&flags.threshold, "threshold", 0,
@@ -445,8 +469,9 @@ func resolveInitEnvFallbacks(f *initFlags) {
 		f.userPin = os.Getenv("XKMS_USER_PIN")
 	}
 	if v := os.Getenv("XKMS_BARRIER_STRATEGY"); v != "" {
-		// Only override the default "software" with an explicit env value.
-		if f.barrierStrategy == "software" {
+		// Only override the default ("passphrase") with an explicit env value;
+		// never clobber an operator's explicit non-default --barrier-strategy.
+		if f.barrierStrategy == "passphrase" {
 			f.barrierStrategy = v
 		}
 	}

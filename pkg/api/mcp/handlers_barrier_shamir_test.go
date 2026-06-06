@@ -31,9 +31,8 @@ func createTestBarrier(t *testing.T) *seal.Barrier {
 	t.Helper()
 
 	barrierStore := storage.New()
-	shamirStore := storage.New()
 
-	shamirStrat, err := seal.NewShamirStrategy(shamirStore, 2, 3)
+	shamirStrat, err := seal.NewShamirStrategy(2, 3)
 	require.NoError(t, err)
 
 	barrier, err := seal.NewBarrier(
@@ -523,166 +522,6 @@ func TestBarrierRekey(t *testing.T) {
 	})
 }
 
-// TestBarrierShamirListShares tests the barrier.shamirListShares handler.
-func TestBarrierShamirListShares(t *testing.T) {
-	t.Run("returns error when barrier not configured", func(t *testing.T) {
-		server := createTestServer(t)
-		defer cleanupXKMS()
-
-		req := makeReq("barrier.shamirListShares", nil)
-		_, err := server.handleBarrierShamirListShares(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
-	})
-
-	t.Run("returns share count and config after init", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
-		defer cleanupXKMS()
-
-		// Initialize
-		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
-		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
-		require.NoError(t, err)
-
-		req := makeReq("barrier.shamirListShares", nil)
-		result, err := server.handleBarrierShamirListShares(context.Background(), req)
-		require.NoError(t, err)
-
-		resultMap := result.(map[string]interface{})
-		assert.Equal(t, 3, resultMap["count"])
-		assert.Equal(t, 2, resultMap["threshold"])
-		assert.Equal(t, 3, resultMap["total"])
-	})
-}
-
-// TestBarrierShamirDeleteShare tests the barrier.shamirDeleteShare handler.
-func TestBarrierShamirDeleteShare(t *testing.T) {
-	t.Run("returns error when barrier not configured", func(t *testing.T) {
-		server := createTestServer(t)
-		defer cleanupXKMS()
-
-		req := makeReq("barrier.shamirDeleteShare", BarrierShamirDeleteShareParams{Index: 1})
-		_, err := server.handleBarrierShamirDeleteShare(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
-	})
-
-	t.Run("returns error with invalid JSON params", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
-		defer cleanupXKMS()
-
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Params:  json.RawMessage(`nope`),
-			ID:      1,
-		}
-		_, err := server.handleBarrierShamirDeleteShare(context.Background(), req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid params")
-	})
-
-	t.Run("returns error with invalid index", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
-		defer cleanupXKMS()
-
-		req := makeReq("barrier.shamirDeleteShare", BarrierShamirDeleteShareParams{Index: 0})
-		_, err := server.handleBarrierShamirDeleteShare(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierShareIndexInvalid)
-	})
-
-	t.Run("succeeds deleting a share after initialization", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
-		defer cleanupXKMS()
-
-		// Initialize
-		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
-		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
-		require.NoError(t, err)
-
-		// Delete share 1
-		req := makeReq("barrier.shamirDeleteShare", BarrierShamirDeleteShareParams{Index: 1})
-		result, err := server.handleBarrierShamirDeleteShare(context.Background(), req)
-		require.NoError(t, err)
-
-		resultMap := result.(map[string]interface{})
-		assert.True(t, resultMap["success"].(bool))
-		assert.Contains(t, resultMap["message"], "share 1 deleted")
-	})
-}
-
-// TestBarrierShamirDeleteAllShares tests the barrier.shamirDeleteAllShares handler.
-func TestBarrierShamirDeleteAllShares(t *testing.T) {
-	t.Run("returns error when barrier not configured", func(t *testing.T) {
-		server := createTestServer(t)
-		defer cleanupXKMS()
-
-		req := makeReq("barrier.shamirDeleteAllShares", nil)
-		_, err := server.handleBarrierShamirDeleteAllShares(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
-	})
-
-	t.Run("succeeds deleting all shares after initialization", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
-		defer cleanupXKMS()
-
-		// Initialize
-		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
-		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
-		require.NoError(t, err)
-
-		// Delete all shares
-		req := makeReq("barrier.shamirDeleteAllShares", nil)
-		result, err := server.handleBarrierShamirDeleteAllShares(context.Background(), req)
-		require.NoError(t, err)
-
-		resultMap := result.(map[string]interface{})
-		assert.True(t, resultMap["success"].(bool))
-		assert.Equal(t, "all shares deleted", resultMap["message"])
-
-		// Verify no shares remain
-		listReq := makeReq("barrier.shamirListShares", nil)
-		listResult, err := server.handleBarrierShamirListShares(context.Background(), listReq)
-		require.NoError(t, err)
-
-		listMap := listResult.(map[string]interface{})
-		assert.Equal(t, 0, listMap["count"])
-	})
-}
-
-// TestBarrierShamirVerify tests the barrier.shamirVerify handler.
-func TestBarrierShamirVerify(t *testing.T) {
-	t.Run("returns error when barrier not configured", func(t *testing.T) {
-		server := createTestServer(t)
-		defer cleanupXKMS()
-
-		req := makeReq("barrier.shamirVerify", nil)
-		_, err := server.handleBarrierShamirVerify(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierNotConfigured)
-	})
-
-	t.Run("succeeds when shares are valid", func(t *testing.T) {
-		server, _ := createTestBarrierServer(t)
-		defer cleanupXKMS()
-
-		// Initialize
-		initReq := makeReq("barrier.initializeShamir", BarrierInitializeShamirParams{})
-		_, err := server.handleBarrierInitializeShamir(context.Background(), initReq)
-		require.NoError(t, err)
-
-		// Verify shares
-		req := makeReq("barrier.shamirVerify", nil)
-		result, err := server.handleBarrierShamirVerify(context.Background(), req)
-		require.NoError(t, err)
-
-		resultMap := result.(map[string]interface{})
-		assert.True(t, resultMap["success"].(bool))
-		assert.Equal(t, "shares verified successfully", resultMap["message"])
-	})
-}
-
 // TestBarrierGenerateRecoveryKeys tests the barrier.generateRecoveryKeys handler.
 func TestBarrierGenerateRecoveryKeys(t *testing.T) {
 	t.Run("returns error when barrier not configured", func(t *testing.T) {
@@ -917,62 +756,6 @@ func TestBarrierGenerateRootToken(t *testing.T) {
 	})
 }
 
-// TestBarrierShamirNotConfiguredForNonShamirBarrier tests that Shamir-specific operations
-// return the correct error when the barrier has no Shamir strategy registered.
-func TestBarrierShamirNotConfiguredForNonShamirBarrier(t *testing.T) {
-	setupTestXKMS(t)
-	defer cleanupXKMS()
-
-	// Create a barrier without a Shamir strategy (software-only strategy would be used,
-	// but we just need any barrier without a ShamirStrategy registered).
-	barrierStore := storage.New()
-
-	softwareStrat := seal.NewSoftwareStrategy()
-	barrier, err := seal.NewBarrier(
-		slog.Default(),
-		barrierStore,
-		seal.BarrierConfig{
-			RootKeyPath: "barrier/root-key",
-		},
-		softwareStrat,
-	)
-	require.NoError(t, err)
-
-	server, err := NewServer(&Config{
-		Addr:    "localhost:0",
-		Barrier: barrier,
-	})
-	require.NoError(t, err)
-
-	t.Run("shamirListShares returns shamir not configured", func(t *testing.T) {
-		req := makeReq("barrier.shamirListShares", nil)
-		_, err := server.handleBarrierShamirListShares(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierShamirNotConfigured)
-	})
-
-	t.Run("shamirDeleteShare returns shamir not configured", func(t *testing.T) {
-		req := makeReq("barrier.shamirDeleteShare", BarrierShamirDeleteShareParams{Index: 1})
-		_, err := server.handleBarrierShamirDeleteShare(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierShamirNotConfigured)
-	})
-
-	t.Run("shamirDeleteAllShares returns shamir not configured", func(t *testing.T) {
-		req := makeReq("barrier.shamirDeleteAllShares", nil)
-		_, err := server.handleBarrierShamirDeleteAllShares(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierShamirNotConfigured)
-	})
-
-	t.Run("shamirVerify returns shamir not configured", func(t *testing.T) {
-		req := makeReq("barrier.shamirVerify", nil)
-		_, err := server.handleBarrierShamirVerify(context.Background(), req)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrBarrierShamirNotConfigured)
-	})
-}
-
 // TestBarrierMethodRouting tests that barrier methods are properly routed
 // through handleRequest.
 func TestBarrierMethodRouting(t *testing.T) {
@@ -1018,18 +801,6 @@ func TestBarrierMethodRouting(t *testing.T) {
 		assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
 	})
 
-	t.Run("routes barrier.shamirListShares", func(t *testing.T) {
-		req := &JSONRPCRequest{
-			JSONRPC: "2.0",
-			Method:  "barrier.shamirListShares",
-			Params:  json.RawMessage(`{}`),
-			ID:      4,
-		}
-		resp := server.handleRequest(ctx, req, nil)
-		require.NotNil(t, resp)
-		// This should succeed because Shamir strategy is registered
-		assert.Nil(t, resp.Error)
-	})
 }
 
 // TestBarrierSetBarrier tests the SetBarrier method.
@@ -1098,18 +869,7 @@ func TestBarrierFullLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, statusResult.(map[string]interface{})["sealed"].(bool))
 
-	// 4. List shares
-	listReq := makeReq("barrier.shamirListShares", nil)
-	listResult, err := server.handleBarrierShamirListShares(ctx, listReq)
-	require.NoError(t, err)
-	assert.Equal(t, 3, listResult.(map[string]interface{})["count"])
-
-	// 5. Verify shares
-	verifyReq := makeReq("barrier.shamirVerify", nil)
-	_, err = server.handleBarrierShamirVerify(ctx, verifyReq)
-	require.NoError(t, err)
-
-	// 6. Generate recovery keys
+	// 4. Generate recovery keys
 	recoveryReq := makeReq("barrier.generateRecoveryKeys", BarrierGenerateRecoveryKeysParams{Threshold: 2, Total: 3})
 	recoveryResult, err := server.handleBarrierGenerateRecoveryKeys(ctx, recoveryReq)
 	require.NoError(t, err)

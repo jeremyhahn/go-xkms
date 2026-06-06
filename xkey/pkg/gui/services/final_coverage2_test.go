@@ -205,13 +205,13 @@ func TestFinal2_Barrier_BestStrategy_SoftwareAlwaysAvailable(t *testing.T) {
 	best, err := svc.BestStrategy()
 	assert.NoError(t, err)
 	assert.NotNil(t, best)
-	assert.Equal(t, string(seal.StrategySoftware), best.ID)
+	assert.Equal(t, string(seal.StrategyPassphrase), best.ID)
 }
 
 func TestFinal2_Barrier_Initialize_NoPassword(t *testing.T) {
 	// Covers L167-169 (BestStrategy error) and related paths.
 	svc := NewBarrierService(t.TempDir(), slog.Default())
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	// BestStrategy fails (no TPM, no software strategy configured by default).
 	assert.Error(t, err)
 }
@@ -219,7 +219,7 @@ func TestFinal2_Barrier_Initialize_NoPassword(t *testing.T) {
 func TestFinal2_Barrier_Unseal_NoBarrierData(t *testing.T) {
 	// Covers L230-233: Unseal fails (no barrier on disk).
 	svc := NewBarrierService(t.TempDir(), slog.Default())
-	err := svc.Unseal("", "software")
+	err := svc.Unseal("", "passphrase")
 	assert.Error(t, err)
 }
 

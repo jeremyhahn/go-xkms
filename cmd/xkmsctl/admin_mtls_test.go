@@ -15,14 +15,11 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"math/big"
@@ -32,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -89,6 +87,53 @@ func generateTestCert(t *testing.T) (string, *x509.Certificate) {
 	return certPath, cert
 }
 
+// reissueTestCertForKey writes a fresh self-signed certificate that reuses the
+// supplied key but carries a different serial number and subject. A renewal /
+// re-issue for the same key must resolve to the same SPKI thumbprint, which is
+// the key-stability property this exercises.
+func reissueTestCertForKey(t *testing.T, key *ecdsa.PrivateKey) (string, *x509.Certificate) {
+	t.Helper()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(99),
+		Subject: pkix.Name{
+			CommonName:   "admin-renewed@example.com",
+			Organization: []string{"Test Org"},
+		},
+		Issuer: pkix.Name{
+			CommonName:   "Test CA",
+			Organization: []string{"Test Org"},
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(2 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create renewed certificate: %v", err)
+	}
+
+	cert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		t.Fatalf("failed to parse renewed certificate: %v", err)
+	}
+
+	pemBlock := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: derBytes,
+	})
+
+	certPath := filepath.Join(t.TempDir(), "client-renewed.pem")
+	if err := os.WriteFile(certPath, pemBlock, 0600); err != nil {
+		t.Fatalf("failed to write renewed cert file: %v", err)
+	}
+
+	return certPath, cert
+}
+
 // ============================================================================
 // admin create --method flag tests
 // ============================================================================
@@ -116,8 +161,7 @@ func TestAdminCreateCmd_HasCertFileFlag(t *testing.T) {
 }
 
 func TestAdminCreateCmd_UnsupportedMethod(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+	tmpDir := newTestStorageDir(t)
 
 	originalConfig := *globalConfig
 	defer func() { *globalConfig = originalConfig }()
@@ -147,65 +191,126 @@ func TestAdminCreateCmd_UnsupportedMethod(t *testing.T) {
 // mTLS enrollment with --cert-file (happy path)
 // ============================================================================
 
-func TestAdminCreate_MTLS_CertFile_Success_Text(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
-
+// TestAdminCreate_MTLS_CertFile_LoadsCertBeforeEnroll verifies that the mTLS
+// enrollment path loads and parses the --cert-file certificate (computing the
+// canonical SPKI thumbprint) before reaching the SDK. The enrollment itself is
+// driven through the xkms SDK against a live server; without a reachable server
+// the command exits non-zero, so this unit test asserts the cert-loading half of
+// the path and leaves the server round-trip to the integration suite.
+func TestAdminCreate_MTLS_CertFile_LoadsCertBeforeEnroll(t *testing.T) {
 	certPath, cert := generateTestCert(t)
+
+	// The loaded cert must produce the canonical qrdb SPKI thumbprint — the
+	// single mTLS identity algorithm shared across qrdb/xkms/quicbaas.
+	loaded, err := loadCertFromFile(certPath)
+	if err != nil {
+		t.Fatalf("loadCertFromFile failed: %v", err)
+	}
+	if got, want := qrdbsdk.ComputeSPKIThumbprint(loaded), qrdbsdk.ComputeSPKIThumbprint(cert); got != want {
+		t.Errorf("SPKI thumbprint mismatch:\n  got:  %s\n  want: %s", got, want)
+	}
+
+	tmpDir := newTestStorageDir(t)
 
 	originalConfig := *globalConfig
 	defer func() { *globalConfig = originalConfig }()
 	globalConfig.OutputFormat = "text"
 
-	output, _ := executeAdminCommand(t, tmpDir, "create", "mtls-admin@test.com",
-		"--method", "mtls",
-		"--cert-file", certPath,
-		"--display-name", "mTLS Admin",
-	)
-
-	// Verify output contains expected fields
-	if !strings.Contains(output, "mtls-admin@test.com") {
-		t.Errorf("expected username in output, got: %s", output)
-	}
-	if !strings.Contains(output, "mTLS") {
-		t.Errorf("expected 'mTLS' auth method in output, got: %s", output)
-	}
-	if !strings.Contains(output, "Fingerprint:") {
-		t.Errorf("expected fingerprint in output, got: %s", output)
-	}
-
-	// Verify user was persisted with correct cert binding
-	ctx := context.Background()
-	admin, err := store.GetByUsername(ctx, "mtls-admin@test.com")
-	if err != nil {
-		t.Fatalf("failed to retrieve admin: %v", err)
-	}
-	if admin.Role != "admin" {
-		t.Errorf("expected admin role, got: %s", admin.Role)
-	}
-	if admin.DisplayName != "mTLS Admin" {
-		t.Errorf("expected display name 'mTLS Admin', got: %s", admin.DisplayName)
-	}
-	if len(admin.CertBindings) != 1 {
-		t.Fatalf("expected 1 cert binding, got: %d", len(admin.CertBindings))
-	}
-
-	// Verify the fingerprint matches the certificate
-	expectedHash := sha256.Sum256(cert.Raw)
-	expectedFingerprint := hex.EncodeToString(expectedHash[:])
-	if admin.CertBindings[0].Fingerprint != expectedFingerprint {
-		t.Errorf("fingerprint mismatch:\n  got:  %s\n  want: %s",
-			admin.CertBindings[0].Fingerprint, expectedFingerprint)
-	}
-	if admin.CertBindings[0].Subject != cert.Subject.String() {
-		t.Errorf("subject mismatch: got %s, want %s",
-			admin.CertBindings[0].Subject, cert.Subject.String())
+	// With no reachable server the SDK connect fails and the command exits 1.
+	exitCode := captureExit(t, func() {
+		_, _ = executeAdminCommand(t, tmpDir, "create", "mtls-admin@test.com",
+			"--method", "mtls",
+			"--cert-file", certPath,
+			"--display-name", "mTLS Admin",
+		)
+	})
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1 when no server is reachable, got %d", exitCode)
 	}
 }
 
-func TestAdminCreate_MTLS_CertFile_Success_JSON(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+// TestAdminCreate_MTLS_CertBinding_KeyStable verifies that the SPKI thumbprint
+// is stable across certificate renewals: an initial certificate and a later
+// re-issued certificate for the SAME key resolve to the same canonical
+// identifier. This is the property that keeps admin mTLS identity stable across
+// renewals, and it is computed from the loaded certificate before enrollment.
+func TestAdminCreate_MTLS_CertBinding_KeyStable(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+
+	// Initial certificate for the key.
+	path1, cert1 := writeTestCertForKey(t, key, "admin-initial@example.com")
+	loaded1, err := loadCertFromFile(path1)
+	if err != nil {
+		t.Fatalf("loadCertFromFile (initial) failed: %v", err)
+	}
+	if got, want := qrdbsdk.ComputeSPKIThumbprint(loaded1), qrdbsdk.ComputeSPKIThumbprint(cert1); got != want {
+		t.Fatalf("initial thumbprint mismatch:\n  got:  %s\n  want: %s", got, want)
+	}
+	id1 := qrdbsdk.ComputeSPKIThumbprint(loaded1)
+
+	// Re-issued certificate for the SAME key (different serial + subject).
+	path2, cert2 := reissueTestCertForKey(t, key)
+	loaded2, err := loadCertFromFile(path2)
+	if err != nil {
+		t.Fatalf("loadCertFromFile (renewed) failed: %v", err)
+	}
+	if got, want := qrdbsdk.ComputeSPKIThumbprint(loaded2), qrdbsdk.ComputeSPKIThumbprint(cert2); got != want {
+		t.Fatalf("renewed thumbprint mismatch:\n  got:  %s\n  want: %s", got, want)
+	}
+	id2 := qrdbsdk.ComputeSPKIThumbprint(loaded2)
+
+	if id1 != id2 {
+		t.Fatalf("key-stability violated: re-issued cert for same key produced a different identifier:\n  first:  %s\n  second: %s", id1, id2)
+	}
+}
+
+// writeTestCertForKey writes a self-signed certificate for the supplied key with
+// the given common name and returns its PEM file path plus the parsed cert.
+func writeTestCertForKey(t *testing.T, key *ecdsa.PrivateKey, commonName string) (string, *x509.Certificate) {
+	t.Helper()
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName:   commonName,
+			Organization: []string{"Test Org"},
+		},
+		Issuer: pkix.Name{
+			CommonName:   "Test CA",
+			Organization: []string{"Test Org"},
+		},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("failed to create certificate: %v", err)
+	}
+	cert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		t.Fatalf("failed to parse certificate: %v", err)
+	}
+	pemBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	certPath := filepath.Join(t.TempDir(), "client-initial.pem")
+	if err := os.WriteFile(certPath, pemBlock, 0600); err != nil {
+		t.Fatalf("failed to write cert file: %v", err)
+	}
+	return certPath, cert
+}
+
+// TestAdminCreate_MTLS_CertFile_JSON_NoServer verifies the JSON-format mTLS
+// enrollment path parses the cert and then fails (exit 1) when the SDK has no
+// reachable server. The successful JSON summary is exercised end-to-end in the
+// integration suite, which runs against a live xkms server.
+func TestAdminCreate_MTLS_CertFile_JSON_NoServer(t *testing.T) {
+	tmpDir := newTestStorageDir(t)
 
 	certPath, _ := generateTestCert(t)
 
@@ -213,26 +318,25 @@ func TestAdminCreate_MTLS_CertFile_Success_JSON(t *testing.T) {
 	defer func() { *globalConfig = originalConfig }()
 	globalConfig.OutputFormat = "json"
 
-	output, _ := executeAdminCommand(t, tmpDir, "create", "mtls-json@test.com",
-		"--method", "mtls",
-		"--cert-file", certPath,
-		"--display-name", "",
-	)
-
-	if !strings.Contains(output, `"auth_method"`) || !strings.Contains(output, `"mtls"`) {
-		t.Errorf("expected JSON with auth_method: mtls, got: %s", output)
-	}
-	if !strings.Contains(output, `"fingerprint"`) {
-		t.Errorf("expected fingerprint in JSON output, got: %s", output)
-	}
-	if !strings.Contains(output, `"success"`) {
-		t.Errorf("expected success in JSON output, got: %s", output)
+	exitCode := captureExit(t, func() {
+		_, _ = executeAdminCommand(t, tmpDir, "create", "mtls-json@test.com",
+			"--method", "mtls",
+			"--cert-file", certPath,
+			"--display-name", "",
+		)
+	})
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1 when no server is reachable, got %d", exitCode)
 	}
 }
 
+// TestAdminCreate_MTLS_DefaultDisplayName verifies that an empty --display-name
+// is accepted (defaulting to the username happens inside the enrollment handler)
+// and that the path proceeds to the SDK, which exits 1 without a server. The
+// default-display-name persistence is verified end-to-end in the integration
+// suite.
 func TestAdminCreate_MTLS_DefaultDisplayName(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+	tmpDir := newTestStorageDir(t)
 
 	certPath, _ := generateTestCert(t)
 
@@ -240,22 +344,17 @@ func TestAdminCreate_MTLS_DefaultDisplayName(t *testing.T) {
 	defer func() { *globalConfig = originalConfig }()
 	globalConfig.OutputFormat = "text"
 
-	// Explicitly pass --display-name "" to reset any stale flag value
-	// on the shared global adminCreateCmd from prior tests.
-	_, _ = executeAdminCommand(t, tmpDir, "create", "defname@test.com",
-		"--method", "mtls",
-		"--cert-file", certPath,
-		"--display-name", "",
-	)
-
-	// When --display-name is empty, username should be used as the display name
-	ctx := context.Background()
-	admin, err := store.GetByUsername(ctx, "defname@test.com")
-	if err != nil {
-		t.Fatalf("failed to retrieve admin: %v", err)
-	}
-	if admin.DisplayName != "defname@test.com" {
-		t.Errorf("expected display name to default to username, got: %s", admin.DisplayName)
+	exitCode := captureExit(t, func() {
+		// Explicitly pass --display-name "" to reset any stale flag value
+		// on the shared global adminCreateCmd from prior tests.
+		_, _ = executeAdminCommand(t, tmpDir, "create", "defname@test.com",
+			"--method", "mtls",
+			"--cert-file", certPath,
+			"--display-name", "",
+		)
+	})
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1 when no server is reachable, got %d", exitCode)
 	}
 }
 
@@ -264,8 +363,7 @@ func TestAdminCreate_MTLS_DefaultDisplayName(t *testing.T) {
 // ============================================================================
 
 func TestAdminCreate_MTLS_NoCertSource(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+	tmpDir := newTestStorageDir(t)
 
 	originalConfig := *globalConfig
 	defer func() { *globalConfig = originalConfig }()
@@ -285,8 +383,7 @@ func TestAdminCreate_MTLS_NoCertSource(t *testing.T) {
 }
 
 func TestAdminCreate_MTLS_InvalidCertFile(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+	tmpDir := newTestStorageDir(t)
 
 	originalConfig := *globalConfig
 	defer func() { *globalConfig = originalConfig }()
@@ -305,8 +402,7 @@ func TestAdminCreate_MTLS_InvalidCertFile(t *testing.T) {
 }
 
 func TestAdminCreate_MTLS_InvalidPEMContent(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+	tmpDir := newTestStorageDir(t)
 
 	// Write a file with invalid PEM content
 	badPemPath := filepath.Join(t.TempDir(), "bad.pem")
@@ -331,8 +427,7 @@ func TestAdminCreate_MTLS_InvalidPEMContent(t *testing.T) {
 }
 
 func TestAdminCreate_MTLS_InvalidDERInPEM(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+	tmpDir := newTestStorageDir(t)
 
 	// Write a valid PEM block with invalid DER content
 	badDerPEM := pem.EncodeToMemory(&pem.Block{
@@ -361,8 +456,7 @@ func TestAdminCreate_MTLS_InvalidDERInPEM(t *testing.T) {
 }
 
 func TestAdminCreate_MTLS_PKCS11Error(t *testing.T) {
-	store, tmpDir := createTestUserStore(t)
-	defer func() { _ = store.Close() }()
+	tmpDir := newTestStorageDir(t)
 
 	originalConfig := *globalConfig
 	defer func() { *globalConfig = originalConfig }()

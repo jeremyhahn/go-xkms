@@ -18,7 +18,6 @@ import (
 	"errors"
 	"testing"
 
-	dberrors "github.com/jeremyhahn/go-qrdb/pkg/errors"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -141,7 +140,7 @@ func TestGet_NotFound_ReturnsQRDBError(t *testing.T) {
 	assert.Nil(t, data)
 
 	// Verify it's a QRDB NotFound error (required by DAO layer).
-	assert.True(t, dberrors.IsNotFound(getErr))
+	assert.True(t, qrdbsdk.IsNotFound(getErr))
 }
 
 func TestGet_BackendError(t *testing.T) {
@@ -182,7 +181,7 @@ func TestDelete_Success(t *testing.T) {
 	data, getErr := adapter.Get(ctx, "key1")
 	assert.Error(t, getErr)
 	assert.Nil(t, data)
-	assert.True(t, dberrors.IsNotFound(getErr))
+	assert.True(t, qrdbsdk.IsNotFound(getErr))
 }
 
 func TestDelete_NotFound_Idempotent(t *testing.T) {
@@ -625,7 +624,7 @@ func TestKVStoreAdapter_RoundTrip(t *testing.T) {
 	data, getErr = adapter.Get(ctx, "entity/1")
 	assert.Error(t, getErr)
 	assert.Nil(t, data)
-	assert.True(t, dberrors.IsNotFound(getErr))
+	assert.True(t, qrdbsdk.IsNotFound(getErr))
 
 	exists, existsErr = adapter.Exists(ctx, "entity/1")
 	assert.NoError(t, existsErr)

@@ -19,9 +19,9 @@ import (
 
 // BarrierConfig configures a Barrier instance.
 type BarrierConfig struct {
-	// PreferenceOrder specifies the order in which sealing strategies are
-	// evaluated. The first available strategy is used to seal the root key.
-	// If nil or empty, DefaultPreferenceOrder is used.
+	// PreferenceOrder is the explicit, ordered list of candidate sealing
+	// strategies; the first available one seals the root key. Required — there
+	// is no implicit default. An empty list is an error (ErrNoStrategySpecified).
 	PreferenceOrder []StrategyID
 
 	// RootKeyPath is the storage key under which the sealed root key blob
@@ -40,9 +40,9 @@ type BarrierConfig struct {
 
 // SealerConfig configures a PlatformSealer instance.
 type SealerConfig struct {
-	// PreferenceOrder specifies the order in which sealing strategies are
-	// evaluated. The first available strategy is used for auto-selection.
-	// If nil or empty, DefaultPreferenceOrder is used.
+	// PreferenceOrder is the explicit, ordered list of candidate sealing
+	// strategies; the first available one is used. Required — there is no
+	// implicit default. An empty list is an error (ErrNoStrategySpecified).
 	PreferenceOrder []StrategyID
 
 	// AuditLogger receives audit events for seal/unseal operations.

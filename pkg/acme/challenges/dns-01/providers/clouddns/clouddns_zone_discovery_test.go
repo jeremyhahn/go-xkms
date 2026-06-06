@@ -16,7 +16,6 @@ package clouddns
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -26,16 +25,6 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01/providers"
 )
-
-// injectZoneCache adds an entry to the zone cache for testing.
-// This allows us to bypass DNS lookups and test the zone selection logic.
-func injectZoneCache(fqdn, zone string) {
-	// Access internal cache in providers package
-	providers.ClearZoneCache()
-
-	// Create a method that adds to the cache
-	// We need to export this or use a workaround - test getHostedZone directly
-}
 
 // TestGetHostedZoneZoneDiscoveryPaths tests zone discovery code paths
 // by using real DNS lookups for well-known domains.
@@ -177,9 +166,6 @@ func TestZoneDiscoveryWithSubdomain(t *testing.T) {
 		assert.Equal(t, "google-zone", zone)
 	})
 }
-
-// testableZoneCache provides access to zone cache for testing
-var zoneCacheMu sync.RWMutex
 
 // TestZoneCaching tests that zone discovery results are used correctly.
 func TestZoneCaching(t *testing.T) {

@@ -19,8 +19,8 @@ import (
 	"os"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/stretchr/testify/assert"
@@ -46,7 +46,7 @@ func setupBarrier(t *testing.T) *seal.Barrier {
 		base,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)
@@ -59,10 +59,10 @@ func setupBarrier(t *testing.T) *seal.Barrier {
 
 // setupPINManager creates an in-memory PIN backend for testing
 // and registers it with the package-level variable.
-func setupPINManager(t *testing.T) pin.PINBackend {
+func setupPINManager(t *testing.T) qrdbsdk.PINBackend {
 	t.Helper()
 
-	backend, err := pin.NewSoftwareBackend(nil, pin.DefaultHashConfig())
+	backend, err := qrdbsdk.NewSoftwareBackend(nil, qrdbsdk.DefaultHashConfig())
 	require.NoError(t, err)
 
 	SetPINManager(backend)
@@ -267,7 +267,7 @@ func TestBarrierStatus_Success(t *testing.T) {
 	resp, err = svc.BarrierStatus(ctx, &emptypb.Empty{})
 	require.NoError(t, err)
 	assert.False(t, resp.Sealed)
-	assert.Equal(t, "software", resp.Strategy)
+	assert.Equal(t, "passphrase", resp.Strategy)
 	assert.False(t, resp.HardwareBacked)
 }
 
@@ -675,15 +675,15 @@ func TestMapPINError_KnownErrors(t *testing.T) {
 		err          error
 		expectedCode codes.Code
 	}{
-		{"pin_not_set", pin.ErrPINNotSet, codes.FailedPrecondition},
-		{"pin_locked", pin.ErrPINLocked, codes.ResourceExhausted},
-		{"pin_invalid", pin.ErrPINInvalid, codes.Unauthenticated},
-		{"so_pin_required", pin.ErrSOPINRequired, codes.Unauthenticated},
-		{"pin_too_short", pin.ErrPINTooShort, codes.InvalidArgument},
-		{"pin_already_set", pin.ErrPINAlreadySet, codes.AlreadyExists},
-		{"invalid_current_pin", pin.ErrInvalidCurrentPIN, codes.Unauthenticated},
-		{"state_corrupted", pin.ErrStateCorrupted, codes.DataLoss},
-		{"strategy_not_set", pin.ErrStrategyNotSet, codes.FailedPrecondition},
+		{"pin_not_set", qrdbsdk.ErrPINNotSet, codes.FailedPrecondition},
+		{"pin_locked", qrdbsdk.ErrPINLocked, codes.ResourceExhausted},
+		{"pin_invalid", qrdbsdk.ErrPINInvalid, codes.Unauthenticated},
+		{"so_pin_required", qrdbsdk.ErrSOPINRequired, codes.Unauthenticated},
+		{"pin_too_short", qrdbsdk.ErrPINTooShort, codes.InvalidArgument},
+		{"pin_already_set", qrdbsdk.ErrPINAlreadySet, codes.AlreadyExists},
+		{"invalid_current_pin", qrdbsdk.ErrInvalidCurrentPIN, codes.Unauthenticated},
+		{"state_corrupted", qrdbsdk.ErrPINStateCorrupted, codes.DataLoss},
+		{"strategy_not_set", qrdbsdk.ErrPINStrategyNotSet, codes.FailedPrecondition},
 	}
 
 	for _, tt := range tests {
@@ -735,7 +735,7 @@ func TestBarrier_FullLifecycle(t *testing.T) {
 	statusResp, err = svc.BarrierStatus(ctx, &emptypb.Empty{})
 	require.NoError(t, err)
 	assert.False(t, statusResp.Sealed)
-	assert.Equal(t, "software", statusResp.Strategy)
+	assert.Equal(t, "passphrase", statusResp.Strategy)
 
 	// 4. Seal.
 	_, err = svc.BarrierSeal(ctx, &emptypb.Empty{})

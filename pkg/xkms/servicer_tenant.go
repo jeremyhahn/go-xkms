@@ -15,18 +15,11 @@ package xkms
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"io"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 )
-
-// tenantSecretSize is the byte length of the auto-generated secret used to
-// initialize a tenant barrier during CreateTenant.
-const tenantSecretSize = 32
 
 // TenantServicer defines operations for managing tenants and their barriers.
 type TenantServicer interface {
@@ -38,10 +31,19 @@ type TenantServicer interface {
 	TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error
 }
 
-// CreateTenant creates a new tenant with the specified configuration. When the
-// system barrier is unsealed, the tenant barrier is automatically initialized
-// with a generated secret so the tenant is immediately usable.
-func (s *XKMSService) CreateTenant(ctx context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
+// CreateTenant provisions a SEALED tenant shell (Phase 1 of the two-phase
+// tenant barrier model, §3.6). It registers the tenant barrier in the
+// registry but deliberately does NOT initialize it and does NOT generate any
+// secret: the server never holds a tenant's barrier key. After CreateTenant
+// the tenant barrier is uninitialized and sealed, and remains unusable until
+// the tenant admin calls TenantBarrierInit (Phase 2) with their own
+// caller-supplied credentials.
+//
+// The seal strategy is fixed at registration time. CreateTenantRequest does
+// not carry a strategy, so the tenant inherits the system barrier's
+// strategies (typically the passphrase strategy); TenantBarrierInit then
+// supplies the passphrase that seals the freshly generated tenant root key.
+func (s *XKMSService) CreateTenant(_ context.Context, req *transport.CreateTenantRequest) (*transport.CreateTenantResponse, error) {
 	if s.barrierRegistry == nil {
 		return nil, ErrBarrierRegistryNotConfigured
 	}
@@ -55,17 +57,9 @@ func (s *XKMSService) CreateTenant(ctx context.Context, req *transport.CreateTen
 		return nil, ErrTenantNameRequired
 	}
 
-	_, err := s.barrierRegistry.RegisterTenant(req.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Auto-initialize the tenant barrier so it is unsealed and ready for use.
-	creds, err := generateTenantCredentials()
-	if err != nil {
-		return nil, err
-	}
-	if err := s.barrierRegistry.InitializeTenant(ctx, req.ID, creds); err != nil {
+	// Register the sealed tenant shell only. No InitializeTenant call and no
+	// server-generated secret — the barrier stays sealed until Phase 2.
+	if _, err := s.barrierRegistry.RegisterTenant(req.ID); err != nil {
 		return nil, err
 	}
 
@@ -133,7 +127,28 @@ func (s *XKMSService) DeleteTenant(ctx context.Context, tenantID string) error {
 	return s.barrierRegistry.UnregisterTenant(tenantID)
 }
 
-// TenantBarrierInit initializes the encryption barrier for a specific tenant.
+// TenantBarrierInit initializes the encryption barrier for a specific tenant
+// (Phase 2 of the two-phase tenant barrier model, §3.6). The tenant admin
+// supplies their OWN credentials in the request; the server NEVER generates a
+// tenant secret. The credentials are interpreted according to req.Strategy:
+//
+//   - "" / "passphrase" / "software": req.Passphrase is required and is used
+//     as the Argon2id passphrase that seals the tenant root key. An empty
+//     passphrase is a hard error (ErrTenantPassphraseRequired); there is no
+//     server-generated fallback.
+//   - "none": the barrier is initialized with empty credentials (no secret).
+//   - "shamir": req.Passphrase is required (credential-mode Shamir splits the
+//     caller's secret into shares). The recovery shares are produced by the
+//     go-qrdb Shamir initialization path; this servicer surfaces no shares
+//     because TenantBarrierInitResponse carries none — callers requiring share
+//     distribution must use the dedicated custodian/share APIs.
+//   - hardware strategies ("tpm2", "pkcs11", cloud KMS): no caller secret is
+//     required; the strategy authenticates against its hardware/KMS backend.
+//
+// The seal strategy is fixed at tenant registration time. If req.Strategy
+// names a strategy that conflicts with the one the tenant barrier was
+// registered with, ErrTenantStrategyConflict is returned.
+//
 // This operation is idempotent: if the tenant barrier is already initialized,
 // it returns nil without error.
 func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.TenantBarrierInitRequest) error {
@@ -147,19 +162,30 @@ func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.Tena
 		return ErrTenantIDRequired
 	}
 
-	// Verify tenant exists.
-	_, err := s.barrierRegistry.Tenant(req.TenantID)
+	// Verify tenant exists and resolve the strategy fixed at registration time.
+	tb, err := s.barrierRegistry.Tenant(req.TenantID)
 	if err != nil {
 		return err
 	}
 
-	// Initialize with generated credentials. If the tenant barrier was
-	// already initialized (e.g., during CreateTenant), treat that as
-	// success to make this operation idempotent.
-	creds, err := generateTenantCredentials()
+	// Idempotency: if the tenant barrier has already been initialized, this is
+	// a no-op. We check before requiring a passphrase so that a redundant init
+	// call does not fail on an empty passphrase.
+	if !tb.Status().InitializedAt.IsZero() {
+		return nil
+	}
+
+	if err := validateTenantStrategy(tb, req.Strategy); err != nil {
+		return err
+	}
+
+	creds, err := tenantInitCredentials(req)
 	if err != nil {
 		return err
 	}
+
+	// Initialize with the caller-supplied credentials. A concurrent init may
+	// have won the race; treat ErrAlreadyInitialized as success.
 	if err := s.barrierRegistry.InitializeTenant(ctx, req.TenantID, creds); err != nil {
 		if err == seal.ErrAlreadyInitialized {
 			return nil
@@ -169,7 +195,14 @@ func (s *XKMSService) TenantBarrierInit(ctx context.Context, req *transport.Tena
 	return nil
 }
 
-// TenantBarrierUnseal unseals the encryption barrier for a specific tenant.
+// TenantBarrierUnseal unseals the encryption barrier for a specific tenant
+// using the caller-supplied recovery material. The server holds no tenant
+// secret, so it can only unseal with credentials taken from the request:
+//
+//   - req.Key carries the passphrase-derived key for software/passphrase and
+//     hardware strategies (empty for "none").
+//   - req.Share carries a single Shamir recovery share for the shamir strategy.
+//
 // If the tenant barrier is already unsealed, this is a no-op that returns nil.
 func (s *XKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.TenantBarrierUnsealRequest) error {
 	if s.barrierRegistry == nil {
@@ -193,16 +226,62 @@ func (s *XKMSService) TenantBarrierUnseal(ctx context.Context, req *transport.Te
 		return nil
 	}
 
-	return seal.ErrSealed
+	creds := tenantUnsealCredentials(req)
+	return s.barrierRegistry.UnsealTenant(ctx, req.TenantID, creds)
 }
 
-// generateTenantCredentials creates a Credentials value with a
-// cryptographically random hex-encoded secret suitable for sealing
-// a tenant barrier.
-func generateTenantCredentials() (seal.Credentials, error) {
-	buf := make([]byte, tenantSecretSize)
-	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
-		return seal.Credentials{}, err
+// validateTenantStrategy ensures the strategy named in a TenantBarrierInit
+// request matches the strategy the tenant barrier was registered with. The
+// seal strategy is fixed at registration time, so an init-time request that
+// names a different strategy is rejected. An empty request strategy is always
+// accepted (it means "use whatever the tenant was registered with"). The
+// tenant barrier's active strategy is only known once initialized; before
+// that we accept the request and let go-qrdb pick the best registered
+// strategy.
+func validateTenantStrategy(tb *seal.TenantBarrier, requested string) error {
+	if requested == "" {
+		return nil
 	}
-	return seal.Credentials{Secret: hex.EncodeToString(buf)}, nil
+	active := string(tb.Status().Strategy)
+	if active == "" {
+		// Not yet initialized; the registered strategy is authoritative and is
+		// selected by go-qrdb at Initialize time. We cannot meaningfully
+		// reject here without duplicating strategy-preference logic, so accept.
+		return nil
+	}
+	if active != requested {
+		return ErrTenantStrategyConflict
+	}
+	return nil
+}
+
+// tenantInitCredentials builds the seal.Credentials for a TenantBarrierInit
+// request from the caller-supplied fields, enforcing the §3.6 invariant that
+// the server never generates a tenant secret.
+func tenantInitCredentials(req *transport.TenantBarrierInitRequest) (seal.Credentials, error) {
+	switch seal.StrategyID(req.Strategy) {
+	case seal.StrategyNone, seal.StrategyTPM2, seal.StrategyPKCS11,
+		seal.StrategyAWSKMS, seal.StrategyGCPKMS, seal.StrategyAzureKV, seal.StrategyVault:
+		// Hardware/KMS strategies and the no-op strategy take no caller secret;
+		// the strategy authenticates against its backend (or none at all).
+		return seal.Credentials{}, nil
+	default:
+		// Empty, "passphrase"/"software", and "shamir" all require the tenant
+		// admin's passphrase. There is NO server-generated fallback.
+		if req.Passphrase == "" {
+			return seal.Credentials{}, ErrTenantPassphraseRequired
+		}
+		return seal.Credentials{Secret: req.Passphrase}, nil
+	}
+}
+
+// tenantUnsealCredentials builds the seal.Credentials for a
+// TenantBarrierUnseal request from the caller-supplied recovery material. A
+// Shamir share takes precedence over a passphrase-derived key when both are
+// present.
+func tenantUnsealCredentials(req *transport.TenantBarrierUnsealRequest) seal.Credentials {
+	if len(req.Share) > 0 {
+		return seal.Credentials{Secret: string(req.Share)}
+	}
+	return seal.Credentials{Secret: string(req.Key)}
 }

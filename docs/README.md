@@ -34,7 +34,31 @@ Configuration guides for various components:
 
 ### [Bootstrap](bootstrap/)
 Secure trust establishment and server initialization:
-- [Overview](bootstrap/README.md) - Bootstrap architecture, DANE/Noise/SPKI trust methods, custodian setup
+- [Overview](bootstrap/README.md) - Bootstrap architecture, DANE/Noise/SPKI/Direct trust methods, custodian setup
+
+### [Trust](trust/)
+Canonical trust-bootstrap dispatch library:
+- [Trust Bootstrap Library](trust/bootstrap.md) - `pkg/trust/bootstrap` Mode enum, Fetch entry point, and the four consumers (xkmsctl, xkey GUI, QuicBaaS SDK, go-trusted-platform via SDK)
+
+### [Init](init/)
+First-boot server initialization ceremony:
+- [Init System](init/README.md) - The `xkmsd init` KMS+CA half plus the IAM half that delegates to the embedded qrdb node's first-boot
+
+### [Auth](auth/)
+Authentication, authorization, and bootstrap:
+- [Bootstrap Authentication](auth/bootstrap.md) - First-admin flow driven against the embedded qrdb node's first-boot
+- [Layering](auth/layering.md) - Identity (qrdb) vs key-domain (xkms) split, Factor adapter composition
+- [MFA Policy](auth/mfa-policy.md) - Operation-level MFA requirements
+
+### [WebAuthn](webauthn/)
+- [WebAuthn / FIDO2 Relying Party](webauthn/README.md) - Canonical RP implementation consumed by every binary in the stack via the QuicBaaS SDK re-export
+- [Headless Client](webauthn/client.md) - Programmatic "browser" used by `xkmsctl` and tests
+
+### [PIN](pin/)
+- [PIN Management](pin/README.md) - PIN service (qrdb) + TPM2 backend (xkms `pkg/pintpm2`) + composition via `WithPINBackend`
+
+### [Seal](seal/)
+- [Barrier Encryption Architecture](seal/README.md) - qrdb owns the barrier and StrategyRegistry; xkms owns every hardware/cloud strategy
 
 ### [Usage](../xkey/docs/usage/)
 CLI usage guides and tutorials have moved to [xkey/docs/usage/](../xkey/docs/usage/README.md).

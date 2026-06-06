@@ -14,6 +14,10 @@ services:
       additional_contexts:
         go-qrdb: ../../../../go-qrdb
         go-quicraft: ../../../../go-quicraft
+        go-codec: ../../../../go-codec
+        go-frost: ../../../../go-frost
+        go-objstore: ../../../../go-objstore
+        go-truststrap: ../../../../go-truststrap
       args:
         - VERSION=${VERSION:-0.0.1-alpha}
     image: go-xkms-bootstrap:latest
@@ -59,6 +63,10 @@ services:
       additional_contexts:
         go-qrdb: ../../../../go-qrdb
         go-quicraft: ../../../../go-quicraft
+        go-codec: ../../../../go-codec
+        go-frost: ../../../../go-frost
+        go-objstore: ../../../../go-objstore
+        go-truststrap: ../../../../go-truststrap
     image: go-xkms-bootstrap:latest
     container_name: bootstrap-zone-generator
     user: root
@@ -113,11 +121,16 @@ services:
       # Sibling module mounts (for go.mod replace directives)
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
       - xkms-certs:/etc/xkms/certs:ro
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
+      - GOTOOLCHAIN=auto
       - BOOTSTRAP_SERVER_URL=https://xkms-server:8443
       - BOOTSTRAP_NOISE_ADDR=xkms-server:8445
       - BOOTSTRAP_DNS_SERVER=coredns:1053
@@ -128,6 +141,7 @@ services:
       - bootstrap-net
     command: >
       sh -c "
+      bash .devcontainer/scripts/ensure-gowork.sh && export GOWORK=/tmp/go.work &&
       echo 'Adding test CA to system trust store...' &&
       cp /etc/xkms/certs/ca.crt /usr/local/share/ca-certificates/xkms-test-ca.crt &&
       update-ca-certificates >/dev/null 2>&1 &&
@@ -161,12 +175,17 @@ services:
       - ../../..:/workspace
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-objstore:/go-objstore:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
       - xkms-certs:/etc/xkms/certs:ro
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
       - ./scripts:/scripts:ro
     environment:
       - CGO_ENABLED=1
+      - GOTOOLCHAIN=auto
       - BOOTSTRAP_SERVER_URL=https://xkms-server:8443
       - BOOTSTRAP_NOISE_ADDR=xkms-server:8445
       - BOOTSTRAP_DNS_SERVER=coredns:1053

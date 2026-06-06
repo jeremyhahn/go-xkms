@@ -155,8 +155,21 @@ func TestVerify_WithWhitespace(t *testing.T) {
 	}
 }
 
+// freePort returns an OS-assigned free TCP port as a string. Using a fixed port
+// makes these tests flaky when something else (e.g. a co-located container) holds
+// it; a dynamically-assigned port avoids the "address already in use" collision.
+func freePort(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("freePort: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+	return fmt.Sprintf("%d", l.Addr().(*net.TCPAddr).Port)
+}
+
 func TestSetup_ServerStarts(t *testing.T) {
-	port := "18080"
+	port := freePort(t)
 	keyAuth := "test-key-authorization"
 
 	Setup(port, keyAuth)
@@ -188,7 +201,7 @@ func TestSetup_ServerStarts(t *testing.T) {
 }
 
 func TestSetup_MultipleRequests(t *testing.T) {
-	port := "18081"
+	port := freePort(t)
 	keyAuth := "test-key-authorization-multiple"
 
 	Setup(port, keyAuth)
@@ -218,7 +231,7 @@ func TestSetup_MultipleRequests(t *testing.T) {
 }
 
 func TestShutdown_Graceful(t *testing.T) {
-	port := "18082"
+	port := freePort(t)
 	keyAuth := "test-key-authorization-shutdown"
 
 	Setup(port, keyAuth)
@@ -245,7 +258,7 @@ func TestShutdown_Graceful(t *testing.T) {
 }
 
 func TestShutdown_MultipleCallsSafe(t *testing.T) {
-	port := "18083"
+	port := freePort(t)
 	keyAuth := "test-key-authorization-multi-shutdown"
 
 	Setup(port, keyAuth)
@@ -386,12 +399,13 @@ func TestChallengeHandlerHTTPx_WriteError(t *testing.T) {
 }
 
 func TestSetup_PortAlreadyInUse(t *testing.T) {
-	// Start a server on a specific port first
-	listener, err := net.Listen("tcp", ":18084")
+	// Occupy a free port and keep it bound so that Setup on the same port collides.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("Port 18084 is already in use, cannot run this test: %v", err)
+		t.Fatalf("Failed to acquire a port to occupy: %v", err)
 	}
 	defer func() { _ = listener.Close() }()
+	port := fmt.Sprintf("%d", listener.Addr().(*net.TCPAddr).Port)
 
 	// Track if fatal handler was called using atomic to avoid race
 	var fatalCalled int32
@@ -415,7 +429,7 @@ func TestSetup_PortAlreadyInUse(t *testing.T) {
 	}()
 
 	// Try to setup on the already-in-use port
-	Setup("18084", "test-key-auth")
+	Setup(port, "test-key-auth")
 
 	// Give the goroutine time to attempt binding
 	time.Sleep(200 * time.Millisecond)
@@ -470,7 +484,7 @@ func TestShutdown_ErrorPath(t *testing.T) {
 func TestHandleShutdown_WithSignal(t *testing.T) {
 	// We can test handleShutdown by simulating the signal handling logic
 	// Create a test server
-	port := "18088"
+	port := freePort(t)
 	keyAuth := "test-handle-shutdown"
 
 	Setup(port, keyAuth)
@@ -547,7 +561,7 @@ func TestHandleShutdown_WithSignal(t *testing.T) {
 
 func TestSetup_ValidatesServerConfiguration(t *testing.T) {
 	// Test that Setup creates a server with proper configuration
-	port := "18085"
+	port := freePort(t)
 	keyAuth := "test-config-validation"
 
 	Setup(port, keyAuth)
@@ -576,7 +590,7 @@ func TestSetup_ValidatesServerConfiguration(t *testing.T) {
 
 func TestSetup_ServerTimeouts(t *testing.T) {
 	// Test that server respects timeout configurations
-	port := "18086"
+	port := freePort(t)
 	keyAuth := "test-timeouts"
 
 	Setup(port, keyAuth)
@@ -604,7 +618,7 @@ func TestSetup_ServerTimeouts(t *testing.T) {
 
 func TestShutdown_ContextTimeout(t *testing.T) {
 	// Test that Shutdown uses context with timeout
-	port := "18087"
+	port := freePort(t)
 	keyAuth := "test-shutdown-timeout"
 
 	shutdownOnce = sync.Once{}

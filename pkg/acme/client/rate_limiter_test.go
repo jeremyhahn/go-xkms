@@ -669,11 +669,6 @@ func TestRateLimiter_Wait_RetryAfter(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 
-		// After waiting, the retry-after should be cleared
-		if rl.retryUntil.Load() != 0 {
-			// This is acceptable - may have been cleared or not depending on timing
-		}
-
 		// The Wait returned - verify it took some time if we had to wait
 		_ = elapsed // elapsed time depends on timing
 	})

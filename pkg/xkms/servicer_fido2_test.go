@@ -2,13 +2,294 @@ package xkms
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
+	waprotocol "github.com/go-webauthn/webauthn/protocol"
+
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newConfiguredWebAuthnService builds a WebAuthn relying-party service backed
+// by in-memory stores, suitable for driving a full registration ceremony in a
+// unit test without any hardware or browser.
+func newConfiguredWebAuthnService(t *testing.T) *webauthn.Service {
+	t.Helper()
+
+	cfg := &webauthn.Config{
+		RPID:          "example.com",
+		RPDisplayName: "Example Corp",
+		RPOrigins:     []string{"https://example.com"},
+	}
+
+	svc, err := webauthn.NewService(webauthn.ServiceParams{
+		Config:          cfg,
+		UserStore:       webauthn.NewMemoryUserStore(),
+		SessionStore:    webauthn.NewMemorySessionStore(),
+		CredentialStore: webauthn.NewMemoryCredentialStore(),
+	})
+	require.NoError(t, err)
+	return svc
+}
+
+// TestRegistrationCeremony_EndToEnd proves the FIDO2/WebAuthn registration
+// ceremony works end-to-end through the XKMSService transport surface using the
+// in-repo mock authenticator — no hardware required.
+//
+// Flow:
+//  1. SetWebAuthn wires a real in-memory-backed WebAuthn service onto the XKMSService.
+//  2. XKMSService.BeginRegistration returns an opaque session ID + the JSON-marshaled
+//     WebAuthn options (CredentialCreation).
+//  3. The options JSON is parsed to recover the server challenge.
+//  4. The mock authenticator produces a valid attestation for that challenge.
+//  5. The attestation's PublicKeyCredential JSON is fed to XKMSService.FinishRegistration
+//     together with the session ID.
+//  6. The response reports success + the credential ID, and the credential is now
+//     persisted (GetCredentials / IsRegistered observe it).
+func TestRegistrationCeremony_EndToEnd(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	waSvc := newConfiguredWebAuthnService(t)
+	svc.SetWebAuthn(waSvc)
+
+	ctx := context.Background()
+	const (
+		email       = "ceremony@example.com"
+		displayName = "Ceremony User"
+		rpID        = "example.com"
+		origin      = "https://example.com"
+	)
+
+	// Step 1: Begin registration through the XKMSService transport surface.
+	beginResp, err := svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
+		Username:    email,
+		DisplayName: displayName,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, beginResp.SessionID)
+	require.NotEmpty(t, beginResp.OptionsJSON)
+
+	// Step 2: Parse the options JSON to recover the WebAuthn challenge.
+	var options waprotocol.CredentialCreation
+	require.NoError(t, json.Unmarshal([]byte(beginResp.OptionsJSON), &options))
+	require.NotEmpty(t, options.Response.Challenge)
+
+	// Step 3: Resolve the user ID so the mock attestation binds to the right user.
+	user, err := waSvc.GetUserByEmail(ctx, email)
+	require.NoError(t, err)
+
+	// Step 4: Drive the mock authenticator to produce a valid attestation for
+	// the server-issued challenge.
+	mockAuth, err := webauthn.NewMockAuthenticator(rpID)
+	require.NoError(t, err)
+
+	attestation, err := mockAuth.CreateAttestationObject(
+		options.Response.Challenge,
+		user.WebAuthnID(),
+		origin,
+	)
+	require.NoError(t, err)
+
+	// Step 5: Marshal the raw PublicKeyCredential (the navigator.credentials.create
+	// response shape) so FinishRegistration can re-parse it exactly as the browser
+	// handler does.
+	attestationJSON, err := json.Marshal(attestation.Raw)
+	require.NoError(t, err)
+
+	finishResp, err := svc.FinishRegistration(ctx, &transport.FinishRegistrationRequest{
+		SessionID:       beginResp.SessionID,
+		AttestationJSON: string(attestationJSON),
+	})
+	require.NoError(t, err)
+	assert.True(t, finishResp.Success)
+	assert.NotEmpty(t, finishResp.CredentialID)
+	assert.NotEmpty(t, finishResp.Token)
+
+	// Step 6: Prove the credential was actually persisted by the ceremony.
+	creds, err := waSvc.GetCredentials(ctx, user.WebAuthnID())
+	require.NoError(t, err)
+	require.Len(t, creds, 1)
+
+	registered, err := waSvc.IsRegistered(ctx, user.WebAuthnID())
+	require.NoError(t, err)
+	assert.True(t, registered)
+}
+
+// registerCredentialForLogin drives the full registration ceremony so a
+// credential exists for a subsequent authentication ceremony. It returns the
+// mock authenticator (whose CredentialID the assertion will reference) and the
+// registered user's WebAuthn ID. It mirrors TestRegistrationCeremony_EndToEnd.
+func registerCredentialForLogin(t *testing.T, svc *XKMSService, waSvc *webauthn.Service, email, displayName, rpID, origin string) (*webauthn.MockAuthenticator, []byte) {
+	t.Helper()
+	ctx := context.Background()
+
+	beginResp, err := svc.BeginRegistration(ctx, &transport.BeginRegistrationRequest{
+		Username:    email,
+		DisplayName: displayName,
+	})
+	require.NoError(t, err)
+
+	var options waprotocol.CredentialCreation
+	require.NoError(t, json.Unmarshal([]byte(beginResp.OptionsJSON), &options))
+
+	user, err := waSvc.GetUserByEmail(ctx, email)
+	require.NoError(t, err)
+
+	mockAuth, err := webauthn.NewMockAuthenticator(rpID)
+	require.NoError(t, err)
+
+	attestation, err := mockAuth.CreateAttestationObject(
+		options.Response.Challenge,
+		user.WebAuthnID(),
+		origin,
+	)
+	require.NoError(t, err)
+
+	attestationJSON, err := json.Marshal(attestation.Raw)
+	require.NoError(t, err)
+
+	finishResp, err := svc.FinishRegistration(ctx, &transport.FinishRegistrationRequest{
+		SessionID:       beginResp.SessionID,
+		AttestationJSON: string(attestationJSON),
+	})
+	require.NoError(t, err)
+	require.True(t, finishResp.Success)
+
+	return mockAuth, user.WebAuthnID()
+}
+
+// TestAuthenticationCeremony_EndToEnd proves the FIDO2/WebAuthn authentication
+// (login) ceremony works end-to-end through the XKMSService transport surface
+// using the in-repo mock authenticator — no hardware required. It is symmetric
+// to TestRegistrationCeremony_EndToEnd.
+//
+// Flow:
+//  1. SetWebAuthn wires a real in-memory-backed WebAuthn service.
+//  2. A credential is registered (reusing the registration ceremony) so the
+//     user has something to assert.
+//  3. XKMSService.BeginAuthentication resolves the username and returns an
+//     opaque session ID + the JSON-marshaled assertion options.
+//  4. The options JSON is parsed to recover the login challenge.
+//  5. The same mock authenticator produces a valid assertion for that challenge.
+//  6. The assertion's PublicKeyCredential JSON is fed to FinishAuthentication
+//     together with the session ID, yielding Success + a non-empty token.
+func TestAuthenticationCeremony_EndToEnd(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	waSvc := newConfiguredWebAuthnService(t)
+	svc.SetWebAuthn(waSvc)
+
+	ctx := context.Background()
+	const (
+		email       = "login@example.com"
+		displayName = "Login User"
+		rpID        = "example.com"
+		origin      = "https://example.com"
+	)
+
+	// Step 1+2: register a credential so the user can authenticate.
+	mockAuth, userID := registerCredentialForLogin(t, svc, waSvc, email, displayName, rpID, origin)
+
+	// Step 3: Begin authentication through the XKMSService transport surface.
+	beginResp, err := svc.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{
+		Username: email,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, beginResp.SessionID)
+	require.NotEmpty(t, beginResp.OptionsJSON)
+
+	// Step 4: Parse the options JSON to recover the WebAuthn login challenge.
+	var options waprotocol.CredentialAssertion
+	require.NoError(t, json.Unmarshal([]byte(beginResp.OptionsJSON), &options))
+	require.NotEmpty(t, options.Response.Challenge)
+
+	// Step 5: Drive the same mock authenticator to produce a valid assertion for
+	// the server-issued challenge, binding the user handle.
+	assertion, err := mockAuth.CreateAssertionResponse(
+		options.Response.Challenge,
+		userID,
+		origin,
+	)
+	require.NoError(t, err)
+
+	// Marshal the raw PublicKeyCredential (the navigator.credentials.get response
+	// shape) so FinishAuthentication can re-parse it exactly as the browser does.
+	assertionJSON, err := json.Marshal(assertion.Raw)
+	require.NoError(t, err)
+
+	// Step 6: Finish authentication and assert success + non-empty token.
+	finishResp, err := svc.FinishAuthentication(ctx, &transport.FinishAuthenticationRequest{
+		SessionID:     beginResp.SessionID,
+		Username:      email,
+		AssertionJSON: string(assertionJSON),
+	})
+	require.NoError(t, err)
+	assert.True(t, finishResp.Success)
+	assert.NotEmpty(t, finishResp.Token)
+	assert.Equal(t, email, finishResp.Username)
+}
+
+// TestBeginAuthentication_UnknownUser ensures authenticating an unregistered
+// username is rejected with a wrapped ceremony error.
+func TestBeginAuthentication_UnknownUser(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	svc.SetWebAuthn(newConfiguredWebAuthnService(t))
+
+	_, err = svc.BeginAuthentication(context.Background(), &transport.BeginAuthenticationRequest{
+		Username: "nobody@example.com",
+	})
+	require.Error(t, err)
+	var ceremonyErr *ErrWebAuthnCeremony
+	assert.True(t, errors.As(err, &ceremonyErr))
+}
+
+// TestFinishAuthentication_InvalidAssertion ensures malformed assertion JSON is
+// rejected with a wrapped ceremony error rather than a panic or success.
+func TestFinishAuthentication_InvalidAssertion(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	svc.SetWebAuthn(newConfiguredWebAuthnService(t))
+
+	_, err = svc.FinishAuthentication(context.Background(), &transport.FinishAuthenticationRequest{
+		SessionID:     "does-not-exist",
+		Username:      "someone@example.com",
+		AssertionJSON: "{not valid assertion json",
+	})
+	require.Error(t, err)
+	var ceremonyErr *ErrWebAuthnCeremony
+	assert.True(t, errors.As(err, &ceremonyErr))
+}
+
+// TestFinishRegistration_InvalidAttestation ensures malformed attestation JSON
+// is rejected with a wrapped ceremony error rather than a panic or success.
+func TestFinishRegistration_InvalidAttestation(t *testing.T) {
+	setupService(t)
+	svc, err := Get()
+	require.NoError(t, err)
+
+	svc.SetWebAuthn(newConfiguredWebAuthnService(t))
+
+	_, err = svc.FinishRegistration(context.Background(), &transport.FinishRegistrationRequest{
+		SessionID:       "does-not-exist",
+		AttestationJSON: "{not valid attestation json",
+	})
+	require.Error(t, err)
+	var ceremonyErr *ErrWebAuthnCeremony
+	assert.True(t, errors.As(err, &ceremonyErr))
+}
 
 func TestBeginRegistration_NotConfigured(t *testing.T) {
 	setupService(t)

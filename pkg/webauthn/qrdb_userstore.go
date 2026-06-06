@@ -15,6 +15,7 @@ package webauthn
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -81,15 +82,50 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	return &qrdbUserStore{b: b}, &qrdbCredentialStore{b: b}, nil
 }
 
+// ----- handle <-> qrdb user id encoding -----
+//
+// qrdb's canonical user identifier is a uint64 stored/indexed as an
+// 8-byte big-endian key. The WebAuthn user handle is the byte form of
+// that id, encoded as a fixed 8-byte big-endian value so it matches
+// qrdb's on-disk key encoding (see also GenerateUserID in types.go,
+// which produces 8-byte big-endian handles for email-derived ids).
+//
+// Persisted xkms KV key segments embed the id as base-10 decimal
+// (strconv.FormatUint) for readability, e.g.
+// "__xkms:webauthn/users/42/credentials".
+
+// HandleFromUserID encodes a qrdb uint64 user id as the fixed 8-byte
+// big-endian WebAuthn user handle. This is the single source of truth
+// for the qrdb-id-to-handle encoding across xkms.
+func HandleFromUserID(id uint64) []byte {
+	h := make([]byte, 8)
+	binary.BigEndian.PutUint64(h, id)
+	return h
+}
+
+// UserIDFromHandle decodes an 8-byte big-endian WebAuthn user handle
+// back into the qrdb uint64 user id. A handle of any other length is
+// rejected with an *InvalidUserHandleError.
+func UserIDFromHandle(handle []byte) (uint64, error) {
+	if len(handle) != 8 {
+		return 0, &InvalidUserHandleError{Length: len(handle)}
+	}
+	return binary.BigEndian.Uint64(handle), nil
+}
+
 // ----- UserStore -----
 
 // GetByID retrieves the user by webauthn handle. The handle is the
-// byte form of the qrdb user id string.
+// 8-byte big-endian form of the qrdb uint64 user id.
 func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error) {
 	if len(userID) == 0 {
 		return nil, ErrUserNotFound
 	}
-	u, err := s.b.users.GetUser(ctx, string(userID))
+	id, err := UserIDFromHandle(userID)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+	u, err := s.b.users.GetUser(ctx, id)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -142,22 +178,28 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	if dn == "" {
 		return nil
 	}
-	idStr := string(user.WebAuthnID())
-	return s.b.kv.Put(ctx, displayNameKey(idStr), []byte(dn))
+	id, err := UserIDFromHandle(user.WebAuthnID())
+	if err != nil {
+		return err
+	}
+	return s.b.kv.Put(ctx, displayNameKey(id), []byte(dn))
 }
 
 // Delete removes the user and the credential side-channel entries.
 func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
-	idStr := string(userID)
-	if err := s.b.users.DeleteUser(ctx, idStr); err != nil {
-		return WrapError("qrdb delete user", err)
+	id, err := UserIDFromHandle(userID)
+	if err != nil {
+		return err
 	}
-	_ = s.b.kv.Delete(ctx, displayNameKey(idStr))
-	credIDs, _ := s.b.listUserCredIDs(ctx, idStr)
+	if dErr := s.b.users.DeleteUser(ctx, id); dErr != nil {
+		return WrapError("qrdb delete user", dErr)
+	}
+	_ = s.b.kv.Delete(ctx, displayNameKey(id))
+	credIDs, _ := s.b.listUserCredIDs(ctx, id)
 	for _, c := range credIDs {
 		_ = s.b.kv.Delete(ctx, credKey(c))
 	}
-	_ = s.b.kv.Delete(ctx, userCredSetKey(idStr))
+	_ = s.b.kv.Delete(ctx, userCredSetKey(id))
 	return nil
 }
 
@@ -171,6 +213,10 @@ func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error 
 	if len(cred.ID) == 0 {
 		return ErrInvalidCredential
 	}
+	id, err := UserIDFromHandle(cred.UserID)
+	if err != nil {
+		return err
+	}
 	s.b.mu.Lock()
 	defer s.b.mu.Unlock()
 
@@ -181,8 +227,7 @@ func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error 
 	if err := s.b.kv.Put(ctx, credKey(string(cred.ID)), blob); err != nil {
 		return WrapError("persist credential", err)
 	}
-	idStr := string(cred.UserID)
-	ids, _ := s.b.listUserCredIDs(ctx, idStr)
+	ids, _ := s.b.listUserCredIDs(ctx, id)
 	for _, existing := range ids {
 		if existing == string(cred.ID) {
 			return nil
@@ -193,7 +238,7 @@ func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error 
 	if err != nil {
 		return WrapError("encode cred index", err)
 	}
-	if err := s.b.kv.Put(ctx, userCredSetKey(idStr), idsBlob); err != nil {
+	if err := s.b.kv.Put(ctx, userCredSetKey(id), idsBlob); err != nil {
 		return WrapError("persist cred index", err)
 	}
 	return nil
@@ -201,14 +246,17 @@ func (s *qrdbCredentialStore) Save(ctx context.Context, cred *Credential) error 
 
 // GetByUserID returns all credentials for a user.
 func (s *qrdbCredentialStore) GetByUserID(ctx context.Context, userID []byte) ([]*Credential, error) {
-	idStr := string(userID)
-	ids, err := s.b.listUserCredIDs(ctx, idStr)
+	id, err := UserIDFromHandle(userID)
+	if err != nil {
+		return nil, err
+	}
+	ids, err := s.b.listUserCredIDs(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	creds := make([]*Credential, 0, len(ids))
-	for _, id := range ids {
-		c, err := s.GetByCredentialID(ctx, []byte(id))
+	for _, cid := range ids {
+		c, err := s.GetByCredentialID(ctx, []byte(cid))
 		if err != nil {
 			if errors.Is(err, ErrCredentialNotFound) {
 				continue
@@ -265,11 +313,14 @@ func (s *qrdbCredentialStore) Delete(ctx context.Context, credID []byte) error {
 		}
 		return err
 	}
+	userID, err := UserIDFromHandle(cred.UserID)
+	if err != nil {
+		return err
+	}
 	if err := s.b.kv.Delete(ctx, credKey(idStr)); err != nil {
 		return WrapError("delete credential", err)
 	}
-	userIDStr := string(cred.UserID)
-	ids, _ := s.b.listUserCredIDs(ctx, userIDStr)
+	ids, _ := s.b.listUserCredIDs(ctx, userID)
 	out := ids[:0]
 	for _, id := range ids {
 		if id == idStr {
@@ -278,29 +329,32 @@ func (s *qrdbCredentialStore) Delete(ctx context.Context, credID []byte) error {
 		out = append(out, id)
 	}
 	if len(out) == 0 {
-		return s.b.kv.Delete(ctx, userCredSetKey(userIDStr))
+		return s.b.kv.Delete(ctx, userCredSetKey(userID))
 	}
 	blob, err := json.Marshal(out)
 	if err != nil {
 		return WrapError("encode cred index", err)
 	}
-	return s.b.kv.Put(ctx, userCredSetKey(userIDStr), blob)
+	return s.b.kv.Put(ctx, userCredSetKey(userID), blob)
 }
 
 // DeleteByUserID removes all credentials for a user.
 func (s *qrdbCredentialStore) DeleteByUserID(ctx context.Context, userID []byte) error {
-	s.b.mu.Lock()
-	defer s.b.mu.Unlock()
-
-	idStr := string(userID)
-	ids, err := s.b.listUserCredIDs(ctx, idStr)
+	id, err := UserIDFromHandle(userID)
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		_ = s.b.kv.Delete(ctx, credKey(id))
+	s.b.mu.Lock()
+	defer s.b.mu.Unlock()
+
+	ids, err := s.b.listUserCredIDs(ctx, id)
+	if err != nil {
+		return err
 	}
-	return s.b.kv.Delete(ctx, userCredSetKey(idStr))
+	for _, cid := range ids {
+		_ = s.b.kv.Delete(ctx, credKey(cid))
+	}
+	return s.b.kv.Delete(ctx, userCredSetKey(id))
 }
 
 // ----- shared helpers -----
@@ -312,7 +366,7 @@ func (b *qrdbBackend) materialize(ctx context.Context, u *qrdbtransport.User) (*
 	if blob, err := b.kv.Get(ctx, displayNameKey(u.ID)); err == nil && len(blob) > 0 {
 		dn = string(blob)
 	}
-	user := NewDefaultUser([]byte(u.ID), u.Username, dn)
+	user := NewDefaultUser(HandleFromUserID(u.ID), u.Username, dn)
 
 	// Load credentials via the cred-set index.
 	ids, err := b.listUserCredIDs(ctx, u.ID)
@@ -338,10 +392,10 @@ func (b *qrdbBackend) materialize(ctx context.Context, u *qrdbtransport.User) (*
 	return user, nil
 }
 
-// listUserCredIDs returns the credential id list for the given user id.
-// When the user has no credentials yet the returned slice is empty.
-func (b *qrdbBackend) listUserCredIDs(ctx context.Context, userIDStr string) ([]string, error) {
-	blob, err := b.kv.Get(ctx, userCredSetKey(userIDStr))
+// listUserCredIDs returns the credential id list for the given qrdb user
+// id. When the user has no credentials yet the returned slice is empty.
+func (b *qrdbBackend) listUserCredIDs(ctx context.Context, userID uint64) ([]string, error) {
+	blob, err := b.kv.Get(ctx, userCredSetKey(userID))
 	if err != nil {
 		if isQRDBNotFound(err) {
 			return nil, nil
@@ -362,12 +416,18 @@ func credKey(credID string) string {
 	return "__xkms:webauthn/credentials/" + credID
 }
 
-func userCredSetKey(userID string) string {
-	return "__xkms:webauthn/users/" + userID + "/credentials"
+// userIDSegment renders a qrdb uint64 user id as the base-10 KV key
+// segment used in the persisted webauthn namespace.
+func userIDSegment(userID uint64) string {
+	return strconv.FormatUint(userID, 10)
 }
 
-func displayNameKey(userID string) string {
-	return "__xkms:webauthn/users/" + userID + "/displayName"
+func userCredSetKey(userID uint64) string {
+	return "__xkms:webauthn/users/" + userIDSegment(userID) + "/credentials"
+}
+
+func displayNameKey(userID uint64) string {
+	return "__xkms:webauthn/users/" + userIDSegment(userID) + "/displayName"
 }
 
 // mapNotFound converts a qrdb not-found error into the xkms sentinel.
@@ -447,11 +507,29 @@ func (e *QRDBAdapterConfigError) Error() string {
 	return "webauthn: qrdb adapter: missing or invalid field: " + e.Field
 }
 
+// InvalidUserHandleError is returned when a WebAuthn user handle cannot
+// be decoded into a qrdb uint64 user id. The handle must be exactly
+// 8 bytes (big-endian uint64).
+type InvalidUserHandleError struct {
+	// Length is the actual byte length of the offending handle.
+	Length int
+}
+
+// Error implements error.
+func (e *InvalidUserHandleError) Error() string {
+	if e == nil {
+		return "webauthn: invalid user handle"
+	}
+	return "webauthn: invalid user handle: expected 8 bytes, got " + strconv.Itoa(e.Length)
+}
+
 // formatUserIDForTest is a small helper used by tests to convert a
 // numeric qrdb id into the matching xkms []byte handle. Production
-// callers obtain the id directly from qrdbtransport.User.ID.
+// callers obtain the id directly from qrdbtransport.User.ID and encode
+// it with HandleFromUserID. The handle is the fixed 8-byte big-endian
+// form of the uint64 id.
 func formatUserIDForTest(n uint64) []byte {
-	return []byte(strconv.FormatUint(n, 10))
+	return HandleFromUserID(n)
 }
 
 // Compile-time interface assertions.

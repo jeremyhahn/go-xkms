@@ -31,6 +31,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpm2/transport/linuxudstpm"
+	tcptpm "github.com/google/go-tpm/tpm2/transport/tcp"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	kbackend "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -351,6 +352,32 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 	if params.Transport != nil {
 		params.Logger.Info("Using custom TPM transport")
 		tpmTransport = params.Transport
+	} else if params.Config.CommandAddress != "" {
+		// External TPM over TCP (e.g. swtpm socket). CommandAddress carries the
+		// "host:port" of the TPM command channel; PlatformAddress carries the
+		// control channel (command port+1 by convention). This path is used when
+		// connecting to a software TPM like swtpm in CI or integration tests.
+		platAddr := params.Config.PlatformAddress
+		if platAddr == "" {
+			// Derive platform address from command address by incrementing the port.
+			// swtpm convention: command=2321, platform(ctrl)=2322.
+			if host, port, splitErr := splitHostPort(params.Config.CommandAddress); splitErr == nil {
+				platAddr = fmt.Sprintf("%s:%d", host, port+1)
+			} else {
+				platAddr = params.Config.CommandAddress
+			}
+		}
+		params.Logger.Info(infoOpeningPlatformAddress,
+			slog.String("command", params.Config.CommandAddress),
+			slog.String("platform", platAddr))
+		tpmTransport, err = tcptpm.Open(tcptpm.Config{
+			CommandAddress:  params.Config.CommandAddress,
+			PlatformAddress: platAddr,
+		})
+		if err != nil {
+			params.Logger.Error("failed to open TCP TPM", slog.String("error", err.Error()))
+			return nil, fmt.Errorf("open TCP TPM at %s: %w", params.Config.CommandAddress, err)
+		}
 	} else if params.Config.UseSimulator {
 		params.Logger.Info(infoOpeningSimulator)
 		sim, err = simulatorOpener()
@@ -511,6 +538,38 @@ func (tpm *TPM2) Open() error {
 // should be closed when no longer needed.
 func OpenUnixSocketTransport(socketPath string) (transport.TPM, error) {
 	return linuxudstpm.Open(socketPath)
+}
+
+// OpenTCPTransport opens a connection to a TPM over TCP (e.g. swtpm).
+// commandAddress is "host:port" for the TPM command channel.
+// platformAddress is "host:port" for the TPM platform (control) channel;
+// when empty it defaults to commandAddress with port incremented by one.
+func OpenTCPTransport(commandAddress, platformAddress string) (transport.TPM, error) {
+	if platformAddress == "" {
+		if host, port, err := splitHostPort(commandAddress); err == nil {
+			platformAddress = fmt.Sprintf("%s:%d", host, port+1)
+		} else {
+			platformAddress = commandAddress
+		}
+	}
+	return tcptpm.Open(tcptpm.Config{
+		CommandAddress:  commandAddress,
+		PlatformAddress: platformAddress,
+	})
+}
+
+// splitHostPort splits a "host:port" string into its components, returning
+// an error when the address is malformed or the port is not numeric.
+func splitHostPort(addr string) (host string, port int, err error) {
+	h, p, splitErr := strings.Cut(addr, ":")
+	if !splitErr {
+		return "", 0, fmt.Errorf("tpm2: malformed address %q (no colon)", addr)
+	}
+	var portN int
+	if _, scanErr := fmt.Sscanf(p, "%d", &portN); scanErr != nil {
+		return "", 0, fmt.Errorf("tpm2: non-numeric port in %q: %w", addr, scanErr)
+	}
+	return h, portN, nil
 }
 
 // Parses a tpm2.TPM2BPublic byte array and returns the crypto.PublicKey

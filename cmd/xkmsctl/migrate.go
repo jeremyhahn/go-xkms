@@ -20,8 +20,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/migration"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/migration"
 	"github.com/spf13/cobra"
 )
 
@@ -301,7 +301,7 @@ var migrateValidateCmd = &cobra.Command{
 		defer func() { _ = migrator.Close() }()
 
 		// Build key attributes from ID
-		attrs := &types.KeyAttributes{
+		attrs := &client.KeyAttributes{
 			CN: keyID,
 		}
 
@@ -359,13 +359,13 @@ func buildMigrationFilter(cmd *cobra.Command) *migration.KeyFilter {
 		for _, kt := range keyTypes {
 			switch strings.ToLower(kt) {
 			case "signing":
-				filter.KeyTypes = append(filter.KeyTypes, types.KeyTypeSigning)
+				filter.KeyTypes = append(filter.KeyTypes, client.KeyTypeSigning)
 			case "encryption":
-				filter.KeyTypes = append(filter.KeyTypes, types.KeyTypeEncryption)
+				filter.KeyTypes = append(filter.KeyTypes, client.KeyTypeEncryption)
 			case "ca":
-				filter.KeyTypes = append(filter.KeyTypes, types.KeyTypeCA)
+				filter.KeyTypes = append(filter.KeyTypes, client.KeyTypeCA)
 			case "tls":
-				filter.KeyTypes = append(filter.KeyTypes, types.KeyTypeTLS)
+				filter.KeyTypes = append(filter.KeyTypes, client.KeyTypeTLS)
 			}
 		}
 	}
@@ -373,14 +373,14 @@ func buildMigrationFilter(cmd *cobra.Command) *migration.KeyFilter {
 	// Store types
 	if storeTypes, _ := cmd.Flags().GetStringSlice("store-types"); len(storeTypes) > 0 {
 		for _, st := range storeTypes {
-			filter.StoreTypes = append(filter.StoreTypes, types.ParseStoreType(st))
+			filter.StoreTypes = append(filter.StoreTypes, client.ParseStoreType(st))
 		}
 	}
 
 	// Partitions
 	if partitions, _ := cmd.Flags().GetStringSlice("partitions"); len(partitions) > 0 {
 		for _, p := range partitions {
-			filter.Partitions = append(filter.Partitions, types.Partition(p))
+			filter.Partitions = append(filter.Partitions, client.Partition(p))
 		}
 	}
 

@@ -24,9 +24,14 @@ services:
         hard: -1
     volumes:
       - ..:/workspace:cached
-      # Sibling module mounts (for go.mod replace directives)
+      # In-house module closure, resolved via /tmp/go.work (see ensure-gowork.sh).
+      # All six siblings are mounted so only public deps are ever fetched.
+      - ../../go-codec:/go-codec:cached
+      - ../../go-frost:/go-frost:cached
+      - ../../go-objstore:/go-objstore:cached
       - ../../go-qrdb:/go-qrdb:cached
       - ../../go-quicraft:/go-quicraft:cached
+      - ../../go-truststrap:/go-truststrap:cached
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/home/vscode/.cache/go-build
       - /var/run/docker.sock:/var/run/docker.sock
@@ -34,6 +39,9 @@ services:
       - xkms-socket:/var/run/xkms
     environment:
       - GOPATH=/go
+      # Workspace lives at /tmp/go.work (materialized by ensure-gowork.sh); set
+      # here so every `docker compose exec` inherits it without re-exporting.
+      - GOWORK=/tmp/go.work
       - CGO_ENABLED=1
       - TPM_USE_SIMULATOR=true
       - TPM_SIMULATOR_HOST=swtpm

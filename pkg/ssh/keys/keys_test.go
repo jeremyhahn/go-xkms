@@ -616,4 +616,3 @@ func TestSignerWithClose_NilInputs(t *testing.T) {
 		}
 	}
 }
-

@@ -38,6 +38,13 @@ var (
 	ErrInvalidRelyingParty   = errors.New("fido2: invalid relying party")
 	ErrInvalidClientDataHash = errors.New("fido2: invalid client data hash")
 	ErrCBORTruncated         = errors.New("fido2: CBOR response truncated")
+
+	// Server-issued assertion options (BeginLogin output) validation errors,
+	// surfaced by AssertWithOptions when parsing the relying party's
+	// PublicKeyCredentialRequestOptions JSON.
+	ErrAssertionOptionsRequired  = errors.New("assertion options JSON required")
+	ErrAssertionChallengeMissing = errors.New("assertion options missing challenge")
+	ErrAssertionRPIDMissing      = errors.New("assertion options missing rpId")
 )
 
 // CTAP2 Command codes

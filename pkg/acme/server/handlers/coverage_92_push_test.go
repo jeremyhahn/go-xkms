@@ -32,7 +32,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
@@ -1584,7 +1583,7 @@ type MockAuthzDAO92ForEachFail struct {
 	qrdbsdk.GenericDAO[*entities.ACMEAuthorization]
 }
 
-func (m *MockAuthzDAO92ForEachFail) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbdao.PagerFunc[*entities.ACMEAuthorization]) error {
+func (m *MockAuthzDAO92ForEachFail) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbsdk.PagerFunc[*entities.ACMEAuthorization]) error {
 	return caerrors.StorageFailureError("mock authz ForEachPage error")
 }
 
@@ -1981,7 +1980,7 @@ type MockAccountDAO92ForEach struct {
 	qrdbsdk.GenericDAO[*entities.ACMEAccount]
 }
 
-func (m *MockAccountDAO92ForEach) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbdao.PagerFunc[*entities.ACMEAccount]) error {
+func (m *MockAccountDAO92ForEach) ForEachPage(ctx context.Context, query qrdbsdk.PageQuery, fn qrdbsdk.PagerFunc[*entities.ACMEAccount]) error {
 	return caerrors.StorageFailureError("mock ForEachPage error")
 }
 
@@ -2108,7 +2107,7 @@ type MockAccountDAO92GetNotFound struct {
 func (m *MockAccountDAO92GetNotFound) Get(ctx context.Context, id uint64) (*entities.ACMEAccount, error) {
 	*m.callCount++
 	if *m.callCount >= m.failOnCall {
-		return nil, qrdbdao.NotFoundError{EntityType: "account", ID: id}
+		return nil, qrdbsdk.DAONotFoundError{EntityType: "account", ID: id}
 	}
 	return m.GenericDAO.Get(ctx, id)
 }

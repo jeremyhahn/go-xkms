@@ -15,6 +15,8 @@ package webauthn
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/x509"
 	"encoding/json"
 	"testing"
 
@@ -23,6 +25,34 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newEC2Credential returns a virtualwebauthn EC2 credential whose P-256 public
+// key has full-length (32-byte) X and Y coordinates. virtualwebauthn encodes
+// coordinates with big.Int.Bytes(), which strips leading zero bytes (~1/128 of
+// random keys); the go-webauthn COSE parser correctly rejects short coordinates
+// per the WebAuthn/COSE spec, so a real authenticator always zero-pads. Regenerating
+// until both coordinates are full-length keeps these tests deterministic without
+// weakening the (correct) parser.
+func newEC2Credential(t *testing.T) virtualwebauthn.Credential {
+	t.Helper()
+	for i := 0; i < 128; i++ {
+		cred := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+		parsed, err := x509.ParsePKCS8PrivateKey(cred.Key.Data)
+		if err != nil {
+			t.Fatalf("parse EC2 credential key: %v", err)
+		}
+		priv, ok := parsed.(*ecdsa.PrivateKey)
+		if !ok {
+			t.Fatalf("expected *ecdsa.PrivateKey, got %T", parsed)
+		}
+		size := (priv.Curve.Params().BitSize + 7) / 8 // 32 bytes for P-256
+		if len(priv.X.Bytes()) == size && len(priv.Y.Bytes()) == size {
+			return cred
+		}
+	}
+	t.Fatal("could not generate EC2 credential with full-length coordinates")
+	return virtualwebauthn.Credential{}
+}
 
 // TestIntegration_FullRegistrationFlow tests the complete WebAuthn registration
 // flow using a virtual authenticator.
@@ -51,7 +81,7 @@ func TestIntegration_FullRegistrationFlow(t *testing.T) {
 		Origin: cfg.RPOrigins[0],
 	}
 	authenticator := virtualwebauthn.NewAuthenticator()
-	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	credential := newEC2Credential(t)
 
 	// Step 1: Begin registration
 	options, sessionID, err := svc.BeginRegistration(ctx, "testuser@example.com", "Test User")
@@ -130,7 +160,7 @@ func TestIntegration_FullLoginFlow(t *testing.T) {
 		Origin: cfg.RPOrigins[0],
 	}
 	authenticator := virtualwebauthn.NewAuthenticator()
-	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	credential := newEC2Credential(t)
 
 	// === REGISTRATION PHASE ===
 
@@ -220,7 +250,7 @@ func TestIntegration_DiscoverableCredentialFlow(t *testing.T) {
 		Origin: cfg.RPOrigins[0],
 	}
 	authenticator := virtualwebauthn.NewAuthenticator()
-	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	credential := newEC2Credential(t)
 
 	// === REGISTRATION ===
 	regOptions, regSessionID, err := svc.BeginRegistration(ctx, "passkey@example.com", "Passkey User")
@@ -294,10 +324,10 @@ func TestIntegration_MultipleCredentials(t *testing.T) {
 
 	// Create two authenticators (simulating different security keys)
 	authenticator1 := virtualwebauthn.NewAuthenticator()
-	credential1 := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	credential1 := newEC2Credential(t)
 
 	authenticator2 := virtualwebauthn.NewAuthenticator()
-	credential2 := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	credential2 := newEC2Credential(t)
 
 	// Register first credential
 	regOptions1, regSessionID1, err := svc.BeginRegistration(ctx, "multicred@example.com", "Multi Cred User")
@@ -386,7 +416,7 @@ func TestIntegration_SignCountValidation(t *testing.T) {
 	}
 
 	authenticator := virtualwebauthn.NewAuthenticator()
-	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	credential := newEC2Credential(t)
 
 	// Register
 	regOptions, regSessionID, _ := svc.BeginRegistration(ctx, "signcount@example.com", "Sign Count User")
@@ -455,7 +485,7 @@ func TestIntegration_WithJWTGenerator(t *testing.T) {
 	}
 
 	authenticator := virtualwebauthn.NewAuthenticator()
-	credential := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	credential := newEC2Credential(t)
 
 	// Register
 	regOptions, regSessionID, _ := svc.BeginRegistration(ctx, "jwt@example.com", "JWT User")

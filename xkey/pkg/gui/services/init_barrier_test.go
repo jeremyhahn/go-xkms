@@ -30,10 +30,10 @@ func TestInitBarrier_Success(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier("test-password-123", "software", result)
+	ok, strategy := tw.svc.initBarrier("test-password-123", "passphrase", result)
 
 	assert.True(t, ok, "initBarrier should return true on successful initialization")
-	assert.Equal(t, "software", strategy, "returned strategy should match the requested strategy")
+	assert.Equal(t, "passphrase", strategy, "returned strategy should match the requested strategy")
 	assert.True(t, result.Success, "result.Success should remain true")
 	assert.Empty(t, result.Errors, "no errors should be appended on success")
 	assert.Empty(t, result.Warnings, "no warnings should be appended on first-attempt success")
@@ -48,7 +48,7 @@ func TestInitBarrier_AlreadyInit_UnsealSucceeds(t *testing.T) {
 
 	// Pre-initialize the barrier so the second call gets ErrBarrierAlreadyInit.
 	preInit := NewBarrierService(tmpDir, slog.Default())
-	err := preInit.Initialize(password, "software")
+	err := preInit.Initialize(password, "passphrase")
 	require.NoError(t, err)
 
 	// Create a fresh BarrierService pointing at the same directory.
@@ -59,10 +59,10 @@ func TestInitBarrier_AlreadyInit_UnsealSucceeds(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier(password, "software", result)
+	ok, strategy := tw.svc.initBarrier(password, "passphrase", result)
 
 	assert.True(t, ok, "initBarrier should return true when unseal succeeds after ErrBarrierAlreadyInit")
-	assert.Equal(t, "software", strategy, "returned strategy should match the requested strategy")
+	assert.Equal(t, "passphrase", strategy, "returned strategy should match the requested strategy")
 	assert.True(t, result.Success, "result.Success should remain true")
 	assert.Empty(t, result.Errors, "no errors should be appended when unseal succeeds")
 }
@@ -78,7 +78,7 @@ func TestInitBarrier_AlreadyInit_UnsealFails(t *testing.T) {
 
 	// Pre-initialize with the correct password.
 	preInit := NewBarrierService(tmpDir, slog.Default())
-	err := preInit.Initialize(correctPassword, "software")
+	err := preInit.Initialize(correctPassword, "passphrase")
 	require.NoError(t, err)
 
 	// Create a fresh BarrierService pointing at the same directory.
@@ -87,7 +87,7 @@ func TestInitBarrier_AlreadyInit_UnsealFails(t *testing.T) {
 	tw.svc.SetBarrierService(barrierSvc)
 
 	result := &SetupResult{Success: true}
-	ok, strategy := tw.svc.initBarrier(wrongPassword, "software", result)
+	ok, strategy := tw.svc.initBarrier(wrongPassword, "passphrase", result)
 
 	assert.False(t, ok, "initBarrier should return false when unseal fails")
 	assert.Empty(t, strategy, "returned strategy should be empty on failure")
@@ -152,7 +152,7 @@ func TestInitBarrier_TPM2AlreadyInit_UnsealFails_NoFallbackToSoftware(t *testing
 
 	// Pre-initialize with software strategy and the correct password.
 	preInit := NewBarrierService(tmpDir, slog.Default())
-	err := preInit.Initialize(correctPassword, "software")
+	err := preInit.Initialize(correctPassword, "passphrase")
 	require.NoError(t, err)
 
 	// Create a fresh BarrierService pointing at the same directory.

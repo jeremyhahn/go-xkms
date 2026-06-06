@@ -225,8 +225,16 @@ func (m *mockTransportClient) AttestKey(_ context.Context, _ *transport.AttestKe
 	return m.attestKeyResp, m.attestKeyErr
 }
 
+func (m *mockTransportClient) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, errNotImplemented
+}
+
 func (m *mockTransportClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
 	return nil, errNotImplemented
+}
+
+func (m *mockTransportClient) BindUserCert(_ context.Context, _, _ string, _ int64) error {
+	return errNotImplemented
 }
 
 func (m *mockTransportClient) GetUser(_ context.Context, _ string) (*transport.GetUserResponse, error) {
@@ -1749,22 +1757,6 @@ func (m *mockTransportClient) BarrierUnsealWithShare(_ context.Context, _ *trans
 }
 
 func (m *mockTransportClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return errNotImplemented
-}
-
-func (m *mockTransportClient) BarrierShamirVerify(_ context.Context) error {
 	return errNotImplemented
 }
 

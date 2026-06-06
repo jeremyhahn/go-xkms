@@ -1,35 +1,120 @@
 # Barrier Encryption Architecture
 
-The barrier subsystem provides transparent at-rest encryption for go-xkms's `storage.Backend` layer. A `Barrier` wraps any storage backend and encrypts all values with AES-256-GCM before they reach the underlying store. Keys (paths) remain in plaintext; only values are encrypted.
+The barrier subsystem provides transparent at-rest encryption for the
+`storage.Backend` layer. A `Barrier` wraps any storage backend and encrypts
+every value with AES-256-GCM (or whichever AEAD the active epoch nominates)
+before it reaches the underlying store. Keys (paths) remain in plaintext;
+only values are encrypted.
+
+go-xkms is the **canonical home for every hardware-backed and cloud-KMS
+sealing strategy** in the stack. It owns the implementations; go-qrdb owns
+the barrier itself and the `StrategyRegistry` plug point that xkms registers
+into at composition time. There is no hardware code in qrdb.
+
+There is exactly **one barrier** at runtime: qrdb's `StorageBarrier`, layered
+by `initializeBarrier` over the embedded qrdb node's KV (see
+`pkg/server/qrdb_node.go`). The server injects xkms's hardware seal strategies
+(TPM2 / PKCS#11 / cloud KMS) into that barrier via
+`pkg/server/seal_strategies.go::buildHardwareSealStrategies`; the `passphrase`
+strategy is the always-available baseline. The embedded node carries no barrier
+of its own — xkms always runs qrdb in-process as its single datastore, so the
+barrier never sits in front of a remote store.
 
 ## Three-Layer Architecture
 
-The barrier implementation is split across three repositories to enable reuse at different levels of the stack:
+The barrier implementation is split across three repositories so each layer
+reuses the right amount of the surface:
 
 | Layer | Repository | Package | Provides |
 |-------|-----------|---------|----------|
-| Interfaces + memguard | **go-quicraft** | `pkg/seal` | `SealingStrategy`, `Barrier`, `SymmetricEncrypter` interfaces; `GuardedBuffer` memory protection |
-| Rich barrier | **go-qrdb** | `pkg/seal` | `ExtendedBarrier` with Shamir secret sharing, multi-tenant barriers, storage wrapping, recovery keys, root token generation |
-| Hardware strategies | **go-xkms** | `pkg/seal` | `SealingStrategy` implementations for TPM2, PKCS#11, AWS KMS, GCP KMS, Azure KV, Vault; `PlatformSealer`; adapter layer |
+| Interfaces + KDFs | **go-quicraft** | `pkg/seal` | `SealingStrategy`, `Barrier`, `SymmetricEncrypter`, `GuardedBuffer`, passphrase (`SoftwareStrategy`), `NoneStrategy` |
+| Rich barrier + registry | **go-qrdb** | `pkg/seal` | `ExtendedBarrier` (Shamir, multi-tenant, recovery keys, root tokens, rekey), `StrategyRegistry`, server option `WithStrategyRegistry` |
+| Hardware + cloud strategies | **go-xkms** | `pkg/seal` | `SealingStrategy` implementations for TPM2, PKCS#11, AWS KMS, GCP KMS, Azure KV, Vault; `PlatformSealer`; tenant barrier registry |
 
-go-xkms imports the barrier from go-qrdb (which itself embeds go-quicraft's minimal barrier) and registers hardware-backed sealing strategies. The `pkg/seal` package in go-xkms contains:
+qrdb owns only the `passphrase` baseline (the software/password-derived
+strategy, ID `passphrase`) and the `None` passthrough — both re-exported
+from quicraft. Every hardware-backed or cloud-KMS strategy
+(TPM2, PKCS#11, AWS KMS, GCP KMS, Azure KV, Vault) lives **exclusively** in
+this repository and is injected into the qrdb server at composition time via
+`qrdbserver.WithStrategyRegistry`. quicbaas wires the two together; that
+composition is documented in the locked architecture.
+
+The `pkg/seal` package in go-xkms contains:
 
 - **Hardware strategy implementations**: `strategy_tpm2.go`, `strategy_pkcs11.go`, `strategy_cloud.go`
-- **Software strategy**: `strategy_software.go` (Argon2id + AES-256-GCM fallback)
-- **Shamir strategy**: `strategy_shamir.go` (M-of-N root key splitting)
-- **Adapter layer**: `adapter.go` bridges go-xkms types to go-qrdb interfaces
-- **PlatformSealer**: `platform_sealer.go` for sealing arbitrary data
-- **Barrier wrapper**: `barrier.go` composes the go-qrdb barrier with local strategies
+- **Shamir strategy adapter**: composes quicraft's Shamir secret-sharing into the same registry
+- **PlatformSealer**: `platform_sealer.go` for sealing arbitrary data with backend tagging
+- **Barrier wrapper**: `barrier.go` composes the qrdb `ExtendedBarrier` with the locally-registered strategies
 - **Tenant barriers**: `tenant_barrier.go`, `barrier_registry.go` for multi-tenant isolation
+
+### Registration into qrdb's `StrategyRegistry`
+
+Hardware strategies are not loaded by qrdb directly. xkms exposes a
+constructor for each strategy and the composing binary (quicbaas, xkmsd)
+registers them:
+
+```go
+import (
+    qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
+    qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
+
+    xkmsseal "github.com/jeremyhahn/go-xkms/pkg/seal"
+)
+
+registry := qrdbseal.NewStrategyRegistry()
+_ = registry.Register(qrdbseal.StrategyTPM2,    xkmsseal.NewTPM2StrategyFactory(tpmSealer))
+_ = registry.Register(qrdbseal.StrategyPKCS11,  xkmsseal.NewPKCS11StrategyFactory(p11))
+_ = registry.Register(qrdbseal.StrategyAWSKMS,  xkmsseal.NewAWSKMSStrategyFactory(kmsClient))
+
+srv, err := qrdbserver.New(
+    qrdbserver.WithStrategyRegistry(registry),
+    // ...
+)
+```
+
+The passphrase (and None) strategies are pre-registered by qrdb itself.
+xkms contributes only the hardware/cloud strategies; nothing else changes
+about the barrier API the server uses.
+
+### Hardware-vs-software ownership
+
+```mermaid
+flowchart TB
+    subgraph QR[go-quicraft]
+        I[SealingStrategy interface]
+        SW["SoftwareStrategy (ID: passphrase)"]
+        NO[NoneStrategy]
+        GB[GuardedBuffer]
+    end
+    subgraph QD[go-qrdb]
+        EB[ExtendedBarrier]
+        SR[StrategyRegistry]
+        OPT[WithStrategyRegistry]
+    end
+    subgraph XK[go-xkms]
+        T[TPM2 strategy]
+        P[PKCS#11 strategy]
+        A[AWS KMS strategy]
+        G[GCP KMS strategy]
+        Z[Azure KV strategy]
+        V[Vault strategy]
+        PS[PlatformSealer]
+    end
+    QR --> QD
+    QR --> XK
+    XK -->|Register hardware/cloud impls| SR
+    OPT -->|composed at startup| EB
+```
 
 ### Import Paths
 
 ```go
 import (
-    // go-qrdb barrier (rich features: Shamir, multi-tenant, recovery)
-    qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
+    // go-qrdb barrier (ExtendedBarrier, StrategyRegistry, server options)
+    qrdbseal   "github.com/jeremyhahn/go-qrdb/pkg/seal"
+    qrdbserver "github.com/jeremyhahn/go-qrdb/pkg/server"
 
-    // go-xkms hardware strategies and adapters
+    // go-xkms hardware/cloud strategies + PlatformSealer + tenant registry
     "github.com/jeremyhahn/go-xkms/pkg/seal"
 )
 ```
@@ -151,15 +236,22 @@ type SealingStrategy interface {
 
 ### Strategy Comparison
 
-| Strategy | ID | Hardware | Key Protection | Credentials Used |
-|----------|----|----------|----------------|-----------------|
-| Software | `software` | No | Argon2id + AES-256-GCM | Password for Argon2id KDF |
-| TPM 2.0 | `tpm2` | Yes | TPM SRK hierarchy, optional PCR binding | May be used as authorization value |
-| PKCS#11 | `pkcs11` | Yes | HSM token wrapping key | N/A (token session auth) |
-| AWS KMS | `awskms` | Yes | AWS KMS CMK envelope encryption | N/A (IAM/external auth) |
-| GCP KMS | `gcpkms` | Yes | GCP KMS key ring envelope encryption | N/A (IAM/external auth) |
-| Azure KV | `azurekv` | Yes | Azure Key Vault key encryption | N/A (Azure AD auth) |
-| Vault | `vault` | Yes | HashiCorp Vault transit engine | N/A (Vault token auth) |
+| Strategy | ID | Hardware | Owned By | Key Protection | Credentials Used |
+|----------|----|----------|----------|----------------|-----------------|
+| None | `none` | No | quicraft (re-export from qrdb) | No encryption (passthrough) | None |
+| Passphrase | `passphrase` | No | quicraft (re-export from qrdb) | Argon2id or PBKDF2 + AES-256-GCM | Passphrase |
+| Shamir | `shamir` | No | quicraft | M-of-N split of the root key | None (root key is the secret) |
+| TPM 2.0 | `tpm2` | Yes | **go-xkms** | TPM SRK hierarchy, optional PCR binding | May carry an SRK auth value |
+| PKCS#11 | `pkcs11` | Yes | **go-xkms** | HSM token wrapping key | N/A (token session auth) |
+| AWS KMS | `awskms` | Yes | **go-xkms** | AWS KMS CMK envelope encryption | N/A (IAM/external auth) |
+| GCP KMS | `gcpkms` | Yes | **go-xkms** | GCP KMS key ring envelope encryption | N/A (IAM/external auth) |
+| Azure KV | `azurekv` | Yes | **go-xkms** | Azure Key Vault key encryption | N/A (Azure AD auth) |
+| Vault | `vault` | Yes | **go-xkms** | HashiCorp Vault transit engine | N/A (Vault token auth) |
+
+> Every strategy marked "go-xkms" is registered into qrdb's
+> `StrategyRegistry` at composition time. qrdb itself ships only `none`,
+> `passphrase`, and `shamir`; reaching into qrdb directly for TPM2/PKCS#11
+> code is an architectural error.
 
 ### Default Preference Order
 
@@ -171,13 +263,14 @@ When `BarrierConfig.PreferenceOrder` is not set, the barrier selects the first a
 4. `gcpkms`
 5. `azurekv`
 6. `vault`
-7. `software`
+7. `passphrase`
 
-Hardware-backed strategies are always preferred over the software fallback.
+Hardware-backed strategies are always preferred over the passphrase fallback.
 
-### Software Strategy Details
+### Passphrase Strategy Details
 
-The software strategy uses Argon2id for password-based key derivation:
+The passphrase strategy (Go type `SoftwareStrategy`, ID `passphrase`) uses
+Argon2id for password-based key derivation:
 
 | Parameter | Value |
 |-----------|-------|
@@ -377,11 +470,11 @@ barrier, err := seal.NewBarrier(
         RootKeyPath: "sys/barrier/root-key",
         PreferenceOrder: []seal.StrategyID{
             seal.StrategyTPM2,
-            seal.StrategySoftware,
+            seal.StrategyPassphrase,
         },
     },
     seal.NewTPM2Strategy(tpmSealer),
-    seal.NewSoftwareStrategy(),
+    seal.NewSoftwareStrategy(), // ID() == seal.StrategyPassphrase
 )
 ```
 
@@ -389,8 +482,8 @@ barrier, err := seal.NewBarrier(
 
 ```go
 sealers := map[seal.StrategyID]types.Sealer{
-    seal.StrategyTPM2:     tpmSealer,
-    seal.StrategySoftware: softwareSealer,
+    seal.StrategyTPM2:       tpmSealer,
+    seal.StrategyPassphrase: softwareSealer,
 }
 
 platformSealer, err := seal.NewPlatformSealer(logger, seal.SealerConfig{}, sealers)
@@ -419,7 +512,7 @@ All Shamir barrier methods operate in one of two modes depending on whether `Str
 | Mode | Strategy Registered | Shamir Secret | Use Case |
 |------|-------------------|---------------|----------|
 | **Direct** | `StrategyShamir` | Root key itself | Multi-party root key custody |
-| **Credential** | Any other (e.g. `software`) | Credential password | Password-based unsealing with quorum |
+| **Credential** | Any other (e.g. `passphrase`) | Credential password | Password-based unsealing with quorum |
 
 In direct mode, reconstructed shares yield the root key directly. In credential mode, reconstructed shares yield the password that is then passed to the underlying strategy's `UnsealRootKey`.
 

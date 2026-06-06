@@ -23,7 +23,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 
-	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 )
@@ -77,7 +77,7 @@ func (v *PIVHardwareFactorVerifier) Type() qrdbtransport.FactorType {
 //   - challenge.Signature: DER-encoded ECDSA or RSA signature over Nonce.
 //   - factor.Metadata["cert_pem"] or factor.Metadata["cert_der"]:
 //     the slot certificate that holds the verification public key.
-func (v *PIVHardwareFactorVerifier) Verify(ctx context.Context, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
+func (v *PIVHardwareFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error {
 	if v == nil || v.roots == nil {
 		return &NilTrustPoolError{}
 	}
@@ -85,10 +85,10 @@ func (v *PIVHardwareFactorVerifier) Verify(ctx context.Context, factor *qrdbauth
 		return &MissingFactorError{}
 	}
 	if factor.RevokedAt != nil {
-		return &qrdbauth.FactorRevokedError{FactorID: factor.ID}
+		return &qrdbsdk.FactorRevokedError{FactorID: factor.ID}
 	}
-	if factor.Type != qrdbauth.AuthFactorPIV {
-		return &qrdbauth.FactorTypeUnsupportedError{Type: string(factor.Type)}
+	if factor.Type != qrdbsdk.AuthFactorPIV {
+		return &qrdbsdk.FactorTypeUnsupportedError{Type: string(factor.Type)}
 	}
 	if len(challenge.Nonce) == 0 {
 		return &MissingChallengeFieldError{Field: "nonce"}
@@ -132,7 +132,7 @@ func (v *PIVHardwareFactorVerifier) Verify(ctx context.Context, factor *qrdbauth
 }
 
 // decodeCertificate pulls an x509.Certificate from the factor's metadata.
-func decodeCertificate(factor *qrdbauth.AuthFactor) (*x509.Certificate, error) {
+func decodeCertificate(factor *qrdbsdk.AuthFactor) (*x509.Certificate, error) {
 	if factor.Metadata != nil {
 		if pemBytes := factor.Metadata["cert_pem"]; pemBytes != "" {
 			block, _ := pem.Decode([]byte(pemBytes))
@@ -163,7 +163,7 @@ var _ qrdbPIVVerifier = (*PIVHardwareFactorVerifier)(nil)
 // this package does not import the embedded sub-package directly.
 type qrdbPIVVerifier interface {
 	Type() qrdbtransport.FactorType
-	Verify(ctx context.Context, factor *qrdbauth.AuthFactor, challenge qrdbtransport.VerifyChallenge) error
+	Verify(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge) error
 }
 
 // NilTrustPoolError is returned when the verifier is constructed with

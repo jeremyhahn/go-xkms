@@ -23,10 +23,10 @@ import (
 	"time"
 
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -663,15 +663,21 @@ type stubFIDO2Backend struct {
 	bt types.BackendType
 }
 
-func (s *stubFIDO2Backend) Type() types.BackendType                  { return s.bt }
-func (s *stubFIDO2Backend) Capabilities() keybackend.FIDO2KeyCapabilities { return keybackend.FIDO2KeyCapabilities{} }
-func (s *stubFIDO2Backend) GenerateCredentialKey(int, []byte) (keybackend.KeyHandle, []byte, error) { return nil, nil, nil }
-func (s *stubFIDO2Backend) Sign(keybackend.KeyHandle, int, []byte) ([]byte, error)                  { return nil, nil }
-func (s *stubFIDO2Backend) LoadKey([]byte, int) (keybackend.KeyHandle, error)                        { return nil, nil }
-func (s *stubFIDO2Backend) DeleteKey(keybackend.KeyHandle) error                                     { return nil }
-func (s *stubFIDO2Backend) ExportPrivateKey(keybackend.KeyHandle) ([]byte, error)                    { return nil, nil }
-func (s *stubFIDO2Backend) ImportPrivateKey([]byte, int, []byte) (keybackend.KeyHandle, error)       { return nil, nil }
-func (s *stubFIDO2Backend) Close() error                                                              { return nil }
+func (s *stubFIDO2Backend) Type() types.BackendType { return s.bt }
+func (s *stubFIDO2Backend) Capabilities() keybackend.FIDO2KeyCapabilities {
+	return keybackend.FIDO2KeyCapabilities{}
+}
+func (s *stubFIDO2Backend) GenerateCredentialKey(int, []byte) (keybackend.KeyHandle, []byte, error) {
+	return nil, nil, nil
+}
+func (s *stubFIDO2Backend) Sign(keybackend.KeyHandle, int, []byte) ([]byte, error) { return nil, nil }
+func (s *stubFIDO2Backend) LoadKey([]byte, int) (keybackend.KeyHandle, error)      { return nil, nil }
+func (s *stubFIDO2Backend) DeleteKey(keybackend.KeyHandle) error                   { return nil }
+func (s *stubFIDO2Backend) ExportPrivateKey(keybackend.KeyHandle) ([]byte, error)  { return nil, nil }
+func (s *stubFIDO2Backend) ImportPrivateKey([]byte, int, []byte) (keybackend.KeyHandle, error) {
+	return nil, nil
+}
+func (s *stubFIDO2Backend) Close() error { return nil }
 
 // newTestCompositeBackend creates a CompositeBackend with a stub backend
 // registered under the given default type.

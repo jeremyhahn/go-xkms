@@ -37,11 +37,12 @@ func (s *RestService) NewNonceHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Link", fmt.Sprintf("%s/acme/directory>;rel=\"index\"", s.baseRESTURI))
 
-	if r.Method == http.MethodHead {
+	switch r.Method {
+	case http.MethodHead:
 		w.WriteHeader(http.StatusOK)
-	} else if r.Method == http.MethodGet {
+	case http.MethodGet:
 		w.WriteHeader(http.StatusNoContent)
-	} else {
+	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }

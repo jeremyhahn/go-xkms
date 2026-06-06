@@ -87,6 +87,18 @@ type CredentialServicer = qrdbsdk.CredentialServicer
 // ceremony state management, Shamir splitting, and certificate operations.
 type CeremonyService struct {
 	inner *qrdbsdk.CeremonyService
+
+	// spiffeTrustDomain is the operator-configured SPIFFE trust domain. When
+	// set, the SO / bootstrap certificate issued during Initialize is stamped
+	// with a system-tenant SPIFFE SAN. Set via SetSPIFFETrustDomain.
+	spiffeTrustDomain string
+}
+
+// SetSPIFFETrustDomain configures the SPIFFE trust domain used to stamp the
+// system-tenant SPIFFE SAN on SO / bootstrap certificates. An empty trust
+// domain disables SPIFFE SAN stamping (legacy behavior).
+func (cs *CeremonyService) SetSPIFFETrustDomain(trustDomain string) {
+	cs.spiffeTrustDomain = trustDomain
 }
 
 // NewCeremonyService creates a new CeremonyService with the provided dependencies.
@@ -152,8 +164,11 @@ func validateCeremonyConfig(config *CeremonyConfig) error {
 // The caInstance parameter is go-xkms's TrustedCA, which is adapted to go-qrdb's
 // CeremonyCA interface via CAAdapter.
 func (cs *CeremonyService) Initialize(ctx context.Context, caInstance ca.TrustedCA) (*InitResult, error) {
-	adapter := NewCAAdapter(caInstance)
-	result, err := cs.inner.Initialize(ctx, adapter)
+	adapter := NewCAAdapter(caInstance, cs.spiffeTrustDomain)
+	// nil InitializeOptions: this layer carries no per-request PIN override,
+	// so the underlying ceremony service uses its configured SO/User PINs
+	// (preserving the pre-per-request-PIN behavior).
+	result, err := cs.inner.Initialize(ctx, adapter, nil)
 	if err != nil {
 		return nil, mapInitError(err)
 	}

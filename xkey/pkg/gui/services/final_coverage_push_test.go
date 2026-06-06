@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -189,8 +189,8 @@ func TestFinalCoveragePush_AppLockService_SetBarrierStrategy(t *testing.T) {
 
 func TestFinalCoveragePush_AppLockService_SetBarrierStrategy_Empty(t *testing.T) {
 	svc := NewAppLockService(nil, nil)
-	svc.SetBarrierStrategy("software")
-	assert.Equal(t, "software", svc.barrierStrategy)
+	svc.SetBarrierStrategy("passphrase")
+	assert.Equal(t, "passphrase", svc.barrierStrategy)
 
 	svc.SetBarrierStrategy("")
 	assert.Equal(t, "", svc.barrierStrategy)
@@ -677,14 +677,14 @@ func TestFinalCoveragePush_AppLockService_Unlock_BarrierConfiguredNotInitialized
 	pinSvc := NewPINService()
 	pinSvc.SetContext(context.Background())
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: nil,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	barrier := &mockBarrierService{
@@ -712,7 +712,7 @@ func TestFinalCoveragePush_AppLockService_Unlock_BarrierSealedUnsealFails(t *tes
 	}
 	svc := NewAppLockService(pinSvc, barrier)
 	svc.SetContext(context.Background())
-	svc.SetBarrierStrategy("software")
+	svc.SetBarrierStrategy("passphrase")
 	svc.LockForStartup()
 
 	err := svc.Unlock("wrong-pin")
@@ -735,14 +735,14 @@ func TestFinalCoveragePush_AppLockService_Unlock_PINNotSet(t *testing.T) {
 	pinSvc := NewPINService()
 	pinSvc.SetContext(context.Background())
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      false,
 		userPINSet:    false,
 		initialized:   true,
 		verifyUserErr: nil,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	pinSvc.SetPINService(pSvc)
 
 	svc := NewAppLockService(pinSvc, nil)
@@ -960,14 +960,14 @@ func TestFinalCoveragePush_PINService_SetSOPIN_WithAuditLogger(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		setSOPINErr:   errors.New("set failed"),
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.SetSOPIN("old", "new")
@@ -984,13 +984,13 @@ func TestFinalCoveragePush_PINService_SetSOPIN_Success(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.SetSOPIN("", "newsopin")
@@ -1006,14 +1006,14 @@ func TestFinalCoveragePush_PINService_ChangeUserPIN_WithAuditLogger(t *testing.T
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		changeUserErr: errors.New("change failed"),
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.ChangeUserPIN("oldpin123", "newpin123")
@@ -1029,18 +1029,18 @@ func TestFinalCoveragePush_PINService_VerifyUserPIN_WithLockout(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
 		verifyUserErr: errors.New("wrong PIN"),
-		lockoutStatus: &pin.LockoutStatus{
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{
 			MaxAttempts:    5,
 			FailedAttempts: 5,
 			IsLocked:       true,
 		},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.VerifyUserPIN("wrong")
@@ -1070,10 +1070,10 @@ func TestFinalCoveragePush_PINService_logPINOperation_WithPINService(t *testing.
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		strategy:      qrdbsdk.PINStrategySoftware,
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	svc.logPINOperation(audit.OpPINChanged, true, nil, map[string]any{"type": "user_pin"})
@@ -1358,7 +1358,7 @@ func TestFinalCoveragePush_BarrierService_Unseal_NotInitialized(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	// Unseal without Initialize should call Initialize since root key not found.
-	err := svc.Unseal("password", "software")
+	err := svc.Unseal("password", "passphrase")
 	// The initialize path will be called, exercising the branch.
 	_ = err
 }
@@ -1454,11 +1454,11 @@ func TestFinalCoveragePush_BarrierService_Initialize_AlreadyInit(t *testing.T) {
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	// Second init should fail with ErrBarrierAlreadyInit.
-	err = svc.Initialize("password", "software")
+	err = svc.Initialize("password", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierAlreadyInit)
 }
 
@@ -1467,7 +1467,7 @@ func TestFinalCoveragePush_BarrierService_Initialize_SoftwareNoPassword(t *testi
 	svc := NewBarrierService(configDir, slog.Default())
 	svc.SetContext(context.Background())
 
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierPasswordRequired)
 }
 
@@ -1708,10 +1708,10 @@ func TestFinalCoveragePush_BarrierService_ProbeStrategies(t *testing.T) {
 	strategies := svc.ProbeStrategies()
 	assert.NotEmpty(t, strategies)
 
-	// Software should always be available.
+	// Passphrase should always be available.
 	foundSoftware := false
 	for _, s := range strategies {
-		if s.ID == "software" {
+		if s.ID == "passphrase" {
 			foundSoftware = true
 			assert.True(t, s.Available)
 			assert.False(t, s.HardwareBacked)
@@ -1762,10 +1762,10 @@ func TestFinalCoveragePush_PINService_SetPINService(t *testing.T) {
 	assert.Nil(t, svc.pinSvc.Load())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		strategy:      qrdbsdk.PINStrategySoftware,
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 	assert.NotNil(t, svc.pinSvc.Load())
 }
@@ -1779,10 +1779,10 @@ func TestFinalCoveragePush_PINService_getPINService_NotConfigured(t *testing.T) 
 func TestFinalCoveragePush_PINService_getPINService_Configured(t *testing.T) {
 	svc := NewPINService()
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		strategy:      qrdbsdk.PINStrategySoftware,
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	got, err := svc.getPINService()
@@ -1801,13 +1801,13 @@ func TestFinalCoveragePush_PINService_SetUserPIN_Success(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    false,
 		initialized:   true,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.SetUserPIN("sopin", "newpin")
@@ -1823,13 +1823,13 @@ func TestFinalCoveragePush_PINService_ChangeSOPIN_Success(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.ChangeSOPIN("oldpin123", "newpin123")
@@ -1845,14 +1845,14 @@ func TestFinalCoveragePush_PINService_ChangeSOPIN_Error(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:       pin.StrategySoftware,
+		strategy:       qrdbsdk.PINStrategySoftware,
 		soPINSet:       true,
 		userPINSet:     true,
 		initialized:    true,
 		changeSOPINErr: errors.New("change failed"),
-		lockoutStatus:  &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus:  &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.ChangeSOPIN("oldpin123", "newpin123")
@@ -1868,13 +1868,13 @@ func TestFinalCoveragePush_PINService_ChangeUserPIN_Success(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.ChangeUserPIN("oldpin123", "newpin123")
@@ -1890,13 +1890,13 @@ func TestFinalCoveragePush_PINService_VerifySOPIN_Success(t *testing.T) {
 	svc.SetAuditLogger(logger)
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.VerifySOPIN("test")
@@ -1910,13 +1910,13 @@ func TestFinalCoveragePush_PINService_GetPINStatus_Success(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
+		strategy:      qrdbsdk.PINStrategySoftware,
 		soPINSet:      true,
 		userPINSet:    true,
 		initialized:   true,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	status, err := svc.GetPINStatus()
@@ -1932,10 +1932,10 @@ func TestFinalCoveragePush_PINService_GetLockoutStatus_Success(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5, FailedAttempts: 2},
+		strategy:      qrdbsdk.PINStrategySoftware,
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5, FailedAttempts: 2},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	status, err := svc.GetLockoutStatus()
@@ -1950,10 +1950,10 @@ func TestFinalCoveragePush_PINService_ResetLockout_Success(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	backend := &mockPINBackend{
-		strategy:      pin.StrategySoftware,
-		lockoutStatus: &pin.LockoutStatus{MaxAttempts: 5},
+		strategy:      qrdbsdk.PINStrategySoftware,
+		lockoutStatus: &qrdbsdk.PINLockoutStatus{MaxAttempts: 5},
 	}
-	pSvc := pin.NewService(backend, slog.Default())
+	pSvc := qrdbsdk.NewPINService(backend, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.ResetLockout("sopin")
@@ -2027,7 +2027,7 @@ func TestFinalCoveragePush_BarrierService_Initialize_WithAuditLogger(t *testing.
 	logger := &fcpMockAuditLogger{}
 	svc.SetAuditLogger(logger)
 
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	// Should have logged the initialization.
@@ -2054,14 +2054,14 @@ func TestFinalCoveragePush_BarrierService_Unseal_WithAuditLogger_PostHook(t *tes
 	})
 
 	// Initialize first.
-	err := svc.Initialize("password", "software")
+	err := svc.Initialize("password", "passphrase")
 	require.NoError(t, err)
 
 	// Reset barrier to simulate a sealed state.
 	svc.barrier = nil
 
 	// Unseal should re-initialize since barrier was nil.
-	err = svc.Unseal("password", "software")
+	err = svc.Unseal("password", "passphrase")
 	// Whether this succeeds depends on the barrier backend.
 	_ = err
 	_ = hookCalled

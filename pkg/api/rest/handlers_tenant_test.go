@@ -27,6 +27,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +49,7 @@ func testTenantRegistry(t *testing.T) *seal.BarrierRegistry {
 		base,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 		},
 		seal.NewSoftwareStrategy(),
 	)
@@ -60,6 +62,21 @@ func testTenantRegistry(t *testing.T) *seal.BarrierRegistry {
 
 	registry, err := seal.NewBarrierRegistry(barrier)
 	require.NoError(t, err)
+
+	// The tenant barrier init/unseal handlers route through the XKMSService
+	// servicer (so the §3.6 "server never generates a tenant secret" invariant
+	// lives in one place). Configure the singleton with the SAME registry the
+	// handlers hold, mirroring production wiring in pkg/server/server.go.
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	svc.SetBarrierRegistry(registry)
+	t.Cleanup(func() { xkms.Reset() })
+
 	return registry
 }
 
@@ -355,8 +372,9 @@ func TestTenantBarrierInitHandler_Success(t *testing.T) {
 	rec := createTenantViaAPI(t, router, "init-tenant", "Init Tenant")
 	require.Equal(t, http.StatusCreated, rec.Code)
 
-	// Initialize the tenant barrier (generates independent DEK).
-	body, err := json.Marshal(tenantBarrierInitRequest{Threshold: 2, Shares: 3})
+	// Initialize the tenant barrier with the tenant admin's own passphrase
+	// (§3.6: the server never generates the secret).
+	body, err := json.Marshal(tenantBarrierInitRequest{Passphrase: "tenant-admin-pw"})
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/tenants/init-tenant/barrier/init", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -371,13 +389,13 @@ func TestTenantBarrierInitHandler_Success(t *testing.T) {
 	assert.Equal(t, "init-tenant", resp.TenantID)
 	// After initialization, tenant barrier is unsealed.
 	assert.False(t, resp.Sealed)
-	assert.Equal(t, seal.StrategySoftware, resp.Strategy)
+	assert.Equal(t, seal.StrategyPassphrase, resp.Strategy)
 }
 
 func TestTenantBarrierInitHandler_NotFound(t *testing.T) {
 	_, router := setupTenantTestHandlers(t)
 
-	body, err := json.Marshal(tenantBarrierInitRequest{Threshold: 2, Shares: 3})
+	body, err := json.Marshal(tenantBarrierInitRequest{Passphrase: "tenant-admin-pw"})
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/tenants/nonexistent/barrier/init", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -417,8 +435,8 @@ func TestTenantBarrierUnsealHandler_Success(t *testing.T) {
 	rec := createTenantViaAPI(t, r, "unseal-tenant", "Unseal Tenant")
 	require.Equal(t, http.StatusCreated, rec.Code)
 
-	// Initialize the tenant barrier first.
-	initBody, err := json.Marshal(tenantBarrierInitRequest{Threshold: 2, Shares: 3})
+	// Initialize the tenant barrier with the tenant admin's passphrase.
+	initBody, err := json.Marshal(tenantBarrierInitRequest{Passphrase: "unseal-pw"})
 	require.NoError(t, err)
 	initReq := httptest.NewRequest(http.MethodPost, "/tenants/unseal-tenant/barrier/init", bytes.NewReader(initBody))
 	initReq.Header.Set("Content-Type", "application/json")
@@ -430,8 +448,8 @@ func TestTenantBarrierUnsealHandler_Success(t *testing.T) {
 	err = registry.SealTenant("unseal-tenant")
 	require.NoError(t, err)
 
-	// Unseal the tenant barrier with the init credentials.
-	body, err := json.Marshal(tenantBarrierUnsealRequest{Key: []byte("tenant-init")})
+	// Unseal the tenant barrier with the SAME passphrase supplied at init.
+	body, err := json.Marshal(tenantBarrierUnsealRequest{Key: []byte("unseal-pw")})
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodPost, "/tenants/unseal-tenant/barrier/unseal", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

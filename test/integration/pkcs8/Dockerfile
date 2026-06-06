@@ -6,4 +6,8 @@ ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
 
+# Materialize /tmp/go.work + GOWORK (resolves the in-house module workspace from
+# the bind-mounted siblings) before running the test CMD passed as args.
+ENTRYPOINT ["bash", ".devcontainer/scripts/ensure-gowork.sh"]
+
 CMD ["go", "test", "-v", "-tags=integration pkcs8 codec_cbor codec_json codec_msgpack", "./test/integration/pkcs8/..."]

@@ -23,6 +23,17 @@ WITH_AZURE_KV ?= 0
 WITH_VAULT ?= 0
 WITH_PKCS11 ?= 0
 
+# Object-storage (go-objstore) backends used by the embedded qrdb datastore for
+# object-store KV and backup/restore targets. Default on (server posture); the
+# tag names match go-objstore exactly (awss3/minio/gcpstorage/azureblob/glacier/
+# azurearchive). Set to 0 to drop the corresponding cloud SDK from the build.
+WITH_AWS_S3 ?= 1
+WITH_MINIO ?= 1
+WITH_GCP_STORAGE ?= 1
+WITH_AZURE_BLOB ?= 1
+WITH_GLACIER ?= 1
+WITH_AZURE_ARCHIVE ?= 1
+
 # Quantum-safe cryptography (ML-DSA, ML-KEM) is always enabled.
 # Uses pure-Go implementations (circl, crypto/mlkem). No external libraries required.
 
@@ -36,25 +47,31 @@ WITH_AWS ?= 0
 WITH_GCP ?= 0
 WITH_AZURE ?= 0
 
-# Apply group flags
+# Apply group flags — each umbrella drives BOTH the KMS backend and the
+# object-storage family for that provider.
 ifeq ($(WITH_AWS),1)
 	WITH_AWS_KMS := 1
+	WITH_AWS_S3 := 1
+	WITH_GLACIER := 1
 endif
 ifeq ($(WITH_GCP),1)
 	WITH_GCP_KMS := 1
+	WITH_GCP_STORAGE := 1
 endif
 ifeq ($(WITH_AZURE),1)
 	WITH_AZURE_KV := 1
+	WITH_AZURE_BLOB := 1
+	WITH_AZURE_ARCHIVE := 1
 endif
 
 
 # All available build tags for release builds
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
 CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack
-# Server includes all tags including pkcs11
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost codec_cbor codec_json codec_msgpack
+# Server includes all tags including pkcs11 and the object-storage cloud backends
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
 # All tags for integration testing (includes all possible build tags)
-ALL_TAGS := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn codec_cbor codec_json codec_msgpack
+ALL_TAGS := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
 
 # Build tags based on backend flags (for development/testing)
 # Codec tags are always required for go-qrdb DAO layer serialization
@@ -82,6 +99,25 @@ ifeq ($(WITH_PKCS11),1)
 endif
 ifeq ($(WITH_FROST),1)
 	BUILD_TAGS += frost
+endif
+# Object-storage (go-objstore) cloud backends.
+ifeq ($(WITH_AWS_S3),1)
+	BUILD_TAGS += awss3
+endif
+ifeq ($(WITH_MINIO),1)
+	BUILD_TAGS += minio
+endif
+ifeq ($(WITH_GCP_STORAGE),1)
+	BUILD_TAGS += gcpstorage
+endif
+ifeq ($(WITH_AZURE_BLOB),1)
+	BUILD_TAGS += azureblob
+endif
+ifeq ($(WITH_GLACIER),1)
+	BUILD_TAGS += glacier
+endif
+ifeq ($(WITH_AZURE_ARCHIVE),1)
+	BUILD_TAGS += azurearchive
 endif
 
 
@@ -131,13 +167,14 @@ XKEY_BUILDER_IMAGE := $(PROJECT_NAME)-xkey-builder:latest
 PARENT_DIR := $(dir $(CURDIR))
 SIBLING_MOUNTS := -v $(PARENT_DIR)go-codec:/go-codec:cached \
                   -v $(PARENT_DIR)go-frost:/go-frost:cached \
+                  -v $(PARENT_DIR)go-objstore:/go-objstore:cached \
                   -v $(PARENT_DIR)go-qrdb:/go-qrdb:cached \
                   -v $(PARENT_DIR)go-quicraft:/go-quicraft:cached \
                   -v $(PARENT_DIR)go-truststrap:/go-truststrap:cached
 
 # go.work generation for Docker containers (creates workspace in /tmp to avoid polluting mounted volume)
 define GOWORK_CONTENT
-go 1.26.1
+go 1.26.3
 
 use (
 	/workspace
@@ -145,6 +182,7 @@ use (
 	/workspace/xkey
 	/go-codec
 	/go-frost
+	/go-objstore
 	/go-qrdb
 	/go-qrdb/sdk/go
 	/go-quicraft
@@ -152,19 +190,20 @@ use (
 )
 
 replace (
-	github.com/jeremyhahn/go-codec => /go-codec
-	github.com/jeremyhahn/go-frost => /go-frost
-	github.com/jeremyhahn/go-qrdb => /go-qrdb
-	github.com/jeremyhahn/go-qrdb/sdk/go => /go-qrdb/sdk/go
-	github.com/jeremyhahn/go-quicraft => /go-quicraft
-	github.com/jeremyhahn/go-truststrap => /go-truststrap
-	github.com/jeremyhahn/go-xkms => /workspace
-	github.com/jeremyhahn/go-xkms/sdk/go => /workspace/sdk/go
-	github.com/jeremyhahn/go-xkms/xkey => /workspace/xkey
+	github.com/jeremyhahn/go-codec v0.0.0 => /go-codec
+	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
+	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
+	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
+	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
+	github.com/jeremyhahn/go-truststrap v0.0.0 => /go-truststrap
+	github.com/jeremyhahn/go-xkms v0.0.0 => /workspace
+	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /workspace/sdk/go
+	github.com/jeremyhahn/go-xkms/xkey v0.0.0 => /workspace/xkey
 )
 endef
 export GOWORK_CONTENT
-GOWORK_INIT := printf '%s\n' "$$GOWORK_CONTENT" > /tmp/go.work && export GOWORK=/tmp/go.work &&
+GOWORK_INIT := printf '%s\n' \"$$GOWORK_CONTENT\" > /tmp/go.work && export GOWORK=/tmp/go.work &&
 
 # ==============================================================================
 # PKCS#11 Module Configuration
@@ -271,6 +310,7 @@ build-server: builder-image
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
 		$(SIBLING_MOUNTS) \
+		-e GOWORK_CONTENT \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
 		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/"
@@ -305,6 +345,7 @@ build-xkey:
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
 		$(SIBLING_MOUNTS) \
+		-e GOWORK_CONTENT \
 		-w /workspace/xkey \
 		$(XKEY_BUILDER_IMAGE) \
 		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -tags 'ble,production,codec_json,pkcs11,webkit2_41' -buildvcs=false -ldflags '-X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Version=$(VERSION) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Commit=$(GIT_COMMIT) -X github.com/jeremyhahn/go-xkms/xkey/cmd/xkey/cmd.Date=$(BUILD_DATE)' -o /workspace/$(BIN_DIR)/xkey ./cmd/xkey && chown $(shell id -u):$(shell id -g) /workspace/$(BIN_DIR)/xkey"
@@ -536,6 +577,7 @@ lib: builder-image
 	@docker run --rm \
 		-v $(CURDIR):/workspace:cached \
 		$(SIBLING_MOUNTS) \
+		-e GOWORK_CONTENT \
 		-w /workspace \
 		$(BUILDER_IMAGE) \
 		bash -c "$(GOWORK_INIT) CGO_ENABLED=1 go build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -buildmode=c-shared -o $(SHARED_LIB) $(CGO_SOURCE)/main.go"
@@ -1262,7 +1304,7 @@ integration-test-symmetric:
 integration-test-pkcs8:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS8 integration tests...$(RESET)"
 	@cd test/integration/pkcs8 && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/pkcs8 && (docker compose run --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/pkcs8 && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ PKCS8 integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11
@@ -1355,7 +1397,7 @@ integration-test-awskms:
 	@echo "$(CYAN)$(BOLD)→ Running AWS KMS/LocalStack integration tests...$(RESET)"
 	@cd test/integration/awskms && docker compose down -v >/dev/null 2>&1 || true
 	@cd test/integration/awskms && docker compose up -d localstack
-	@cd test/integration/awskms && (docker compose run --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/awskms && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ AWS KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-gcpkms
@@ -1363,7 +1405,7 @@ integration-test-awskms:
 integration-test-gcpkms:
 	@echo "$(CYAN)$(BOLD)→ Running GCP KMS integration tests with mock client...$(RESET)"
 	@cd test/integration/gcpkms && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/gcpkms && (docker compose run --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/gcpkms && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ GCP KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-azurekv
@@ -1371,7 +1413,7 @@ integration-test-gcpkms:
 integration-test-azurekv:
 	@echo "$(CYAN)$(BOLD)→ Running Azure Key Vault integration tests...$(RESET)"
 	@cd test/integration/azurekv && docker compose down -v >/dev/null 2>&1 || true
-	@cd test/integration/azurekv && (docker compose run --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/azurekv && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ Azure Key Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-vault
@@ -1381,7 +1423,7 @@ integration-test-vault:
 	@cd test/integration/vault && docker compose down -v >/dev/null 2>&1 || true
 	@cd test/integration/vault && docker compose up -d vault
 	@cd test/integration/vault && docker compose build test
-	@cd test/integration/vault && (docker compose run --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@cd test/integration/vault && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-quantum
@@ -1426,6 +1468,17 @@ endif
 integration-test-webauthn:
 	$(call run_in_devcontainer,$(GO) test -v -tags=integration ./pkg/webauthn/... -timeout 5m,integration-test-webauthn)
 
+.PHONY: integration-test-webauthn-browser
+## integration-test-webauthn-browser: Drive Chrome's CDP virtual authenticator against the REAL xkmsd WebAuthn RP (host: needs Node + Chromium)
+integration-test-webauthn-browser:
+	@echo "$(CYAN)$(BOLD)→ Building xkmsd (software tags) for the WebAuthn browser ceremony test...$(RESET)"
+	@CGO_ENABLED=1 $(GO) build -tags "pkcs8 frost webauthn fido2 codec_cbor codec_json codec_msgpack" -o $(BIN_DIR)/xkmsd ./cmd/xkmsd/
+	@echo "$(CYAN)$(BOLD)→ Chrome virtual authenticator → real RP (/api/v1/webauthn/*)$(RESET)"
+	@cd test/integration/webauthn-browser && \
+		npm install --no-fund --no-audit && \
+		npx playwright install chromium chromium-headless-shell && \
+		XKMSD_BIN="$(abspath $(BIN_DIR)/xkmsd)" npx playwright test
+
 # Comma for use in function calls (Make escapes commas in function args)
 comma := ,
 
@@ -1435,10 +1488,11 @@ DOCKER_COMPOSE := docker compose -f .devcontainer/docker-compose.yml
 # Helper to run command in devcontainer (auto-starts if needed)
 define run_in_devcontainer
 	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
-		$(1); \
+		/workspace/.devcontainer/scripts/ensure-gowork.sh && $(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "/workspace/.devcontainer/scripts/ensure-gowork.sh"; \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && $(1)"; \
 	fi
@@ -1448,6 +1502,7 @@ endef
 # Usage: $(call run_with_server,command,description)
 define run_with_server
 	@if [ -f "/.dockerenv" ] || [ -n "$$DEVCONTAINER" ]; then \
+		/workspace/.devcontainer/scripts/ensure-gowork.sh; \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library...$(RESET)"; \
 		mkdir -p build/lib && CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module; \
 		echo "$(GREEN)✓ PKCS#11 module built: build/lib/libxkms_pkcs11.so$(RESET)"; \
@@ -1466,6 +1521,7 @@ define run_with_server
 	else \
 		echo "$(CYAN)$(BOLD)→ Starting devcontainer...$(RESET)"; \
 		$(DOCKER_COMPOSE) up -d devcontainer 2>/dev/null || true; \
+		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "/workspace/.devcontainer/scripts/ensure-gowork.sh"; \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)"; \
 		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd /workspace && mkdir -p build/lib && CGO_ENABLED=1 go build -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module"; \
 		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)"; \
@@ -2553,9 +2609,10 @@ docker-ci: docker-ci-build
 	@docker run --rm \
 		-v $(PWD):/workspace \
 		$(SIBLING_MOUNTS) \
+		-e GOWORK_CONTENT \
 		-w /workspace \
 		$(CI_IMAGE_NAME):latest \
-		make ci-local
+		bash -c "$(GOWORK_INIT) make ci-local"
 	@echo "$(GREEN)$(BOLD)✓ CI pipeline complete!$(RESET)"
 
 .PHONY: ci-local

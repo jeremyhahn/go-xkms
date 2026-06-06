@@ -29,6 +29,10 @@ else
     echo "Note: /dev/uhid not available (virtual FIDO2 tests will be skipped)"
 fi
 
+# Generate the devcontainer Go workspace (go.work) so in-house modules resolve
+# against the bind-mounted sibling repos. Must run before any go command.
+/workspace/.devcontainer/scripts/ensure-gowork.sh
+
 # Download Go dependencies
 echo "Downloading Go dependencies..."
 cd /workspace

@@ -28,14 +28,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jeremyhahn/go-xkms/pkg/bootstrap"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/custodian"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/user"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
@@ -75,7 +73,7 @@ func TestNewServer_WithBarrier(t *testing.T) {
 
 func TestNewServer_WithPINManager(t *testing.T) {
 	ks := newMockKeyStore()
-	pinMgr := &mockPINManager{strategy: pin.StrategySoftware, initialized: true}
+	pinMgr := &mockPINManager{strategy: qrdbsdk.PINStrategySoftware, initialized: true}
 
 	cfg := &Config{
 		Backends:   map[string]xkms.Backend{"test": ks},
@@ -101,54 +99,6 @@ func TestNewServer_WithRBACEnabled_DefaultAdapter(t *testing.T) {
 	require.NotNil(t, server)
 	assert.NotNil(t, server.rbacAdapter)
 	assert.NotNil(t, server.rbacMiddleware)
-}
-
-func TestNewServer_WithRBACEnabled_UserStoreAdapter(t *testing.T) {
-	ks := newMockKeyStore()
-	userStore, err := user.NewFileStore(storage.NewMemory())
-	require.NoError(t, err)
-
-	cfg := &Config{
-		Backends:   map[string]xkms.Backend{"test": ks},
-		EnableRBAC: true,
-		UserStore:  userStore,
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.rbacAdapter)
-	assert.NotNil(t, server.userHandlers)
-}
-
-func TestNewServer_WithUserStoreOnly(t *testing.T) {
-	ks := newMockKeyStore()
-	userStore, err := user.NewFileStore(storage.NewMemory())
-	require.NoError(t, err)
-
-	cfg := &Config{
-		Backends:  map[string]xkms.Backend{"test": ks},
-		UserStore: userStore,
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.userHandlers)
-}
-
-func TestNewServer_WithBootstrapService(t *testing.T) {
-	ks := newMockKeyStore()
-
-	cfg := &Config{
-		Backends:         map[string]xkms.Backend{"test": ks},
-		BootstrapService: &bootstrap.Service{},
-	}
-
-	server, err := NewServer(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	assert.NotNil(t, server.bootstrapHandlers)
 }
 
 func TestNewServer_WithCustodianService(t *testing.T) {
@@ -687,40 +637,6 @@ func TestRecoveryMiddleware_PanicRecovery(t *testing.T) {
 	// Should not panic.
 	handler.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
-// ==========================================================================
-// handlers_barrier_shamir.go - BarrierShamirDeleteAllSharesHandler
-// ==========================================================================
-
-func TestBarrierShamirDeleteAllSharesHandler_NilBarrier(t *testing.T) {
-	h := NewHandlerContext("test")
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares", nil)
-	w := httptest.NewRecorder()
-	h.BarrierShamirDeleteAllSharesHandler(w, req)
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-func TestBarrierShamirDeleteAllSharesHandler_NoShamirStrategy(t *testing.T) {
-	memStore := storage.NewMemory()
-	strat := seal.NewSoftwareStrategy()
-
-	barrier, err := seal.NewBarrier(
-		slog.Default(),
-		memStore,
-		seal.BarrierConfig{RootKeyPath: "test-key"},
-		strat,
-	)
-	require.NoError(t, err)
-
-	h := NewHandlerContext("test")
-	h.SetBarrier(barrier)
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/barrier/shamir/shares", nil)
-	w := httptest.NewRecorder()
-	h.BarrierShamirDeleteAllSharesHandler(w, req)
-	// Should fail because software strategy is not a Shamir strategy.
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // ==========================================================================

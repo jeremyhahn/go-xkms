@@ -22,8 +22,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -69,7 +71,11 @@ func NewAdapter(config *api.AdapterConfig) (*Adapter, error) {
 	}
 
 	if config.TLSConfig != nil {
-		tlsConfig.InsecureSkipVerify = config.TLSConfig.InsecureSkipVerify
+		if config.TLSConfig.InsecureSkipVerify { //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
+			slog.Warn("acme/quic: TLS certificate verification disabled via InsecureSkipVerify; do not use in production",
+				"address", config.QUICAddr)
+		}
+		tlsConfig.InsecureSkipVerify = config.TLSConfig.InsecureSkipVerify //nolint:staticcheck // config-driven passthrough for self-signed integration testing; production leaves it false
 
 		// Load client certificate if provided
 		if config.TLSConfig.CertFile != "" && config.TLSConfig.KeyFile != "" {
@@ -460,7 +466,7 @@ func (a *Adapter) GetTenantUser(ctx context.Context, tenantID, userID string) (*
 
 // UpdateTenantUser updates an existing user.
 func (a *Adapter) UpdateTenantUser(ctx context.Context, tenantID string, req *db.UpdateUserRequest) (*db.User, error) {
-	resp, err := a.doRequest(ctx, http.MethodPut, "/api/v1/tenants/"+tenantID+"/users/"+req.ID, req)
+	resp, err := a.doRequest(ctx, http.MethodPut, "/api/v1/tenants/"+tenantID+"/users/"+strconv.FormatUint(req.ID, 10), req)
 	if err != nil {
 		return nil, err
 	}

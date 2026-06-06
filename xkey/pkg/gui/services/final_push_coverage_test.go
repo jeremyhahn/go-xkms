@@ -140,7 +140,7 @@ func TestFP_BarrierService_Initialize_FactoryError(t *testing.T) {
 		return nil, factoryErr
 	})
 
-	err := svc.Initialize("test-password-123", "software")
+	err := svc.Initialize("test-password-123", "passphrase")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, factoryErr)
 }
@@ -292,7 +292,7 @@ func TestFP_SetupWizard_ApplySetup_BarrierAutoUnseal(t *testing.T) {
 		StorageType:        "barrier",
 		BarrierPassword:    "barrier-test-pw",
 		UseUserPinAsMaster: true, // Covers L560-562
-		SealerBackend:      "software",
+		SealerBackend:      "passphrase",
 		EnableAutoUnseal:   true, // Enters auto-unseal block
 	}
 
@@ -303,7 +303,7 @@ func TestFP_SetupWizard_ApplySetup_BarrierAutoUnseal(t *testing.T) {
 
 	// Verify the config was saved with barrier auto-unseal blob ID.
 	assert.True(t, cfg.BarrierInitialized)
-	assert.Equal(t, "software", cfg.BarrierStrategy)
+	assert.Equal(t, "passphrase", cfg.BarrierStrategy)
 	assert.NotEmpty(t, cfg.BarrierAutoUnsealBlobID, "barrier auto-unseal blob ID should be set")
 }
 
@@ -350,7 +350,7 @@ func TestFP_SetupWizard_ApplySetup_BarrierAutoUnsealSealFail(t *testing.T) {
 		UserPin:          "654321",
 		StorageType:      "barrier",
 		BarrierPassword:  "barrier-test-pw",
-		SealerBackend:    "software",
+		SealerBackend:    "passphrase",
 		EnableAutoUnseal: true,
 	}
 

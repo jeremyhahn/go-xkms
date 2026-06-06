@@ -88,8 +88,8 @@ type SetupChoices struct {
 	SetHierarchyAuth   bool   `json:"set_hierarchy_auth"` // Use SO PIN to set TPM hierarchy passwords
 	EnableAutoUnseal   bool   `json:"enable_auto_unseal"`
 	StorageType        string `json:"storage_type"`       // "luks" or "barrier"
-	BarrierPassword    string `json:"barrier_password"`   // For barrier software strategy
-	SealerBackend      string `json:"sealer_backend"`     // "tpm2", "software", "" (auto)
+	BarrierPassword    string `json:"barrier_password"`   // For barrier passphrase strategy
+	SealerBackend      string `json:"sealer_backend"`     // "tpm2", "passphrase", "" (auto)
 	QuickSetup         bool   `json:"quick_setup"`        // True when quick setup flow is used
 	DeploymentMode     string `json:"deployment_mode"`    // "personal" or "enterprise"
 	SavePinsToStore    bool   `json:"save_pins_to_store"` // Save PINs to password store (manual setup option)
@@ -445,6 +445,24 @@ func (s *SetupWizardService) emitProgress(step int, label string) {
 	}
 }
 
+// sealBackendForBarrierSealer maps a wizard barrier sealer strategy
+// ("passphrase"/"tpm2"/"pkcs11") onto the seal feature's own backend namespace
+// ("software"/"tpm2"). A passphrase (software-AES) barrier corresponds to the
+// software seal backend. Unknown or hardware-token strategies return "" so the
+// caller falls back to auto-selecting a valid available seal backend rather
+// than pinning the seal feature to an unsupported backend (which makes CanSeal
+// return false and disables sealing entirely).
+func sealBackendForBarrierSealer(sealer string) string {
+	switch sealer {
+	case "tpm2":
+		return string(types.BackendTypeTPM2)
+	case "passphrase", "software":
+		return string(types.BackendTypeSoftware)
+	default:
+		return ""
+	}
+}
+
 // ApplySetup applies the user's wizard choices by delegating to the
 // appropriate services and persisting the configuration.
 func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, error) {
@@ -582,9 +600,9 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			choices.SealerBackend = best.ID
 		}
 	}
-	// Last-resort fallback: if no sealers are available, default to software.
+	// Last-resort fallback: if no sealers are available, default to passphrase.
 	if choices.SealerBackend == "" {
-		choices.SealerBackend = "software"
+		choices.SealerBackend = "passphrase"
 	}
 
 	// Step 6: Initialize built-in encryption (barrier).
@@ -633,9 +651,17 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 			barrierPW, choices.SealerBackend, result)
 	}
 
-	// Apply sealer backend selection before any seal operations.
-	if choices.SealerBackend != "" && s.sealSvc != nil {
-		s.sealSvc.SetDefaultBackend(choices.SealerBackend)
+	// Apply the seal-feature default backend. choices.SealerBackend is a BARRIER
+	// strategy ("passphrase"/"tpm2"/"pkcs11"); the seal feature uses its own
+	// backend namespace ("software"/"tpm2"). Map between them so CanSeal accepts
+	// the default — passing the raw "passphrase" strategy made CanSeal reject an
+	// unknown backend and permanently disabled the "Seal New Data" action.
+	if s.sealSvc != nil {
+		if sb := sealBackendForBarrierSealer(choices.SealerBackend); sb != "" {
+			s.sealSvc.SetDefaultBackend(sb)
+		} else {
+			s.sealSvc.AutoSelectDefault()
+		}
 	}
 
 	// Step 7: Initialize data directory.
@@ -771,10 +797,10 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 				result.Warnings = append(result.Warnings, "auto-unseal service unavailable")
 			}
 		}
-		// Barrier auto-unseal: when using software strategy, seal the
+		// Barrier auto-unseal: when using passphrase strategy, seal the
 		// barrier password to TPM so the barrier can auto-unseal on restart.
 		// TPM2 strategy auto-unseals inherently (no password needed).
-		if barrierInitialized && barrierStrategy == "software" {
+		if barrierInitialized && barrierStrategy == "passphrase" {
 			barrierPW := choices.BarrierPassword
 			if choices.UseUserPinAsMaster && choices.UserPin != "" {
 				barrierPW = choices.UserPin
@@ -1270,9 +1296,9 @@ func (s *SetupWizardService) ApplyUserOnboarding(choices *UserOnboardingChoices)
 				barrierStrategy = ucfg.State.BarrierStrategy
 			}
 		}
-		// Default to software if still unknown.
+		// Default to passphrase if still unknown.
 		if barrierStrategy == "" {
-			barrierStrategy = "software"
+			barrierStrategy = "passphrase"
 		}
 
 		// Try unseal first (SO provisioning may have already created the barrier).

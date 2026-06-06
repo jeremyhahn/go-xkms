@@ -26,26 +26,27 @@ test.describe('Barrier Integration', () => {
       const wails = await isWailsMode(page);
       test.skip(!wails, 'Requires Wails backend');
 
-      await navigateTo(page, 'seal');
+      // The barrier card moved from the Seal view to the Dashboard in the
+      // Barrier Architecture refactor (Mar 2026). Navigate to Dashboard.
+      await navigateTo(page, 'dashboard');
       await page.waitForTimeout(1000);
 
-      const barrierCard = page.locator('.barrier-card');
-      await expect(barrierCard).toBeVisible();
+      // The Dashboard barrier detail section only renders when the barrier is
+      // initialized (barrierInfo?.initialized === true). Its presence proves
+      // the barrier is configured after setup.
+      const barrierDetail = page.locator('.barrier-detail');
+      await expect(barrierDetail).toBeVisible({ timeout: 10_000 });
 
-      // After setup completes, barrier should be either Sealed or Unsealed — NOT "Not Configured".
-      const notConfigured = page.locator('.barrier-status-warn');
-      const isNotConfigured = await notConfigured.isVisible().catch(() => false);
+      // The StatusBadge inside the barrier detail shows the seal state.
+      // 'Disconnected' = sealed (software-passphrase barrier is sealed on fresh view),
+      // 'Verified' = unsealed. Both are valid initialized states.
+      const statusBadge = barrierDetail.locator('[role="status"]');
+      await expect(statusBadge).toBeVisible();
+      const statusText = await statusBadge.textContent();
+      expect(['Disconnected', 'Verified']).toContain(statusText?.trim());
 
-      if (isNotConfigured) {
-        // This is a failure — barrier should be configured after setup.
-        test.fail(true, 'Barrier shows "Not Configured" — barrier initialization failed during setup');
-      }
-
-      // Should show Sealed or Unsealed.
-      const statusText = page.locator('.barrier-status');
-      await expect(statusText).toBeVisible();
-      const text = await statusText.textContent();
-      expect(['Sealed', 'Unsealed']).toContain(text?.trim());
+      // "Barrier Encryption" label must be present.
+      await expect(barrierDetail.getByText('Barrier Encryption')).toBeVisible();
     });
 
     test('barrier card shows correct strategy (tpm2 when TPM available)', async ({ page }) => {

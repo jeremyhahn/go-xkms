@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -48,7 +48,7 @@ func TestPINService_VerifySOPIN_NotConfigured(t *testing.T) {
 func TestPINService_VerifySOPIN_ManagerError(t *testing.T) {
 	errTest := errors.New("test: so pin verify error")
 	mgr := &mockPINBackendWithSOPINErr{
-		mockPINBackend: mockPINBackend{strategy: pin.StrategySoftware},
+		mockPINBackend: mockPINBackend{strategy: qrdbsdk.PINStrategySoftware},
 		verifySOPINErr: errTest,
 	}
 	svc := newTestPINService(mgr)
@@ -59,7 +59,7 @@ func TestPINService_VerifySOPIN_ManagerError(t *testing.T) {
 
 func TestPINService_VerifySOPIN_Success(t *testing.T) {
 	mgr := &mockPINBackendWithSOPINErr{
-		mockPINBackend: mockPINBackend{strategy: pin.StrategySoftware},
+		mockPINBackend: mockPINBackend{strategy: qrdbsdk.PINStrategySoftware},
 		verifySOPINErr: nil,
 	}
 	svc := newTestPINService(mgr)
@@ -94,7 +94,7 @@ func TestBarrierService_ProbeStrategies_TPMReturnsNil(t *testing.T) {
 
 	require.Len(t, strategies, 2, "TPM strategy entry should still appear")
 	// Software strategy.
-	assert.Equal(t, string(seal.StrategySoftware), strategies[0].ID)
+	assert.Equal(t, string(seal.StrategyPassphrase), strategies[0].ID)
 	assert.True(t, strategies[0].Available)
 	// TPM2 strategy marked as unavailable.
 	assert.Equal(t, string(seal.StrategyTPM2), strategies[1].ID)
@@ -104,9 +104,9 @@ func TestBarrierService_ProbeStrategies_TPMReturnsNil(t *testing.T) {
 
 func TestBarrierService_assembleStrategy_Software(t *testing.T) {
 	svc := newTestBarrierService(t)
-	strategy, err := svc.assembleStrategy("software")
+	strategy, err := svc.assembleStrategy("passphrase")
 	require.NoError(t, err)
-	assert.Equal(t, seal.StrategySoftware, strategy.ID())
+	assert.Equal(t, seal.StrategyPassphrase, strategy.ID())
 }
 
 func TestBarrierService_assembleStrategy_TPM_NilFunc(t *testing.T) {
@@ -161,7 +161,7 @@ func TestBarrierService_Unseal_WrongPassword(t *testing.T) {
 	svc := newTestBarrierService(t)
 
 	// Initialize with a known password.
-	err := svc.Initialize("correct-password", "software")
+	err := svc.Initialize("correct-password", "passphrase")
 	require.NoError(t, err)
 
 	// Seal.
@@ -169,7 +169,7 @@ func TestBarrierService_Unseal_WrongPassword(t *testing.T) {
 	require.NoError(t, err)
 
 	// Unseal with wrong password.
-	err = svc.Unseal("wrong-password", "software")
+	err = svc.Unseal("wrong-password", "passphrase")
 	assert.Error(t, err, "unsealing with wrong password must fail")
 }
 
@@ -180,7 +180,7 @@ func TestBarrierService_IsUnsealed_AfterUnseal(t *testing.T) {
 	assert.False(t, svc.IsUnsealed())
 
 	// Initialize.
-	err := svc.Initialize("test-pw", "software")
+	err := svc.Initialize("test-pw", "passphrase")
 	require.NoError(t, err)
 	assert.True(t, svc.IsUnsealed())
 
@@ -189,7 +189,7 @@ func TestBarrierService_IsUnsealed_AfterUnseal(t *testing.T) {
 	assert.False(t, svc.IsUnsealed())
 
 	// Unseal.
-	require.NoError(t, svc.Unseal("test-pw", "software"))
+	require.NoError(t, svc.Unseal("test-pw", "passphrase"))
 	assert.True(t, svc.IsUnsealed())
 }
 
@@ -685,7 +685,7 @@ func TestSetupWizardService_GetStartupState_WithPINService(t *testing.T) {
 	})
 
 	pinMgr := &wizardMockPINBackend{
-		strategy:   pin.StrategySoftware,
+		strategy:   qrdbsdk.PINStrategySoftware,
 		soPINSet:   true,
 		userPINSet: false,
 	}
@@ -758,7 +758,7 @@ func TestSetupWizardService_ApplySOProvisioning_NilBarrierService(t *testing.T) 
 	svc.SetConfigDir(tmpDir)
 
 	// PIN service is required.
-	pinMgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	pinMgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(pinMgr)
 	svc.SetPINService(pinSvc)
 
@@ -830,7 +830,7 @@ func TestSetupWizardService_ApplyUserOnboarding_SOPINVerifyFailed(t *testing.T) 
 
 	// PIN manager with a known SO PIN.
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    "correct-pin",
 		soPINSet: true,
 	}
@@ -868,7 +868,7 @@ func TestSetupWizardService_ApplyUserOnboarding_Success(t *testing.T) {
 
 	// Set up PIN service with correct SO PIN.
 	pinMgr := &wizardMockPINBackend{
-		strategy: pin.StrategySoftware,
+		strategy: qrdbsdk.PINStrategySoftware,
 		soPIN:    "123456",
 		soPINSet: true,
 	}
@@ -926,7 +926,7 @@ func TestSetupWizardService_GetPolicy_LoadsFromConfig(t *testing.T) {
 func TestSetupWizardService_ApplySetup_WithPINService_SOAndUser(t *testing.T) {
 	tw := newTestSetupWizard(&GUIConfigData{SetupComplete: false})
 
-	pinMgr := &wizardMockPINBackend{strategy: pin.StrategySoftware}
+	pinMgr := &wizardMockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	pinSvc := newWizardPINService(pinMgr)
 	tw.svc.SetPINService(pinSvc)
 
@@ -1007,7 +1007,7 @@ func TestBarrierService_BestStrategy_TPMNotAvailable(t *testing.T) {
 	best, err := svc.BestStrategy()
 	require.NoError(t, err)
 	// TPM2 is listed but not available, so software should be best.
-	assert.Equal(t, string(seal.StrategySoftware), best.ID)
+	assert.Equal(t, string(seal.StrategyPassphrase), best.ID)
 }
 
 // ===========================================================================

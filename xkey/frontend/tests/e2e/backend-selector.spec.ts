@@ -4,6 +4,7 @@ import {
   navigateToFIDO2,
   waitForAppReady,
   ensureSidebarExpanded,
+  isWailsMode,
 } from './helpers';
 
 /**
@@ -57,6 +58,12 @@ test.describe('Admin Add Backend dialog empty state', () => {
   test('In Vite mode, Add Backend dialog shows "Backend Types Unavailable"', async ({
     page,
   }) => {
+    // In Wails mode the real backend returns available backend types, so the
+    // "Backend Types Unavailable" empty state is never shown. This assertion
+    // is Vite-only (no backend, window.go undefined, types list is empty).
+    const wails = await isWailsMode(page).catch(() => false);
+    test.skip(wails, 'Real Wails backend provides backend types — unavailable state is Vite-only');
+
     await navigateTo(page, 'admin');
     // Open the Add Backend dialog.
     const addBtn = page.getByRole('button', { name: /add backend/i }).first();

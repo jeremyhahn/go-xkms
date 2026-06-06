@@ -71,7 +71,7 @@ func TestTLSConfigOptions_Validate_ClientNoServerNameWarns(t *testing.T) {
 func TestTLSConfigOptions_ApplyDefaults(t *testing.T) {
 	opts := &TLSConfigOptions{}
 	opts.applyDefaults()
-	assert.Equal(t, uint16(tls.VersionTLS12), opts.MinVersion)
+	assert.Equal(t, uint16(tls.VersionTLS13), opts.MinVersion)
 	assert.Equal(t, uint16(tls.VersionTLS13), opts.MaxVersion)
 }
 
@@ -104,10 +104,8 @@ func TestSecureCipherSuites(t *testing.T) {
 func TestDefaultTLSConfig(t *testing.T) {
 	cfg := DefaultTLSConfig()
 	require.NotNil(t, cfg)
-	assert.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
 	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MaxVersion)
-	assert.NotEmpty(t, cfg.CipherSuites)
-	assert.True(t, cfg.PreferServerCipherSuites)
 	assert.False(t, cfg.SessionTicketsDisabled)
 }
 

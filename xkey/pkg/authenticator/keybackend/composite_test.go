@@ -29,8 +29,8 @@ type mockKeyHandle struct {
 	backendType  types.BackendType
 }
 
-func (h *mockKeyHandle) CredentialID() []byte       { return h.credentialID }
-func (h *mockKeyHandle) Algorithm() int              { return h.algorithm }
+func (h *mockKeyHandle) CredentialID() []byte         { return h.credentialID }
+func (h *mockKeyHandle) Algorithm() int               { return h.algorithm }
 func (h *mockKeyHandle) BackendID() types.BackendType { return h.backendType }
 
 // mockFIDO2Backend is a configurable test backend.

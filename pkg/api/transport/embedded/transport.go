@@ -387,54 +387,6 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 	return t.service.AttestKey(ctx, req)
 }
 
-// ListUsers returns a list of all users.
-func (t *Transport) ListUsers(ctx context.Context, opts ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ListUsers(ctx, opts...)
-}
-
-// GetUser returns information about a specific user.
-func (t *Transport) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.GetUser(ctx, username)
-}
-
-// DeleteUser deletes a user.
-func (t *Transport) DeleteUser(ctx context.Context, username string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.DeleteUser(ctx, username)
-}
-
-// EnableUser enables a user account.
-func (t *Transport) EnableUser(ctx context.Context, username string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.EnableUser(ctx, username)
-}
-
-// DisableUser disables a user account.
-func (t *Transport) DisableUser(ctx context.Context, username string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.DisableUser(ctx, username)
-}
-
-// ListUserCredentials returns a list of credentials for a user.
-func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.ListUserCredentials(ctx, username)
-}
-
 // BeginRegistration begins a WebAuthn registration flow.
 func (t *Transport) BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
 	if !t.connected {
@@ -707,38 +659,6 @@ func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.
 		return ErrNotConnected
 	}
 	return t.service.BarrierUnsealWithShares(ctx, req)
-}
-
-// BarrierShamirListShares returns metadata about stored Shamir shares.
-func (t *Transport) BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	return t.service.BarrierShamirListShares(ctx)
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (t *Transport) BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierShamirDeleteShare(ctx, req)
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (t *Transport) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierShamirDeleteAllShares(ctx)
-}
-
-// BarrierShamirVerify verifies the integrity of stored Shamir shares.
-func (t *Transport) BarrierShamirVerify(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	return t.service.BarrierShamirVerify(ctx)
 }
 
 // BarrierRekey rotates Shamir shares while keeping the same root key.
@@ -1220,4 +1140,73 @@ func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.Crede
 		return nil, ErrNotConnected
 	}
 	return t.service.GetCredentialStrategy(ctx)
+}
+
+// ==================== User Operations ====================
+//
+// The embedded transport delegates user management directly to the in-process
+// xkms service, which backs it with the embedded qrdb node.
+
+// CreateUser creates a new xkms user.
+func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.CreateUser(ctx, req)
+}
+
+// ListUsers lists xkms users.
+func (t *Transport) ListUsers(ctx context.Context, opts ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ListUsers(ctx, opts...)
+}
+
+// GetUser retrieves a single xkms user by username.
+func (t *Transport) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.GetUser(ctx, username)
+}
+
+// DeleteUser removes an xkms user by username.
+func (t *Transport) DeleteUser(ctx context.Context, username string) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.DeleteUser(ctx, username)
+}
+
+// EnableUser enables an xkms user by username.
+func (t *Transport) EnableUser(ctx context.Context, username string) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.EnableUser(ctx, username)
+}
+
+// DisableUser disables an xkms user by username.
+func (t *Transport) DisableUser(ctx context.Context, username string) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.DisableUser(ctx, username)
+}
+
+// BindUserCert binds an mTLS certificate SPKI thumbprint to an xkms user.
+func (t *Transport) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+	return t.service.BindUserCert(ctx, username, thumbprint, notAfterUnix)
+}
+
+// ListUserCredentials lists the credentials registered to an xkms user.
+func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+	return t.service.ListUserCredentials(ctx, username)
 }

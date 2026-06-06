@@ -154,10 +154,48 @@ COPY --chown=testuser:testuser sdk/go/go.mod sdk/go/go.sum ./sdk/go/
 # Copy the xkey module files before go mod download (required for replace directive)
 COPY --chown=testuser:testuser xkey/go.mod xkey/go.sum ./xkey/
 
-# Copy sibling modules required by go.mod replace directives
-# These are provided via docker compose additional_contexts
+# Copy the full in-house module closure (provided via docker compose
+# additional_contexts). All six siblings are present so the build-time Go
+# workspace resolves every in-house module locally and only public deps download.
+COPY --from=go-codec --chown=testuser:testuser . /go-codec
+COPY --from=go-frost --chown=testuser:testuser . /go-frost
+COPY --from=go-objstore --chown=testuser:testuser . /go-objstore
 COPY --from=go-qrdb --chown=testuser:testuser . /go-qrdb
 COPY --from=go-quicraft --chown=testuser:testuser . /go-quicraft
+COPY --from=go-truststrap --chown=testuser:testuser . /go-truststrap
+
+# Materialize the build-time Go workspace (mirrors ensure-gowork.sh / the
+# Makefile GOWORK_CONTENT). GOWORK is exported for all subsequent go commands.
+ENV GOWORK=/tmp/go.work
+RUN cat > /tmp/go.work <<'EOF'
+go 1.26.3
+
+use (
+	/workspace
+	/workspace/sdk/go
+	/workspace/xkey
+	/go-codec
+	/go-frost
+	/go-objstore
+	/go-qrdb
+	/go-qrdb/sdk/go
+	/go-quicraft
+	/go-truststrap
+)
+
+replace (
+	github.com/jeremyhahn/go-codec v0.0.0 => /go-codec
+	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
+	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
+	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
+	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
+	github.com/jeremyhahn/go-truststrap v0.0.0 => /go-truststrap
+	github.com/jeremyhahn/go-xkms v0.0.0 => /workspace
+	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /workspace/sdk/go
+	github.com/jeremyhahn/go-xkms/xkey v0.0.0 => /workspace/xkey
+)
+EOF
 
 # Download dependencies (cached if go.mod/go.sum unchanged)
 RUN go mod download

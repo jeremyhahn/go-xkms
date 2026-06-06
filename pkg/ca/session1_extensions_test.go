@@ -189,9 +189,6 @@ func TestImportCertificatePEM_Roundtrip(t *testing.T) {
 	pemBytes, err := ca.CertificatePEM("Test Root CA")
 	require.NoError(t, err)
 	_ = pemBytes
-	// Use a freshly encoded PEM to exercise the parser.
-	freshPEM := []byte("-----BEGIN CERTIFICATE-----\n")
-	freshPEM = append(freshPEM, []byte("invalid")...)
 	err = ca.ImportCertificatePEM("", nil)
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
 

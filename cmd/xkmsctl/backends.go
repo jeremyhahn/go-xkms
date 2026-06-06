@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
@@ -113,7 +112,7 @@ func backendInfo(cfg *Config, printer *Printer, backendName string) {
 		return
 	}
 
-	// Convert SDK BackendInfo capabilities to types.Capabilities
+	// Convert SDK BackendInfo capabilities to client.Capabilities
 	caps := convertBackendInfoToCapabilities(info)
 
 	if err := printer.PrintBackendInfo(backendName, caps); err != nil {
@@ -121,10 +120,10 @@ func backendInfo(cfg *Config, printer *Printer, backendName string) {
 	}
 }
 
-// convertBackendInfoToCapabilities converts SDK BackendInfo to types.Capabilities.
-func convertBackendInfoToCapabilities(info *client.BackendInfo) types.Capabilities {
+// convertBackendInfoToCapabilities converts SDK BackendInfo to client.Capabilities.
+func convertBackendInfoToCapabilities(info *client.BackendInfo) client.Capabilities {
 	c := info.Capabilities
-	return types.Capabilities{
+	return client.Capabilities{
 		Keys:                c.Keys,
 		HardwareBacked:      c.HardwareBacked || info.HardwareBacked,
 		Signing:             c.Signing,

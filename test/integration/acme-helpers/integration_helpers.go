@@ -35,12 +35,12 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server/handlers"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/ca"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 )

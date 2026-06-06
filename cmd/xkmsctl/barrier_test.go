@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,1544 +26,1147 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
-// mockBarrierClient is a mock client for testing barrier operations.
+// -----------------------------------------------------------------------------
+// Test scaffolding
+// -----------------------------------------------------------------------------
+
+// mockBarrierClient is a recording mock for the SDK Client surface
+// exercised by the barrier verbs. It embeds mockBackendsClient (which
+// supplies the entire 100+ method Client interface) and overrides only
+// the methods the barrier verbs call.
 type mockBarrierClient struct {
 	mockBackendsClient
 
-	// Barrier operation results
-	initErr            error
-	unsealErr          error
-	sealBarrierErr     error
-	statusResp         *transport.BarrierStatusResponse
-	statusErr          error
-	initShamirResp     *transport.BarrierInitializeShamirResponse
-	initShamirErr      error
-	unsealShareResp    *transport.BarrierUnsealShareResponse
-	unsealShareErr     error
-	unsealSharesErr    error
-	connectBarrierErr  error
-	closeBarrierCalled bool
-	closeBarrierErr    error
+	// Connect/Close
+	connectErr  error
+	closeCalled bool
+	closeErr    error
+
+	// Barrier ops
+	initErr         error
+	initReq         *transport.BarrierInitializeRequest
+	initShamirResp  *transport.BarrierInitializeShamirResponse
+	initShamirErr   error
+	initShamirReq   *transport.BarrierInitializeShamirRequest
+	unsealErr       error
+	unsealReq       *transport.BarrierUnsealRequest
+	unsealSharesErr error
+	unsealSharesReq *transport.BarrierUnsealSharesRequest
+	statusResp      *transport.BarrierStatusResponse
+	statusErr       error
+	sealErr         error
+	rekeyResp       *transport.BarrierRekeyResponse
+	rekeyErr        error
+	rekeyReq        *transport.BarrierRekeyRequest
+	genKeysResp     *transport.BarrierRecoveryKeysResponse
+	genKeysErr      error
+	genKeysReq      *transport.BarrierGenerateRecoveryKeysRequest
+	recoverErr      error
+	recoverReq      *transport.BarrierRecoverWithKeysRequest
+
+	// PIN ops
+	setSOPINReq    *transport.SetSOPINRequest
+	setSOPINErr    error
+	setUserPINReq  *transport.SetUserPINRequest
+	setUserPINErr  error
+	verifySOPINReq *transport.VerifySOPINRequest
+	verifySOPINErr error
 }
 
-func (m *mockBarrierClient) Connect(ctx context.Context) error {
-	return m.connectBarrierErr
-}
+// Connect captures the connection invocation.
+func (m *mockBarrierClient) Connect(_ context.Context) error { return m.connectErr }
 
+// Close records that the client was closed by the verb cleanup path.
 func (m *mockBarrierClient) Close() error {
-	m.closeBarrierCalled = true
-	return m.closeBarrierErr
+	m.closeCalled = true
+	return m.closeErr
 }
 
-func (m *mockBarrierClient) BarrierInitialize(ctx context.Context, req *transport.BarrierInitializeRequest) error {
+func (m *mockBarrierClient) BarrierInitialize(_ context.Context, req *transport.BarrierInitializeRequest) error {
+	m.initReq = req
 	return m.initErr
 }
 
-func (m *mockBarrierClient) BarrierUnseal(ctx context.Context, req *transport.BarrierUnsealRequest) error {
-	return m.unsealErr
-}
-
-func (m *mockBarrierClient) BarrierSeal(ctx context.Context) error {
-	return m.sealBarrierErr
-}
-
-func (m *mockBarrierClient) BarrierStatus(ctx context.Context) (*transport.BarrierStatusResponse, error) {
-	return m.statusResp, m.statusErr
-}
-
-func (m *mockBarrierClient) BarrierInitializeShamir(ctx context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
+func (m *mockBarrierClient) BarrierInitializeShamir(_ context.Context, req *transport.BarrierInitializeShamirRequest) (*transport.BarrierInitializeShamirResponse, error) {
+	m.initShamirReq = req
 	return m.initShamirResp, m.initShamirErr
 }
 
-func (m *mockBarrierClient) BarrierUnsealWithShare(ctx context.Context, req *transport.BarrierUnsealShareRequest) (*transport.BarrierUnsealShareResponse, error) {
-	return m.unsealShareResp, m.unsealShareErr
+func (m *mockBarrierClient) BarrierUnseal(_ context.Context, req *transport.BarrierUnsealRequest) error {
+	m.unsealReq = req
+	return m.unsealErr
 }
 
-func (m *mockBarrierClient) BarrierUnsealWithShares(ctx context.Context, req *transport.BarrierUnsealSharesRequest) error {
+func (m *mockBarrierClient) BarrierUnsealWithShares(_ context.Context, req *transport.BarrierUnsealSharesRequest) error {
+	m.unsealSharesReq = req
 	return m.unsealSharesErr
 }
 
-// newBarrierConfig creates a Config with a mock barrier client injected.
-func newBarrierConfig(mock *mockBarrierClient) *Config {
+func (m *mockBarrierClient) BarrierStatus(_ context.Context) (*transport.BarrierStatusResponse, error) {
+	return m.statusResp, m.statusErr
+}
+
+func (m *mockBarrierClient) BarrierSeal(_ context.Context) error { return m.sealErr }
+
+func (m *mockBarrierClient) BarrierRekey(_ context.Context, req *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
+	m.rekeyReq = req
+	return m.rekeyResp, m.rekeyErr
+}
+
+func (m *mockBarrierClient) BarrierGenerateRecoveryKeys(_ context.Context, req *transport.BarrierGenerateRecoveryKeysRequest) (*transport.BarrierRecoveryKeysResponse, error) {
+	m.genKeysReq = req
+	return m.genKeysResp, m.genKeysErr
+}
+
+func (m *mockBarrierClient) BarrierRecoverWithKeys(_ context.Context, req *transport.BarrierRecoverWithKeysRequest) error {
+	m.recoverReq = req
+	return m.recoverErr
+}
+
+func (m *mockBarrierClient) SetSOPIN(_ context.Context, req *transport.SetSOPINRequest) error {
+	m.setSOPINReq = req
+	return m.setSOPINErr
+}
+
+func (m *mockBarrierClient) SetUserPIN(_ context.Context, req *transport.SetUserPINRequest) error {
+	m.setUserPINReq = req
+	return m.setUserPINErr
+}
+
+func (m *mockBarrierClient) VerifySOPIN(_ context.Context, req *transport.VerifySOPINRequest) error {
+	m.verifySOPINReq = req
+	return m.verifySOPINErr
+}
+
+// newBarrierMockConfig returns a Config wired to the supplied mock
+// client through ClientFactory.
+func newBarrierMockConfig(mock *mockBarrierClient) *Config {
 	return &Config{
-		Backend: "software",
-		ClientFactory: func(cfg *Config) (client.Client, error) {
+		Backend:      "software",
+		OutputFormat: "json",
+		Protocol:     DefaultTransport,
+		ClientFactory: func(*Config) (client.Client, error) {
 			return mock, nil
 		},
 	}
 }
 
-// newBarrierErrorConfig creates a Config that fails on client creation.
-func newBarrierErrorConfig() *Config {
+// newBarrierClientErrorConfig returns a Config whose ClientFactory always
+// errors, used to drive the failure-on-create branches.
+func newBarrierClientErrorConfig() *Config {
 	return &Config{
-		ClientFactory: func(cfg *Config) (client.Client, error) {
+		Backend:      "software",
+		OutputFormat: "json",
+		Protocol:     DefaultTransport,
+		ClientFactory: func(*Config) (client.Client, error) {
 			return nil, errors.New("client creation failed")
 		},
 	}
 }
 
-// --- Command existence and properties ---
-
-func TestBarrierCmd_Exists(t *testing.T) {
-	if barrierCmd == nil {
-		t.Fatal("barrierCmd should not be nil")
-	}
+// withGlobalConfig copies the supplied Config's field values into the
+// package-level globalConfig struct for the duration of the test (and
+// restores them via t.Cleanup). The global pointer is NEVER reassigned
+// — root.go's PersistentFlags are bound to the address of the original
+// struct's fields, so swapping the pointer would silently desync the
+// CLI's flag layer.
+func withGlobalConfig(t *testing.T, cfg *Config) {
+	t.Helper()
+	original := *globalConfig
+	t.Cleanup(func() { *globalConfig = original })
+	*globalConfig = *cfg
 }
 
-func TestBarrierCmd_Properties(t *testing.T) {
-	if barrierCmd.Use != "barrier" {
-		t.Errorf("barrierCmd.Use = %q, want %q", barrierCmd.Use, "barrier")
-	}
-	if barrierCmd.Short == "" {
-		t.Error("barrierCmd.Short should not be empty")
-	}
+// resetBarrierFlags clears the package-level barrier flag state so
+// tests do not leak values into each other.
+func resetBarrierFlags(t *testing.T) {
+	t.Helper()
+	barrierSecret = ""
+	barrierShares = nil
+	barrierSharesFile = ""
+	barrierThreshold = 0
+	barrierTotal = 0
+	barrierAssumeYes = false
+	barrierStrategy = "passphrase"
+	barrierFlagSOPin = ""
+	barrierFlagUserPin = ""
+	barrierRecoveryShs = nil
 }
 
-func TestBarrierCmd_HasSubcommands(t *testing.T) {
-	expectedCmds := map[string]bool{
-		"init":       false,
-		"unseal":     false,
-		"seal":       false,
-		"status":     false,
-		"shares":     false,
-		"rekey":      false,
-		"root-token": false,
-		"recovery":   false,
-	}
+// -----------------------------------------------------------------------------
+// Command tree structure
+// -----------------------------------------------------------------------------
 
-	for _, cmd := range barrierCmd.Commands() {
-		if _, ok := expectedCmds[cmd.Name()]; ok {
-			expectedCmds[cmd.Name()] = true
+func TestBarrierCmd_HasCanonicalSubcommands(t *testing.T) {
+	want := map[string]bool{
+		"status":        false,
+		"init":          false,
+		"init-shamir":   false,
+		"unseal":        false,
+		"unseal-shares": false,
+		"seal":          false,
+		"rekey":         false,
+		"recovery":      false,
+	}
+	for _, c := range barrierCmd.Commands() {
+		if _, ok := want[c.Name()]; ok {
+			want[c.Name()] = true
 		}
 	}
-
-	for name, found := range expectedCmds {
+	for name, found := range want {
 		if !found {
-			t.Errorf("expected subcommand %q not found in barrierCmd", name)
+			t.Errorf("barrier subcommand %q missing", name)
 		}
 	}
 }
 
-func TestBarrierSharesCmd_HasSubcommands(t *testing.T) {
-	expectedCmds := map[string]bool{
-		"list":   false,
-		"verify": false,
-		"delete": false,
+func TestBarrierCmd_DoesNotExposeRetiredVerbs(t *testing.T) {
+	retired := map[string]struct{}{
+		"root-token": {},
+		"shares":     {},
 	}
-
-	for _, cmd := range barrierSharesCmd.Commands() {
-		if _, ok := expectedCmds[cmd.Name()]; ok {
-			expectedCmds[cmd.Name()] = true
+	for _, c := range barrierCmd.Commands() {
+		if _, hit := retired[c.Name()]; hit {
+			t.Errorf("retired verb %q still attached to barrier command", c.Name())
 		}
 	}
+}
 
-	for name, found := range expectedCmds {
+func TestBarrierRecoveryCmd_HasCanonicalSubcommands(t *testing.T) {
+	want := map[string]bool{"generate": false, "recover": false}
+	for _, c := range barrierRecoveryCmd.Commands() {
+		if _, ok := want[c.Name()]; ok {
+			want[c.Name()] = true
+		}
+	}
+	for name, found := range want {
 		if !found {
-			t.Errorf("expected subcommand %q not found in barrierSharesCmd", name)
+			t.Errorf("barrier recovery subcommand %q missing", name)
 		}
 	}
 }
 
-func TestBarrierRecoveryCmd_HasSubcommands(t *testing.T) {
-	expectedCmds := map[string]bool{
-		"generate": false,
-		"recover":  false,
-		"delete":   false,
-	}
-
-	for _, cmd := range barrierRecoveryCmd.Commands() {
-		if _, ok := expectedCmds[cmd.Name()]; ok {
-			expectedCmds[cmd.Name()] = true
-		}
-	}
-
-	for name, found := range expectedCmds {
-		if !found {
-			t.Errorf("expected subcommand %q not found in barrierRecoveryCmd", name)
+func TestBarrierRecoveryCmd_DoesNotExposeDelete(t *testing.T) {
+	for _, c := range barrierRecoveryCmd.Commands() {
+		if c.Name() == "delete" {
+			t.Error("retired verb 'recovery delete' still attached")
 		}
 	}
 }
 
-func TestBarrierCmd_RegisteredInRoot(t *testing.T) {
-	found := false
-	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "barrier" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("barrierCmd should be registered as a subcommand of rootCmd")
+// -----------------------------------------------------------------------------
+// validateInitFlags
+// -----------------------------------------------------------------------------
+
+func TestValidateInitFlags_Software_Success(t *testing.T) {
+	if err := validateInitFlags("passphrase", "pp", "", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-// --- barrierInit ---
+func TestValidateInitFlags_Software_RequiresSecret(t *testing.T) {
+	err := validateInitFlags("passphrase", "", "", "")
+	if err == nil {
+		t.Fatal("expected error for missing --passphrase")
+	}
+	var typed *BarrierSecretRequiredError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSecretRequiredError, got %T: %v", err, err)
+	}
+}
 
-func TestBarrierInit_Success(t *testing.T) {
+func TestValidateInitFlags_None_RejectsSecret(t *testing.T) {
+	err := validateInitFlags("none", "pp", "", "")
+	var typed *BarrierSecretNotAllowedError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSecretNotAllowedError, got %T: %v", err, err)
+	}
+}
+
+func TestValidateInitFlags_None_RejectsPINs(t *testing.T) {
+	cases := []struct {
+		name           string
+		soPin, userPin string
+	}{
+		{"so-pin only", "SO", ""},
+		{"user-pin only", "", "USR"},
+		{"both pins", "SO", "USR"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateInitFlags("none", "", tc.soPin, tc.userPin)
+			var typed *PINsNotAllowedError
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected PINsNotAllowedError, got %T: %v", err, err)
+			}
+			if typed.Strategy != "none" {
+				t.Errorf("Strategy = %q, want \"none\"", typed.Strategy)
+			}
+		})
+	}
+}
+
+func TestValidateInitFlags_Shamir_RoutedElsewhere(t *testing.T) {
+	err := validateInitFlags("shamir", "pp", "", "")
+	var typed *BarrierShamirOnInitError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShamirOnInitError, got %T: %v", err, err)
+	}
+}
+
+func TestValidateInitFlags_UnknownStrategy(t *testing.T) {
+	err := validateInitFlags("bogus", "pp", "", "")
+	var typed *BarrierStrategyError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierStrategyError, got %T: %v", err, err)
+	}
+}
+
+func TestValidateInitFlags_PINPairRequired(t *testing.T) {
+	cases := []struct {
+		name           string
+		soPin, userPin string
+	}{
+		{"so-pin without user-pin", "SO", ""},
+		{"user-pin without so-pin", "", "USR"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateInitFlags("passphrase", "pp", tc.soPin, tc.userPin)
+			var typed *PINPairError
+			if !errors.As(err, &typed) {
+				t.Fatalf("expected PINPairError, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// -----------------------------------------------------------------------------
+// runBarrierInitCmd
+// -----------------------------------------------------------------------------
+
+func TestRunBarrierInitCmd_Software_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "passphrase"
+	barrierSecret = "pp"
+
 	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInit(cfg, printer, "my-secret")
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("barrierInit should report success")
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierInitCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.initReq == nil {
+		t.Fatal("BarrierInitialize was not called")
+	}
+	if mock.initReq.Secret != "pp" {
+		t.Errorf("Secret = %q, want %q", mock.initReq.Secret, "pp")
+	}
+	if !mock.closeCalled {
+		t.Error("client cleanup did not close the client")
+	}
+	// No PINs supplied, so the PIN RPCs must not have been called.
+	if mock.setSOPINReq != nil || mock.setUserPINReq != nil {
+		t.Error("PIN RPCs called when no PINs were supplied")
 	}
 }
 
-func TestBarrierInit_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+func TestRunBarrierInitCmd_None_NoSecretNoPINs(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "none"
 
-	mock := &mockBarrierClient{
-		initErr: errors.New("init failed"),
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierInitCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInit(cfg, printer, "my-secret")
-	// Should not panic
-}
-
-func TestBarrierInit_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInit(cfg, printer, "secret")
-	// Should not panic
-}
-
-func TestBarrierInit_ConnectError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		connectBarrierErr: errors.New("connect failed"),
+	if mock.initReq == nil {
+		t.Fatal("BarrierInitialize was not called")
 	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInit(cfg, printer, "secret")
-	// Should not panic
+	if mock.initReq.Secret != "" {
+		t.Errorf("Secret = %q, want empty for strategy=none", mock.initReq.Secret)
+	}
 }
 
-// --- barrierInitShamir ---
+func TestRunBarrierInitCmd_None_RejectsPINs(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "none"
+	barrierFlagSOPin = "SO"
+	barrierFlagUserPin = "USR"
 
-func TestBarrierInitShamir_Success(t *testing.T) {
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	err := runBarrierInitCmd(cmd, nil)
+	var typed *PINsNotAllowedError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected PINsNotAllowedError, got %T: %v", err, err)
+	}
+	if mock.initReq != nil {
+		t.Error("BarrierInitialize must not be called when validation fails")
+	}
+}
+
+func TestRunBarrierInitCmd_Software_PINPairDispatched(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "passphrase"
+	barrierSecret = "pp"
+	barrierFlagSOPin = "SO123"
+	barrierFlagUserPin = "USR123"
+
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierInitCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mock.setSOPINReq == nil {
+		t.Fatal("SetSOPIN was not called")
+	}
+	if mock.setSOPINReq.NewSOPIN != "SO123" || mock.setSOPINReq.CurrentSOPIN != "" {
+		t.Errorf("SetSOPIN request = %+v, want NewSOPIN=SO123 CurrentSOPIN=\"\"", mock.setSOPINReq)
+	}
+	if mock.setUserPINReq == nil {
+		t.Fatal("SetUserPIN was not called")
+	}
+	if mock.setUserPINReq.SOPIN != "SO123" || mock.setUserPINReq.NewUserPIN != "USR123" {
+		t.Errorf("SetUserPIN request = %+v, want SOPIN=SO123 NewUserPIN=USR123", mock.setUserPINReq)
+	}
+}
+
+func TestRunBarrierInitCmd_BarrierInitErrorBubbles(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "passphrase"
+	barrierSecret = "pp"
+
+	mock := &mockBarrierClient{initErr: errors.New("boom")}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierInitCmd(cmd, nil); err == nil {
+		t.Fatal("expected error from BarrierInitialize")
+	}
+}
+
+func TestRunBarrierInitCmd_SetSOPINErrorBubbles(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "passphrase"
+	barrierSecret = "pp"
+	barrierFlagSOPin = "SO"
+	barrierFlagUserPin = "USR"
+
+	mock := &mockBarrierClient{setSOPINErr: errors.New("pin failed")}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	err := runBarrierInitCmd(cmd, nil)
+	if err == nil {
+		t.Fatal("expected error when SetSOPIN fails")
+	}
+	if !strings.Contains(err.Error(), "set SO PIN") {
+		t.Errorf("error %q does not mention SetSOPIN", err.Error())
+	}
+}
+
+func TestRunBarrierInitCmd_ClientFactoryError(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "passphrase"
+	barrierSecret = "pp"
+
+	withGlobalConfig(t, newBarrierClientErrorConfig())
+
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierInitCmd(cmd, nil); err == nil {
+		t.Fatal("expected error when client creation fails")
+	}
+}
+
+func TestRunBarrierInitCmd_ConnectError(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierStrategy = "passphrase"
+	barrierSecret = "pp"
+
+	mock := &mockBarrierClient{connectErr: errors.New("dial failed")}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierInitCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierInitCmd(cmd, nil); err == nil {
+		t.Fatal("expected error when Connect fails")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// validateInitShamirFlags / runBarrierInitShamirCmd
+// -----------------------------------------------------------------------------
+
+func TestValidateInitShamirFlags_Success(t *testing.T) {
+	if err := validateInitShamirFlags("pp", 3, 5, "", ""); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateInitShamirFlags_MissingSecret(t *testing.T) {
+	err := validateInitShamirFlags("", 3, 5, "", "")
+	var typed *BarrierSecretRequiredError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSecretRequiredError, got %T: %v", err, err)
+	}
+}
+
+func TestValidateInitShamirFlags_ThresholdZero(t *testing.T) {
+	err := validateInitShamirFlags("pp", 0, 5, "", "")
+	var typed *BarrierShamirParamsError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShamirParamsError, got %T", err)
+	}
+}
+
+func TestValidateInitShamirFlags_TotalZero(t *testing.T) {
+	err := validateInitShamirFlags("pp", 3, 0, "", "")
+	var typed *BarrierShamirParamsError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShamirParamsError, got %T", err)
+	}
+}
+
+func TestValidateInitShamirFlags_ThresholdExceedsTotal(t *testing.T) {
+	err := validateInitShamirFlags("pp", 5, 3, "", "")
+	var typed *BarrierShamirParamsError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShamirParamsError, got %T", err)
+	}
+}
+
+func TestRunBarrierInitShamirCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierSecret = "pp"
+	barrierThreshold = 2
+	barrierTotal = 3
+
 	mock := &mockBarrierClient{
 		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"share-1", "share-2", "share-3"},
+			Shares:      []string{"s1", "s2", "s3"},
 			Threshold:   2,
 			TotalShares: 3,
 		},
 	}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInitShamir(cfg, printer, "my-secret", 2, 3)
-
-	output := buf.String()
-	if !strings.Contains(output, "share-1") {
-		t.Error("barrierInitShamir should output shares")
+	out := new(bytes.Buffer)
+	cmd := barrierInitShamirCmd
+	cmd.SetOut(out)
+	if err := runBarrierInitShamirCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(output, "threshold") {
-		t.Error("barrierInitShamir should output threshold")
+	if mock.initShamirReq == nil {
+		t.Fatal("BarrierInitializeShamir was not called")
+	}
+	if mock.initShamirReq.Threshold != 2 || mock.initShamirReq.TotalShares != 3 {
+		t.Errorf("request = %+v, want threshold=2 total=3", mock.initShamirReq)
+	}
+	if !strings.Contains(out.String(), "s1") {
+		t.Errorf("output should include the shares; got %q", out.String())
 	}
 }
 
-func TestBarrierInitShamir_TextFormat(t *testing.T) {
+func TestRunBarrierInitShamirCmd_PINPairDispatched(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierSecret = "pp"
+	barrierThreshold = 2
+	barrierTotal = 3
+	barrierFlagSOPin = "SO"
+	barrierFlagUserPin = "USR"
+
 	mock := &mockBarrierClient{
 		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"aaa", "bbb", "ccc"},
+			Shares:      []string{"s1", "s2"},
 			Threshold:   2,
 			TotalShares: 3,
 		},
 	}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	barrierInitShamir(cfg, printer, "secret", 2, 3)
-
-	output := buf.String()
-	if !strings.Contains(output, "Shamir Secret Sharing Initialized") {
-		t.Error("text output should contain initialization header")
+	cmd := barrierInitShamirCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierInitShamirCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(output, "Share 1: aaa") {
-		t.Error("text output should contain numbered shares")
-	}
-	if !strings.Contains(output, "WARNING") {
-		t.Error("text output should contain a warning")
+	if mock.setSOPINReq == nil || mock.setUserPINReq == nil {
+		t.Error("expected PIN RPCs to be dispatched after init-shamir")
 	}
 }
 
-func TestBarrierInitShamir_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+// -----------------------------------------------------------------------------
+// runBarrierUnsealCmd
+// -----------------------------------------------------------------------------
 
-	mock := &mockBarrierClient{
-		initShamirErr: errors.New("shamir init failed"),
-	}
-	cfg := newBarrierConfig(mock)
+func TestRunBarrierUnsealCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierSecret = "pp"
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInitShamir(cfg, printer, "secret", 2, 3)
-}
-
-func TestBarrierInitShamir_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInitShamir(cfg, printer, "secret", 2, 3)
-}
-
-// --- barrierUnsealWithSecret ---
-
-func TestBarrierUnsealWithSecret_Success(t *testing.T) {
 	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithSecret(cfg, printer, "my-secret")
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("barrierUnsealWithSecret should report success")
+	cmd := barrierUnsealCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierUnsealCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.unsealReq == nil || mock.unsealReq.Secret != "pp" {
+		t.Errorf("BarrierUnseal req = %+v, want Secret=pp", mock.unsealReq)
 	}
 }
 
-func TestBarrierUnsealWithSecret_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+func TestRunBarrierUnsealCmd_MissingSecret(t *testing.T) {
+	resetBarrierFlags(t)
 
-	mock := &mockBarrierClient{
-		unsealErr: errors.New("unseal failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithSecret(cfg, printer, "secret")
-}
-
-func TestBarrierUnsealWithSecret_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithSecret(cfg, printer, "secret")
-}
-
-// --- barrierUnsealWithShare ---
-
-func TestBarrierUnsealWithShare_Incomplete(t *testing.T) {
-	mock := &mockBarrierClient{
-		unsealShareResp: &transport.BarrierUnsealShareResponse{
-			Required:  3,
-			Submitted: 1,
-			Complete:  false,
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithShare(cfg, printer, "share-1")
-
-	output := buf.String()
-	if !strings.Contains(output, "\"complete\": false") {
-		t.Error("incomplete unseal should show complete: false")
-	}
-	if !strings.Contains(output, "\"submitted\": 1") {
-		t.Error("incomplete unseal should show submitted count")
-	}
-}
-
-func TestBarrierUnsealWithShare_Complete(t *testing.T) {
-	mock := &mockBarrierClient{
-		unsealShareResp: &transport.BarrierUnsealShareResponse{
-			Required:  2,
-			Submitted: 2,
-			Complete:  true,
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	barrierUnsealWithShare(cfg, printer, "share-2")
-
-	output := buf.String()
-	if !strings.Contains(output, "unsealed successfully") {
-		t.Error("complete unseal should report success")
-	}
-}
-
-func TestBarrierUnsealWithShare_TextIncomplete(t *testing.T) {
-	mock := &mockBarrierClient{
-		unsealShareResp: &transport.BarrierUnsealShareResponse{
-			Required:  3,
-			Submitted: 2,
-			Complete:  false,
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	barrierUnsealWithShare(cfg, printer, "share-x")
-
-	output := buf.String()
-	if !strings.Contains(output, "need 1 more") {
-		t.Error("text incomplete should show how many more shares are needed")
-	}
-}
-
-func TestBarrierUnsealWithShare_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		unsealShareErr: errors.New("share rejected"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithShare(cfg, printer, "bad-share")
-}
-
-func TestBarrierUnsealWithShare_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithShare(cfg, printer, "share")
-}
-
-// --- barrierUnsealWithShares ---
-
-func TestBarrierUnsealWithShares_Success(t *testing.T) {
 	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithShares(cfg, printer, []string{"share-1", "share-2", "share-3"})
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("barrierUnsealWithShares should report success")
+	cmd := barrierUnsealCmd
+	cmd.SetOut(new(bytes.Buffer))
+	err := runBarrierUnsealCmd(cmd, nil)
+	var typed *BarrierSecretRequiredError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSecretRequiredError, got %T: %v", err, err)
 	}
 }
 
-func TestBarrierUnsealWithShares_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+func TestRunBarrierUnsealCmd_BackendErrorBubbles(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierSecret = "pp"
 
-	mock := &mockBarrierClient{
-		unsealSharesErr: errors.New("batch unseal failed"),
+	mock := &mockBarrierClient{unsealErr: errors.New("denied")}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierUnsealCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierUnsealCmd(cmd, nil); err == nil {
+		t.Fatal("expected error from BarrierUnseal")
 	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithShares(cfg, printer, []string{"share-1", "share-2"})
 }
 
-func TestBarrierUnsealWithShares_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+// -----------------------------------------------------------------------------
+// resolveUnsealShares / runBarrierUnsealSharesCmd
+// -----------------------------------------------------------------------------
 
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithShares(cfg, printer, []string{"share-1"})
+func TestResolveUnsealShares_FlagsOnly(t *testing.T) {
+	got, err := resolveUnsealShares([]string{"a", "b"}, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("got = %v, want [a b]", got)
+	}
 }
 
-// --- barrierSeal ---
+func TestResolveUnsealShares_NeitherSupplied(t *testing.T) {
+	_, err := resolveUnsealShares(nil, "", nil)
+	var typed *BarrierShareInputError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShareInputError, got %T: %v", err, err)
+	}
+}
 
-func TestBarrierSeal_Success(t *testing.T) {
+func TestResolveUnsealShares_BothSupplied(t *testing.T) {
+	_, err := resolveUnsealShares([]string{"a"}, "/some/file", nil)
+	var typed *BarrierShareInputError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShareInputError, got %T: %v", err, err)
+	}
+}
+
+func TestResolveUnsealShares_FileReadsLines(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "shares.txt")
+	if err := os.WriteFile(tmp, []byte("alpha\n# comment\n\nbeta\n   \ngamma\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveUnsealShares(nil, tmp, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 3 || got[0] != "alpha" || got[1] != "beta" || got[2] != "gamma" {
+		t.Errorf("got = %v, want [alpha beta gamma]", got)
+	}
+}
+
+func TestResolveUnsealShares_FileMissing(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "missing.txt")
+	_, err := resolveUnsealShares(nil, tmp, nil)
+	var typed *BarrierSharesFileError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSharesFileError, got %T: %v", err, err)
+	}
+}
+
+func TestResolveUnsealShares_FileEmpty(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "empty.txt")
+	if err := os.WriteFile(tmp, []byte("# only comments\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := resolveUnsealShares(nil, tmp, nil)
+	var typed *BarrierSharesFileEmptyError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSharesFileEmptyError, got %T: %v", err, err)
+	}
+}
+
+func TestResolveUnsealShares_StdinReads(t *testing.T) {
+	stdin := strings.NewReader("share-x\nshare-y\n")
+	got, err := resolveUnsealShares(nil, "-", stdin)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0] != "share-x" || got[1] != "share-y" {
+		t.Errorf("got = %v, want [share-x share-y]", got)
+	}
+}
+
+func TestRunBarrierUnsealSharesCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierShares = []string{"a", "b", "c"}
+
 	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSeal(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("barrierSeal should report success")
+	cmd := barrierUnsealSharesCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierUnsealSharesCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.unsealSharesReq == nil || len(mock.unsealSharesReq.Shares) != 3 {
+		t.Errorf("expected 3 shares submitted, got %+v", mock.unsealSharesReq)
 	}
 }
 
-func TestBarrierSeal_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+func TestRunBarrierUnsealSharesCmd_NoInput(t *testing.T) {
+	resetBarrierFlags(t)
+
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierUnsealSharesCmd
+	cmd.SetOut(new(bytes.Buffer))
+	err := runBarrierUnsealSharesCmd(cmd, nil)
+	var typed *BarrierShareInputError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShareInputError, got %T: %v", err, err)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// runBarrierSealCmd
+// -----------------------------------------------------------------------------
+
+func TestConfirmBarrierSeal_AssumeYes(t *testing.T) {
+	ok, err := confirmBarrierSeal(nil, new(bytes.Buffer), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("assume-yes must return ok=true")
+	}
+}
+
+func TestConfirmBarrierSeal_Yes(t *testing.T) {
+	ok, err := confirmBarrierSeal(strings.NewReader("yes\n"), new(bytes.Buffer), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("yes response must return ok=true")
+	}
+}
+
+func TestConfirmBarrierSeal_No(t *testing.T) {
+	ok, err := confirmBarrierSeal(strings.NewReader("no\n"), new(bytes.Buffer), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("no response must return ok=false")
+	}
+}
+
+func TestConfirmBarrierSeal_StdinError(t *testing.T) {
+	_, err := confirmBarrierSeal(strings.NewReader(""), new(bytes.Buffer), false)
+	var typed *BarrierSealConfirmationError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSealConfirmationError, got %T: %v", err, err)
+	}
+}
+
+func TestRunBarrierSealCmd_AssumeYesSeals(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierAssumeYes = true
+
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierSealCmd
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetIn(strings.NewReader(""))
+	if err := runBarrierSealCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunBarrierSealCmd_CancelOnNo(t *testing.T) {
+	resetBarrierFlags(t)
+
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	out := new(bytes.Buffer)
+	cmd := barrierSealCmd
+	cmd.SetOut(out)
+	cmd.SetIn(strings.NewReader("no\n"))
+	if err := runBarrierSealCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "Seal cancelled") {
+		t.Errorf("output should mention cancellation; got %q", out.String())
+	}
+	if mock.closeCalled {
+		t.Error("client should not be created when seal is cancelled")
+	}
+}
+
+func TestRunBarrierSealCmd_SOPinVerifiedBeforeSeal(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierAssumeYes = true
+	barrierFlagSOPin = "SO12345"
+
+	mock := &mockBarrierClient{}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierSealCmd
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetIn(strings.NewReader(""))
+	if err := runBarrierSealCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.verifySOPINReq == nil {
+		t.Fatal("VerifySOPIN was not called")
+	}
+	if mock.verifySOPINReq.SOPIN != "SO12345" {
+		t.Errorf("VerifySOPIN SOPIN = %q, want SO12345", mock.verifySOPINReq.SOPIN)
+	}
+}
+
+func TestRunBarrierSealCmd_SOPinVerifyErrorAborts(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierAssumeYes = true
+	barrierFlagSOPin = "BAD"
 
 	mock := &mockBarrierClient{
-		sealBarrierErr: errors.New("seal failed"),
+		verifySOPINErr: errors.New("invalid pin"),
+		// BarrierSeal must NOT be invoked when verification fails.
+		sealErr: errors.New("should not be called"),
 	}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSeal(cfg, printer)
-}
-
-func TestBarrierSeal_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSeal(cfg, printer)
-}
-
-// --- barrierStatus ---
-
-func TestBarrierStatus_Unsealed(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:         false,
-			Strategy:       "password",
-			HardwareBacked: false,
-			InitializedAt:  "2025-01-15T10:30:00Z",
-		},
+	cmd := barrierSealCmd
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetIn(strings.NewReader(""))
+	err := runBarrierSealCmd(cmd, nil)
+	if err == nil {
+		t.Fatal("expected error when VerifySOPIN fails")
 	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierStatus(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "\"sealed\": false") {
-		t.Error("status should show sealed: false")
-	}
-	if !strings.Contains(output, "password") {
-		t.Error("status should show the strategy")
-	}
-	if !strings.Contains(output, "initialized_at") {
-		t.Error("status should show initialized_at when present")
+	if !strings.Contains(err.Error(), "verify SO PIN") {
+		t.Errorf("error %q does not mention VerifySOPIN", err.Error())
 	}
 }
 
-func TestBarrierStatus_Sealed(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:         true,
-			Strategy:       "shamir",
-			HardwareBacked: true,
-		},
-	}
-	cfg := newBarrierConfig(mock)
+// -----------------------------------------------------------------------------
+// validateRekeyFlags / runBarrierRekeyCmd
+// -----------------------------------------------------------------------------
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	barrierStatus(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "sealed") {
-		t.Error("text status should show 'sealed' state")
-	}
-	if !strings.Contains(output, "shamir") {
-		t.Error("text status should show strategy")
-	}
-	if !strings.Contains(output, "true") {
-		t.Error("text status should show hardware_backed: true")
+func TestValidateRekeyFlags_PassphraseOnlyUnsupported(t *testing.T) {
+	err := validateRekeyFlags("new-pp", 0, 0)
+	var typed *XKMSPassphraseRekeyUnsupportedError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected XKMSPassphraseRekeyUnsupportedError, got %T: %v", err, err)
 	}
 }
 
-func TestBarrierStatus_UnsealedText(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:         false,
-			Strategy:       "password",
-			HardwareBacked: false,
-			InitializedAt:  "2025-06-01T00:00:00Z",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	barrierStatus(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "unsealed") {
-		t.Error("text status should show 'unsealed' when not sealed")
-	}
-	if !strings.Contains(output, "Initialized At") {
-		t.Error("text status should show initialized_at")
+func TestValidateRekeyFlags_ShamirSuccess(t *testing.T) {
+	if err := validateRekeyFlags("new-pp", 3, 5); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestBarrierStatus_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+func TestValidateRekeyFlags_SecretRequired(t *testing.T) {
+	err := validateRekeyFlags("", 3, 5)
+	var typed *BarrierSecretRequiredError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierSecretRequiredError, got %T", err)
+	}
+}
+
+func TestValidateRekeyFlags_UnpairedShamirFlags(t *testing.T) {
+	cases := []struct {
+		threshold, total int
+	}{
+		{3, 0},
+		{0, 5},
+	}
+	for _, tc := range cases {
+		err := validateRekeyFlags("new-pp", tc.threshold, tc.total)
+		var typed *BarrierShamirParamsError
+		if !errors.As(err, &typed) {
+			t.Fatalf("expected BarrierShamirParamsError for threshold=%d total=%d, got %T", tc.threshold, tc.total, err)
+		}
+	}
+}
+
+func TestValidateRekeyFlags_ThresholdExceedsTotal(t *testing.T) {
+	err := validateRekeyFlags("new-pp", 5, 3)
+	var typed *BarrierShamirParamsError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShamirParamsError, got %T", err)
+	}
+}
+
+func TestRunBarrierRekeyCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierSecret = "new-pp"
+	barrierThreshold = 3
+	barrierTotal = 5
 
 	mock := &mockBarrierClient{
-		statusErr: errors.New("status failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierStatus(cfg, printer)
-}
-
-func TestBarrierStatus_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierStatus(cfg, printer)
-}
-
-// --- barrierRekey ---
-
-func TestBarrierRekey_Success(t *testing.T) {
-	mock := &mockBarrierClient{
-		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"new-1", "new-2", "new-3", "new-4", "new-5"},
+		rekeyResp: &transport.BarrierRekeyResponse{
+			Shares:      []string{"n1", "n2", "n3", "n4", "n5"},
 			Threshold:   3,
 			TotalShares: 5,
 		},
 	}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRekey(cfg, printer, 3, 5)
-
-	output := buf.String()
-	if !strings.Contains(output, "new-1") {
-		t.Error("rekey should output new shares")
+	cmd := barrierRekeyCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierRekeyCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(output, "\"threshold\": 3") {
-		t.Error("rekey should output new threshold")
+	if mock.rekeyReq == nil || mock.rekeyReq.Threshold != 3 || mock.rekeyReq.Total != 5 {
+		t.Errorf("rekey req = %+v, want threshold=3 total=5", mock.rekeyReq)
 	}
 }
 
-func TestBarrierRekey_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+func TestRunBarrierRekeyCmd_SOPinVerified(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierSecret = "new-pp"
+	barrierThreshold = 3
+	barrierTotal = 5
+	barrierFlagSOPin = "SO"
 
 	mock := &mockBarrierClient{
-		initShamirErr: errors.New("rekey failed"),
+		rekeyResp: &transport.BarrierRekeyResponse{
+			Shares:      []string{"n1", "n2"},
+			Threshold:   3,
+			TotalShares: 5,
+		},
 	}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRekey(cfg, printer, 3, 5)
+	cmd := barrierRekeyCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierRekeyCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.verifySOPINReq == nil || mock.verifySOPINReq.SOPIN != "SO" {
+		t.Errorf("expected VerifySOPIN to be called with SO; got %+v", mock.verifySOPINReq)
+	}
 }
 
-func TestBarrierRekey_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+// -----------------------------------------------------------------------------
+// validateRecoveryGenerateFlags / runBarrierRecoveryGenerateCmd
+// -----------------------------------------------------------------------------
 
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRekey(cfg, printer, 3, 5)
+func TestValidateRecoveryGenerateFlags_Success(t *testing.T) {
+	if err := validateRecoveryGenerateFlags(3, 5); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
-// --- barrierRootToken ---
+func TestValidateRecoveryGenerateFlags_ThresholdTooSmall(t *testing.T) {
+	err := validateRecoveryGenerateFlags(1, 5)
+	var typed *BarrierShamirParamsError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShamirParamsError, got %T", err)
+	}
+}
 
-func TestBarrierRootToken_Success(t *testing.T) {
+func TestValidateRecoveryGenerateFlags_TotalLessThanThreshold(t *testing.T) {
+	err := validateRecoveryGenerateFlags(3, 2)
+	var typed *BarrierShamirParamsError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierShamirParamsError, got %T", err)
+	}
+}
+
+func TestRunBarrierRecoveryGenerateCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierThreshold = 2
+	barrierTotal = 3
+
+	mock := &mockBarrierClient{
+		genKeysResp: &transport.BarrierRecoveryKeysResponse{
+			Keys:      []string{"rk-1", "rk-2", "rk-3"},
+			Threshold: 2,
+			Total:     3,
+		},
+	}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	out := new(bytes.Buffer)
+	cmd := barrierRecoveryGenerateCmd
+	cmd.SetOut(out)
+	if err := runBarrierRecoveryGenerateCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.genKeysReq == nil || mock.genKeysReq.Threshold != 2 || mock.genKeysReq.Total != 3 {
+		t.Errorf("gen-keys req = %+v, want threshold=2 total=3", mock.genKeysReq)
+	}
+	if !strings.Contains(out.String(), "rk-1") {
+		t.Errorf("expected recovery keys in output; got %q", out.String())
+	}
+}
+
+// -----------------------------------------------------------------------------
+// runBarrierRecoveryRecoverCmd
+// -----------------------------------------------------------------------------
+
+func TestRunBarrierRecoveryRecoverCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
+	barrierRecoveryShs = []string{"rk-1", "rk-2"}
+
 	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRootToken(cfg, printer, []string{"share-1", "share-2", "share-3"})
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("root token generation should report success")
+	cmd := barrierRecoveryRecoverCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierRecoveryRecoverCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mock.recoverReq == nil || len(mock.recoverReq.Keys) != 2 {
+		t.Errorf("recover req = %+v, want 2 keys", mock.recoverReq)
 	}
 }
 
-func TestBarrierRootToken_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+func TestRunBarrierRecoveryRecoverCmd_MissingShares(t *testing.T) {
+	resetBarrierFlags(t)
 
-	mock := &mockBarrierClient{
-		unsealSharesErr: errors.New("root token failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRootToken(cfg, printer, []string{"share-1", "share-2"})
-}
-
-func TestBarrierRootToken_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRootToken(cfg, printer, []string{"share-1"})
-}
-
-// --- barrierSharesList ---
-
-func TestBarrierSharesList_Success(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "shamir",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesList(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "shamir") {
-		t.Error("shares list should show strategy")
-	}
-}
-
-func TestBarrierSharesList_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		statusErr: errors.New("status failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesList(cfg, printer)
-}
-
-func TestBarrierSharesList_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesList(cfg, printer)
-}
-
-// --- barrierSharesVerify ---
-
-func TestBarrierSharesVerify_Success(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "shamir",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesVerify(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "success") {
-		t.Error("shares verify should report success for shamir strategy")
-	}
-}
-
-func TestBarrierSharesVerify_NotShamir(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "password",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesVerify(cfg, printer)
-	// Should error with ErrBarrierNotShamir
-}
-
-func TestBarrierSharesVerify_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		statusErr: errors.New("verify failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesVerify(cfg, printer)
-}
-
-func TestBarrierSharesVerify_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesVerify(cfg, printer)
-}
-
-// --- barrierSharesDelete ---
-
-func TestBarrierSharesDelete_Success(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "shamir",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDelete(cfg, printer, "2")
-
-	output := buf.String()
-	if !strings.Contains(output, "deleted") {
-		t.Error("shares delete should report deletion")
-	}
-}
-
-func TestBarrierSharesDelete_InvalidIndex(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "shamir",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDelete(cfg, printer, "not-a-number")
-	// Should error with ErrBarrierInvalidShareIndex
-}
-
-func TestBarrierSharesDelete_NotShamir(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "password",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDelete(cfg, printer, "0")
-}
-
-func TestBarrierSharesDelete_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDelete(cfg, printer, "0")
-}
-
-// --- barrierSharesDeleteAll ---
-
-func TestBarrierSharesDeleteAll_Success(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "shamir",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDeleteAll(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "deleted") {
-		t.Error("shares delete all should report deletion")
-	}
-}
-
-func TestBarrierSharesDeleteAll_NotShamir(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:   false,
-			Strategy: "password",
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDeleteAll(cfg, printer)
-}
-
-func TestBarrierSharesDeleteAll_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		statusErr: errors.New("status failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDeleteAll(cfg, printer)
-}
-
-func TestBarrierSharesDeleteAll_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSharesDeleteAll(cfg, printer)
-}
-
-// --- barrierRecoveryGenerate ---
-
-func TestBarrierRecoveryGenerate_Success(t *testing.T) {
-	mock := &mockBarrierClient{
-		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"rk-1", "rk-2", "rk-3"},
-			Threshold:   2,
-			TotalShares: 3,
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryGenerate(cfg, printer, 2, 3)
-
-	output := buf.String()
-	if !strings.Contains(output, "rk-1") {
-		t.Error("recovery generate should output keys")
-	}
-	if !strings.Contains(output, "recovery_keys") {
-		t.Error("recovery generate should have 'recovery_keys' field in JSON")
-	}
-}
-
-func TestBarrierRecoveryGenerate_TextFormat(t *testing.T) {
-	mock := &mockBarrierClient{
-		initShamirResp: &transport.BarrierInitializeShamirResponse{
-			Shares:      []string{"rk-a", "rk-b"},
-			Threshold:   1,
-			TotalShares: 2,
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
-
-	barrierRecoveryGenerate(cfg, printer, 1, 2)
-
-	output := buf.String()
-	if !strings.Contains(output, "Recovery Keys Generated") {
-		t.Error("text output should contain header")
-	}
-	if !strings.Contains(output, "Key 1: rk-a") {
-		t.Error("text output should contain numbered keys")
-	}
-}
-
-func TestBarrierRecoveryGenerate_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		initShamirErr: errors.New("generate failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryGenerate(cfg, printer, 2, 3)
-}
-
-func TestBarrierRecoveryGenerate_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryGenerate(cfg, printer, 2, 3)
-}
-
-// --- barrierRecoveryRecover ---
-
-func TestBarrierRecoveryRecover_Success(t *testing.T) {
 	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryRecover(cfg, printer, []string{"rk-1", "rk-2"})
-
-	output := buf.String()
-	if !strings.Contains(output, "recovered successfully") {
-		t.Error("recovery recover should report success")
+	cmd := barrierRecoveryRecoverCmd
+	cmd.SetOut(new(bytes.Buffer))
+	err := runBarrierRecoveryRecoverCmd(cmd, nil)
+	var typed *BarrierRecoverySharesRequiredError
+	if !errors.As(err, &typed) {
+		t.Fatalf("expected BarrierRecoverySharesRequiredError, got %T: %v", err, err)
 	}
 }
 
-func TestBarrierRecoveryRecover_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
+// -----------------------------------------------------------------------------
+// runBarrierStatusCmd
+// -----------------------------------------------------------------------------
 
-	mock := &mockBarrierClient{
-		unsealSharesErr: errors.New("recovery failed"),
-	}
-	cfg := newBarrierConfig(mock)
+func TestRunBarrierStatusCmd_Success(t *testing.T) {
+	resetBarrierFlags(t)
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryRecover(cfg, printer, []string{"rk-1"})
-}
-
-func TestBarrierRecoveryRecover_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryRecover(cfg, printer, []string{"rk-1"})
-}
-
-// --- barrierRecoveryDelete ---
-
-func TestBarrierRecoveryDelete_Success(t *testing.T) {
-	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryDelete(cfg, printer)
-
-	output := buf.String()
-	if !strings.Contains(output, "deleted") {
-		t.Error("recovery delete should report deletion")
-	}
-}
-
-func TestBarrierRecoveryDelete_Error(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	mock := &mockBarrierClient{
-		sealBarrierErr: errors.New("delete failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryDelete(cfg, printer)
-}
-
-func TestBarrierRecoveryDelete_ClientCreateError(t *testing.T) {
-	originalExitFunc := exitFunc
-	exitFunc = func(code int) {}
-	defer func() { exitFunc = originalExitFunc }()
-
-	cfg := newBarrierErrorConfig()
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierRecoveryDelete(cfg, printer)
-}
-
-// --- createBarrierClient ---
-
-func TestCreateBarrierClient_Success(t *testing.T) {
-	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
-
-	cl, cleanup, err := createBarrierClient(cfg)
-	if err != nil {
-		t.Fatalf("createBarrierClient should not error: %v", err)
-	}
-	defer cleanup()
-
-	if cl == nil {
-		t.Fatal("createBarrierClient should return a non-nil client")
-	}
-}
-
-func TestCreateBarrierClient_ClientCreateError(t *testing.T) {
-	cfg := newBarrierErrorConfig()
-
-	_, _, err := createBarrierClient(cfg)
-	if err == nil {
-		t.Fatal("createBarrierClient should return an error when client creation fails")
-	}
-}
-
-func TestCreateBarrierClient_ConnectError(t *testing.T) {
-	mock := &mockBarrierClient{
-		connectBarrierErr: errors.New("connect failed"),
-	}
-	cfg := newBarrierConfig(mock)
-
-	_, _, err := createBarrierClient(cfg)
-	if err == nil {
-		t.Fatal("createBarrierClient should return an error when connect fails")
-	}
-}
-
-// --- Output format tests ---
-
-func TestBarrierInit_AllFormats(t *testing.T) {
-	formats := []string{"text", "json", "table"}
-
-	for _, format := range formats {
-		t.Run(format, func(t *testing.T) {
-			mock := &mockBarrierClient{}
-			cfg := newBarrierConfig(mock)
-
-			buf := new(bytes.Buffer)
-			printer := NewPrinter(format, buf)
-
-			barrierInit(cfg, printer, "secret")
-
-			if buf.Len() == 0 {
-				t.Errorf("barrierInit with %s format should produce output", format)
-			}
-		})
-	}
-}
-
-func TestBarrierSeal_AllFormats(t *testing.T) {
-	formats := []string{"text", "json", "table"}
-
-	for _, format := range formats {
-		t.Run(format, func(t *testing.T) {
-			mock := &mockBarrierClient{}
-			cfg := newBarrierConfig(mock)
-
-			buf := new(bytes.Buffer)
-			printer := NewPrinter(format, buf)
-
-			barrierSeal(cfg, printer)
-
-			if buf.Len() == 0 {
-				t.Errorf("barrierSeal with %s format should produce output", format)
-			}
-		})
-	}
-}
-
-func TestBarrierStatus_AllFormats(t *testing.T) {
-	formats := []string{"text", "json", "table"}
-
-	for _, format := range formats {
-		t.Run(format, func(t *testing.T) {
-			mock := &mockBarrierClient{
-				statusResp: &transport.BarrierStatusResponse{
-					Sealed:         false,
-					Strategy:       "password",
-					HardwareBacked: false,
-				},
-			}
-			cfg := newBarrierConfig(mock)
-
-			buf := new(bytes.Buffer)
-			printer := NewPrinter(format, buf)
-
-			barrierStatus(cfg, printer)
-
-			if buf.Len() == 0 {
-				t.Errorf("barrierStatus with %s format should produce output", format)
-			}
-		})
-	}
-}
-
-func TestBarrierUnsealWithShare_AllFormats(t *testing.T) {
-	formats := []string{"text", "json", "table"}
-
-	for _, format := range formats {
-		t.Run(format, func(t *testing.T) {
-			mock := &mockBarrierClient{
-				unsealShareResp: &transport.BarrierUnsealShareResponse{
-					Required:  3,
-					Submitted: 1,
-					Complete:  false,
-				},
-			}
-			cfg := newBarrierConfig(mock)
-
-			buf := new(bytes.Buffer)
-			printer := NewPrinter(format, buf)
-
-			barrierUnsealWithShare(cfg, printer, "share-1")
-
-			if buf.Len() == 0 {
-				t.Errorf("barrierUnsealWithShare with %s format should produce output", format)
-			}
-		})
-	}
-}
-
-func TestBarrierInitShamir_AllFormats(t *testing.T) {
-	formats := []string{"text", "json", "table"}
-
-	for _, format := range formats {
-		t.Run(format, func(t *testing.T) {
-			mock := &mockBarrierClient{
-				initShamirResp: &transport.BarrierInitializeShamirResponse{
-					Shares:      []string{"s1", "s2", "s3"},
-					Threshold:   2,
-					TotalShares: 3,
-				},
-			}
-			cfg := newBarrierConfig(mock)
-
-			buf := new(bytes.Buffer)
-			printer := NewPrinter(format, buf)
-
-			barrierInitShamir(cfg, printer, "secret", 2, 3)
-
-			if buf.Len() == 0 {
-				t.Errorf("barrierInitShamir with %s format should produce output", format)
-			}
-		})
-	}
-}
-
-func TestBarrierRecoveryGenerate_AllFormats(t *testing.T) {
-	formats := []string{"text", "json", "table"}
-
-	for _, format := range formats {
-		t.Run(format, func(t *testing.T) {
-			mock := &mockBarrierClient{
-				initShamirResp: &transport.BarrierInitializeShamirResponse{
-					Shares:      []string{"rk-1", "rk-2"},
-					Threshold:   1,
-					TotalShares: 2,
-				},
-			}
-			cfg := newBarrierConfig(mock)
-
-			buf := new(bytes.Buffer)
-			printer := NewPrinter(format, buf)
-
-			barrierRecoveryGenerate(cfg, printer, 1, 2)
-
-			if buf.Len() == 0 {
-				t.Errorf("barrierRecoveryGenerate with %s format should produce output", format)
-			}
-		})
-	}
-}
-
-// --- Sentinel error tests ---
-
-func TestBarrierErrors_AreDistinct(t *testing.T) {
-	sentinelErrors := []error{
-		ErrBarrierUnsealNoInput,
-		ErrBarrierRekeyParams,
-		ErrBarrierRootTokenNoShares,
-		ErrBarrierNotShamir,
-		ErrBarrierInvalidShareIndex,
-		ErrBarrierSharesDeleteNoIndex,
-		ErrBarrierRecoveryParams,
-		ErrBarrierRecoveryNoKeys,
-	}
-
-	for i, err1 := range sentinelErrors {
-		if err1 == nil {
-			t.Errorf("sentinel error at index %d should not be nil", i)
-		}
-		for j, err2 := range sentinelErrors {
-			if i != j && err1.Error() == err2.Error() {
-				t.Errorf("sentinel errors at indices %d and %d have the same message: %q",
-					i, j, err1.Error())
-			}
-		}
-	}
-}
-
-func TestBarrierErrors_ContainMeaningfulMessages(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		contains string
-	}{
-		{"UnsealNoInput", ErrBarrierUnsealNoInput, "required"},
-		{"RekeyParams", ErrBarrierRekeyParams, "positive"},
-		{"RootTokenNoShares", ErrBarrierRootTokenNoShares, "required"},
-		{"NotShamir", ErrBarrierNotShamir, "Shamir"},
-		{"InvalidShareIndex", ErrBarrierInvalidShareIndex, "index"},
-		{"SharesDeleteNoIndex", ErrBarrierSharesDeleteNoIndex, "index"},
-		{"RecoveryParams", ErrBarrierRecoveryParams, "positive"},
-		{"RecoveryNoKeys", ErrBarrierRecoveryNoKeys, "required"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if !strings.Contains(tt.err.Error(), tt.contains) {
-				t.Errorf("error %q should contain %q", tt.err.Error(), tt.contains)
-			}
-		})
-	}
-}
-
-// --- Client close tests ---
-
-func TestBarrierInit_ClosesClient(t *testing.T) {
-	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierInit(cfg, printer, "secret")
-
-	if !mock.closeBarrierCalled {
-		t.Error("barrierInit should close the client")
-	}
-}
-
-func TestBarrierSeal_ClosesClient(t *testing.T) {
-	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierSeal(cfg, printer)
-
-	if !mock.closeBarrierCalled {
-		t.Error("barrierSeal should close the client")
-	}
-}
-
-func TestBarrierStatus_ClosesClient(t *testing.T) {
-	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
-	mock.statusResp = &transport.BarrierStatusResponse{
-		Sealed:   false,
-		Strategy: "password",
-	}
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierStatus(cfg, printer)
-
-	if !mock.closeBarrierCalled {
-		t.Error("barrierStatus should close the client")
-	}
-}
-
-func TestBarrierUnsealWithSecret_ClosesClient(t *testing.T) {
-	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithSecret(cfg, printer, "secret")
-
-	if !mock.closeBarrierCalled {
-		t.Error("barrierUnsealWithSecret should close the client")
-	}
-}
-
-func TestBarrierUnsealWithShares_ClosesClient(t *testing.T) {
-	mock := &mockBarrierClient{}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierUnsealWithShares(cfg, printer, []string{"s1", "s2"})
-
-	if !mock.closeBarrierCalled {
-		t.Error("barrierUnsealWithShares should close the client")
-	}
-}
-
-// --- Status without initialized_at ---
-
-func TestBarrierStatus_WithoutInitializedAt(t *testing.T) {
-	mock := &mockBarrierClient{
-		statusResp: &transport.BarrierStatusResponse{
-			Sealed:         true,
-			Strategy:       "password",
-			HardwareBacked: false,
-		},
-	}
-	cfg := newBarrierConfig(mock)
-
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("json", buf)
-
-	barrierStatus(cfg, printer)
-
-	output := buf.String()
-	if strings.Contains(output, "initialized_at") {
-		t.Error("status without initialized_at should not show that field")
-	}
-}
-
-func TestBarrierStatus_TextWithoutInitializedAt(t *testing.T) {
 	mock := &mockBarrierClient{
 		statusResp: &transport.BarrierStatusResponse{
 			Sealed:         false,
-			Strategy:       "shamir",
-			HardwareBacked: true,
+			Strategy:       "passphrase",
+			HardwareBacked: false,
+			InitializedAt:  "2025-01-01T00:00:00Z",
 		},
 	}
-	cfg := newBarrierConfig(mock)
+	withGlobalConfig(t, newBarrierMockConfig(mock))
 
-	buf := new(bytes.Buffer)
-	printer := NewPrinter("text", buf)
+	out := new(bytes.Buffer)
+	cmd := barrierStatusCmd
+	cmd.SetOut(out)
+	if err := runBarrierStatusCmd(cmd, nil); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "passphrase") {
+		t.Errorf("expected strategy in output; got %q", out.String())
+	}
+}
 
-	barrierStatus(cfg, printer)
+func TestRunBarrierStatusCmd_Error(t *testing.T) {
+	resetBarrierFlags(t)
 
-	output := buf.String()
-	if strings.Contains(output, "Initialized At") {
-		t.Error("text status without initialized_at should not show that field")
+	mock := &mockBarrierClient{statusErr: errors.New("rpc failed")}
+	withGlobalConfig(t, newBarrierMockConfig(mock))
+
+	cmd := barrierStatusCmd
+	cmd.SetOut(new(bytes.Buffer))
+	if err := runBarrierStatusCmd(cmd, nil); err == nil {
+		t.Fatal("expected error from BarrierStatus")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Typed error coverage
+// -----------------------------------------------------------------------------
+
+func TestTypedErrorMessages(t *testing.T) {
+	cases := []struct {
+		err      error
+		contains string
+	}{
+		{&PINsNotAllowedError{Strategy: "none", Op: "init"}, "--barrier-strategy=none"},
+		{&BarrierStrategyError{}, "--barrier-strategy is required"},
+		{&BarrierStrategyError{Value: "bogus"}, "bogus"},
+		{&BarrierSecretRequiredError{Op: "init", Strategy: "passphrase"}, "--passphrase is required"},
+		{&BarrierSecretNotAllowedError{Op: "init", Strategy: "none"}, "not allowed"},
+		{&PINPairError{Op: "init", Missing: "--so-pin"}, "--so-pin"},
+		{&BarrierShamirParamsError{Op: "init-shamir", Reason: "--threshold must be > 0"}, "threshold"},
+		{&BarrierShamirOnInitError{}, "init-shamir"},
+		{&BarrierShareInputError{Reason: "one of"}, "unseal-shares"},
+		{&BarrierSharesFileError{Path: "/x", Err: errors.New("oops")}, "/x"},
+		{&BarrierSharesFileEmptyError{Path: "/x"}, "/x"},
+		{&XKMSPassphraseRekeyUnsupportedError{}, "Shamir"},
+		{&BarrierRecoverySharesRequiredError{}, "--share is required"},
+		{&BarrierSealConfirmationError{Err: errors.New("eof")}, "eof"},
+	}
+	for _, tc := range cases {
+		if !strings.Contains(tc.err.Error(), tc.contains) {
+			t.Errorf("error %q does not contain %q", tc.err.Error(), tc.contains)
+		}
+	}
+}
+
+func TestBarrierSharesFileError_Unwrap(t *testing.T) {
+	inner := errors.New("inner")
+	err := &BarrierSharesFileError{Path: "/x", Err: inner}
+	if !errors.Is(err, inner) {
+		t.Error("BarrierSharesFileError should unwrap to its inner error")
+	}
+}
+
+func TestBarrierSealConfirmationError_Unwrap(t *testing.T) {
+	inner := errors.New("inner")
+	err := &BarrierSealConfirmationError{Err: inner}
+	if !errors.Is(err, inner) {
+		t.Error("BarrierSealConfirmationError should unwrap to its inner error")
 	}
 }

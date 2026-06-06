@@ -1059,7 +1059,7 @@ func TestFA_BarrierService_Initialize_DirExistsNoRootKey(t *testing.T) {
 	require.NoError(t, os.MkdirAll(storageDir, 0700))
 
 	svc := NewBarrierService(dir, slog.Default())
-	err := svc.Initialize("my-password", "software")
+	err := svc.Initialize("my-password", "passphrase")
 	assert.NoError(t, err)
 	assert.True(t, svc.IsUnsealed())
 }
@@ -1077,7 +1077,7 @@ func TestFA_BarrierService_Initialize_StorageDirExistsButFilestorageNewFails(t *
 	t.Cleanup(func() { os.Chmod(storageDir, 0700) })
 
 	svc := NewBarrierService(dir, slog.Default())
-	err := svc.Initialize("test-password", "software")
+	err := svc.Initialize("test-password", "passphrase")
 	assert.Error(t, err)
 }
 
@@ -1085,9 +1085,9 @@ func TestFA_BarrierService_Initialize_StorageDirExistsButFilestorageNewFails(t *
 // when root key exists (AlreadyInit path).
 func TestFA_BarrierService_Initialize_ExistsCheckError(t *testing.T) {
 	svc := newTestBarrierService(t)
-	require.NoError(t, svc.Initialize("pw1", "software"))
+	require.NoError(t, svc.Initialize("pw1", "passphrase"))
 
-	err := svc.Initialize("pw2", "software")
+	err := svc.Initialize("pw2", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierAlreadyInit)
 }
 
@@ -1095,17 +1095,17 @@ func TestFA_BarrierService_Initialize_ExistsCheckError(t *testing.T) {
 // when best strategy is software and password is empty.
 func TestFA_BarrierService_Initialize_PasswordRequired(t *testing.T) {
 	svc := newTestBarrierService(t)
-	err := svc.Initialize("", "software")
+	err := svc.Initialize("", "passphrase")
 	assert.ErrorIs(t, err, ErrBarrierPasswordRequired)
 }
 
 // TestFA_BarrierService_Unseal_HappyPath covers L219-243: full unseal path.
 func TestFA_BarrierService_Unseal_HappyPath(t *testing.T) {
 	svc := newTestBarrierService(t)
-	require.NoError(t, svc.Initialize("pw", "software"))
+	require.NoError(t, svc.Initialize("pw", "passphrase"))
 	require.NoError(t, svc.Seal())
 
-	err := svc.Unseal("pw", "software")
+	err := svc.Unseal("pw", "passphrase")
 	assert.NoError(t, err)
 	assert.True(t, svc.IsUnsealed())
 }
@@ -1116,12 +1116,12 @@ func TestFA_BarrierService_Unseal_BadPassword(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
 
-	require.NoError(t, svc.Initialize("correct-password", "software"))
+	require.NoError(t, svc.Initialize("correct-password", "passphrase"))
 	require.NoError(t, svc.Seal())
 
 	// Create new service instance to force re-read from disk.
 	svc2 := NewBarrierService(dir, slog.Default())
-	err := svc2.Unseal("wrong-password", "software")
+	err := svc2.Unseal("wrong-password", "passphrase")
 	assert.Error(t, err) // L236-238: unseal fails
 }
 
@@ -1148,7 +1148,7 @@ func TestFA_BarrierService_Initialize_MkdirAllFails(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(dir, 0700) })
 
 	svc := NewBarrierService(dir, slog.Default())
-	err := svc.Initialize("pw", "software")
+	err := svc.Initialize("pw", "passphrase")
 	assert.Error(t, err)
 }
 
@@ -1163,7 +1163,7 @@ func TestFA_BarrierService_Initialize_FilestorageNewFailsAfterMkdirAll(t *testin
 	require.NoError(t, os.WriteFile(storageDir, []byte("not-a-dir"), 0600))
 
 	svc := NewBarrierService(dir, slog.Default())
-	err := svc.Initialize("pw", "software")
+	err := svc.Initialize("pw", "passphrase")
 	assert.Error(t, err)
 }
 
@@ -1172,7 +1172,7 @@ func TestFA_BarrierService_Initialize_FilestorageNewFailsAfterMkdirAll(t *testin
 func TestFA_BarrierService_Unseal_FilestorageNewFails(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
-	require.NoError(t, svc.Initialize("pw", "software"))
+	require.NoError(t, svc.Initialize("pw", "passphrase"))
 	require.NoError(t, svc.Seal())
 
 	// Replace the barrier directory with a file.
@@ -1181,7 +1181,7 @@ func TestFA_BarrierService_Unseal_FilestorageNewFails(t *testing.T) {
 	require.NoError(t, os.WriteFile(storageDir, []byte("not-a-dir"), 0600))
 
 	svc2 := NewBarrierService(dir, slog.Default())
-	err := svc2.Unseal("pw", "software")
+	err := svc2.Unseal("pw", "passphrase")
 	assert.Error(t, err) // L220-222: filestorage.New fails
 }
 

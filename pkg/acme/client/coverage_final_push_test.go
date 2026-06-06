@@ -317,6 +317,7 @@ func TestEncodePrivateKeyPEM_Ed25519SuccessCoverageFinal(t *testing.T) {
 	block, _ := pem.Decode(pemData)
 	if block == nil {
 		t.Error("expected valid PEM block")
+		return
 	}
 	if block.Type != "PRIVATE KEY" {
 		t.Errorf("expected type 'PRIVATE KEY', got %s", block.Type)
@@ -562,13 +563,6 @@ func createTestCertWithSerialCoverageFinal(t *testing.T, cn string, serial *big.
 	}
 
 	return cert
-}
-
-func encodeCertToPEMCoverageFinal(cert *x509.Certificate) []byte {
-	return pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: cert.Raw,
-	})
 }
 
 // Unused but needed for compilation

@@ -284,7 +284,7 @@ func TestValidateInitFlags_ValidSingleAdmin(t *testing.T) {
 	flags := &initFlags{
 		soPin:           "so-pin-value",
 		userPin:         "user-pin-value",
-		barrierStrategy: "software",
+		barrierStrategy: "passphrase",
 	}
 	if err := validateInitFlags(flags); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -299,7 +299,7 @@ func TestValidateInitFlags_ThresholdWithoutOfficers(t *testing.T) {
 	flags := &initFlags{
 		soPin:           "so-pin-value",
 		userPin:         "user-pin-value",
-		barrierStrategy: "software",
+		barrierStrategy: "passphrase",
 		threshold:       2,
 	}
 	err := validateInitFlags(flags)
@@ -525,7 +525,7 @@ func TestValidateInitFlags_ThresholdOneIsNotMofN(t *testing.T) {
 	flags := &initFlags{
 		soPin:           "so-pin",
 		userPin:         "user-pin",
-		barrierStrategy: "software",
+		barrierStrategy: "passphrase",
 		threshold:       1,
 	}
 	if err := validateInitFlags(flags); err == nil {
@@ -537,7 +537,7 @@ func TestValidateInitFlags_ThresholdZeroIsValid(t *testing.T) {
 	flags := &initFlags{
 		soPin:           "so-pin",
 		userPin:         "user-pin",
-		barrierStrategy: "software",
+		barrierStrategy: "passphrase",
 	}
 	if err := validateInitFlags(flags); err != nil {
 		t.Fatalf("unexpected error: %v", err)

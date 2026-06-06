@@ -23,11 +23,11 @@ import (
 	"sync"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -57,7 +57,7 @@ type Server struct {
 	logger          *slog.Logger
 	rateLimiter     *ratelimit.Limiter
 	barrier         *seal.Barrier
-	pinManager      pin.PINBackend
+	pinManager      qrdbsdk.PINBackend
 	passwordStore   staticpw.Store
 	passwordManager *staticpw.TenantPasswordStoreManager
 	server          *http3.Server
@@ -78,7 +78,7 @@ type Config struct {
 	Logger          *slog.Logger
 	RateLimiter     *ratelimit.Limiter
 	Barrier         *seal.Barrier
-	PINManager      pin.PINBackend
+	PINManager      qrdbsdk.PINBackend
 	PasswordStore   staticpw.Store
 	PasswordManager *staticpw.TenantPasswordStoreManager
 }
@@ -244,7 +244,7 @@ func (s *Server) SetBarrier(barrier *seal.Barrier) {
 
 // SetPINManager sets the PIN backend on the server. This allows the PIN
 // backend to be configured after server creation.
-func (s *Server) SetPINManager(manager pin.PINBackend) {
+func (s *Server) SetPINManager(manager qrdbsdk.PINBackend) {
 	s.pinManager = manager
 }
 

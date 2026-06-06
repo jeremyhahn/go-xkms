@@ -325,8 +325,8 @@ func TestNewPinnedTLSConfig(t *testing.T) {
 	assert.True(t, cfg.InsecureSkipVerify, "InsecureSkipVerify must be true for SPKI bootstrap")
 	// VerifyConnection must be set: this IS the actual verification
 	assert.NotNil(t, cfg.VerifyConnection, "VerifyConnection must be set for pin verification")
-	// MinVersion must be TLS 1.2+
-	assert.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+	// MinVersion must be TLS 1.3
+	assert.Equal(t, uint16(tls.VersionTLS13), cfg.MinVersion)
 }
 
 func TestNewPinnedTLSConfig_VerifiesCorrectPin(t *testing.T) {

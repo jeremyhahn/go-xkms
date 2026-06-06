@@ -28,11 +28,13 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/hardware"
 	p11 "github.com/miekg/pkcs11"
 )
@@ -282,6 +284,12 @@ func (s *PKCS11CertStorage) Delete(slot pivcert.PIVSlot) error {
 		return pivcert.NewStorageError("Delete", slot, err)
 	}
 	if err := s.hw.DeleteCert(id); err != nil {
+		// Translate the hardware-layer not-found sentinel into the pivcert API
+		// sentinel callers assert on; surface all other errors (e.g. a token
+		// that does not support deletion) unchanged.
+		if errors.Is(err, storage.ErrNotFound) {
+			return pivcert.NewStorageError("Delete", slot, pivcert.ErrCertificateNotFound)
+		}
 		return pivcert.NewStorageError("Delete", slot, err)
 	}
 	return nil

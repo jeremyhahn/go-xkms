@@ -884,7 +884,7 @@ func TestFCP5_BarrierService_BestStrategyUnlocked_SoftwareAlwaysAvailable(t *tes
 	strategy, err := svc.bestStrategyUnlocked()
 	require.NoError(t, err)
 	require.NotNil(t, strategy)
-	assert.Equal(t, "software", strategy.ID)
+	assert.Equal(t, "passphrase", strategy.ID)
 	assert.True(t, strategy.Available)
 }
 
@@ -894,7 +894,7 @@ func TestFCP5_BarrierService_BestStrategyUnlocked_AfterProbe(t *testing.T) {
 	strategy, err := svc.bestStrategyUnlocked()
 	require.NoError(t, err)
 	require.NotNil(t, strategy)
-	assert.Equal(t, "software", strategy.ID)
+	assert.Equal(t, "passphrase", strategy.ID)
 	assert.False(t, strategy.HardwareBacked)
 }
 

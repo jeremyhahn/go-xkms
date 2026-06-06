@@ -24,10 +24,10 @@
 // Required environment variables (set by the bootstrap docker-compose
 // stack; tests skip when unset so the file can also be run locally):
 //
-//   BOOTSTRAP_SERVER_URL        — https://xkms-server:8443
-//   BOOTSTRAP_NOISE_ADDR        — xkms-server:8445
-//   BOOTSTRAP_NOISE_STATIC_KEY  — hex-encoded 32-byte Curve25519 pubkey
-//   BOOTSTRAP_SPKI_PIN          — hex-encoded SHA-256 SPKI pin
+//	BOOTSTRAP_SERVER_URL        — https://xkms-server:8443
+//	BOOTSTRAP_NOISE_ADDR        — xkms-server:8445
+//	BOOTSTRAP_NOISE_STATIC_KEY  — hex-encoded 32-byte Curve25519 pubkey
+//	BOOTSTRAP_SPKI_PIN          — hex-encoded SHA-256 SPKI pin
 //
 // DANE is intentionally not exercised here: the CoreDNS fixture does
 // not serve DNSSEC AD-validated responses, and TrustService does not

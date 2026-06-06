@@ -1,6 +1,18 @@
 # PIN Management
 
-The `pkg/pin` package provides dual-PIN management with two backend implementations: software hash-based (`SoftwareBackend`) and TPM 2.0 platform auth-based (`TPM2Backend`). A `Service` wraps the chosen backend and serves as the single entry point for all PIN operations, including FIDO2 authenticator integration.
+> **Authoritative reference:** [pin/README.md](../pin/README.md). After
+> Phase 2 the PIN service moved down to `go-qrdb/pkg/pin`; xkms ships only
+> the TPM 2.0 hardware backend in `pkg/pintpm2`. Read the canonical doc
+> for the current `PINBackend` contract, composition pattern
+> (`qrdbserver.WithPINBackend`), and storage layout. This page is kept as
+> a historical reference for the barrier-side integration only.
+
+The PIN service provides dual-PIN management with two backend
+implementations: software hash-based (`SoftwareBackend`, in
+`go-qrdb/pkg/pin`) and TPM 2.0 platform auth-based (`TPM2Backend`, in
+`go-xkms/pkg/pintpm2`). A `Service` wraps the chosen backend and serves as
+the single entry point for all PIN operations, including FIDO2
+authenticator integration.
 
 ## PIN Model
 

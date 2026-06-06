@@ -924,16 +924,16 @@ func TestNewFromEnv(t *testing.T) {
 	}()
 
 	t.Run("with static credentials", func(t *testing.T) {
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-		os.Setenv(envAWSHostedZoneID, "Z123456")
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Unsetenv(envAWSPropagationTimeout)
-		os.Unsetenv(envAWSPollingInterval)
-		os.Unsetenv(envAWSTTL)
-		os.Unsetenv(envRoute53PropagationTimeout)
-		os.Unsetenv(envRoute53PollingInterval)
-		os.Unsetenv(envRoute53TTL)
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+		_ = os.Setenv(envAWSHostedZoneID, "Z123456")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Unsetenv(envAWSPropagationTimeout)
+		_ = os.Unsetenv(envAWSPollingInterval)
+		_ = os.Unsetenv(envAWSTTL)
+		_ = os.Unsetenv(envRoute53PropagationTimeout)
+		_ = os.Unsetenv(envRoute53PollingInterval)
+		_ = os.Unsetenv(envRoute53TTL)
 
 		ctx := context.Background()
 		provider, err := NewFromEnv(ctx)
@@ -946,15 +946,15 @@ func TestNewFromEnv(t *testing.T) {
 	})
 
 	t.Run("with AWS timeout env vars", func(t *testing.T) {
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Setenv(envAWSPropagationTimeout, "60s")
-		os.Setenv(envAWSPollingInterval, "2s")
-		os.Setenv(envAWSTTL, "300")
-		os.Unsetenv(envRoute53PropagationTimeout)
-		os.Unsetenv(envRoute53PollingInterval)
-		os.Unsetenv(envRoute53TTL)
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Setenv(envAWSPropagationTimeout, "60s")
+		_ = os.Setenv(envAWSPollingInterval, "2s")
+		_ = os.Setenv(envAWSTTL, "300")
+		_ = os.Unsetenv(envRoute53PropagationTimeout)
+		_ = os.Unsetenv(envRoute53PollingInterval)
+		_ = os.Unsetenv(envRoute53TTL)
 
 		ctx := context.Background()
 		provider, err := NewFromEnv(ctx)
@@ -966,15 +966,15 @@ func TestNewFromEnv(t *testing.T) {
 	})
 
 	t.Run("Route53 specific env vars take precedence", func(t *testing.T) {
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Setenv(envAWSPropagationTimeout, "60s")
-		os.Setenv(envAWSPollingInterval, "2s")
-		os.Setenv(envAWSTTL, "300")
-		os.Setenv(envRoute53PropagationTimeout, "90s")
-		os.Setenv(envRoute53PollingInterval, "3s")
-		os.Setenv(envRoute53TTL, "600")
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Setenv(envAWSPropagationTimeout, "60s")
+		_ = os.Setenv(envAWSPollingInterval, "2s")
+		_ = os.Setenv(envAWSTTL, "300")
+		_ = os.Setenv(envRoute53PropagationTimeout, "90s")
+		_ = os.Setenv(envRoute53PollingInterval, "3s")
+		_ = os.Setenv(envRoute53TTL, "600")
 
 		ctx := context.Background()
 		provider, err := NewFromEnv(ctx)
@@ -987,15 +987,15 @@ func TestNewFromEnv(t *testing.T) {
 	})
 
 	t.Run("with ambient credentials", func(t *testing.T) {
-		os.Unsetenv(envAWSAccessKeyID)
-		os.Unsetenv(envAWSSecretAccessKey)
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Unsetenv(envAWSPropagationTimeout)
-		os.Unsetenv(envAWSPollingInterval)
-		os.Unsetenv(envAWSTTL)
-		os.Unsetenv(envRoute53PropagationTimeout)
-		os.Unsetenv(envRoute53PollingInterval)
-		os.Unsetenv(envRoute53TTL)
+		_ = os.Unsetenv(envAWSAccessKeyID)
+		_ = os.Unsetenv(envAWSSecretAccessKey)
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Unsetenv(envAWSPropagationTimeout)
+		_ = os.Unsetenv(envAWSPollingInterval)
+		_ = os.Unsetenv(envAWSTTL)
+		_ = os.Unsetenv(envRoute53PropagationTimeout)
+		_ = os.Unsetenv(envRoute53PollingInterval)
+		_ = os.Unsetenv(envRoute53TTL)
 
 		ctx := context.Background()
 		provider, err := NewFromEnv(ctx)
@@ -1008,11 +1008,11 @@ func TestNewFromEnv(t *testing.T) {
 	})
 
 	t.Run("with invalid duration", func(t *testing.T) {
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Setenv(envAWSPropagationTimeout, "invalid")
-		os.Unsetenv(envRoute53PropagationTimeout)
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Setenv(envAWSPropagationTimeout, "invalid")
+		_ = os.Unsetenv(envRoute53PropagationTimeout)
 
 		ctx := context.Background()
 		provider, err := NewFromEnv(ctx)
@@ -1023,11 +1023,11 @@ func TestNewFromEnv(t *testing.T) {
 	})
 
 	t.Run("with invalid TTL", func(t *testing.T) {
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-		os.Setenv(envAWSRegion, "us-east-1")
-		os.Setenv(envAWSTTL, "invalid")
-		os.Unsetenv(envRoute53TTL)
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Setenv(envAWSSecretAccessKey, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Setenv(envAWSTTL, "invalid")
+		_ = os.Unsetenv(envRoute53TTL)
 
 		ctx := context.Background()
 		provider, err := NewFromEnv(ctx)
@@ -1038,10 +1038,10 @@ func TestNewFromEnv(t *testing.T) {
 	})
 
 	t.Run("with partial static credentials error on secret file", func(t *testing.T) {
-		os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
-		os.Unsetenv(envAWSSecretAccessKey)
-		os.Setenv(envAWSSecretAccessKey+"_FILE", "/nonexistent/path/to/file")
-		os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Setenv(envAWSAccessKeyID, "AKIAIOSFODNN7EXAMPLE")
+		_ = os.Unsetenv(envAWSSecretAccessKey)
+		_ = os.Setenv(envAWSSecretAccessKey+"_FILE", "/nonexistent/path/to/file")
+		_ = os.Setenv(envAWSRegion, "us-east-1")
 
 		ctx := context.Background()
 		_, err := NewFromEnv(ctx)
@@ -1049,7 +1049,7 @@ func TestNewFromEnv(t *testing.T) {
 		assert.Contains(t, err.Error(), "secret_access_key")
 
 		// Cleanup
-		os.Unsetenv(envAWSSecretAccessKey + "_FILE")
+		_ = os.Unsetenv(envAWSSecretAccessKey + "_FILE")
 	})
 }
 
@@ -1072,27 +1072,27 @@ func TestNewFromEnvFileSupport(t *testing.T) {
 		// Create temporary files for credentials
 		accessKeyFile, err := os.CreateTemp("", "aws-access-key")
 		require.NoError(t, err)
-		defer os.Remove(accessKeyFile.Name())
+		defer func() { _ = os.Remove(accessKeyFile.Name()) }()
 
 		secretKeyFile, err := os.CreateTemp("", "aws-secret-key")
 		require.NoError(t, err)
-		defer os.Remove(secretKeyFile.Name())
+		defer func() { _ = os.Remove(secretKeyFile.Name()) }()
 
 		// Write credentials to files
 		_, err = accessKeyFile.WriteString("AKIAIOSFODNN7EXAMPLE")
 		require.NoError(t, err)
-		accessKeyFile.Close()
+		_ = accessKeyFile.Close()
 
 		_, err = secretKeyFile.WriteString("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
 		require.NoError(t, err)
-		secretKeyFile.Close()
+		_ = secretKeyFile.Close()
 
 		// Set file environment variables
-		os.Unsetenv(envAWSAccessKeyID)
-		os.Unsetenv(envAWSSecretAccessKey)
-		os.Setenv(envAWSAccessKeyID+"_FILE", accessKeyFile.Name())
-		os.Setenv(envAWSSecretAccessKey+"_FILE", secretKeyFile.Name())
-		os.Setenv(envAWSRegion, "us-east-1")
+		_ = os.Unsetenv(envAWSAccessKeyID)
+		_ = os.Unsetenv(envAWSSecretAccessKey)
+		_ = os.Setenv(envAWSAccessKeyID+"_FILE", accessKeyFile.Name())
+		_ = os.Setenv(envAWSSecretAccessKey+"_FILE", secretKeyFile.Name())
+		_ = os.Setenv(envAWSRegion, "us-east-1")
 
 		ctx := context.Background()
 		provider, err := NewFromEnv(ctx)
@@ -1101,8 +1101,8 @@ func TestNewFromEnvFileSupport(t *testing.T) {
 	})
 
 	t.Run("error on non-existent file", func(t *testing.T) {
-		os.Unsetenv(envAWSAccessKeyID)
-		os.Setenv(envAWSAccessKeyID+"_FILE", "/nonexistent/path/to/file")
+		_ = os.Unsetenv(envAWSAccessKeyID)
+		_ = os.Setenv(envAWSAccessKeyID+"_FILE", "/nonexistent/path/to/file")
 
 		ctx := context.Background()
 		_, err := NewFromEnv(ctx)
@@ -1234,8 +1234,8 @@ func TestLoadAWSConfig(t *testing.T) {
 // setEnvOrUnset sets an environment variable or unsets it if value is empty
 func setEnvOrUnset(key, value string) {
 	if value == "" {
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 	} else {
-		os.Setenv(key, value)
+		_ = os.Setenv(key, value)
 	}
 }

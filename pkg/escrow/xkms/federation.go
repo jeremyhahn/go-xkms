@@ -335,7 +335,7 @@ func (a *FederationAgent) Close() error {
 // buildTransport creates an http.Transport with optional mTLS configuration.
 func buildTransport(config *FederationConfig) (*http.Transport, error) {
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion: tls.VersionTLS13,
 	}
 
 	// Load client certificate for mTLS if provided.

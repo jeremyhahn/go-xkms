@@ -23,8 +23,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	client "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/virtualdevice"
 	"github.com/spf13/cobra"
@@ -93,7 +93,7 @@ func defaultFIDO2HandlerFactory(config *fido2.Config) (fido2.Handler, error) {
 // the given directory as the root for file storage. This adapts the go-xkms
 // file storage backend into the authenticator's credential storage interface.
 func newFileCredentialStorage(stateDir string) (authenticator.StatefulCredentialStorage, error) {
-	backend, err := filestorage.New(stateDir)
+	backend, err := client.NewFileStorageBackend(stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrVirtualStorageInit, err)
 	}

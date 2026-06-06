@@ -158,7 +158,7 @@ func (s *BarrierAutoUnsealService) TryAutoUnseal(ctx context.Context) (bool, err
 	}
 
 	// 2. Verify current PCR values match the policy.
-	match, verifyErr := s.VerifyPCRs(ctx, policy)
+	match, verifyErr := s.verifyPCRs(ctx, policy)
 	if verifyErr != nil {
 		s.logger.Error("barrier-auto-unseal: PCR verification failed", "error", verifyErr)
 		return false, verifyErr
@@ -187,10 +187,17 @@ func (s *BarrierAutoUnsealService) TryAutoUnseal(ctx context.Context) (bool, err
 	return true, nil
 }
 
-// VerifyPCRs checks if current TPM PCR values match the given policy.
+// verifyPCRs checks if current TPM PCR values match the given policy.
 // Returns (true, nil) on match, (false, nil) on mismatch, or (false, err)
 // on TPM or validation errors.
-func (s *BarrierAutoUnsealService) VerifyPCRs(ctx context.Context, policy *pcrpolicy.PCRPolicyEntity) (bool, error) {
+//
+// Unexported on purpose: it takes a *pcrpolicy.PCRPolicyEntity, and pcr_policy
+// transitively imports the go-qrdb/sdk/go generic DAO types. If this method were
+// exported, the wails v2 binding generator would try to type-load that generics
+// package and abort with "package go-qrdb/sdk/go without types", preventing the
+// GUI from launching. It is only used internally (by TryAutoUnseal); the frontend
+// never calls it.
+func (s *BarrierAutoUnsealService) verifyPCRs(ctx context.Context, policy *pcrpolicy.PCRPolicyEntity) (bool, error) {
 	if policy == nil {
 		return false, nil
 	}
@@ -324,7 +331,7 @@ func (s *BarrierAutoUnsealService) GetAutoUnsealStatus() (*BarrierAutoUnsealStat
 
 	// If the TPM is available, check whether current PCR values match.
 	if status.TPMAvailable {
-		match, verifyErr := s.VerifyPCRs(context.Background(), policy)
+		match, verifyErr := s.verifyPCRs(context.Background(), policy)
 		if verifyErr == nil {
 			status.PCRsMatch = match
 		}

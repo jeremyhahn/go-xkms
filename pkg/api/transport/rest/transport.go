@@ -97,7 +97,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 			tlsConfig = t.config.TLSConfig
 		} else {
 			tlsConfig = &tls.Config{
-				MinVersion: tls.VersionTLS12,
+				MinVersion: tls.VersionTLS13,
 			}
 
 			// Load CA certificate if specified
@@ -1080,385 +1080,94 @@ func (t *Transport) AttestKey(ctx context.Context, req *transport.AttestKeyReque
 	return &resp, nil
 }
 
-// ListUsers returns a list of all users.
-// Requires the server to have user management enabled.
-func (t *Transport) ListUsers(ctx context.Context, opts ...transport.ListOption) (*transport.ListUsersResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-
-	path := transport.AppendPaginationQuery("/api/v1/users/", transport.BuildPageRequest(opts...), false)
-	data, err := t.DoRawRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// The server returns UserListResponse with "users" and "total" fields
-	var serverResp struct {
-		Users []struct {
-			ID              string `json:"id"`
-			Username        string `json:"username"`
-			DisplayName     string `json:"display_name"`
-			Role            string `json:"role"`
-			Enabled         bool   `json:"enabled"`
-			CredentialCount int    `json:"credential_count"`
-			CreatedAt       string `json:"created_at"`
-			LastLoginAt     string `json:"last_login_at,omitempty"`
-		} `json:"users"`
-		Total int `json:"total"`
-	}
-	if err := json.Unmarshal(data, &serverResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	// Convert to SDK response format
-	users := make([]transport.UserInfo, len(serverResp.Users))
-	for i, u := range serverResp.Users {
-		users[i] = transport.UserInfo{
-			Username:    u.Username,
-			DisplayName: u.DisplayName,
-			Role:        u.Role,
-			Enabled:     u.Enabled,
-		}
-	}
-
-	return &transport.ListUsersResponse{
-		Users: users,
-	}, nil
-}
-
-// GetUser returns information about a specific user.
-// The userID parameter should be the base64url-encoded user ID.
-// Requires the server to have user management enabled.
-func (t *Transport) GetUser(ctx context.Context, userID string) (*transport.GetUserResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-
-	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(userID))
-	data, err := t.DoRawRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// The server returns UserDetailResponse
-	var serverResp struct {
-		ID          string `json:"id"`
-		Username    string `json:"username"`
-		DisplayName string `json:"display_name"`
-		Role        string `json:"role"`
-		Enabled     bool   `json:"enabled"`
-		Credentials []struct {
-			ID         string `json:"id"`
-			Name       string `json:"name"`
-			CreatedAt  string `json:"created_at"`
-			LastUsedAt string `json:"last_used_at,omitempty"`
-		} `json:"credentials"`
-		CreatedAt   string `json:"created_at"`
-		LastLoginAt string `json:"last_login_at,omitempty"`
-	}
-	if err := json.Unmarshal(data, &serverResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	return &transport.GetUserResponse{
-		User: transport.UserInfo{
-			Username:    serverResp.Username,
-			DisplayName: serverResp.DisplayName,
-			Role:        serverResp.Role,
-			Enabled:     serverResp.Enabled,
-		},
-	}, nil
-}
-
-// DeleteUser deletes a user.
-// The userID parameter should be the base64url-encoded user ID.
-// Requires the server to have user management enabled.
-func (t *Transport) DeleteUser(ctx context.Context, userID string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(userID))
-	_, err := t.DoRawRequest(ctx, http.MethodDelete, path, nil)
-	return err
-}
-
-// EnableUser enables a user account.
-// The userID parameter should be the base64url-encoded user ID.
-// Requires the server to have user management enabled.
-func (t *Transport) EnableUser(ctx context.Context, userID string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(userID))
-	body := map[string]interface{}{
-		"enabled": true,
-	}
-	_, err := t.DoRawRequest(ctx, http.MethodPut, path, body)
-	return err
-}
-
-// DisableUser disables a user account.
-// The userID parameter should be the base64url-encoded user ID.
-// Requires the server to have user management enabled.
-func (t *Transport) DisableUser(ctx context.Context, userID string) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-
-	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(userID))
-	body := map[string]interface{}{
-		"enabled": false,
-	}
-	_, err := t.DoRawRequest(ctx, http.MethodPut, path, body)
-	return err
-}
-
-// ListUserCredentials returns a list of credentials for a user.
-// The userID parameter should be the base64url-encoded user ID.
-// Requires the server to have user management enabled.
-func (t *Transport) ListUserCredentials(ctx context.Context, userID string) (*transport.ListUserCredentialsResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-
-	// The user detail endpoint includes credentials
-	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(userID))
-	data, err := t.DoRawRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse credentials from user detail response
-	var serverResp struct {
-		Credentials []struct {
-			ID         string `json:"id"`
-			Name       string `json:"name"`
-			CreatedAt  string `json:"created_at"`
-			LastUsedAt string `json:"last_used_at,omitempty"`
-		} `json:"credentials"`
-	}
-	if err := json.Unmarshal(data, &serverResp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-
-	credentials := make([]transport.CredentialInfo, len(serverResp.Credentials))
-	for i, cred := range serverResp.Credentials {
-		credentials[i] = transport.CredentialInfo{
-			ID:          cred.ID,
-			DisplayName: cred.Name,
-		}
-	}
-
-	return &transport.ListUserCredentialsResponse{
-		Credentials: credentials,
-	}, nil
-}
-
 // Authentication Flow Operations - WebAuthn/FIDO2 server-side operations
 
 // BeginRegistration begins a WebAuthn registration flow.
-// Requires the server to have WebAuthn enabled.
+// Requires the server to have WebAuthn enabled. It returns the JSON-marshaled
+// WebAuthn options together with an opaque session ID; the caller drives an
+// authenticator with the options and echoes the session ID back to
+// FinishRegistration. This is the lossless SDK ceremony that mirrors the
+// browser ceremony served by pkg/webauthn/http.
 func (t *Transport) BeginRegistration(ctx context.Context, req *transport.BeginRegistrationRequest) (*transport.BeginRegistrationResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 
-	// Build the WebAuthn request body
-	body := map[string]interface{}{
-		"email": req.Username,
-	}
-	if req.DisplayName != "" {
-		body["display_name"] = req.DisplayName
-	}
-
-	data, respHeaders, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/registration/begin", body, nil)
+	data, _, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/sdk/registration/begin", req, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse the WebAuthn PublicKeyCredentialCreationOptions response
-	var options struct {
-		Challenge string `json:"challenge"`
-		User      struct {
-			ID          string `json:"id"`
-			Name        string `json:"name"`
-			DisplayName string `json:"displayName"`
-		} `json:"user"`
-		RelyingParty struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"rp"`
-		PubKeyCredParams []struct {
-			Type string `json:"type"`
-			Alg  int    `json:"alg"`
-		} `json:"pubKeyCredParams"`
-	}
-	if err := json.Unmarshal(data, &options); err != nil {
+	var resp transport.BeginRegistrationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-
-	// Get session ID from response header (needed for FinishRegistration)
-	sessionID := respHeaders.Get("X-Session-Id")
-	_ = sessionID // Session ID is returned in headers, client should track it
-
-	// Convert to SDK response format
-	credParams := make([]transport.CredentialParam, len(options.PubKeyCredParams))
-	for i, param := range options.PubKeyCredParams {
-		credParams[i] = transport.CredentialParam{
-			Type: param.Type,
-			Alg:  param.Alg,
-		}
-	}
-
-	return &transport.BeginRegistrationResponse{
-		Challenge:        options.Challenge,
-		UserID:           options.User.ID,
-		RPID:             options.RelyingParty.ID,
-		RPName:           options.RelyingParty.Name,
-		CredentialParams: credParams,
-	}, nil
+	return &resp, nil
 }
 
 // FinishRegistration completes a WebAuthn registration flow.
-// Requires the server to have WebAuthn enabled.
+// Requires the server to have WebAuthn enabled. The request carries the session
+// ID from BeginRegistration and the authenticator attestation as WebAuthn
+// PublicKeyCredential JSON.
 func (t *Transport) FinishRegistration(ctx context.Context, req *transport.FinishRegistrationRequest) (*transport.FinishRegistrationResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 
-	// Build the attestation response body that the WebAuthn server expects
-	// This matches the format from navigator.credentials.create()
-	body := map[string]interface{}{
-		"id":    req.CredentialID,
-		"rawId": req.CredentialID,
-		"type":  "public-key",
-		"response": map[string]interface{}{
-			"clientDataJSON":    req.ClientDataJSON,
-			"attestationObject": req.AttestationData,
-		},
-	}
-
-	// The session ID should be passed in a header
-	reqHeaders := map[string]string{
-		"X-Session-Id": req.Username, // Username is used as session lookup key
-	}
-
-	data, _, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/registration/finish", body, reqHeaders)
+	data, _, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/sdk/registration/finish", req, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse the auth response
-	var authResp struct {
-		Token  string `json:"token"`
-		UserID string `json:"user_id"`
-	}
-	if err := json.Unmarshal(data, &authResp); err != nil {
+	var resp transport.FinishRegistrationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-
-	return &transport.FinishRegistrationResponse{
-		Success:      true,
-		CredentialID: req.CredentialID,
-		Message:      "Registration successful",
-	}, nil
+	return &resp, nil
 }
 
-// BeginAuthentication begins a WebAuthn authentication flow.
-// Requires the server to have WebAuthn enabled.
+// BeginAuthentication begins a WebAuthn authentication (login) flow.
+// Requires the server to have WebAuthn enabled. It returns the JSON-marshaled
+// WebAuthn assertion options together with an opaque session ID; the caller
+// drives an authenticator with the options and echoes the session ID back to
+// FinishAuthentication. This is the lossless SDK ceremony that mirrors the
+// browser ceremony served by pkg/webauthn/http, symmetric to BeginRegistration.
 func (t *Transport) BeginAuthentication(ctx context.Context, req *transport.BeginAuthenticationRequest) (*transport.BeginAuthenticationResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 
-	// Build the request body
-	body := map[string]interface{}{}
-	if req.Username != "" {
-		body["email"] = req.Username
-	}
-
-	data, respHeaders, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/login/begin", body, nil)
+	data, _, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/sdk/authentication/begin", req, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse the WebAuthn PublicKeyCredentialRequestOptions response
-	var options struct {
-		Challenge        string `json:"challenge"`
-		RelyingPartyID   string `json:"rpId"`
-		AllowCredentials []struct {
-			ID   string `json:"id"`
-			Type string `json:"type"`
-		} `json:"allowCredentials"`
-	}
-	if err := json.Unmarshal(data, &options); err != nil {
+	var resp transport.BeginAuthenticationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-
-	// Get session ID and user ID from response headers
-	_ = respHeaders.Get("X-Session-Id")
-	_ = respHeaders.Get("X-User-Id")
-
-	// Extract credential IDs
-	credentialIDs := make([]string, len(options.AllowCredentials))
-	for i, cred := range options.AllowCredentials {
-		credentialIDs[i] = cred.ID
-	}
-
-	return &transport.BeginAuthenticationResponse{
-		Challenge:     options.Challenge,
-		RPID:          options.RelyingPartyID,
-		CredentialIDs: credentialIDs,
-	}, nil
+	return &resp, nil
 }
 
-// FinishAuthentication completes a WebAuthn authentication flow.
-// Requires the server to have WebAuthn enabled.
+// FinishAuthentication completes a WebAuthn authentication (login) flow.
+// Requires the server to have WebAuthn enabled. The request carries the session
+// ID from BeginAuthentication and the authenticator assertion as WebAuthn
+// PublicKeyCredential JSON.
 func (t *Transport) FinishAuthentication(ctx context.Context, req *transport.FinishAuthenticationRequest) (*transport.FinishAuthenticationResponse, error) {
 	if !t.connected {
 		return nil, ErrNotConnected
 	}
 
-	// Build the assertion response body that the WebAuthn server expects
-	// This matches the format from navigator.credentials.get()
-	body := map[string]interface{}{
-		"id":    req.CredentialID,
-		"rawId": req.CredentialID,
-		"type":  "public-key",
-		"response": map[string]interface{}{
-			"clientDataJSON":    req.ClientDataJSON,
-			"authenticatorData": req.AuthenticatorData,
-			"signature":         req.Signature,
-		},
-	}
-
-	// The session ID and user ID should be passed in headers
-	reqHeaders := map[string]string{
-		"X-Session-Id": req.Username, // Username is used as session lookup key
-	}
-
-	data, _, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/login/finish", body, reqHeaders)
+	data, _, err := t.DoRequestWithHeaders(ctx, http.MethodPost, "/api/v1/webauthn/sdk/authentication/finish", req, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Parse the auth response
-	var authResp struct {
-		Token  string `json:"token"`
-		UserID string `json:"user_id"`
-	}
-	if err := json.Unmarshal(data, &authResp); err != nil {
+	var resp transport.FinishAuthenticationResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-
-	return &transport.FinishAuthenticationResponse{
-		Success: true,
-		Token:   authResp.Token,
-		Message: "Authentication successful",
-	}, nil
+	return &resp, nil
 }
 
 // CA Operations
@@ -1979,49 +1688,6 @@ func (t *Transport) BarrierUnsealWithShares(ctx context.Context, req *transport.
 		return ErrNotConnected
 	}
 	_, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/barrier/shamir/unseal-shares", req)
-	return err
-}
-
-// BarrierShamirListShares returns metadata about stored Shamir shares.
-func (t *Transport) BarrierShamirListShares(ctx context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	if !t.connected {
-		return nil, ErrNotConnected
-	}
-	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/barrier/shamir/shares", nil)
-	if err != nil {
-		return nil, err
-	}
-	var resp transport.BarrierShamirSharesResponse
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return &resp, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (t *Transport) BarrierShamirDeleteShare(ctx context.Context, req *transport.BarrierShamirDeleteShareRequest) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	_, err := t.DoRawRequest(ctx, http.MethodDelete, fmt.Sprintf("/api/v1/barrier/shamir/shares/%d", req.Index), nil)
-	return err
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (t *Transport) BarrierShamirDeleteAllShares(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	_, err := t.DoRawRequest(ctx, http.MethodDelete, "/api/v1/barrier/shamir/shares", nil)
-	return err
-}
-
-// BarrierShamirVerify verifies the integrity of stored Shamir shares.
-func (t *Transport) BarrierShamirVerify(ctx context.Context) error {
-	if !t.connected {
-		return ErrNotConnected
-	}
-	_, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/barrier/shamir/verify", nil)
 	return err
 }
 
@@ -2770,4 +2436,165 @@ func (t *Transport) GetCredentialStrategy(ctx context.Context) (*transport.Crede
 	}
 
 	return &resp, nil
+}
+
+// ==================== User Operations ====================
+//
+// The REST transport reaches the xkms user API exposed under /api/v1/users.
+
+// CreateUser creates a new xkms user.
+func (t *Transport) CreateUser(ctx context.Context, req *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	body := map[string]string{
+		"username":     req.Username,
+		"display_name": req.DisplayName,
+		"role":         req.Role,
+		"tenant_id":    req.TenantID,
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodPost, "/api/v1/users/", body)
+	if err != nil {
+		return nil, err
+	}
+
+	var user transport.UserInfo
+	if err := json.Unmarshal(data, &user); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &transport.GetUserResponse{User: user}, nil
+}
+
+// ListUsers lists xkms users.
+func (t *Transport) ListUsers(ctx context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/users/", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp transport.ListUsersResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// GetUser retrieves a single xkms user by username.
+func (t *Transport) GetUser(ctx context.Context, username string) (*transport.GetUserResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
+	data, err := t.DoRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var user transport.UserInfo
+	if err := json.Unmarshal(data, &user); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &transport.GetUserResponse{User: user}, nil
+}
+
+// DeleteUser removes an xkms user by username.
+func (t *Transport) DeleteUser(ctx context.Context, username string) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+
+	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
+	if _, err := t.DoRawRequest(ctx, http.MethodDelete, path, nil); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// EnableUser enables an xkms user by username.
+func (t *Transport) EnableUser(ctx context.Context, username string) error {
+	return t.setUserEnabled(ctx, username, true)
+}
+
+// DisableUser disables an xkms user by username.
+func (t *Transport) DisableUser(ctx context.Context, username string) error {
+	return t.setUserEnabled(ctx, username, false)
+}
+
+// setUserEnabled toggles the enabled state of an xkms user.
+func (t *Transport) setUserEnabled(ctx context.Context, username string, enabled bool) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+
+	path := fmt.Sprintf("/api/v1/users/%s", url.PathEscape(username))
+	body := map[string]bool{"enabled": enabled}
+	if _, err := t.DoRawRequest(ctx, http.MethodPut, path, body); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// BindUserCert binds an mTLS certificate SPKI thumbprint to an xkms user.
+func (t *Transport) BindUserCert(ctx context.Context, username, thumbprint string, notAfterUnix int64) error {
+	if !t.connected {
+		return ErrNotConnected
+	}
+
+	path := fmt.Sprintf("/api/v1/users/%s/cert-bindings", url.PathEscape(username))
+	body := map[string]any{
+		"thumbprint":     thumbprint,
+		"not_after_unix": notAfterUnix,
+	}
+	if _, err := t.DoRawRequest(ctx, http.MethodPost, path, body); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ListUserCredentials lists the credentials registered to an xkms user.
+func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*transport.ListUserCredentialsResponse, error) {
+	if !t.connected {
+		return nil, ErrNotConnected
+	}
+
+	path := fmt.Sprintf("/api/v1/users/%s/credentials", url.PathEscape(username))
+	data, err := t.DoRawRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var raw struct {
+		Credentials []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"credentials"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	resp := &transport.ListUserCredentialsResponse{
+		Credentials: make([]transport.CredentialInfo, 0, len(raw.Credentials)),
+	}
+	for _, c := range raw.Credentials {
+		resp.Credentials = append(resp.Credentials, transport.CredentialInfo{
+			ID:          c.ID,
+			DisplayName: c.Name,
+		})
+	}
+
+	return resp, nil
 }

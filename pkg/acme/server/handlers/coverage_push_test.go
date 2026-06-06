@@ -790,13 +790,19 @@ func TestCoveragePush_NewAccountHandler_OnlyReturnExisting_NotFound(t *testing.T
 	assertErrorType(t, w, "accountDoesNotExist", http.StatusNotFound)
 }
 
+// TestCoveragePush_NewAccountHandler_AccountExists_NotOnlyReturn covers
+// idempotent re-registration without onlyReturnExisting. Per RFC 8555
+// §7.3 the server MUST respond 200 (OK) with the existing account URL
+// when the supplied key already maps to a registered account; returning
+// 409 here would break stock ACME clients that recover the KID from the
+// response on retry.
 func TestCoveragePush_NewAccountHandler_AccountExists_NotOnlyReturn(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
 	key := generateTestKey(t)
 
-	// First create an account
+	// First registration creates the account.
 	payload := map[string]interface{}{
 		"contact":              []string{"mailto:test@example.com"},
 		"termsOfServiceAgreed": true,
@@ -806,13 +812,16 @@ func TestCoveragePush_NewAccountHandler_AccountExists_NotOnlyReturn(t *testing.T
 	w := httptest.NewRecorder()
 	service.NewAccountHandler(w, req)
 	require.Equal(t, http.StatusCreated, w.Code)
+	createdLocation := w.Header().Get("Location")
+	require.NotEmpty(t, createdLocation)
 
-	// Try to create again without onlyReturnExisting
+	// Second registration with the same key without onlyReturnExisting.
 	req2 := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload, false, 0)
 	w2 := httptest.NewRecorder()
 	service.NewAccountHandler(w2, req2)
 
-	assert.Equal(t, http.StatusConflict, w2.Code)
+	assert.Equal(t, http.StatusOK, w2.Code, "RFC 8555 §7.3 requires 200 for idempotent re-registration")
+	assert.Equal(t, createdLocation, w2.Header().Get("Location"), "Location header must point to the same existing account")
 }
 
 func TestCoveragePush_NewAccountHandler_AccountExists_OnlyReturn(t *testing.T) {

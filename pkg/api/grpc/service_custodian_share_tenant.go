@@ -23,9 +23,11 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Typed errors for custodian, share, and tenant gRPC operations.
@@ -81,6 +83,11 @@ var tenantErrorToGRPC = map[error]codes.Code{
 	seal.ErrAlreadyInitialized:  codes.AlreadyExists,
 	seal.ErrAlreadyUnsealed:     codes.AlreadyExists,
 	seal.ErrNilSystemBarrier:    codes.Unavailable,
+
+	// Two-phase tenant barrier (§3.6) servicer errors.
+	xkms.ErrTenantPassphraseRequired: codes.InvalidArgument,
+	xkms.ErrTenantSharesRequired:     codes.InvalidArgument,
+	xkms.ErrTenantStrategyConflict:   codes.FailedPrecondition,
 }
 
 // Package-level service references, set via their respective setter functions.
@@ -666,10 +673,11 @@ func (s *Service) DeleteTenant(ctx context.Context, req *pb.DeleteTenantRequest)
 	return &emptypb.Empty{}, nil
 }
 
-// TenantBarrierInit initializes the barrier for a tenant. Tenant barriers
-// share the system barrier's root key and encryption lifecycle, so this
-// endpoint verifies the tenant exists and confirms the system barrier's
-// initialization state.
+// TenantBarrierInit initializes the per-tenant barrier (Phase 2 of the §3.6
+// two-phase model). The tenant admin's passphrase is taken verbatim from the
+// request secret; the server never generates a tenant secret. The work is
+// delegated to the XKMSService servicer so the security invariant lives in
+// exactly one place.
 func (s *Service) TenantBarrierInit(ctx context.Context, req *pb.TenantBarrierInitRequest) (*emptypb.Empty, error) {
 	if barrierRegistry == nil {
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
@@ -684,19 +692,26 @@ func (s *Service) TenantBarrierInit(ctx context.Context, req *pb.TenantBarrierIn
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	// Verify the tenant exists. Tenant barriers delegate initialization to the
-	// system barrier, so we only validate tenant existence here.
-	if _, err := barrierRegistry.Tenant(tenantID); err != nil {
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+	if err := svc.TenantBarrierInit(ctx, &transport.TenantBarrierInitRequest{
+		TenantID:   tenantID,
+		Passphrase: req.GetSecret(),
+		Strategy:   req.GetStrategy(),
+		Threshold:  int(req.GetThreshold()),
+		Shares:     int(req.GetShares()),
+	}); err != nil {
 		return nil, mapTenantError(err, "tenant barrier init")
 	}
 
 	return &emptypb.Empty{}, nil
 }
 
-// TenantBarrierUnseal unseals the barrier for a tenant. Tenant barriers share
-// the system barrier's unsealing lifecycle, so this endpoint verifies the
-// tenant exists and reports the current seal state. To unseal, use the system
-// barrier's unseal endpoint.
+// TenantBarrierUnseal unseals the per-tenant barrier using the caller-supplied
+// recovery material (secret for passphrase strategies, share_values for
+// shamir). The server holds no tenant secret and delegates to the servicer.
 func (s *Service) TenantBarrierUnseal(ctx context.Context, req *pb.TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
 	if barrierRegistry == nil {
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
@@ -711,9 +726,21 @@ func (s *Service) TenantBarrierUnseal(ctx context.Context, req *pb.TenantBarrier
 		return nil, status.Error(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	// Verify the tenant exists. Tenant barriers delegate unsealing to the
-	// system barrier, so we only validate tenant existence here.
-	if _, err := barrierRegistry.Tenant(tenantID); err != nil {
+	svc, err := xkms.Get()
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
+	}
+
+	unsealReq := &transport.TenantBarrierUnsealRequest{
+		TenantID: tenantID,
+		Key:      []byte(req.GetSecret()),
+	}
+	// A single Shamir recovery share, when provided, takes precedence.
+	if shares := req.GetShareValues(); len(shares) > 0 {
+		unsealReq.Share = []byte(shares[0])
+	}
+
+	if err := svc.TenantBarrierUnseal(ctx, unsealReq); err != nil {
 		return nil, mapTenantError(err, "tenant barrier unseal")
 	}
 

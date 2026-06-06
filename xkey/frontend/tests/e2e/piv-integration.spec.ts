@@ -14,6 +14,17 @@ import {
  * delete) and backend switching through the GUI. They are designed to run
  * against the Wails dev server backed by real swtpm and softhsm2 instances
  * inside a Docker container (via `make test-e2e-piv-integration`).
+ *
+ * Slot test-id scheme (from PIV.svelte):
+ *   - Outer card:   data-testid="piv-slot-card-{slotId}"     (always present)
+ *   - Empty state:  data-testid="piv-slot-empty-{slotId}"    (no cert, no key)
+ *   - Key-only:     data-testid="piv-slot-key-only-{slotId}" (key, no cert)
+ *   - Loaded:       data-testid="piv-slot-details-{slotId}"  (cert present)
+ *
+ * Generate dialog buttons have no data-testid; use role/text matchers.
+ * Delete is via the ActionMenu overflow: data-testid="action-menu-kebab"
+ * then data-testid="piv-action-delete".
+ * BackendSelector in PIV uses showAll=false; chips are .backend-selector .filter-chip.
  */
 test.describe('PIV Integration', () => {
   test.beforeEach(async ({ page }) => {
@@ -29,52 +40,72 @@ test.describe('PIV Integration', () => {
       const wails = await isWailsMode(page).catch(() => false);
       test.skip(!wails, 'Requires Wails backend for PIV key generation');
 
-      // Click the 9A slot card to open it.
-      const slot9a = page.locator('[data-testid="piv-slot-9a"]');
-      await expect(slot9a).toBeVisible();
-      await slot9a.click();
+      // The slot card is always present (piv-slot-card-9A).
+      const slotCard = page.locator('[data-testid="piv-slot-card-9A"]');
+      await expect(slotCard).toBeVisible();
 
-      // Open the generate key dialog.
-      const generateBtn = page.locator('[data-testid="piv-generate-key"]');
-      await expect(generateBtn).toBeVisible();
-      await generateBtn.click();
+      // The "Generate Key" action button is inside the empty slot state.
+      const generateActionBtn = page.locator('[data-testid="piv-slot-action-9A"]');
+      await expect(generateActionBtn).toBeVisible();
+      await generateActionBtn.click();
+
+      // The generate dialog should open.
+      const dialog = page.locator('[data-testid="piv-generate-dialog"]');
+      await expect(dialog).toBeVisible({ timeout: 5_000 });
+
+      // Ensure the Common Name field is filled (loadDefaults is async; if it hasn't
+      // resolved yet, set a value explicitly to avoid a backend validation failure).
+      const cnInput = dialog.getByLabel('Common Name');
+      await expect(cnInput).toBeVisible();
+      const existingCN = await cnInput.inputValue();
+      if (!existingCN.trim()) {
+        await cnInput.fill('Test User');
+      }
 
       // Select ECCP256 algorithm.
       const algoSelect = page.locator('[data-testid="piv-algorithm-select"]');
       await expect(algoSelect).toBeVisible();
       await algoSelect.selectOption('ECCP256');
 
-      // Confirm generation.
-      const confirmBtn = page.locator('[data-testid="piv-generate-confirm"]');
-      await expect(confirmBtn).toBeVisible();
-      await confirmBtn.click();
+      // Click the "Generate Key" button. The empty slot cards each expose an inline
+      // "Generate Key" button, and the dialog's submit button lives in the role=dialog
+      // footer (outside the piv-generate-dialog content node), so scope to the dialog
+      // by its accessible name to target the submit button unambiguously.
+      const generateBtn = page
+        .getByRole('dialog', { name: 'Generate PIV Key' })
+        .getByRole('button', { name: 'Generate Key', exact: true });
+      await expect(generateBtn).toBeVisible();
+      await generateBtn.click();
 
-      // Wait for success notification.
-      await expect(page.getByText(/Key generated/i)).toBeVisible({ timeout: 15000 });
+      // Wait for the dialog to close (self-signed format closes on success).
+      await expect(dialog).toBeHidden({ timeout: 20_000 });
+      await waitForLoadingComplete(page);
 
-      // Slot should now show a certificate.
-      await expect(slot9a.getByText(/ECDSA|ECCP256/i)).toBeVisible();
+      // Slot should now show a key/cert state (details or key-only).
+      const slotLoaded = page.locator(
+        '[data-testid="piv-slot-details-9A"], [data-testid="piv-slot-key-only-9A"]',
+      );
+      await expect(slotLoaded).toBeVisible({ timeout: 10_000 });
 
-      // Export the certificate.
-      const exportBtn = page.locator('[data-testid="piv-export-cert"]');
-      if (await exportBtn.isVisible()) {
-        await exportBtn.click();
-        await expect(page.getByText(/BEGIN CERTIFICATE/)).toBeVisible({ timeout: 5000 });
-      }
+      // Delete: open the ActionMenu overflow on the slot card.
+      const kebab = slotCard.locator('[data-testid="action-menu-kebab"]');
+      await expect(kebab).toBeVisible();
+      await kebab.click();
 
-      // Delete the certificate.
-      const deleteBtn = page.locator('[data-testid="piv-delete-cert"]');
-      await expect(deleteBtn).toBeVisible();
-      await deleteBtn.click();
+      // Click the delete action in the overflow menu.
+      const deleteAction = page.locator('[data-testid="piv-action-delete"]');
+      await expect(deleteAction).toBeVisible({ timeout: 3_000 });
+      await deleteAction.click();
 
-      // Confirm deletion.
-      const confirmDeleteBtn = page.locator('[data-testid="piv-delete-confirm"]');
-      if (await confirmDeleteBtn.isVisible()) {
-        await confirmDeleteBtn.click();
-      }
+      // Confirm deletion in the modal.
+      const confirmDeleteBtn = page.getByRole('button', { name: 'Delete' });
+      await expect(confirmDeleteBtn).toBeVisible({ timeout: 3_000 });
+      await confirmDeleteBtn.click();
 
       // Slot should revert to empty state.
-      await expect(slot9a.getByText(/No certificate/i)).toBeVisible({ timeout: 5000 });
+      await expect(
+        page.locator('[data-testid="piv-slot-empty-9A"]'),
+      ).toBeVisible({ timeout: 10_000 });
     });
   });
 
@@ -83,29 +114,32 @@ test.describe('PIV Integration', () => {
       const wails = await isWailsMode(page).catch(() => false);
       test.skip(!wails, 'Requires Wails backend for backend switching');
 
-      // The backend selector should be visible on the PIV page.
-      const backendSelector = page.locator('[data-testid="backend-selector"]');
+      // The PIV BackendSelector renders as .backend-selector with showAll=false
+      // (no "All Backends" chip — only per-backend filter chips).
+      const backendSelector = page.locator('.backend-selector');
       await expect(backendSelector).toBeVisible();
 
-      // Select the first available backend option.
-      const options = backendSelector.locator('option');
-      const count = await options.count();
+      // Enumerate available backend chips.
+      const chips = backendSelector.locator('.filter-chip');
+      const count = await chips.count();
       expect(count).toBeGreaterThan(0);
 
-      // Pick the first option and verify slots reload without error.
-      await backendSelector.selectOption({ index: 0 });
+      // Click the first chip and verify slots reload without error.
+      await chips.nth(0).click();
       await waitForLoadingComplete(page);
 
-      // Slots should still be visible after switching.
-      await expect(page.locator('[data-testid="piv-slot-9a"]')).toBeVisible();
+      // At least one slot card should be visible after switching.
+      await expect(
+        page.locator('[data-testid="piv-slot-card-9A"]'),
+      ).toBeVisible({ timeout: 10_000 });
     });
   });
 
   test.describe('TPM2 PIV Key Lifecycle', () => {
     test('generate a key in slot 9A using TPM2 backend', async ({ page }) => {
-      // The backend selector should show TPM2 as an option when swtpm is available.
-      const backendChips = page.locator('.filter-chip, .backend-chip');
-      const tpm2Chip = backendChips.filter({ hasText: /TPM/i });
+      // Check for a TPM2 chip in the BackendSelector (not .backend-chip, which is
+      // a per-slot label, but .filter-chip inside .backend-selector).
+      const tpm2Chip = page.locator('.backend-selector .filter-chip').filter({ hasText: /TPM/i });
 
       // Skip if TPM2 backend is not available (no swtpm in this environment).
       const hasTpm2 = await tpm2Chip.isVisible({ timeout: 3_000 }).catch(() => false);
@@ -115,49 +149,78 @@ test.describe('PIV Integration', () => {
       await tpm2Chip.click();
       await waitForLoadingComplete(page);
 
-      // Click the 9A slot card.
-      const slot9a = page.locator('[data-testid="piv-slot-9a"]');
-      await expect(slot9a).toBeVisible();
-      await slot9a.click();
+      // Verify 9A slot card is present.
+      const slotCard = page.locator('[data-testid="piv-slot-card-9A"]');
+      await expect(slotCard).toBeVisible();
 
-      // Open the generate key dialog.
-      const generateBtn = page.locator('[data-testid="piv-generate-key"]');
-      await expect(generateBtn).toBeVisible();
-      await generateBtn.click();
+      // Open generate dialog via the slot action button.
+      const generateActionBtn = page.locator('[data-testid="piv-slot-action-9A"]');
+      await expect(generateActionBtn).toBeVisible();
+      await generateActionBtn.click();
+
+      // The generate dialog should open.
+      const dialog = page.locator('[data-testid="piv-generate-dialog"]');
+      await expect(dialog).toBeVisible({ timeout: 5_000 });
+
+      // Ensure Common Name is filled before generating (loadDefaults is async).
+      const cnInput = dialog.getByLabel('Common Name');
+      await expect(cnInput).toBeVisible();
+      const existingCN = await cnInput.inputValue();
+      if (!existingCN.trim()) {
+        await cnInput.fill('Test User');
+      }
 
       // Select ECCP256 algorithm.
       const algoSelect = page.locator('[data-testid="piv-algorithm-select"]');
       await expect(algoSelect).toBeVisible();
       await algoSelect.selectOption('ECCP256');
 
-      // Confirm generation.
-      const confirmBtn = page.locator('[data-testid="piv-generate-confirm"]');
-      await expect(confirmBtn).toBeVisible();
-      await confirmBtn.click();
+      // Click "Generate Key" — scope to the role=dialog footer (slot cards also expose
+      // inline "Generate Key" buttons; the submit button is outside the testid node).
+      const generateBtn = page
+        .getByRole('dialog', { name: 'Generate PIV Key' })
+        .getByRole('button', { name: 'Generate Key', exact: true });
+      await expect(generateBtn).toBeVisible();
+      await generateBtn.click();
 
-      // Wait for success — the key should be generated using the TPM2 backend.
-      await expect(page.getByText(/Key generated/i)).toBeVisible({ timeout: 15_000 });
+      // Wait for dialog to close — TPM key generation may take a few seconds.
+      await expect(dialog).toBeHidden({ timeout: 25_000 });
+      await waitForLoadingComplete(page);
 
-      // Slot should now show a certificate.
-      await expect(slot9a.getByText(/ECDSA|ECCP256/i)).toBeVisible({ timeout: 5_000 });
+      // Slot should now show a key/cert state.
+      const slotLoaded = page.locator(
+        '[data-testid="piv-slot-details-9A"], [data-testid="piv-slot-key-only-9A"]',
+      );
+      // TPM2-backed slot state settles slower than software under swtpm/Docker
+      // load; match the 25s budget the generate step already allows.
+      await expect(slotLoaded).toBeVisible({ timeout: 20_000 });
 
-      // Clean up — delete the certificate.
-      const deleteBtn = page.locator('[data-testid="piv-delete-cert"]');
-      if (await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-        await deleteBtn.click();
-        const confirmDeleteBtn = page.locator('[data-testid="piv-delete-confirm"]');
-        if (await confirmDeleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-          await confirmDeleteBtn.click();
+      // Clean up — delete via ActionMenu.
+      const kebab = slotCard.locator('[data-testid="action-menu-kebab"]');
+      if (await kebab.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        await kebab.click();
+        const deleteAction = page.locator('[data-testid="piv-action-delete"]');
+        if (await deleteAction.isVisible({ timeout: 2_000 }).catch(() => false)) {
+          await deleteAction.click();
+          const confirmDeleteBtn = page.getByRole('button', { name: 'Delete' });
+          if (await confirmDeleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+            await confirmDeleteBtn.click();
+          }
+          // TPM2 delete evicts the persistent handle + cert then re-polls;
+          // give it the same settle window as generate (swtpm/Docker latency).
+          await expect(
+            page.locator('[data-testid="piv-slot-empty-9A"]'),
+          ).toBeVisible({ timeout: 20_000 });
         }
-        await expect(slot9a.getByText(/No certificate/i)).toBeVisible({ timeout: 5_000 });
       }
     });
   });
 
   test.describe('PKCS11 PIV Key Lifecycle', () => {
     test('generate a key in slot 9A using PKCS11 backend', async ({ page }) => {
-      const backendChips = page.locator('.filter-chip, .backend-chip');
-      const pkcs11Chip = backendChips.filter({ hasText: /PKCS|HSM|YubiKey/i });
+      // PKCS#11 chips are filter chips inside .backend-selector, not .backend-chip
+      // (which is a per-slot informational badge, not interactive).
+      const pkcs11Chip = page.locator('.backend-selector .filter-chip').filter({ hasText: /PKCS|HSM|YubiKey/i });
 
       const hasPkcs11 = await pkcs11Chip.first().isVisible({ timeout: 3_000 }).catch(() => false);
       test.skip(!hasPkcs11, 'PKCS#11 backend not available');
@@ -165,32 +228,51 @@ test.describe('PIV Integration', () => {
       await pkcs11Chip.first().click();
       await waitForLoadingComplete(page);
 
-      const slot9a = page.locator('[data-testid="piv-slot-9a"]');
-      await expect(slot9a).toBeVisible();
-      await slot9a.click();
+      const slotCard = page.locator('[data-testid="piv-slot-card-9A"]');
+      await expect(slotCard).toBeVisible();
 
-      const generateBtn = page.locator('[data-testid="piv-generate-key"]');
-      await expect(generateBtn).toBeVisible();
-      await generateBtn.click();
+      const generateActionBtn = page.locator('[data-testid="piv-slot-action-9A"]');
+      await expect(generateActionBtn).toBeVisible();
+      await generateActionBtn.click();
+
+      const dialog = page.locator('[data-testid="piv-generate-dialog"]');
+      await expect(dialog).toBeVisible({ timeout: 5_000 });
+
+      // Ensure Common Name is filled before generating (loadDefaults is async).
+      const cnInput = dialog.getByLabel('Common Name');
+      await expect(cnInput).toBeVisible();
+      const existingCN = await cnInput.inputValue();
+      if (!existingCN.trim()) {
+        await cnInput.fill('Test User');
+      }
 
       const algoSelect = page.locator('[data-testid="piv-algorithm-select"]');
       await expect(algoSelect).toBeVisible();
       await algoSelect.selectOption('ECCP256');
 
-      const confirmBtn = page.locator('[data-testid="piv-generate-confirm"]');
-      await expect(confirmBtn).toBeVisible();
-      await confirmBtn.click();
+      const generateBtn = page.getByRole('button', { name: 'Generate Key' });
+      await expect(generateBtn).toBeVisible();
+      await generateBtn.click();
 
-      await expect(page.getByText(/Key generated/i)).toBeVisible({ timeout: 15_000 });
-      await expect(slot9a.getByText(/ECDSA|ECCP256/i)).toBeVisible({ timeout: 5_000 });
+      await expect(dialog).toBeHidden({ timeout: 20_000 });
+      await waitForLoadingComplete(page);
+
+      const slotLoaded = page.locator(
+        '[data-testid="piv-slot-details-9A"], [data-testid="piv-slot-key-only-9A"]',
+      );
+      await expect(slotLoaded).toBeVisible({ timeout: 10_000 });
 
       // Clean up
-      const deleteBtn = page.locator('[data-testid="piv-delete-cert"]');
-      if (await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-        await deleteBtn.click();
-        const confirmDeleteBtn = page.locator('[data-testid="piv-delete-confirm"]');
-        if (await confirmDeleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
-          await confirmDeleteBtn.click();
+      const kebab = slotCard.locator('[data-testid="action-menu-kebab"]');
+      if (await kebab.isVisible({ timeout: 2_000 }).catch(() => false)) {
+        await kebab.click();
+        const deleteAction = page.locator('[data-testid="piv-action-delete"]');
+        if (await deleteAction.isVisible({ timeout: 2_000 }).catch(() => false)) {
+          await deleteAction.click();
+          const confirmDeleteBtn = page.getByRole('button', { name: 'Delete' });
+          if (await confirmDeleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
+            await confirmDeleteBtn.click();
+          }
         }
       }
     });
@@ -201,24 +283,29 @@ test.describe('PIV Integration', () => {
       const wails = await isWailsMode(page).catch(() => false);
       test.skip(!wails, 'Requires Wails backend for certificate isolation test');
 
-      const backendChips = page.locator('.filter-chip, .backend-chip');
+      // Use .filter-chip inside .backend-selector (not .backend-chip, which is
+      // a per-slot informational badge and not interactive).
+      const backendChips = page.locator('.backend-selector .filter-chip');
 
-      // Count backends
+      // Count backends; the PIV BackendSelector uses showAll=false so each chip
+      // is a backend (no "All Backends" chip).
       const chipCount = await backendChips.count();
       test.skip(chipCount < 2, 'Need at least 2 backends to test isolation');
 
-      // Select first backend and count loaded slots
+      // Select first backend and count slot cards.
+      // Use piv-slot-card-* (exactly one per slot) to avoid counting inner state
+      // divs (piv-slot-empty-*, piv-slot-details-*, piv-slot-key-only-*).
       await backendChips.nth(0).click();
       await waitForLoadingComplete(page);
 
-      const firstBackendSlots = page.locator('[data-testid^="piv-slot-"]');
+      const firstBackendSlots = page.locator('[data-testid^="piv-slot-card-"]');
       const firstCount = await firstBackendSlots.count();
 
       // Select second backend
       await backendChips.nth(1).click();
       await waitForLoadingComplete(page);
 
-      const secondBackendSlots = page.locator('[data-testid^="piv-slot-"]');
+      const secondBackendSlots = page.locator('[data-testid^="piv-slot-card-"]');
       const secondCount = await secondBackendSlots.count();
 
       // Both should show 5 standard slots (empty or loaded)

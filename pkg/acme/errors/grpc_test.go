@@ -421,10 +421,10 @@ func TestGRPCRoundTrip(t *testing.T) {
 
 	for i, se := range restored.SubErrors {
 		orig := original.SubErrors[i]
-		if se.TrustedCAError.Type != orig.TrustedCAError.Type {
+		if se.Type != orig.Type {
 			t.Errorf("SubError[%d].Type mismatch", i)
 		}
-		if se.TrustedCAError.Detail != orig.TrustedCAError.Detail {
+		if se.Detail != orig.Detail {
 			t.Errorf("SubError[%d].Detail mismatch", i)
 		}
 		if se.Identifier.Type != orig.Identifier.Type {

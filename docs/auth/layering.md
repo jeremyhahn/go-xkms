@@ -15,6 +15,36 @@ xkms does not re-model identity. The `auth.Identity` type in `pkg/auth` is a
 type alias for `qrdbauth.Identity` (`Subject`, `TenantID`, `Roles`, `Metadata`).
 Authentication adapters (mTLS, JWT, OIDC) populate this shape directly.
 
+## What xkms delegates to qrdb
+
+go-qrdb is the single owner of barrier, bootstrap/first-boot, ceremony, and the
+user/identity model. xkms consumes all of these through `go-qrdb/sdk/go` — it
+carries **no local user model, cert-binding scheme, or barrier**:
+
+| Capability | qrdb owns | xkms uses via |
+|------------|-----------|---------------|
+| User/identity model (`User`, RoleBindings, ABAC, factors) | `pkg/user` | `sdk/go/types_user.go` |
+| mTLS cert-binding identifier | `ComputeSPKIThumbprint` (SHA-256 over SubjectPublicKeyInfo, base64url) | `sdk.ComputeSPKIThumbprint` |
+| First-boot + admin-mTLS enrollment | `pkg/firstboot` | `sdk/go/types_firstboot.go` |
+| Barrier (none/passphrase/shamir; system + per-tenant) | `pkg/seal` | `sdk/go/types_seal*.go` |
+| Ceremony (Shamir M-of-N, CSR claim) | `pkg/ceremony` | qrdb SDK |
+
+xkms binds admin mTLS certs by qrdb's canonical SPKI thumbprint
+(`pkg/auth/mtls.go`, `cmd/xkmsctl/admin.go`); the earlier divergent
+`auth.ComputeCertFingerprint` binding identifier was removed. There is exactly
+one cert-binding algorithm in the stack and it lives in qrdb.
+
+## What xkms still OWNS
+
+- **TrustedCA** (`pkg/ca`) — implements qrdb's `CertProvider` / `CertSigner`
+  (admin-mTLS Path A and Path B) and `CeremonyCA` seams. Admin enrollment is
+  cert-based: CSR-sign (the CA signs an admin CSR) or generate-and-distribute
+  (the CA emits a bundle). No invite tokens.
+- **Hardware factors** — PIV / FIDO2 / WebAuthn implementations registered into
+  qrdb's `FactorRegistry` (see [Factor adapters](#factor-adapters-phase-1) below).
+- **Hardware seal strategies** — TPM2 / PKCS#11 / cloud-KMS / Vault, registered
+  into qrdb's `StrategyRegistry` as extensions of `passphrase`.
+
 ## SDK entry point
 
 Downstream consumers reach qrdb through xkms's SDK so they only depend on a
@@ -102,6 +132,73 @@ Identity struct before this refactor.
   to xkms's permission vocabulary.
 - It is **not** dependent on qrdb being remote. The same shape works when
   qrdb is embedded in-process via the embedded transport.
+
+## Factor adapters (Phase 1)
+
+`go-qrdb/pkg/authfactors` defines the canonical `Factor` interface (Name,
+Enroll, Challenge, Verify) and the `FactorRegistry` server option that
+composes implementations into a qrdb server. **No hardware code lives in
+qrdb** — every implementation of that interface that talks to a real
+authenticator lives in xkms and is composed in at startup.
+
+```mermaid
+flowchart LR
+    QR[go-qrdb/pkg/authfactors<br/>Factor interface]
+    PIV[xkms/pkg/factor/piv<br/>Factor adapter] --> XPIV[xkms/pkg/pivcert<br/>NIST SP 800-73-4 stack]
+    FIDO[xkms/pkg/fido2<br/>CTAP2 / WebAuthn impl]
+    P11[xkms/pkg/pkcs11<br/>HSM stack]
+    PIV --> QR
+    FIDO -.adapter.-> QR
+    P11 -.adapter.-> QR
+```
+
+| Adapter | Source | Wraps | Status |
+|---------|--------|-------|--------|
+| PIV (`pkg/factor/piv`) | `pkg/factor/piv/factor.go:84` | xkms's PIV stack (`pkg/pivcert`, `xkms.PIVKeyGenerator`) | Shipped |
+| FIDO2 | `pkg/fido2` (full RP impl) | CTAP2 / WebAuthn | Available through `pkg/webauthn` — see [WebAuthn RP](../webauthn/README.md) |
+| PKCS#11 | `pkg/pkcs11` | HSM token sessions | Available; adapter wiring is composition-only |
+
+The PIV adapter implements `authfactors.Factor` directly:
+
+```go
+// pkg/factor/piv/factor.go:84
+type Factor struct {
+    cfg Config
+}
+
+// Compile-time check
+var _ authfactors.Factor = (*Factor)(nil)
+```
+
+`Factor` is cross-vendor: any `xkms.PIVKeyGenerator` (software, PKCS#11,
+TPM2-backed) can be injected via `Config.Generator`. The adapter itself is
+hardware-agnostic; the hardware-coupled logic remains in xkms.
+
+The composing binary registers the adapter into qrdb's `FactorRegistry`:
+
+```go
+import (
+    qrdbauthfactors "github.com/jeremyhahn/go-qrdb/pkg/authfactors"
+    qrdbserver      "github.com/jeremyhahn/go-qrdb/pkg/server"
+    xkmspivfactor   "github.com/jeremyhahn/go-xkms/pkg/factor/piv"
+    xkms            "github.com/jeremyhahn/go-xkms/pkg/xkms"
+)
+
+registry := qrdbauthfactors.NewFactorRegistry()
+_ = registry.Register(xkmspivfactor.New(xkmspivfactor.Config{
+    Generator: xkms.NewSoftwarePIVKeyGenerator(),
+}))
+
+srv, err := qrdbserver.New(
+    qrdbserver.WithFactorRegistry(registry),
+    // ...
+)
+```
+
+This is the same composition pattern used by the seal/strategy registry
+and the PIN backend: qrdb defines the interface and the registry, xkms
+supplies the hardware implementation, and quicbaas (or another composing
+binary) wires them together.
 
 ## What still lives in `pkg/auth`
 

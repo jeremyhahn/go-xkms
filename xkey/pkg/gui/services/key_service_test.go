@@ -183,16 +183,6 @@ func (m *mockClient) BarrierUnsealWithShare(context.Context, *transport.BarrierU
 func (m *mockClient) BarrierUnsealWithShares(context.Context, *transport.BarrierUnsealSharesRequest) error {
 	panic("not implemented")
 }
-func (m *mockClient) BarrierShamirListShares(context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierShamirDeleteShare(context.Context, *transport.BarrierShamirDeleteShareRequest) error {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierShamirDeleteAllShares(context.Context) error {
-	panic("not implemented")
-}
-func (m *mockClient) BarrierShamirVerify(context.Context) error { panic("not implemented") }
 func (m *mockClient) BarrierRekey(context.Context, *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	panic("not implemented")
 }
@@ -303,6 +293,12 @@ func (m *mockClient) GetLockoutStatus(context.Context) (*transport.LockoutStatus
 	panic("not implemented")
 }
 func (m *mockClient) ResetLockout(context.Context, *transport.ResetLockoutRequest) error {
+	panic("not implemented")
+}
+func (m *mockClient) CreateUser(context.Context, *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	panic("not implemented")
+}
+func (m *mockClient) BindUserCert(context.Context, string, string, int64) error {
 	panic("not implemented")
 }
 func (m *mockClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {

@@ -1135,15 +1135,6 @@ func TestCov90_ConvertAdminTenantToProto_WithSettings(t *testing.T) {
 
 // --- Shutdown Error Path Tests ---
 
-// mockHTTPServer implements http.Server interface methods needed for testing
-type mockHTTPServerWithError struct {
-	shutdownErr error
-}
-
-func (m *mockHTTPServerWithError) Shutdown(ctx context.Context) error {
-	return m.shutdownErr
-}
-
 func TestCov90_Shutdown_WithRESTError(t *testing.T) {
 	server := newTestServer(&mockAdminService{}, nil)
 	server.running.Store(true)

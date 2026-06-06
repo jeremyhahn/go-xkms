@@ -30,8 +30,8 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
-	"github.com/jeremyhahn/go-xkms/test/integration"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/test/integration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

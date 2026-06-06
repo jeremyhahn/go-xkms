@@ -76,7 +76,7 @@ func TLSClientConfig(config *TLSConfig) (*tls.Config, error) {
 
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{*tlsCert},
-		MinVersion:   tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS13,
 	}
 
 	if config.ServerName != "" {

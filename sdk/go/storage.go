@@ -17,11 +17,19 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+
+	objstorecommon "github.com/jeremyhahn/go-objstore/pkg/common"
+	objstorelocal "github.com/jeremyhahn/go-objstore/pkg/local"
+	objstorememory "github.com/jeremyhahn/go-objstore/pkg/memory"
 )
 
 // Storage interface and types re-exported from pkg/storage.
 // These allow SDK consumers to configure storage backends directly
 // through the SDK without importing internal packages.
+//
+// ObjectStorage aliases are re-exported from go-objstore/pkg/common so that
+// xkms-layer consumers (and, transitively, go-quicbaas consumers) can work
+// with object/blob storage without naming go-objstore in their own imports.
 type (
 	// StorageBackend is the interface for key-value storage backends.
 	// All implementations are thread-safe.
@@ -53,6 +61,34 @@ type (
 
 	// TCGAttributes holds TCG-specific certificate attributes.
 	TCGAttributes = certstore.TCGAttributes
+
+	// ObjectStorage is the canonical object/blob storage interface re-exported
+	// from go-objstore/pkg/common. xkms-layer consumers should reference this
+	// alias rather than importing go-objstore directly; go-quicbaas in turn
+	// re-exports ObjectStorage so service-level consumers can reach the full
+	// stack without naming go-objstore in their go.mod.
+	ObjectStorage = objstorecommon.Storage
+
+	// ObjectMetadata holds object-level metadata (content-type, size, custom tags).
+	// Re-exported so that all ObjectStorage method signatures are usable through
+	// this alias chain without a direct go-objstore import.
+	ObjectMetadata = objstorecommon.Metadata
+
+	// ObjectListOptions configures paginated object listing.
+	// Re-exported alongside ObjectStorage for the same reason as ObjectMetadata.
+	ObjectListOptions = objstorecommon.ListOptions
+
+	// ObjectInfo holds key and metadata for a single listed object.
+	ObjectInfo = objstorecommon.ObjectInfo
+
+	// ObjectListResult is the paginated result returned by ObjectStorage.ListWithOptions.
+	ObjectListResult = objstorecommon.ListResult
+
+	// ObjectArchiver is the destination interface used by ObjectStorage.Archive.
+	ObjectArchiver = objstorecommon.Archiver
+
+	// ObjectLifecyclePolicy configures retention and expiry rules on a storage backend.
+	ObjectLifecyclePolicy = objstorecommon.LifecyclePolicy
 )
 
 // Storage backend constructors re-exported from pkg/storage and subpackages.
@@ -95,6 +131,19 @@ var (
 	// It prepends the "keys/" prefix and ".key" suffix matching the PKCS8
 	// backend's storage convention.
 	StorageGetKey = storage.GetKey
+)
+
+// Object-storage constructors re-exported from go-objstore so that
+// downstream layers (go-quicbaas → go-trusted-platform) never name
+// go-objstore in their own imports.
+var (
+	// NewObjectStorageLocal constructs a filesystem-backed ObjectStorage
+	// implementation rooted at the given directory.
+	NewObjectStorageLocal = objstorelocal.New
+
+	// NewObjectStorageMemory constructs an in-memory ObjectStorage
+	// implementation suitable for testing and embedded use.
+	NewObjectStorageMemory = objstorememory.New
 )
 
 // Storage error sentinels re-exported from pkg/storage.

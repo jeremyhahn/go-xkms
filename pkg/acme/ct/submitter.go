@@ -96,7 +96,7 @@ func (s *HTTPLogSubmitter) SubmitPrecert(ctx interface{}, precertDER []byte, cha
 	if err != nil {
 		return nil, caerrors.ConnectionFailureError("ct: log submission failed: sending request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Read response
 	body, err := io.ReadAll(resp.Body)

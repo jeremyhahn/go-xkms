@@ -210,8 +210,14 @@ type PKCS11BackendConfig struct {
 
 // StateSection holds runtime state persisted across application restarts.
 type StateSection struct {
-	SetupComplete      bool   `yaml:"setup_complete" json:"setup_complete" mapstructure:"setup_complete"`
-	StorageType        string `yaml:"storage_type" json:"storage_type" mapstructure:"storage_type"`
+	SetupComplete bool   `yaml:"setup_complete" json:"setup_complete" mapstructure:"setup_complete"`
+	StorageType   string `yaml:"storage_type" json:"storage_type" mapstructure:"storage_type"`
+	// StorageEngine selects the go-qrdb storage engine backing all local
+	// persistence: "file" (default, one flat file per key — identical to xkey's
+	// historical layout), "pebble" (embedded LSM-tree), or "memory" (ephemeral).
+	// It is orthogonal to StorageType, which chooses plain-disk vs LUKS at-rest
+	// encryption for the data directory.
+	StorageEngine      string `yaml:"storage_engine" json:"storage_engine" mapstructure:"storage_engine"`
 	BarrierInitialized bool   `yaml:"barrier_initialized" json:"barrier_initialized" mapstructure:"barrier_initialized"`
 	BarrierStrategy    string `yaml:"barrier_strategy" json:"barrier_strategy" mapstructure:"barrier_strategy"`
 	Mode               string `yaml:"mode" json:"mode" mapstructure:"mode"`
@@ -232,6 +238,14 @@ var validBackends = map[string]struct{}{
 	"tpm2":     {},
 	"pkcs11":   {},
 	"phone":    {},
+}
+
+// validStorageEngines is the set of accepted go-qrdb storage engine
+// identifiers for State.StorageEngine.
+var validStorageEngines = map[string]struct{}{
+	"file":   {},
+	"pebble": {},
+	"memory": {},
 }
 
 // validBackendCategories is the set of accepted backend categories.
@@ -288,6 +302,9 @@ func DefaultConfig() *Config {
 			WindowHeight:     768,
 			FIDO2AuthEnabled: true,
 		},
+		State: StateSection{
+			StorageEngine: "file",
+		},
 	}
 }
 
@@ -335,6 +352,14 @@ func (c *Config) Validate() error {
 		if _, ok := validModes[c.State.Mode]; !ok {
 			return fmt.Errorf("%w: state.mode %q is not one of personal, enterprise",
 				ErrConfigInvalid, c.State.Mode)
+		}
+	}
+
+	// Validate storage engine if set.
+	if c.State.StorageEngine != "" {
+		if _, ok := validStorageEngines[c.State.StorageEngine]; !ok {
+			return fmt.Errorf("%w: state.storage_engine %q is not one of file, pebble, memory",
+				ErrConfigInvalid, c.State.StorageEngine)
 		}
 	}
 

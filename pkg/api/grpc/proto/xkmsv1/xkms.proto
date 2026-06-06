@@ -272,18 +272,6 @@ service KeystoreService {
   // BarrierUnsealShares performs stateless batch unsealing with all shares.
   rpc BarrierUnsealShares(BarrierUnsealSharesRequest) returns (google.protobuf.Empty);
 
-  // BarrierShamirListShares returns metadata about stored Shamir shares.
-  rpc BarrierShamirListShares(google.protobuf.Empty) returns (BarrierShamirSharesResponse);
-
-  // BarrierShamirDeleteShare removes a single share by index.
-  rpc BarrierShamirDeleteShare(BarrierShamirDeleteShareRequest) returns (google.protobuf.Empty);
-
-  // BarrierShamirDeleteAllShares removes all shares from storage.
-  rpc BarrierShamirDeleteAllShares(google.protobuf.Empty) returns (google.protobuf.Empty);
-
-  // BarrierShamirVerify checks the integrity and consistency of stored shares.
-  rpc BarrierShamirVerify(google.protobuf.Empty) returns (google.protobuf.Empty);
-
   // BarrierRekey generates new Shamir shares for the existing root key.
   rpc BarrierRekey(BarrierRekeyRequest) returns (BarrierShamirInitResponse);
 
@@ -437,6 +425,109 @@ service KeystoreService {
 
   // PasswordGenerate generates a random password with specified constraints.
   rpc PasswordGenerate(PasswordGenerateRequest) returns (PasswordGenerateResponse);
+
+  // User management. xkms presents its own user model; the backing store is
+  // the embedded qrdb node.
+  rpc CreateUser(CreateUserRequest) returns (UserResponse);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc GetUser(GetUserRequest) returns (UserResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+  rpc EnableUser(EnableUserRequest) returns (UserResponse);
+  rpc DisableUser(DisableUserRequest) returns (UserResponse);
+  rpc BindUserCert(BindUserCertRequest) returns (UserResponse);
+  rpc ListUserCredentials(ListUserCredentialsRequest) returns (ListUserCredentialsResponse);
+
+  // FIDO2/WebAuthn registration ceremony. BeginRegistration returns the
+  // JSON-marshaled WebAuthn options plus an opaque session ID; the client
+  // drives an authenticator and echoes the session ID back to
+  // FinishRegistration together with the attestation JSON.
+  rpc BeginRegistration(BeginRegistrationRequest) returns (BeginRegistrationResponse);
+  rpc FinishRegistration(FinishRegistrationRequest) returns (FinishRegistrationResponse);
+
+  // FIDO2/WebAuthn authentication (login) ceremony. BeginAuthentication returns
+  // the JSON-marshaled WebAuthn assertion options plus an opaque session ID; the
+  // client drives an authenticator and echoes the session ID back to
+  // FinishAuthentication together with the assertion JSON.
+  rpc BeginAuthentication(BeginAuthenticationRequest) returns (BeginAuthenticationResponse);
+  rpc FinishAuthentication(FinishAuthenticationRequest) returns (FinishAuthenticationResponse);
+}
+
+// UserInfo describes an xkms user.
+message UserInfo {
+  string username = 1;
+  string display_name = 2;
+  string role = 3;
+  bool enabled = 4;
+}
+
+// CreateUserRequest creates a new xkms user.
+message CreateUserRequest {
+  string username = 1;
+  string display_name = 2;
+  string role = 3;
+  string tenant_id = 4;
+}
+
+// UserResponse returns a single xkms user.
+message UserResponse {
+  UserInfo user = 1;
+}
+
+// ListUsersRequest lists xkms users.
+message ListUsersRequest {}
+
+// ListUsersResponse returns a list of xkms users.
+message ListUsersResponse {
+  repeated UserInfo users = 1;
+}
+
+// GetUserRequest resolves a user by username.
+message GetUserRequest {
+  string username = 1;
+}
+
+// DeleteUserRequest removes a user by username.
+message DeleteUserRequest {
+  string username = 1;
+}
+
+// DeleteUserResponse reports the outcome of a delete.
+message DeleteUserResponse {
+  string username = 1;
+  bool deleted = 2;
+}
+
+// EnableUserRequest enables a user by username.
+message EnableUserRequest {
+  string username = 1;
+}
+
+// DisableUserRequest disables a user by username.
+message DisableUserRequest {
+  string username = 1;
+}
+
+// BindUserCertRequest binds an mTLS certificate SPKI thumbprint to a user.
+message BindUserCertRequest {
+  string username = 1;
+  string thumbprint = 2;
+  int64 not_after_unix = 3;
+}
+
+// ListUserCredentialsRequest lists a user's credentials.
+message ListUserCredentialsRequest {
+  string username = 1;
+}
+
+// UserCredential describes a single user credential.
+message UserCredential {
+  string id = 1;
+  string name = 2;
+}
+
+// ListUserCredentialsResponse returns a user's credentials.
+message ListUserCredentialsResponse {
+  repeated UserCredential credentials = 1;
 }
 
 // HealthRequest is the request for health check
@@ -1801,22 +1892,6 @@ message BarrierQuorumProgressResponse {
   bool complete = 3;
 }
 
-// BarrierShamirSharesResponse returns metadata about stored shares.
-message BarrierShamirSharesResponse {
-  // count is the number of shares currently in storage.
-  int32 count = 1;
-  // threshold is the minimum shares needed to reconstruct.
-  int32 threshold = 2;
-  // total is the total number of shares.
-  int32 total = 3;
-}
-
-// BarrierShamirDeleteShareRequest requests deletion of a share by index.
-message BarrierShamirDeleteShareRequest {
-  // index is the 1-based share index.
-  int32 index = 1;
-}
-
 // BarrierRekeyRequest requests generation of new shares for the existing root key.
 message BarrierRekeyRequest {
   // threshold is the new minimum shares needed.
@@ -2231,12 +2306,16 @@ message DeleteTenantRequest {
   string tenant_id = 1;
 }
 
-// TenantBarrierInitRequest requests initialization of a tenant barrier.
+// TenantBarrierInitRequest requests initialization of a tenant barrier. The
+// secret is the tenant admin's caller-supplied passphrase; the server never
+// generates it (§3.6). The strategy selects the seal strategy (empty means the
+// passphrase strategy).
 message TenantBarrierInitRequest {
   string tenant_id = 1;
   string secret = 2;
   int32 shares = 3;
   int32 threshold = 4;
+  string strategy = 5;
 }
 
 // TenantBarrierUnsealRequest requests unsealing of a tenant barrier.
@@ -2372,4 +2451,62 @@ message PasswordGenerateRequest {
 message PasswordGenerateResponse {
   string password = 1;
   int32 length = 2;
+}
+
+// ==================== FIDO2/WebAuthn Registration ====================
+
+// BeginRegistrationRequest begins a WebAuthn registration ceremony.
+message BeginRegistrationRequest {
+  string username = 1;
+  string display_name = 2;
+}
+
+// BeginRegistrationResponse carries the session ID and JSON-marshaled WebAuthn
+// registration options (PublicKeyCredentialCreationOptions).
+message BeginRegistrationResponse {
+  string session_id = 1;
+  string options_json = 2;
+}
+
+// FinishRegistrationRequest completes a WebAuthn registration ceremony.
+message FinishRegistrationRequest {
+  string session_id = 1;
+  string attestation_json = 2;
+}
+
+// FinishRegistrationResponse contains the result of WebAuthn registration.
+message FinishRegistrationResponse {
+  bool success = 1;
+  string credential_id = 2;
+  string token = 3;
+  string message = 4;
+}
+
+// ==================== FIDO2/WebAuthn Authentication ====================
+
+// BeginAuthenticationRequest begins a WebAuthn authentication (login) ceremony.
+message BeginAuthenticationRequest {
+  string username = 1;
+}
+
+// BeginAuthenticationResponse carries the session ID and JSON-marshaled WebAuthn
+// authentication options (PublicKeyCredentialRequestOptions).
+message BeginAuthenticationResponse {
+  string session_id = 1;
+  string options_json = 2;
+}
+
+// FinishAuthenticationRequest completes a WebAuthn authentication ceremony.
+message FinishAuthenticationRequest {
+  string session_id = 1;
+  string username = 2;
+  string assertion_json = 3;
+}
+
+// FinishAuthenticationResponse contains the result of WebAuthn authentication.
+message FinishAuthenticationResponse {
+  bool success = 1;
+  string token = 2;
+  string username = 3;
+  string message = 4;
 }

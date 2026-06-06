@@ -341,8 +341,15 @@ func TestConfig_ToTPMConfig_CompleteConfig(t *testing.T) {
 	if tpmConfig.Device != config.Device {
 		t.Errorf("Device: expected %s, got %s", config.Device, tpmConfig.Device)
 	}
-	if tpmConfig.UseSimulator != config.UseSimulator {
-		t.Errorf("UseSimulator: expected %v, got %v", config.UseSimulator, tpmConfig.UseSimulator)
+	// When SimulatorHost is set alongside UseSimulator, ToTPMConfig targets an
+	// external TPM daemon (e.g. swtpm) over TCP: it wires CommandAddress and
+	// clears UseSimulator so NewTPM2 selects the TCP transport path instead of
+	// the in-memory go-tpm-tools simulator.
+	if tpmConfig.UseSimulator {
+		t.Errorf("UseSimulator: expected false (external TCP via SimulatorHost), got true")
+	}
+	if tpmConfig.CommandAddress != "localhost:2321" {
+		t.Errorf("CommandAddress: expected localhost:2321, got %s", tpmConfig.CommandAddress)
 	}
 	if tpmConfig.EncryptSession != config.EncryptSession {
 		t.Errorf("EncryptSession: expected %v, got %v", config.EncryptSession, tpmConfig.EncryptSession)

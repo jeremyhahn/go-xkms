@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/spf13/pflag"
@@ -1178,5 +1178,5 @@ func TestInvalidPCRBanks(t *testing.T) {
 	}
 }
 
-// Ensure dao.PageQuery is used to avoid unused import.
-var _ = dao.PageQuery{}
+// Ensure qrdbsdk.PageQuery is used to avoid unused import.
+var _ = qrdbsdk.PageQuery{}

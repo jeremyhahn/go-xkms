@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -456,7 +456,7 @@ func TestPINService_VerifySOPIN_ManagerErrorPath(t *testing.T) {
 }
 
 func TestPINService_GetLockoutStatus_WithStatus(t *testing.T) {
-	lockoutStatus := &pin.LockoutStatus{
+	lockoutStatus := &qrdbsdk.PINLockoutStatus{
 		IsLocked:        true,
 		FailedAttempts:  6,
 		MaxAttempts:     10,

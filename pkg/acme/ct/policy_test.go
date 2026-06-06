@@ -469,7 +469,7 @@ func TestCTPolicy_GetSCTs(t *testing.T) {
 		}()
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, err = policy.GetSCTs(ctx, []byte("test"), nil, expiry)
+		_, _ = policy.GetSCTs(ctx, []byte("test"), nil, expiry)
 		// May or may not get enough SCTs depending on timing
 		// The important thing is it doesn't hang
 	})

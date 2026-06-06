@@ -30,8 +30,8 @@ func TestGRPCServer_Start_MkdirAllError(t *testing.T) {
 	// Create a temp file that prevents MkdirAll from creating a subdirectory
 	tmpFile, err := os.CreateTemp("", "xkms-block-*")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	_ = tmpFile.Close()
 
 	// Try to create a socket under a file path (impossible)
 	socketPath := filepath.Join(tmpFile.Name(), "subdir", "test.sock")
@@ -53,7 +53,7 @@ func TestGRPCServer_Start_MkdirAllError(t *testing.T) {
 func TestGRPCServer_Start_RemoveExistingSocketError(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
 
@@ -65,7 +65,7 @@ func TestGRPCServer_Start_RemoveExistingSocketError(t *testing.T) {
 	// Put a file in the directory so it can't be removed with os.Remove
 	f, err := os.Create(filepath.Join(socketPath, "blocker"))
 	require.NoError(t, err)
-	f.Close()
+	_ = f.Close()
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,
@@ -84,7 +84,7 @@ func TestGRPCServer_Start_RemoveExistingSocketError(t *testing.T) {
 func TestGRPCServer_Stop_ContextAlreadyCancelled(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xkms-grpc-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
 

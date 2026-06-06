@@ -16,4 +16,7 @@ ENV CGO_ENABLED=1
 WORKDIR /app
 
 # Run all TPM2 integration tests including encryption verification
+# Materialize /tmp/go.work + GOWORK before running the test CMD passed as args.
+ENTRYPOINT ["bash", ".devcontainer/scripts/ensure-gowork.sh"]
+
 CMD ["sh", "-c", "echo 'Waiting for TPM simulator to be ready...'; while ! nc -z tpm-simulator 2421; do sleep 1; done; echo 'TPM simulator is ready, running tests...'; go test -v -tags='integration tpm2 codec_cbor codec_json codec_msgpack' -timeout 30m ./test/integration/tpm2/..."]

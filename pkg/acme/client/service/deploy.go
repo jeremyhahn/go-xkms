@@ -69,11 +69,16 @@ func (d *Deployer) Deploy(ctx context.Context, certPEM []byte, keyPEM []byte, cf
 		}
 	}
 
-	// Create parent directories for certificate and key paths
-	if err := os.MkdirAll(filepath.Dir(cfg.CertPath), 0755); err != nil {
+	// Create parent directories for certificate and key paths.
+	// Perms are 0750 (owner+group, no world): the private-key directory must
+	// never be world-traversable, and cert/key are commonly siblings in one
+	// dir, so a single hardened mode covers both. The 0644 cert file stays
+	// readable by the owning service account and its group; only world (other)
+	// traversal is removed (gosec G301 / CWE-276).
+	if err := os.MkdirAll(filepath.Dir(cfg.CertPath), 0750); err != nil {
 		return ErrDeployFailed{CertName: cfg.CertPath, Err: err}
 	}
-	if err := os.MkdirAll(filepath.Dir(cfg.KeyPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cfg.KeyPath), 0750); err != nil {
 		return ErrDeployFailed{CertName: cfg.KeyPath, Err: err}
 	}
 

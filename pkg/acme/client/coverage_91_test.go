@@ -30,7 +30,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"golang.org/x/crypto/acme"
 )
 
@@ -250,7 +249,7 @@ func TestChallengeResolver_AdditionalCoverage91(t *testing.T) {
 
 	t.Run("RegisterSolver when closed", func(t *testing.T) {
 		resolver := NewChallengeResolver()
-		resolver.Close()
+		_ = resolver.Close()
 
 		err := resolver.RegisterSolver(&cov91MockChallengeSolver{})
 		if !errors.Is(err, ErrResolverClosed) {
@@ -261,7 +260,7 @@ func TestChallengeResolver_AdditionalCoverage91(t *testing.T) {
 	t.Run("GetSolver for registered type", func(t *testing.T) {
 		resolver := NewChallengeResolver()
 		solver := &cov91MockChallengeSolver{}
-		resolver.RegisterSolver(solver)
+		_ = resolver.RegisterSolver(solver)
 
 		retrieved, ok := resolver.GetSolver("mock-01")
 		if !ok || retrieved == nil {
@@ -279,7 +278,7 @@ func TestChallengeResolver_AdditionalCoverage91(t *testing.T) {
 
 	t.Run("HasSolver true", func(t *testing.T) {
 		resolver := NewChallengeResolver()
-		resolver.RegisterSolver(&cov91MockChallengeSolver{})
+		_ = resolver.RegisterSolver(&cov91MockChallengeSolver{})
 
 		if !resolver.HasSolver("mock-01") {
 			t.Error("expected HasSolver to return true")
@@ -332,7 +331,7 @@ func TestChallengeResolver_AdditionalCoverage91(t *testing.T) {
 
 	t.Run("Solve when closed", func(t *testing.T) {
 		resolver := NewChallengeResolver()
-		resolver.Close()
+		_ = resolver.Close()
 
 		authz := &acme.Authorization{
 			Identifier: acme.AuthzID{Value: "example.com"},
@@ -902,6 +901,7 @@ func TestChallengeResolver_SolveWithSolver_Coverage91(t *testing.T) {
 		}
 		if challenge == nil {
 			t.Error("expected non-nil challenge")
+			return
 		}
 		if challenge.Type != "mock-01" {
 			t.Errorf("expected challenge type 'mock-01', got %q", challenge.Type)
@@ -1040,29 +1040,6 @@ func createCov91TestCert(t *testing.T, cn string, validity time.Duration) *x509.
 	}
 
 	return cert
-}
-
-// cov91MockStorage implements storage.AccountDAO for testing
-type cov91MockStorage struct{}
-
-func (m *cov91MockStorage) Save(_ context.Context, _ *entities.ACMEAccount) error {
-	return nil
-}
-
-func (m *cov91MockStorage) Get(_ context.Context, _ uint64) (*entities.ACMEAccount, error) {
-	return nil, nil
-}
-
-func (m *cov91MockStorage) Exists(_ context.Context, _ uint64) (bool, error) {
-	return false, nil
-}
-
-func (m *cov91MockStorage) Delete(_ context.Context, _ uint64) error {
-	return nil
-}
-
-func (m *cov91MockStorage) List(_ context.Context, _ string) ([]*entities.ACMEAccount, error) {
-	return nil, nil
 }
 
 // cov91MockChallengeSolver for testing

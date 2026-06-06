@@ -49,7 +49,7 @@ func TestShutdownWithExpiredContext(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
 	defer cancel()
 
-	err = server.Shutdown(ctx)
+	_ = server.Shutdown(ctx)
 
 	// Error may or may not be returned depending on shutdown speed
 	// The important thing is that the server stops

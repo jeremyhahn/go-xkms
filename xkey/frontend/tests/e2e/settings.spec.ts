@@ -931,19 +931,28 @@ test.describe('Settings View', () => {
       }
     });
 
-    test('Save Settings persists config', async ({ page }) => {
+    test('Settings auto-save: server address field is editable (no explicit Save button)', async ({ page }) => {
       const wails = await isWailsMode(page);
       test.skip(!wails, 'Requires Wails backend');
 
+      // Settings moved to auto-save (no "Save Settings" button). Verify the
+      // server address field is editable and changes are accepted — the save
+      // mechanism fires on change events (on:change={autoSave} in Settings.svelte).
       await navigateToSettingsCategory(page, 'Server');
 
-      const saveButton = page.getByRole('button', { name: 'Save Settings' });
-      await expect(saveButton).toBeVisible();
-      await saveButton.click();
-      await page.waitForTimeout(500);
+      // Address input must be present and editable.
+      const addressInput = page.locator('input[placeholder*="localhost"]').first();
+      await expect(addressInput).toBeVisible();
+      await expect(addressInput).toBeEditable();
 
-      // After save, the notification toast should appear
-      // (the addNotification call in handleSave fires 'Settings saved')
+      // Verify no "Save Settings" button exists — settings are auto-saved.
+      const saveButton = page.getByRole('button', { name: 'Save Settings' });
+      await expect(saveButton).not.toBeVisible();
+
+      // The Protocol select must be interactive.
+      const protocolSelect = page.locator('select').first();
+      await expect(protocolSelect).toBeVisible();
+      await expect(protocolSelect).toBeEnabled();
     });
   });
 

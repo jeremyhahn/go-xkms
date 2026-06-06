@@ -164,7 +164,7 @@ func (f *FileStorage) List(_ context.Context, prefix string) ([]string, error) {
 			return err
 		}
 
-		// Skip directories
+		// Skip directories; every regular file represents a key.
 		if d.IsDir() {
 			return nil
 		}
@@ -204,7 +204,7 @@ func (f *FileStorage) Scan(_ context.Context, prefix string, fn func(key string,
 			return err
 		}
 
-		// Skip directories
+		// Skip directories; every regular file represents a key.
 		if d.IsDir() {
 			return nil
 		}
@@ -260,8 +260,8 @@ func (f *FileStorage) Close() error {
 	return nil
 }
 
-// keyToPath converts a storage key to a file path.
-// Validates key safety before constructing path.
+// keyToPath converts a storage key to its on-disk file path (<root>/<key>).
+// Validates key safety before constructing the path.
 func (f *FileStorage) keyToPath(key string) string {
 	// Validate key safety (allows internal paths like "keys/alice" but blocks traversal)
 	if err := validateStorageKey(key); err != nil {
@@ -302,13 +302,13 @@ func validateStorageKey(key string) error {
 	return nil
 }
 
-// pathToKey converts a file path to a storage key.
+// pathToKey converts a stored file path (<root>/<key>) back to its key.
 func (f *FileStorage) pathToKey(path string) (string, error) {
 	rel, err := filepath.Rel(f.rootDir, path)
 	if err != nil {
 		return "", fmt.Errorf("file storage: failed to convert path to key: %w", err)
 	}
-	return rel, nil
+	return filepath.ToSlash(rel), nil
 }
 
 // filePermissionsForKey determines the file permissions based on the key prefix.

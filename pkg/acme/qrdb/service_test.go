@@ -369,14 +369,6 @@ func (m *mockTransport) BarrierUnsealWithShare(ctx context.Context, req *db.Barr
 func (m *mockTransport) BarrierUnsealWithShares(ctx context.Context, req *db.BarrierUnsealSharesRequest) error {
 	return nil
 }
-func (m *mockTransport) BarrierShamirListShares(ctx context.Context) (*db.BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-func (m *mockTransport) BarrierShamirDeleteShare(ctx context.Context, req *db.BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-func (m *mockTransport) BarrierShamirDeleteAllShares(ctx context.Context) error { return nil }
-func (m *mockTransport) BarrierShamirVerify(ctx context.Context) error          { return nil }
 func (m *mockTransport) BarrierRekey(ctx context.Context, req *db.BarrierRekeyRequest) (*db.BarrierRekeyResponse, error) {
 	return nil, nil
 }

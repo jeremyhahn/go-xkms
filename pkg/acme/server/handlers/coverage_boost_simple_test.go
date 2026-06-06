@@ -35,7 +35,6 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
-	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
@@ -109,7 +108,7 @@ func (m *mockTenantDAOSimple) Save(_ context.Context, tenant *entities.Tenant) e
 	return nil
 }
 
-func (m *mockTenantDAOSimple) SaveWithCondition(_ context.Context, _ *entities.Tenant, _ qrdbdao.Condition) error {
+func (m *mockTenantDAOSimple) SaveWithCondition(_ context.Context, _ *entities.Tenant, _ qrdbsdk.Condition) error {
 	panic("not implemented")
 }
 
@@ -138,7 +137,7 @@ func (m *mockTenantDAOSimple) Page(_ context.Context, _ qrdbsdk.PageQuery) (qrdb
 	panic("not implemented")
 }
 
-func (m *mockTenantDAOSimple) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbdao.PagerFunc[*entities.Tenant]) error {
+func (m *mockTenantDAOSimple) ForEachPage(_ context.Context, _ qrdbsdk.PageQuery, _ qrdbsdk.PagerFunc[*entities.Tenant]) error {
 	panic("not implemented")
 }
 
@@ -195,7 +194,7 @@ func (m *mockTenantDAOSimple) CountByIndex(_ context.Context, _ string, _ interf
 	panic("not implemented")
 }
 
-func (m *mockTenantDAOSimple) Find(_ context.Context) *qrdbdao.QueryBuilder[*entities.Tenant] {
+func (m *mockTenantDAOSimple) Find(_ context.Context) *qrdbsdk.QueryBuilder[*entities.Tenant] {
 	panic("not implemented")
 }
 

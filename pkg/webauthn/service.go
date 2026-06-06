@@ -16,6 +16,7 @@ package webauthn
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -23,6 +24,19 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
+
+// verificationError classifies an error returned by go-webauthn credential
+// validation. A protocol-level verification failure (a forged or invalid
+// attestation/assertion) is mapped to ErrVerificationFailed so transports
+// return 401; any other error (for example a storage fault surfaced through a
+// validation callback) is wrapped unchanged and remains a 500.
+func verificationError(op string, err error) error {
+	var protoErr *protocol.Error
+	if errors.As(err, &protoErr) {
+		return NewVerificationError(op, err)
+	}
+	return WrapError(op, err)
+}
 
 // Service provides WebAuthn registration and authentication operations.
 type Service struct {
@@ -178,7 +192,7 @@ func (s *Service) FinishRegistration(ctx context.Context, sessionID string, resp
 	// Finish registration
 	credential, err := s.webauthn.CreateCredential(user, *session, response)
 	if err != nil {
-		return "", nil, WrapError("create credential", err)
+		return "", nil, verificationError("create credential", err)
 	}
 
 	// Convert and store credential
@@ -280,7 +294,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID string, userID []by
 			response,
 		)
 		if err != nil {
-			return "", nil, WrapError("validate discoverable login", err)
+			return "", nil, verificationError("validate discoverable login", err)
 		}
 
 		// Get user from credential
@@ -301,7 +315,7 @@ func (s *Service) FinishLogin(ctx context.Context, sessionID string, userID []by
 
 		credential, err = s.webauthn.ValidateLogin(user, *session, response)
 		if err != nil {
-			return "", nil, WrapError("validate login", err)
+			return "", nil, verificationError("validate login", err)
 		}
 	}
 

@@ -27,8 +27,12 @@ import (
 // - Unix: Response{Body: []byte{...}} (raw JSON bytes in Body field)
 // - MCP: json.RawMessage (raw JSON bytes)
 func extractResponseData(raw interface{}) ([]byte, error) {
-	// If raw is already a map (gRPC transport), marshal it directly.
+	// If raw is already a map (gRPC transport), unwrap a Data field if
+	// present, otherwise marshal the map directly.
 	if m, ok := raw.(map[string]interface{}); ok {
+		if data, ok := m["Data"].(map[string]interface{}); ok {
+			return json.Marshal(data)
+		}
 		return json.Marshal(m)
 	}
 
@@ -119,20 +123,22 @@ func mapListResponse(raw interface{}, itemsKey string, items interface{}, pagina
 		}
 	}
 
-	// Extract pagination from top-level fields.
+	// Extract pagination from a nested "pagination" object.
 	if pagination != nil {
-		p := &Pagination{}
-		if total, ok := data["total"].(float64); ok {
-			p.Total = int(total)
-		}
-		if page, ok := data["page"].(float64); ok {
-			p.Page = int(page)
-		}
-		if perPage, ok := data["per_page"].(float64); ok {
-			p.PerPage = int(perPage)
-		}
-		if p.Total > 0 || p.Page > 0 {
-			*pagination = p
+		if pagMap, ok := data["pagination"].(map[string]interface{}); ok {
+			p := &Pagination{}
+			if total, ok := pagMap["total"].(float64); ok {
+				p.Total = int(total)
+			}
+			if page, ok := pagMap["page"].(float64); ok {
+				p.Page = int(page)
+			}
+			if perPage, ok := pagMap["per_page"].(float64); ok {
+				p.PerPage = int(perPage)
+			}
+			if p.Total > 0 || p.Page > 0 {
+				*pagination = p
+			}
 		}
 	}
 

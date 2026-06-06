@@ -16,7 +16,7 @@ package staticpw
 import (
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // AccessMode identifies the access control strategy for the password store.
@@ -36,11 +36,11 @@ const (
 // inner EncryptedStore without PIN verification.
 type PINAccessStore struct {
 	inner      *EncryptedStore
-	pinManager pin.PINBackend
+	pinManager qrdbsdk.PINBackend
 }
 
 // NewPINAccessStore creates a PINAccessStore. Both inner and pinManager must be non-nil.
-func NewPINAccessStore(inner *EncryptedStore, pinManager pin.PINBackend) (*PINAccessStore, error) {
+func NewPINAccessStore(inner *EncryptedStore, pinManager qrdbsdk.PINBackend) (*PINAccessStore, error) {
 	if inner == nil {
 		return nil, ErrNilInnerStore
 	}
@@ -133,13 +133,13 @@ func (s *PINAccessStore) Close() error {
 // unlocked, decryption operations succeed until Lock is called.
 type SessionStore struct {
 	inner      *EncryptedStore
-	pinManager pin.PINBackend
+	pinManager qrdbsdk.PINBackend
 	unlocked   atomic.Bool
 }
 
 // NewSessionStore creates a SessionStore. Both inner and pinManager must be non-nil.
 // The store starts in the locked state.
-func NewSessionStore(inner *EncryptedStore, pinManager pin.PINBackend) (*SessionStore, error) {
+func NewSessionStore(inner *EncryptedStore, pinManager qrdbsdk.PINBackend) (*SessionStore, error) {
 	if inner == nil {
 		return nil, ErrNilInnerStore
 	}

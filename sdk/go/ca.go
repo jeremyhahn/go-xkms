@@ -271,3 +271,198 @@ var (
 	// ErrCATCGCSRUnmarshalFailed indicates the packed CSR could not be unmarshaled.
 	ErrCATCGCSRUnmarshalFailed = pkgca.ErrTCGCSRUnmarshalFailed
 )
+
+// ---------------------------------------------------------------------------
+// Extended re-exports
+//
+// Bulk-aliased public surface from pkg/ca for downstream consumers. Grouped by
+// purpose: types, constants, profile constructors, verification helpers,
+// certificate predicates, key-usage checks, certificate utilities, CSR/CRL/PEM
+// parsing, TPM extension builders, and defaults.
+// ---------------------------------------------------------------------------
+
+// --- Additional types ---
+
+// CA is the concrete certificate authority implementation.
+type CA = pkgca.CA
+
+// OCSPResponder serves OCSP responses for certificate revocation queries.
+type OCSPResponder = pkgca.OCSPResponder
+
+// OCSPResponderConfig configures an OCSPResponder.
+type OCSPResponderConfig = pkgca.OCSPResponderConfig
+
+// OpenSSLConfig represents OpenSSL-compatible CA configuration.
+type OpenSSLConfig = pkgca.OpenSSLConfig
+
+// RevokeOptions configures certificate revocation behavior.
+type RevokeOptions = pkgca.RevokeOptions
+
+// SerialGenerator issues serial numbers for new certificates.
+type SerialGenerator = pkgca.SerialGenerator
+
+// Storage abstracts persistence for serial number tracking.
+type Storage = pkgca.Storage
+
+// VerifyOptions configures certificate verification behavior.
+type VerifyOptions = pkgca.VerifyOptions
+
+// VerificationError contains structured verification failure detail.
+type VerificationError = pkgca.VerificationError
+
+// QuantumAlgorithmError indicates a post-quantum algorithm error.
+type QuantumAlgorithmError = pkgca.QuantumAlgorithmError
+
+// QuantumCertError indicates a post-quantum certificate error.
+type QuantumCertError = pkgca.QuantumCertError
+
+// QuantumVerificationError indicates a post-quantum verification error.
+type QuantumVerificationError = pkgca.QuantumVerificationError
+
+// SerialGenerationError indicates a failure generating a serial number.
+type SerialGenerationError = pkgca.SerialGenerationError
+
+// SerialStorageError indicates a failure persisting serial number state.
+type SerialStorageError = pkgca.SerialStorageError
+
+// SerialValidationError indicates a failure validating a serial number.
+type SerialValidationError = pkgca.SerialValidationError
+
+// --- Constants ---
+
+// DefaultCRLValidityDays is the default validity period (in days) for CRLs.
+const DefaultCRLValidityDays = pkgca.DefaultCRLValidityDays
+
+// --- Profile, config, and infrastructure constructors ---
+
+var (
+	NewCAProfile                     = pkgca.NewCAProfile
+	NewClientProfile                 = pkgca.NewClientProfile
+	NewServerProfile                 = pkgca.NewServerProfile
+	NewEmailProfile                  = pkgca.NewEmailProfile
+	NewCodeSigningProfile            = pkgca.NewCodeSigningProfile
+	NewOCSPResponderProfile          = pkgca.NewOCSPResponderProfile
+	NewTimestampingProfile           = pkgca.NewTimestampingProfile
+	NewConfigBuilder                 = pkgca.NewConfigBuilder
+	NewProfileBuilder                = pkgca.NewProfileBuilder
+	NewRevocationManager             = pkgca.NewRevocationManager
+	NewSerialGenerator               = pkgca.NewSerialGenerator
+	NewMemoryStorage                 = pkgca.NewMemoryStorage
+	NewDefaultCABundler              = pkgca.NewDefaultCABundler
+	NewDefaultCABundlerWithProviders = pkgca.NewDefaultCABundlerWithProviders
+	NewDefaultProfileRegistry        = pkgca.NewDefaultProfileRegistry
+	NewOCSPResponder                 = pkgca.NewOCSPResponder
+	NewSimpleCertificate             = pkgca.NewSimpleCertificate
+)
+
+// --- Verification helpers ---
+
+var (
+	VerifyHybridCertificate           = pkgca.VerifyHybridCertificate
+	VerifyTBSDeterminism              = pkgca.VerifyTBSDeterminism
+	VerifyWithOptions                 = pkgca.VerifyWithOptions
+	VerifyChain                       = pkgca.VerifyChain
+	VerifyAgainstCRL                  = pkgca.VerifyAgainstCRL
+	VerifyCertificateSignature        = pkgca.VerifyCertificateSignature
+	VerifyCertificateAgainstPublicKey = pkgca.VerifyCertificateAgainstPublicKey
+	ExtractTBSBytes                   = pkgca.ExtractTBSBytes
+)
+
+// --- Certificate predicates ---
+
+var (
+	IsCA                    = pkgca.IsCA
+	IsSelfSigned            = pkgca.IsSelfSigned
+	IsExpired               = pkgca.IsExpired
+	IsNotYetValid           = pkgca.IsNotYetValid
+	IsCurrentlyValid        = pkgca.IsCurrentlyValid
+	IsValidAt               = pkgca.IsValidAt
+	IsIssuedBy              = pkgca.IsIssuedBy
+	IsCRLValid              = pkgca.IsCRLValid
+	IsCRLExpired            = pkgca.IsCRLExpired
+	IsCertificateInCRL      = pkgca.IsCertificateInCRL
+	IsValidCSRPEM           = pkgca.IsValidCSRPEM
+	IsValidRevocationReason = pkgca.IsValidRevocationReason
+)
+
+// --- Key-usage checks ---
+
+var (
+	HasKeyUsage        = pkgca.HasKeyUsage
+	HasExtKeyUsage     = pkgca.HasExtKeyUsage
+	HasAnyExtKeyUsage  = pkgca.HasAnyExtKeyUsage
+	HasAllExtKeyUsages = pkgca.HasAllExtKeyUsages
+)
+
+// --- Certificate utilities ---
+
+var (
+	CertificateFingerprint = pkgca.CertificateFingerprint
+	CertificatesMatch      = pkgca.CertificatesMatch
+	SerialNumbersMatch     = pkgca.SerialNumbersMatch
+	PathLength             = pkgca.PathLength
+	DaysUntilExpiration    = pkgca.DaysUntilExpiration
+	RemainingValidity      = pkgca.RemainingValidity
+	MatchesDNSName         = pkgca.MatchesDNSName
+	GetRevocationReason    = pkgca.GetRevocationReason
+	RevocationReasonName   = pkgca.RevocationReasonName
+	GetTLSCertificateInfo  = pkgca.GetTLSCertificateInfo
+	ValidityPeriod         = pkgca.ValidityPeriod
+)
+
+// --- Certificate / CSR / OCSP creation ---
+
+var (
+	CreateCSRWithKey        = pkgca.CreateCSRWithKey
+	CreateHybridCertificate = pkgca.CreateHybridCertificate
+	CreateOCSPRequest       = pkgca.CreateOCSPRequest
+)
+
+// --- SAN / CRL / CSR / PEM parsing and loading ---
+
+var (
+	ApplySANsToTemplate      = pkgca.ApplySANsToTemplate
+	MergeSANs                = pkgca.MergeSANs
+	ParseSANsFromCSR         = pkgca.ParseSANsFromCSR
+	BuildCRLTemplate         = pkgca.BuildCRLTemplate
+	ParseCRLToRevocationInfo = pkgca.ParseCRLToRevocationInfo
+	BuildCertPool            = pkgca.BuildCertPool
+	SecureCipherSuites       = pkgca.SecureCipherSuites
+	ParseCSR                 = pkgca.ParseCSR
+	ParsePEMCertificateChain = pkgca.ParsePEMCertificateChain
+	LoadOpenSSLConfig        = pkgca.LoadOpenSSLConfig
+	LoadTLSCertificate       = pkgca.LoadTLSCertificate
+	LoadTLSCertificateFiles  = pkgca.LoadTLSCertificateFiles
+	TryLoadOpenSSLDefaults   = pkgca.TryLoadOpenSSLDefaults
+)
+
+// --- TPM and platform extension builders ---
+
+var (
+	CreatePlatformManufacturerExtension = pkgca.CreatePlatformManufacturerExtension
+	CreatePlatformModelExtension        = pkgca.CreatePlatformModelExtension
+	CreatePlatformVersionExtension      = pkgca.CreatePlatformVersionExtension
+	CreateTPMManufacturerExtension      = pkgca.CreateTPMManufacturerExtension
+	CreateTPMModelExtension             = pkgca.CreateTPMModelExtension
+	CreateTPMVersionExtension           = pkgca.CreateTPMVersionExtension
+	CreateTPFIPS140Extension            = pkgca.CreateTPFIPS140Extension
+	CreateTPKeyStoreExtension           = pkgca.CreateTPKeyStoreExtension
+	CreateTPIssuerKeyStoreExtension     = pkgca.CreateTPIssuerKeyStoreExtension
+	CreateVerifiedTPMFixedExtension     = pkgca.CreateVerifiedTPMFixedExtension
+	CreateVerifiedTPMResidencyExtension = pkgca.CreateVerifiedTPMResidencyExtension
+)
+
+// --- Defaults ---
+
+var (
+	DefaultClientExtKeyUsage                     = pkgca.DefaultClientExtKeyUsage
+	DefaultClientKeyUsage                        = pkgca.DefaultClientKeyUsage
+	DefaultKeyConfig                             = pkgca.DefaultKeyConfig
+	DefaultMultiIdentityCAConfig                 = pkgca.DefaultMultiIdentityCAConfig
+	DefaultMultiIdentityCAConfigWithIntermediate = pkgca.DefaultMultiIdentityCAConfigWithIntermediate
+	DefaultOCSPResponderConfig                   = pkgca.DefaultOCSPResponderConfig
+	DefaultServerClientExtKeyUsage               = pkgca.DefaultServerClientExtKeyUsage
+	DefaultServerExtKeyUsage                     = pkgca.DefaultServerExtKeyUsage
+	DefaultServerKeyUsage                        = pkgca.DefaultServerKeyUsage
+	DefaultTLSConfig                             = pkgca.DefaultTLSConfig
+)

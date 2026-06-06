@@ -33,9 +33,8 @@ func setupShamirBarrier(t *testing.T, threshold, total int) *seal.Barrier {
 	t.Helper()
 
 	base := storage.New()
-	shareStore := storage.New()
 
-	shamirStrat, err := seal.NewShamirStrategy(shareStore, threshold, total)
+	shamirStrat, err := seal.NewShamirStrategy(threshold, total)
 	require.NoError(t, err)
 
 	b, err := seal.NewBarrier(
@@ -58,7 +57,7 @@ func setupShamirBarrier(t *testing.T, threshold, total int) *seal.Barrier {
 	return b
 }
 
-// setupCredentialShamirBarrier creates a barrier with StrategySoftware that
+// setupCredentialShamirBarrier creates a barrier with StrategyPassphrase that
 // uses credential-mode Shamir (the password is split into shares).
 func setupCredentialShamirBarrier(t *testing.T, threshold, total int) *seal.Barrier {
 	t.Helper()
@@ -69,7 +68,7 @@ func setupCredentialShamirBarrier(t *testing.T, threshold, total int) *seal.Barr
 		base,
 		seal.BarrierConfig{
 			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategySoftware},
+			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
 			Shamir: &seal.ShamirConfig{
 				Threshold:   threshold,
 				TotalShares: total,
@@ -332,218 +331,6 @@ func TestBarrierUnsealShares_AlreadyUnsealed(t *testing.T) {
 	assert.Equal(t, codes.AlreadyExists, st.Code())
 }
 
-// ==================== BarrierShamirListShares Tests ====================
-
-func TestBarrierShamirListShares_Success(t *testing.T) {
-	setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
-	ctx := context.Background()
-
-	// Initialize to create shares.
-	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
-	require.NoError(t, err)
-
-	resp, err := svc.BarrierShamirListShares(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(3), resp.Count)
-	assert.Equal(t, int32(2), resp.Threshold)
-	assert.Equal(t, int32(3), resp.Total)
-}
-
-func TestBarrierShamirListShares_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirListShares(context.Background(), &emptypb.Empty{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Contains(t, st.Message(), "barrier not configured")
-}
-
-func TestBarrierShamirListShares_NoShamirStrategy(t *testing.T) {
-	// Create a barrier without Shamir strategy.
-	setupBarrier(t)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirListShares(context.Background(), &emptypb.Empty{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-	assert.Contains(t, st.Message(), "shamir not configured")
-}
-
-// ==================== BarrierShamirDeleteShare Tests ====================
-
-func TestBarrierShamirDeleteShare_Success(t *testing.T) {
-	setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
-	ctx := context.Background()
-
-	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
-	require.NoError(t, err)
-
-	// Delete share at index 1.
-	resp, err := svc.BarrierShamirDeleteShare(ctx, &pb.BarrierShamirDeleteShareRequest{
-		Index: 1,
-	})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-
-	// Verify count decreased.
-	listResp, err := svc.BarrierShamirListShares(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(2), listResp.Count)
-}
-
-func TestBarrierShamirDeleteShare_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirDeleteShare(context.Background(), &pb.BarrierShamirDeleteShareRequest{
-		Index: 1,
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-func TestBarrierShamirDeleteShare_NoShamirStrategy(t *testing.T) {
-	setupBarrier(t)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirDeleteShare(context.Background(), &pb.BarrierShamirDeleteShareRequest{
-		Index: 1,
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-func TestBarrierShamirDeleteShare_NotFound(t *testing.T) {
-	setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
-	ctx := context.Background()
-
-	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
-	require.NoError(t, err)
-
-	// Delete a non-existent share index.
-	_, err = svc.BarrierShamirDeleteShare(ctx, &pb.BarrierShamirDeleteShareRequest{
-		Index: 99,
-	})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.NotFound, st.Code())
-}
-
-// ==================== BarrierShamirDeleteAllShares Tests ====================
-
-func TestBarrierShamirDeleteAllShares_Success(t *testing.T) {
-	setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
-	ctx := context.Background()
-
-	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
-	require.NoError(t, err)
-
-	resp, err := svc.BarrierShamirDeleteAllShares(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-
-	// Verify all shares are gone.
-	listResp, err := svc.BarrierShamirListShares(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(0), listResp.Count)
-}
-
-func TestBarrierShamirDeleteAllShares_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirDeleteAllShares(context.Background(), &emptypb.Empty{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-func TestBarrierShamirDeleteAllShares_NoShamirStrategy(t *testing.T) {
-	setupBarrier(t)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirDeleteAllShares(context.Background(), &emptypb.Empty{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-// ==================== BarrierShamirVerify Tests ====================
-
-func TestBarrierShamirVerify_Success(t *testing.T) {
-	setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
-	ctx := context.Background()
-
-	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
-	require.NoError(t, err)
-
-	resp, err := svc.BarrierShamirVerify(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.NotNil(t, resp)
-}
-
-func TestBarrierShamirVerify_NotConfigured(t *testing.T) {
-	SetBarrier(nil)
-	defer SetBarrier(nil)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirVerify(context.Background(), &emptypb.Empty{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-func TestBarrierShamirVerify_NoShamirStrategy(t *testing.T) {
-	setupBarrier(t)
-	svc := newTestService()
-
-	_, err := svc.BarrierShamirVerify(context.Background(), &emptypb.Empty{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.FailedPrecondition, st.Code())
-}
-
-func TestBarrierShamirVerify_FailsAfterShareDeletion(t *testing.T) {
-	setupShamirBarrier(t, 2, 3)
-	svc := newTestService()
-	ctx := context.Background()
-
-	_, err := svc.BarrierInitializeShamir(ctx, &pb.BarrierInitializeShamirRequest{})
-	require.NoError(t, err)
-
-	// Delete all shares, then verify should fail.
-	_, err = svc.BarrierShamirDeleteAllShares(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-
-	_, err = svc.BarrierShamirVerify(ctx, &emptypb.Empty{})
-	require.Error(t, err)
-	st, ok := status.FromError(err)
-	require.True(t, ok)
-	assert.Equal(t, codes.NotFound, st.Code())
-}
-
 // ==================== BarrierRekey Tests ====================
 
 func TestBarrierRekey_Success(t *testing.T) {
@@ -564,13 +351,6 @@ func TestBarrierRekey_Success(t *testing.T) {
 	assert.Len(t, resp.Shares, 5)
 	assert.Equal(t, int32(3), resp.Threshold)
 	assert.Equal(t, int32(5), resp.TotalShares)
-
-	// Verify share count reflects new total.
-	listResp, err := svc.BarrierShamirListShares(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(5), listResp.Count)
-	assert.Equal(t, int32(3), listResp.Threshold)
-	assert.Equal(t, int32(5), listResp.Total)
 }
 
 func TestBarrierRekey_NotConfigured(t *testing.T) {
@@ -1096,16 +876,7 @@ func TestBarrierShamir_FullLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, initResp.Shares, 3)
 
-	// 2. Verify shares are valid.
-	_, err = svc.BarrierShamirVerify(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-
-	// 3. List shares.
-	listResp, err := svc.BarrierShamirListShares(ctx, &emptypb.Empty{})
-	require.NoError(t, err)
-	assert.Equal(t, int32(3), listResp.Count)
-
-	// 4. Generate recovery keys.
+	// 2. Generate recovery keys.
 	recoveryResp, err := svc.BarrierGenerateRecoveryKeys(ctx, &pb.BarrierGenerateRecoveryKeysRequest{
 		Threshold: 2,
 		Total:     3,

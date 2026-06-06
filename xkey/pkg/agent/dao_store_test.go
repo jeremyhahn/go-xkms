@@ -20,9 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	dberrors "github.com/jeremyhahn/go-qrdb/pkg/errors"
-	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 // testKVStore is a minimal in-memory KVStore for unit testing.
@@ -32,7 +30,7 @@ type testKVStore struct {
 	data map[string][]byte
 }
 
-func newTestKVStore() kvstore.KVStore {
+func newTestKVStore() qrdbsdk.KVStore {
 	return &testKVStore{data: make(map[string][]byte)}
 }
 
@@ -50,7 +48,7 @@ func (m *testKVStore) Get(_ context.Context, key string) ([]byte, error) {
 	defer m.mu.RUnlock()
 	v, ok := m.data[key]
 	if !ok {
-		return nil, &dberrors.QRDBError{Code: dberrors.ErrNotFound, Op: "kv.get"}
+		return nil, &qrdbsdk.QRDBError{Code: qrdbsdk.ErrNotFound, Op: "kv.get"}
 	}
 	cp := make([]byte, len(v))
 	copy(cp, v)
@@ -108,7 +106,7 @@ func (m *testKVStore) Exists(_ context.Context, key string) (bool, error) {
 	return ok, nil
 }
 
-func (m *testKVStore) RegisterEntityIndexes(_ string, _ []kvstore.EntityIndex) error { return nil }
+func (m *testKVStore) RegisterEntityIndexes(_ string, _ []qrdbsdk.EntityIndex) error { return nil }
 
 func (m *testKVStore) QueryIndex(_ context.Context, _ string, _ []byte) ([][]byte, error) {
 	return nil, nil
@@ -118,7 +116,15 @@ func (m *testKVStore) ScanIndex(_ context.Context, _ string, _, _ []byte) (map[s
 	return nil, nil
 }
 
-var _ kvstore.KVStore = (*testKVStore)(nil)
+func (m *testKVStore) QueryCompoundIndex(_ context.Context, _ string, _ [][]byte) ([][]byte, error) {
+	return nil, nil
+}
+
+func (m *testKVStore) ScanCompoundIndex(_ context.Context, _ string, _ [][]byte, _, _ []byte) (map[string][][]byte, error) {
+	return nil, nil
+}
+
+var _ qrdbsdk.KVStore = (*testKVStore)(nil)
 
 // newTestDAOStore creates a DAOStore with an in-memory KVStore for testing.
 func newTestDAOStore(t *testing.T) *DAOStore {
@@ -328,7 +334,7 @@ func TestDAOStore_Page(t *testing.T) {
 		ctx := context.Background()
 
 		// First page of 2.
-		page1, err := store.Page(ctx, dao.PageQuery{Page: 1, PageSize: 2})
+		page1, err := store.Page(ctx, qrdbsdk.PageQuery{Page: 1, PageSize: 2})
 		if err != nil {
 			t.Fatalf("Page(1) error: %v", err)
 		}
@@ -343,7 +349,7 @@ func TestDAOStore_Page(t *testing.T) {
 		}
 
 		// Last page.
-		page3, err := store.Page(ctx, dao.PageQuery{Page: 3, PageSize: 2})
+		page3, err := store.Page(ctx, qrdbsdk.PageQuery{Page: 3, PageSize: 2})
 		if err != nil {
 			t.Fatalf("Page(3) error: %v", err)
 		}

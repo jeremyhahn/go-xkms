@@ -161,6 +161,10 @@ func (m *mockCAClient) CanSeal(_ context.Context, _ string) (*transport.CanSealR
 func (m *mockCAClient) AttestKey(_ context.Context, _ *transport.AttestKeyRequest) (*transport.AttestKeyResponse, error) {
 	return nil, nil
 }
+func (m *mockCAClient) CreateUser(_ context.Context, _ *transport.CreateUserRequest) (*transport.GetUserResponse, error) {
+	return nil, nil
+}
+func (m *mockCAClient) BindUserCert(_ context.Context, _, _ string, _ int64) error { return nil }
 func (m *mockCAClient) ListUsers(_ context.Context, _ ...transport.ListOption) (*transport.ListUsersResponse, error) {
 	return nil, nil
 }
@@ -255,26 +259,6 @@ func (m *mockCAClient) BarrierUnsealWithShare(_ context.Context, _ *transport.Ba
 	return nil, nil
 }
 func (m *mockCAClient) BarrierUnsealWithShares(_ context.Context, _ *transport.BarrierUnsealSharesRequest) error {
-	return nil
-}
-
-// BarrierShamirListShares returns Shamir share metadata.
-func (m *mockCAClient) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, nil
-}
-
-// BarrierShamirDeleteShare deletes a Shamir share by index.
-func (m *mockCAClient) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	return nil
-}
-
-// BarrierShamirDeleteAllShares deletes all Shamir shares.
-func (m *mockCAClient) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return nil
-}
-
-// BarrierShamirVerify verifies Shamir share integrity.
-func (m *mockCAClient) BarrierShamirVerify(_ context.Context) error {
 	return nil
 }
 

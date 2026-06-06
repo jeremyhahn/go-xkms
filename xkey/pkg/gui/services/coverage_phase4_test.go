@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +34,7 @@ import (
 // status when the PINManager reports initialized with both PINs set.
 func TestP4B_PINService_GetPINStatus_Success(t *testing.T) {
 	mgr := &mockPINBackend{
-		strategy:    pin.StrategySoftware,
+		strategy:    qrdbsdk.PINStrategySoftware,
 		soPINSet:    true,
 		userPINSet:  true,
 		initialized: true,
@@ -54,7 +54,7 @@ func TestP4B_PINService_GetPINStatus_Success(t *testing.T) {
 // status when no PINs have been set yet.
 func TestP4B_PINService_GetPINStatus_NoPINsSet(t *testing.T) {
 	mgr := &mockPINBackend{
-		strategy:    pin.StrategyTPM2,
+		strategy:    qrdbsdk.PINStrategyTPM2,
 		soPINSet:    false,
 		userPINSet:  false,
 		initialized: false,
@@ -72,7 +72,7 @@ func TestP4B_PINService_GetPINStatus_NoPINsSet(t *testing.T) {
 
 // TestP4B_PINService_SetSOPIN_Success tests the SetSOPIN success path.
 func TestP4B_PINService_SetSOPIN_Success(t *testing.T) {
-	mgr := &mockPINBackend{strategy: pin.StrategySoftware}
+	mgr := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(mgr)
 
 	err := svc.SetSOPIN("", "new-so-pin")
@@ -82,7 +82,7 @@ func TestP4B_PINService_SetSOPIN_Success(t *testing.T) {
 // TestP4B_PINService_SetSOPIN_ManagerError tests SetSOPIN with a manager error.
 func TestP4B_PINService_SetSOPIN_ManagerError(t *testing.T) {
 	mgr := &mockPINBackend{
-		strategy:    pin.StrategySoftware,
+		strategy:    qrdbsdk.PINStrategySoftware,
 		setSOPINErr: errors.New("tpm locked"),
 	}
 	svc := newTestPINService(mgr)
@@ -94,7 +94,7 @@ func TestP4B_PINService_SetSOPIN_ManagerError(t *testing.T) {
 
 // TestP4B_PINService_ChangeSOPIN_Success tests the ChangeSOPIN success path.
 func TestP4B_PINService_ChangeSOPIN_Success(t *testing.T) {
-	mgr := &mockPINBackend{strategy: pin.StrategySoftware}
+	mgr := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(mgr)
 
 	err := svc.ChangeSOPIN("old-pin", "new-pin")
@@ -113,7 +113,7 @@ func TestP4B_PINService_ChangeSOPIN_NotConfigured(t *testing.T) {
 // a manager error.
 func TestP4B_PINService_ChangeSOPIN_ManagerError(t *testing.T) {
 	mgr := &mockPINBackend{
-		strategy:       pin.StrategySoftware,
+		strategy:       qrdbsdk.PINStrategySoftware,
 		changeSOPINErr: errors.New("pin mismatch"),
 	}
 	svc := newTestPINService(mgr)
@@ -126,7 +126,7 @@ func TestP4B_PINService_ChangeSOPIN_ManagerError(t *testing.T) {
 // TestP4B_PINService_VerifySOPIN_Success tests the VerifySOPIN success path.
 func TestP4B_PINService_VerifySOPIN_Success(t *testing.T) {
 	// mockPINBackend.VerifySOPIN always returns nil.
-	mgr := &mockPINBackend{strategy: pin.StrategySoftware}
+	mgr := &mockPINBackend{strategy: qrdbsdk.PINStrategySoftware}
 	svc := newTestPINService(mgr)
 
 	err := svc.VerifySOPIN("so-pin-value")

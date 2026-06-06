@@ -35,8 +35,8 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
-	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 )

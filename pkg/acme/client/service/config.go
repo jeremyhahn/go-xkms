@@ -348,7 +348,7 @@ func DefaultConfig() *Config {
 		Certificates: make(map[string]*CertificateSpec),
 		// Deprecated legacy defaults
 		Client: ClientConfig{
-			DirectoryURL:  "http://localhost:8080/acme/directory",
+			DirectoryURL:  "https://localhost:8443/acme/directory",
 			Timeout:       60 * time.Second,
 			RetryAttempts: 3,
 			RetryDelay:    1 * time.Second,

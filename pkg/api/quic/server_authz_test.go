@@ -128,7 +128,7 @@ func TestAuthzAuthorize_AllowedRequest(t *testing.T) {
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{
 		Subject: "admin@example.com",
-		Roles: []string{"admin"},
+		Roles:   []string{"admin"},
 	}
 	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
 	defer xkms.Reset()
@@ -157,7 +157,7 @@ func TestAuthzAuthorize_DeniedRequest(t *testing.T) {
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{
 		Subject: "viewer@example.com",
-		Roles: []string{"viewer"},
+		Roles:   []string{"viewer"},
 	}
 	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
 	defer xkms.Reset()
@@ -201,7 +201,7 @@ func TestAuthzAuthorize_AuthzError(t *testing.T) {
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{
 		Subject: "admin@example.com",
-		Roles: []string{"admin"},
+		Roles:   []string{"admin"},
 	}
 	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
 	defer xkms.Reset()
@@ -316,7 +316,7 @@ func TestAuthzAuditLogging(t *testing.T) {
 		logger := &mockAuditLogger{}
 		identity := &auth.Identity{
 			Subject: "operator@example.com",
-			Roles: []string{"operator"},
+			Roles:   []string{"operator"},
 		}
 		server, _ := createAuthzTestServer(t, authorizer, logger, identity)
 		defer xkms.Reset()
@@ -347,7 +347,7 @@ func TestAuthzAuditLogging(t *testing.T) {
 		logger := &mockAuditLogger{}
 		identity := &auth.Identity{
 			Subject: "viewer@example.com",
-			Roles: []string{"viewer"},
+			Roles:   []string{"viewer"},
 		}
 		server, _ := createAuthzTestServer(t, authorizer, logger, identity)
 		defer xkms.Reset()

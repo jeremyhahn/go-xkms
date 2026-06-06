@@ -347,22 +347,6 @@ func (b *baseSDKClient) BarrierUnsealWithShares(ctx context.Context, req *transp
 	return errNotImplemented
 }
 
-func (b *baseSDKClient) BarrierShamirListShares(_ context.Context) (*transport.BarrierShamirSharesResponse, error) {
-	return nil, errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierShamirDeleteShare(_ context.Context, _ *transport.BarrierShamirDeleteShareRequest) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierShamirDeleteAllShares(_ context.Context) error {
-	return errNotImplemented
-}
-
-func (b *baseSDKClient) BarrierShamirVerify(_ context.Context) error {
-	return errNotImplemented
-}
-
 func (b *baseSDKClient) BarrierRekey(_ context.Context, _ *transport.BarrierRekeyRequest) (*transport.BarrierRekeyResponse, error) {
 	return nil, errNotImplemented
 }

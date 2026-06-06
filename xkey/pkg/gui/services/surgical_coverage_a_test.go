@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pin"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -45,11 +45,11 @@ type saPanicPINBackend struct {
 	mockPINBackend
 }
 
-func (m *saPanicPINBackend) Strategy() pin.StrategyID   { panic("saPanic: Strategy") }
-func (m *saPanicPINBackend) SOPINSet() bool             { panic("saPanic: SOPINSet") }
-func (m *saPanicPINBackend) UserPINSet() bool           { panic("saPanic: UserPINSet") }
-func (m *saPanicPINBackend) IsInitialized() bool        { panic("saPanic: IsInitialized") }
-func (m *saPanicPINBackend) SetSOPIN(_, _ string) error { panic("saPanic: SetSOPIN") }
+func (m *saPanicPINBackend) Strategy() qrdbsdk.PINStrategyID { panic("saPanic: Strategy") }
+func (m *saPanicPINBackend) SOPINSet() bool                  { panic("saPanic: SOPINSet") }
+func (m *saPanicPINBackend) UserPINSet() bool                { panic("saPanic: UserPINSet") }
+func (m *saPanicPINBackend) IsInitialized() bool             { panic("saPanic: IsInitialized") }
+func (m *saPanicPINBackend) SetSOPIN(_, _ string) error      { panic("saPanic: SetSOPIN") }
 func (m *saPanicPINBackend) SetUserPIN(_, _ string) error {
 	panic("saPanic: SetUserPIN")
 }
@@ -65,7 +65,7 @@ func (m *saPanicPINBackend) VerifyUserPIN(_ string) error {
 func (m *saPanicPINBackend) VerifySOPIN(_ string) error {
 	panic("saPanic: VerifySOPIN")
 }
-func (m *saPanicPINBackend) GetLockoutStatus() *pin.LockoutStatus {
+func (m *saPanicPINBackend) GetLockoutStatus() *qrdbsdk.PINLockoutStatus {
 	panic("saPanic: GetLockoutStatus")
 }
 func (m *saPanicPINBackend) ResetLockout(_ string) error {
@@ -634,7 +634,7 @@ func TestSA_PINService_GetPINStatus_Panic(t *testing.T) {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
 	mgr := &saPanicPINBackend{}
-	pSvc := pin.NewService(mgr, slog.Default())
+	pSvc := qrdbsdk.NewPINService(mgr, slog.Default())
 	svc.SetPINService(pSvc)
 
 	result, err := svc.GetPINStatus()
@@ -648,7 +648,7 @@ func TestSA_PINService_GetPINStatus_Panic(t *testing.T) {
 func TestSA_PINService_SetSOPIN_Panic(t *testing.T) {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pSvc := pin.NewService(&saPanicPINBackend{}, slog.Default())
+	pSvc := qrdbsdk.NewPINService(&saPanicPINBackend{}, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.SetSOPIN("old-pin-123", "new-pin-456")
@@ -661,7 +661,7 @@ func TestSA_PINService_SetSOPIN_Panic(t *testing.T) {
 func TestSA_PINService_SetUserPIN_Panic(t *testing.T) {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pSvc := pin.NewService(&saPanicPINBackend{}, slog.Default())
+	pSvc := qrdbsdk.NewPINService(&saPanicPINBackend{}, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.SetUserPIN("so-pin-123", "user-pin-456")
@@ -674,7 +674,7 @@ func TestSA_PINService_SetUserPIN_Panic(t *testing.T) {
 func TestSA_PINService_VerifyUserPIN_Panic(t *testing.T) {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pSvc := pin.NewService(&saPanicPINBackend{}, slog.Default())
+	pSvc := qrdbsdk.NewPINService(&saPanicPINBackend{}, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.VerifyUserPIN("pin")
@@ -687,7 +687,7 @@ func TestSA_PINService_VerifyUserPIN_Panic(t *testing.T) {
 func TestSA_PINService_VerifySOPIN_Panic(t *testing.T) {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pSvc := pin.NewService(&saPanicPINBackend{}, slog.Default())
+	pSvc := qrdbsdk.NewPINService(&saPanicPINBackend{}, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.VerifySOPIN("pin")
@@ -700,7 +700,7 @@ func TestSA_PINService_VerifySOPIN_Panic(t *testing.T) {
 func TestSA_PINService_GetLockoutStatus_Panic(t *testing.T) {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pSvc := pin.NewService(&saPanicPINBackend{}, slog.Default())
+	pSvc := qrdbsdk.NewPINService(&saPanicPINBackend{}, slog.Default())
 	svc.SetPINService(pSvc)
 
 	result, err := svc.GetLockoutStatus()
@@ -714,7 +714,7 @@ func TestSA_PINService_GetLockoutStatus_Panic(t *testing.T) {
 func TestSA_PINService_ResetLockout_Panic(t *testing.T) {
 	svc := NewPINService()
 	svc.SetContext(context.Background())
-	pSvc := pin.NewService(&saPanicPINBackend{}, slog.Default())
+	pSvc := qrdbsdk.NewPINService(&saPanicPINBackend{}, slog.Default())
 	svc.SetPINService(pSvc)
 
 	err := svc.ResetLockout("so-pin")

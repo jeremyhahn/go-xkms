@@ -20,8 +20,18 @@ services:
       - ../../..:/workspace
       # Sibling module mounts for go.mod replace directives.
       # xkey/go.mod: replace ... => ../../go-qrdb resolves to /go-qrdb inside the container.
+      # The full in-house closure must be present so the relative replaces resolve.
+      - ../../../../go-codec:/go-codec:cached
+      - ../../../../go-frost:/go-frost:cached
+      - ../../../../go-objstore:/go-objstore:cached
       - ../../../../go-qrdb:/go-qrdb:cached
       - ../../../../go-quicraft:/go-quicraft:cached
+      - ../../../../go-truststrap:/go-truststrap:cached
+      # Persist the Go build + module caches across `docker compose run --rm`
+      # invocations so wails dev compiles incrementally instead of cold every
+      # run (keeps startup well under the readiness timeout and speeds the suite).
+      - xkey-e2e-go-build:/root/.cache/go-build
+      - xkey-e2e-go-mod:/root/go/pkg/mod
     environment:
       - DISPLAY=:99
       - TPM2TOOLS_TCTI=swtpm:host=localhost,port=2321
@@ -34,3 +44,7 @@ services:
       - /dev/uhid:/dev/uhid
     privileged: true
     working_dir: /workspace/xkey
+
+volumes:
+  xkey-e2e-go-build:
+  xkey-e2e-go-mod:

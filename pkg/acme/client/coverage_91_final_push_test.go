@@ -271,8 +271,7 @@ func TestListOrders_FullFlow_Success(t *testing.T) {
 }
 
 func TestFetchOrdersList_InvalidJSON(t *testing.T) {
-	var server *httptest.Server
-	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{invalid json`))
@@ -760,9 +759,8 @@ func TestCheckOCSP_UnknownStatus91(t *testing.T) {
 // =============================================================================
 
 func TestPreAuthorize_DiscoverError91(t *testing.T) {
-	var server *httptest.Server
-	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Return error on directory
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()

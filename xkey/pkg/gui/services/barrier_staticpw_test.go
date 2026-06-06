@@ -43,7 +43,7 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	// ---------------------------------------------------------------
 	svc := NewBarrierService(configDir, slog.Default())
 
-	err := svc.Initialize(barrierPassword, "software")
+	err := svc.Initialize(barrierPassword, "passphrase")
 	require.NoError(t, err, "barrier initialization must succeed")
 
 	backend := svc.GetBackend()
@@ -126,7 +126,7 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	// ---------------------------------------------------------------
 	// Step 6: Unseal and verify passwords are accessible again.
 	// ---------------------------------------------------------------
-	err = svc.Unseal(barrierPassword, "software")
+	err = svc.Unseal(barrierPassword, "passphrase")
 	require.NoError(t, err, "unseal must succeed with the correct password")
 	assert.True(t, svc.IsUnsealed(), "barrier must be unsealed after Unseal()")
 
@@ -160,7 +160,7 @@ func TestBarrierStaticPW_WrongPasswordCannotDecrypt(t *testing.T) {
 	// Initialize and store a password.
 	svc := NewBarrierService(configDir, slog.Default())
 
-	err := svc.Initialize(correctPassword, "software")
+	err := svc.Initialize(correctPassword, "passphrase")
 	require.NoError(t, err)
 
 	store := staticpw.NewStore(svc.GetBackend())
@@ -175,7 +175,7 @@ func TestBarrierStaticPW_WrongPasswordCannotDecrypt(t *testing.T) {
 	require.NoError(t, err)
 
 	// Unseal with wrong password must fail.
-	err = svc.Unseal(wrongPassword, "software")
+	err = svc.Unseal(wrongPassword, "passphrase")
 	require.Error(t, err, "unseal with wrong password must fail")
 }
 
@@ -186,7 +186,7 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 	password := "multi-entry-pw-77"
 
 	svc := NewBarrierService(configDir, slog.Default())
-	err := svc.Initialize(password, "software")
+	err := svc.Initialize(password, "passphrase")
 	require.NoError(t, err)
 
 	store := staticpw.NewStore(svc.GetBackend())
@@ -227,7 +227,7 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 	err = svc.Seal()
 	require.NoError(t, err)
 
-	err = svc.Unseal(password, "software")
+	err = svc.Unseal(password, "passphrase")
 	require.NoError(t, err)
 
 	store2 := staticpw.NewStore(svc.GetBackend())

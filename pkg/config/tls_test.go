@@ -85,8 +85,8 @@ func TestLoadTLSConfig_ValidConfig(t *testing.T) {
 		t.Errorf("len(Certificates) = %v, want 1", len(tlsConfig.Certificates))
 	}
 
-	if tlsConfig.MinVersion != tls.VersionTLS12 {
-		t.Errorf("MinVersion = %v, want TLS 1.2", tlsConfig.MinVersion)
+	if tlsConfig.MinVersion != tls.VersionTLS13 {
+		t.Errorf("MinVersion = %v, want TLS 1.3", tlsConfig.MinVersion)
 	}
 }
 
@@ -362,12 +362,12 @@ func TestParseTLSVersion(t *testing.T) {
 		version  string
 		expected uint16
 	}{
-		{"TLS1.0", tls.VersionTLS10},
-		{"TLS1.1", tls.VersionTLS11},
 		{"TLS1.2", tls.VersionTLS12},
 		{"TLS1.3", tls.VersionTLS13},
-		{"unknown", tls.VersionTLS12}, // Default
-		{"", tls.VersionTLS12},        // Default
+		{"TLS1.0", tls.VersionTLS13}, // Insecure value falls to default
+		{"TLS1.1", tls.VersionTLS13}, // Insecure value falls to default
+		{"unknown", tls.VersionTLS13},
+		{"", tls.VersionTLS13},
 	}
 
 	for _, tt := range tests {

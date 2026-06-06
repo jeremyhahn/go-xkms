@@ -18,7 +18,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 )
 
 func TestPageRequest_Normalize_Defaults(t *testing.T) {
@@ -135,7 +135,7 @@ func TestPageRequest_ToDAOPageQuery_Unpaginated(t *testing.T) {
 }
 
 func TestPageResponseFromDAO(t *testing.T) {
-	result := dao.PageResult[string]{
+	result := qrdbsdk.PageResult[string]{
 		Entities: []string{"a", "b", "c"},
 		Page:     2,
 		PageSize: 3,
@@ -160,7 +160,7 @@ func TestPageResponseFromDAO(t *testing.T) {
 }
 
 func TestPageResponseFromDAO_Empty(t *testing.T) {
-	result := dao.PageResult[int]{
+	result := qrdbsdk.PageResult[int]{
 		Entities: nil,
 		Page:     1,
 		PageSize: 25,
@@ -191,7 +191,7 @@ func TestPageResponseFromDAO_RoundTrip(t *testing.T) {
 	q := req.ToDAOPageQuery()
 
 	// Simulate DAO returning a page.
-	daoResult := dao.PageResult[string]{
+	daoResult := qrdbsdk.PageResult[string]{
 		Entities: []string{"x", "y"},
 		Page:     q.Page,
 		PageSize: q.PageSize,

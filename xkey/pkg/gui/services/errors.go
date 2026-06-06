@@ -311,8 +311,8 @@ var (
 	// ErrBarrierAlreadyInit indicates the barrier has already been initialized.
 	ErrBarrierAlreadyInit = errors.New("barrier_service: already initialized")
 
-	// ErrBarrierPasswordRequired indicates a password is required for the software strategy.
-	ErrBarrierPasswordRequired = errors.New("barrier_service: password required for software strategy")
+	// ErrBarrierPasswordRequired indicates a password is required for the passphrase strategy.
+	ErrBarrierPasswordRequired = errors.New("barrier_service: password required for passphrase strategy")
 
 	// ErrBarrierResealFailed indicates the barrier root key re-seal failed
 	// during a password change operation.

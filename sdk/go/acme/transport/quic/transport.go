@@ -34,7 +34,6 @@ package quic
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -122,17 +121,12 @@ func NewTransport(cfg *transport.Config) (transport.Transport, error) {
 		return nil, errors.NewInvalidInput("quic.NewTransport", "address cannot be empty")
 	}
 
-	// QUIC requires TLS - use InsecureSkipVerify if Insecure is set.
+	// QUIC requires an explicit TLS configuration. The Insecure flag only
+	// affects verification when applied to a caller-supplied TLS config; it
+	// does not authorize auto-fabricating one.
 	tlsConfig := cfg.TLSConfig
 	if tlsConfig == nil {
-		if cfg.Insecure {
-			tlsConfig = &tls.Config{
-				MinVersion:         tls.VersionTLS13,
-				InsecureSkipVerify: true, //nolint:gosec // Intentional for dev/testing
-			}
-		} else {
-			return nil, errors.NewConfiguration("quic.NewTransport", "TLS configuration required for QUIC transport")
-		}
+		return nil, errors.NewConfiguration("quic.NewTransport", "TLS configuration required for QUIC transport")
 	}
 
 	tlsConfig = tlsConfig.Clone()

@@ -33,7 +33,15 @@ test.describe('Dashboard View', () => {
     });
 
     test('shows empty activity message when no events', async ({ page }) => {
-      // In standalone mode (no backend), there should be no recent activity
+      const wails = await isWailsMode(page);
+      if (wails) {
+        // In Wails mode the backend emits real events, so the empty state is
+        // not guaranteed. Verify the Recent Activity section itself is present
+        // instead; a separate test covers the populated state.
+        await expect(page.getByRole('heading', { name: 'Recent Activity' })).toBeVisible();
+        return;
+      }
+      // In standalone mode (no backend), there should be no recent activity.
       await expect(page.getByText('No recent activity')).toBeVisible();
     });
   });
@@ -56,10 +64,13 @@ test.describe('Dashboard View', () => {
 
       await page.waitForTimeout(1000);
 
-      // In Wails mode, we expect Mode, Storage, and TPM status cards
-      await expect(page.getByText('Mode')).toBeVisible();
-      await expect(page.getByText('Storage')).toBeVisible();
-      await expect(page.getByText('TPM 2.0')).toBeVisible();
+      // In Wails mode, we expect Mode, Storage, and TPM status cards.
+      // Scope to the status grid to avoid matching sidebar nav labels with
+      // the same text.
+      const statusGrid = page.locator('.status-grid');
+      await expect(statusGrid.getByText('Mode', { exact: true })).toBeVisible();
+      await expect(statusGrid.getByText('Storage', { exact: true })).toBeVisible();
+      await expect(statusGrid.getByText('TPM 2.0', { exact: true })).toBeVisible();
     });
 
     test('key inventory section appears when backend is available', async ({ page }) => {
