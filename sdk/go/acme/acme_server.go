@@ -173,6 +173,12 @@ var NewACMEPreIssuanceHookRegistry = acmehandler.NewPreIssuanceHookRegistry
 // NewACMEStorageFactory creates a new ACME storage factory backed by go-objstore.
 var NewACMEStorageFactory = acmeobjstore.NewFactory
 
+// NewACMEStorageFactoryFromKVStore creates an ACME storage factory backed by a
+// go-qrdb KVStore directly. This is the datastore path: ACME persistence
+// (accounts / orders / authorizations / certificates) shares the caller's
+// configured qrdb datastore instead of a separate object store.
+var NewACMEStorageFactoryFromKVStore = acmeobjstore.NewFactoryFromKVStore
+
 // NewACMEClient creates a new ACME protocol client.
 var NewACMEClient = acmeclient.NewClient
 
