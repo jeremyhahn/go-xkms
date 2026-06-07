@@ -147,34 +147,51 @@ func TestEngineBackendScanStopsOnError(t *testing.T) {
 	}
 }
 
-func TestEngineBackendOperationsWrapEngineError(t *testing.T) {
+func TestEngineBackendClosedReturnsErrClosed(t *testing.T) {
 	ctx := context.Background()
 	b := newMemEngineBackend(t)
 	if err := b.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Every operation against the closed engine must surface an *EngineError
-	// that unwraps to the engine's failure.
-	_, err := b.Get(ctx, "k")
+	// Every operation against the closed engine must map the engine's
+	// closed-error onto the ErrClosed sentinel (the Backend contract), not a
+	// wrapped EngineError.
+	if _, err := b.Get(ctx, "k"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Get after Close = %v, want ErrClosed", err)
+	}
+	if err := b.Put(ctx, "k", []byte("v")); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Put after Close = %v, want ErrClosed", err)
+	}
+	if err := b.Delete(ctx, "k"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Delete after Close = %v, want ErrClosed", err)
+	}
+	if _, err := b.List(ctx, ""); !errors.Is(err, ErrClosed) {
+		t.Fatalf("List after Close = %v, want ErrClosed", err)
+	}
+	if _, err := b.Exists(ctx, "k"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Exists after Close = %v, want ErrClosed", err)
+	}
+}
+
+// TestEngineBackendWrapsNonClosedError verifies that a genuine, non-closed
+// engine failure (here: an empty key, which the engine rejects) surfaces as an
+// *EngineError carrying the operation/key and unwrapping to the engine error.
+func TestEngineBackendWrapsNonClosedError(t *testing.T) {
+	ctx := context.Background()
+	b := newMemEngineBackend(t)
+	t.Cleanup(func() { _ = b.Close() })
+
+	_, err := b.Get(ctx, "")
 	var ee *EngineError
 	if !errors.As(err, &ee) {
-		t.Fatalf("Get after Close error = %v, want *EngineError", err)
+		t.Fatalf("Get(empty key) = %v, want *EngineError", err)
 	}
-	if ee.Op != "get" || ee.Key != "k" || ee.Unwrap() == nil {
-		t.Fatalf("EngineError = %+v, want op=get key=k with wrapped err", ee)
+	if ee.Op != "get" || ee.Unwrap() == nil {
+		t.Fatalf("EngineError = %+v, want op=get with wrapped err", ee)
 	}
-	if err := b.Put(ctx, "k", []byte("v")); !errors.As(err, &ee) {
-		t.Fatalf("Put after Close error = %v, want *EngineError", err)
-	}
-	if err := b.Delete(ctx, "k"); !errors.As(err, &ee) {
-		t.Fatalf("Delete after Close error = %v, want *EngineError", err)
-	}
-	if _, err := b.List(ctx, ""); !errors.As(err, &ee) {
-		t.Fatalf("List after Close error = %v, want *EngineError", err)
-	}
-	if _, err := b.Exists(ctx, "k"); !errors.As(err, &ee) {
-		t.Fatalf("Exists after Close error = %v, want *EngineError", err)
+	if err := b.Put(ctx, "", []byte("v")); !errors.As(err, &ee) {
+		t.Fatalf("Put(empty key) = %v, want *EngineError", err)
 	}
 }
 

@@ -334,10 +334,12 @@ func (s *Server) createStorage(subdir string) (storage.Backend, error) {
 	switch cfg.Backend {
 	case "memory":
 		return storage.NewMemoryBackend()
-	case "pebble":
+	case "pebble", "":
+		// Empty defaults to durable PebbleDB (see config validation); never a
+		// non-durable store in a production path.
 		path := filepath.Join(cfg.Path, subdir)
 		return storage.NewPebble(path)
-	case "file", "":
+	case "file":
 		path := filepath.Join(cfg.Path, subdir)
 		return file.New(path)
 	case "qrdb":
@@ -359,9 +361,9 @@ func (s *Server) createStorageAt(path string) (storage.Backend, error) {
 	switch cfg.Backend {
 	case "memory":
 		return storage.NewMemoryBackend()
-	case "pebble":
+	case "pebble", "":
 		return storage.NewPebble(path)
-	case "file", "":
+	case "file":
 		return file.New(path)
 	case "qrdb":
 		// File-style absolute paths map to a qrdb key namespace derived from

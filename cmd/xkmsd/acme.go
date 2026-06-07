@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	objstorelocal "github.com/jeremyhahn/go-objstore/pkg/local"
 
 	dns01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/dns-01"
 	http01 "github.com/jeremyhahn/go-xkms/pkg/acme/challenges/http-01"
@@ -38,6 +37,7 @@ import (
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/server"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
 
 // ACME integration error types. These are returned from startACMEServer and
@@ -147,14 +147,18 @@ func startACMEServer(srv *server.Server, cfg *config.Config, logger *slog.Logger
 	}
 
 	// Create the storage factory for ACME accounts/orders/authorizations.
-	// All ACME persistence routes through this factory via the handlers.
-	stateStore := objstorelocal.New()
-	if err := stateStore.Configure(map[string]string{
-		"path": filepath.Join(dataDir, "state"),
-	}); err != nil {
-		return nil, &acmeInitError{Stage: "configure state store", Err: err}
+	// ACME state persists through the server's configured datastore (the same
+	// durable engine — pebble/file/qrdb — as the rest of xkmsd), wrapped as a
+	// go-qrdb KVStore. This replaces the previous separate local object store.
+	stateBackend, err := srv.CreateStorage("acme-state")
+	if err != nil {
+		return nil, &acmeInitError{Stage: "create state store", Err: err}
 	}
-	storageFactory, err := acmeobjstore.NewFactory(stateStore)
+	stateKV, err := kvadapter.New(stateBackend)
+	if err != nil {
+		return nil, &acmeInitError{Stage: "wrap state store", Err: err}
+	}
+	storageFactory, err := acmeobjstore.NewFactoryFromKVStore(stateKV)
 	if err != nil {
 		return nil, &acmeInitError{Stage: "create storage factory", Err: err}
 	}

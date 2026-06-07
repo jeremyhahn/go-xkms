@@ -823,9 +823,17 @@ func (s *Server) initializeWebAuthnService() error {
 		credStore = qrdbCreds
 		s.logger.Info("WebAuthn using qrdb stores for persistence")
 	} else {
-		userStore = webauthn.NewMemoryUserStore()
-		credStore = webauthn.NewMemoryCredentialStore()
-		s.logger.Info("WebAuthn using in-memory stores")
+		// No qrdb identity plane (non-qrdb storage mode): persist WebAuthn
+		// users and credentials in the configured datastore so registrations
+		// survive restarts. Sessions remain in-memory (short-lived challenge
+		// state); a cluster-safe session store is a clustering concern.
+		waStore, err := s.createStorage("webauthn")
+		if err != nil {
+			return &ErrServiceInit{Service: "webauthn store", Err: err}
+		}
+		userStore = webauthn.NewBackendUserStore(waStore)
+		credStore = webauthn.NewBackendCredentialStore(waStore)
+		s.logger.Info("WebAuthn using datastore-backed stores for persistence")
 	}
 
 	svc, err := webauthn.NewService(webauthn.ServiceParams{
@@ -1409,11 +1417,30 @@ func (s *Server) initializeCA() error {
 		return &ErrServiceInit{Service: "CA certificate store", Err: err}
 	}
 
+	// Persist certificate serial numbers in the datastore so uniqueness
+	// survives restarts (and replicates under Raft). Without this the CA falls
+	// back to in-memory serial tracking, which risks issuing duplicate serials
+	// after a restart — a violation of X.509 serial uniqueness.
+	serialStore, err := s.createStorage("ca-serials")
+	if err != nil {
+		return &ErrServiceInit{Service: "CA serial store", Err: err}
+	}
+
+	// Persist certificate revocations in the datastore so the revocation set
+	// survives restarts (and replicates under Raft). Without this, revoked
+	// certificates silently become un-revoked after a restart.
+	revocationStore, err := s.createStorage("ca-revocations")
+	if err != nil {
+		return &ErrServiceInit{Service: "CA revocation store", Err: err}
+	}
+
 	// Create the CA instance
 	trustedCA, err := ca.NewFromMultiIdentityConfig(&ca.MultiIdentityParams{
-		Config:    s.config.CA,
-		KeyStore:  backend,
-		CertStore: caCertStore,
+		Config:          s.config.CA,
+		KeyStore:        backend,
+		CertStore:       caCertStore,
+		SerialGen:       ca.NewSerialGenerator(ca.NewBackendStorage(serialStore)),
+		RevocationStore: revocationStore,
 	})
 	if err != nil {
 		return &ErrCAInit{Operation: "create CA", Err: err}

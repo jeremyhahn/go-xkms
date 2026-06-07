@@ -839,9 +839,12 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Validate storage
+	// Validate storage. An unspecified backend defaults to durable PebbleDB
+	// rather than failing — production paths must never silently fall back to a
+	// non-durable store. Deployments that want plain files set backend "file"
+	// explicitly (respected, not migrated).
 	if c.Storage.Backend == "" {
-		return fmt.Errorf("storage backend must be specified")
+		c.Storage.Backend = "pebble"
 	}
 	switch strings.ToLower(c.Storage.Backend) {
 	case "qrdb":

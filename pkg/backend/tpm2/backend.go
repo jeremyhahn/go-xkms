@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/google/go-tpm/tpm2"
@@ -360,14 +361,66 @@ func (b *Backend) ListKeys() ([]*types.KeyAttributes, error) {
 		// Look for private blob files
 		if ext := filepath.Ext(name); ext == store.FSEXT_PRIVATE_BLOB {
 			cn := name[:len(name)-len(ext)]
-			keys = append(keys, &types.KeyAttributes{
+			attrs := &types.KeyAttributes{
 				CN:        cn,
 				StoreType: types.StoreTPM2,
-			})
+			}
+			// Recover the key algorithm from the persisted public blob so that
+			// downstream consumers (e.g. DeleteKey, which branches on
+			// KeyAlgorithm to choose the load-vs-unseal delete path) operate on
+			// the correct key type. This is best-effort: a missing or malformed
+			// public blob, or a sealed/keyedhash object, leaves KeyAlgorithm
+			// unset and must not fail enumeration.
+			if algo, ok := b.keyAlgorithmFromPublicBlob(cn); ok {
+				attrs.KeyAlgorithm = algo
+			}
+			// Recover the PIV slot from the "piv-<slot>" CN convention.
+			if strings.HasPrefix(cn, pivCNPrefix) {
+				attrs.PIVSlot = cn[len(pivCNPrefix):]
+			}
+			keys = append(keys, attrs)
 		}
 	}
 
 	return keys, nil
+}
+
+// pivCNPrefix is the common-name prefix used for TPM2-backed PIV keys. The
+// slot identifier (e.g. "9a") follows the prefix in the CN ("piv-9a").
+const pivCNPrefix = "piv-"
+
+// keyAlgorithmFromPublicBlob recovers the X.509 public-key algorithm of a
+// persisted key by unmarshaling its stored TPM2B_PUBLIC blob
+// (store.FSEXT_PUBLIC_BLOB). It is best-effort: any failure, or a non-asymmetric
+// object such as a sealed/keyedhash key, returns (UnknownPublicKeyAlgorithm,
+// false) so that callers fall back to their existing behavior without erroring.
+func (b *Backend) keyAlgorithmFromPublicBlob(cn string) (x509.PublicKeyAlgorithm, bool) {
+	if b.keyBackend == nil {
+		return x509.UnknownPublicKeyAlgorithm, false
+	}
+
+	pubBytes, err := b.keyBackend.Get(&types.KeyAttributes{CN: cn}, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		return x509.UnknownPublicKeyAlgorithm, false
+	}
+
+	// The stored public blob is the bare TPMTPublic marshaling produced by
+	// outPublic.Bytes() (no length prefix), so it must be wrapped with
+	// BytesAs2B, mirroring the production read path in TPM2.ParsePublicKey.
+	pub2b := tpm2.BytesAs2B[tpm2.TPMTPublic](pubBytes)
+	pub, err := pub2b.Contents()
+	if err != nil {
+		return x509.UnknownPublicKeyAlgorithm, false
+	}
+
+	switch pub.Type {
+	case tpm2.TPMAlgRSA:
+		return x509.RSA, true
+	case tpm2.TPMAlgECC:
+		return x509.ECDSA, true
+	default:
+		return x509.UnknownPublicKeyAlgorithm, false
+	}
 }
 
 // Signer returns a crypto.Signer for the key identified by attrs.

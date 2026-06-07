@@ -19,6 +19,7 @@ package ca
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/x509"
 	"encoding/json"
@@ -626,12 +627,6 @@ func (ca *CA) recordRevocation(serial *big.Int, reason int, deletedKeys bool) er
 	}
 	ca.revocationsMutex.Unlock()
 
-	if ca.objectStore == nil {
-		slog.Warn("ca: revocation recorded without persistence (no object store configured)",
-			"serial", key, "reason", reason)
-		return nil
-	}
-
 	payload := persistedRevocation{
 		Serial:      key,
 		Reason:      reason,
@@ -642,10 +637,74 @@ func (ca *CA) recordRevocation(serial *big.Int, reason int, deletedKeys bool) er
 	if err != nil {
 		return fmt.Errorf("%w: marshal revocation: %v", ErrStorageError, err)
 	}
-	if err := ca.objectStore.Put(revocationKey(serial)+".json", bytes.NewReader(buf)); err != nil {
+	persisted, err := ca.putRevocationBlob(serial, buf)
+	if err != nil {
 		return fmt.Errorf("%w: persist revocation: %v", ErrStorageError, err)
 	}
+	if !persisted {
+		slog.Warn("ca: revocation recorded without persistence (no revocation store configured)",
+			"serial", key, "reason", reason)
+	}
 	return nil
+}
+
+// putRevocationBlob persists a serialized revocation record, preferring the
+// datastore-backed revocation store and falling back to the legacy object
+// store. Returns false when neither is configured (no persistence).
+func (ca *CA) putRevocationBlob(serial *big.Int, buf []byte) (bool, error) {
+	key := revocationKey(serial) + ".json"
+	if ca.revocationStore != nil {
+		if err := ca.revocationStore.Put(context.Background(), key, buf); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if ca.objectStore != nil {
+		if err := ca.objectStore.Put(key, bytes.NewReader(buf)); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// listRevocationBlobs reads all persisted revocation records (key -> JSON
+// payload) from the configured store, preferring the datastore-backed
+// revocation store and falling back to the legacy object store.
+func (ca *CA) listRevocationBlobs() (map[string][]byte, error) {
+	out := make(map[string][]byte)
+	if ca.revocationStore != nil {
+		err := ca.revocationStore.Scan(context.Background(), revocationKeyPrefix, func(k string, v []byte) error {
+			out[k] = append([]byte(nil), v...)
+			return nil
+		})
+		return out, err
+	}
+	if ca.objectStore != nil {
+		keys, err := ca.objectStore.List(revocationKeyPrefix)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if len(k) == 0 || k[len(k)-1] == '/' {
+				continue
+			}
+			reader, err := ca.objectStore.Get(k)
+			if err != nil {
+				slog.Warn("ca: failed to read persisted revocation", "key", k, "err", err)
+				continue
+			}
+			data, err := io.ReadAll(reader)
+			_ = reader.Close()
+			if err != nil {
+				slog.Warn("ca: failed to read persisted revocation body", "key", k, "err", err)
+				continue
+			}
+			out[k] = data
+		}
+		return out, nil
+	}
+	return out, nil
 }
 
 // loadPersistedRevocations reads revocation records from the object store
@@ -656,29 +715,11 @@ func (ca *CA) recordRevocation(serial *big.Int, reason int, deletedKeys bool) er
 // Missing or corrupt records are logged and skipped rather than aborting
 // Load(); a single bad record should not render the CA inoperable.
 func (ca *CA) loadPersistedRevocations() error {
-	if ca.objectStore == nil {
-		return nil
-	}
-	keys, err := ca.objectStore.List(revocationKeyPrefix)
+	blobs, err := ca.listRevocationBlobs()
 	if err != nil {
 		return fmt.Errorf("%w: list revocations: %v", ErrStorageError, err)
 	}
-	for _, k := range keys {
-		// Skip directory markers and anything that's not a JSON payload.
-		if len(k) == 0 || k[len(k)-1] == '/' {
-			continue
-		}
-		reader, err := ca.objectStore.Get(k)
-		if err != nil {
-			slog.Warn("ca: failed to read persisted revocation", "key", k, "err", err)
-			continue
-		}
-		data, err := io.ReadAll(reader)
-		_ = reader.Close()
-		if err != nil {
-			slog.Warn("ca: failed to read persisted revocation body", "key", k, "err", err)
-			continue
-		}
+	for k, data := range blobs {
 		var rec persistedRevocation
 		if err := json.Unmarshal(data, &rec); err != nil {
 			slog.Warn("ca: failed to unmarshal persisted revocation", "key", k, "err", err)

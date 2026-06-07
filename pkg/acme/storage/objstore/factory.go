@@ -43,6 +43,20 @@ func NewFactory(store common.Storage) (storage.Factory, error) {
 	}, nil
 }
 
+// NewFactoryFromKVStore creates a Factory over a go-qrdb KVStore directly. This
+// is the datastore path: callers wrap any storage.Backend (file, pebble, qrdb)
+// with kvadapter.New and pass it here, so ACME persistence shares the server's
+// configured datastore instead of a separate object store.
+func NewFactoryFromKVStore(kv xkmssdk.QRDBKVStore) (storage.Factory, error) {
+	if kv == nil {
+		return nil, xkmssdk.QRDBDAOInvalidConfigError{
+			Field:  "kvStore",
+			Reason: "kv store not configured",
+		}
+	}
+	return &Factory{kvStore: kv}, nil
+}
+
 // Entity-type prefixes for the ACME DAOs. The first `:` is the
 // QuicBaaS catalog's namespace/path separator — without it the
 // catalog's ParseKey rejects the key with `KEY_INVALID: missing

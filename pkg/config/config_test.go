@@ -1020,9 +1020,11 @@ func TestValidate_Storage(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "missing backend",
+			// An unspecified backend now defaults to durable PebbleDB rather
+			// than erroring (production paths never fall back to non-durable).
+			name:      "missing backend defaults to pebble",
 			storage:   StorageConfig{Backend: "", Path: "/data"},
-			wantError: true,
+			wantError: false,
 		},
 		{
 			name:      "missing path",

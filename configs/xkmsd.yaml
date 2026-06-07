@@ -45,7 +45,9 @@ health:
   path: "/health"
 
 storage:
-  backend: "file"
+  # Durable embedded PebbleDB by default. Use "file" for one plain file per key
+  # (human-inspectable), "qrdb" to share the hosted node, or "memory" for tests.
+  backend: "pebble"
   path: "xkms-data/storage"
 
 rng:

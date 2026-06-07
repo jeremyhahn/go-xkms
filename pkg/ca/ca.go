@@ -82,6 +82,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 
@@ -133,6 +134,12 @@ type Params struct {
 	// return ErrObjectStoreRequired when invoked.
 	// Optional.
 	ObjectStore objstore.Storage
+
+	// RevocationStore durably persists certificate revocations in the
+	// datastore. When set, the revocation set survives restarts and replicates
+	// under Raft. Optional; if nil, revocations fall back to ObjectStore (if
+	// set) or in-memory-only tracking.
+	RevocationStore storage.Backend
 
 	// Identity carries one or two CA identities for the multi-identity
 	// constructors NewCA, NewParentCA, and NewIntermediateCA. Identity[0]
@@ -210,6 +217,13 @@ type CA struct {
 	// trust-chain cache, CRL snapshots, and attestation evidence. May be nil;
 	// features that require it return ErrObjectStoreRequired in that case.
 	objectStore objstore.Storage
+
+	// revocationStore durably persists revocation records in the datastore so
+	// the revocation set survives restarts (and replicates under Raft). When
+	// set it is the primary persistence medium for revocations, preferred over
+	// objectStore. May be nil (revocations then persist to objectStore if set,
+	// otherwise stay in-memory only).
+	revocationStore storage.Backend
 
 	// Serial number generator
 	serialGen SerialGenerator
@@ -387,13 +401,14 @@ func New(params *Params) (TrustedCA, error) {
 	multiConfig := caConfigToMultiIdentity(params.Config, params.KeyAttributes)
 
 	ca := &CA{
-		config:      multiConfig,
-		caConfig:    params.Config,
-		keyAttrs:    params.KeyAttributes,
-		keyStore:    params.KeyStore,
-		certStore:   params.CertStore,
-		objectStore: params.ObjectStore,
-		revocations: make(map[string]*RevocationInfo),
+		config:          multiConfig,
+		caConfig:        params.Config,
+		keyAttrs:        params.KeyAttributes,
+		keyStore:        params.KeyStore,
+		certStore:       params.CertStore,
+		objectStore:     params.ObjectStore,
+		revocationStore: params.RevocationStore,
+		revocations:     make(map[string]*RevocationInfo),
 	}
 
 	// Set up serial generator (use memory storage if not provided)
@@ -442,6 +457,10 @@ type MultiIdentityParams struct {
 	// trust-chain cache, CRL snapshots, and attestation evidence.
 	// Optional. If nil, features that require it return ErrObjectStoreRequired.
 	ObjectStore objstore.Storage
+
+	// RevocationStore durably persists certificate revocations in the
+	// datastore so the revocation set survives restarts. Optional.
+	RevocationStore storage.Backend
 }
 
 // NewFromMultiIdentityConfig creates a new CA from a MultiIdentityCAConfig.
@@ -495,13 +514,14 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 	}
 
 	return New(&Params{
-		Config:        caConfig,
-		KeyAttributes: keyAttrs,
-		KeyStore:      mp.KeyStore,
-		CertStore:     mp.CertStore,
-		SerialGen:     mp.SerialGen,
-		Profiles:      mp.Profiles,
-		ObjectStore:   mp.ObjectStore,
+		Config:          caConfig,
+		KeyAttributes:   keyAttrs,
+		KeyStore:        mp.KeyStore,
+		CertStore:       mp.CertStore,
+		SerialGen:       mp.SerialGen,
+		Profiles:        mp.Profiles,
+		ObjectStore:     mp.ObjectStore,
+		RevocationStore: mp.RevocationStore,
 	})
 }
 

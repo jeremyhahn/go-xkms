@@ -15,6 +15,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -41,6 +42,18 @@ func (e *EngineError) Error() string {
 // Unwrap returns the underlying engine error.
 func (e *EngineError) Unwrap() error { return e.Err }
 
+// mapErr translates a go-qrdb engine error into the xkms storage contract. A
+// closed-engine error becomes the ErrClosed sentinel (so errors.Is(err,
+// ErrClosed) holds across the adapter); every other failure is wrapped in an
+// EngineError carrying the operation and key.
+func mapErr(op, key string, err error) error {
+	var closed *qrdbsdk.StorageClosedError
+	if errors.As(err, &closed) {
+		return ErrClosed
+	}
+	return &EngineError{Op: op, Key: key, Err: err}
+}
+
 // engineBackend adapts a go-qrdb raw storage engine (qrdbsdk.Storage) to the
 // xkms Backend interface. It is the single bridge through which xkms local
 // persistence reaches a go-qrdb engine, so the concrete engine — file,
@@ -66,7 +79,7 @@ func NewEngineBackend(eng qrdbsdk.Storage) Backend {
 func (b *engineBackend) Get(_ context.Context, key string) ([]byte, error) {
 	value, err := b.eng.Get([]byte(key))
 	if err != nil {
-		return nil, &EngineError{Op: "get", Key: key, Err: err}
+		return nil, mapErr("get", key, err)
 	}
 	if value == nil {
 		return nil, ErrNotFound
@@ -77,7 +90,7 @@ func (b *engineBackend) Get(_ context.Context, key string) ([]byte, error) {
 // Put stores value under key, overwriting any existing value.
 func (b *engineBackend) Put(_ context.Context, key string, value []byte) error {
 	if err := b.eng.Set([]byte(key), value); err != nil {
-		return &EngineError{Op: "put", Key: key, Err: err}
+		return mapErr("put", key, err)
 	}
 	return nil
 }
@@ -88,13 +101,13 @@ func (b *engineBackend) Put(_ context.Context, key string, value []byte) error {
 func (b *engineBackend) Delete(_ context.Context, key string) error {
 	exists, err := b.eng.Exists([]byte(key))
 	if err != nil {
-		return &EngineError{Op: "delete", Key: key, Err: err}
+		return mapErr("delete", key, err)
 	}
 	if !exists {
 		return ErrNotFound
 	}
 	if err := b.eng.Delete([]byte(key)); err != nil {
-		return &EngineError{Op: "delete", Key: key, Err: err}
+		return mapErr("delete", key, err)
 	}
 	return nil
 }
@@ -104,7 +117,7 @@ func (b *engineBackend) Delete(_ context.Context, key string) error {
 func (b *engineBackend) List(_ context.Context, prefix string) ([]string, error) {
 	raw, err := b.eng.List([]byte(prefix))
 	if err != nil {
-		return nil, &EngineError{Op: "list", Key: prefix, Err: err}
+		return nil, mapErr("list", prefix, err)
 	}
 	keys := make([]string, len(raw))
 	for i, k := range raw {
@@ -125,7 +138,7 @@ func (b *engineBackend) Scan(ctx context.Context, prefix string, fn func(key str
 	for _, key := range keys {
 		value, err := b.eng.Get([]byte(key))
 		if err != nil {
-			return &EngineError{Op: "scan", Key: key, Err: err}
+			return mapErr("scan", key, err)
 		}
 		if value == nil {
 			// Key was deleted between List and Get; skip it.
@@ -142,7 +155,7 @@ func (b *engineBackend) Scan(ctx context.Context, prefix string, fn func(key str
 func (b *engineBackend) Exists(_ context.Context, key string) (bool, error) {
 	exists, err := b.eng.Exists([]byte(key))
 	if err != nil {
-		return false, &EngineError{Op: "exists", Key: key, Err: err}
+		return false, mapErr("exists", key, err)
 	}
 	return exists, nil
 }
@@ -150,7 +163,7 @@ func (b *engineBackend) Exists(_ context.Context, key string) (bool, error) {
 // Close releases the resources held by the underlying engine.
 func (b *engineBackend) Close() error {
 	if err := b.eng.Close(); err != nil {
-		return &EngineError{Op: "close", Err: err}
+		return mapErr("close", "", err)
 	}
 	return nil
 }

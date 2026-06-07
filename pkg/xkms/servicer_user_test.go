@@ -100,6 +100,12 @@ func (m *mockRoleClient) CreateRole(ctx context.Context, req *qrdbtransport.Crea
 func (m *mockRoleClient) GetRole(ctx context.Context, id string) (*qrdbtransport.Role, error) {
 	return m.getRole(ctx, id)
 }
+func (m *mockRoleClient) GetRoleByName(ctx context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+	return nil, nil
+}
+func (m *mockRoleClient) ResolvePermissions(ctx context.Context, req *qrdbtransport.ResolvePermissionsRequest) (*qrdbtransport.ResolvePermissionsResponse, error) {
+	return nil, nil
+}
 
 func (m *mockRoleClient) UpdateRole(ctx context.Context, req *qrdbtransport.UpdateRoleRequest) (*qrdbtransport.Role, error) {
 	return nil, errors.New("not used")

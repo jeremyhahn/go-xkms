@@ -62,6 +62,9 @@ func (m *mockCA) CACertificate() (*x509.Certificate, error) { return m.cert, m.c
 func (m *mockCA) SignCSRRaw(csrPEM []byte, profile string, validityDays int) (*x509.Certificate, error) {
 	return m.signCSRCert, m.signCSRErr
 }
+func (m *mockCA) SignCSRWithSPIFFE(csrPEM []byte, profile string, validityDays int, trustDomain, tenantID, kind, name string) (*x509.Certificate, error) {
+	return m.signCSRCert, m.signCSRErr
+}
 func (m *mockCA) IssueCertificateRaw(commonName, organization string, sans []string, validityDays int, profile, algorithm string) (certPEM, chainPEM, keyPEM []byte, serialHex string, err error) {
 	return m.issueCertPEM, m.issueChainPEM, m.issueKeyPEM, m.issueSerial, m.issueErr
 }

@@ -191,9 +191,7 @@ test.describe('PIV Integration', () => {
       const slotLoaded = page.locator(
         '[data-testid="piv-slot-details-9A"], [data-testid="piv-slot-key-only-9A"]',
       );
-      // TPM2-backed slot state settles slower than software under swtpm/Docker
-      // load; match the 25s budget the generate step already allows.
-      await expect(slotLoaded).toBeVisible({ timeout: 20_000 });
+      await expect(slotLoaded).toBeVisible({ timeout: 10_000 });
 
       // Clean up — delete via ActionMenu.
       const kebab = slotCard.locator('[data-testid="action-menu-kebab"]');
@@ -206,11 +204,9 @@ test.describe('PIV Integration', () => {
           if (await confirmDeleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
             await confirmDeleteBtn.click();
           }
-          // TPM2 delete evicts the persistent handle + cert then re-polls;
-          // give it the same settle window as generate (swtpm/Docker latency).
           await expect(
             page.locator('[data-testid="piv-slot-empty-9A"]'),
-          ).toBeVisible({ timeout: 20_000 });
+          ).toBeVisible({ timeout: 10_000 });
         }
       }
     });

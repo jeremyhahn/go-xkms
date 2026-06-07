@@ -6,6 +6,7 @@
 package file
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,32 +69,24 @@ func TestValidateStorageKey_ValidWithDots(t *testing.T) {
 }
 
 // ========================================================================
-// Test keyToPath edge cases
+// Test that invalid keys are rejected through the public Backend API
 // ========================================================================
 
-func TestKeyToPath_InvalidKey(t *testing.T) {
-	fs := &FileStorage{rootDir: "/tmp/test"}
+// TestPublicAPIRejectsInvalidKeys verifies that traversal/empty/absolute keys
+// are rejected by every key-accepting method (the engine itself does not block
+// traversal, so the file backend must).
+func TestPublicAPIRejectsInvalidKeys(t *testing.T) {
+	ctx := context.Background()
+	store, err := New(t.TempDir())
+	assert.NoError(t, err)
+	defer store.Close()
 
-	// Should return safe invalid path for keys that fail validation
-	path := fs.keyToPath("")
-	assert.Contains(t, path, "invalid")
-
-	path = fs.keyToPath("../secret")
-	assert.Contains(t, path, "invalid")
-}
-
-// ========================================================================
-// Test pathToKey edge cases
-// ========================================================================
-
-func TestPathToKey_PathOutsideRoot(t *testing.T) {
-	fs := &FileStorage{rootDir: "/tmp/test-storage"}
-
-	// Path outside root directory
-	_, err := fs.pathToKey("/etc/passwd")
-	// This should work but return a relative path with ..
-	// The error case depends on the platform
-	if err != nil {
-		assert.Error(t, err)
+	for _, badKey := range []string{"", "../secret", "a/../../etc/passwd"} {
+		assert.Error(t, store.Put(ctx, badKey, []byte("v")), "Put(%q) should be rejected", badKey)
+		_, getErr := store.Get(ctx, badKey)
+		assert.Error(t, getErr, "Get(%q) should be rejected", badKey)
+		assert.Error(t, store.Delete(ctx, badKey), "Delete(%q) should be rejected", badKey)
+		_, existsErr := store.Exists(ctx, badKey)
+		assert.Error(t, existsErr, "Exists(%q) should be rejected", badKey)
 	}
 }

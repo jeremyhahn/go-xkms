@@ -112,6 +112,14 @@ func (m *restMockRoleClient) GetRole(ctx context.Context, id string) (*qrdbtrans
 	return m.getRole(ctx, id)
 }
 
+func (m *restMockRoleClient) GetRoleByName(ctx context.Context, req *qrdbtransport.GetRoleByNameRequest) (*qrdbtransport.Role, error) {
+	return nil, errRestMockUnused
+}
+
+func (m *restMockRoleClient) ResolvePermissions(ctx context.Context, req *qrdbtransport.ResolvePermissionsRequest) (*qrdbtransport.ResolvePermissionsResponse, error) {
+	return nil, errRestMockUnused
+}
+
 func (m *restMockRoleClient) UpdateRole(ctx context.Context, req *qrdbtransport.UpdateRoleRequest) (*qrdbtransport.Role, error) {
 	return nil, errRestMockUnused
 }

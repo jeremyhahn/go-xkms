@@ -884,39 +884,35 @@ func TestFilePermissionsForKey(t *testing.T) {
 	}
 }
 
-func TestPathConversion(t *testing.T) {
+// TestPathConversionRoundTrip verifies key↔on-disk-path symmetry through the
+// public API: a key written under the file backend is listed back verbatim
+// (the engine owns the <root>/<key> mapping; this guards the round-trip).
+func TestPathConversionRoundTrip(t *testing.T) {
+	ctx := context.Background()
 	dir := setupTestDir(t)
-	fs := &FileStorage{rootDir: dir}
-
-	tests := []struct {
-		name string
-		key  string
-	}{
-		{
-			name: "simple key",
-			key:  "testkey",
-		},
-		{
-			name: "nested key",
-			key:  "path/to/key",
-		},
-		{
-			name: "deeply nested",
-			key:  "a/b/c/d/e/f",
-		},
+	store, err := New(dir)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
 	}
+	defer store.Close()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			path := fs.keyToPath(tt.key)
-			key, err := fs.pathToKey(path)
-			if err != nil {
-				t.Fatalf("pathToKey() error = %v", err)
+	for _, key := range []string{"testkey", "path/to/key", "a/b/c/d/e/f"} {
+		if err := store.Put(ctx, key, []byte("v")); err != nil {
+			t.Fatalf("Put(%q) error = %v", key, err)
+		}
+		keys, err := store.List(ctx, key)
+		if err != nil {
+			t.Fatalf("List(%q) error = %v", key, err)
+		}
+		found := false
+		for _, k := range keys {
+			if k == key {
+				found = true
 			}
-			if key != tt.key {
-				t.Errorf("Round-trip conversion failed: got %q, want %q", key, tt.key)
-			}
-		})
+		}
+		if !found {
+			t.Errorf("key %q did not round-trip through List: got %v", key, keys)
+		}
 	}
 }
 
@@ -1209,21 +1205,6 @@ func TestErrorConditions(t *testing.T) {
 		_, err = store.Exists(ctx, key)
 		if err == nil {
 			t.Error("Exists() with stat error should return error")
-		}
-	})
-
-	t.Run("pathToKey success case", func(t *testing.T) {
-		dir := setupTestDir(t)
-		fs := &FileStorage{rootDir: dir}
-
-		// Try to convert a valid stored file path (<root>/test/key).
-		path := filepath.Join(dir, "test", "key")
-		key, err := fs.pathToKey(path)
-		if err != nil {
-			t.Errorf("pathToKey() error = %v", err)
-		}
-		if key != "test/key" {
-			t.Errorf("pathToKey() = %q, want test/key", key)
 		}
 	})
 }

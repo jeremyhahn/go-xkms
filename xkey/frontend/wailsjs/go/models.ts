@@ -563,6 +563,8 @@ export namespace seal {
 	    hardware_backed: boolean;
 	    // Go type: time
 	    initialized_at: any;
+	    shamir_threshold?: number;
+	    shamir_total?: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new BarrierStatus(source);
@@ -574,6 +576,8 @@ export namespace seal {
 	        this.strategy = source["strategy"];
 	        this.hardware_backed = source["hardware_backed"];
 	        this.initialized_at = this.convertValues(source["initialized_at"], null);
+	        this.shamir_threshold = source["shamir_threshold"];
+	        this.shamir_total = source["shamir_total"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

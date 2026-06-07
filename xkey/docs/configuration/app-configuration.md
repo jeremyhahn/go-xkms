@@ -186,15 +186,31 @@ gui:
 ```yaml
 state:
   setup_complete: false
-  storage_type: ""          # luks | barrier
+  storage_type: ""          # luks | barrier   (at-rest: LUKS volume vs plain dir)
+  storage_engine: "file"    # file | pebble | memory  (go-qrdb storage engine)
   barrier_initialized: false
   barrier_strategy: ""      # software | tpm-pcr
 ```
+
+`storage_engine` selects the go-qrdb storage engine backing **all** local
+persistence (barrier-sealed component stores, trust store, PIN, PIV, FIDO2,
+OATH, passwords). It is orthogonal to `storage_type`, which chooses plain-disk
+vs LUKS at-rest encryption for the data directory.
+
+- `file` (default) — one flat file per key under the data directory
+  (`<dir>/<key>`). This is xkey's historical on-disk layout, so switching to it
+  (or staying on it) requires **no data migration**.
+- `pebble` — an embedded PebbleDB (LSM-tree) database directory.
+- `memory` — ephemeral, non-durable; for testing only.
+
+All engines are reached through the go-qrdb SDK; the barrier still encrypts on
+top of whichever engine is selected.
 
 ## Validation Rules
 
 - `log.level` must be one of: trace, debug, info, warn, error
 - `backend.default` must be one of: software, tpm2, pkcs11, phone
+- `state.storage_engine` (when set) must be one of: file, pebble, memory
 - `gui.clipboard_timeout` must be >= 0
 - `gui.window_width` and `gui.window_height` must be > 0
 

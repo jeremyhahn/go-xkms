@@ -11,8 +11,13 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package file provides a file-based implementation of the storage.Backend interface.
-// It uses the os package directly for file operations with RWMutex for thread-safe operations.
+// Package file provides a file-based implementation of the storage.Backend
+// interface. Key/value I/O is delegated to the canonical go-qrdb file engine
+// (one flat file per key at <root>/<key>); this package layers two
+// xkms-specific behaviors the raw engine does not provide: storage-key
+// validation that blocks path traversal, and prefix-based file permissions so
+// private key material stays owner-only (0600) while public certificates are
+// world-readable (0644).
 package file
 
 import (
@@ -21,9 +26,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
@@ -38,12 +41,16 @@ const (
 	defaultPerms   = 0600 // default = owner rw only
 )
 
-// FileStorage is a file-based implementation of storage.Backend.
-// It stores key-value pairs as files in a directory hierarchy and is thread-safe.
+// FileStorage is a file-based implementation of storage.Backend. It wraps the
+// go-qrdb file engine for I/O and is thread-safe (the underlying engine
+// serializes access).
 type FileStorage struct {
-	mu      sync.RWMutex
-	rootDir string
+	backend storage.Backend // engine adapter over the go-qrdb file engine
+	rootDir string          // absolute root, used to apply per-file permissions
 }
+
+// Compile-time assertion that FileStorage satisfies storage.Backend.
+var _ storage.Backend = (*FileStorage)(nil)
 
 // New creates a new FileStorage instance with the specified root directory.
 // The root directory is created with 0700 permissions if it doesn't exist.
@@ -68,207 +75,78 @@ func New(rootDir string) (storage.Backend, error) {
 		return nil, fmt.Errorf("file storage: failed to create root directory: %w", err)
 	}
 
-	return &FileStorage{
-		rootDir: absRootDir,
-	}, nil
+	backend, err := storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: absRootDir})
+	if err != nil {
+		return nil, fmt.Errorf("file storage: failed to open file engine: %w", err)
+	}
+
+	return &FileStorage{backend: backend, rootDir: absRootDir}, nil
 }
 
 // Get retrieves the value for the given key.
 // Returns storage.ErrNotFound if the key does not exist.
-func (f *FileStorage) Get(_ context.Context, key string) ([]byte, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
-	filePath := f.keyToPath(key)
-
-	cleanPath := filepath.Clean(filePath)
-	if !filepath.IsAbs(cleanPath) {
-		return nil, fmt.Errorf("file path must be absolute: %s", filePath)
+func (f *FileStorage) Get(ctx context.Context, key string) ([]byte, error) {
+	if err := validateStorageKey(key); err != nil {
+		return nil, fmt.Errorf("file storage: invalid key %q: %w", key, err)
 	}
-	data, err := os.ReadFile(cleanPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, storage.ErrNotFound
-		}
-		return nil, fmt.Errorf("file storage: failed to read key %q: %w", key, err)
-	}
-
-	return data, nil
+	return f.backend.Get(ctx, key)
 }
 
-// Put stores the value for the given key.
-// If the key already exists, it will be overwritten.
+// Put stores the value for the given key, overwriting any existing value.
 // File permissions are determined by the key prefix:
 //   - keys/* = 0600 (owner rw only)
 //   - certs/* = 0644 (owner rw, others r)
 //   - default = 0600 (owner rw only)
-func (f *FileStorage) Put(_ context.Context, key string, value []byte) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	filePath := f.keyToPath(key)
-
-	// Create parent directories if they don't exist
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, defaultDirPerms); err != nil {
-		return fmt.Errorf("file storage: failed to create directory for key %q: %w", key, err)
+func (f *FileStorage) Put(ctx context.Context, key string, value []byte) error {
+	if err := validateStorageKey(key); err != nil {
+		return fmt.Errorf("file storage: invalid key %q: %w", key, err)
 	}
-
-	// Determine file permissions based on key prefix
-	perms := filePermissionsForKey(key)
-
-	// Write the file
-	if err := os.WriteFile(filePath, value, perms); err != nil {
-		return fmt.Errorf("file storage: failed to write key %q: %w", key, err)
+	if err := f.backend.Put(ctx, key, value); err != nil {
+		return err
 	}
-
+	// The engine writes 0600; widen only the prefixes that require it.
+	if perm := filePermissionsForKey(key); perm != defaultPerms {
+		path := filepath.Join(f.rootDir, filepath.FromSlash(key))
+		if err := os.Chmod(path, perm); err != nil {
+			return fmt.Errorf("file storage: failed to set permissions for key %q: %w", key, err)
+		}
+	}
 	return nil
 }
 
 // Delete removes the key and its value from storage.
 // Returns storage.ErrNotFound if the key does not exist.
-func (f *FileStorage) Delete(_ context.Context, key string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	filePath := f.keyToPath(key)
-
-	// Check if file exists first
-	if _, err := os.Stat(filePath); err != nil {
-		if os.IsNotExist(err) {
-			return storage.ErrNotFound
-		}
-		return fmt.Errorf("file storage: failed to stat key %q: %w", key, err)
+func (f *FileStorage) Delete(ctx context.Context, key string) error {
+	if err := validateStorageKey(key); err != nil {
+		return fmt.Errorf("file storage: invalid key %q: %w", key, err)
 	}
-
-	// Remove the file
-	if err := os.Remove(filePath); err != nil {
-		return fmt.Errorf("file storage: failed to delete key %q: %w", key, err)
-	}
-
-	return nil
+	return f.backend.Delete(ctx, key)
 }
 
-// List returns all keys with the given prefix.
+// List returns all keys with the given prefix in sorted order.
 // If prefix is empty, all keys are returned.
-// Keys are returned in sorted order.
-func (f *FileStorage) List(_ context.Context, prefix string) ([]string, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
-	keys := make([]string, 0)
-
-	// Walk the directory tree
-	err := filepath.WalkDir(f.rootDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip directories; every regular file represents a key.
-		if d.IsDir() {
-			return nil
-		}
-
-		// Convert file path back to key
-		key, err := f.pathToKey(path)
-		if err != nil {
-			return err
-		}
-
-		// Filter by prefix
-		if prefix == "" || strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("file storage: failed to list keys: %w", err)
-	}
-
-	// Sort for consistent ordering
-	sort.Strings(keys)
-	return keys, nil
+func (f *FileStorage) List(ctx context.Context, prefix string) ([]string, error) {
+	return f.backend.List(ctx, prefix)
 }
 
 // Scan iterates over all key-value pairs matching the given prefix,
 // calling fn for each pair. If prefix is empty, all pairs are visited.
 // Return a non-nil error from fn to stop iteration early.
-func (f *FileStorage) Scan(_ context.Context, prefix string, fn func(key string, value []byte) error) error {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
-	err := filepath.WalkDir(f.rootDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip directories; every regular file represents a key.
-		if d.IsDir() {
-			return nil
-		}
-
-		// Convert file path back to key
-		key, err := f.pathToKey(path)
-		if err != nil {
-			return err
-		}
-
-		// Filter by prefix
-		if prefix != "" && !strings.HasPrefix(key, prefix) {
-			return nil
-		}
-
-		// Read the file contents
-		data, err := os.ReadFile(path) // #nosec G122 -- path comes from WalkDir, not user input
-		if err != nil {
-			return fmt.Errorf("file storage: failed to read key %q: %w", key, err)
-		}
-
-		return fn(key, data)
-	})
-
-	if err != nil {
-		return fmt.Errorf("file storage: failed to scan keys: %w", err)
-	}
-
-	return nil
+func (f *FileStorage) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	return f.backend.Scan(ctx, prefix, fn)
 }
 
 // Exists checks if a key exists in storage.
-func (f *FileStorage) Exists(_ context.Context, key string) (bool, error) {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-
-	filePath := f.keyToPath(key)
-
-	_, err := os.Stat(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("file storage: failed to check key %q: %w", key, err)
+func (f *FileStorage) Exists(ctx context.Context, key string) (bool, error) {
+	if err := validateStorageKey(key); err != nil {
+		return false, fmt.Errorf("file storage: invalid key %q: %w", key, err)
 	}
-
-	return true, nil
+	return f.backend.Exists(ctx, key)
 }
 
 // Close releases any resources held by the backend.
-// For file storage, this is a no-op but provided for interface compliance.
 func (f *FileStorage) Close() error {
-	return nil
-}
-
-// keyToPath converts a storage key to its on-disk file path (<root>/<key>).
-// Validates key safety before constructing the path.
-func (f *FileStorage) keyToPath(key string) string {
-	// Validate key safety (allows internal paths like "keys/alice" but blocks traversal)
-	if err := validateStorageKey(key); err != nil {
-		// Return a safe invalid path that will fail gracefully
-		return filepath.Join(f.rootDir, "invalid")
-	}
-	return filepath.Join(f.rootDir, key)
+	return f.backend.Close()
 }
 
 // validateStorageKey validates storage keys (more permissive than service validation).
@@ -300,15 +178,6 @@ func validateStorageKey(key string) error {
 	}
 
 	return nil
-}
-
-// pathToKey converts a stored file path (<root>/<key>) back to its key.
-func (f *FileStorage) pathToKey(path string) (string, error) {
-	rel, err := filepath.Rel(f.rootDir, path)
-	if err != nil {
-		return "", fmt.Errorf("file storage: failed to convert path to key: %w", err)
-	}
-	return filepath.ToSlash(rel), nil
 }
 
 // filePermissionsForKey determines the file permissions based on the key prefix.
