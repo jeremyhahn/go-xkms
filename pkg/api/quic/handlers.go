@@ -304,7 +304,7 @@ func (s *Server) handleListBackends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "backends", "read") {
+	if !s.authorize(w, r, "backends", "list") {
 		return
 	}
 
@@ -391,7 +391,7 @@ func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleListKeys handles listing keys
 func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "keys", "read") {
+	if !s.authorize(w, r, "keys", "list") {
 		return
 	}
 
@@ -435,7 +435,7 @@ func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleGenerateKey handles key generation
 func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "keys", "write") {
+	if !s.authorize(w, r, "keys", "create") {
 		return
 	}
 
@@ -568,7 +568,7 @@ func (s *Server) handleGenerateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to generate key: %v", err))
+		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to generate key: %v", err))
 		return
 	}
 
@@ -679,7 +679,7 @@ func (s *Server) findKeyByID(ks xkms.Backend, keyID string) (*types.KeyAttribute
 
 // handleGetKey handles retrieving a key
 func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request, keyID, backendParam string) {
-	if !s.authorize(w, r, "keys", "read") {
+	if !s.authorize(w, r, "keys", "get") {
 		return
 	}
 
@@ -757,7 +757,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backe
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "sign") {
 		return
 	}
 
@@ -782,7 +782,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backe
 
 	signer, err := ks.Signer(attrs)
 	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get signer: %v", err))
+		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get signer: %v", err))
 		return
 	}
 
@@ -793,7 +793,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backe
 		// Ed25519 uses crypto.Hash(0) to indicate no pre-hashing
 		signature, err = signer.Sign(rand.Reader, req.Data, crypto.Hash(0))
 		if err != nil {
-			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to sign: %v", err))
+			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to sign: %v", err))
 			return
 		}
 	} else {
@@ -811,7 +811,7 @@ func (s *Server) handleSign(w http.ResponseWriter, r *http.Request, keyID, backe
 		// Sign the digest
 		signature, err = signer.Sign(rand.Reader, digest, hash)
 		if err != nil {
-			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to sign: %v", err))
+			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to sign: %v", err))
 			return
 		}
 	}
@@ -826,7 +826,7 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, keyID, bac
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "verify") {
 		return
 	}
 
@@ -927,7 +927,7 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "write") {
+	if !s.authorize(w, r, "keys", "rotate") {
 		return
 	}
 
@@ -946,7 +946,7 @@ func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request, keyID, 
 
 	privKey, err := ks.RotateKey(attrs)
 	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to rotate key: %v", err))
+		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to rotate key: %v", err))
 		return
 	}
 
@@ -982,7 +982,7 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "encrypt") {
 		return
 	}
 
@@ -1020,7 +1020,7 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	// Get the symmetric encrypter
 	encrypter, err := symBackend.SymmetricEncrypter(attrs)
 	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get encrypter: %v", err))
+		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get encrypter: %v", err))
 		return
 	}
 
@@ -1033,7 +1033,7 @@ func (s *Server) handleEncrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 	// Encrypt the plaintext
 	encrypted, err := encrypter.Encrypt(req.Plaintext, encryptOpts)
 	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to encrypt: %v", err))
+		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to encrypt: %v", err))
 		return
 	}
 
@@ -1051,7 +1051,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "decrypt") {
 		return
 	}
 
@@ -1108,7 +1108,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 
 		encrypter, err := symBackend.SymmetricEncrypter(attrs)
 		if err != nil {
-			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get encrypter: %v", err))
+			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get encrypter: %v", err))
 			return
 		}
 
@@ -1127,7 +1127,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 
 		plaintext, err := encrypter.Decrypt(encrypted, decryptOpts)
 		if err != nil {
-			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to decrypt: %v", err))
+			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to decrypt: %v", err))
 			return
 		}
 
@@ -1136,7 +1136,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		// Asymmetric decryption (RSA-OAEP with SHA256)
 		decrypter, err := ks.Decrypter(attrs)
 		if err != nil {
-			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get decrypter: %v", err))
+			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to get decrypter: %v", err))
 			return
 		}
 
@@ -1146,7 +1146,7 @@ func (s *Server) handleDecrypt(w http.ResponseWriter, r *http.Request, keyID, ba
 		}
 		plaintext, err := decrypter.Decrypt(rand.Reader, req.Ciphertext, opts)
 		if err != nil {
-			s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to decrypt: %v", err))
+			s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to decrypt: %v", err))
 			return
 		}
 
@@ -1168,7 +1168,7 @@ func (s *Server) handleCerts(w http.ResponseWriter, r *http.Request) {
 
 // handleListCerts handles listing certificates
 func (s *Server) handleListCerts(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "certs", "read") {
+	if !s.authorize(w, r, "certs", "list") {
 		return
 	}
 
@@ -1189,7 +1189,7 @@ func (s *Server) handleListCerts(w http.ResponseWriter, r *http.Request) {
 
 // handleSaveCert handles saving a certificate
 func (s *Server) handleSaveCert(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "certs", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 
@@ -1308,7 +1308,7 @@ func (s *Server) handleGetCert(w http.ResponseWriter, r *http.Request, certID st
 
 // handleDeleteCert handles deleting a certificate
 func (s *Server) handleDeleteCert(w http.ResponseWriter, r *http.Request, certID string) {
-	if !s.authorize(w, r, "certs", "delete") {
+	if !s.authorize(w, r, "certs", "revoke") {
 		return
 	}
 
@@ -1353,7 +1353,7 @@ func (s *Server) handleCertChainOperations(w http.ResponseWriter, r *http.Reques
 
 // handleSaveCertChain handles saving a certificate chain
 func (s *Server) handleSaveCertChain(w http.ResponseWriter, r *http.Request, certID string) {
-	if !s.authorize(w, r, "certs", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 
@@ -1523,7 +1523,7 @@ func (s *Server) handleGetImportParameters(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "read") {
+	if !s.authorize(w, r, "keys", "import") {
 		return
 	}
 
@@ -1607,7 +1607,7 @@ func (s *Server) handleGetImportParams(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "read") {
+	if !s.authorize(w, r, "keys", "import") {
 		return
 	}
 
@@ -1759,7 +1759,7 @@ func (s *Server) handleWrapKey(w http.ResponseWriter, r *http.Request, keyID, ba
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "wrap") {
 		return
 	}
 
@@ -1825,7 +1825,7 @@ func (s *Server) handleUnwrapKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "unwrap") {
 		return
 	}
 
@@ -1909,7 +1909,7 @@ func (s *Server) handleImportKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "write") {
+	if !s.authorize(w, r, "keys", "import") {
 		return
 	}
 
@@ -1970,7 +1970,7 @@ func (s *Server) handleExportKey(w http.ResponseWriter, r *http.Request, keyID, 
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "read") {
+	if !s.authorize(w, r, "keys", "export") {
 		return
 	}
 
@@ -2035,7 +2035,7 @@ func (s *Server) handleAsymmetricEncrypt(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "encrypt") {
 		return
 	}
 
@@ -2083,7 +2083,7 @@ func (s *Server) handleAsymmetricEncrypt(w http.ResponseWriter, r *http.Request,
 	hash := crypto.SHA256
 	ciphertext, err := rsa.EncryptOAEP(hash.New(), rand.Reader, rsaPubKey, req.Plaintext, nil)
 	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, fmt.Sprintf("failed to encrypt: %v", err))
+		s.sendServiceError(w, err, http.StatusInternalServerError, fmt.Sprintf("failed to encrypt: %v", err))
 		return
 	}
 
@@ -2101,7 +2101,7 @@ func (s *Server) handleCopyKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "write") {
+	if !s.authorize(w, r, "keys", "create") {
 		return
 	}
 

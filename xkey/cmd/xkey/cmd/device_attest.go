@@ -34,7 +34,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	xkeyTruststore "github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
@@ -286,12 +286,12 @@ func runDeviceAttest(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  Trust Sources:       Google Hardware Attestation + %d local certificate(s)\n", len(xkeyCerts))
 		}
 
-		verifyOpts := &android.VerifyOptions{
+		verifyOpts := &xkms.AndroidVerifyOptions{
 			TrustedRoots:  rootPool,
 			ExpectedNonce: nonce,
 		}
 
-		desc, err := android.VerifyKeyAttestation(chain, verifyOpts)
+		desc, err := xkms.VerifyAndroidKeyAttestation(chain, verifyOpts)
 		if err != nil {
 			fmt.Printf("  Chain Status:        FAILED (%v)\n", err)
 			fmt.Println()
@@ -653,7 +653,7 @@ func truncateHex(data []byte, maxChars int) string {
 }
 
 // printAuthorizationList prints the contents of an AuthorizationList.
-func printAuthorizationList(list *android.AuthorizationList, indent string) {
+func printAuthorizationList(list *xkms.AndroidAuthorizationList, indent string) {
 	if list == nil {
 		fmt.Printf("%s(empty)\n", indent)
 		return
@@ -692,7 +692,7 @@ func printAuthorizationList(list *android.AuthorizationList, indent string) {
 }
 
 // printKeyDescription displays the parsed Android Key Attestation extension.
-func printKeyDescription(desc *android.KeyDescription) {
+func printKeyDescription(desc *xkms.AndroidKeyDescription) {
 	fmt.Println("Key Attestation Extension (OID 1.3.6.1.4.1.11129.2.1.17)")
 	fmt.Println(strings.Repeat("=", 70))
 

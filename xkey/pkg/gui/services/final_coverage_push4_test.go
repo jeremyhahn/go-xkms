@@ -16,6 +16,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -28,7 +29,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
@@ -48,8 +48,8 @@ func fcp6NewExplorer(t *testing.T, opts ...func(*ExplorerConfig)) *APIExplorerSe
 	cfg := &ExplorerConfig{
 		TokenStore:   tokenstore.NewMemoryTokenStore(),
 		Registry:     serverregistry.NewMemoryServerRegistry(),
-		TrustStore:   storage.NewMemory(),
-		HistoryStore: storage.NewMemory(),
+		TrustStore:   xkms.NewStorageMemory(),
+		HistoryStore: xkms.NewStorageMemory(),
 	}
 	for _, fn := range opts {
 		fn(cfg)
@@ -113,7 +113,7 @@ func TestFCP6_APIExplorer_ClearHistory_Closed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFCP6_APIExplorer_GetHistory_SkipsBadEntries(t *testing.T) {
-	histStore := storage.NewMemory()
+	histStore := xkms.NewStorageMemory()
 	explorer := fcp6NewExplorer(t, func(cfg *ExplorerConfig) {
 		cfg.HistoryStore = histStore
 	})
@@ -357,7 +357,7 @@ func TestFCP6_OIDCService_SetBackend_NilBackend(t *testing.T) {
 
 func TestFCP6_OIDCService_SetBackend_Success(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	err := svc.SetBackend(backend, "oidc/")
 	assert.NoError(t, err)
 	assert.NotNil(t, svc.tokenStore)
@@ -708,7 +708,7 @@ func TestFCP6_OIDCService_SaveProviders_ToFile(t *testing.T) {
 
 func TestFCP6_OIDCService_SaveProviders_ToBackend(t *testing.T) {
 	svc := NewOIDCService(slog.Default())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.backend = backend
 	svc.backendPrefix = "oidc/"
 	svc.providers["backend-prov"] = &OIDCProviderEntry{

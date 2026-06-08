@@ -50,9 +50,6 @@ var (
 	// ErrUnknownCompositeMethod indicates an unknown composite authentication method was specified.
 	ErrUnknownCompositeMethod = errors.New("server: unknown composite authentication method")
 
-	// ErrAuditPathRequired indicates audit logging requires a path to be configured.
-	ErrAuditPathRequired = errors.New("server: audit logging requires a path to be configured")
-
 	// ErrTLSNotEnabled indicates TLS is not enabled in configuration.
 	ErrTLSNotEnabled = errors.New("server: TLS is not enabled in configuration")
 

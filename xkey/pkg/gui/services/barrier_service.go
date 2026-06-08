@@ -15,6 +15,7 @@ package services
 
 import (
 	"context"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,9 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -36,9 +34,9 @@ const barrierSubdir = "barrier"
 const barrierRootKeyPath = "barrier/root_key"
 
 // strategyLabels maps strategy IDs to human-readable labels for the frontend.
-var strategyLabels = map[seal.StrategyID]string{
-	seal.StrategyPassphrase: "Passphrase (AES-256-GCM)",
-	seal.StrategyTPM2:       "TPM 2.0 Hardware",
+var strategyLabels = map[xkms.StrategyID]string{
+	xkms.StrategyPassphrase: "Passphrase (AES-256-GCM)",
+	xkms.StrategyTPM2:       "TPM 2.0 Hardware",
 }
 
 // BarrierStrategyInfo describes a seal strategy's availability for the frontend.
@@ -51,7 +49,7 @@ type BarrierStrategyInfo struct {
 
 // BaseBackendFactory creates the storage backend used underneath the barrier.
 // The storageDir parameter is the barrier subdirectory path.
-type BaseBackendFactory func(storageDir string) (storage.Backend, error)
+type BaseBackendFactory func(storageDir string) (xkms.StorageBackend, error)
 
 // BarrierService wraps the seal.Barrier for GUI integration, providing
 // cross-platform encrypted storage with automatic strategy selection.
@@ -59,14 +57,14 @@ type BarrierService struct {
 	mu            sync.Mutex
 	ctx           context.Context
 	log           *slog.Logger
-	barrier       *seal.Barrier
+	barrier       *xkms.Barrier
 	configDir     string
 	dataDir       string
 	baseBackendFn BaseBackendFactory
 
 	// tpmSealerFn is called to obtain a TPM2 sealer when probing strategies.
 	// If nil, TPM2 strategy is unavailable.
-	tpmSealerFn func() types.Sealer
+	tpmSealerFn func() xkms.Sealer
 
 	// postUnsealHook is called after a successful Unseal() to allow the
 	// application to initialize services that depend on the barrier backend
@@ -108,7 +106,7 @@ func (s *BarrierService) SetDataDir(dir string) {
 
 // SetTPMSealerFunc sets the function used to obtain a TPM2 sealer. When the
 // function returns a non-nil sealer, TPM2 strategy becomes available.
-func (s *BarrierService) SetTPMSealerFunc(fn func() types.Sealer) {
+func (s *BarrierService) SetTPMSealerFunc(fn func() xkms.Sealer) {
 	s.tpmSealerFn = fn
 }
 
@@ -246,7 +244,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	// Validate password for the passphrase strategy: a missing password is
 	// caught here before the deferred-passphrase strategy errors deeper in
 	// the barrier.
-	if strategyID == string(seal.StrategyPassphrase) && password == "" {
+	if strategyID == string(xkms.StrategyPassphrase) && password == "" {
 		s.log.Error("barrier: passphrase strategy requires password but none provided")
 		return ErrBarrierPasswordRequired
 	}
@@ -271,9 +269,9 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 		return err
 	}
 
-	barrier, bErr := seal.NewBarrier(s.log, base, seal.BarrierConfig{
+	barrier, bErr := xkms.NewBarrier(s.log, base, xkms.BarrierConfig{
 		RootKeyPath:     barrierRootKeyPath,
-		PreferenceOrder: []seal.StrategyID{strategy.ID()},
+		PreferenceOrder: []xkms.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
 		_ = base.Close()
@@ -282,7 +280,7 @@ func (s *BarrierService) Initialize(password, strategyID string) error {
 	}
 
 	ctx := s.context()
-	if initErr := barrier.Initialize(ctx, seal.Credentials{Secret: password}); initErr != nil {
+	if initErr := barrier.Initialize(ctx, xkms.SealCredentials{Secret: password}); initErr != nil {
 		_ = base.Close()
 		s.log.Error("barrier: barrier.Initialize failed",
 			"strategy", strategyID, "error", initErr)
@@ -363,9 +361,9 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 		return err
 	}
 
-	barrier, bErr := seal.NewBarrier(s.log, base, seal.BarrierConfig{
+	barrier, bErr := xkms.NewBarrier(s.log, base, xkms.BarrierConfig{
 		RootKeyPath:     barrierRootKeyPath,
-		PreferenceOrder: []seal.StrategyID{strategy.ID()},
+		PreferenceOrder: []xkms.StrategyID{strategy.ID()},
 	}, strategy)
 	if bErr != nil {
 		_ = base.Close()
@@ -374,7 +372,7 @@ func (s *BarrierService) Unseal(password, strategyID string) error {
 	}
 
 	ctx := s.context()
-	if err := barrier.Unseal(ctx, seal.Credentials{Secret: password}); err != nil {
+	if err := barrier.Unseal(ctx, xkms.SealCredentials{Secret: password}); err != nil {
 		_ = base.Close()
 		s.mu.Unlock()
 		s.logBarrierEvent(audit.OpBarrierUnsealed, false, err, map[string]any{"strategy": strategyID})
@@ -430,7 +428,7 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 	}
 
 	ctx := s.context()
-	if err := s.barrier.ChangePassword(ctx, seal.Credentials{Secret: newPassword}); err != nil {
+	if err := s.barrier.ChangePassword(ctx, xkms.SealCredentials{Secret: newPassword}); err != nil {
 		s.logBarrierEvent(audit.OpBarrierPasswordChanged, false, err, nil)
 		return err
 	}
@@ -442,12 +440,12 @@ func (s *BarrierService) ChangePassword(newPassword string) error {
 
 // Status returns the current barrier status. If the barrier has not been
 // initialized, a zero-value BarrierStatus is returned.
-func (s *BarrierService) Status() *seal.BarrierStatus {
+func (s *BarrierService) Status() *xkms.BarrierStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.barrier == nil {
-		return &seal.BarrierStatus{Sealed: true}
+		return &xkms.BarrierStatus{Sealed: true}
 	}
 	return s.barrier.Status()
 }
@@ -467,7 +465,7 @@ func (s *BarrierService) IsUnsealed() bool {
 // GetBackend returns the barrier as a storage.Backend for use by other
 // services that need encrypted storage. Returns nil if the barrier has
 // not been initialized or unsealed.
-func (s *BarrierService) GetBackend() storage.Backend {
+func (s *BarrierService) GetBackend() xkms.StorageBackend {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -532,9 +530,9 @@ func (s *BarrierService) probeRootKey(dir string) bool {
 // assembleStrategy builds the single sealing strategy matching strategyID.
 // No fallback strategies are included — if the selected strategy is
 // unavailable, the caller must surface the error.
-func (s *BarrierService) assembleStrategy(strategyID string) (seal.SealingStrategy, error) {
-	switch seal.StrategyID(strategyID) {
-	case seal.StrategyTPM2:
+func (s *BarrierService) assembleStrategy(strategyID string) (xkms.SealingStrategy, error) {
+	switch xkms.StrategyID(strategyID) {
+	case xkms.StrategyTPM2:
 		if s.tpmSealerFn == nil {
 			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
 		}
@@ -542,9 +540,9 @@ func (s *BarrierService) assembleStrategy(strategyID string) (seal.SealingStrate
 		if sealer == nil || !sealer.CanSeal() {
 			return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
 		}
-		return seal.NewTPM2Strategy(sealer, nil), nil
-	case seal.StrategyPassphrase:
-		return seal.NewSoftwareStrategy(), nil
+		return xkms.NewTPM2Strategy(sealer, nil), nil
+	case xkms.StrategyPassphrase:
+		return xkms.NewSoftwareSealStrategy(), nil
 	default:
 		return nil, &ErrBarrierStrategyUnavailable{Strategy: strategyID}
 	}
@@ -554,11 +552,11 @@ func (s *BarrierService) assembleStrategy(strategyID string) (seal.SealingStrate
 // Uses the registered factory if set, otherwise defaults to the go-qrdb file
 // engine, which writes the same flat <storageDir>/<key> layout as xkey's
 // historical storage (no data migration).
-func (s *BarrierService) createBaseBackend(storageDir string) (storage.Backend, error) {
+func (s *BarrierService) createBaseBackend(storageDir string) (xkms.StorageBackend, error) {
 	if s.baseBackendFn != nil {
 		return s.baseBackendFn(storageDir)
 	}
-	return storage.OpenEngine(storage.EngineConfig{Kind: storage.EngineFile, Path: storageDir})
+	return xkms.StorageOpenEngine(xkms.StorageEngineConfig{Kind: xkms.StorageEngineFile, Path: storageDir})
 }
 
 // BarrierSealInfo describes the barrier's seal state for the frontend.
@@ -612,7 +610,7 @@ func (s *BarrierService) GetSealInfo() *BarrierSealInfo {
 		// Use the strategy from the last Initialize/Unseal if available,
 		// otherwise fall back to probing available strategies.
 		if s.lastStrategy != "" {
-			sid := seal.StrategyID(s.lastStrategy)
+			sid := xkms.StrategyID(s.lastStrategy)
 			info.Strategy = s.lastStrategy
 			if label, ok := strategyLabels[sid]; ok {
 				info.StrategyLabel = label
@@ -662,17 +660,17 @@ func (s *BarrierService) bestStrategyUnlocked() (*BarrierStrategyInfo, error) {
 	if fallback != nil {
 		return fallback, nil
 	}
-	return nil, seal.ErrNoAvailableStrategy
+	return nil, xkms.ErrNoAvailableSealStrategy
 }
 
 // probeStrategiesUnlocked is the non-locking version of ProbeStrategies.
 func (s *BarrierService) probeStrategiesUnlocked() []BarrierStrategyInfo {
 	strategies := []BarrierStrategyInfo{
 		{
-			ID:             string(seal.StrategyPassphrase),
+			ID:             string(xkms.StrategyPassphrase),
 			Available:      true,
 			HardwareBacked: false,
-			Label:          strategyLabels[seal.StrategyPassphrase],
+			Label:          strategyLabels[xkms.StrategyPassphrase],
 		},
 	}
 	if s.tpmSealerFn != nil {
@@ -683,10 +681,10 @@ func (s *BarrierService) probeStrategiesUnlocked() []BarrierStrategyInfo {
 		// barrier internally falls to Passphrase with an empty password.
 		available := sealer != nil && sealer.CanSeal()
 		strategies = append(strategies, BarrierStrategyInfo{
-			ID:             string(seal.StrategyTPM2),
+			ID:             string(xkms.StrategyTPM2),
 			Available:      available,
 			HardwareBacked: true,
-			Label:          strategyLabels[seal.StrategyTPM2],
+			Label:          strategyLabels[xkms.StrategyTPM2],
 		})
 	}
 	return strategies

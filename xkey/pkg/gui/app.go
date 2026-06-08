@@ -39,22 +39,8 @@ import (
 	tpmtransport "github.com/google/go-tpm/tpm2/transport"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
-	backendtpm2 "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
-	"github.com/jeremyhahn/go-xkms/pkg/pintpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/pinadapter"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	tpm2store "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
@@ -173,16 +159,16 @@ type App struct {
 	fido2Storage  authenticator.StatefulCredentialStorage
 	staticpwStore staticpw.Store
 	trustStore    truststore.TrustStore
-	pivFileStore  pivcert.PIVCertificateStorage
-	pivStorageBE  storage.Backend // underlying storage for creating namespaced PIV stores
+	pivFileStore  xkmssdk.PIVCertificateStorage
+	pivStorageBE  xkmssdk.StorageBackend // underlying storage for creating namespaced PIV stores
 
 	// TPM instance (lazy-initialized, closed on shutdown).
 	tpmMu             sync.Mutex
-	tpmInstance       tpm2pkg.TrustedPlatformModule
-	tpmStorageFactory *tpm2store.StorageFactory
-	tpmUnavailable    bool           // true after first probe found no TPM device
-	tpmConfigOnce     sync.Once      // ensures config is loaded and logged once
-	tpmCachedConfig   tpm2pkg.Config // config loaded by tpmConfigOnce
+	tpmInstance       xkmssdk.TrustedPlatformModule
+	tpmStorageFactory *xkmssdk.TPMStorageFactory
+	tpmUnavailable    bool              // true after first probe found no TPM device
+	tpmConfigOnce     sync.Once         // ensures config is loaded and logged once
+	tpmCachedConfig   xkmssdk.TPMConfig // config loaded by tpmConfigOnce
 
 	// tpmAccessor serializes cross-service TPM access and coordinates
 	// shutdown to prevent use-after-close panics.
@@ -528,14 +514,14 @@ func (a *App) restorePKCS11Modules() {
 // Stores are registered under both the registry ID and the category
 // name so that lookups from the GUI (registry IDs) and from xkms
 // (category names) both succeed.
-func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
+func initLocalPIV(log *slog.Logger, dir string, barrierBackend xkmssdk.StorageBackend,
 	backendIDs []string, registry backendregistry.Registry,
-	openStore func(string) (storage.Backend, error)) (pivcert.PIVCertificateStorage, storage.Backend, bool) {
+	openStore func(string) (xkmssdk.StorageBackend, error)) (xkmssdk.PIVCertificateStorage, xkmssdk.StorageBackend, bool) {
 	if dir == "" {
 		return nil, nil, false
 	}
 
-	var pivBackend storage.Backend
+	var pivBackend xkmssdk.StorageBackend
 	if barrierBackend != nil {
 		pivBackend = barrierBackend
 	} else {
@@ -555,7 +541,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 
 	// The software backend uses the root path (no prefix) for backward
 	// compatibility with certificates stored before per-backend namespacing.
-	pivFileStore, err := pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+	pivFileStore, err := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
 		Backend:    pivBackend,
 		DEREnabled: true,
 		PEMEnabled: true,
@@ -573,7 +559,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 	// compatibility. Other backends (tpm2, pkcs11, etc.) get isolated
 	// namespaces under "backends/{category}/" so certificates from one
 	// backend never appear when listing another.
-	stores := make(map[string]pivcert.PIVCertificateStorage, len(backendIDs)*2)
+	stores := make(map[string]xkmssdk.PIVCertificateStorage, len(backendIDs)*2)
 	for _, id := range backendIDs {
 		cat := id
 		if registry != nil {
@@ -596,7 +582,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 		// use file storage as a placeholder.
 
 		// Other backends get a namespaced store.
-		ns, nsErr := storage.NewPrefixBackend(pivBackend, "backends/"+cat+"/")
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(pivBackend, "backends/"+cat+"/")
 		if nsErr != nil {
 			log.Warn("failed to create namespaced PIV backend, using shared store",
 				"backend", id, "category", cat, "error", nsErr)
@@ -607,7 +593,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 			continue
 		}
 
-		nsStore, nsStoreErr := pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+		nsStore, nsStoreErr := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
 			Backend:    ns,
 			DEREnabled: true,
 			PEMEnabled: true,
@@ -635,7 +621,7 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 
 	// Factory for creating PIV stores on demand when a backend is requested
 	// that wasn't pre-registered (e.g., PKCS#11 modules added via admin area).
-	storeFactory := func(backendName string) (pivcert.PIVCertificateStorage, error) {
+	storeFactory := func(backendName string) (xkmssdk.PIVCertificateStorage, error) {
 		if backendName == "software" || backendName == "" {
 			return pivFileStore, nil
 		}
@@ -643,18 +629,18 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 		// PKCS#11 backends get on-device cert storage when the connect
 		// hook fires; the store factory returns file storage as a fallback.
 
-		ns, nsErr := storage.NewPrefixBackend(pivBackend, "backends/"+backendName+"/")
+		ns, nsErr := xkmssdk.NewStoragePrefixBackend(pivBackend, "backends/"+backendName+"/")
 		if nsErr != nil {
 			return nil, nsErr
 		}
-		return pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+		return xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
 			Backend:    ns,
 			DEREnabled: true,
 			PEMEnabled: true,
 		})
 	}
 
-	if err := xkms.InitializePIV(&xkms.PIVManagerConfig{
+	if err := xkmssdk.InitializePIV(&xkmssdk.PIVManagerConfig{
 		Stores:       stores,
 		StoreFactory: storeFactory,
 	}); err != nil {
@@ -667,8 +653,8 @@ func initLocalPIV(log *slog.Logger, dir string, barrierBackend storage.Backend,
 	return pivFileStore, pivBackend, true
 }
 
-// closeBackend is a helper that closes a storage.Backend and logs any error.
-func closeBackend(log *slog.Logger, b storage.Backend) {
+// closeBackend is a helper that closes a xkmssdk.StorageBackend and logs any error.
+func closeBackend(log *slog.Logger, b xkmssdk.StorageBackend) {
 	if err := b.Close(); err != nil {
 		log.Warn("failed to close storage backend", "error", err)
 	}
@@ -682,22 +668,22 @@ func closeBackend(log *slog.Logger, b storage.Backend) {
 // local persistence. It reads State.StorageEngine from the unified config and
 // defaults to the file engine, whose flat <dir>/<key> layout matches xkey's
 // historical on-disk format (no data migration).
-func (a *App) storageEngineKind() storage.EngineKind {
+func (a *App) storageEngineKind() xkmssdk.StorageEngineKind {
 	a.storageEngineOnce.Do(func() {
 		a.storageEngine = "file"
 		if ucfg, err := config.Load(); err == nil && ucfg.State.StorageEngine != "" {
 			a.storageEngine = ucfg.State.StorageEngine
 		}
 	})
-	return storage.EngineKind(a.storageEngine)
+	return xkmssdk.StorageEngineKind(a.storageEngine)
 }
 
-// openStore creates a storage.Backend rooted at dir using the configured
+// openStore creates a xkmssdk.StorageBackend rooted at dir using the configured
 // storage engine. It is the single construction point for xkey's local file
 // stores, so flipping State.StorageEngine switches the underlying engine
 // (file, pebble, memory) without changing any call site.
-func (a *App) openStore(dir string) (storage.Backend, error) {
-	return storage.OpenEngine(storage.EngineConfig{Kind: a.storageEngineKind(), Path: dir})
+func (a *App) openStore(dir string) (xkmssdk.StorageBackend, error) {
+	return xkmssdk.StorageOpenEngine(xkmssdk.StorageEngineConfig{Kind: a.storageEngineKind(), Path: dir})
 }
 
 func (a *App) initializeDataDir() error {
@@ -800,7 +786,7 @@ func (a *App) initializeDataDir() error {
 	// Team store for password sharing — uses barrier backend when available,
 	// falls back to file backend otherwise.
 	{
-		var teamBackend storage.Backend
+		var teamBackend xkmssdk.StorageBackend
 		if barrierBackend != nil {
 			teamBackend = barrierBackend
 		} else {
@@ -812,7 +798,7 @@ func (a *App) initializeDataDir() error {
 			}
 		}
 		if teamBackend != nil {
-			kvStore, kvErr := kvadapter.New(teamBackend)
+			kvStore, kvErr := xkmssdk.NewKVStoreAdapter(teamBackend)
 			if kvErr != nil {
 				a.log.Warn("failed to create team kv adapter", "error", kvErr)
 			} else {
@@ -890,7 +876,7 @@ func (a *App) initializeDataDir() error {
 
 	// Share storage — encrypted via barrier or plain file fallback.
 	if barrierBackend != nil {
-		ss, ssErr := sharestore.NewBackendShareStore(barrierBackend, "shares/")
+		ss, ssErr := xkmssdk.NewBackendShareStore(barrierBackend, "shares/")
 		if ssErr != nil {
 			a.log.Warn("failed to create share backend store", "error", ssErr)
 		} else {
@@ -905,7 +891,7 @@ func (a *App) initializeDataDir() error {
 			if sbErr != nil {
 				a.log.Warn("failed to create share file backend", "error", sbErr)
 			} else {
-				ss, ssErr := sharestore.NewBackendShareStore(shareBackend, "")
+				ss, ssErr := xkmssdk.NewBackendShareStore(shareBackend, "")
 				if ssErr != nil {
 					a.log.Warn("failed to create share file store", "error", ssErr)
 				} else {
@@ -1022,7 +1008,7 @@ func (a *App) initializeAuthenticator() {
 	// Initialize the composite FIDO2 key backend. Backends are registered from
 	// the go-xkms service via BackendAdapter, which delegates all crypto to the
 	// existing KeyProvider implementations. No per-backend FIDO2 code needed.
-	composite := keybackend.NewCompositeBackend(types.BackendTypeSoftware)
+	composite := keybackend.NewCompositeBackend(xkmssdk.BackendTypeSoftware)
 	a.fido2KeyBackend = composite
 
 	// Register all available go-xkms backends as FIDO2 key backends.
@@ -1035,28 +1021,28 @@ func (a *App) initializeAuthenticator() {
 		a.log.Info("auto-UV enabled: FIDO2 backends will report built-in user verification")
 	}
 
-	if swBackend, swErr := xkms.GetBackend("software"); swErr == nil {
-		adapter := keybackend.NewBackendAdapter(swBackend.KeyProvider(), types.BackendTypeSoftware)
+	if swBackend, swErr := xkmssdk.GetBackend("software"); swErr == nil {
+		adapter := keybackend.NewBackendAdapter(swBackend.KeyProvider(), xkmssdk.BackendTypeSoftware)
 		adapter.SetLogger(a.log)
 		var backend keybackend.FIDO2KeyBackend = adapter
 		if autoUVProvider != nil {
 			backend = keybackend.NewAutoUVBackend(adapter, autoUVProvider)
 		}
-		composite.Register(types.BackendTypeSoftware, backend)
+		composite.Register(xkmssdk.BackendTypeSoftware, backend)
 	}
-	if tpm2Backend, tpmErr := xkms.GetBackend("tpm2"); tpmErr == nil {
-		adapter := keybackend.NewBackendAdapter(tpm2Backend.KeyProvider(), types.BackendTypeTPM2)
+	if tpm2Backend, tpmErr := xkmssdk.GetBackend("tpm2"); tpmErr == nil {
+		adapter := keybackend.NewBackendAdapter(tpm2Backend.KeyProvider(), xkmssdk.BackendTypeTPM2)
 		adapter.SetLogger(a.log)
 		var backend keybackend.FIDO2KeyBackend = adapter
 		if autoUVProvider != nil {
 			backend = keybackend.NewAutoUVBackend(adapter, autoUVProvider)
 		}
-		composite.Register(types.BackendTypeTPM2, backend)
+		composite.Register(xkmssdk.BackendTypeTPM2, backend)
 		a.log.Info("FIDO2 TPM2 key backend registered")
 	}
 
 	a.log.Info("FIDO2 composite key backend initialized",
-		"default", types.BackendTypeSoftware,
+		"default", xkmssdk.BackendTypeSoftware,
 		"backends", composite.Backends())
 
 	// AAGUID: UUIDv5(DNS, "xkey.automatethethings.com") = 5150e208-1ab8-5162-bc67-f5e4f24adefa
@@ -1137,11 +1123,11 @@ func (a *App) initializeAuthenticator() {
 func (a *App) initLocalKeyStore(dataDir string) {
 	keysDir := filepath.Join(dataDir, "keys")
 
-	xkms.Reset()
+	xkmssdk.Reset()
 
 	backendConfigs := a.buildXKMSBackendConfigs()
 
-	if err := xkms.AutoInitialize(&xkms.AutoConfig{
+	if err := xkmssdk.AutoInitialize(&xkmssdk.AutoConfig{
 		DataDir:        keysDir,
 		DefaultBackend: "software",
 		BackendConfigs: backendConfigs,
@@ -1150,7 +1136,7 @@ func (a *App) initLocalKeyStore(dataDir string) {
 		return
 	}
 
-	svc, err := xkms.Get()
+	svc, err := xkmssdk.Get()
 	if err != nil {
 		a.log.Warn("failed to get xkms service for local key store", "error", err)
 		return
@@ -1168,9 +1154,9 @@ func (a *App) initLocalKeyStore(dataDir string) {
 	// (TPM_RC_POLICY_FAIL) because the SRK's compound policy was computed
 	// using the GUI TPM's PCR config. By sharing the same TPM instance, all
 	// seal/unseal operations use identical policy state and SRK auth.
-	if tpm2Backend, gbErr := xkms.GetBackend("tpm2"); gbErr == nil && tpm2Backend != nil {
+	if tpm2Backend, gbErr := xkmssdk.GetBackend("tpm2"); gbErr == nil && tpm2Backend != nil {
 		if kp := tpm2Backend.KeyProvider(); kp != nil {
-			if concrete, ok := kp.(*backendtpm2.Backend); ok {
+			if concrete, ok := kp.(*xkmssdk.TPM2Backend); ok {
 				sharedTPM, tpmErr := a.tpmAccessor.Acquire()
 				if tpmErr == nil {
 					a.tpmAccessor.Release()
@@ -1198,20 +1184,20 @@ func (a *App) initLocalKeyStore(dataDir string) {
 	// need PIV stores for certificate operations. Each non-software backend
 	// gets a namespaced store under "backends/{name}/" for certificate isolation.
 	if a.pivStorageBE != nil {
-		for _, name := range xkms.Backends() {
+		for _, name := range xkmssdk.Backends() {
 			if name == "software" {
 				// Software uses the root path (backward compatible).
 				if a.pivFileStore != nil {
-					_ = xkms.RegisterPIVStore(name, a.pivFileStore)
+					_ = xkmssdk.RegisterPIVStore(name, a.pivFileStore)
 				}
 				continue
 			}
-			ns, nsErr := storage.NewPrefixBackend(a.pivStorageBE, "backends/"+name+"/")
+			ns, nsErr := xkmssdk.NewStoragePrefixBackend(a.pivStorageBE, "backends/"+name+"/")
 			if nsErr != nil {
 				a.log.Warn("failed to create namespaced PIV store", "backend", name, "error", nsErr)
 				continue
 			}
-			nsStore, storeErr := pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+			nsStore, storeErr := xkmssdk.NewPIVFileBackend(&xkmssdk.PIVFileStorageConfig{
 				Backend:    ns,
 				DEREnabled: true,
 				PEMEnabled: true,
@@ -1220,7 +1206,7 @@ func (a *App) initLocalKeyStore(dataDir string) {
 				a.log.Warn("failed to create PIV file store for backend", "backend", name, "error", storeErr)
 				continue
 			}
-			if regErr := xkms.RegisterPIVStore(name, nsStore); regErr != nil {
+			if regErr := xkmssdk.RegisterPIVStore(name, nsStore); regErr != nil {
 				a.log.Debug("PIV store registration failed", "backend", name, "error", regErr)
 			} else {
 				a.log.Info("registered namespaced PIV store for xkms backend", "backend", name)
@@ -1235,7 +1221,7 @@ func (a *App) initLocalKeyStore(dataDir string) {
 // with the xkms service. Called when a PKCS#11 token is connected via the admin
 // area so PIV key generation and key operations can use the hardware token.
 func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN, soPin, tokenLabel string) {
-	if !xkms.IsInitialized() {
+	if !xkmssdk.IsInitialized() {
 		a.log.Warn("cannot register PKCS#11 xkms backend: xkms not initialized")
 		return
 	}
@@ -1254,15 +1240,15 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 	// If a backend is already registered, close it and re-register.
 	// This handles reconnection after YubiKey reset or disconnect/reconnect
 	// cycles where the old backend's sessions may be stale.
-	if existingBackend, err := xkms.GetBackend("pkcs11"); err == nil {
+	if existingBackend, err := xkmssdk.GetBackend("pkcs11"); err == nil {
 		a.log.Info("replacing existing PKCS#11 xkms backend (reconnect)")
 		if closer, ok := existingBackend.(interface{ Close() error }); ok {
 			_ = closer.Close()
 		}
-		xkms.UnregisterBackend("pkcs11")
+		xkmssdk.UnregisterBackend("pkcs11")
 	}
 
-	factory, ok := xkms.GetBackendFactory(xkms.BackendPKCS11)
+	factory, ok := xkmssdk.GetBackendFactory(xkmssdk.BackendPKCS11)
 	if !ok {
 		a.log.Warn("PKCS#11 backend factory not registered")
 		return
@@ -1312,7 +1298,7 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		return
 	}
 
-	ks, ksErr := xkms.New(&xkms.BackendConfig{
+	ks, ksErr := xkmssdk.NewServiceBackend(&xkmssdk.ServiceBackendConfig{
 		Backend:     kp,
 		CertStorage: certStore,
 	})
@@ -1321,7 +1307,7 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 		return
 	}
 
-	if regErr := xkms.RegisterServiceBackend("pkcs11", ks); regErr != nil {
+	if regErr := xkmssdk.RegisterServiceBackend("pkcs11", ks); regErr != nil {
 		a.log.Warn("failed to register PKCS#11 xkms backend", "error", regErr)
 		return
 	}
@@ -1338,8 +1324,8 @@ func (a *App) registerPKCS11XKMSBackend(libraryPath string, slotID uint, userPIN
 // backend factory functions. This enables AutoInitialize to successfully create
 // TPM2 and PKCS#11 backends that would otherwise fail due to missing device
 // paths or library paths.
-func (a *App) buildXKMSBackendConfigs() map[xkms.BackendType]map[string]interface{} {
-	configs := make(map[xkms.BackendType]map[string]interface{})
+func (a *App) buildXKMSBackendConfigs() map[xkmssdk.ServiceBackendType]map[string]interface{} {
+	configs := make(map[xkmssdk.ServiceBackendType]map[string]interface{})
 
 	ucfg, err := config.Load()
 	if err != nil {
@@ -1358,7 +1344,7 @@ func (a *App) buildXKMSBackendConfigs() map[xkms.BackendType]map[string]interfac
 				if lb.TPM2.Simulator {
 					cfg["use_simulator"] = true
 				}
-				configs[xkms.BackendTPM2] = cfg
+				configs[xkmssdk.BackendTPM2] = cfg
 			}
 		case "pkcs11":
 			if lb.PKCS11 != nil {
@@ -1369,16 +1355,16 @@ func (a *App) buildXKMSBackendConfigs() map[xkms.BackendType]map[string]interfac
 				if lb.PKCS11.SlotID != 0 {
 					cfg["slot"] = lb.PKCS11.SlotID
 				}
-				configs[xkms.BackendPKCS11] = cfg
+				configs[xkmssdk.BackendPKCS11] = cfg
 			}
 		}
 	}
 
 	// Fall back to the shared TPM config for the device path when no
 	// explicit TPM2 local backend entry exists in the backends section.
-	if _, hasTPM2 := configs[xkms.BackendTPM2]; !hasTPM2 {
+	if _, hasTPM2 := configs[xkmssdk.BackendTPM2]; !hasTPM2 {
 		if ucfg.TPM.Device != "" {
-			configs[xkms.BackendTPM2] = map[string]interface{}{
+			configs[xkmssdk.BackendTPM2] = map[string]interface{}{
 				"device": ucfg.TPM.Device,
 			}
 		}
@@ -1643,7 +1629,7 @@ func NewApp(cfg *GUIConfig) *App {
 	// Create shared audit store for queryable logging across all services.
 	// Initially backed by in-memory storage; migrated to barrier-encrypted
 	// persistence in initializeDataDir() after barrier unseal.
-	auditStore, auditStoreErr := audit.NewBackendStore(storage.NewMemory(), 10000, slog.Default())
+	auditStore, auditStoreErr := audit.NewBackendStore(xkmssdk.NewStorageMemory(), 10000, slog.Default())
 	if auditStoreErr != nil {
 		log.Error("failed to create audit store", "error", auditStoreErr)
 		panic("audit store initialization failed: " + auditStoreErr.Error())
@@ -1691,8 +1677,8 @@ func NewApp(cfg *GUIConfig) *App {
 		Logger:       log,
 		TokenStore:   tokenstore.NewMemoryTokenStore(),
 		Registry:     serverregistry.NewMemoryServerRegistry(),
-		TrustStore:   storage.NewMemory(),
-		HistoryStore: storage.NewMemory(),
+		TrustStore:   xkmssdk.NewStorageMemory(),
+		HistoryStore: xkmssdk.NewStorageMemory(),
 		OIDCService:  oidcSvc,
 	})
 	if err != nil {
@@ -1791,7 +1777,7 @@ func NewApp(cfg *GUIConfig) *App {
 	// Create a single shared TPMAccessor for cross-service serialization.
 	// All services that need the TPM use the same accessor so that only
 	// one TPM command is in-flight at a time.
-	tpmAccessor := services.NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	tpmAccessor := services.NewTPMAccessor(func() xkmssdk.TrustedPlatformModule {
 		return a.getTPM()
 	})
 	a.tpmAccessor = tpmAccessor
@@ -1806,8 +1792,8 @@ func NewApp(cfg *GUIConfig) *App {
 
 	// Wire TPM sealer function to barrier service so it can use TPM-based
 	// sealing when the TPM is available. The TrustedPlatformModule interface
-	// directly implements types.Sealer (Seal, Unseal, CanSeal).
-	barrierSvc.SetTPMSealerFunc(func() types.Sealer {
+	// directly implements xkmssdk.Sealer (Seal, Unseal, CanSeal).
+	barrierSvc.SetTPMSealerFunc(func() xkmssdk.Sealer {
 		tpmObj, tpmErr := tpmAccessor.Acquire()
 		if tpmErr != nil {
 			return nil
@@ -1923,12 +1909,12 @@ func NewApp(cfg *GUIConfig) *App {
 			if conn, connErr := mgr.GetConnection(moduleID, slotID); connErr == nil {
 				p11Store, p11Err := newPKCS11PIVCertStorageFromConnection(conn, soPin, userPIN)
 				if p11Err == nil {
-					if pivErr := xkms.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
+					if pivErr := xkmssdk.RegisterPIVStore("pkcs11", p11Store); pivErr != nil {
 						a.log.Warn("failed to register PKCS#11 PIV store", "error", pivErr)
 					} else {
 						a.log.Info("registered PKCS#11 PIV cert storage (on-device)")
 					}
-					if pivErr := xkms.RegisterPIVStore(moduleID, p11Store); pivErr != nil {
+					if pivErr := xkmssdk.RegisterPIVStore(moduleID, p11Store); pivErr != nil {
 						a.log.Debug("failed to register PIV store under module ID", "error", pivErr)
 					}
 				} else {
@@ -1942,9 +1928,9 @@ func NewApp(cfg *GUIConfig) *App {
 				if a.fido2KeyBackend != nil {
 					// The xkms backend is registered under "pkcs11" (see
 					// registerPKCS11XKMSBackend), not the module ID.
-					p11Backend, p11Err := xkms.GetBackend("pkcs11")
+					p11Backend, p11Err := xkmssdk.GetBackend("pkcs11")
 					if p11Err == nil && p11Backend != nil {
-						bt := types.BackendType(moduleID)
+						bt := xkmssdk.BackendType(moduleID)
 						provider := p11Backend.KeyProvider()
 						if isYubiKeyLibrary(libraryPath) && wrapYubiKeyProvider != nil {
 							if wrapped := wrapYubiKeyProvider(provider); wrapped != nil {
@@ -1957,7 +1943,7 @@ func NewApp(cfg *GUIConfig) *App {
 						adapter.SetLogger(a.log)
 						// Attach PIV slot model if the backend supports it.
 						type slotModelProvider interface {
-							SlotModel() pivcert.SlotModel
+							SlotModel() xkmssdk.PIVSlotModel
 						}
 						if smp, ok := p11Backend.KeyProvider().(slotModelProvider); ok {
 							if sm := smp.SlotModel(); sm != nil {
@@ -1982,7 +1968,7 @@ func NewApp(cfg *GUIConfig) *App {
 	a.pkcs11Service.SetDisconnectHook(func(moduleID string, slotID uint) {
 		// Unregister the PKCS#11 FIDO2 key backend when the token disconnects.
 		if a.fido2KeyBackend != nil {
-			a.fido2KeyBackend.Unregister(types.BackendType(moduleID))
+			a.fido2KeyBackend.Unregister(xkmssdk.BackendType(moduleID))
 			a.log.Info("unregistered PKCS#11 FIDO2 key backend",
 				"module_id", moduleID,
 				"slot_id", slotID)
@@ -2031,14 +2017,14 @@ func NewApp(cfg *GUIConfig) *App {
 		if store == nil {
 			return
 		}
-		if err := xkms.RegisterPIVStore(backendID, store); err != nil {
+		if err := xkmssdk.RegisterPIVStore(backendID, store); err != nil {
 			a.log.Warn("failed to register PIV store for new backend",
 				"backend_id", backendID, "error", err)
 			return
 		}
 		// Also register under the category name for xkms lookups.
 		if category != "" && category != backendID {
-			if err := xkms.RegisterPIVStore(category, store); err != nil {
+			if err := xkmssdk.RegisterPIVStore(category, store); err != nil {
 				a.log.Warn("failed to register PIV store under category",
 					"category", category, "error", err)
 			}
@@ -2231,7 +2217,7 @@ func NewApp(cfg *GUIConfig) *App {
 		return nil
 	})
 	// Wire autofill policy persist callback so GUI toggle changes are saved to config.
-	autofillSvc.SetPolicyPersistFunc(func(policy *autofill.AutoFillPolicy) error {
+	autofillSvc.SetPolicyPersistFunc(func(policy *xkmssdk.AutoFillPolicy) error {
 		a.config.AutoFillPolicy = policy
 		return SaveGUIConfig(a.config)
 	})
@@ -2257,7 +2243,7 @@ func NewApp(cfg *GUIConfig) *App {
 // Returns nil if the hardware TPM device is not available.
 // The result is cached: once we determine the TPM is unavailable,
 // subsequent calls return nil immediately without re-logging.
-func (a *App) getTPM() tpm2pkg.TrustedPlatformModule {
+func (a *App) getTPM() xkmssdk.TrustedPlatformModule {
 	a.tpmMu.Lock()
 	defer a.tpmMu.Unlock()
 
@@ -2297,8 +2283,8 @@ func (a *App) getTPM() tpm2pkg.TrustedPlatformModule {
 	// Create the TPM storage factory. If it fails (e.g. missing codec_json
 	// build tag), proceed without persistent storage — the TPM can still
 	// serve property/capability queries with nil BlobStore/Backend.
-	var factory *tpm2store.StorageFactory
-	factory, err := tpm2store.NewStorageFactory(a.log, tpmDataDir)
+	var factory *xkmssdk.TPMStorageFactory
+	factory, err := xkmssdk.NewTPMStorageFactory(a.log, tpmDataDir)
 	if err != nil {
 		a.log.Warn("failed to create TPM storage factory, continuing without persistent storage", "error", err)
 	}
@@ -2311,7 +2297,7 @@ func (a *App) getTPM() tpm2pkg.TrustedPlatformModule {
 		if ekHandle == 0x81010002 {
 			cfg.EK.KeyAlgorithm = "ECDSA"
 			cfg.EK.RSAConfig = nil
-			cfg.EK.ECCConfig = &tpm2store.ECCConfig{Curve: "P-256"}
+			cfg.EK.ECCConfig = &xkmssdk.ECCConfig{Curve: "P-256"}
 			cfg.EK.CertHandle = 0x01C0000A
 		}
 	}
@@ -2324,7 +2310,7 @@ func (a *App) getTPM() tpm2pkg.TrustedPlatformModule {
 	FixSignalHandlers()
 
 	// Build TPM params — use factory backends when available, nil otherwise.
-	tpmParams := &tpm2pkg.Params{
+	tpmParams := &xkmssdk.TPMParams{
 		Logger: a.log,
 		Config: &cfg,
 	}
@@ -2333,13 +2319,13 @@ func (a *App) getTPM() tpm2pkg.TrustedPlatformModule {
 		tpmParams.Backend = factory.KeyBackend()
 	}
 
-	tpm, err := tpm2pkg.NewTPM2(tpmParams)
+	tpm, err := xkmssdk.NewTPM2(tpmParams)
 	if err != nil {
 		// ErrNotInitialized means the TPM is connected and communicating but
 		// has no persistent EK key yet (e.g. manufacturer EK cert in NV RAM
 		// only). The returned TPM object is still valid for status/info queries
 		// — cache it so the TPM view shows real hardware values.
-		if errors.Is(err, tpm2pkg.ErrNotInitialized) && tpm != nil {
+		if errors.Is(err, xkmssdk.ErrTPMNotInitialized) && tpm != nil {
 			a.log.Info("TPM device connected but not yet provisioned", "device", cfg.Device)
 			a.tpmInstance = tpm
 			a.tpmStorageFactory = factory
@@ -2356,10 +2342,10 @@ func (a *App) getTPM() tpm2pkg.TrustedPlatformModule {
 	// NewPlatformKeyStore auto-detects prior initialization from the PIN state file.
 	if cfg.PlatformSRK != nil && factory != nil {
 		pinStatePath := filepath.Join(tpmDataDir, "pin_state.json")
-		pks, pksErr := tpm2pkg.NewPlatformKeyStore(a.log, tpm, factory.KeyBackend(), &cfg, pinStatePath)
+		pks, pksErr := xkmssdk.NewPlatformKeyStore(a.log, tpm, factory.KeyBackend(), &cfg, pinStatePath)
 		if pksErr != nil {
 			a.log.Warn("failed to create platform key store", "error", pksErr)
-		} else if tpm2Impl, ok := tpm.(*tpm2pkg.TPM2); ok {
+		} else if tpm2Impl, ok := tpm.(*xkmssdk.TPM2); ok {
 			tpm2Impl.SetPlatformKeyStore(pks)
 			// Auto-initialize the Platform Key Store (creates Platform SRK)
 			// only for returning users (setup already completed). During first-
@@ -2919,14 +2905,14 @@ func (a *App) postDataDirStartup() {
 // An SRK from a prior TPM owner may exist (IsInitialized=true) but have unknown
 // auth. Using IsInitialized alone would select TPM2 and break every PIN check.
 // guiTPMProvider adapts the xKey GUI's TPM accessor and wizard/GUIConfig
-// auth-readiness model to the shared pinselect.TPMProvider contract. TPM2 is
+// auth-readiness model to the shared xkmssdk.PINTPMProvider contract. TPM2 is
 // usable only when the SRK is initialized AND its auth was confirmed this
 // session (wizard) or restored from a prior session that persisted
 // PINStrategy="tpm2".
 type guiTPMProvider struct{ app *App }
 
-// PlatformAuth implements pinselect.TPMProvider.
-func (p guiTPMProvider) PlatformAuth() (pintpm2.PlatformAuthProvider, bool) {
+// PlatformAuth implements xkmssdk.PINTPMProvider.
+func (p guiTPMProvider) PlatformAuth() (xkmssdk.TPMPlatformAuthProvider, bool) {
 	tpmImpl, err := p.app.tpmAccessor.Acquire()
 	if err != nil {
 		return nil, false
@@ -2943,7 +2929,7 @@ func (p guiTPMProvider) PlatformAuth() (pintpm2.PlatformAuthProvider, bool) {
 		}
 		pks.SetAuthReady(true)
 	}
-	concrete, ok := pks.(*tpm2pkg.PlatformKeyStore)
+	concrete, ok := pks.(*xkmssdk.PlatformKeyStore)
 	if !ok {
 		return nil, false
 	}
@@ -2956,23 +2942,23 @@ func (p guiTPMProvider) PlatformAuth() (pintpm2.PlatformAuthProvider, bool) {
 // the raw file storage backend directly).
 type guiSoftwarePINProvider struct {
 	dataDir string
-	engine  storage.EngineKind
+	engine  xkmssdk.StorageEngineKind
 }
 
-// Storage implements pinselect.SoftwareProvider.
+// Storage implements xkmssdk.PINSoftwareProvider.
 func (p guiSoftwarePINProvider) Storage() (qrdbsdk.PINStorage, error) {
 	pinDir := filepath.Join(p.dataDir, "pin")
 	if err := os.MkdirAll(pinDir, 0700); err != nil {
 		return nil, err
 	}
-	fs, err := storage.OpenEngine(storage.EngineConfig{Kind: p.engine, Path: pinDir})
+	fs, err := xkmssdk.StorageOpenEngine(xkmssdk.StorageEngineConfig{Kind: p.engine, Path: pinDir})
 	if err != nil {
 		return nil, err
 	}
-	return pinadapter.New(fs)
+	return xkmssdk.NewPINStoreAdapter(fs)
 }
 
-// HashConfig implements pinselect.SoftwareProvider.
+// HashConfig implements xkmssdk.PINSoftwareProvider.
 func (p guiSoftwarePINProvider) HashConfig() qrdbsdk.PINHashConfig {
 	return qrdbsdk.AutoDetectHashConfig()
 }
@@ -2988,7 +2974,7 @@ func (a *App) initPINService() {
 	// software) rather than duplicated inline logic. The GUI supplies its own
 	// environment adapters: TPM auth-readiness comes from the wizard /
 	// persisted GUIConfig, and software state persists under <dataDir>/pin.
-	backend, err := pinselect.Select(pinselect.Config{
+	backend, err := xkmssdk.SelectPINBackend(xkmssdk.PINSelectConfig{
 		TPM:      guiTPMProvider{app: a},
 		Software: guiSoftwarePINProvider{dataDir: a.dataDir, engine: a.storageEngineKind()},
 	})
@@ -3504,8 +3490,8 @@ func detectEKHandle(log *slog.Logger, device string) uint32 {
 // loadTPMConfig loads TPM configuration from the xKey config file.
 // Uses the unified xhome path resolution to locate config.yaml.
 // Falls back to DefaultConfig if no config file is found.
-func loadTPMConfig(logger *slog.Logger) tpm2pkg.Config {
-	cfg := tpm2pkg.DefaultConfig
+func loadTPMConfig(logger *slog.Logger) xkmssdk.TPMConfig {
+	cfg := xkmssdk.DefaultTPMConfig
 
 	h, err := xhome.Resolve()
 	if err != nil {
@@ -3528,7 +3514,7 @@ func loadTPMConfig(logger *slog.Logger) tpm2pkg.Config {
 
 	// Parse the full config file to extract the "tpm" section.
 	var fileConfig struct {
-		TPM tpm2pkg.Config `yaml:"tpm"`
+		TPM xkmssdk.TPMConfig `yaml:"tpm"`
 	}
 	if err := yaml.Unmarshal(data, &fileConfig); err != nil {
 		logger.Warn("failed to parse config file, using defaults",
@@ -3545,7 +3531,7 @@ func loadTPMConfig(logger *slog.Logger) tpm2pkg.Config {
 // wrapYubiKeyProvider is set by the pkcs11 build tag to wrap a PKCS#11
 // KeyProvider with YubiKey-specific behavior (SO login for key generation).
 // Returns nil if the provider cannot be wrapped.
-var wrapYubiKeyProvider func(inner types.KeyProvider) types.KeyProvider
+var wrapYubiKeyProvider func(inner xkmssdk.KeyProvider) xkmssdk.KeyProvider
 
 // isYubiKeyLibrary returns true if the library path points to a YubiKey
 // PKCS#11 module (libykcs11).
@@ -3553,7 +3539,7 @@ func isYubiKeyLibrary(libraryPath string) bool {
 	return strings.Contains(libraryPath, "ykcs11")
 }
 
-func mergeTPMConfig(defaults, file tpm2pkg.Config) tpm2pkg.Config {
+func mergeTPMConfig(defaults, file xkmssdk.TPMConfig) xkmssdk.TPMConfig {
 	cfg := defaults
 
 	if file.Device != "" {

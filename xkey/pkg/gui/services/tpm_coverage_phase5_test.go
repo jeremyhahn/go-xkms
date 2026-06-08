@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"os"
@@ -30,8 +31,6 @@ import (
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -89,7 +88,7 @@ func p5aNewPINService(backend qrdbsdk.PINBackend) *PINService {
 func p5aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 	t.Helper()
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
 	return svc, dataDir
@@ -99,14 +98,14 @@ func p5aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 func p5aDefaultMockTPM() *mockTPM {
 	return &mockTPM{
 		device: "/dev/tpmrm0",
-		config: &tpm2pkg.Config{
+		config: &xkms.TPMConfig{
 			Hash: "SHA-256",
-			SSRK: &tpm2pkg.SRKConfig{
+			SSRK: &xkms.SRKConfig{
 				Handle:       0x81000001,
 				KeyAlgorithm: "RSA",
 			},
 		},
-		fixedProps: &tpm2pkg.PropertiesFixed{
+		fixedProps: &xkms.PropertiesFixed{
 			Manufacturer:       "P5TestMFG",
 			VendorID:           "P5ID",
 			Family:             "2.0",
@@ -124,18 +123,18 @@ func p5aDefaultMockTPM() *mockTPM {
 			MaxRSAKeyBits:      2048,
 			MaxECCKeyBits:      384,
 		},
-		ekAttrs: &types.KeyAttributes{
+		ekAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm:  x509.RSA,
-			RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-			TPMAttributes: &types.TPMAttributes{Handle: 0x81010001},
+			RSAAttributes: &xkms.RSAAttributes{KeySize: 2048},
+			TPMAttributes: &xkms.TPMAttributes{Handle: 0x81010001},
 		},
-		ssrkAttrs: &types.KeyAttributes{
+		ssrkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: x509.RSA,
 		},
-		pcrBanks: []tpm2pkg.PCRBank{
+		pcrBanks: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB}},
 				},
 			},
@@ -319,7 +318,7 @@ func TestP5A_PINService_GetPINStatus_MixedState(t *testing.T) {
 // TestP5A_AlgoDisplayName_RSAPSS tests the RSA-PSS branch of algoDisplayName
 // which is the only uncovered case at 88.9%.
 func TestP5A_AlgoDisplayName_RSAPSS(t *testing.T) {
-	attrs := &types.KeyAttributes{
+	attrs := &xkms.KeyAttributes{
 		KeyAlgorithm:       x509.RSA,
 		SignatureAlgorithm: x509.SHA256WithRSAPSS,
 	}
@@ -329,7 +328,7 @@ func TestP5A_AlgoDisplayName_RSAPSS(t *testing.T) {
 
 // TestP5A_AlgoDisplayName_RSAPSS384 tests with SHA384 PSS variant.
 func TestP5A_AlgoDisplayName_RSAPSS384(t *testing.T) {
-	attrs := &types.KeyAttributes{
+	attrs := &xkms.KeyAttributes{
 		KeyAlgorithm:       x509.RSA,
 		SignatureAlgorithm: x509.SHA384WithRSAPSS,
 	}
@@ -338,7 +337,7 @@ func TestP5A_AlgoDisplayName_RSAPSS384(t *testing.T) {
 
 // TestP5A_AlgoDisplayName_RSAPSS512 tests with SHA512 PSS variant.
 func TestP5A_AlgoDisplayName_RSAPSS512(t *testing.T) {
-	attrs := &types.KeyAttributes{
+	attrs := &xkms.KeyAttributes{
 		KeyAlgorithm:       x509.RSA,
 		SignatureAlgorithm: x509.SHA512WithRSAPSS,
 	}
@@ -517,10 +516,10 @@ func TestP5A_GetIDevIDInfo_NilAttrs(t *testing.T) {
 // TestP5A_GetIAKInfo_WithCert tests GetIAKInfo when IAK certificate is available.
 func TestP5A_GetIAKInfo_WithCert(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.iakAttrs = &types.KeyAttributes{
+	mock.iakAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.RSA,
-		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020001},
+		RSAAttributes: &xkms.RSAAttributes{KeySize: 2048},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020001},
 	}
 	mock.iakAttrsErr = nil
 	mock.iakCert = p5aGenerateTestCert(t)
@@ -540,10 +539,10 @@ func TestP5A_GetIAKInfo_WithCert(t *testing.T) {
 func TestP5A_GetIDevIDInfo_WithCertAndTrustStore(t *testing.T) {
 	cert := p5aGenerateTestCert(t)
 	mock := p5aDefaultMockTPM()
-	mock.idevidAttrs = &types.KeyAttributes{
+	mock.idevidAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.ECDSA,
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020000},
+		ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P256()},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020000},
 	}
 	mock.idevidAttrsErr = nil
 	mock.idevidCert = cert
@@ -568,7 +567,7 @@ func TestP5A_GetIDevIDInfo_WithCertAndTrustStore(t *testing.T) {
 // SSRK config provides a handle.
 func TestP5A_GetSharedSRKInfo_WithSSRKConfig(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.ssrkAttrs = &types.KeyAttributes{KeyAlgorithm: x509.RSA}
+	mock.ssrkAttrs = &xkms.KeyAttributes{KeyAlgorithm: x509.RSA}
 	mock.ssrkAttrsErr = nil
 	svc, _ := p5aNewTPMService(t, mock)
 
@@ -598,7 +597,7 @@ func TestP5A_GetSharedSRKInfo_NoSSRK(t *testing.T) {
 // SRKAttributes returns nil but PlatformSRK config provides a handle.
 func TestP5A_GetPlatformSRKInfo_ConfigFallback(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.config.PlatformSRK = &tpm2pkg.PlatformSRKConfig{
+	mock.config.PlatformSRK = &xkms.PlatformSRKConfig{
 		SRKHandle: 0x81010003,
 	}
 	pks := &mockPlatformKeyStorer{
@@ -620,9 +619,9 @@ func TestP5A_GetPlatformSRKInfo_ConfigFallback(t *testing.T) {
 func TestP5A_GetPlatformSRKInfo_PolicyEnabled(t *testing.T) {
 	mock := p5aDefaultMockTPM()
 	pks := &mockPlatformKeyStorer{
-		srkAttrs: &types.KeyAttributes{
+		srkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: x509.ECDSA,
-			TPMAttributes: &types.TPMAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Handle: 0x81010003,
 			},
 		},
@@ -1023,9 +1022,9 @@ func TestP5A_GetStatus_NoTPM(t *testing.T) {
 func TestP5A_GetStatus_FullProvisioningLevels(t *testing.T) {
 	mock := p5aDefaultMockTPM()
 	// EK present, SRK present, IDevID present with cert.
-	mock.idevidAttrs = &types.KeyAttributes{
+	mock.idevidAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.ECDSA,
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020000},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020000},
 	}
 	mock.idevidAttrsErr = nil
 	mock.idevidCert = p5aGenerateTestCert(t)
@@ -1361,11 +1360,11 @@ func TestP5A_GetEKECCInfo_WithTrustStoreVerification(t *testing.T) {
 // typo variant that some TPMs return.
 func TestP5A_DetectPCRBanks_SHA384Variant(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA1", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x02}}}},
-		{Algorithm: "SHA386", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x03}}}},
-		{Algorithm: "SHA512", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x04}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA1", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x02}}}},
+		{Algorithm: "SHA386", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x03}}}},
+		{Algorithm: "SHA512", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x04}}}},
 	}
 
 	banks := detectPCRBanks(mock)
@@ -1429,10 +1428,10 @@ func TestP5A_ReadPCRDigests_BankReadError(t *testing.T) {
 // TestP5A_ReadPCRDigests_Success tests readPCRDigests with matching bank data.
 func TestP5A_ReadPCRDigests_Success(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "sha256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 				{ID: 7, Value: []byte{0xCC, 0xDD}},
 			},
@@ -1454,10 +1453,10 @@ func TestP5A_ReadPCRDigests_Success(t *testing.T) {
 // mismatch handling.
 func TestP5A_GetPCRs_SHA384Mismatch(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA386",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0x11, 0x22}},
 			},
 		},
@@ -1475,8 +1474,8 @@ func TestP5A_GetPCRs_SHA384Mismatch(t *testing.T) {
 // is not present in the TPM response.
 func TestP5A_GetPCRs_BankNotSupported(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
 	}
 	svc, _ := p5aNewTPMService(t, mock)
 
@@ -1489,7 +1488,7 @@ func TestP5A_GetPCRs_BankNotSupported(t *testing.T) {
 func TestP5A_GenerateQuote_AutoNonce(t *testing.T) {
 	mock := p5aDefaultMockTPM()
 	mock.randomBytesVal = make([]byte, 32)
-	mock.quoteResult = tpm2pkg.Quote{
+	mock.quoteResult = xkms.Quote{
 		Quoted:    []byte{0x01},
 		Signature: []byte{0x02},
 		PCRs:      []byte{0x03},
@@ -1525,7 +1524,7 @@ func TestP5A_GenerateQuote_NegativePCR(t *testing.T) {
 // TestP5A_GetEventLog_EmptyDigests tests GetEventLog when events have no digests.
 func TestP5A_GetEventLog_EmptyDigests(t *testing.T) {
 	mock := p5aDefaultMockTPM()
-	mock.parsedEvents = []tpm2pkg.Event{
+	mock.parsedEvents = []xkms.TPMEvent{
 		{
 			PCRIndex:    0,
 			EventType:   "EV_POST_CODE",

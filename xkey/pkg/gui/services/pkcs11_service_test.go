@@ -16,10 +16,10 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/manager"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +28,7 @@ import (
 // to return a configurable error, allowing tests to exercise the success
 // and failure paths of PKCS11Service.Disconnect without a real PKCS#11 library.
 type disconnectMockManager struct {
-	manager.Manager
+	xkms.PKCS11Manager
 	disconnectErr    error
 	disconnectCalled atomic.Bool
 }
@@ -257,7 +257,7 @@ func TestPKCS11Service_DisconnectHook(t *testing.T) {
 		svc := NewPKCS11Service()
 
 		mock := &disconnectMockManager{
-			Manager: svc.manager, // embed the stub for non-Disconnect methods
+			PKCS11Manager: svc.manager, // embed the stub for non-Disconnect methods
 		}
 		svc.SetManager(mock)
 
@@ -283,7 +283,7 @@ func TestPKCS11Service_DisconnectHook(t *testing.T) {
 		svc := NewPKCS11Service()
 
 		mock := &disconnectMockManager{
-			Manager:       svc.manager,
+			PKCS11Manager: svc.manager,
 			disconnectErr: errors.New("pkcs11: session not found"),
 		}
 		svc.SetManager(mock)

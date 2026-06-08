@@ -43,12 +43,13 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -313,11 +314,10 @@ func setupTestService(t *testing.T) (*RestService, string, func()) {
 	tmpDir, err := os.MkdirTemp("", "acme-handler-test-*")
 	require.NoError(t, err)
 
-	store := local.New()
-	err = store.Configure(map[string]string{"path": tmpDir})
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
-	factory, err := objstore.NewFactory(store)
+	factory, err := objstore.NewFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

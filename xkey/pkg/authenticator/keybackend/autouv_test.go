@@ -17,7 +17,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // mockBarrierProvider is a test BarrierStateProvider with configurable state.
@@ -52,7 +52,7 @@ func TestNewAutoUVBackend_PreservesInnerAndProvider(t *testing.T) {
 	provider := &mockBarrierProvider{active: false}
 
 	backend := NewAutoUVBackend(inner, provider)
-	if backend.inner.Type() != types.BackendType("tpm2") {
+	if backend.inner.Type() != xkms.BackendType("tpm2") {
 		t.Errorf("inner Type() = %q, want %q", backend.inner.Type(), "tpm2")
 	}
 	if backend.provider.IsAutoUVActive() {
@@ -66,7 +66,7 @@ func TestAutoUVBackend_Type_DelegatesToInner(t *testing.T) {
 	inner := newMockBackend("pkcs11", FIDO2KeyCapabilities{})
 	backend := NewAutoUVBackend(inner, &mockBarrierProvider{active: true})
 
-	if got := backend.Type(); got != types.BackendType("pkcs11") {
+	if got := backend.Type(); got != xkms.BackendType("pkcs11") {
 		t.Errorf("Type() = %q, want %q", got, "pkcs11")
 	}
 }
@@ -211,7 +211,7 @@ func TestAutoUVBackend_Sign_Delegates(t *testing.T) {
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-sign"),
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	sig, err := backend.Sign(handle, COSEAlgES256, []byte("data-to-sign"))
@@ -234,7 +234,7 @@ func TestAutoUVBackend_Sign_PropagatesError(t *testing.T) {
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	_, err := backend.Sign(handle, COSEAlgES256, []byte("data"))
@@ -252,7 +252,7 @@ func TestAutoUVBackend_LoadKey_Delegates(t *testing.T) {
 	inner.keys[string(credID)] = &mockKeyHandle{
 		credentialID: credID,
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 	inner.mu.Unlock()
 
@@ -289,7 +289,7 @@ func TestAutoUVBackend_DeleteKey_Delegates(t *testing.T) {
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-del"),
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	err := backend.DeleteKey(handle)
@@ -309,7 +309,7 @@ func TestAutoUVBackend_DeleteKey_PropagatesError(t *testing.T) {
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	err := backend.DeleteKey(handle)
@@ -327,7 +327,7 @@ func TestAutoUVBackend_ExportPrivateKey_Delegates(t *testing.T) {
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-export"),
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	data, err := backend.ExportPrivateKey(handle)
@@ -350,7 +350,7 @@ func TestAutoUVBackend_ExportPrivateKey_PropagatesError(t *testing.T) {
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypeTPM2,
+		backendType:  xkms.BackendTypeTPM2,
 	}
 
 	_, err := backend.ExportPrivateKey(handle)

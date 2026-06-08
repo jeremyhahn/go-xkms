@@ -49,7 +49,7 @@ func (s *Service) IssueEKCertificate(ctx context.Context, req *pb.IssueEKCertifi
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "write", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
 		return nil, err
 	}
 
@@ -89,7 +89,7 @@ func (s *Service) IssueAKCertificate(ctx context.Context, req *pb.IssueAKCertifi
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "write", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
 		return nil, err
 	}
 
@@ -129,7 +129,7 @@ func (s *Service) SignTCGCSR(ctx context.Context, req *pb.SignTCGCSRRequest) (*p
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "write", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
 		return nil, err
 	}
 
@@ -152,7 +152,7 @@ func (s *Service) SignTCGCSR(ctx context.Context, req *pb.SignTCGCSRRequest) (*p
 		TCGCSR:       req.GetTcgCsr(),
 	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to sign TCG CSR: %v", err)
+		return nil, wrapWriteError(err, codes.Internal, "failed to sign TCG CSR: %v", err)
 	}
 
 	return &pb.SignTCGCSRResponse{
@@ -168,7 +168,7 @@ func (s *Service) EnrollDevice(ctx context.Context, req *pb.EnrollDeviceRequest)
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "write", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
 		return nil, err
 	}
 

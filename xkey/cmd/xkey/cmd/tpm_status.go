@@ -23,8 +23,7 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/spf13/cobra"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // KeyStatus represents the status of a TPM key
@@ -131,7 +130,7 @@ func runTPMStatus(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func buildTPMStatus(tpm tpm2pkg.TrustedPlatformModule, props *tpm2pkg.PropertiesFixed) *TPMStatusOutput {
+func buildTPMStatus(tpm xkms.TrustedPlatformModule, props *xkms.PropertiesFixed) *TPMStatusOutput {
 	config := tpm.Config()
 
 	status := &TPMStatusOutput{
@@ -202,7 +201,7 @@ func buildTPMStatus(tpm tpm2pkg.TrustedPlatformModule, props *tpm2pkg.Properties
 	return status
 }
 
-func buildKeyStatus(tpm tpm2pkg.TrustedPlatformModule, config *tpm2pkg.Config) []KeyStatus {
+func buildKeyStatus(tpm xkms.TrustedPlatformModule, config *xkms.TPMConfig) []KeyStatus {
 	keys := make([]KeyStatus, 0, 4)
 
 	// EK Status
@@ -266,7 +265,7 @@ func buildKeyStatus(tpm tpm2pkg.TrustedPlatformModule, config *tpm2pkg.Config) [
 	return keys
 }
 
-func buildCertStatus(tpm tpm2pkg.TrustedPlatformModule, config *tpm2pkg.Config) []CertStatus {
+func buildCertStatus(tpm xkms.TrustedPlatformModule, config *xkms.TPMConfig) []CertStatus {
 	certs := make([]CertStatus, 0, 2)
 
 	// EK Certificate Status
@@ -304,7 +303,7 @@ func buildCertStatus(tpm tpm2pkg.TrustedPlatformModule, config *tpm2pkg.Config) 
 	return certs
 }
 
-func buildPlatformPolicyStatus(tpm tpm2pkg.TrustedPlatformModule, config *tpm2pkg.Config) PlatformPolicyStatus {
+func buildPlatformPolicyStatus(tpm xkms.TrustedPlatformModule, config *xkms.TPMConfig) PlatformPolicyStatus {
 	policyStatus := PlatformPolicyStatus{
 		PCRBank:     config.PlatformPCRBank,
 		PlatformPCR: config.PlatformPCR,
@@ -332,7 +331,7 @@ func buildPlatformPolicyStatus(tpm tpm2pkg.TrustedPlatformModule, config *tpm2pk
 }
 
 // formatKeyAlgorithmFromAttrs formats the key algorithm from KeyAttributes
-func formatKeyAlgorithmFromAttrs(attrs *types.KeyAttributes) string {
+func formatKeyAlgorithmFromAttrs(attrs *xkms.KeyAttributes) string {
 	if attrs == nil {
 		return "Unknown"
 	}

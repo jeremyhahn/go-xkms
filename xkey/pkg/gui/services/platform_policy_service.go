@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,7 +28,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -547,7 +547,7 @@ func (s *PlatformPolicyService) validatePlatformPolicyDigests(def *PlatformPolic
 
 // getTPM acquires the shared TPM accessor and returns the current TPM instance.
 // Callers MUST call s.tpmAccessor.Release() after a successful call.
-func (s *PlatformPolicyService) getTPM() (tpm2pkg.TrustedPlatformModule, error) {
+func (s *PlatformPolicyService) getTPM() (xkms.TrustedPlatformModule, error) {
 	if s.tpmAccessor == nil {
 		return nil, ErrPolicyTPMNotAvailable
 	}

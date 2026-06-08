@@ -208,6 +208,22 @@ type TCGVendorID = tpm2.TCGVendorID
 // TPMKeyBackend provides key storage operations for TPM keys.
 type TPMKeyBackend = store.KeyBackend
 
+// TPMStorageFactory builds key backends for TPM key persistence.
+type TPMStorageFactory = store.StorageFactory
+
+// NewTPMStorageFactory constructs a TPM key-storage factory rooted at baseDir.
+var NewTPMStorageFactory = store.NewStorageFactory
+
+// TPMStoreIsRSAPSS reports whether the signature algorithm is an RSA-PSS
+// variant, per pkg/tpm2/store. The equivalent pkg/types helper is re-exported
+// as IsRSAPSS in types.go.
+var TPMStoreIsRSAPSS = store.IsRSAPSS
+
+// NewTPMStorePassword wraps a byte slice as a types.Password using the
+// pkg/tpm2/store constructor. The pkg/types equivalent is re-exported as
+// NewPassword in types.go.
+var NewTPMStorePassword = store.NewPassword
+
 // TPMBlobStorer provides binary blob storage for TPM operations.
 type TPMBlobStorer = store.BlobStorer
 

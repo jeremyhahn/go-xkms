@@ -19,11 +19,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"sync"
 	"testing"
-
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 const (
@@ -33,24 +32,24 @@ const (
 // setupRealTPM creates a connection to the real hardware TPM using the
 // kernel resource manager device at /dev/tpmrm0. The test is skipped
 // if the device does not exist.
-func setupRealTPM(t *testing.T) tpm2pkg.TrustedPlatformModule {
+func setupRealTPM(t *testing.T) xkms.TrustedPlatformModule {
 	t.Helper()
 
 	if _, err := os.Stat(integrationTPMDevice); err != nil {
 		t.Skipf("no TPM device at %s: %v", integrationTPMDevice, err)
 	}
 
-	cfg := tpm2pkg.DefaultConfig
+	cfg := xkms.DefaultTPMConfig
 	cfg.Device = integrationTPMDevice
 	cfg.UseSimulator = false
 
-	tpm, err := tpm2pkg.NewTPM2(&tpm2pkg.Params{
+	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
 		Config: &cfg,
 	})
 	if err != nil {
 		// ErrNotInitialized means the TPM is accessible but not provisioned.
 		// This is acceptable for read-only integration testing.
-		if err == tpm2pkg.ErrNotInitialized {
+		if err == xkms.ErrTPMNotInitialized {
 			t.Logf("TPM opened but not initialized (no persistent EK): proceeding with read-only tests")
 			return tpm
 		}
@@ -66,7 +65,7 @@ func setupTPMService(t *testing.T) (*TPMService, func()) {
 
 	tpm := setupRealTPM(t)
 
-	accessor := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return tpm
 	})
 

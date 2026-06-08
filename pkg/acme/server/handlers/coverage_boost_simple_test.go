@@ -34,13 +34,14 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/kms"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -254,11 +255,10 @@ func setupServiceWithTenantFactory(t *testing.T, tenantDAO *mockTenantDAOSimple)
 	tmpDir, err := os.MkdirTemp("", "acme-simple-test-*")
 	require.NoError(t, err)
 
-	store := local.New()
-	err = store.Configure(map[string]string{"path": tmpDir})
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
-	factory, err := objstore.NewFactory(store)
+	factory, err := objstore.NewFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
 	tenantAwareFactory := &mockTenantAwareFactorySimple{
@@ -602,10 +602,9 @@ func TestNewAccountHandler_DAOErrorSimple(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "acme-dao-test-*")
 	defer os.RemoveAll(tmpDir)
 
-	store := local.New()
-	store.Configure(map[string]string{"path": tmpDir})
+	kv, _ := kvadapter.New(xkmsstorage.NewMemory())
 
-	factory, _ := objstore.NewFactory(store)
+	factory, _ := objstore.NewFactoryFromKVStore(kv)
 	failingFactory := &failingAccountDAOFactorySimple{Factory: factory}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))

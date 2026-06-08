@@ -15,10 +15,12 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -28,30 +30,45 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// denyingAuthorizer always denies every request.
-type denyingAuthorizer struct{}
+// denyingRBAC always denies every request with a fixed reason. It satisfies
+// the qrdb RBACClient interface so it can back an enabled *auth.Authorizer.
+type denyingRBAC struct{}
 
-func (d *denyingAuthorizer) Authorize(_ context.Context, _ *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
-	return &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied by test"}, nil
+func (d *denyingRBAC) Authorize(_ context.Context, _ *qrdbtransport.Identity, _, _ string) error {
+	return errors.New("denied by test")
+}
+
+func (d *denyingRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
+	return nil, nil
 }
 
 // newDeniedService creates a Service with a denying authorizer for testing
 // authorization error paths.
 func newDeniedService() *Service {
-	return NewService(&denyingAuthorizer{}, nil)
+	return NewService(auth.NewAuthorizer(&denyingRBAC{}), nil)
+}
+
+// deniedCtx returns a context carrying an authenticated identity so the
+// enabled authorizer reaches a genuine permission denial (rather than an
+// unauthenticated rejection for a missing identity).
+func deniedCtx() context.Context {
+	return auth.WithIdentity(context.Background(), &auth.Identity{
+		Subject: "denied-subject",
+		Roles:   []string{"guest"},
+	})
 }
 
 // TestAuthzDeny_ServiceMethods tests the authorization denial path for all
 // service methods that call s.authorize(). This covers the common pattern
 // of returning a PermissionDenied error when authorization fails.
 func TestAuthzDeny_ServiceMethods(t *testing.T) {
-	// Need xkms initialized for methods that check backend before keyauthz.
+	// Need xkms initialized for methods that check backend before authorization.
 	xkms.Reset()
 	setupXKMSForTest(t)
 	defer xkms.Reset()
 
 	svc := newDeniedService()
-	ctx := context.Background()
+	ctx := deniedCtx()
 
 	tests := []struct {
 		name string
@@ -237,7 +254,7 @@ func TestAuthzDeny_ServiceMethods(t *testing.T) {
 // TestAuthzDeny_CAMethods tests authorization denial for CA methods.
 func TestAuthzDeny_CAMethods(t *testing.T) {
 	svc := newDeniedService()
-	ctx := context.Background()
+	ctx := deniedCtx()
 
 	// CA methods need a CA configured
 	cert := generateTestCert(t)
@@ -285,7 +302,7 @@ func TestAuthzDeny_CAMethods(t *testing.T) {
 // TestAuthzDeny_CATCGMethods tests authorization denial for CA TCG methods.
 func TestAuthzDeny_CATCGMethods(t *testing.T) {
 	svc := newDeniedService()
-	ctx := context.Background()
+	ctx := deniedCtx()
 
 	old := GetCA()
 	SetCA(&mockCAIssueEK{})
@@ -331,17 +348,17 @@ func TestAuthzDeny_CATCGMethods(t *testing.T) {
 // custodian, share, and tenant methods.
 func TestAuthzDeny_CustodianShareTenantMethods(t *testing.T) {
 	svc := newDeniedService()
-	ctx := context.Background()
+	ctx := deniedCtx()
 
-	cs := setupCustodianService(t)
-	oldCS := GetCustodianService()
-	SetCustodianService(cs)
-	defer SetCustodianService(oldCS)
+	cs := setupCustodianClient(t)
+	oldCS := GetCustodianClient()
+	SetCustodianClient(cs)
+	defer SetCustodianClient(oldCS)
 
-	ss := setupShareStore(t)
-	oldSS := GetShareStore()
-	SetShareStore(ss)
-	defer SetShareStore(oldSS)
+	sc := setupShareClient(t)
+	oldSS := GetShareClient()
+	SetShareClient(sc)
+	defer SetShareClient(oldSS)
 
 	reg := setupBarrierRegistry(t)
 	oldReg := GetBarrierRegistry()
@@ -428,7 +445,7 @@ func TestAuthzDeny_CustodianShareTenantMethods(t *testing.T) {
 // TestAuthzDeny_BarrierPINMethods tests authorization denial for barrier and PIN methods.
 func TestAuthzDeny_BarrierPINMethods(t *testing.T) {
 	svc := newDeniedService()
-	ctx := context.Background()
+	ctx := deniedCtx()
 
 	// Need barrier and PIN manager configured
 	reg := setupBarrierRegistry(t)

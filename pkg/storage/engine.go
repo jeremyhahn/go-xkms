@@ -184,6 +184,13 @@ const (
 	// EngineMemory selects the go-qrdb in-memory engine: non-durable, intended
 	// for tests and ephemeral use.
 	EngineMemory EngineKind = "memory"
+
+	// EngineObjstore selects the go-qrdb object-storage engine, backed by a
+	// go-objstore provider (Config.Provider + Config.Options). "local" and
+	// "memory" providers are always available; cloud providers (s3, gcs, azure,
+	// …) require go-objstore's matching build tag. This lets the same DAOs
+	// persist to cloud object storage exactly as they do to file/pebble.
+	EngineObjstore EngineKind = "objstore"
 )
 
 // EngineConfig selects and configures a storage engine for OpenEngine.
@@ -194,6 +201,15 @@ type EngineConfig struct {
 	// Path is the filesystem location for the file and pebble engines. It is
 	// required by those engines and ignored by the memory engine.
 	Path string
+
+	// Provider names the object-storage provider when Kind is EngineObjstore
+	// ("local", "memory", "s3", "gcs", …). Defaults to "local" when empty.
+	Provider string
+
+	// Options carries provider-specific settings for EngineObjstore, passed
+	// verbatim to go-objstore (e.g. "path" for local, bucket/region/credentials
+	// for cloud providers).
+	Options map[string]string
 }
 
 // OpenEngine constructs a Backend backed by the go-qrdb storage engine selected
@@ -226,6 +242,17 @@ func OpenEngine(cfg EngineConfig) (Backend, error) {
 
 	case EngineMemory:
 		return NewEngineBackend(qrdbsdk.NewMemoryStorage()), nil
+
+	case EngineObjstore:
+		provider := cfg.Provider
+		if provider == "" {
+			provider = "local"
+		}
+		eng, err := qrdbsdk.NewObjStoreStorage(provider, cfg.Options)
+		if err != nil {
+			return nil, &EngineError{Op: "open-objstore", Key: provider, Err: err}
+		}
+		return NewEngineBackend(eng), nil
 
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnknownEngine, cfg.Kind)

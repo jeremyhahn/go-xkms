@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"os"
@@ -31,7 +32,6 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
@@ -79,20 +79,20 @@ func (m *p6bMockPINManager) ResetLockout(_ string) error                 { retur
 type p6bMockSealer struct {
 	canSeal  bool
 	sealErr  error
-	sealData *types.SealedData
+	sealData *xkms.SealedData
 
 	unsealErr  error
 	unsealData []byte
 }
 
 func (m *p6bMockSealer) CanSeal() bool { return m.canSeal }
-func (m *p6bMockSealer) Seal(_ context.Context, _ []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (m *p6bMockSealer) Seal(_ context.Context, _ []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	if m.sealErr != nil {
 		return nil, m.sealErr
 	}
 	return m.sealData, nil
 }
-func (m *p6bMockSealer) Unseal(_ context.Context, data *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *p6bMockSealer) Unseal(_ context.Context, data *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	if m.unsealErr != nil {
 		return nil, m.unsealErr
 	}
@@ -1814,7 +1814,7 @@ func TestP6B_SealService_ClassifyCategory(t *testing.T) {
 
 func TestP6B_SealService_HandlePolicyPlatformPolicy_NilService(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, opts)
 	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
 }
@@ -1826,20 +1826,20 @@ func TestP6B_SealService_HandlePolicyPlatformPolicy_NotConfigured(t *testing.T) 
 	svc := NewSealService(dir)
 	svc.policyService = policySvc
 
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, opts)
 	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
 }
 
 func TestP6B_SealService_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{PCRs: nil}, opts)
 	assert.NoError(t, err)
 	assert.Nil(t, opts.TPMPolicy)
 }
 
 func TestP6B_SealService_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{
 		PCRs:    []int{0, 7},
 		PCRBank: "sha256",
@@ -1849,7 +1849,7 @@ func TestP6B_SealService_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
 }
 
 func TestP6B_SealService_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{
 		PCRs:    []int{0},
 		PCRBank: "unknown_bank",

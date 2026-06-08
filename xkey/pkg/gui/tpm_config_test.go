@@ -22,15 +22,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	tpm2store "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 }
 
-// TestLoadTPMConfig_NoFile verifies that loadTPMConfig returns DefaultConfig
+// TestLoadTPMConfig_NoFile verifies that loadTPMConfig returns DefaultTPMConfig
 // when no config file exists at any candidate path.
 func TestLoadTPMConfig_NoFile(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -38,12 +37,12 @@ func TestLoadTPMConfig_NoFile(t *testing.T) {
 
 	cfg := loadTPMConfig(testLogger())
 
-	assert.Equal(t, tpm2pkg.DefaultConfig.Device, cfg.Device)
-	assert.Equal(t, tpm2pkg.DefaultConfig.Hash, cfg.Hash)
-	assert.Equal(t, tpm2pkg.DefaultConfig.UseSimulator, cfg.UseSimulator)
-	assert.Equal(t, tpm2pkg.DefaultConfig.EncryptSession, cfg.EncryptSession)
+	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
+	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
+	assert.Equal(t, xkms.DefaultTPMConfig.UseSimulator, cfg.UseSimulator)
+	assert.Equal(t, xkms.DefaultTPMConfig.EncryptSession, cfg.EncryptSession)
 	assert.NotNil(t, cfg.EK)
-	assert.Equal(t, tpm2pkg.DefaultConfig.EK.Handle, cfg.EK.Handle)
+	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
 }
 
 // TestLoadTPMConfig_WithFile verifies that loadTPMConfig reads a config file
@@ -121,17 +120,17 @@ tpm:
 	assert.Equal(t, "SHA-512", cfg.Hash)
 
 	// Default fields should be preserved.
-	assert.Equal(t, tpm2pkg.DefaultConfig.Device, cfg.Device)
-	assert.Equal(t, tpm2pkg.DefaultConfig.PlatformPCR, cfg.PlatformPCR)
-	assert.Equal(t, tpm2pkg.DefaultConfig.PlatformPCRBank, cfg.PlatformPCRBank)
+	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
+	assert.Equal(t, xkms.DefaultTPMConfig.PlatformPCR, cfg.PlatformPCR)
+	assert.Equal(t, xkms.DefaultTPMConfig.PlatformPCRBank, cfg.PlatformPCRBank)
 	assert.NotNil(t, cfg.EK)
-	assert.Equal(t, tpm2pkg.DefaultConfig.EK.Handle, cfg.EK.Handle)
+	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
 	assert.NotNil(t, cfg.SSRK)
-	assert.Equal(t, tpm2pkg.DefaultConfig.SSRK.Handle, cfg.SSRK.Handle)
+	assert.Equal(t, xkms.DefaultTPMConfig.SSRK.Handle, cfg.SSRK.Handle)
 }
 
 // TestLoadTPMConfig_InvalidYAML verifies that loadTPMConfig returns
-// DefaultConfig when the config file contains invalid YAML.
+// DefaultTPMConfig when the config file contains invalid YAML.
 func TestLoadTPMConfig_InvalidYAML(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
@@ -146,10 +145,10 @@ func TestLoadTPMConfig_InvalidYAML(t *testing.T) {
 
 	cfg := loadTPMConfig(testLogger())
 
-	assert.Equal(t, tpm2pkg.DefaultConfig.Device, cfg.Device)
-	assert.Equal(t, tpm2pkg.DefaultConfig.Hash, cfg.Hash)
+	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
+	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
 	assert.NotNil(t, cfg.EK)
-	assert.Equal(t, tpm2pkg.DefaultConfig.EK.Handle, cfg.EK.Handle)
+	assert.Equal(t, xkms.DefaultTPMConfig.EK.Handle, cfg.EK.Handle)
 }
 
 // TestLoadTPMConfig_EtcFallback verifies that loadTPMConfig falls back to
@@ -168,11 +167,11 @@ func TestLoadTPMConfig_EtcFallback(t *testing.T) {
 
 	// No ~/.xkey/config.yaml, and /etc/xkey/config.yaml doesn't exist.
 	cfg := loadTPMConfig(testLogger())
-	assert.Equal(t, tpm2pkg.DefaultConfig.Device, cfg.Device)
+	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
 }
 
 // TestLoadTPMConfig_NoTPMSection verifies that a config file without a "tpm"
-// section returns DefaultConfig.
+// section returns DefaultTPMConfig.
 func TestLoadTPMConfig_NoTPMSection(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
@@ -188,17 +187,17 @@ func TestLoadTPMConfig_NoTPMSection(t *testing.T) {
 	cfg := loadTPMConfig(testLogger())
 
 	// All defaults should be preserved since "tpm" section is missing.
-	assert.Equal(t, tpm2pkg.DefaultConfig.Device, cfg.Device)
-	assert.Equal(t, tpm2pkg.DefaultConfig.Hash, cfg.Hash)
+	assert.Equal(t, xkms.DefaultTPMConfig.Device, cfg.Device)
+	assert.Equal(t, xkms.DefaultTPMConfig.Hash, cfg.Hash)
 	assert.NotNil(t, cfg.EK)
 }
 
 // TestMergeTPMConfig verifies the merge behavior for each field category.
 func TestMergeTPMConfig(t *testing.T) {
-	defaults := tpm2pkg.DefaultConfig
+	defaults := xkms.DefaultTPMConfig
 
 	t.Run("empty file config preserves defaults", func(t *testing.T) {
-		merged := mergeTPMConfig(defaults, tpm2pkg.Config{})
+		merged := mergeTPMConfig(defaults, xkms.TPMConfig{})
 
 		assert.Equal(t, defaults.Device, merged.Device)
 		assert.Equal(t, defaults.Hash, merged.Hash)
@@ -213,7 +212,7 @@ func TestMergeTPMConfig(t *testing.T) {
 	})
 
 	t.Run("string fields override", func(t *testing.T) {
-		file := tpm2pkg.Config{
+		file := xkms.TPMConfig{
 			Device:          "/dev/tpm1",
 			Hash:            "SHA-512",
 			PlatformPCRBank: "SHA-512",
@@ -226,7 +225,7 @@ func TestMergeTPMConfig(t *testing.T) {
 	})
 
 	t.Run("bool fields always apply from file", func(t *testing.T) {
-		file := tpm2pkg.Config{
+		file := xkms.TPMConfig{
 			EncryptSession: true,
 			UseSimulator:   true,
 			UseEntropy:     true,
@@ -239,7 +238,7 @@ func TestMergeTPMConfig(t *testing.T) {
 	})
 
 	t.Run("numeric fields override when non-zero", func(t *testing.T) {
-		file := tpm2pkg.Config{
+		file := xkms.TPMConfig{
 			PlatformPCR: 14,
 		}
 		merged := mergeTPMConfig(defaults, file)
@@ -248,7 +247,7 @@ func TestMergeTPMConfig(t *testing.T) {
 	})
 
 	t.Run("slice fields override when non-empty", func(t *testing.T) {
-		file := tpm2pkg.Config{
+		file := xkms.TPMConfig{
 			GoldenPCRs: []uint{0, 7, 14},
 		}
 		merged := mergeTPMConfig(defaults, file)
@@ -257,16 +256,16 @@ func TestMergeTPMConfig(t *testing.T) {
 	})
 
 	t.Run("sub-configs merge field-by-field when present", func(t *testing.T) {
-		customEK := &tpm2pkg.EKConfig{
+		customEK := &xkms.EKConfig{
 			Handle:       0x81010002,
 			KeyAlgorithm: "ECDSA",
-			ECCConfig:    &tpm2store.ECCConfig{Curve: "P-256"},
+			ECCConfig:    &xkms.ECCConfig{Curve: "P-256"},
 		}
-		customSRK := &tpm2pkg.PlatformSRKConfig{
+		customSRK := &xkms.PlatformSRKConfig{
 			SRKHandle:      0x81000003,
 			PlatformPolicy: true,
 		}
-		file := tpm2pkg.Config{
+		file := xkms.TPMConfig{
 			EK:          customEK,
 			PlatformSRK: customSRK,
 		}
@@ -275,7 +274,7 @@ func TestMergeTPMConfig(t *testing.T) {
 		// Non-zero fields from file override defaults.
 		assert.Equal(t, uint32(0x81010002), merged.EK.Handle)
 		assert.Equal(t, "ECDSA", merged.EK.KeyAlgorithm)
-		assert.Equal(t, &tpm2store.ECCConfig{Curve: "P-256"}, merged.EK.ECCConfig)
+		assert.Equal(t, &xkms.ECCConfig{Curve: "P-256"}, merged.EK.ECCConfig)
 		// Zero/nil fields in file preserve defaults (field-by-field merge).
 		assert.Equal(t, defaults.EK.CertHandle, merged.EK.CertHandle)
 		assert.Equal(t, defaults.EK.HierarchyAuth, merged.EK.HierarchyAuth)
@@ -293,12 +292,12 @@ func TestMergeTPMConfig(t *testing.T) {
 // TestMergeTPMConfig_BoolFalseOverridesTrue verifies that bool fields from
 // the file config can override true defaults to false.
 func TestMergeTPMConfig_BoolFalseOverridesTrue(t *testing.T) {
-	defaults := tpm2pkg.Config{
+	defaults := xkms.TPMConfig{
 		EncryptSession: true,
 		UseSimulator:   true,
 		UseEntropy:     true,
 	}
-	file := tpm2pkg.Config{
+	file := xkms.TPMConfig{
 		EncryptSession: false,
 		UseSimulator:   false,
 		UseEntropy:     false,

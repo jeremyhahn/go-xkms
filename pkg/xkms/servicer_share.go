@@ -15,113 +15,68 @@ package xkms
 
 import (
 	"context"
-	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 )
 
 // ShareServicer defines operations for submitting and managing Shamir shares.
+// Share state is owned by the embedded go-qrdb node; the servicer passes calls
+// through to the node's share client.
 type ShareServicer interface {
 	SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error)
 	ListShares(ctx context.Context) (*transport.ListSharesResponse, error)
+	GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error)
+	DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error
 	GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error)
 }
 
-// SubmitShare submits a Shamir share for collection.
+// SubmitShare submits a Shamir share for collection. It passes the request
+// through to the embedded go-qrdb node's share client.
 func (s *XKMSService) SubmitShare(ctx context.Context, req *transport.SubmitShareRequest) (*transport.SubmitShareResponse, error) {
-	if s.shareStore == nil {
+	if s.shares == nil {
 		return nil, ErrNotConfigured
 	}
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	entry := &sharestore.ShareEntry{
-		ServerURL:  req.ServerURL,
-		GroupID:    req.GroupID,
-		GroupName:  req.GroupName,
-		ShareIndex: req.ShareIndex,
-		ShareData:  req.ShareData,
-		Purpose:    req.Purpose,
-		ReceivedAt: time.Now().UTC(),
-		TenantID:   req.TenantID,
-	}
-	if err := s.shareStore.Save(ctx, entry); err != nil {
-		return nil, err
-	}
-	return &transport.SubmitShareResponse{
-		Accepted: true,
-	}, nil
+	return s.shares.SubmitShare(ctx, req)
 }
 
-// ListShares returns all locally stored shares.
+// ListShares returns all shares available to the authenticated caller. It
+// passes the request through to the embedded go-qrdb node's share client.
 func (s *XKMSService) ListShares(ctx context.Context) (*transport.ListSharesResponse, error) {
-	if s.shareStore == nil {
+	if s.shares == nil {
 		return nil, ErrNotConfigured
 	}
-	entries, err := s.shareStore.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	shares := make([]transport.ShareInfo, 0, len(entries))
-	for _, e := range entries {
-		shares = append(shares, shareEntryToInfo(e))
-	}
-	return &transport.ListSharesResponse{
-		Shares: shares,
-	}, nil
+	return s.shares.ListShares(ctx)
 }
 
-// GetShareCollectionStatus returns the share collection status for a custodian group.
-// It counts shares matching the given group ID and reports threshold progress
-// using the custodian service when available.
+// GetShare retrieves a single submitted share identified by its server URL,
+// group ID, and share index. It passes the request through to the embedded
+// go-qrdb node's share client.
+func (s *XKMSService) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*transport.ShareInfo, error) {
+	if s.shares == nil {
+		return nil, ErrNotConfigured
+	}
+	return s.shares.GetShare(ctx, serverURL, groupID, shareIndex)
+}
+
+// DeleteShare removes a single submitted share identified by its server URL,
+// group ID, and share index. It passes the request through to the embedded
+// go-qrdb node's share client.
+func (s *XKMSService) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	if s.shares == nil {
+		return ErrNotConfigured
+	}
+	return s.shares.DeleteShare(ctx, serverURL, groupID, shareIndex)
+}
+
+// GetShareCollectionStatus returns the share collection status for a custodian
+// group. It passes the request through to the embedded go-qrdb node's share
+// client, which reports threshold progress for the group.
 func (s *XKMSService) GetShareCollectionStatus(ctx context.Context, groupID string) (*transport.ShareCollectionStatus, error) {
-	if s.shareStore == nil {
+	if s.shares == nil {
 		return nil, ErrNotConfigured
 	}
-	entries, err := s.shareStore.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Count shares belonging to this group.
-	collected := 0
-	for _, e := range entries {
-		if e.GroupID == groupID {
-			collected++
-		}
-	}
-
-	// Retrieve threshold from the custodian group if the service is available.
-	threshold := 0
-	total := 0
-	if s.custodianService != nil {
-		group, groupErr := s.custodianService.GetGroup(ctx, groupID)
-		if groupErr == nil {
-			threshold = group.Threshold
-			total = group.Total
-		}
-	}
-
-	return &transport.ShareCollectionStatus{
-		GroupID:   groupID,
-		Threshold: threshold,
-		Total:     total,
-		Collected: collected,
-		Ready:     threshold > 0 && collected >= threshold,
-	}, nil
-}
-
-// shareEntryToInfo converts a sharestore.ShareEntry to a transport.ShareInfo.
-func shareEntryToInfo(e *sharestore.ShareEntry) transport.ShareInfo {
-	return transport.ShareInfo{
-		ServerURL:  e.ServerURL,
-		GroupID:    e.GroupID,
-		GroupName:  e.GroupName,
-		ShareIndex: e.ShareIndex,
-		ShareData:  e.ShareData,
-		Purpose:    e.Purpose,
-		ReceivedAt: e.ReceivedAt,
-		TenantID:   e.TenantID,
-	}
+	return s.shares.GetShareCollectionStatus(ctx, groupID)
 }

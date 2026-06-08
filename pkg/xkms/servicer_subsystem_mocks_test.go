@@ -6,8 +6,10 @@ import (
 	"errors"
 	"testing"
 
+	"time"
+
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -204,56 +206,86 @@ func (m *mockPlatformStore) Reseal(ctx context.Context, name string) error {
 	return nil
 }
 
-// mockShareStore implements sharestore.ShareStore for testing.
-type mockShareStore struct {
-	entries []*sharestore.ShareEntry
-	err     error
+// fakeShareClient implements qrdbtransport.ShareClient for testing. It mirrors
+// the behaviour of the embedded go-qrdb node's share client by storing
+// submitted shares in memory.
+type fakeShareClient struct {
+	shares    []qrdbtransport.ShareInfo
+	threshold int
+	total     int
+	err       error
 }
 
-func newMockShareStore() *mockShareStore {
-	return &mockShareStore{}
+func newFakeShareClient() *fakeShareClient {
+	return &fakeShareClient{}
 }
 
-func (m *mockShareStore) Save(ctx context.Context, entry *sharestore.ShareEntry) error {
-	if m.err != nil {
-		return m.err
+func (f *fakeShareClient) SubmitShare(ctx context.Context, req *qrdbtransport.SubmitShareRequest) (*qrdbtransport.SubmitShareResponse, error) {
+	if f.err != nil {
+		return nil, f.err
 	}
-	m.entries = append(m.entries, entry)
-	return nil
+	f.shares = append(f.shares, qrdbtransport.ShareInfo{
+		ServerURL:  req.ServerURL,
+		GroupID:    req.GroupID,
+		GroupName:  req.GroupName,
+		ShareIndex: req.ShareIndex,
+		ShareData:  req.ShareData,
+		Purpose:    req.Purpose,
+		ReceivedAt: time.Now().UTC(),
+		TenantID:   req.TenantID,
+	})
+	return &qrdbtransport.SubmitShareResponse{Accepted: true}, nil
 }
 
-func (m *mockShareStore) Load(ctx context.Context, serverURL, groupID string, shareIndex int) (*sharestore.ShareEntry, error) {
-	for _, e := range m.entries {
-		if e.ServerURL == serverURL && e.GroupID == groupID && e.ShareIndex == shareIndex {
-			return e, nil
+func (f *fakeShareClient) ListShares(ctx context.Context) (*qrdbtransport.ListSharesResponse, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &qrdbtransport.ListSharesResponse{Shares: f.shares}, nil
+}
+
+func (f *fakeShareClient) GetShare(ctx context.Context, serverURL, groupID string, shareIndex int) (*qrdbtransport.ShareInfo, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	for i := range f.shares {
+		s := f.shares[i]
+		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
+			return &s, nil
 		}
 	}
-	return nil, errors.New("share not found")
+	return nil, qrdbsdk.ErrCeremonyShareNotFound
 }
 
-func (m *mockShareStore) Delete(ctx context.Context, serverURL, groupID string, shareIndex int) error {
-	return nil
-}
-
-func (m *mockShareStore) List(ctx context.Context) ([]*sharestore.ShareEntry, error) {
-	if m.err != nil {
-		return nil, m.err
+func (f *fakeShareClient) DeleteShare(ctx context.Context, serverURL, groupID string, shareIndex int) error {
+	if f.err != nil {
+		return f.err
 	}
-	return m.entries, nil
-}
-
-func (m *mockShareStore) ListByServer(ctx context.Context, serverURL string) ([]*sharestore.ShareEntry, error) {
-	return nil, nil
-}
-
-func (m *mockShareStore) ListByGroup(ctx context.Context, groupID string) ([]*sharestore.ShareEntry, error) {
-	var result []*sharestore.ShareEntry
-	for _, e := range m.entries {
-		if e.GroupID == groupID {
-			result = append(result, e)
+	for i := range f.shares {
+		s := f.shares[i]
+		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
+			f.shares = append(f.shares[:i], f.shares[i+1:]...)
+			return nil
 		}
 	}
-	return result, nil
+	return qrdbsdk.ErrCeremonyShareNotFound
 }
 
-func (m *mockShareStore) Close() error { return nil }
+func (f *fakeShareClient) GetShareCollectionStatus(ctx context.Context, groupID string) (*qrdbtransport.ShareCollectionStatus, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	collected := 0
+	for i := range f.shares {
+		if f.shares[i].GroupID == groupID {
+			collected++
+		}
+	}
+	return &qrdbtransport.ShareCollectionStatus{
+		GroupID:   groupID,
+		Threshold: f.threshold,
+		Total:     f.total,
+		Collected: collected,
+		Ready:     f.threshold > 0 && collected >= f.threshold,
+	}, nil
+}

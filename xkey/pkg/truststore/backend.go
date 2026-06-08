@@ -23,7 +23,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (
@@ -33,13 +33,13 @@ const (
 	metadataKeySuffix = ".json"
 )
 
-// BackendStore implements TrustStore using a storage.Backend for persistence.
+// BackendStore implements TrustStore using a xkms.StorageBackend for persistence.
 // Each certificate is stored as an individual PEM entry keyed by its SHA-256
 // fingerprint, and each metadata entry is stored as an individual JSON entry.
 // This enables transparent encryption when the backend is a barrier.
 type BackendStore struct {
 	mu      sync.RWMutex
-	backend storage.Backend
+	backend xkms.StorageBackend
 	prefix  string
 	certs   map[string]*x509.Certificate // fingerprint -> parsed cert (in-memory cache)
 	meta    map[string]*CertMetadata     // fingerprint -> metadata (in-memory cache)
@@ -52,7 +52,7 @@ type BackendStore struct {
 // The prefix is prepended to all storage keys (e.g., "trust/" produces keys
 // like "trust/certificates/{fingerprint}.pem"). Existing data in the backend
 // is loaded into the in-memory cache on creation.
-func NewBackendStore(backend storage.Backend, prefix string) (*BackendStore, error) {
+func NewBackendStore(backend xkms.StorageBackend, prefix string) (*BackendStore, error) {
 	if backend == nil {
 		return nil, fmt.Errorf("%w: storage backend is required", ErrInvalidCertificate)
 	}
@@ -218,12 +218,12 @@ func (bs *BackendStore) RemoveCertificate(fingerprint string) error {
 	}
 
 	// Delete certificate PEM entry.
-	if err := bs.backend.Delete(context.Background(), bs.certKey(fingerprint)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+	if err := bs.backend.Delete(context.Background(), bs.certKey(fingerprint)); err != nil && !errors.Is(err, xkms.ErrStorageNotFound) {
 		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
 	}
 
 	// Delete metadata entry.
-	if err := bs.backend.Delete(context.Background(), bs.metaKey(fingerprint)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+	if err := bs.backend.Delete(context.Background(), bs.metaKey(fingerprint)); err != nil && !errors.Is(err, xkms.ErrStorageNotFound) {
 		return fmt.Errorf("%w: %v", ErrStorageWrite, err)
 	}
 
@@ -474,7 +474,7 @@ func (bs *BackendStore) loadFromBackend() error {
 	for _, key := range metaKeys {
 		data, getErr := bs.backend.Get(context.Background(), key)
 		if getErr != nil {
-			if errors.Is(getErr, storage.ErrNotFound) {
+			if errors.Is(getErr, xkms.ErrStorageNotFound) {
 				continue
 			}
 			return fmt.Errorf("%w: %v", ErrStorageRead, getErr)
@@ -537,7 +537,7 @@ func (bs *BackendStore) rebuildFromCerts() error {
 
 		data, getErr := bs.backend.Get(context.Background(), key)
 		if getErr != nil {
-			if errors.Is(getErr, storage.ErrNotFound) {
+			if errors.Is(getErr, xkms.ErrStorageNotFound) {
 				continue
 			}
 			continue

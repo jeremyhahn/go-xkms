@@ -15,12 +15,12 @@ package services
 
 import (
 	"encoding/json"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -52,9 +52,9 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	// ---------------------------------------------------------------
 	// Step 2: Create a static password store and add an entry.
 	// ---------------------------------------------------------------
-	store := staticpw.NewStore(backend)
+	store := xkms.NewStaticPasswordStore(backend)
 
-	entry := &staticpw.StaticPassword{
+	entry := &xkms.StaticPassword{
 		Name:     "TestPassword",
 		Password: "secret123",
 		Username: "testuser",
@@ -71,7 +71,7 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	// store writes keys as "staticpw/<id>.json", so the file is at
 	// configDir/barrier/staticpw/<id>.json.
 	// ---------------------------------------------------------------
-	expectedID := staticpw.GenerateID("TestPassword", "")
+	expectedID := xkms.GenerateStaticPasswordID("TestPassword", "")
 	rawFilePath := filepath.Join(configDir, "barrier", "staticpw", expectedID+".json")
 
 	rawBytes, err := os.ReadFile(rawFilePath)
@@ -135,7 +135,7 @@ func TestBarrierStaticPW_EncryptionEndToEnd(t *testing.T) {
 	newBackend := svc.GetBackend()
 	require.NotNil(t, newBackend, "GetBackend must return non-nil after unseal")
 
-	store2 := staticpw.NewStore(newBackend)
+	store2 := xkms.NewStaticPasswordStore(newBackend)
 
 	retrieved2, err := store2.Get("TestPassword")
 	require.NoError(t, err, "reading password after unseal must succeed")
@@ -163,8 +163,8 @@ func TestBarrierStaticPW_WrongPasswordCannotDecrypt(t *testing.T) {
 	err := svc.Initialize(correctPassword, "passphrase")
 	require.NoError(t, err)
 
-	store := staticpw.NewStore(svc.GetBackend())
-	err = store.Add(&staticpw.StaticPassword{
+	store := xkms.NewStaticPasswordStore(svc.GetBackend())
+	err = store.Add(&xkms.StaticPassword{
 		Name:     "SecretEntry",
 		Password: "very-secret",
 	})
@@ -189,9 +189,9 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 	err := svc.Initialize(password, "passphrase")
 	require.NoError(t, err)
 
-	store := staticpw.NewStore(svc.GetBackend())
+	store := xkms.NewStaticPasswordStore(svc.GetBackend())
 
-	entries := []staticpw.StaticPassword{
+	entries := []xkms.StaticPassword{
 		{Name: "GitHub", Password: "gh-token-abc", Username: "dev"},
 		{Name: "AWS Console", Password: "aws-secret-xyz", Username: "admin"},
 		{Name: "Database", Password: "db-pass-123", Username: "root"},
@@ -230,13 +230,13 @@ func TestBarrierStaticPW_MultipleEntries(t *testing.T) {
 	err = svc.Unseal(password, "passphrase")
 	require.NoError(t, err)
 
-	store2 := staticpw.NewStore(svc.GetBackend())
+	store2 := xkms.NewStaticPasswordStore(svc.GetBackend())
 	listed2, err := store2.List()
 	require.NoError(t, err)
 	require.Len(t, listed2, 3)
 
 	// Verify each entry by name.
-	nameMap := make(map[string]*staticpw.StaticPassword, len(listed2))
+	nameMap := make(map[string]*xkms.StaticPassword, len(listed2))
 	for _, pw := range listed2 {
 		nameMap[pw.Name] = pw
 	}

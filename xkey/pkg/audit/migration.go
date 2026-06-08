@@ -17,16 +17,16 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // MigrateFromBackend scans old prefix-keyed audit entries from a
-// storage.Backend and saves them into the DAOAuditStore. Entries are
+// xkms.StorageBackend and saves them into the DAOAuditStore. Entries are
 // read chronologically (sorted by key), converted to entities, and
 // persisted via the DAO. After each entry is migrated successfully,
 // the old key is deleted from the source backend. Entries that fail
 // to unmarshal are skipped and reported as ErrMigration errors.
-func MigrateFromBackend(ctx context.Context, backend storage.Backend, daoStore *DAOAuditStore) []error {
+func MigrateFromBackend(ctx context.Context, backend xkms.StorageBackend, daoStore *DAOAuditStore) []error {
 	if backend == nil || daoStore == nil {
 		return nil
 	}

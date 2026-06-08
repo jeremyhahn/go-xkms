@@ -14,13 +14,13 @@
 // Package file provides a file system-based PIV certificate storage backend.
 //
 // The FileBackend stores PIV certificates as DER and optionally PEM-encoded data
-// using a storage.Backend for persistence. Keys are organized as:
+// using a xkms.StorageBackend for persistence. Keys are organized as:
 //
 //	certificates/{slot}.der   # DER-encoded certificate
 //	certificates/{slot}.pem   # PEM-encoded certificate (optional)
 //	metadata/slots.json       # Slot metadata index
 //
-// All operations are thread-safe as the underlying storage.Backend is
+// All operations are thread-safe as the underlying xkms.StorageBackend is
 // thread-safe per interface contract.
 package file
 
@@ -35,8 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (
@@ -56,12 +55,12 @@ const (
 )
 
 // Compile-time interface compliance check.
-var _ pivcert.PIVCertificateStorage = (*FileBackend)(nil)
+var _ xkms.PIVCertificateStorage = (*FileBackend)(nil)
 
-// FileBackend implements PIVCertificateStorage using a storage.Backend.
+// FileBackend implements PIVCertificateStorage using a xkms.StorageBackend.
 // All operations are thread-safe via the underlying storage backend.
 type FileBackend struct {
-	backend    storage.Backend
+	backend    xkms.StorageBackend
 	derEnabled bool
 	pemEnabled bool
 	closed     bool
@@ -87,15 +86,15 @@ type slotMetadata struct {
 	StoredAt     string `json:"stored_at"`
 }
 
-// NewFileBackend creates a new storage.Backend-based PIV certificate storage backend.
+// NewFileBackend creates a new xkms.StorageBackend-based PIV certificate storage backend.
 //
-// The backend uses the provided storage.Backend for persistence. By default,
+// The backend uses the provided xkms.StorageBackend for persistence. By default,
 // both DER and PEM formats are enabled unless explicitly disabled in the configuration.
 //
 // Returns an error if the configuration is nil or the backend is nil.
-func NewFileBackend(config *pivcert.FileStorageConfig) (*FileBackend, error) {
+func NewFileBackend(config *xkms.PIVFileStorageConfig) (*FileBackend, error) {
 	if config == nil {
-		return nil, pivcert.NewStorageTypeError("NewFileBackend", pivcert.StorageTypeFile, pivcert.ErrInvalidConfig)
+		return nil, xkms.NewPIVStorageTypeError("NewFileBackend", xkms.PIVStorageTypeFile, xkms.ErrPIVInvalidConfig)
 	}
 
 	if err := config.Validate(); err != nil {
@@ -110,7 +109,7 @@ func NewFileBackend(config *pivcert.FileStorageConfig) (*FileBackend, error) {
 
 	// Initialize metadata file if it doesn't exist
 	if err := fb.ensureMetadataInitialized(); err != nil {
-		return nil, pivcert.NewStorageTypeError("NewFileBackend", pivcert.StorageTypeFile, err)
+		return nil, xkms.NewPIVStorageTypeError("NewFileBackend", xkms.PIVStorageTypeFile, err)
 	}
 
 	return fb, nil
@@ -123,32 +122,32 @@ func NewFileBackend(config *pivcert.FileStorageConfig) (*FileBackend, error) {
 //
 // Returns an error if the slot is invalid, the storage is closed,
 // or storage operations fail.
-func (fb *FileBackend) Store(slot pivcert.PIVSlot, cert *x509.Certificate) error {
+func (fb *FileBackend) Store(slot xkms.PIVSlot, cert *x509.Certificate) error {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
 	if fb.closed {
-		return pivcert.NewStorageError("Store", slot, pivcert.ErrStorageClosed)
+		return xkms.NewPIVStorageError("Store", slot, xkms.ErrPIVStorageClosed)
 	}
 
 	if !slot.IsValid() {
-		return pivcert.NewStorageError("Store", slot, pivcert.ErrInvalidSlot)
+		return xkms.NewPIVStorageError("Store", slot, xkms.ErrPIVInvalidSlot)
 	}
 
 	if cert == nil {
-		return pivcert.NewStorageError("Store", slot, pivcert.ErrInvalidCertificate)
+		return xkms.NewPIVStorageError("Store", slot, xkms.ErrPIVInvalidCertificate)
 	}
 
 	// Check certificate size
-	if len(cert.Raw) > pivcert.MaxCertSizeFile {
-		return pivcert.NewStorageError("Store", slot, pivcert.ErrCertificateTooLarge)
+	if len(cert.Raw) > xkms.PIVMaxCertSizeFile {
+		return xkms.NewPIVStorageError("Store", slot, xkms.ErrPIVCertificateTooLarge)
 	}
 
 	// Write DER data
 	if fb.derEnabled {
 		derKey := certKey(slot, extDER)
 		if err := fb.backend.Put(context.Background(), derKey, cert.Raw); err != nil {
-			return pivcert.NewStorageError("Store", slot, err)
+			return xkms.NewPIVStorageError("Store", slot, err)
 		}
 	}
 
@@ -160,13 +159,13 @@ func (fb *FileBackend) Store(slot pivcert.PIVSlot, cert *x509.Certificate) error
 			Bytes: cert.Raw,
 		})
 		if err := fb.backend.Put(context.Background(), pemKey, pemData); err != nil {
-			return pivcert.NewStorageError("Store", slot, err)
+			return xkms.NewPIVStorageError("Store", slot, err)
 		}
 	}
 
 	// Update metadata
 	if err := fb.updateMetadata(slot, cert); err != nil {
-		return pivcert.NewStorageError("Store", slot, err)
+		return xkms.NewPIVStorageError("Store", slot, err)
 	}
 
 	return nil
@@ -177,16 +176,16 @@ func (fb *FileBackend) Store(slot pivcert.PIVSlot, cert *x509.Certificate) error
 // The certificate is read from the DER data if available, otherwise
 // from the PEM data. Returns ErrCertificateNotFound if no certificate
 // exists in the slot.
-func (fb *FileBackend) Retrieve(slot pivcert.PIVSlot) (*x509.Certificate, error) {
+func (fb *FileBackend) Retrieve(slot xkms.PIVSlot) (*x509.Certificate, error) {
 	fb.mu.RLock()
 	defer fb.mu.RUnlock()
 
 	if fb.closed {
-		return nil, pivcert.NewStorageError("Retrieve", slot, pivcert.ErrStorageClosed)
+		return nil, xkms.NewPIVStorageError("Retrieve", slot, xkms.ErrPIVStorageClosed)
 	}
 
 	if !slot.IsValid() {
-		return nil, pivcert.NewStorageError("Retrieve", slot, pivcert.ErrInvalidSlot)
+		return nil, xkms.NewPIVStorageError("Retrieve", slot, xkms.ErrPIVInvalidSlot)
 	}
 
 	// Try DER first
@@ -195,7 +194,7 @@ func (fb *FileBackend) Retrieve(slot pivcert.PIVSlot) (*x509.Certificate, error)
 	if err == nil {
 		cert, parseErr := x509.ParseCertificate(data)
 		if parseErr != nil {
-			return nil, pivcert.NewStorageError("Retrieve", slot, pivcert.ErrInvalidCertificate)
+			return nil, xkms.NewPIVStorageError("Retrieve", slot, xkms.ErrPIVInvalidCertificate)
 		}
 		return cert, nil
 	}
@@ -204,20 +203,20 @@ func (fb *FileBackend) Retrieve(slot pivcert.PIVSlot) (*x509.Certificate, error)
 	pemKey := certKey(slot, extPEM)
 	data, err = fb.backend.Get(context.Background(), pemKey)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return nil, pivcert.NewStorageError("Retrieve", slot, pivcert.ErrCertificateNotFound)
+		if errors.Is(err, xkms.ErrStorageNotFound) {
+			return nil, xkms.NewPIVStorageError("Retrieve", slot, xkms.ErrPIVCertificateNotFound)
 		}
-		return nil, pivcert.NewStorageError("Retrieve", slot, err)
+		return nil, xkms.NewPIVStorageError("Retrieve", slot, err)
 	}
 
 	block, _ := pem.Decode(data)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, pivcert.NewStorageError("Retrieve", slot, pivcert.ErrInvalidFormat)
+		return nil, xkms.NewPIVStorageError("Retrieve", slot, xkms.ErrPIVInvalidFormat)
 	}
 
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, pivcert.NewStorageError("Retrieve", slot, pivcert.ErrInvalidCertificate)
+		return nil, xkms.NewPIVStorageError("Retrieve", slot, xkms.ErrPIVInvalidCertificate)
 	}
 
 	return cert, nil
@@ -227,16 +226,16 @@ func (fb *FileBackend) Retrieve(slot pivcert.PIVSlot) (*x509.Certificate, error)
 //
 // Both DER and PEM data are removed if they exist. Returns
 // ErrCertificateNotFound if no certificate exists in the slot.
-func (fb *FileBackend) Delete(slot pivcert.PIVSlot) error {
+func (fb *FileBackend) Delete(slot xkms.PIVSlot) error {
 	fb.mu.Lock()
 	defer fb.mu.Unlock()
 
 	if fb.closed {
-		return pivcert.NewStorageError("Delete", slot, pivcert.ErrStorageClosed)
+		return xkms.NewPIVStorageError("Delete", slot, xkms.ErrPIVStorageClosed)
 	}
 
 	if !slot.IsValid() {
-		return pivcert.NewStorageError("Delete", slot, pivcert.ErrInvalidSlot)
+		return xkms.NewPIVStorageError("Delete", slot, xkms.ErrPIVInvalidSlot)
 	}
 
 	// Check if certificate exists
@@ -247,26 +246,26 @@ func (fb *FileBackend) Delete(slot pivcert.PIVSlot) error {
 	pemExists, _ := fb.backend.Exists(context.Background(), pemKey)
 
 	if !derExists && !pemExists {
-		return pivcert.NewStorageError("Delete", slot, pivcert.ErrCertificateNotFound)
+		return xkms.NewPIVStorageError("Delete", slot, xkms.ErrPIVCertificateNotFound)
 	}
 
 	// Remove DER data
 	if derExists {
-		if err := fb.backend.Delete(context.Background(), derKey); err != nil && !errors.Is(err, storage.ErrNotFound) {
-			return pivcert.NewStorageError("Delete", slot, err)
+		if err := fb.backend.Delete(context.Background(), derKey); err != nil && !errors.Is(err, xkms.ErrStorageNotFound) {
+			return xkms.NewPIVStorageError("Delete", slot, err)
 		}
 	}
 
 	// Remove PEM data
 	if pemExists {
-		if err := fb.backend.Delete(context.Background(), pemKey); err != nil && !errors.Is(err, storage.ErrNotFound) {
-			return pivcert.NewStorageError("Delete", slot, err)
+		if err := fb.backend.Delete(context.Background(), pemKey); err != nil && !errors.Is(err, xkms.ErrStorageNotFound) {
+			return xkms.NewPIVStorageError("Delete", slot, err)
 		}
 	}
 
 	// Update metadata
 	if err := fb.removeMetadata(slot); err != nil {
-		return pivcert.NewStorageError("Delete", slot, err)
+		return xkms.NewPIVStorageError("Delete", slot, err)
 	}
 
 	return nil
@@ -276,24 +275,24 @@ func (fb *FileBackend) Delete(slot pivcert.PIVSlot) error {
 //
 // The slot information is read from the metadata and includes
 // certificate subject, issuer, validity period, and key algorithm.
-func (fb *FileBackend) List() ([]pivcert.PIVSlotInfo, error) {
+func (fb *FileBackend) List() ([]xkms.PIVSlotInfo, error) {
 	fb.mu.RLock()
 	defer fb.mu.RUnlock()
 
 	if fb.closed {
-		return nil, pivcert.NewStorageTypeError("List", pivcert.StorageTypeFile, pivcert.ErrStorageClosed)
+		return nil, xkms.NewPIVStorageTypeError("List", xkms.PIVStorageTypeFile, xkms.ErrPIVStorageClosed)
 	}
 
 	metadata, err := fb.loadMetadata()
 	if err != nil {
-		return nil, pivcert.NewStorageTypeError("List", pivcert.StorageTypeFile, err)
+		return nil, xkms.NewPIVStorageTypeError("List", xkms.PIVStorageTypeFile, err)
 	}
 
-	result := make([]pivcert.PIVSlotInfo, 0, len(metadata.Slots))
+	result := make([]xkms.PIVSlotInfo, 0, len(metadata.Slots))
 	for slotID, meta := range metadata.Slots {
 		storedAt, _ := time.Parse(time.RFC3339, meta.StoredAt)
-		result = append(result, pivcert.PIVSlotInfo{
-			Slot:         pivcert.PIVSlot(slotID),
+		result = append(result, xkms.PIVSlotInfo{
+			Slot:         xkms.PIVSlot(slotID),
 			Subject:      meta.Subject,
 			Issuer:       meta.Issuer,
 			SerialNumber: meta.SerialNumber,
@@ -314,33 +313,33 @@ func (fb *FileBackend) List() ([]pivcert.PIVSlotInfo, error) {
 // The data is parsed according to the specified format (DER or PEM)
 // and stored in the given slot. This is a convenience method that
 // combines parsing and storing.
-func (fb *FileBackend) Import(slot pivcert.PIVSlot, data []byte, format pivcert.CertFormat) error {
+func (fb *FileBackend) Import(slot xkms.PIVSlot, data []byte, format xkms.PIVCertFormat) error {
 	if len(data) == 0 {
-		return pivcert.NewStorageError("Import", slot, pivcert.ErrInvalidCertificate)
+		return xkms.NewPIVStorageError("Import", slot, xkms.ErrPIVInvalidCertificate)
 	}
 
 	var cert *x509.Certificate
 	var err error
 
 	switch format {
-	case pivcert.FormatDER:
+	case xkms.PIVFormatDER:
 		cert, err = x509.ParseCertificate(data)
 		if err != nil {
-			return pivcert.NewStorageError("Import", slot, pivcert.ErrInvalidCertificate)
+			return xkms.NewPIVStorageError("Import", slot, xkms.ErrPIVInvalidCertificate)
 		}
 
-	case pivcert.FormatPEM:
+	case xkms.PIVFormatPEM:
 		block, _ := pem.Decode(data)
 		if block == nil || block.Type != "CERTIFICATE" {
-			return pivcert.NewStorageError("Import", slot, pivcert.ErrInvalidFormat)
+			return xkms.NewPIVStorageError("Import", slot, xkms.ErrPIVInvalidFormat)
 		}
 		cert, err = x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return pivcert.NewStorageError("Import", slot, pivcert.ErrInvalidCertificate)
+			return xkms.NewPIVStorageError("Import", slot, xkms.ErrPIVInvalidCertificate)
 		}
 
 	default:
-		return pivcert.NewStorageError("Import", slot, pivcert.ErrInvalidFormat)
+		return xkms.NewPIVStorageError("Import", slot, xkms.ErrPIVInvalidFormat)
 	}
 
 	return fb.Store(slot, cert)
@@ -350,17 +349,17 @@ func (fb *FileBackend) Import(slot pivcert.PIVSlot, data []byte, format pivcert.
 //
 // Returns the certificate encoded in DER or PEM format.
 // Returns ErrCertificateNotFound if no certificate exists in the slot.
-func (fb *FileBackend) Export(slot pivcert.PIVSlot, format pivcert.CertFormat) ([]byte, error) {
+func (fb *FileBackend) Export(slot xkms.PIVSlot, format xkms.PIVCertFormat) ([]byte, error) {
 	cert, err := fb.Retrieve(slot)
 	if err != nil {
 		return nil, err
 	}
 
 	switch format {
-	case pivcert.FormatDER:
+	case xkms.PIVFormatDER:
 		return cert.Raw, nil
 
-	case pivcert.FormatPEM:
+	case xkms.PIVFormatPEM:
 		pemData := pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
 			Bytes: cert.Raw,
@@ -368,7 +367,7 @@ func (fb *FileBackend) Export(slot pivcert.PIVSlot, format pivcert.CertFormat) (
 		return pemData, nil
 
 	default:
-		return nil, pivcert.NewStorageError("Export", slot, pivcert.ErrInvalidFormat)
+		return nil, xkms.NewPIVStorageError("Export", slot, xkms.ErrPIVInvalidFormat)
 	}
 }
 
@@ -384,8 +383,8 @@ func (fb *FileBackend) Close() error {
 }
 
 // Type returns the storage type identifier.
-func (fb *FileBackend) Type() pivcert.PIVStorageType {
-	return pivcert.StorageTypeFile
+func (fb *FileBackend) Type() xkms.PIVStorageType {
+	return xkms.PIVStorageTypeFile
 }
 
 // ensureMetadataInitialized creates the metadata file if it doesn't exist.
@@ -414,7 +413,7 @@ func (fb *FileBackend) ensureMetadataInitialized() error {
 func (fb *FileBackend) loadMetadata() (*slotMetadataFile, error) {
 	data, err := fb.backend.Get(context.Background(), keySlotMetadata)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return &slotMetadataFile{
 				Version: metadataVersion,
 				Slots:   make(map[string]slotMetadata),
@@ -445,7 +444,7 @@ func (fb *FileBackend) saveMetadata(metadata *slotMetadataFile) error {
 }
 
 // updateMetadata updates the metadata for a slot.
-func (fb *FileBackend) updateMetadata(slot pivcert.PIVSlot, cert *x509.Certificate) error {
+func (fb *FileBackend) updateMetadata(slot xkms.PIVSlot, cert *x509.Certificate) error {
 	metadata, err := fb.loadMetadata()
 	if err != nil {
 		return err
@@ -470,7 +469,7 @@ func (fb *FileBackend) updateMetadata(slot pivcert.PIVSlot, cert *x509.Certifica
 }
 
 // removeMetadata removes the metadata for a slot.
-func (fb *FileBackend) removeMetadata(slot pivcert.PIVSlot) error {
+func (fb *FileBackend) removeMetadata(slot xkms.PIVSlot) error {
 	metadata, err := fb.loadMetadata()
 	if err != nil {
 		return err
@@ -481,7 +480,7 @@ func (fb *FileBackend) removeMetadata(slot pivcert.PIVSlot) error {
 }
 
 // certKey returns the storage key for a certificate slot.
-func certKey(slot pivcert.PIVSlot, ext string) string {
+func certKey(slot xkms.PIVSlot, ext string) string {
 	return keyPrefixCertificates + string(slot) + ext
 }
 

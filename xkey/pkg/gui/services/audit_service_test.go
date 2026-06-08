@@ -17,11 +17,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +60,7 @@ func TestAuditService_GetEntries_NilStoreWithFilter(t *testing.T) {
 }
 
 func TestAuditService_GetEntries_WithStore(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "key1", true, nil, 100)
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "key2", true, nil, 50)
@@ -131,7 +131,7 @@ func TestAuditService_GetEntries_WithStore(t *testing.T) {
 }
 
 func TestAuditService_GetEntries_ErrorField(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	testErr := errors.New("operation failed")
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", false, testErr, 10)
@@ -166,7 +166,7 @@ func TestAuditService_ExportEntries_NoEntries_CSV(t *testing.T) {
 }
 
 func TestAuditService_ExportEntries_JSON(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "test-key", true, nil, 42)
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "key2", true, nil, 10)
@@ -185,7 +185,7 @@ func TestAuditService_ExportEntries_JSON(t *testing.T) {
 }
 
 func TestAuditService_ExportEntries_JSONWithFilter(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 42)
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "k2", true, nil, 10)
@@ -202,7 +202,7 @@ func TestAuditService_ExportEntries_JSONWithFilter(t *testing.T) {
 }
 
 func TestAuditService_ExportEntries_CSV(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpSignRequest, "software", "sign-key", true, nil, 99)
 
@@ -228,7 +228,7 @@ func TestAuditService_ExportEntries_CSV(t *testing.T) {
 }
 
 func TestAuditService_ExportCSV_MultipleEntries(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 	store.LogKeyOperation(audit.OpKeyDeleted, "hw", "k2", false, errors.New("denied"), 20)

@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -473,7 +473,7 @@ func (a *Authenticator) commandContext() context.Context {
 // backendID returns the current key backend identifier string.
 // Returns empty string when no key backend is configured (legacy path),
 // which means software for backward compatibility.
-func (a *Authenticator) backendID() types.BackendType {
+func (a *Authenticator) backendID() xkms.BackendType {
 	if a.keyBackend != nil {
 		return a.keyBackend.Type()
 	}

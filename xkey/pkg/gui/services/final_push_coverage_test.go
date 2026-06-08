@@ -4,15 +4,13 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
@@ -26,14 +24,14 @@ type fpMockSealer struct {
 	canSeal bool
 }
 
-func (m *fpMockSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
-	return &types.SealedData{
-		Backend:    types.BackendTypeSoftware,
+func (m *fpMockSealer) Seal(_ context.Context, data []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
+	return &xkms.SealedData{
+		Backend:    xkms.BackendTypeSoftware,
 		Ciphertext: data,
 	}, nil
 }
 
-func (m *fpMockSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *fpMockSealer) Unseal(_ context.Context, sealed *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	return sealed.Ciphertext, nil
 }
 
@@ -75,11 +73,11 @@ func (m *fpMockTrustStore) Close() error                                        
 // fpMockSealerFail implements types.Sealer that always fails Seal.
 type fpMockSealerFail struct{}
 
-func (m *fpMockSealerFail) Seal(_ context.Context, _ []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (m *fpMockSealerFail) Seal(_ context.Context, _ []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	return nil, errors.New("fp_test: seal failed")
 }
 
-func (m *fpMockSealerFail) Unseal(_ context.Context, _ *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *fpMockSealerFail) Unseal(_ context.Context, _ *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	return nil, errors.New("fp_test: unseal failed")
 }
 
@@ -93,17 +91,17 @@ type fpMockStaticPWStore struct {
 	listErr error
 }
 
-func (m *fpMockStaticPWStore) Add(_ *staticpw.StaticPassword) error           { return nil }
-func (m *fpMockStaticPWStore) Get(_ string) (*staticpw.StaticPassword, error) { return nil, nil }
-func (m *fpMockStaticPWStore) List() ([]*staticpw.StaticPassword, error)      { return nil, m.listErr }
-func (m *fpMockStaticPWStore) Update(_ *staticpw.StaticPassword) error        { return nil }
-func (m *fpMockStaticPWStore) Delete(_ string) error                          { return nil }
-func (m *fpMockStaticPWStore) ForceDelete(_ string) error                     { return nil }
-func (m *fpMockStaticPWStore) ListByFolder(_ string) ([]*staticpw.StaticPassword, error) {
+func (m *fpMockStaticPWStore) Add(_ *xkms.StaticPassword) error           { return nil }
+func (m *fpMockStaticPWStore) Get(_ string) (*xkms.StaticPassword, error) { return nil, nil }
+func (m *fpMockStaticPWStore) List() ([]*xkms.StaticPassword, error)      { return nil, m.listErr }
+func (m *fpMockStaticPWStore) Update(_ *xkms.StaticPassword) error        { return nil }
+func (m *fpMockStaticPWStore) Delete(_ string) error                      { return nil }
+func (m *fpMockStaticPWStore) ForceDelete(_ string) error                 { return nil }
+func (m *fpMockStaticPWStore) ListByFolder(_ string) ([]*xkms.StaticPassword, error) {
 	return nil, nil
 }
 func (m *fpMockStaticPWStore) ListFolders() ([]string, error) { return nil, nil }
-func (m *fpMockStaticPWStore) ListByFolderDirect(_ string) ([]*staticpw.StaticPassword, error) {
+func (m *fpMockStaticPWStore) ListByFolderDirect(_ string) ([]*xkms.StaticPassword, error) {
 	return nil, nil
 }
 func (m *fpMockStaticPWStore) MoveToFolder(_ string, _ string) error {
@@ -133,7 +131,7 @@ func TestFP_BarrierService_Initialize_FactoryError(t *testing.T) {
 	factoryErr := errors.New("factory error: backend unavailable")
 
 	// SetBaseBackendFactory covers L92 (body of the setter).
-	svc.SetBaseBackendFactory(func(_ string) (storage.Backend, error) {
+	svc.SetBaseBackendFactory(func(_ string) (xkms.StorageBackend, error) {
 		// Returning an error exercises:
 		//   - L329 (createBaseBackend enters factory branch)
 		//   - L192 (Initialize handles error from createBaseBackend)

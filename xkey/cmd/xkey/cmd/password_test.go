@@ -23,8 +23,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/pflag"
 )
@@ -398,11 +397,11 @@ func TestPasswordCmd_AddAndList(t *testing.T) {
 
 	// Verify the entry was persisted to the store by opening
 	// the backend directly and reading it back.
-	backend, err := file.New(storePath)
+	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := staticpw.NewStore(backend)
+	store := xkms.NewStaticPasswordStore(backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("TestService")
@@ -454,11 +453,11 @@ func TestPasswordCmd_AddGenerated(t *testing.T) {
 	}
 
 	// Verify the generated entry was persisted to the store.
-	backend, err := file.New(storePath)
+	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := staticpw.NewStore(backend)
+	store := xkms.NewStaticPasswordStore(backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("GeneratedEntry")
@@ -473,13 +472,13 @@ func TestPasswordCmd_AddGenerated(t *testing.T) {
 	}
 
 	// The default generated password length is 32 characters.
-	if len(pw.Password) != staticpw.DefaultLength {
-		t.Errorf("generated password length = %d, want %d", len(pw.Password), staticpw.DefaultLength)
+	if len(pw.Password) != xkms.StaticPasswordDefaultLength {
+		t.Errorf("generated password length = %d, want %d", len(pw.Password), xkms.StaticPasswordDefaultLength)
 	}
 
 	// Verify the entry file exists on disk. The staticpw store uses an
 	// xxhash-based ID as the filename, not the entry name.
-	entryID := staticpw.GenerateID("GeneratedEntry", "")
+	entryID := xkms.GenerateStaticPasswordID("GeneratedEntry", "")
 	entryPath := filepath.Join(storePath, "staticpw", entryID+".json")
 	if _, statErr := os.Stat(entryPath); os.IsNotExist(statErr) {
 		t.Errorf("generated entry file not found at %s", entryPath)
@@ -517,11 +516,11 @@ func TestPasswordCmd_AddWithMetadata(t *testing.T) {
 	}
 
 	// Verify all fields were persisted.
-	backend, err := file.New(storePath)
+	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := staticpw.NewStore(backend)
+	store := xkms.NewStaticPasswordStore(backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("GitHubWork")
@@ -573,11 +572,11 @@ func TestPasswordCmd_AddWithoutMetadata(t *testing.T) {
 	}
 
 	// Verify optional metadata fields default to empty.
-	backend, err := file.New(storePath)
+	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		t.Fatalf("failed to open store backend: %v", err)
 	}
-	store := staticpw.NewStore(backend)
+	store := xkms.NewStaticPasswordStore(backend)
 	defer func() { _ = store.Close() }()
 
 	pw, err := store.Get("SimplePW")

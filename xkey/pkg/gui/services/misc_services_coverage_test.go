@@ -26,8 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -260,7 +258,7 @@ func TestMiscServices_Coverage_ShareService_ListShares_Success(t *testing.T) {
 	svc.SetContext(context.Background())
 
 	store := &mockShareStore{
-		listResult: []*sharestore.ShareEntry{
+		listResult: []*xkms.ShareEntry{
 			{
 				ServerURL:  "https://example.com",
 				GroupID:    "grp1",
@@ -427,7 +425,7 @@ func TestMiscServices_Coverage_ShareService_Emit_WithEmitter(t *testing.T) {
 
 func TestMiscServices_Coverage_EntryToShareInfo(t *testing.T) {
 	now := time.Now()
-	entry := &sharestore.ShareEntry{
+	entry := &xkms.ShareEntry{
 		ServerURL:  "https://example.com",
 		GroupID:    "grp-abc",
 		GroupName:  "Test Group",
@@ -448,30 +446,30 @@ func TestMiscServices_Coverage_EntryToShareInfo(t *testing.T) {
 
 // mockShareStore implements sharestore.ShareStore for testing.
 type mockShareStore struct {
-	listResult []*sharestore.ShareEntry
+	listResult []*xkms.ShareEntry
 	listErr    error
 	saveErr    error
-	loadResult *sharestore.ShareEntry
+	loadResult *xkms.ShareEntry
 	loadErr    error
 	deleteErr  error
 }
 
-func (m *mockShareStore) Save(ctx context.Context, entry *sharestore.ShareEntry) error {
+func (m *mockShareStore) Save(ctx context.Context, entry *xkms.ShareEntry) error {
 	return m.saveErr
 }
-func (m *mockShareStore) Load(ctx context.Context, serverURL, groupID string, shareIndex int) (*sharestore.ShareEntry, error) {
+func (m *mockShareStore) Load(ctx context.Context, serverURL, groupID string, shareIndex int) (*xkms.ShareEntry, error) {
 	return m.loadResult, m.loadErr
 }
 func (m *mockShareStore) Delete(ctx context.Context, serverURL, groupID string, shareIndex int) error {
 	return m.deleteErr
 }
-func (m *mockShareStore) List(ctx context.Context) ([]*sharestore.ShareEntry, error) {
+func (m *mockShareStore) List(ctx context.Context) ([]*xkms.ShareEntry, error) {
 	return m.listResult, m.listErr
 }
-func (m *mockShareStore) ListByServer(ctx context.Context, serverURL string) ([]*sharestore.ShareEntry, error) {
+func (m *mockShareStore) ListByServer(ctx context.Context, serverURL string) ([]*xkms.ShareEntry, error) {
 	return nil, nil
 }
-func (m *mockShareStore) ListByGroup(ctx context.Context, groupID string) ([]*sharestore.ShareEntry, error) {
+func (m *mockShareStore) ListByGroup(ctx context.Context, groupID string) ([]*xkms.ShareEntry, error) {
 	return nil, nil
 }
 func (m *mockShareStore) Close() error { return nil }
@@ -527,13 +525,13 @@ func TestMiscServices_Coverage_AutoFillService_SetEnabled_EnterpriseAllows(t *te
 func TestMiscServices_Coverage_AutoFillService_SetPolicyPersistFunc(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 	called := false
-	svc.SetPolicyPersistFunc(func(policy *autofill.AutoFillPolicy) error {
+	svc.SetPolicyPersistFunc(func(policy *xkms.AutoFillPolicy) error {
 		called = true
 		return nil
 	})
 	assert.NotNil(t, svc.persistPolicy)
 
-	err := svc.persistPolicy(&autofill.AutoFillPolicy{})
+	err := svc.persistPolicy(&xkms.AutoFillPolicy{})
 	require.NoError(t, err)
 	assert.True(t, called)
 }
@@ -585,7 +583,7 @@ func TestMiscServices_Coverage_AutoFillService_SetPolicy_Nil(t *testing.T) {
 
 func TestMiscServices_Coverage_AutoFillService_SetPolicy_Valid(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.MaxFillsPerMinute = 20
 	err := svc.SetPolicy(policy)
 	require.NoError(t, err)
@@ -620,8 +618,8 @@ func TestMiscServices_Coverage_AutoFillService_SetRequireAuthentication_Enterpri
 
 func TestMiscServices_Coverage_AutoFillService_SetRequireAuthentication_WithPersist(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
-	var persisted *autofill.AutoFillPolicy
-	svc.SetPolicyPersistFunc(func(policy *autofill.AutoFillPolicy) error {
+	var persisted *xkms.AutoFillPolicy
+	svc.SetPolicyPersistFunc(func(policy *xkms.AutoFillPolicy) error {
 		persisted = policy
 		return nil
 	})
@@ -692,7 +690,7 @@ func TestMiscServices_Coverage_AutoFillService_GetCredential_EmptyID(t *testing.
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 	svc.SetEnabled(true)
 	// Set policy to not require auth for this test.
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = false
 	svc.SetPolicy(policy)
 

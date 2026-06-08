@@ -39,7 +39,7 @@ import (
 	"log"
 	"unsafe"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeypkcs11 "github.com/jeremyhahn/go-xkms/xkey/pkg/pkcs11"
 )
 
@@ -57,17 +57,17 @@ func C_Initialize(pInitArgs C.CK_VOID_PTR) C.CK_RV {
 	}
 
 	// Create the PKCS#11 module with the embedded transport.
-	m, err := module.New(module.WithClient(adapter))
+	m, err := xkms.NewPKCS11Module(xkms.WithPKCS11Client(adapter))
 	if err != nil {
 		log.Printf("xkey/pkcs11: failed to create module: %v", err)
 		return C.CKR_GENERAL_ERROR
 	}
 
 	// Set as the global module so all C_* functions can access it.
-	module.SetGlobalModule(m)
+	xkms.SetGlobalPKCS11Module(m)
 
 	// Initialize the module (loads config, creates slots/tokens).
-	rv := module.GetGlobalModule().Initialize(nil)
+	rv := xkms.GetGlobalPKCS11Module().Initialize(nil)
 	return C.CK_RV(rv)
 }
 
@@ -77,7 +77,7 @@ func C_Finalize(pReserved C.CK_VOID_PTR) C.CK_RV {
 	if pReserved != nil {
 		return C.CKR_ARGUMENTS_BAD
 	}
-	rv := module.GetGlobalModule().Finalize()
+	rv := xkms.GetGlobalPKCS11Module().Finalize()
 	return C.CK_RV(rv)
 }
 
@@ -87,8 +87,8 @@ func C_GetInfo(pInfo C.CK_INFO_PTR) C.CK_RV {
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	info, rv := module.GetGlobalModule().GetInfo()
-	if rv != module.CKR_OK {
+	info, rv := xkms.GetGlobalPKCS11Module().GetInfo()
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -191,8 +191,8 @@ func C_GetSlotList(tokenPresent C.CK_BBOOL, pSlotList C.CK_SLOT_ID_PTR, pulCount
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	slots, rv := module.GetGlobalModule().GetSlotList(tokenPresent == C.CK_TRUE)
-	if rv != module.CKR_OK {
+	slots, rv := xkms.GetGlobalPKCS11Module().GetSlotList(tokenPresent == C.CK_TRUE)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -223,8 +223,8 @@ func C_GetSlotInfo(slotID C.CK_SLOT_ID, pInfo C.CK_SLOT_INFO_PTR) C.CK_RV {
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	info, rv := module.GetGlobalModule().GetSlotInfo(module.SlotID(slotID))
-	if rv != module.CKR_OK {
+	info, rv := xkms.GetGlobalPKCS11Module().GetSlotInfo(xkms.PKCS11SlotID(slotID))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -249,8 +249,8 @@ func C_GetTokenInfo(slotID C.CK_SLOT_ID, pInfo C.CK_TOKEN_INFO_PTR) C.CK_RV {
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	info, rv := module.GetGlobalModule().GetTokenInfo(module.SlotID(slotID))
-	if rv != module.CKR_OK {
+	info, rv := xkms.GetGlobalPKCS11Module().GetTokenInfo(xkms.PKCS11SlotID(slotID))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -288,8 +288,8 @@ func C_GetMechanismList(slotID C.CK_SLOT_ID, pMechanismList C.CK_MECHANISM_TYPE_
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	mechs, rv := module.GetGlobalModule().GetMechanismList(module.SlotID(slotID))
-	if rv != module.CKR_OK {
+	mechs, rv := xkms.GetGlobalPKCS11Module().GetMechanismList(xkms.PKCS11SlotID(slotID))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -320,8 +320,8 @@ func C_GetMechanismInfo(slotID C.CK_SLOT_ID, mechType C.CK_MECHANISM_TYPE, pInfo
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	info, rv := module.GetGlobalModule().GetMechanismInfo(module.SlotID(slotID), module.MechanismType(mechType))
-	if rv != module.CKR_OK {
+	info, rv := xkms.GetGlobalPKCS11Module().GetMechanismInfo(xkms.PKCS11SlotID(slotID), xkms.PKCS11MechanismType(mechType))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -345,7 +345,7 @@ func C_InitToken(slotID C.CK_SLOT_ID, pPin C.CK_UTF8CHAR_PTR, ulPinLen C.CK_ULON
 
 	label := C.GoStringN((*C.char)(unsafe.Pointer(pLabel)), 32)
 
-	rv := module.GetGlobalModule().InitToken(module.SlotID(slotID), pin, label)
+	rv := xkms.GetGlobalPKCS11Module().InitToken(xkms.PKCS11SlotID(slotID), pin, label)
 	return C.CK_RV(rv)
 }
 
@@ -356,7 +356,7 @@ func C_InitPIN(hSession C.CK_SESSION_HANDLE, pPin C.CK_UTF8CHAR_PTR, ulPinLen C.
 		pin = C.GoBytes(unsafe.Pointer(pPin), C.int(ulPinLen))
 	}
 
-	rv := module.GetGlobalModule().InitPIN(module.SessionHandle(hSession), pin)
+	rv := xkms.GetGlobalPKCS11Module().InitPIN(xkms.PKCS11SessionHandle(hSession), pin)
 	return C.CK_RV(rv)
 }
 
@@ -371,7 +371,7 @@ func C_SetPIN(hSession C.CK_SESSION_HANDLE, pOldPin C.CK_UTF8CHAR_PTR, ulOldLen 
 		newPin = C.GoBytes(unsafe.Pointer(pNewPin), C.int(ulNewLen))
 	}
 
-	rv := module.GetGlobalModule().SetPIN(module.SessionHandle(hSession), oldPin, newPin)
+	rv := xkms.GetGlobalPKCS11Module().SetPIN(xkms.PKCS11SessionHandle(hSession), oldPin, newPin)
 	return C.CK_RV(rv)
 }
 
@@ -386,8 +386,8 @@ func C_OpenSession(slotID C.CK_SLOT_ID, flags C.CK_FLAGS, pApplication C.CK_VOID
 	}
 
 	// Note: We ignore pApplication and Notify callback for now
-	handle, rv := module.GetGlobalModule().OpenSession(module.SlotID(slotID), module.SessionFlag(flags))
-	if rv != module.CKR_OK {
+	handle, rv := xkms.GetGlobalPKCS11Module().OpenSession(xkms.PKCS11SlotID(slotID), xkms.PKCS11SessionFlag(flags))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -397,13 +397,13 @@ func C_OpenSession(slotID C.CK_SLOT_ID, flags C.CK_FLAGS, pApplication C.CK_VOID
 
 //export C_CloseSession
 func C_CloseSession(hSession C.CK_SESSION_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().CloseSession(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().CloseSession(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
 //export C_CloseAllSessions
 func C_CloseAllSessions(slotID C.CK_SLOT_ID) C.CK_RV {
-	rv := module.GetGlobalModule().CloseAllSessions(module.SlotID(slotID))
+	rv := xkms.GetGlobalPKCS11Module().CloseAllSessions(xkms.PKCS11SlotID(slotID))
 	return C.CK_RV(rv)
 }
 
@@ -413,8 +413,8 @@ func C_GetSessionInfo(hSession C.CK_SESSION_HANDLE, pInfo C.CK_SESSION_INFO_PTR)
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	info, rv := module.GetGlobalModule().GetSessionInfo(module.SessionHandle(hSession))
-	if rv != module.CKR_OK {
+	info, rv := xkms.GetGlobalPKCS11Module().GetSessionInfo(xkms.PKCS11SessionHandle(hSession))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -432,8 +432,8 @@ func C_GetOperationState(hSession C.CK_SESSION_HANDLE, pOperationState C.CK_BYTE
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	state, rv := module.GetGlobalModule().GetOperationStateBytes(module.SessionHandle(hSession))
-	if rv != module.CKR_OK {
+	state, rv := xkms.GetGlobalPKCS11Module().GetOperationStateBytes(xkms.PKCS11SessionHandle(hSession))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -466,11 +466,11 @@ func C_SetOperationState(hSession C.CK_SESSION_HANDLE, pOperationState C.CK_BYTE
 		state = C.GoBytes(unsafe.Pointer(pOperationState), C.int(ulOperationStateLen))
 	}
 
-	rv := module.GetGlobalModule().SetOperationStateBytes(
-		module.SessionHandle(hSession),
+	rv := xkms.GetGlobalPKCS11Module().SetOperationStateBytes(
+		xkms.PKCS11SessionHandle(hSession),
 		state,
-		module.ObjectHandle(hEncryptionKey),
-		module.ObjectHandle(hAuthenticationKey),
+		xkms.PKCS11ObjectHandle(hEncryptionKey),
+		xkms.PKCS11ObjectHandle(hAuthenticationKey),
 	)
 	return C.CK_RV(rv)
 }
@@ -482,13 +482,13 @@ func C_Login(hSession C.CK_SESSION_HANDLE, userType C.CK_USER_TYPE, pPin C.CK_UT
 		pin = C.GoBytes(unsafe.Pointer(pPin), C.int(ulPinLen))
 	}
 
-	rv := module.GetGlobalModule().Login(module.SessionHandle(hSession), module.UserType(userType), pin)
+	rv := xkms.GetGlobalPKCS11Module().Login(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11UserType(userType), pin)
 	return C.CK_RV(rv)
 }
 
 //export C_Logout
 func C_Logout(hSession C.CK_SESSION_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().Logout(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().Logout(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -504,8 +504,8 @@ func C_CreateObject(hSession C.CK_SESSION_HANDLE, pTemplate C.CK_ATTRIBUTE_PTR, 
 
 	template := convertCTemplateToGo(pTemplate, ulCount)
 
-	handle, rv := module.GetGlobalModule().CreateObject(module.SessionHandle(hSession), template)
-	if rv != module.CKR_OK {
+	handle, rv := xkms.GetGlobalPKCS11Module().CreateObject(xkms.PKCS11SessionHandle(hSession), template)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -521,8 +521,8 @@ func C_CopyObject(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE, pTem
 
 	template := convertCTemplateToGo(pTemplate, ulCount)
 
-	handle, rv := module.GetGlobalModule().CopyObject(module.SessionHandle(hSession), module.ObjectHandle(hObject), template)
-	if rv != module.CKR_OK {
+	handle, rv := xkms.GetGlobalPKCS11Module().CopyObject(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11ObjectHandle(hObject), template)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -532,7 +532,7 @@ func C_CopyObject(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE, pTem
 
 //export C_DestroyObject
 func C_DestroyObject(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().DestroyObject(module.SessionHandle(hSession), module.ObjectHandle(hObject))
+	rv := xkms.GetGlobalPKCS11Module().DestroyObject(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11ObjectHandle(hObject))
 	return C.CK_RV(rv)
 }
 
@@ -542,8 +542,8 @@ func C_GetObjectSize(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE, p
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	size, rv := module.GetGlobalModule().GetObjectSize(module.SessionHandle(hSession), module.ObjectHandle(hObject))
-	if rv != module.CKR_OK {
+	size, rv := xkms.GetGlobalPKCS11Module().GetObjectSize(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11ObjectHandle(hObject))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -559,8 +559,8 @@ func C_GetAttributeValue(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDL
 
 	template := convertCTemplateToGo(pTemplate, ulCount)
 
-	result, rv := module.GetGlobalModule().GetAttributeValue(module.SessionHandle(hSession), module.ObjectHandle(hObject), template)
-	if rv != module.CKR_OK {
+	result, rv := xkms.GetGlobalPKCS11Module().GetAttributeValue(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11ObjectHandle(hObject), template)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -574,7 +574,7 @@ func C_GetAttributeValue(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDL
 func C_SetAttributeValue(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDLE, pTemplate C.CK_ATTRIBUTE_PTR, ulCount C.CK_ULONG) C.CK_RV {
 	template := convertCTemplateToGo(pTemplate, ulCount)
 
-	rv := module.GetGlobalModule().SetAttributeValue(module.SessionHandle(hSession), module.ObjectHandle(hObject), template)
+	rv := xkms.GetGlobalPKCS11Module().SetAttributeValue(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11ObjectHandle(hObject), template)
 	return C.CK_RV(rv)
 }
 
@@ -582,7 +582,7 @@ func C_SetAttributeValue(hSession C.CK_SESSION_HANDLE, hObject C.CK_OBJECT_HANDL
 func C_FindObjectsInit(hSession C.CK_SESSION_HANDLE, pTemplate C.CK_ATTRIBUTE_PTR, ulCount C.CK_ULONG) C.CK_RV {
 	template := convertCTemplateToGo(pTemplate, ulCount)
 
-	rv := module.GetGlobalModule().FindObjectsInit(module.SessionHandle(hSession), template)
+	rv := xkms.GetGlobalPKCS11Module().FindObjectsInit(xkms.PKCS11SessionHandle(hSession), template)
 	return C.CK_RV(rv)
 }
 
@@ -592,8 +592,8 @@ func C_FindObjects(hSession C.CK_SESSION_HANDLE, phObject C.CK_OBJECT_HANDLE_PTR
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	handles, rv := module.GetGlobalModule().FindObjects(module.SessionHandle(hSession), uint32(ulMaxObjectCount))
-	if rv != module.CKR_OK {
+	handles, rv := xkms.GetGlobalPKCS11Module().FindObjects(xkms.PKCS11SessionHandle(hSession), uint32(ulMaxObjectCount))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -611,7 +611,7 @@ func C_FindObjects(hSession C.CK_SESSION_HANDLE, phObject C.CK_OBJECT_HANDLE_PTR
 
 //export C_FindObjectsFinal
 func C_FindObjectsFinal(hSession C.CK_SESSION_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().FindObjectsFinal(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().FindObjectsFinal(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -627,7 +627,7 @@ func C_EncryptInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, 
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	rv := module.GetGlobalModule().EncryptInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().EncryptInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -642,8 +642,8 @@ func C_Encrypt(hSession C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK
 		data = C.GoBytes(unsafe.Pointer(pData), C.int(ulDataLen))
 	}
 
-	encrypted, rv := module.GetGlobalModule().Encrypt(module.SessionHandle(hSession), data)
-	if rv != module.CKR_OK {
+	encrypted, rv := xkms.GetGlobalPKCS11Module().Encrypt(xkms.PKCS11SessionHandle(hSession), data)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -674,8 +674,8 @@ func C_EncryptUpdate(hSession C.CK_SESSION_HANDLE, pPart C.CK_BYTE_PTR, ulPartLe
 		part = C.GoBytes(unsafe.Pointer(pPart), C.int(ulPartLen))
 	}
 
-	encrypted, rv := module.GetGlobalModule().EncryptUpdate(module.SessionHandle(hSession), part)
-	if rv != module.CKR_OK {
+	encrypted, rv := xkms.GetGlobalPKCS11Module().EncryptUpdate(xkms.PKCS11SessionHandle(hSession), part)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -709,8 +709,8 @@ func C_EncryptFinal(hSession C.CK_SESSION_HANDLE, pLastEncryptedPart C.CK_BYTE_P
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	encrypted, rv := module.GetGlobalModule().EncryptFinal(module.SessionHandle(hSession))
-	if rv != module.CKR_OK {
+	encrypted, rv := xkms.GetGlobalPKCS11Module().EncryptFinal(xkms.PKCS11SessionHandle(hSession))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -744,7 +744,7 @@ func C_DecryptInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, 
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	rv := module.GetGlobalModule().DecryptInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().DecryptInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -759,8 +759,8 @@ func C_Decrypt(hSession C.CK_SESSION_HANDLE, pEncryptedData C.CK_BYTE_PTR, ulEnc
 		encryptedData = C.GoBytes(unsafe.Pointer(pEncryptedData), C.int(ulEncryptedDataLen))
 	}
 
-	data, rv := module.GetGlobalModule().Decrypt(module.SessionHandle(hSession), encryptedData)
-	if rv != module.CKR_OK {
+	data, rv := xkms.GetGlobalPKCS11Module().Decrypt(xkms.PKCS11SessionHandle(hSession), encryptedData)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -793,8 +793,8 @@ func C_DecryptUpdate(hSession C.CK_SESSION_HANDLE, pEncryptedPart C.CK_BYTE_PTR,
 		encryptedPart = C.GoBytes(unsafe.Pointer(pEncryptedPart), C.int(ulEncryptedPartLen))
 	}
 
-	decrypted, rv := module.GetGlobalModule().DecryptUpdate(module.SessionHandle(hSession), encryptedPart)
-	if rv != module.CKR_OK {
+	decrypted, rv := xkms.GetGlobalPKCS11Module().DecryptUpdate(xkms.PKCS11SessionHandle(hSession), encryptedPart)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -828,8 +828,8 @@ func C_DecryptFinal(hSession C.CK_SESSION_HANDLE, pLastPart C.CK_BYTE_PTR, pulLa
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	decrypted, rv := module.GetGlobalModule().DecryptFinal(module.SessionHandle(hSession))
-	if rv != module.CKR_OK {
+	decrypted, rv := xkms.GetGlobalPKCS11Module().DecryptFinal(xkms.PKCS11SessionHandle(hSession))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -863,7 +863,7 @@ func C_DigestInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR) C
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	rv := module.GetGlobalModule().DigestInit(module.SessionHandle(hSession), mech)
+	rv := xkms.GetGlobalPKCS11Module().DigestInit(xkms.PKCS11SessionHandle(hSession), mech)
 	return C.CK_RV(rv)
 }
 
@@ -878,8 +878,8 @@ func C_Digest(hSession C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_
 		data = C.GoBytes(unsafe.Pointer(pData), C.int(ulDataLen))
 	}
 
-	digest, rv := module.GetGlobalModule().Digest(module.SessionHandle(hSession), data)
-	if rv != module.CKR_OK {
+	digest, rv := xkms.GetGlobalPKCS11Module().Digest(xkms.PKCS11SessionHandle(hSession), data)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -906,13 +906,13 @@ func C_DigestUpdate(hSession C.CK_SESSION_HANDLE, pPart C.CK_BYTE_PTR, ulPartLen
 		part = C.GoBytes(unsafe.Pointer(pPart), C.int(ulPartLen))
 	}
 
-	rv := module.GetGlobalModule().DigestUpdate(module.SessionHandle(hSession), part)
+	rv := xkms.GetGlobalPKCS11Module().DigestUpdate(xkms.PKCS11SessionHandle(hSession), part)
 	return C.CK_RV(rv)
 }
 
 //export C_DigestKey
 func C_DigestKey(hSession C.CK_SESSION_HANDLE, hKey C.CK_OBJECT_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().DigestKey(module.SessionHandle(hSession), module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().DigestKey(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -922,8 +922,8 @@ func C_DigestFinal(hSession C.CK_SESSION_HANDLE, pDigest C.CK_BYTE_PTR, pulDiges
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	digest, rv := module.GetGlobalModule().DigestFinal(module.SessionHandle(hSession))
-	if rv != module.CKR_OK {
+	digest, rv := xkms.GetGlobalPKCS11Module().DigestFinal(xkms.PKCS11SessionHandle(hSession))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -955,7 +955,7 @@ func C_SignInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hKe
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	rv := module.GetGlobalModule().SignInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().SignInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -970,8 +970,8 @@ func C_Sign(hSession C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_UL
 		data = C.GoBytes(unsafe.Pointer(pData), C.int(ulDataLen))
 	}
 
-	signature, rv := module.GetGlobalModule().Sign(module.SessionHandle(hSession), data)
-	if rv != module.CKR_OK {
+	signature, rv := xkms.GetGlobalPKCS11Module().Sign(xkms.PKCS11SessionHandle(hSession), data)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -998,7 +998,7 @@ func C_SignUpdate(hSession C.CK_SESSION_HANDLE, pPart C.CK_BYTE_PTR, ulPartLen C
 		part = C.GoBytes(unsafe.Pointer(pPart), C.int(ulPartLen))
 	}
 
-	rv := module.GetGlobalModule().SignUpdate(module.SessionHandle(hSession), part)
+	rv := xkms.GetGlobalPKCS11Module().SignUpdate(xkms.PKCS11SessionHandle(hSession), part)
 	return C.CK_RV(rv)
 }
 
@@ -1008,8 +1008,8 @@ func C_SignFinal(hSession C.CK_SESSION_HANDLE, pSignature C.CK_BYTE_PTR, pulSign
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	signature, rv := module.GetGlobalModule().SignFinal(module.SessionHandle(hSession))
-	if rv != module.CKR_OK {
+	signature, rv := xkms.GetGlobalPKCS11Module().SignFinal(xkms.PKCS11SessionHandle(hSession))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1037,7 +1037,7 @@ func C_SignRecoverInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_P
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	rv := module.GetGlobalModule().SignRecoverInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().SignRecoverInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -1052,8 +1052,8 @@ func C_SignRecover(hSession C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen 
 		data = C.GoBytes(unsafe.Pointer(pData), C.int(ulDataLen))
 	}
 
-	signature, rv := module.GetGlobalModule().SignRecover(module.SessionHandle(hSession), data)
-	if rv != module.CKR_OK {
+	signature, rv := xkms.GetGlobalPKCS11Module().SignRecover(xkms.PKCS11SessionHandle(hSession), data)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1087,7 +1087,7 @@ func C_VerifyInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, h
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	rv := module.GetGlobalModule().VerifyInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().VerifyInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -1102,7 +1102,7 @@ func C_Verify(hSession C.CK_SESSION_HANDLE, pData C.CK_BYTE_PTR, ulDataLen C.CK_
 		signature = C.GoBytes(unsafe.Pointer(pSignature), C.int(ulSignatureLen))
 	}
 
-	rv := module.GetGlobalModule().Verify(module.SessionHandle(hSession), data, signature)
+	rv := xkms.GetGlobalPKCS11Module().Verify(xkms.PKCS11SessionHandle(hSession), data, signature)
 	return C.CK_RV(rv)
 }
 
@@ -1113,7 +1113,7 @@ func C_VerifyUpdate(hSession C.CK_SESSION_HANDLE, pPart C.CK_BYTE_PTR, ulPartLen
 		part = C.GoBytes(unsafe.Pointer(pPart), C.int(ulPartLen))
 	}
 
-	rv := module.GetGlobalModule().VerifyUpdate(module.SessionHandle(hSession), part)
+	rv := xkms.GetGlobalPKCS11Module().VerifyUpdate(xkms.PKCS11SessionHandle(hSession), part)
 	return C.CK_RV(rv)
 }
 
@@ -1124,7 +1124,7 @@ func C_VerifyFinal(hSession C.CK_SESSION_HANDLE, pSignature C.CK_BYTE_PTR, ulSig
 		signature = C.GoBytes(unsafe.Pointer(pSignature), C.int(ulSignatureLen))
 	}
 
-	rv := module.GetGlobalModule().VerifyFinal(module.SessionHandle(hSession), signature)
+	rv := xkms.GetGlobalPKCS11Module().VerifyFinal(xkms.PKCS11SessionHandle(hSession), signature)
 	return C.CK_RV(rv)
 }
 
@@ -1136,7 +1136,7 @@ func C_VerifyRecoverInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	rv := module.GetGlobalModule().VerifyRecoverInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().VerifyRecoverInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -1151,8 +1151,8 @@ func C_VerifyRecover(hSession C.CK_SESSION_HANDLE, pSignature C.CK_BYTE_PTR, ulS
 		signature = C.GoBytes(unsafe.Pointer(pSignature), C.int(ulSignatureLen))
 	}
 
-	data, rv := module.GetGlobalModule().VerifyRecover(module.SessionHandle(hSession), signature)
-	if rv != module.CKR_OK {
+	data, rv := xkms.GetGlobalPKCS11Module().VerifyRecover(xkms.PKCS11SessionHandle(hSession), signature)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1189,8 +1189,8 @@ func C_DigestEncryptUpdate(hSession C.CK_SESSION_HANDLE, pPart C.CK_BYTE_PTR, ul
 		part = C.GoBytes(unsafe.Pointer(pPart), C.int(ulPartLen))
 	}
 
-	encrypted, rv := module.GetGlobalModule().DigestEncryptUpdate(module.SessionHandle(hSession), part)
-	if rv != module.CKR_OK {
+	encrypted, rv := xkms.GetGlobalPKCS11Module().DigestEncryptUpdate(xkms.PKCS11SessionHandle(hSession), part)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1223,8 +1223,8 @@ func C_DecryptDigestUpdate(hSession C.CK_SESSION_HANDLE, pEncryptedPart C.CK_BYT
 		encryptedPart = C.GoBytes(unsafe.Pointer(pEncryptedPart), C.int(ulEncryptedPartLen))
 	}
 
-	decrypted, rv := module.GetGlobalModule().DecryptDigestUpdate(module.SessionHandle(hSession), encryptedPart)
-	if rv != module.CKR_OK {
+	decrypted, rv := xkms.GetGlobalPKCS11Module().DecryptDigestUpdate(xkms.PKCS11SessionHandle(hSession), encryptedPart)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1257,8 +1257,8 @@ func C_SignEncryptUpdate(hSession C.CK_SESSION_HANDLE, pPart C.CK_BYTE_PTR, ulPa
 		part = C.GoBytes(unsafe.Pointer(pPart), C.int(ulPartLen))
 	}
 
-	encrypted, rv := module.GetGlobalModule().SignEncryptUpdate(module.SessionHandle(hSession), part)
-	if rv != module.CKR_OK {
+	encrypted, rv := xkms.GetGlobalPKCS11Module().SignEncryptUpdate(xkms.PKCS11SessionHandle(hSession), part)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1291,8 +1291,8 @@ func C_DecryptVerifyUpdate(hSession C.CK_SESSION_HANDLE, pEncryptedPart C.CK_BYT
 		encryptedPart = C.GoBytes(unsafe.Pointer(pEncryptedPart), C.int(ulEncryptedPartLen))
 	}
 
-	decrypted, rv := module.GetGlobalModule().DecryptVerifyUpdate(module.SessionHandle(hSession), encryptedPart)
-	if rv != module.CKR_OK {
+	decrypted, rv := xkms.GetGlobalPKCS11Module().DecryptVerifyUpdate(xkms.PKCS11SessionHandle(hSession), encryptedPart)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1327,8 +1327,8 @@ func C_GenerateKey(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, 
 	mech := convertCMechanismToGo(pMechanism)
 	template := convertCTemplateToGo(pTemplate, ulCount)
 
-	handle, rv := module.GetGlobalModule().GenerateKey(module.SessionHandle(hSession), mech, template)
-	if rv != module.CKR_OK {
+	handle, rv := xkms.GetGlobalPKCS11Module().GenerateKey(xkms.PKCS11SessionHandle(hSession), mech, template)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1346,8 +1346,8 @@ func C_GenerateKeyPair(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_P
 	pubTemplate := convertCTemplateToGo(pPublicKeyTemplate, ulPublicKeyAttributeCount)
 	privTemplate := convertCTemplateToGo(pPrivateKeyTemplate, ulPrivateKeyAttributeCount)
 
-	pubHandle, privHandle, rv := module.GetGlobalModule().GenerateKeyPair(module.SessionHandle(hSession), mech, pubTemplate, privTemplate)
-	if rv != module.CKR_OK {
+	pubHandle, privHandle, rv := xkms.GetGlobalPKCS11Module().GenerateKeyPair(xkms.PKCS11SessionHandle(hSession), mech, pubTemplate, privTemplate)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1364,13 +1364,13 @@ func C_WrapKey(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hWra
 
 	mech := convertCMechanismToGo(pMechanism)
 
-	wrappedKey, rv := module.GetGlobalModule().WrapKey(
-		module.SessionHandle(hSession),
+	wrappedKey, rv := xkms.GetGlobalPKCS11Module().WrapKey(
+		xkms.PKCS11SessionHandle(hSession),
 		mech,
-		module.ObjectHandle(hWrappingKey),
-		module.ObjectHandle(hKey),
+		xkms.PKCS11ObjectHandle(hWrappingKey),
+		xkms.PKCS11ObjectHandle(hKey),
 	)
-	if rv != module.CKR_OK {
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1406,14 +1406,14 @@ func C_UnwrapKey(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hU
 		wrappedKey = C.GoBytes(unsafe.Pointer(pWrappedKey), C.int(ulWrappedKeyLen))
 	}
 
-	handle, rv := module.GetGlobalModule().UnwrapKey(
-		module.SessionHandle(hSession),
+	handle, rv := xkms.GetGlobalPKCS11Module().UnwrapKey(
+		xkms.PKCS11SessionHandle(hSession),
 		mech,
-		module.ObjectHandle(hUnwrappingKey),
+		xkms.PKCS11ObjectHandle(hUnwrappingKey),
 		wrappedKey,
 		template,
 	)
-	if rv != module.CKR_OK {
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1430,13 +1430,13 @@ func C_DeriveKey(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_PTR, hB
 	mech := convertCMechanismToGo(pMechanism)
 	template := convertCTemplateToGo(pTemplate, ulAttributeCount)
 
-	handle, rv := module.GetGlobalModule().DeriveKey(
-		module.SessionHandle(hSession),
+	handle, rv := xkms.GetGlobalPKCS11Module().DeriveKey(
+		xkms.PKCS11SessionHandle(hSession),
 		mech,
-		module.ObjectHandle(hBaseKey),
+		xkms.PKCS11ObjectHandle(hBaseKey),
 		template,
 	)
-	if rv != module.CKR_OK {
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1460,8 +1460,8 @@ func C_GenerateRandom(hSession C.CK_SESSION_HANDLE, pRandomData C.CK_BYTE_PTR, u
 		return C.CKR_ARGUMENTS_BAD
 	}
 
-	data, rv := module.GetGlobalModule().GenerateRandom(module.SessionHandle(hSession), uint32(ulRandomLen))
-	if rv != module.CKR_OK {
+	data, rv := xkms.GetGlobalPKCS11Module().GenerateRandom(xkms.PKCS11SessionHandle(hSession), uint32(ulRandomLen))
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1513,14 +1513,14 @@ func C_LoginUser(hSession C.CK_SESSION_HANDLE, userType C.CK_USER_TYPE, pPin C.C
 	if pUsername != nil && ulUsernameLen > 0 {
 		username = C.GoStringN((*C.char)(unsafe.Pointer(pUsername)), C.int(ulUsernameLen))
 	}
-	rv := module.GetGlobalModule().LoginUser(module.SessionHandle(hSession), module.UserType(userType), pin, username)
+	rv := xkms.GetGlobalPKCS11Module().LoginUser(xkms.PKCS11SessionHandle(hSession), xkms.PKCS11UserType(userType), pin, username)
 	return C.CK_RV(rv)
 }
 
 //export C_SessionCancel
 func C_SessionCancel(hSession C.CK_SESSION_HANDLE, flags C.CK_FLAGS) C.CK_RV {
 	// PKCS#11 v3.0 session operation cancellation
-	rv := module.GetGlobalModule().SessionCancel(module.SessionHandle(hSession), uint64(flags))
+	rv := xkms.GetGlobalPKCS11Module().SessionCancel(xkms.PKCS11SessionHandle(hSession), uint64(flags))
 	return C.CK_RV(rv)
 }
 
@@ -1534,7 +1534,7 @@ func C_MessageEncryptInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANIS
 		return C.CKR_ARGUMENTS_BAD
 	}
 	mech := convertCMechanismToGo(pMechanism)
-	rv := module.GetGlobalModule().MessageEncryptInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().MessageEncryptInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -1554,8 +1554,8 @@ func C_EncryptMessage(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, ul
 		plaintext = C.GoBytes(unsafe.Pointer(pPlaintext), C.int(ulPlaintextLen))
 	}
 
-	ciphertext, rv := module.GetGlobalModule().EncryptMessage(module.SessionHandle(hSession), aad, plaintext)
-	if rv != module.CKR_OK {
+	ciphertext, rv := xkms.GetGlobalPKCS11Module().EncryptMessage(xkms.PKCS11SessionHandle(hSession), aad, plaintext)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1581,7 +1581,7 @@ func C_EncryptMessageBegin(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PT
 		aad = C.GoBytes(unsafe.Pointer(pAssociatedData), C.int(ulAssociatedDataLen))
 	}
 
-	rv := module.GetGlobalModule().EncryptMessageBegin(module.SessionHandle(hSession), aad)
+	rv := xkms.GetGlobalPKCS11Module().EncryptMessageBegin(xkms.PKCS11SessionHandle(hSession), aad)
 	return C.CK_RV(rv)
 }
 
@@ -1599,8 +1599,8 @@ func C_EncryptMessageNext(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR
 	// Check if this is the final part (CKF_END_OF_MESSAGE = 0x00000001)
 	final := (flags & 0x00000001) != 0
 
-	ciphertext, rv := module.GetGlobalModule().EncryptMessageNext(module.SessionHandle(hSession), plaintext, final)
-	if rv != module.CKR_OK {
+	ciphertext, rv := xkms.GetGlobalPKCS11Module().EncryptMessageNext(xkms.PKCS11SessionHandle(hSession), plaintext, final)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1623,7 +1623,7 @@ func C_EncryptMessageNext(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR
 
 //export C_MessageEncryptFinal
 func C_MessageEncryptFinal(hSession C.CK_SESSION_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().MessageEncryptFinal(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().MessageEncryptFinal(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -1637,7 +1637,7 @@ func C_MessageDecryptInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANIS
 		return C.CKR_ARGUMENTS_BAD
 	}
 	mech := convertCMechanismToGo(pMechanism)
-	rv := module.GetGlobalModule().MessageDecryptInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().MessageDecryptInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -1657,8 +1657,8 @@ func C_DecryptMessage(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, ul
 		ciphertext = C.GoBytes(unsafe.Pointer(pCiphertext), C.int(ulCiphertextLen))
 	}
 
-	plaintext, rv := module.GetGlobalModule().DecryptMessage(module.SessionHandle(hSession), aad, ciphertext)
-	if rv != module.CKR_OK {
+	plaintext, rv := xkms.GetGlobalPKCS11Module().DecryptMessage(xkms.PKCS11SessionHandle(hSession), aad, ciphertext)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1686,7 +1686,7 @@ func C_DecryptMessageBegin(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PT
 		aad = C.GoBytes(unsafe.Pointer(pAssociatedData), C.int(ulAssociatedDataLen))
 	}
 
-	rv := module.GetGlobalModule().DecryptMessageBegin(module.SessionHandle(hSession), aad)
+	rv := xkms.GetGlobalPKCS11Module().DecryptMessageBegin(xkms.PKCS11SessionHandle(hSession), aad)
 	return C.CK_RV(rv)
 }
 
@@ -1704,8 +1704,8 @@ func C_DecryptMessageNext(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR
 	// Check if this is the final part (CKF_END_OF_MESSAGE = 0x00000001)
 	final := (flags & 0x00000001) != 0
 
-	plaintext, rv := module.GetGlobalModule().DecryptMessageNext(module.SessionHandle(hSession), ciphertext, final)
-	if rv != module.CKR_OK {
+	plaintext, rv := xkms.GetGlobalPKCS11Module().DecryptMessageNext(xkms.PKCS11SessionHandle(hSession), ciphertext, final)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1728,7 +1728,7 @@ func C_DecryptMessageNext(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR
 
 //export C_MessageDecryptFinal
 func C_MessageDecryptFinal(hSession C.CK_SESSION_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().MessageDecryptFinal(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().MessageDecryptFinal(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -1742,7 +1742,7 @@ func C_MessageSignInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM_P
 		return C.CKR_ARGUMENTS_BAD
 	}
 	mech := convertCMechanismToGo(pMechanism)
-	rv := module.GetGlobalModule().MessageSignInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().MessageSignInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -1757,8 +1757,8 @@ func C_SignMessage(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, ulPar
 		data = C.GoBytes(unsafe.Pointer(pData), C.int(ulDataLen))
 	}
 
-	signature, rv := module.GetGlobalModule().SignMessage(module.SessionHandle(hSession), data)
-	if rv != module.CKR_OK {
+	signature, rv := xkms.GetGlobalPKCS11Module().SignMessage(xkms.PKCS11SessionHandle(hSession), data)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1781,7 +1781,7 @@ func C_SignMessage(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, ulPar
 
 //export C_SignMessageBegin
 func C_SignMessageBegin(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, ulParameterLen C.CK_ULONG) C.CK_RV {
-	rv := module.GetGlobalModule().SignMessageBegin(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().SignMessageBegin(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -1795,14 +1795,14 @@ func C_SignMessageNext(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, u
 	// For SignMessageNext, signature is only returned on final call
 	if pulSignatureLen == nil {
 		// Non-final call - just update with data
-		signature, rv := module.GetGlobalModule().SignMessageNext(module.SessionHandle(hSession), data, false)
+		signature, rv := xkms.GetGlobalPKCS11Module().SignMessageNext(xkms.PKCS11SessionHandle(hSession), data, false)
 		_ = signature
 		return C.CK_RV(rv)
 	}
 
 	// Final call - get signature
-	signature, rv := module.GetGlobalModule().SignMessageNext(module.SessionHandle(hSession), data, true)
-	if rv != module.CKR_OK {
+	signature, rv := xkms.GetGlobalPKCS11Module().SignMessageNext(xkms.PKCS11SessionHandle(hSession), data, true)
+	if rv != xkms.PKCS11CKROK {
 		return C.CK_RV(rv)
 	}
 
@@ -1825,7 +1825,7 @@ func C_SignMessageNext(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, u
 
 //export C_MessageSignFinal
 func C_MessageSignFinal(hSession C.CK_SESSION_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().MessageSignFinal(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().MessageSignFinal(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -1839,7 +1839,7 @@ func C_MessageVerifyInit(hSession C.CK_SESSION_HANDLE, pMechanism C.CK_MECHANISM
 		return C.CKR_ARGUMENTS_BAD
 	}
 	mech := convertCMechanismToGo(pMechanism)
-	rv := module.GetGlobalModule().MessageVerifyInit(module.SessionHandle(hSession), mech, module.ObjectHandle(hKey))
+	rv := xkms.GetGlobalPKCS11Module().MessageVerifyInit(xkms.PKCS11SessionHandle(hSession), mech, xkms.PKCS11ObjectHandle(hKey))
 	return C.CK_RV(rv)
 }
 
@@ -1855,13 +1855,13 @@ func C_VerifyMessage(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, ulP
 		signature = C.GoBytes(unsafe.Pointer(pSignature), C.int(ulSignatureLen))
 	}
 
-	rv := module.GetGlobalModule().VerifyMessage(module.SessionHandle(hSession), data, signature)
+	rv := xkms.GetGlobalPKCS11Module().VerifyMessage(xkms.PKCS11SessionHandle(hSession), data, signature)
 	return C.CK_RV(rv)
 }
 
 //export C_VerifyMessageBegin
 func C_VerifyMessageBegin(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR, ulParameterLen C.CK_ULONG) C.CK_RV {
-	rv := module.GetGlobalModule().VerifyMessageBegin(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().VerifyMessageBegin(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -1877,13 +1877,13 @@ func C_VerifyMessageNext(hSession C.CK_SESSION_HANDLE, pParameter C.CK_VOID_PTR,
 		signature = C.GoBytes(unsafe.Pointer(pSignature), C.int(ulSignatureLen))
 	}
 
-	rv := module.GetGlobalModule().VerifyMessageNext(module.SessionHandle(hSession), data, signature)
+	rv := xkms.GetGlobalPKCS11Module().VerifyMessageNext(xkms.PKCS11SessionHandle(hSession), data, signature)
 	return C.CK_RV(rv)
 }
 
 //export C_MessageVerifyFinal
 func C_MessageVerifyFinal(hSession C.CK_SESSION_HANDLE) C.CK_RV {
-	rv := module.GetGlobalModule().MessageVerifyFinal(module.SessionHandle(hSession))
+	rv := xkms.GetGlobalPKCS11Module().MessageVerifyFinal(xkms.PKCS11SessionHandle(hSession))
 	return C.CK_RV(rv)
 }
 
@@ -1892,18 +1892,18 @@ func C_MessageVerifyFinal(hSession C.CK_SESSION_HANDLE) C.CK_RV {
 // ============================================================================
 
 // convertCTemplateToGo converts a C attribute template to Go attributes.
-func convertCTemplateToGo(pTemplate C.CK_ATTRIBUTE_PTR, ulCount C.CK_ULONG) []module.Attribute {
+func convertCTemplateToGo(pTemplate C.CK_ATTRIBUTE_PTR, ulCount C.CK_ULONG) []xkms.PKCS11Attribute {
 	if pTemplate == nil || ulCount == 0 {
 		return nil
 	}
 
-	attrs := make([]module.Attribute, ulCount)
+	attrs := make([]xkms.PKCS11Attribute, ulCount)
 	templateArray := unsafe.Slice(pTemplate, ulCount)
 
 	for i := C.CK_ULONG(0); i < ulCount; i++ {
 		cAttr := templateArray[i]
-		attrs[i] = module.Attribute{
-			Type: module.AttributeType(cAttr._type),
+		attrs[i] = xkms.PKCS11Attribute{
+			Type: xkms.PKCS11AttributeType(cAttr._type),
 		}
 
 		if cAttr.pValue != nil && cAttr.ulValueLen > 0 {
@@ -1915,7 +1915,7 @@ func convertCTemplateToGo(pTemplate C.CK_ATTRIBUTE_PTR, ulCount C.CK_ULONG) []mo
 }
 
 // copyGoTemplateToCTemplate copies Go attributes back to a C template.
-func copyGoTemplateToCTemplate(attrs []module.Attribute, pTemplate C.CK_ATTRIBUTE_PTR, ulCount C.CK_ULONG) {
+func copyGoTemplateToCTemplate(attrs []xkms.PKCS11Attribute, pTemplate C.CK_ATTRIBUTE_PTR, ulCount C.CK_ULONG) {
 	if pTemplate == nil || ulCount == 0 || len(attrs) == 0 {
 		return
 	}
@@ -1942,26 +1942,26 @@ func copyGoTemplateToCTemplate(attrs []module.Attribute, pTemplate C.CK_ATTRIBUT
 }
 
 // convertCMechanismToGo converts a C mechanism to a Go mechanism.
-func convertCMechanismToGo(pMechanism C.CK_MECHANISM_PTR) *module.Mechanism {
+func convertCMechanismToGo(pMechanism C.CK_MECHANISM_PTR) *xkms.PKCS11Mechanism {
 	if pMechanism == nil {
 		return nil
 	}
 
-	mech := &module.Mechanism{
-		Type: module.MechanismType(pMechanism.mechanism),
+	mech := &xkms.PKCS11Mechanism{
+		Type: xkms.PKCS11MechanismType(pMechanism.mechanism),
 	}
 
 	if pMechanism.pParameter != nil && pMechanism.ulParameterLen > 0 {
 		mech.Parameter = C.GoBytes(unsafe.Pointer(pMechanism.pParameter), C.int(pMechanism.ulParameterLen))
 
 		// Parse mechanism-specific parameters
-		switch module.MechanismType(pMechanism.mechanism) {
-		case module.CKM_ECDH1_DERIVE, module.CKM_ECDH1_COFACTOR_DERIVE:
+		switch xkms.PKCS11MechanismType(pMechanism.mechanism) {
+		case xkms.PKCS11CKMECDH1DeriveMechanism, xkms.PKCS11CKMECDH1CofactorDeriveMechanism:
 			// Parse CK_ECDH1_DERIVE_PARAMS
 			if pMechanism.ulParameterLen >= C.CK_ULONG(unsafe.Sizeof(C.CK_ECDH1_DERIVE_PARAMS{})) {
 				cParams := (*C.CK_ECDH1_DERIVE_PARAMS)(pMechanism.pParameter)
-				ecdhParams := &module.ECDHParams{
-					KDF: module.KDFType(cParams.kdf),
+				ecdhParams := &xkms.PKCS11ECDHParams{
+					KDF: xkms.PKCS11KDFType(cParams.kdf),
 				}
 				if cParams.pSharedData != nil && cParams.ulSharedDataLen > 0 {
 					ecdhParams.SharedData = C.GoBytes(unsafe.Pointer(cParams.pSharedData), C.int(cParams.ulSharedDataLen))

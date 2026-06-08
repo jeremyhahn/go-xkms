@@ -16,9 +16,9 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/manager"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,16 +34,16 @@ type pkcs11MockManager struct {
 	closeErr             error
 	registerFn           func(libraryPath, displayName string) (string, error)
 	unregisterFn         func(moduleID string) error
-	refreshSlotsFn       func(moduleID string) ([]manager.SlotInfo, error)
-	getModuleFn          func(moduleID string) (*manager.ModuleInfo, error)
-	listModulesResult    []manager.ModuleInfo
-	listTokensResult     []manager.TokenInfo
+	refreshSlotsFn       func(moduleID string) ([]xkms.PKCS11SlotInfo, error)
+	getModuleFn          func(moduleID string) (*xkms.PKCS11ModuleInfo, error)
+	listModulesResult    []xkms.PKCS11ModuleInfo
+	listTokensResult     []xkms.PKCS11TokenInfo
 	initializeTokenFn    func(moduleID string, slotID uint, label, soPin, userPin string) error
 	testLoginFn          func(moduleID string, slotID uint, userPin string) error
-	connectFn            func(moduleID string, slotID uint, userPin, soPin string) (manager.Backend, error)
+	connectFn            func(moduleID string, slotID uint, userPin, soPin string) (xkms.PKCS11ManagerBackend, error)
 	disconnectFn         func(moduleID string, slotID uint) error
-	getConnectionFn      func(moduleID string, slotID uint) (*manager.Connection, error)
-	listConnectionResult []*manager.Connection
+	getConnectionFn      func(moduleID string, slotID uint) (*xkms.PKCS11Connection, error)
+	listConnectionResult []*xkms.PKCS11Connection
 }
 
 func (m *pkcs11MockManager) IsAvailable() bool { return m.available }
@@ -60,22 +60,22 @@ func (m *pkcs11MockManager) UnregisterModule(moduleID string) error {
 	}
 	return nil
 }
-func (m *pkcs11MockManager) RefreshSlots(moduleID string) ([]manager.SlotInfo, error) {
+func (m *pkcs11MockManager) RefreshSlots(moduleID string) ([]xkms.PKCS11SlotInfo, error) {
 	if m.refreshSlotsFn != nil {
 		return m.refreshSlotsFn(moduleID)
 	}
 	return nil, errors.New("not configured")
 }
-func (m *pkcs11MockManager) GetModule(moduleID string) (*manager.ModuleInfo, error) {
+func (m *pkcs11MockManager) GetModule(moduleID string) (*xkms.PKCS11ModuleInfo, error) {
 	if m.getModuleFn != nil {
 		return m.getModuleFn(moduleID)
 	}
 	return nil, errors.New("module not found")
 }
-func (m *pkcs11MockManager) ListModules() []manager.ModuleInfo {
+func (m *pkcs11MockManager) ListModules() []xkms.PKCS11ModuleInfo {
 	return m.listModulesResult
 }
-func (m *pkcs11MockManager) ListTokens() []manager.TokenInfo {
+func (m *pkcs11MockManager) ListTokens() []xkms.PKCS11TokenInfo {
 	return m.listTokensResult
 }
 func (m *pkcs11MockManager) InitializeToken(moduleID string, slotID uint, label, soPin, userPin string) error {
@@ -90,7 +90,7 @@ func (m *pkcs11MockManager) TestLogin(moduleID string, slotID uint, userPin stri
 	}
 	return nil
 }
-func (m *pkcs11MockManager) Connect(moduleID string, slotID uint, userPin, soPin string) (manager.Backend, error) {
+func (m *pkcs11MockManager) Connect(moduleID string, slotID uint, userPin, soPin string) (xkms.PKCS11ManagerBackend, error) {
 	if m.connectFn != nil {
 		return m.connectFn(moduleID, slotID, userPin, soPin)
 	}
@@ -102,13 +102,13 @@ func (m *pkcs11MockManager) Disconnect(moduleID string, slotID uint) error {
 	}
 	return nil
 }
-func (m *pkcs11MockManager) GetConnection(moduleID string, slotID uint) (*manager.Connection, error) {
+func (m *pkcs11MockManager) GetConnection(moduleID string, slotID uint) (*xkms.PKCS11Connection, error) {
 	if m.getConnectionFn != nil {
 		return m.getConnectionFn(moduleID, slotID)
 	}
 	return nil, errors.New("no connection")
 }
-func (m *pkcs11MockManager) ListConnections() []*manager.Connection {
+func (m *pkcs11MockManager) ListConnections() []*xkms.PKCS11Connection {
 	return m.listConnectionResult
 }
 
@@ -197,13 +197,13 @@ func TestPKCS11Service_Coverage_IsSoftHSM2Module(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPKCS11Service_Coverage_ConvertModule(t *testing.T) {
-	mod := &manager.ModuleInfo{
+	mod := &xkms.PKCS11ModuleInfo{
 		ID:          "mod-1",
 		DisplayName: "Test Module",
 		LibraryPath: "/usr/lib/test.so",
-		State:       manager.ModuleStateLoaded,
+		State:       xkms.PKCS11ModuleStateLoaded,
 		ErrorMsg:    "some error",
-		Slots: []manager.SlotInfo{
+		Slots: []xkms.PKCS11SlotInfo{
 			{
 				SlotID:          0,
 				Label:           "Token A",
@@ -237,7 +237,7 @@ func TestPKCS11Service_Coverage_ConvertModule(t *testing.T) {
 }
 
 func TestPKCS11Service_Coverage_ConvertSlots_Multiple(t *testing.T) {
-	slots := []manager.SlotInfo{
+	slots := []xkms.PKCS11SlotInfo{
 		{SlotID: 0, Label: "A", TokenPresent: true},
 		{SlotID: 1, Label: "B", TokenPresent: false},
 		{SlotID: 2, Label: "C", Initialized: true},
@@ -334,8 +334,8 @@ func TestPKCS11Service_Coverage_UnregisterModule_Error(t *testing.T) {
 
 func TestPKCS11Service_Coverage_RefreshSlots_Success(t *testing.T) {
 	mock := &pkcs11MockManager{
-		refreshSlotsFn: func(_ string) ([]manager.SlotInfo, error) {
-			return []manager.SlotInfo{
+		refreshSlotsFn: func(_ string) ([]xkms.PKCS11SlotInfo, error) {
+			return []xkms.PKCS11SlotInfo{
 				{SlotID: 0, Label: "Slot A"},
 				{SlotID: 1, Label: "Slot B"},
 			}, nil
@@ -351,7 +351,7 @@ func TestPKCS11Service_Coverage_RefreshSlots_Success(t *testing.T) {
 func TestPKCS11Service_Coverage_RefreshSlots_Error(t *testing.T) {
 	refreshErr := errors.New("refresh failed")
 	mock := &pkcs11MockManager{
-		refreshSlotsFn: func(_ string) ([]manager.SlotInfo, error) {
+		refreshSlotsFn: func(_ string) ([]xkms.PKCS11SlotInfo, error) {
 			return nil, refreshErr
 		},
 	}
@@ -366,11 +366,11 @@ func TestPKCS11Service_Coverage_RefreshSlots_Error(t *testing.T) {
 
 func TestPKCS11Service_Coverage_GetModule_Success(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID:          "mod-1",
 				DisplayName: "Test",
-				State:       manager.ModuleStateLoaded,
+				State:       xkms.PKCS11ModuleStateLoaded,
 			}, nil
 		},
 	}
@@ -384,7 +384,7 @@ func TestPKCS11Service_Coverage_GetModule_Success(t *testing.T) {
 func TestPKCS11Service_Coverage_GetModule_Error(t *testing.T) {
 	getErr := errors.New("not found")
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
 			return nil, getErr
 		},
 	}
@@ -399,18 +399,18 @@ func TestPKCS11Service_Coverage_GetModule_Error(t *testing.T) {
 
 func TestPKCS11Service_Coverage_ListModules_WithData(t *testing.T) {
 	mock := &pkcs11MockManager{
-		listModulesResult: []manager.ModuleInfo{
+		listModulesResult: []xkms.PKCS11ModuleInfo{
 			{
 				ID:          "mod-1",
 				DisplayName: "Module One",
 				LibraryPath: "/usr/lib/one.so",
-				State:       manager.ModuleStateLoaded,
+				State:       xkms.PKCS11ModuleStateLoaded,
 			},
 			{
 				ID:          "mod-2",
 				DisplayName: "Module Two",
 				LibraryPath: "/usr/lib/two.so",
-				State:       manager.ModuleStateError,
+				State:       xkms.PKCS11ModuleStateError,
 				ErrorMsg:    "load failed",
 			},
 		},
@@ -431,7 +431,7 @@ func TestPKCS11Service_Coverage_ListModules_WithData(t *testing.T) {
 
 func TestPKCS11Service_Coverage_ListTokens_WithData(t *testing.T) {
 	mock := &pkcs11MockManager{
-		listTokensResult: []manager.TokenInfo{
+		listTokensResult: []xkms.PKCS11TokenInfo{
 			{
 				ModuleID:     "mod-1",
 				ModuleName:   "Module One",
@@ -473,7 +473,7 @@ func TestPKCS11Service_Coverage_ListTokens_WithData(t *testing.T) {
 func TestPKCS11Service_Coverage_InitializeToken_GetModuleError(t *testing.T) {
 	modErr := errors.New("module not found")
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
 			return nil, modErr
 		},
 	}
@@ -485,8 +485,8 @@ func TestPKCS11Service_Coverage_InitializeToken_GetModuleError(t *testing.T) {
 
 func TestPKCS11Service_Coverage_InitializeToken_NoSlots(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{ID: "mod-1", Slots: nil}, nil
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{ID: "mod-1", Slots: nil}, nil
 		},
 	}
 	svc := newPKCS11ServiceWithMock(mock)
@@ -496,10 +496,10 @@ func TestPKCS11Service_Coverage_InitializeToken_NoSlots(t *testing.T) {
 
 func TestPKCS11Service_Coverage_InitializeToken_SlotNotFound(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 5, Label: "Other Slot"},
 				},
 			}, nil
@@ -514,10 +514,10 @@ func TestPKCS11Service_Coverage_InitializeToken_SlotNotFound(t *testing.T) {
 func TestPKCS11Service_Coverage_InitializeToken_ManagerError(t *testing.T) {
 	initErr := errors.New("init failed")
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, Label: "Slot 0", TokenPresent: true},
 				},
 			}, nil
@@ -537,10 +537,10 @@ func TestPKCS11Service_Coverage_InitializeToken_Success(t *testing.T) {
 	var capturedSlotID uint
 	var capturedLabel string
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, Label: "Slot 0", TokenPresent: true},
 				},
 			}, nil
@@ -572,10 +572,10 @@ func TestPKCS11Service_Coverage_GetModuleSlots_NilManager(t *testing.T) {
 
 func TestPKCS11Service_Coverage_GetModuleSlots_Success(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, Label: "Slot 0"},
 					{SlotID: 1, Label: "Slot 1"},
 				},
@@ -593,7 +593,7 @@ func TestPKCS11Service_Coverage_GetModuleSlots_Success(t *testing.T) {
 func TestPKCS11Service_Coverage_GetModuleSlots_Error(t *testing.T) {
 	modErr := errors.New("not found")
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
 			return nil, modErr
 		},
 	}
@@ -609,7 +609,7 @@ func TestPKCS11Service_Coverage_GetModuleSlots_Error(t *testing.T) {
 func TestPKCS11Service_Coverage_Connect_GetModuleError(t *testing.T) {
 	modErr := errors.New("module not found")
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
 			return nil, modErr
 		},
 	}
@@ -621,8 +621,8 @@ func TestPKCS11Service_Coverage_Connect_GetModuleError(t *testing.T) {
 
 func TestPKCS11Service_Coverage_Connect_NoSlots(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{ID: "mod-1", Slots: nil}, nil
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{ID: "mod-1", Slots: nil}, nil
 		},
 	}
 	svc := newPKCS11ServiceWithMock(mock)
@@ -632,10 +632,10 @@ func TestPKCS11Service_Coverage_Connect_NoSlots(t *testing.T) {
 
 func TestPKCS11Service_Coverage_Connect_SlotNotFound_WithAvailable(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true},
 					{SlotID: 1, TokenPresent: false, Initialized: false},
 				},
@@ -651,10 +651,10 @@ func TestPKCS11Service_Coverage_Connect_SlotNotFound_WithAvailable(t *testing.T)
 
 func TestPKCS11Service_Coverage_Connect_SlotNotFound_NoneInitialized(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: false, Initialized: false},
 				},
 			}, nil
@@ -669,10 +669,10 @@ func TestPKCS11Service_Coverage_Connect_SlotNotFound_NoneInitialized(t *testing.
 
 func TestPKCS11Service_Coverage_Connect_NoTokenPresent(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: false, Initialized: false},
 				},
 			}, nil
@@ -686,10 +686,10 @@ func TestPKCS11Service_Coverage_Connect_NoTokenPresent(t *testing.T) {
 
 func TestPKCS11Service_Coverage_Connect_NotInitialized(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: false},
 				},
 			}, nil
@@ -704,15 +704,15 @@ func TestPKCS11Service_Coverage_Connect_NotInitialized(t *testing.T) {
 func TestPKCS11Service_Coverage_Connect_ManagerConnectError(t *testing.T) {
 	connErr := errors.New("connection failed")
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true},
 				},
 			}, nil
 		},
-		connectFn: func(_ string, _ uint, _, _ string) (manager.Backend, error) {
+		connectFn: func(_ string, _ uint, _, _ string) (xkms.PKCS11ManagerBackend, error) {
 			return nil, connErr
 		},
 	}
@@ -724,15 +724,15 @@ func TestPKCS11Service_Coverage_Connect_ManagerConnectError(t *testing.T) {
 
 func TestPKCS11Service_Coverage_Connect_Success_WithRegistry(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true, Label: "MyToken"},
 				},
 			}, nil
 		},
-		connectFn: func(_ string, _ uint, _, _ string) (manager.Backend, error) {
+		connectFn: func(_ string, _ uint, _, _ string) (xkms.PKCS11ManagerBackend, error) {
 			return nil, nil
 		},
 	}
@@ -759,15 +759,15 @@ func TestPKCS11Service_Coverage_Connect_Success_WithRegistry(t *testing.T) {
 
 func TestPKCS11Service_Coverage_Connect_Success_NoRegistry(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true},
 				},
 			}, nil
 		},
-		connectFn: func(_ string, _ uint, _, _ string) (manager.Backend, error) {
+		connectFn: func(_ string, _ uint, _, _ string) (xkms.PKCS11ManagerBackend, error) {
 			return nil, nil
 		},
 	}
@@ -830,8 +830,8 @@ func TestPKCS11Service_Coverage_Disconnect_WithRegistry(t *testing.T) {
 
 func TestPKCS11Service_Coverage_GetConnection_Success(t *testing.T) {
 	mock := &pkcs11MockManager{
-		getConnectionFn: func(_ string, _ uint) (*manager.Connection, error) {
-			return &manager.Connection{
+		getConnectionFn: func(_ string, _ uint) (*xkms.PKCS11Connection, error) {
+			return &xkms.PKCS11Connection{
 				ModuleID:   "mod-1",
 				SlotID:     0,
 				TokenLabel: "MyToken",
@@ -850,7 +850,7 @@ func TestPKCS11Service_Coverage_GetConnection_Success(t *testing.T) {
 func TestPKCS11Service_Coverage_GetConnection_Error(t *testing.T) {
 	connErr := errors.New("no connection")
 	mock := &pkcs11MockManager{
-		getConnectionFn: func(_ string, _ uint) (*manager.Connection, error) {
+		getConnectionFn: func(_ string, _ uint) (*xkms.PKCS11Connection, error) {
 			return nil, connErr
 		},
 	}
@@ -865,7 +865,7 @@ func TestPKCS11Service_Coverage_GetConnection_Error(t *testing.T) {
 
 func TestPKCS11Service_Coverage_ListConnections_WithData(t *testing.T) {
 	mock := &pkcs11MockManager{
-		listConnectionResult: []*manager.Connection{
+		listConnectionResult: []*xkms.PKCS11Connection{
 			{ModuleID: "mod-1", SlotID: 0, TokenLabel: "Token A"},
 			{ModuleID: "mod-2", SlotID: 1, TokenLabel: "Token B"},
 		},
@@ -921,10 +921,10 @@ func TestPKCS11Service_Coverage_TestConnection_LoginFails(t *testing.T) {
 		registerFn: func(_, _ string) (string, error) {
 			return "test-mod", nil
 		},
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "test-mod",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true},
 				},
 			}, nil
@@ -950,10 +950,10 @@ func TestPKCS11Service_Coverage_TestConnection_Success(t *testing.T) {
 		registerFn: func(_, _ string) (string, error) {
 			return "test-mod", nil
 		},
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "test-mod",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true},
 				},
 			}, nil
@@ -1012,7 +1012,7 @@ func TestPKCS11Service_Coverage_ProbeSlots_GetModuleFails(t *testing.T) {
 		registerFn: func(_, _ string) (string, error) {
 			return "probe-mod", nil
 		},
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
 			return nil, modErr
 		},
 		unregisterFn: func(_ string) error {
@@ -1033,10 +1033,10 @@ func TestPKCS11Service_Coverage_ProbeSlots_Success(t *testing.T) {
 		registerFn: func(_, _ string) (string, error) {
 			return "probe-mod", nil
 		},
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "probe-mod",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, Label: "Slot 0", TokenPresent: true, Initialized: true},
 					{SlotID: 1, Label: "Slot 1", TokenPresent: false, Initialized: false},
 				},

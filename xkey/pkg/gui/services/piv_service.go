@@ -22,11 +22,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 )

@@ -35,11 +35,12 @@ import (
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1124,11 +1125,10 @@ func setupTestStorage(t *testing.T) storage.Factory {
 		_ = os.RemoveAll(tmpDir)
 	})
 
-	store := local.New()
-	err = store.Configure(map[string]string{"path": tmpDir})
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
-	factory, err := objstore.NewFactory(store)
+	factory, err := objstore.NewFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
 	return factory

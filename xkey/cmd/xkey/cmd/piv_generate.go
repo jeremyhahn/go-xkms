@@ -26,8 +26,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 )
@@ -143,7 +142,7 @@ func (t PIVTouchPolicy) IsValid() bool {
 // PIVKeyGenerateConfig holds configuration for PIV key generation.
 type PIVKeyGenerateConfig struct {
 	// Slot is the PIV slot to generate the key in.
-	Slot pivcert.PIVSlot
+	Slot xkms.PIVSlot
 
 	// Algorithm is the key algorithm to use.
 	Algorithm PIVAlgorithm
@@ -160,7 +159,7 @@ type PIVKeyGenerateConfig struct {
 
 // Validate checks if the key generation configuration is valid.
 func (c *PIVKeyGenerateConfig) Validate() error {
-	if err := pivcert.ValidateSlot(c.Slot); err != nil {
+	if err := xkms.ValidatePIVSlot(c.Slot); err != nil {
 		return ErrPIVInvalidSlot
 	}
 	if !c.Algorithm.IsValid() {
@@ -303,7 +302,7 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 
 	// Default subject to slot name.
 	if subjectCN == "" {
-		subjectCN = pivcert.SlotName(slot)
+		subjectCN = xkms.PIVSlotName(slot)
 	}
 
 	logger.Info("generating PIV key",
@@ -338,7 +337,7 @@ func runPivGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Handle output based on format.
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 
 	switch outputFormat {
 	case "public-key":
@@ -395,7 +394,7 @@ func ensurePIVInitialized(pivCfg *PIVConfig, logger *slog.Logger) error {
 
 	// Initialize PIV manager (idempotent via sync.Once internally).
 	if initErr := xkms.InitializePIV(&xkms.PIVManagerConfig{
-		Stores: map[string]pivcert.PIVCertificateStorage{
+		Stores: map[string]xkms.PIVCertificateStorage{
 			string(pivCfg.Backend): storage,
 		},
 	}); initErr != nil {
@@ -420,9 +419,9 @@ func ensurePIVInitialized(pivCfg *PIVConfig, logger *slog.Logger) error {
 }
 
 // parsePIVSlot parses a slot string into a PIVSlot.
-func parsePIVSlot(slot string) (pivcert.PIVSlot, error) {
-	s := pivcert.PIVSlot(strings.ToLower(slot))
-	if err := pivcert.ValidateSlot(s); err != nil {
+func parsePIVSlot(slot string) (xkms.PIVSlot, error) {
+	s := xkms.PIVSlot(strings.ToLower(slot))
+	if err := xkms.ValidatePIVSlot(s); err != nil {
 		return "", ErrPIVInvalidSlot
 	}
 	return s, nil

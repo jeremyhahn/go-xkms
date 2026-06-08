@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,7 +26,6 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/stretchr/testify/assert"
@@ -696,7 +696,7 @@ func TestP3B_PINService_ResetLockout_Success(t *testing.T) {
 func TestP3B_BarrierService_Initialize_EmptyPassword_WithTPM(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 	svc.SetContext(context.Background())
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: true}
 	})
 
@@ -1162,7 +1162,7 @@ func TestP3B_SealService_ListBlobs_CategoryClassification(t *testing.T) {
 		ID:         "sys-001",
 		Label:      "user_pin",
 		SizeBytes:  32,
-		SealedData: &types.SealedData{Backend: types.BackendTypeTPM2},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeTPM2},
 		CreatedAt:  time.Now(),
 	}
 	data, err := json.Marshal(systemBlob)
@@ -1177,7 +1177,7 @@ func TestP3B_SealService_ListBlobs_CategoryClassification(t *testing.T) {
 		ID:         "usr-001",
 		Label:      "my-secret-note",
 		SizeBytes:  64,
-		SealedData: &types.SealedData{Backend: types.BackendTypeTPM2},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeTPM2},
 		CreatedAt:  time.Now(),
 	}
 	data, err = json.Marshal(userBlob)
@@ -1310,7 +1310,7 @@ func TestP3B_HandlePolicyPassword_WithPassword(t *testing.T) {
 // TestP3B_HandlePolicyCustomPCR_NoPCRs tests handlePolicyCustomPCR
 // with no PCRs (returns nil, no-op).
 func TestP3B_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{}, opts)
 	assert.NoError(t, err)
 	assert.Nil(t, opts.TPMPolicy)
@@ -1319,7 +1319,7 @@ func TestP3B_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
 // TestP3B_HandlePolicyCustomPCR_WithPCRs tests handlePolicyCustomPCR
 // with specific PCRs and bank.
 func TestP3B_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{
 		PCRs:    []int{0, 7, 9},
 		PCRBank: "sha256",
@@ -1331,7 +1331,7 @@ func TestP3B_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
 // TestP3B_HandlePolicyCustomPCR_DefaultBank tests handlePolicyCustomPCR
 // with an empty bank (defaults to sha256).
 func TestP3B_HandlePolicyCustomPCR_DefaultBank(t *testing.T) {
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{
 		PCRs:    []int{0},
 		PCRBank: "",
@@ -1343,7 +1343,7 @@ func TestP3B_HandlePolicyCustomPCR_DefaultBank(t *testing.T) {
 // TestP3B_HandlePolicyCustomPCR_UnknownBank tests handlePolicyCustomPCR
 // with an unknown bank name (should default to SHA256 alg).
 func TestP3B_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, &SealRequest{
 		PCRs:    []int{0},
 		PCRBank: "unknown-bank",
@@ -1356,6 +1356,6 @@ func TestP3B_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
 // handlePolicyPlatformPolicy when policyService is nil.
 func TestP3B_HandlePolicyPlatformPolicy_NilPolicyService(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, &types.SealOptions{})
+	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, &xkms.SealOptions{})
 	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
 }

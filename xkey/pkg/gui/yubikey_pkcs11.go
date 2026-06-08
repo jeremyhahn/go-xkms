@@ -16,14 +16,13 @@
 package gui
 
 import (
-	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/yubikey"
 )
 
 func init() {
-	wrapYubiKeyProvider = func(inner types.KeyProvider) types.KeyProvider {
-		p11b, ok := inner.(*pkcs11backend.Backend)
+	wrapYubiKeyProvider = func(inner xkms.KeyProvider) xkms.KeyProvider {
+		p11b, ok := inner.(*xkms.PKCS11Backend)
 		if !ok {
 			return nil
 		}

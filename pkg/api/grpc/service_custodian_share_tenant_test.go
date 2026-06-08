@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,19 +30,211 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// setupCustodianService creates a real custodian service backed by an in-memory store.
-func setupCustodianService(t *testing.T) *custodian.Service {
-	t.Helper()
-	store := custodian.NewMemoryStore()
-	svc, err := custodian.NewService(store)
-	require.NoError(t, err)
-	return svc
+// grpcFakeCustodianClient is an in-memory qrdbtransport.CustodianGroupClient
+// mirroring the embedded go-qrdb node's custodian semantics, used to exercise
+// the gRPC custodian handlers without a real node.
+type grpcFakeCustodianClient struct {
+	groups map[string]*qrdbtransport.CustodianGroupInfo
 }
 
-// setupShareStore creates an in-memory share store.
-func setupShareStore(t *testing.T) sharestore.ShareStore {
+func newGRPCFakeCustodianClient() *grpcFakeCustodianClient {
+	return &grpcFakeCustodianClient{groups: make(map[string]*qrdbtransport.CustodianGroupInfo)}
+}
+
+func (f *grpcFakeCustodianClient) CreateCustodianGroup(_ context.Context, req *qrdbtransport.CreateCustodianGroupRequest) (*qrdbtransport.CreateCustodianGroupResponse, error) {
+	if req.ID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	if req.Name == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupName
+	}
+	if req.Total < 1 {
+		return nil, qrdbsdk.ErrCeremonyInvalidTotal
+	}
+	if req.Threshold < 1 || req.Threshold > req.Total {
+		return nil, qrdbsdk.ErrCeremonyInvalidThreshold
+	}
+	if _, exists := f.groups[req.ID]; exists {
+		return nil, qrdbsdk.ErrCeremonyGroupAlreadyExists
+	}
+	now := time.Now().UTC()
+	g := &qrdbtransport.CustodianGroupInfo{
+		ID: req.ID, TenantID: req.TenantID, Name: req.Name, Purpose: req.Purpose,
+		Threshold: req.Threshold, Total: req.Total,
+		Members: []qrdbtransport.CustodianMemberInfo{}, CreatedAt: now, UpdatedAt: now,
+	}
+	f.groups[req.ID] = g
+	return &qrdbtransport.CreateCustodianGroupResponse{Group: *g}, nil
+}
+
+func (f *grpcFakeCustodianClient) GetCustodianGroup(_ context.Context, groupID string) (*qrdbtransport.GetCustodianGroupResponse, error) {
+	if groupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[groupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	return &qrdbtransport.GetCustodianGroupResponse{Group: *g}, nil
+}
+
+func (f *grpcFakeCustodianClient) ListCustodianGroups(_ context.Context) (*qrdbtransport.ListCustodianGroupsResponse, error) {
+	groups := make([]qrdbtransport.CustodianGroupInfo, 0, len(f.groups))
+	for _, g := range f.groups {
+		groups = append(groups, *g)
+	}
+	return &qrdbtransport.ListCustodianGroupsResponse{Groups: groups}, nil
+}
+
+func (f *grpcFakeCustodianClient) DeleteCustodianGroup(_ context.Context, groupID string) error {
+	if groupID == "" {
+		return qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	if _, ok := f.groups[groupID]; !ok {
+		return qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	delete(f.groups, groupID)
+	return nil
+}
+
+func (f *grpcFakeCustodianClient) AddCustodianMember(_ context.Context, req *qrdbtransport.AddCustodianMemberRequest) (*qrdbtransport.AddCustodianMemberResponse, error) {
+	if req.GroupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	if req.UserID == "" {
+		return nil, qrdbsdk.ErrCeremonyUserNotFound
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	if len(g.Members) >= g.Total {
+		return nil, qrdbsdk.ErrCeremonyGroupFull
+	}
+	for _, m := range g.Members {
+		if m.UserID == req.UserID {
+			return nil, qrdbsdk.ErrCeremonyMemberAlreadyExists
+		}
+	}
+	member := qrdbtransport.CustodianMemberInfo{
+		ShareIndex: len(g.Members), UserID: req.UserID, Username: req.Username,
+		AssignedAt: time.Now().UTC(), Method: req.Method,
+	}
+	g.Members = append(g.Members, member)
+	g.UpdatedAt = time.Now().UTC()
+	return &qrdbtransport.AddCustodianMemberResponse{Member: member}, nil
+}
+
+func (f *grpcFakeCustodianClient) RemoveCustodianMember(_ context.Context, req *qrdbtransport.RemoveCustodianMemberRequest) error {
+	if req.GroupID == "" {
+		return qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	for i, m := range g.Members {
+		if m.UserID == req.UserID {
+			g.Members = append(g.Members[:i], g.Members[i+1:]...)
+			g.UpdatedAt = time.Now().UTC()
+			return nil
+		}
+	}
+	return qrdbsdk.ErrCeremonyMemberNotFound
+}
+
+func (f *grpcFakeCustodianClient) DistributeShares(_ context.Context, req *qrdbtransport.DistributeSharesRequest) (*qrdbtransport.DistributeSharesResponse, error) {
+	if req.GroupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	if len(g.Members) == 0 {
+		return nil, qrdbsdk.ErrCeremonyInsufficientMembers
+	}
+	return &qrdbtransport.DistributeSharesResponse{Distributed: len(g.Members)}, nil
+}
+
+// grpcFakeShareClient is an in-memory qrdbtransport.ShareClient mirroring the
+// embedded go-qrdb node's share semantics, used to exercise the gRPC share
+// handlers without a real node.
+type grpcFakeShareClient struct {
+	shares    []qrdbtransport.ShareInfo
+	threshold int
+	total     int
+}
+
+func newGRPCFakeShareClient() *grpcFakeShareClient {
+	return &grpcFakeShareClient{}
+}
+
+func (f *grpcFakeShareClient) SubmitShare(_ context.Context, req *qrdbtransport.SubmitShareRequest) (*qrdbtransport.SubmitShareResponse, error) {
+	f.shares = append(f.shares, qrdbtransport.ShareInfo{
+		ServerURL:  req.ServerURL,
+		GroupID:    req.GroupID,
+		GroupName:  req.GroupName,
+		ShareIndex: req.ShareIndex,
+		ShareData:  req.ShareData,
+		Purpose:    req.Purpose,
+		ReceivedAt: time.Now().UTC(),
+		TenantID:   req.TenantID,
+	})
+	return &qrdbtransport.SubmitShareResponse{Accepted: true}, nil
+}
+
+func (f *grpcFakeShareClient) ListShares(_ context.Context) (*qrdbtransport.ListSharesResponse, error) {
+	return &qrdbtransport.ListSharesResponse{Shares: f.shares}, nil
+}
+
+func (f *grpcFakeShareClient) GetShare(_ context.Context, serverURL, groupID string, shareIndex int) (*qrdbtransport.ShareInfo, error) {
+	for i := range f.shares {
+		s := f.shares[i]
+		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
+			return &s, nil
+		}
+	}
+	return nil, qrdbsdk.ErrCeremonyShareNotFound
+}
+
+func (f *grpcFakeShareClient) DeleteShare(_ context.Context, serverURL, groupID string, shareIndex int) error {
+	for i := range f.shares {
+		s := f.shares[i]
+		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
+			f.shares = append(f.shares[:i], f.shares[i+1:]...)
+			return nil
+		}
+	}
+	return qrdbsdk.ErrCeremonyShareNotFound
+}
+
+func (f *grpcFakeShareClient) GetShareCollectionStatus(_ context.Context, groupID string) (*qrdbtransport.ShareCollectionStatus, error) {
+	collected := 0
+	for i := range f.shares {
+		if f.shares[i].GroupID == groupID {
+			collected++
+		}
+	}
+	return &qrdbtransport.ShareCollectionStatus{
+		GroupID:   groupID,
+		Threshold: f.threshold,
+		Total:     f.total,
+		Collected: collected,
+		Ready:     f.threshold > 0 && collected >= f.threshold,
+	}, nil
+}
+
+// setupCustodianClient creates an in-memory custodian group client.
+func setupCustodianClient(t *testing.T) *grpcFakeCustodianClient {
 	t.Helper()
-	return sharestore.NewMemoryShareStore()
+	return newGRPCFakeCustodianClient()
+}
+
+// setupShareClient creates an in-memory share client.
+func setupShareClient(t *testing.T) *grpcFakeShareClient {
+	t.Helper()
+	return newGRPCFakeShareClient()
 }
 
 // setupBarrierRegistry creates an initialized barrier registry.
@@ -62,35 +254,35 @@ func setupBarrierRegistry(t *testing.T) *seal.BarrierRegistry {
 	return reg
 }
 
-func TestSetCustodianService_GetCustodianService(t *testing.T) {
-	old := GetCustodianService()
-	defer SetCustodianService(old)
+func TestSetCustodianClient_GetCustodianClient(t *testing.T) {
+	old := GetCustodianClient()
+	defer SetCustodianClient(old)
 
 	t.Run("sets and gets custodian service", func(t *testing.T) {
-		svc := setupCustodianService(t)
-		SetCustodianService(svc)
-		assert.Equal(t, svc, GetCustodianService())
+		svc := setupCustodianClient(t)
+		SetCustodianClient(svc)
+		assert.Equal(t, svc, GetCustodianClient())
 	})
 
 	t.Run("returns nil when not set", func(t *testing.T) {
-		SetCustodianService(nil)
-		assert.Nil(t, GetCustodianService())
+		SetCustodianClient(nil)
+		assert.Nil(t, GetCustodianClient())
 	})
 }
 
-func TestSetShareStore_GetShareStore(t *testing.T) {
-	old := GetShareStore()
-	defer SetShareStore(old)
+func TestSetShareClient_GetShareClient(t *testing.T) {
+	old := GetShareClient()
+	defer SetShareClient(old)
 
-	t.Run("sets and gets share store", func(t *testing.T) {
-		ss := setupShareStore(t)
-		SetShareStore(ss)
-		assert.Equal(t, ss, GetShareStore())
+	t.Run("sets and gets share client", func(t *testing.T) {
+		sc := setupShareClient(t)
+		SetShareClient(sc)
+		assert.Equal(t, sc, GetShareClient())
 	})
 
 	t.Run("returns nil when not set", func(t *testing.T) {
-		SetShareStore(nil)
-		assert.Nil(t, GetShareStore())
+		SetShareClient(nil)
+		assert.Nil(t, GetShareClient())
 	})
 }
 
@@ -118,7 +310,7 @@ func TestMapCustodianError(t *testing.T) {
 	})
 
 	t.Run("known error maps to correct code", func(t *testing.T) {
-		err := mapCustodianError(custodian.ErrGroupNotFound, "get group")
+		err := mapCustodianError(qrdbsdk.ErrCeremonyGroupNotFound, "get group")
 		st, ok := status.FromError(err)
 		require.True(t, ok)
 		assert.Equal(t, codes.NotFound, st.Code())
@@ -138,7 +330,7 @@ func TestMapShareError(t *testing.T) {
 	})
 
 	t.Run("known error maps to correct code", func(t *testing.T) {
-		err := mapShareError(sharestore.ErrShareNotFound, "get share")
+		err := mapShareError(qrdbsdk.ErrCeremonyShareNotFound, "get share")
 		st, ok := status.FromError(err)
 		require.True(t, ok)
 		assert.Equal(t, codes.NotFound, st.Code())
@@ -176,12 +368,12 @@ func TestMapTenantError(t *testing.T) {
 
 func TestCustodianGroupToProto(t *testing.T) {
 	now := time.Now().UTC()
-	group := &custodian.CustodianGroup{
+	group := &qrdbtransport.CustodianGroupInfo{
 		ID:        "group-1",
 		Name:      "Test Group",
 		Purpose:   "barrier",
 		Threshold: 2,
-		Members: []custodian.CustodianMember{
+		Members: []qrdbtransport.CustodianMemberInfo{
 			{UserID: "user-1", Username: "alice", Method: "manual"},
 			{UserID: "user-2", Username: "bob", Method: "auto"},
 		},
@@ -200,7 +392,7 @@ func TestCustodianGroupToProto(t *testing.T) {
 }
 
 func TestCustodianMemberToProto(t *testing.T) {
-	m := &custodian.CustodianMember{
+	m := &qrdbtransport.CustodianMemberInfo{
 		UserID:   "user-1",
 		Username: "alice",
 		Method:   "manual",
@@ -212,9 +404,9 @@ func TestCustodianMemberToProto(t *testing.T) {
 	assert.Equal(t, "manual", pb.Role)
 }
 
-func TestShareEntryToProto(t *testing.T) {
+func TestShareInfoToProto(t *testing.T) {
 	now := time.Now().UTC()
-	entry := &sharestore.ShareEntry{
+	info := &qrdbtransport.ShareInfo{
 		GroupID:    "group-1",
 		ServerURL:  "https://server.example.com",
 		GroupName:  "Test Group",
@@ -224,7 +416,7 @@ func TestShareEntryToProto(t *testing.T) {
 		ReceivedAt: now,
 	}
 
-	pb := shareEntryToProto(entry)
+	pb := shareInfoToProto(info)
 	assert.Equal(t, "group-1", pb.GroupId)
 	assert.Equal(t, "https://server.example.com", pb.ServerUrl)
 	assert.Equal(t, "Test Group", pb.GroupName)
@@ -239,9 +431,9 @@ func TestCreateCustodianGroup(t *testing.T) {
 	svc := NewService(nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(nil)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(nil)
+		defer SetCustodianClient(old)
 
 		_, err := svc.CreateCustodianGroup(context.Background(), &pb.CreateCustodianGroupRequest{
 			Name: "test", Threshold: 2,
@@ -253,9 +445,9 @@ func TestCreateCustodianGroup(t *testing.T) {
 	})
 
 	t.Run("returns error when name is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.CreateCustodianGroup(context.Background(), &pb.CreateCustodianGroupRequest{
 			Name: "", Threshold: 2,
@@ -267,9 +459,9 @@ func TestCreateCustodianGroup(t *testing.T) {
 	})
 
 	t.Run("returns error when threshold is invalid", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.CreateCustodianGroup(context.Background(), &pb.CreateCustodianGroupRequest{
 			Name: "test", Threshold: 0,
@@ -281,9 +473,9 @@ func TestCreateCustodianGroup(t *testing.T) {
 	})
 
 	t.Run("returns mapped error when custodian service returns domain error", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		// The handler passes empty strings for id and tenantID, which fails
 		// validation in the custodian service. This tests the error mapping path.
@@ -303,9 +495,9 @@ func TestGetCustodianGroup(t *testing.T) {
 	svc := NewService(nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(nil)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(nil)
+		defer SetCustodianClient(old)
 
 		_, err := svc.GetCustodianGroup(context.Background(), &pb.GetCustodianGroupRequest{GroupId: "id"})
 		require.Error(t, err)
@@ -315,9 +507,9 @@ func TestGetCustodianGroup(t *testing.T) {
 	})
 
 	t.Run("returns error when group_id is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.GetCustodianGroup(context.Background(), &pb.GetCustodianGroupRequest{GroupId: ""})
 		require.Error(t, err)
@@ -327,9 +519,9 @@ func TestGetCustodianGroup(t *testing.T) {
 	})
 
 	t.Run("returns error when group not found", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.GetCustodianGroup(context.Background(), &pb.GetCustodianGroupRequest{GroupId: "nonexistent"})
 		require.Error(t, err)
@@ -339,17 +531,19 @@ func TestGetCustodianGroup(t *testing.T) {
 	})
 
 	t.Run("returns group on success", func(t *testing.T) {
-		old := GetCustodianService()
-		cs := setupCustodianService(t)
-		SetCustodianService(cs)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		cs := setupCustodianClient(t)
+		SetCustodianClient(cs)
+		defer SetCustodianClient(old)
 
-		group, err := cs.CreateGroup(context.Background(), "grp-1", "tenant-1", "test", "barrier", 2, 2)
+		groupResp, err := cs.CreateCustodianGroup(context.Background(), &qrdbtransport.CreateCustodianGroupRequest{
+			ID: "grp-1", TenantID: "tenant-1", Name: "test", Purpose: "barrier", Threshold: 2, Total: 2,
+		})
 		require.NoError(t, err)
 
-		resp, err := svc.GetCustodianGroup(context.Background(), &pb.GetCustodianGroupRequest{GroupId: group.ID})
+		resp, err := svc.GetCustodianGroup(context.Background(), &pb.GetCustodianGroupRequest{GroupId: groupResp.Group.ID})
 		require.NoError(t, err)
-		assert.Equal(t, group.ID, resp.Group.Id)
+		assert.Equal(t, groupResp.Group.ID, resp.Group.Id)
 	})
 }
 
@@ -357,9 +551,9 @@ func TestListCustodianGroups(t *testing.T) {
 	svc := NewService(nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(nil)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(nil)
+		defer SetCustodianClient(old)
 
 		_, err := svc.ListCustodianGroups(context.Background(), &pb.ListCustodianGroupsRequest{})
 		require.Error(t, err)
@@ -369,9 +563,9 @@ func TestListCustodianGroups(t *testing.T) {
 	})
 
 	t.Run("returns empty list", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		resp, err := svc.ListCustodianGroups(context.Background(), &pb.ListCustodianGroupsRequest{})
 		require.NoError(t, err)
@@ -379,12 +573,14 @@ func TestListCustodianGroups(t *testing.T) {
 	})
 
 	t.Run("returns populated list", func(t *testing.T) {
-		old := GetCustodianService()
-		cs := setupCustodianService(t)
-		SetCustodianService(cs)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		cs := setupCustodianClient(t)
+		SetCustodianClient(cs)
+		defer SetCustodianClient(old)
 
-		_, err := cs.CreateGroup(context.Background(), "grp-list-1", "", "g1", "barrier", 2, 2)
+		_, err := cs.CreateCustodianGroup(context.Background(), &qrdbtransport.CreateCustodianGroupRequest{
+			ID: "grp-list-1", TenantID: "", Name: "g1", Purpose: "barrier", Threshold: 2, Total: 2,
+		})
 		require.NoError(t, err)
 
 		resp, err := svc.ListCustodianGroups(context.Background(), &pb.ListCustodianGroupsRequest{})
@@ -397,18 +593,18 @@ func TestDeleteCustodianGroup(t *testing.T) {
 	svc := NewService(nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(nil)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(nil)
+		defer SetCustodianClient(old)
 
 		_, err := svc.DeleteCustodianGroup(context.Background(), &pb.DeleteCustodianGroupRequest{GroupId: "id"})
 		require.Error(t, err)
 	})
 
 	t.Run("returns error when group_id is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.DeleteCustodianGroup(context.Background(), &pb.DeleteCustodianGroupRequest{GroupId: ""})
 		require.Error(t, err)
@@ -418,15 +614,17 @@ func TestDeleteCustodianGroup(t *testing.T) {
 	})
 
 	t.Run("deletes group on success", func(t *testing.T) {
-		old := GetCustodianService()
-		cs := setupCustodianService(t)
-		SetCustodianService(cs)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		cs := setupCustodianClient(t)
+		SetCustodianClient(cs)
+		defer SetCustodianClient(old)
 
-		group, err := cs.CreateGroup(context.Background(), "grp-del-1", "", "test", "barrier", 2, 2)
+		groupResp, err := cs.CreateCustodianGroup(context.Background(), &qrdbtransport.CreateCustodianGroupRequest{
+			ID: "grp-del-1", TenantID: "", Name: "test", Purpose: "barrier", Threshold: 2, Total: 2,
+		})
 		require.NoError(t, err)
 
-		_, err = svc.DeleteCustodianGroup(context.Background(), &pb.DeleteCustodianGroupRequest{GroupId: group.ID})
+		_, err = svc.DeleteCustodianGroup(context.Background(), &pb.DeleteCustodianGroupRequest{GroupId: groupResp.Group.ID})
 		require.NoError(t, err)
 	})
 }
@@ -435,9 +633,9 @@ func TestAddCustodianMember(t *testing.T) {
 	svc := NewService(nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(nil)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(nil)
+		defer SetCustodianClient(old)
 
 		_, err := svc.AddCustodianMember(context.Background(), &pb.AddCustodianMemberRequest{
 			GroupId: "g1", UserId: "u1",
@@ -446,9 +644,9 @@ func TestAddCustodianMember(t *testing.T) {
 	})
 
 	t.Run("returns error when group_id is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.AddCustodianMember(context.Background(), &pb.AddCustodianMemberRequest{
 			UserId: "u1",
@@ -460,9 +658,9 @@ func TestAddCustodianMember(t *testing.T) {
 	})
 
 	t.Run("returns error when user_id is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.AddCustodianMember(context.Background(), &pb.AddCustodianMemberRequest{
 			GroupId: "g1",
@@ -474,21 +672,23 @@ func TestAddCustodianMember(t *testing.T) {
 	})
 
 	t.Run("adds member on success", func(t *testing.T) {
-		old := GetCustodianService()
-		cs := setupCustodianService(t)
-		SetCustodianService(cs)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		cs := setupCustodianClient(t)
+		SetCustodianClient(cs)
+		defer SetCustodianClient(old)
 
-		group, err := cs.CreateGroup(context.Background(), "grp-add-1", "", "test", "barrier", 2, 2)
+		groupResp, err := cs.CreateCustodianGroup(context.Background(), &qrdbtransport.CreateCustodianGroupRequest{
+			ID: "grp-add-1", TenantID: "", Name: "test", Purpose: "barrier", Threshold: 2, Total: 2,
+		})
 		require.NoError(t, err)
 
 		resp, err := svc.AddCustodianMember(context.Background(), &pb.AddCustodianMemberRequest{
-			GroupId: group.ID, UserId: "user-1", Name: "alice",
+			GroupId: groupResp.Group.ID, UserId: "user-1", Name: "alice",
 		})
 		require.NoError(t, err)
 		assert.Equal(t, "user-1", resp.Member.UserId)
 		assert.Equal(t, "alice", resp.Member.Name)
-		assert.Equal(t, custodian.MethodManual, resp.Member.Role)
+		assert.Equal(t, defaultCustodianMethod, resp.Member.Role)
 	})
 }
 
@@ -496,9 +696,9 @@ func TestRemoveCustodianMember(t *testing.T) {
 	svc := NewService(nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(nil)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(nil)
+		defer SetCustodianClient(old)
 
 		_, err := svc.RemoveCustodianMember(context.Background(), &pb.RemoveCustodianMemberRequest{
 			GroupId: "g1", UserId: "u1",
@@ -507,9 +707,9 @@ func TestRemoveCustodianMember(t *testing.T) {
 	})
 
 	t.Run("returns error when group_id is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.RemoveCustodianMember(context.Background(), &pb.RemoveCustodianMemberRequest{
 			UserId: "u1",
@@ -521,9 +721,9 @@ func TestRemoveCustodianMember(t *testing.T) {
 	})
 
 	t.Run("returns error when user_id is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.RemoveCustodianMember(context.Background(), &pb.RemoveCustodianMemberRequest{
 			GroupId: "g1",
@@ -535,18 +735,22 @@ func TestRemoveCustodianMember(t *testing.T) {
 	})
 
 	t.Run("removes member on success", func(t *testing.T) {
-		old := GetCustodianService()
-		cs := setupCustodianService(t)
-		SetCustodianService(cs)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		cs := setupCustodianClient(t)
+		SetCustodianClient(cs)
+		defer SetCustodianClient(old)
 
-		group, err := cs.CreateGroup(context.Background(), "grp-rem-1", "", "test", "barrier", 2, 2)
+		groupResp, err := cs.CreateCustodianGroup(context.Background(), &qrdbtransport.CreateCustodianGroupRequest{
+			ID: "grp-rem-1", TenantID: "", Name: "test", Purpose: "barrier", Threshold: 2, Total: 2,
+		})
 		require.NoError(t, err)
-		_, err = cs.AddMember(context.Background(), group.ID, "user-1", "alice", "manual")
+		_, err = cs.AddCustodianMember(context.Background(), &qrdbtransport.AddCustodianMemberRequest{
+			GroupID: groupResp.Group.ID, UserID: "user-1", Username: "alice", Method: "manual",
+		})
 		require.NoError(t, err)
 
 		_, err = svc.RemoveCustodianMember(context.Background(), &pb.RemoveCustodianMemberRequest{
-			GroupId: group.ID, UserId: "user-1",
+			GroupId: groupResp.Group.ID, UserId: "user-1",
 		})
 		require.NoError(t, err)
 	})
@@ -556,18 +760,18 @@ func TestDistributeShares(t *testing.T) {
 	svc := NewService(nil, nil)
 
 	t.Run("returns error when service not configured", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(nil)
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(nil)
+		defer SetCustodianClient(old)
 
 		_, err := svc.DistributeShares(context.Background(), &pb.DistributeSharesRequest{GroupId: "g1"})
 		require.Error(t, err)
 	})
 
 	t.Run("returns error when group_id is empty", func(t *testing.T) {
-		old := GetCustodianService()
-		SetCustodianService(setupCustodianService(t))
-		defer SetCustodianService(old)
+		old := GetCustodianClient()
+		SetCustodianClient(setupCustodianClient(t))
+		defer SetCustodianClient(old)
 
 		_, err := svc.DistributeShares(context.Background(), &pb.DistributeSharesRequest{GroupId: ""})
 		require.Error(t, err)
@@ -582,10 +786,10 @@ func TestDistributeShares(t *testing.T) {
 func TestSubmitShare(t *testing.T) {
 	svc := NewService(nil, nil)
 
-	t.Run("returns error when share store not configured", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(nil)
-		defer SetShareStore(old)
+	t.Run("returns error when share client not configured", func(t *testing.T) {
+		old := GetShareClient()
+		SetShareClient(nil)
+		defer SetShareClient(old)
 
 		_, err := svc.SubmitShare(context.Background(), &pb.SubmitShareRequest{
 			GroupId: "g1", ShareData: "data", ServerUrl: "https://example.com",
@@ -597,9 +801,9 @@ func TestSubmitShare(t *testing.T) {
 	})
 
 	t.Run("returns error when group_id is empty", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(setupShareStore(t))
-		defer SetShareStore(old)
+		old := GetShareClient()
+		SetShareClient(setupShareClient(t))
+		defer SetShareClient(old)
 
 		_, err := svc.SubmitShare(context.Background(), &pb.SubmitShareRequest{
 			ShareData: "data", ServerUrl: "https://example.com",
@@ -611,9 +815,9 @@ func TestSubmitShare(t *testing.T) {
 	})
 
 	t.Run("returns error when share_data is empty", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(setupShareStore(t))
-		defer SetShareStore(old)
+		old := GetShareClient()
+		SetShareClient(setupShareClient(t))
+		defer SetShareClient(old)
 
 		_, err := svc.SubmitShare(context.Background(), &pb.SubmitShareRequest{
 			GroupId: "g1", ServerUrl: "https://example.com",
@@ -625,9 +829,9 @@ func TestSubmitShare(t *testing.T) {
 	})
 
 	t.Run("returns error when server_url is empty", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(setupShareStore(t))
-		defer SetShareStore(old)
+		old := GetShareClient()
+		SetShareClient(setupShareClient(t))
+		defer SetShareClient(old)
 
 		_, err := svc.SubmitShare(context.Background(), &pb.SubmitShareRequest{
 			GroupId: "g1", ShareData: "data",
@@ -639,9 +843,9 @@ func TestSubmitShare(t *testing.T) {
 	})
 
 	t.Run("submits share on success", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(setupShareStore(t))
-		defer SetShareStore(old)
+		old := GetShareClient()
+		SetShareClient(setupShareClient(t))
+		defer SetShareClient(old)
 
 		resp, err := svc.SubmitShare(context.Background(), &pb.SubmitShareRequest{
 			GroupId:    "g1",
@@ -661,10 +865,10 @@ func TestSubmitShare(t *testing.T) {
 func TestListShares(t *testing.T) {
 	svc := NewService(nil, nil)
 
-	t.Run("returns error when share store not configured", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(nil)
-		defer SetShareStore(old)
+	t.Run("returns error when share client not configured", func(t *testing.T) {
+		old := GetShareClient()
+		SetShareClient(nil)
+		defer SetShareClient(old)
 
 		_, err := svc.ListShares(context.Background(), &pb.ListSharesRequest{})
 		require.Error(t, err)
@@ -674,9 +878,9 @@ func TestListShares(t *testing.T) {
 	})
 
 	t.Run("returns empty list", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(setupShareStore(t))
-		defer SetShareStore(old)
+		old := GetShareClient()
+		SetShareClient(setupShareClient(t))
+		defer SetShareClient(old)
 
 		resp, err := svc.ListShares(context.Background(), &pb.ListSharesRequest{})
 		require.NoError(t, err)
@@ -684,17 +888,16 @@ func TestListShares(t *testing.T) {
 	})
 
 	t.Run("returns shares after submit", func(t *testing.T) {
-		old := GetShareStore()
-		ss := setupShareStore(t)
-		SetShareStore(ss)
-		defer SetShareStore(old)
+		old := GetShareClient()
+		sc := setupShareClient(t)
+		SetShareClient(sc)
+		defer SetShareClient(old)
 
-		err := ss.Save(context.Background(), &sharestore.ShareEntry{
-			ServerURL:  "https://example.com",
-			GroupID:    "g1",
-			GroupName:  "group-1",
-			ShareData:  []byte("share-data"),
-			ReceivedAt: time.Now().UTC(),
+		_, err := sc.SubmitShare(context.Background(), &qrdbtransport.SubmitShareRequest{
+			ServerURL: "https://example.com",
+			GroupID:   "g1",
+			GroupName: "group-1",
+			ShareData: []byte("share-data"),
 		})
 		require.NoError(t, err)
 
@@ -707,19 +910,19 @@ func TestListShares(t *testing.T) {
 func TestGetShareCollectionStatus(t *testing.T) {
 	svc := NewService(nil, nil)
 
-	t.Run("returns error when share store not configured", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(nil)
-		defer SetShareStore(old)
+	t.Run("returns error when share client not configured", func(t *testing.T) {
+		old := GetShareClient()
+		SetShareClient(nil)
+		defer SetShareClient(old)
 
 		_, err := svc.GetShareCollectionStatus(context.Background(), &pb.GetShareCollectionStatusRequest{GroupId: "g1"})
 		require.Error(t, err)
 	})
 
 	t.Run("returns error when group_id is empty", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(setupShareStore(t))
-		defer SetShareStore(old)
+		old := GetShareClient()
+		SetShareClient(setupShareClient(t))
+		defer SetShareClient(old)
 
 		_, err := svc.GetShareCollectionStatus(context.Background(), &pb.GetShareCollectionStatusRequest{GroupId: ""})
 		require.Error(t, err)
@@ -729,9 +932,9 @@ func TestGetShareCollectionStatus(t *testing.T) {
 	})
 
 	t.Run("returns status with zero collected", func(t *testing.T) {
-		old := GetShareStore()
-		SetShareStore(setupShareStore(t))
-		defer SetShareStore(old)
+		old := GetShareClient()
+		SetShareClient(setupShareClient(t))
+		defer SetShareClient(old)
 
 		resp, err := svc.GetShareCollectionStatus(context.Background(), &pb.GetShareCollectionStatusRequest{GroupId: "g1"})
 		require.NoError(t, err)
@@ -739,35 +942,27 @@ func TestGetShareCollectionStatus(t *testing.T) {
 		assert.Equal(t, int32(0), resp.Collected)
 	})
 
-	t.Run("returns status with collected count and threshold from custodian", func(t *testing.T) {
-		oldSS := GetShareStore()
-		oldCS := GetCustodianService()
-		ss := setupShareStore(t)
-		cs := setupCustodianService(t)
-		SetShareStore(ss)
-		SetCustodianService(cs)
-		defer func() {
-			SetShareStore(oldSS)
-			SetCustodianService(oldCS)
-		}()
+	t.Run("returns status with collected count and threshold from client", func(t *testing.T) {
+		old := GetShareClient()
+		sc := setupShareClient(t)
+		sc.threshold = 2
+		sc.total = 2
+		SetShareClient(sc)
+		defer SetShareClient(old)
 
-		group, err := cs.CreateGroup(context.Background(), "grp-share-1", "", "test", "barrier", 2, 2)
-		require.NoError(t, err)
-
-		// Add shares for this group
+		// Add shares for this group.
 		for i := 0; i < 2; i++ {
-			err := ss.Save(context.Background(), &sharestore.ShareEntry{
+			_, err := sc.SubmitShare(context.Background(), &qrdbtransport.SubmitShareRequest{
 				ServerURL:  "https://example.com",
-				GroupID:    group.ID,
+				GroupID:    "grp-share-1",
 				GroupName:  "test",
 				ShareIndex: i,
 				ShareData:  []byte("share-data"),
-				ReceivedAt: time.Now().UTC(),
 			})
 			require.NoError(t, err)
 		}
 
-		resp, err := svc.GetShareCollectionStatus(context.Background(), &pb.GetShareCollectionStatusRequest{GroupId: group.ID})
+		resp, err := svc.GetShareCollectionStatus(context.Background(), &pb.GetShareCollectionStatusRequest{GroupId: "grp-share-1"})
 		require.NoError(t, err)
 		assert.Equal(t, int32(2), resp.Collected)
 		assert.Equal(t, int32(2), resp.Required)

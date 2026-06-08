@@ -22,7 +22,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/fetcher"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -121,7 +121,7 @@ func registerTrustFetchFlags(cmd *cobra.Command) {
 		"override the recorded source (default: \"platform:<host>\")")
 	cmd.Flags().Bool("install-system", false,
 		"after adding to xKey trust store, install root certificates to OS trust store")
-	cmd.Flags().Duration("timeout", fetcher.DefaultTimeout,
+	cmd.Flags().Duration("timeout", xkms.TrustFetcherDefaultTimeout,
 		"HTTP transaction timeout")
 }
 
@@ -142,7 +142,7 @@ func runTrustImportPlatform(cmd *cobra.Command, args []string) error {
 	hostPort = strings.TrimPrefix(hostPort, "http://")
 	hostPort = strings.TrimSuffix(hostPort, "/")
 
-	target := "https://" + hostPort + fetcher.DefaultBundlePath
+	target := "https://" + hostPort + xkms.TrustFetcherDefaultBundlePath
 	if _, err := url.Parse(target); err != nil {
 		return fmt.Errorf("%w: %v", ErrTrustImportPlatformFailed, err)
 	}
@@ -167,7 +167,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 			ErrTrustFetchInvalidArgs)
 	}
 	if timeout <= 0 {
-		timeout = fetcher.DefaultTimeout
+		timeout = xkms.TrustFetcherDefaultTimeout
 	}
 
 	purpose := truststore.PurposeBootstrapCA
@@ -179,7 +179,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 		purpose = parsed
 	}
 
-	opts := fetcher.Options{
+	opts := xkms.TrustFetcherOptions{
 		Timeout: timeout,
 		SPKIPin: pinFlag,
 	}
@@ -189,7 +189,7 @@ func executeTrustFetch(cmd *cobra.Command, target string) error {
 
 	fmt.Fprintf(cmd.ErrOrStderr(), "Fetching CA bundle from %s\n", target)
 
-	bundle, err := fetcher.Fetch(ctx, target, opts)
+	bundle, err := xkms.TrustFetcherFetch(ctx, target, opts)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrTrustFetchFailed, err)
 	}

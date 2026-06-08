@@ -21,7 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // TPMInfo holds information about the TPM device
@@ -107,7 +107,7 @@ func runTPMInfo(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func buildTPMInfo(tpm tpm2.TrustedPlatformModule, props *tpm2.PropertiesFixed) *TPMInfo {
+func buildTPMInfo(tpm xkms.TrustedPlatformModule, props *xkms.PropertiesFixed) *TPMInfo {
 	info := &TPMInfo{
 		Manufacturer:      props.Manufacturer,
 		VendorID:          strings.TrimSpace(props.VendorID),
@@ -145,7 +145,7 @@ func buildTPMInfo(tpm tpm2.TrustedPlatformModule, props *tpm2.PropertiesFixed) *
 	return info
 }
 
-func (info *TPMInfo) checkProvisioningState(tpm tpm2.TrustedPlatformModule) {
+func (info *TPMInfo) checkProvisioningState(tpm xkms.TrustedPlatformModule) {
 	// Check EK
 	if _, err := tpm.EKAttributes(); err == nil {
 		info.EKPresent = true

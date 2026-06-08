@@ -20,29 +20,28 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // memoryStore is a simple in-memory implementation for testing.
 type memoryStore struct {
-	passwords map[string]*staticpw.StaticPassword
+	passwords map[string]*xkms.StaticPassword
 	folders   map[string]bool
 }
 
 func newMemoryStore() *memoryStore {
 	return &memoryStore{
-		passwords: make(map[string]*staticpw.StaticPassword),
+		passwords: make(map[string]*xkms.StaticPassword),
 		folders:   make(map[string]bool),
 	}
 }
 
-func (s *memoryStore) Add(pw *staticpw.StaticPassword) error {
+func (s *memoryStore) Add(pw *xkms.StaticPassword) error {
 	if pw.ID == "" {
-		pw.ID = staticpw.GenerateID(pw.Name, pw.FolderPath)
+		pw.ID = xkms.GenerateStaticPasswordID(pw.Name, pw.FolderPath)
 	}
 	if _, exists := s.passwords[pw.ID]; exists {
-		return staticpw.ErrPasswordExists
+		return xkms.ErrStaticPasswordExists
 	}
 	s.passwords[pw.ID] = pw
 	if pw.FolderPath != "" {
@@ -51,7 +50,7 @@ func (s *memoryStore) Add(pw *staticpw.StaticPassword) error {
 	return nil
 }
 
-func (s *memoryStore) Get(idOrName string) (*staticpw.StaticPassword, error) {
+func (s *memoryStore) Get(idOrName string) (*xkms.StaticPassword, error) {
 	if pw, ok := s.passwords[idOrName]; ok {
 		return pw, nil
 	}
@@ -60,20 +59,20 @@ func (s *memoryStore) Get(idOrName string) (*staticpw.StaticPassword, error) {
 			return pw, nil
 		}
 	}
-	return nil, staticpw.ErrPasswordNotFound
+	return nil, xkms.ErrStaticPasswordNotFound
 }
 
-func (s *memoryStore) List() ([]*staticpw.StaticPassword, error) {
-	result := make([]*staticpw.StaticPassword, 0, len(s.passwords))
+func (s *memoryStore) List() ([]*xkms.StaticPassword, error) {
+	result := make([]*xkms.StaticPassword, 0, len(s.passwords))
 	for _, pw := range s.passwords {
 		result = append(result, pw)
 	}
 	return result, nil
 }
 
-func (s *memoryStore) Update(pw *staticpw.StaticPassword) error {
+func (s *memoryStore) Update(pw *xkms.StaticPassword) error {
 	if _, exists := s.passwords[pw.ID]; !exists {
-		return staticpw.ErrPasswordNotFound
+		return xkms.ErrStaticPasswordNotFound
 	}
 	s.passwords[pw.ID] = pw
 	return nil
@@ -90,15 +89,15 @@ func (s *memoryStore) Delete(idOrName string) error {
 			return nil
 		}
 	}
-	return staticpw.ErrPasswordNotFound
+	return xkms.ErrStaticPasswordNotFound
 }
 
 func (s *memoryStore) ForceDelete(idOrName string) error {
 	return s.Delete(idOrName)
 }
 
-func (s *memoryStore) ListByFolder(folderPath string) ([]*staticpw.StaticPassword, error) {
-	result := make([]*staticpw.StaticPassword, 0)
+func (s *memoryStore) ListByFolder(folderPath string) ([]*xkms.StaticPassword, error) {
+	result := make([]*xkms.StaticPassword, 0)
 	for _, pw := range s.passwords {
 		if folderPath == "" || pw.FolderPath == folderPath {
 			result = append(result, pw)
@@ -107,8 +106,8 @@ func (s *memoryStore) ListByFolder(folderPath string) ([]*staticpw.StaticPasswor
 	return result, nil
 }
 
-func (s *memoryStore) ListByFolderDirect(folderPath string) ([]*staticpw.StaticPassword, error) {
-	result := make([]*staticpw.StaticPassword, 0)
+func (s *memoryStore) ListByFolderDirect(folderPath string) ([]*xkms.StaticPassword, error) {
+	result := make([]*xkms.StaticPassword, 0)
 	for _, pw := range s.passwords {
 		if pw.FolderPath == folderPath {
 			result = append(result, pw)
@@ -136,7 +135,7 @@ func (s *memoryStore) MoveToFolder(idOrName string, folderPath string) error {
 
 func (s *memoryStore) CreateFolder(path string) error {
 	if path == "" {
-		return staticpw.ErrFolderEmpty
+		return xkms.ErrStaticPasswordFolderEmpty
 	}
 	s.folders[path] = true
 	return nil
@@ -279,14 +278,14 @@ func TestDaemon_CollectionOperations(t *testing.T) {
 
 	t.Run("collections_with_folders", func(t *testing.T) {
 		// Add passwords in different folders
-		err := store.Add(&staticpw.StaticPassword{
+		err := store.Add(&xkms.StaticPassword{
 			Name:       "test1",
 			Password:   "secret1",
 			FolderPath: "Work",
 		})
 		require.NoError(t, err)
 
-		err = store.Add(&staticpw.StaticPassword{
+		err = store.Add(&xkms.StaticPassword{
 			Name:       "test2",
 			Password:   "secret2",
 			FolderPath: "Personal",
@@ -307,7 +306,7 @@ func TestDaemon_SearchItems(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add test passwords
-	err = store.Add(&staticpw.StaticPassword{
+	err = store.Add(&xkms.StaticPassword{
 		ID:       "pw1",
 		Name:     "GitHub",
 		Username: "user@example.com",
@@ -316,7 +315,7 @@ func TestDaemon_SearchItems(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = store.Add(&staticpw.StaticPassword{
+	err = store.Add(&xkms.StaticPassword{
 		ID:       "pw2",
 		Name:     "GitLab",
 		Username: "admin@example.com",
@@ -367,7 +366,7 @@ func TestDaemon_GetSecrets(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add a test password
-	pw := &staticpw.StaticPassword{
+	pw := &xkms.StaticPassword{
 		ID:       "test-pw",
 		Name:     "TestService",
 		Password: "supersecret",
@@ -555,16 +554,16 @@ func TestDaemon_IsRunning(t *testing.T) {
 }
 
 func TestNewDaemon_WithRealStore(t *testing.T) {
-	// Test with a real staticpw.BackendStore
-	memBackend := storage.NewMemory()
-	store := staticpw.NewStore(memBackend)
+	// Test with a real xkms.StaticPasswordBackendStore
+	memBackend := xkms.NewStorageMemory()
+	store := xkms.NewStaticPasswordStore(memBackend)
 
 	daemon, err := NewDaemon(store, nil, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, daemon)
 
 	// Add a password and verify it can be retrieved
-	err = store.Add(&staticpw.StaticPassword{
+	err = store.Add(&xkms.StaticPassword{
 		Name:     "RealStoreTest",
 		Password: "realpassword",
 	})

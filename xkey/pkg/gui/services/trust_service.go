@@ -20,6 +20,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -29,7 +30,6 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -403,7 +403,7 @@ func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, e
 		ctx = context.Background()
 	}
 
-	bundle, err := bootstrap.Fetch(ctx, cfg)
+	bundle, err := xkms.TrustBootstrapFetch(ctx, cfg)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrTrustStrapFetch, err)
 	}
@@ -422,16 +422,16 @@ func (s *TrustService) ImportFromTrustStrap(req TrustStrapImportRequest) (int, e
 // onto the canonical bootstrap.Config shape consumed by
 // xkms/pkg/trust/bootstrap.Fetch. Bootstrapper-specific validation
 // (key length, URL format, etc.) is delegated to the library.
-func (s *TrustService) buildBootstrapConfig(req TrustStrapImportRequest) (bootstrap.Config, error) {
-	cfg := bootstrap.Config{
+func (s *TrustService) buildBootstrapConfig(req TrustStrapImportRequest) (xkms.TrustBootstrapConfig, error) {
+	cfg := xkms.TrustBootstrapConfig{
 		ServerURL:  req.Server,
 		BundlePath: req.BundlePath,
 		Logger:     s.log,
 	}
 	switch strings.ToLower(strings.TrimSpace(req.Method)) {
 	case "dane":
-		cfg.Mode = bootstrap.ModeDANE
-		cfg.DANE = &bootstrap.DANEConfig{
+		cfg.Mode = xkms.TrustBootstrapModeDANE
+		cfg.DANE = &xkms.TrustBootstrapDANEConfig{
 			DNSServer:  req.DNSServer,
 			DNSOverTLS: req.DNSOverTLS,
 		}
@@ -439,21 +439,21 @@ func (s *TrustService) buildBootstrapConfig(req TrustStrapImportRequest) (bootst
 		// For Noise the UI's Server field is already a host:port
 		// pair (per TrustStrapImportRequest doc), so pass it as
 		// the explicit Noise address.
-		cfg.Mode = bootstrap.ModeNoise
-		cfg.Noise = &bootstrap.NoiseConfig{
+		cfg.Mode = xkms.TrustBootstrapModeNoise
+		cfg.Noise = &xkms.TrustBootstrapNoiseConfig{
 			ServerAddr:      req.Server,
 			ServerStaticKey: req.ServerStaticKey,
 		}
 	case "spki":
-		cfg.Mode = bootstrap.ModeSPKI
-		cfg.SPKI = &bootstrap.SPKIConfig{
+		cfg.Mode = xkms.TrustBootstrapModeSPKI
+		cfg.SPKI = &xkms.TrustBootstrapSPKIConfig{
 			Pin: req.SPKIPinSHA256,
 		}
 	case "direct":
-		cfg.Mode = bootstrap.ModeDirect
-		cfg.Direct = &bootstrap.DirectConfig{}
+		cfg.Mode = xkms.TrustBootstrapModeDirect
+		cfg.Direct = &xkms.TrustBootstrapDirectConfig{}
 	default:
-		return bootstrap.Config{}, fmt.Errorf("%w: %q", ErrTrustStrapUnsupportedMethod, req.Method)
+		return xkms.TrustBootstrapConfig{}, fmt.Errorf("%w: %q", ErrTrustStrapUnsupportedMethod, req.Method)
 	}
 	return cfg, nil
 }

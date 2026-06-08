@@ -1,6 +1,6 @@
 {
   "version": 1,
   "algorithm": "HMAC-SHA256",
-  "salt": "573WYHPjqw7txxUve+Pidw==",
-  "hmac": "GggJ+uPrVRrh3vV6espvRst7lY2+X8K2PuwomWj1uSo="
+  "salt": "159Qxb/veQkB0d6+rz03Tw==",
+  "hmac": "p2IIb/Gd56WC2NnGfycXcgwik0PVSwAxdmQcRxHhBfA="
 }

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"net"
 	"net/url"
@@ -32,8 +33,6 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -276,7 +275,7 @@ func TestP3_GenerateIDevIDCSR_Success(t *testing.T) {
 	mock.iakAttrsErr = nil
 	mock.idevidAttrsErr = nil
 	// CreateTCG_CSR_IDEVID returns a valid CSR
-	mock.createTCGCSRResult = tpm2pkg.TCG_CSR_IDEVID{
+	mock.createTCGCSRResult = xkms.TCG_CSR_IDEVID{
 		StructVer: [4]byte{0x00, 0x00, 0x00, 0x01},
 		Contents:  [4]byte{0x00, 0x00, 0x00, 0x00},
 		SigSz:     [4]byte{0x00, 0x00, 0x00, 0x00},
@@ -299,16 +298,16 @@ func TestP3_GenerateIDevIDCSR_IAKFallbackSuccess(t *testing.T) {
 	// IAKAttributes fails, triggering fallback
 	mock.iakAttrsErr = errors.New("no iak attrs")
 	// handleKeyAttrs provides fallback handle 0x81020001
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
 		0x81020001: {
 			KeyAlgorithm: x509.RSA,
-			TPMAttributes: &types.TPMAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Handle: 0x81020001,
 			},
 		},
 	}
 	mock.idevidAttrsErr = nil
-	mock.createTCGCSRResult = tpm2pkg.TCG_CSR_IDEVID{}
+	mock.createTCGCSRResult = xkms.TCG_CSR_IDEVID{}
 	mock.createTCGCSRErr = nil
 	svc := newServiceWithMock(mock)
 
@@ -324,15 +323,15 @@ func TestP3_GenerateIDevIDCSR_IDevIDFallbackSuccess(t *testing.T) {
 	mock.iakAttrsErr = nil
 	// IDevIDAttributes fails, triggering fallback to handle 0x81020000
 	mock.idevidAttrsErr = errors.New("no idevid attrs")
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
 		0x81020000: {
 			KeyAlgorithm: x509.ECDSA,
-			TPMAttributes: &types.TPMAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Handle: 0x81020000,
 			},
 		},
 	}
-	mock.createTCGCSRResult = tpm2pkg.TCG_CSR_IDEVID{}
+	mock.createTCGCSRResult = xkms.TCG_CSR_IDEVID{}
 	mock.createTCGCSRErr = nil
 	svc := newServiceWithMock(mock)
 
@@ -347,7 +346,7 @@ func TestP3_GenerateIDevIDCSR_IAKFallbackAllFail(t *testing.T) {
 	mock.ekCertErr = nil
 	// IAKAttributes fails and no fallback handles found
 	mock.iakAttrsErr = errors.New("no iak")
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{}
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{}
 	svc := newServiceWithMock(mock)
 
 	_, err := svc.GenerateIDevIDCSR()
@@ -361,7 +360,7 @@ func TestP3_GenerateIDevIDCSR_IDevIDFallbackFails(t *testing.T) {
 	mock.ekCertErr = nil
 	mock.iakAttrsErr = nil
 	mock.idevidAttrsErr = errors.New("no idevid")
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{}
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{}
 	svc := newServiceWithMock(mock)
 
 	_, err := svc.GenerateIDevIDCSR()

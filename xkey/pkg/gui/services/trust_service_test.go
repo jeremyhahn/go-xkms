@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +27,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -1192,11 +1192,11 @@ func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
 
 	cases := []struct {
 		req      TrustStrapImportRequest
-		wantMode bootstrap.Mode
+		wantMode xkms.TrustBootstrapMode
 	}{
 		{
 			req:      TrustStrapImportRequest{Method: "dane", Server: "https://kms.example.com:8443"},
-			wantMode: bootstrap.ModeDANE,
+			wantMode: xkms.TrustBootstrapModeDANE,
 		},
 		{
 			req: TrustStrapImportRequest{
@@ -1204,7 +1204,7 @@ func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
 				Server:          "kms.example.com:8445",
 				ServerStaticKey: strings.Repeat("ab", 32),
 			},
-			wantMode: bootstrap.ModeNoise,
+			wantMode: xkms.TrustBootstrapModeNoise,
 		},
 		{
 			req: TrustStrapImportRequest{
@@ -1212,11 +1212,11 @@ func TestImportFromTrustStrap_DispatchesByMethod(t *testing.T) {
 				Server:        "https://kms.example.com:8443",
 				SPKIPinSHA256: strings.Repeat("cd", 32),
 			},
-			wantMode: bootstrap.ModeSPKI,
+			wantMode: xkms.TrustBootstrapModeSPKI,
 		},
 		{
 			req:      TrustStrapImportRequest{Method: "direct", Server: "https://kms.example.com:8443"},
-			wantMode: bootstrap.ModeDirect,
+			wantMode: xkms.TrustBootstrapModeDirect,
 		},
 	}
 	for _, tc := range cases {

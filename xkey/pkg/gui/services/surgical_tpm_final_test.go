@@ -16,18 +16,15 @@ package services
 import (
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -40,7 +37,7 @@ func surgCreateServiceWithPWStore(t *testing.T, mock *mockTPM) (*TPMService, str
 	svc := newServiceWithMock(mock)
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
-	spwStore := staticpw.NewStore(storage.NewMemory())
+	spwStore := staticpw.NewStore(xkms.NewStorageMemory())
 	svc.SetStaticPasswordService(NewStaticPasswordService(spwStore))
 	return svc, dataDir
 }
@@ -53,7 +50,7 @@ func surgCreateServiceWithPWStore(t *testing.T, mock *mockTPM) (*TPMService, str
 
 func TestSurgTPM_GetPlatformSRKInfo_ConfigFallback(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.config.PlatformSRK = &tpm2pkg.PlatformSRKConfig{
+	mock.config.PlatformSRK = &xkms.PlatformSRKConfig{
 		SRKHandle: 0x81800002,
 	}
 	mock.platformKeyStore = &mockPlatformKeyStorer{
@@ -82,9 +79,9 @@ func TestSurgTPM_GetPlatformSRKInfo_ReadHandleError(t *testing.T) {
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized:   true,
 		policyEnabled: false,
-		srkAttrs: &types.KeyAttributes{
+		srkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: 1, // RSA
-			TPMAttributes: &types.TPMAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Handle: 0x81800003,
 			},
 		},
@@ -113,7 +110,7 @@ func TestSurgTPM_GetPlatformSRKInfo_NoTPMAttrsNoConfig(t *testing.T) {
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized:   false,
 		policyEnabled: false,
-		srkAttrs: &types.KeyAttributes{
+		srkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm:  1,
 			TPMAttributes: nil, // nil -> L1187 skipped
 		},
@@ -711,10 +708,10 @@ func TestSurgTPM_GetInfo_AlgoFallbackToConfig(t *testing.T) {
 
 func TestSurgTPM_ComparePolicyPCRs_MultiplePCRs(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 				{ID: 7, Value: []byte{0xCC, 0xDD}},
 				{ID: 9, Value: []byte{0xEE, 0xFF}},
@@ -757,10 +754,10 @@ func TestSurgTPM_ComparePolicyPCRs_MultiplePCRs(t *testing.T) {
 
 func TestSurgTPM_ListPoliciesWithDigests_AllMatch(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 				{ID: 7, Value: []byte{0xCC, 0xDD}},
 			},
@@ -797,10 +794,10 @@ func TestSurgTPM_ListPoliciesWithDigests_AllMatch(t *testing.T) {
 
 func TestSurgTPM_ListPoliciesWithDigests_CurrentHexEmpty(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA}}, // Only PCR 0
 			},
 		},
@@ -836,10 +833,10 @@ func TestSurgTPM_ListPoliciesWithDigests_CurrentHexEmpty(t *testing.T) {
 
 func TestSurgTPM_RefreshCompositePolicyPCRs_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xDE, 0xAD}},
 			},
 		},
@@ -884,10 +881,10 @@ func TestSurgTPM_RefreshCompositePolicyPCRs_NotFound(t *testing.T) {
 
 func TestSurgTPM_UpdatePolicy_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xBE, 0xEF}},
 				{ID: 9, Value: []byte{0xCA, 0xFE}},
 			},
@@ -940,10 +937,10 @@ func TestSurgTPM_UpdatePolicy_NilUpdated(t *testing.T) {
 
 func TestSurgTPM_RefreshPolicyPCRs_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0x11, 0x22}},
 			},
 		},

@@ -16,7 +16,7 @@ package truststore
 import (
 	"crypto/x509"
 
-	rootTruststore "github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // LoadEmbeddedRoots returns compiled-in root certificates for the given
@@ -44,7 +44,7 @@ var embeddedLoaders = map[CertPurpose]func() []*x509.Certificate{
 // loadGoogleHardwareAttestationRoots parses and returns the embedded Google
 // Hardware Attestation Root CAs from the root truststore package.
 func loadGoogleHardwareAttestationRoots() []*x509.Certificate {
-	certs, err := rootTruststore.GoogleHardwareAttestationRoots()
+	certs, err := xkms.GoogleHardwareAttestationRoots()
 	if err != nil {
 		return nil
 	}

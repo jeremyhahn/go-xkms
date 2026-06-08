@@ -16,13 +16,12 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"testing"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -1388,7 +1387,7 @@ func TestFinalCoveragePush_AuditService_GetEntries_NilStore(t *testing.T) {
 }
 
 func TestFinalCoveragePush_AuditService_GetEntries_WithFilter(t *testing.T) {
-	store, err := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, err)
 
 	store.Log(audit.Entry{
@@ -1685,15 +1684,15 @@ func TestFinalCoveragePush_BarrierService_SetDataDir(t *testing.T) {
 func TestFinalCoveragePush_BarrierService_SetTPMSealerFunc(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 	assert.Nil(t, svc.tpmSealerFn)
-	svc.SetTPMSealerFunc(func() types.Sealer { return nil })
+	svc.SetTPMSealerFunc(func() xkms.Sealer { return nil })
 	assert.NotNil(t, svc.tpmSealerFn)
 }
 
 func TestFinalCoveragePush_BarrierService_SetBaseBackendFactory(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 	assert.Nil(t, svc.baseBackendFn)
-	svc.SetBaseBackendFactory(func(dir string) (storage.Backend, error) {
-		return storage.NewMemory(), nil
+	svc.SetBaseBackendFactory(func(dir string) (xkms.StorageBackend, error) {
+		return xkms.NewStorageMemory(), nil
 	})
 	assert.NotNil(t, svc.baseBackendFn)
 }
@@ -1981,7 +1980,7 @@ func TestFinalCoveragePush_AuditService_ExportEntries_NilStore(t *testing.T) {
 }
 
 func TestFinalCoveragePush_AuditService_ExportEntries_JSON(t *testing.T) {
-	store, err := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, err)
 
 	store.Log(audit.Entry{
@@ -1999,7 +1998,7 @@ func TestFinalCoveragePush_AuditService_ExportEntries_JSON(t *testing.T) {
 }
 
 func TestFinalCoveragePush_AuditService_ExportEntries_CSV(t *testing.T) {
-	store, err := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, err)
 
 	store.Log(audit.Entry{

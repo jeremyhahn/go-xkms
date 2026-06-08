@@ -178,7 +178,7 @@ func (s *Server) handleBarrierInitialize(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "bootstrap") {
 		return
 	}
 
@@ -217,7 +217,7 @@ func (s *Server) handleBarrierUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "unseal") {
 		return
 	}
 
@@ -256,7 +256,7 @@ func (s *Server) handleBarrierSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "seal") {
 		return
 	}
 
@@ -283,7 +283,7 @@ func (s *Server) handleBarrierStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "read") {
+	if !s.authorize(w, r, "seal", "status") {
 		return
 	}
 
@@ -310,7 +310,7 @@ func (s *Server) handleSetSOPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "use") {
+	if !s.authorize(w, r, "pin", "write") {
 		return
 	}
 
@@ -348,7 +348,7 @@ func (s *Server) handleSetUserPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "use") {
+	if !s.authorize(w, r, "pin", "write") {
 		return
 	}
 
@@ -391,7 +391,7 @@ func (s *Server) handleChangeSOPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "use") {
+	if !s.authorize(w, r, "pin", "write") {
 		return
 	}
 
@@ -434,7 +434,7 @@ func (s *Server) handleChangeUserPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "use") {
+	if !s.authorize(w, r, "pin", "write") {
 		return
 	}
 
@@ -477,7 +477,7 @@ func (s *Server) handleVerifySOPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "use") {
+	if !s.authorize(w, r, "pin", "read") {
 		return
 	}
 
@@ -515,7 +515,7 @@ func (s *Server) handleVerifyUserPIN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "use") {
+	if !s.authorize(w, r, "pin", "read") {
 		return
 	}
 
@@ -579,7 +579,7 @@ func (s *Server) handleResetLockout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "pin", "use") {
+	if !s.authorize(w, r, "pin", "write") {
 		return
 	}
 

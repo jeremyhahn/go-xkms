@@ -71,7 +71,7 @@ func (s *Server) handleSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "use") {
+	if !s.authorize(w, r, "keys", "encrypt") {
 		return
 	}
 
@@ -152,7 +152,7 @@ func (s *Server) handleUnseal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "use") {
+	if !s.authorize(w, r, "keys", "decrypt") {
 		return
 	}
 
@@ -238,7 +238,7 @@ func (s *Server) handleCanSeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "seal", "read") {
+	if !s.authorize(w, r, "keys", "get") {
 		return
 	}
 

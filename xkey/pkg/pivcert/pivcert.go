@@ -26,7 +26,7 @@
 //
 // Example usage:
 //
-//	backend := storage.NewMemory() // or file.New("/var/lib/xkey/piv")
+//	backend := xkms.NewStorageMemory() // or file.New("/var/lib/xkey/piv")
 //	config := &pivcert.PIVConfig{
 //	    StorageType: pivcert.StorageTypeFile,
 //	    FileConfig: &pivcert.FileStorageConfig{
@@ -51,7 +51,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // PIVStorageType identifies the certificate storage backend type.
@@ -402,8 +402,8 @@ func (c *PIVConfig) Validate() error {
 // FileStorageConfig contains file backend configuration.
 type FileStorageConfig struct {
 	// Backend is the storage backend for certificate persistence.
-	// This can be any storage.Backend implementation (memory, file, etc.).
-	Backend storage.Backend
+	// This can be any xkms.StorageBackend implementation (memory, file, etc.).
+	Backend xkms.StorageBackend
 
 	// DEREnabled controls whether DER files are written.
 	// When true, certificates are stored in binary DER format.

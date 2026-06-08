@@ -36,8 +36,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -101,7 +99,7 @@ const (
 )
 
 // policyHandler is a function that applies policy-specific seal options.
-type policyHandler func(s *SealService, req *SealRequest, opts *types.SealOptions) error
+type policyHandler func(s *SealService, req *SealRequest, opts *xkms.SealOptions) error
 
 // policyHandlers maps policy types to their handler functions.
 var policyHandlers = map[PolicyType]policyHandler{
@@ -141,23 +139,23 @@ type sealerMetadata struct {
 	Label          string
 	Description    string
 	HardwareBacked bool
-	SecurityLevel  types.SecurityLevel
+	SecurityLevel  xkms.SecurityLevel
 }
 
 // knownSealerMeta maps backend names to their display metadata.
 // SecurityLevel values: 0=Low (software), 3=VeryHigh (TPM2)
 var knownSealerMeta = map[string]sealerMetadata{
-	string(types.BackendTypeTPM2): {
+	string(xkms.BackendTypeTPM2): {
 		Label:          "TPM 2.0",
 		Description:    "Hardware-bound sealing using the Trusted Platform Module. Keys never leave the TPM chip.",
 		HardwareBacked: true,
-		SecurityLevel:  types.SecurityLevelVeryHigh,
+		SecurityLevel:  xkms.SecurityLevelVeryHigh,
 	},
-	string(types.BackendTypeSoftware): {
+	string(xkms.BackendTypeSoftware): {
 		Label:          "Software AES-256-GCM",
 		Description:    "Software-based sealing with a filesystem-protected master key. No special hardware required.",
 		HardwareBacked: false,
-		SecurityLevel:  types.SecurityLevelLow,
+		SecurityLevel:  xkms.SecurityLevelLow,
 	},
 }
 
@@ -220,9 +218,9 @@ func (s *SealService) AvailableSealers() []SealerInfo {
 func (s *SealService) sealerDetails(backend string) map[string]string {
 	details := make(map[string]string)
 	switch backend {
-	case string(types.BackendTypeSoftware):
+	case string(xkms.BackendTypeSoftware):
 		details["storage_dir"] = s.storageDir
-	case string(types.BackendTypeTPM2):
+	case string(xkms.BackendTypeTPM2):
 		details["srk_handle"] = "0x81000002"
 		details["storage_dir"] = s.storageDir
 	}
@@ -256,20 +254,20 @@ type SealRequest struct {
 
 // sealedBlobStorage is the internal on-disk representation.
 type sealedBlobStorage struct {
-	ID          string            `json:"id"`
-	Label       string            `json:"label"`
-	SizeBytes   int               `json:"size_bytes"`
-	PCRBound    bool              `json:"pcr_bound"`
-	PCRs        []int             `json:"pcrs,omitempty"`
-	PCRBank     string            `json:"pcr_bank,omitempty"`
-	PolicyType  string            `json:"policy_type,omitempty"`
-	Password    string            `json:"password,omitempty"` // argon2id hash for verification
-	Category    string            `json:"category,omitempty"`
-	BackendID   string            `json:"backend_id,omitempty"`   // backend registry ID that sealed this blob
-	StorageType string            `json:"storage_type,omitempty"` // "disk" or "nvram"
-	NVIndex     uint32            `json:"nv_index,omitempty"`     // NV RAM base index (when StorageType = "nvram")
-	SealedData  *types.SealedData `json:"sealed_data"`
-	CreatedAt   time.Time         `json:"created_at"`
+	ID          string           `json:"id"`
+	Label       string           `json:"label"`
+	SizeBytes   int              `json:"size_bytes"`
+	PCRBound    bool             `json:"pcr_bound"`
+	PCRs        []int            `json:"pcrs,omitempty"`
+	PCRBank     string           `json:"pcr_bank,omitempty"`
+	PolicyType  string           `json:"policy_type,omitempty"`
+	Password    string           `json:"password,omitempty"` // argon2id hash for verification
+	Category    string           `json:"category,omitempty"`
+	BackendID   string           `json:"backend_id,omitempty"`   // backend registry ID that sealed this blob
+	StorageType string           `json:"storage_type,omitempty"` // "disk" or "nvram"
+	NVIndex     uint32           `json:"nv_index,omitempty"`     // NV RAM base index (when StorageType = "nvram")
+	SealedData  *xkms.SealedData `json:"sealed_data"`
+	CreatedAt   time.Time        `json:"created_at"`
 }
 
 // SealService exposes seal/unseal operations to the frontend via the
@@ -288,11 +286,11 @@ type SealService struct {
 	storageDir     string
 	tpmAccessor    *TPMAccessor // kept for NV RAM operations
 	policyService  *PlatformPolicyService
-	localClient    xkms.Client        // embedded local client (always available after init)
-	clientFunc     func() xkms.Client // remote server client provider
-	defaultBackend string             // default backend name
-	backend        storage.Backend    // barrier-encrypted storage (nil = direct disk fallback)
-	blobPrefix     string             // key prefix for backend storage (e.g. "sealed/")
+	localClient    xkms.Client         // embedded local client (always available after init)
+	clientFunc     func() xkms.Client  // remote server client provider
+	defaultBackend string              // default backend name
+	backend        xkms.StorageBackend // barrier-encrypted storage (nil = direct disk fallback)
+	blobPrefix     string              // key prefix for backend storage (e.g. "sealed/")
 	auditLog       atomic.Pointer[audit.Logger]
 }
 
@@ -301,7 +299,7 @@ func NewSealService(storageDir string) *SealService {
 	return &SealService{
 		log:            slog.Default().With("component", "seal_service"),
 		storageDir:     storageDir,
-		defaultBackend: string(types.BackendTypeTPM2),
+		defaultBackend: string(xkms.BackendTypeTPM2),
 	}
 }
 
@@ -356,13 +354,13 @@ func (s *SealService) SetPlatformPolicyService(svc *PlatformPolicyService) {
 // SetBackend sets the storage backend used for blob persistence. When set,
 // all blob I/O is routed through this backend (typically the barrier for
 // transparent encryption). When nil, blobs are written directly to disk.
-func (s *SealService) SetBackend(b storage.Backend, prefix string) {
+func (s *SealService) SetBackend(b xkms.StorageBackend, prefix string) {
 	s.backend = b
 	s.blobPrefix = prefix
 }
 
 // Backend returns the current storage backend, or nil if direct disk I/O is used.
-func (s *SealService) Backend() storage.Backend {
+func (s *SealService) Backend() xkms.StorageBackend {
 	return s.backend
 }
 
@@ -428,7 +426,7 @@ func (s *SealService) autoSelectDefault() {
 
 	type sealerWithLevel struct {
 		name  string
-		level types.SecurityLevel
+		level xkms.SecurityLevel
 	}
 	var available []sealerWithLevel
 
@@ -759,12 +757,12 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 	}
 
 	// Validate TPM-only policies against backend.
-	if _, isTPMOnly := tpmOnlyPolicies[pt]; isTPMOnly && backend != string(types.BackendTypeTPM2) {
+	if _, isTPMOnly := tpmOnlyPolicies[pt]; isTPMOnly && backend != string(xkms.BackendTypeTPM2) {
 		return nil, ErrSealPolicyRequiresTPM
 	}
 
 	// Build seal options and apply policy handler (computes PCR selections).
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	handler, ok := policyHandlers[pt]
 	if !ok {
 		return nil, ErrSealInvalidPolicyType
@@ -811,8 +809,8 @@ func (s *SealService) SealData(req *SealRequest) (entry *SealedBlobEntry, retErr
 	}
 
 	// Map SDK response to SealedData for blob storage.
-	sealed := &types.SealedData{
-		Backend:    types.BackendType(resp.Backend),
+	sealed := &xkms.SealedData{
+		Backend:    xkms.BackendType(resp.Backend),
 		Ciphertext: resp.Ciphertext,
 		Nonce:      resp.Nonce,
 		Tag:        resp.Tag,
@@ -1105,13 +1103,13 @@ func hashAlgIDToString(alg tpm2.TPMAlgID) string {
 // ---------------------------------------------------------------------------
 
 // handlePolicyNone performs no additional processing.
-func handlePolicyNone(_ *SealService, _ *SealRequest, _ *types.SealOptions) error {
+func handlePolicyNone(_ *SealService, _ *SealRequest, _ *xkms.SealOptions) error {
 	return nil
 }
 
 // handlePolicyPassword validates the password is non-empty. The password
 // hash is stored on the blob after sealing, not in the TPM seal options.
-func handlePolicyPassword(_ *SealService, req *SealRequest, _ *types.SealOptions) error {
+func handlePolicyPassword(_ *SealService, req *SealRequest, _ *xkms.SealOptions) error {
 	if req.Password == "" {
 		return ErrSealPasswordRequired
 	}
@@ -1120,7 +1118,7 @@ func handlePolicyPassword(_ *SealService, req *SealRequest, _ *types.SealOptions
 
 // handlePolicyPlatformPolicy retrieves PCRs from the PlatformPolicyService
 // and configures the seal options with the platform policy PCR selection.
-func handlePolicyPlatformPolicy(s *SealService, req *SealRequest, opts *types.SealOptions) error {
+func handlePolicyPlatformPolicy(s *SealService, req *SealRequest, opts *xkms.SealOptions) error {
 	if s.policyService == nil {
 		return ErrSealPolicyNotAvailable
 	}
@@ -1140,7 +1138,7 @@ func handlePolicyPlatformPolicy(s *SealService, req *SealRequest, opts *types.Se
 		pcrUints[i] = uint(p)
 	}
 
-	opts.TPMPolicy = &types.TPMSealPolicy{
+	opts.TPMPolicy = &xkms.TPMSealPolicy{
 		PCRSelection: tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{
 				{
@@ -1160,7 +1158,7 @@ func handlePolicyPlatformPolicy(s *SealService, req *SealRequest, opts *types.Se
 }
 
 // handlePolicyCustomPCR uses the request's PCRs directly (current behavior).
-func handlePolicyCustomPCR(_ *SealService, req *SealRequest, opts *types.SealOptions) error {
+func handlePolicyCustomPCR(_ *SealService, req *SealRequest, opts *xkms.SealOptions) error {
 	if len(req.PCRs) == 0 {
 		return nil
 	}
@@ -1179,7 +1177,7 @@ func handlePolicyCustomPCR(_ *SealService, req *SealRequest, opts *types.SealOpt
 		pcrUints[i] = uint(p)
 	}
 
-	opts.TPMPolicy = &types.TPMSealPolicy{
+	opts.TPMPolicy = &xkms.TPMSealPolicy{
 		PCRSelection: tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{
 				{

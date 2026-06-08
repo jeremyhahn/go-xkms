@@ -29,12 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 func generateTestCert(t *testing.T) *x509.Certificate {
@@ -65,20 +61,20 @@ func TestPIVMultiBackend_CertificateIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// Create separate namespaced stores for "software" and "tpm2" backends.
-	baseBackend, err := filestorage.New(dir)
+	baseBackend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, baseBackend.Close()) })
 
-	softwareStore, err := pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+	softwareStore, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
 		Backend:    baseBackend,
 		DEREnabled: true,
 		PEMEnabled: true,
 	})
 	require.NoError(t, err)
 
-	tpm2NS, err := storage.NewPrefixBackend(baseBackend, "backends/tpm2/")
+	tpm2NS, err := xkms.NewStoragePrefixBackend(baseBackend, "backends/tpm2/")
 	require.NoError(t, err)
-	tpm2Store, err := pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+	tpm2Store, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
 		Backend:    tpm2NS,
 		DEREnabled: true,
 		PEMEnabled: true,
@@ -86,9 +82,9 @@ func TestPIVMultiBackend_CertificateIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Initialize PIV manager with per-backend stores and a factory.
-	xkms.ResetPIV()
+	xkms.XKMSResetPIV()
 	err = xkms.InitializePIV(&xkms.PIVManagerConfig{
-		Stores: map[string]pivcert.PIVCertificateStorage{
+		Stores: map[string]xkms.PIVCertificateStorage{
 			"software": softwareStore,
 			"tpm2":     tpm2Store,
 		},
@@ -97,12 +93,12 @@ func TestPIVMultiBackend_CertificateIsolation(t *testing.T) {
 
 	// Store a cert in software backend slot 9D.
 	cert := generateTestCert(t)
-	err = softwareStore.Store(pivcert.PIVSlotKeyManagement, cert)
+	err = softwareStore.Store(xkms.PIVSlotKeyManagement, cert)
 	require.NoError(t, err)
 
 	// Store a cert in tpm2 backend slot 9A.
 	cert2 := generateTestCert(t)
-	err = tpm2Store.Store(pivcert.PIVSlotAuthentication, cert2)
+	err = tpm2Store.Store(xkms.PIVSlotAuthentication, cert2)
 	require.NoError(t, err)
 
 	// List software backend — should see 9D loaded, NOT 9A.
@@ -152,33 +148,33 @@ func TestPIVMultiBackend_LazyStoreFactory(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	baseBackend, err := filestorage.New(dir)
+	baseBackend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, baseBackend.Close()) })
 
 	// Initialize with only "software" pre-registered and a factory for others.
-	softwareStore, err := pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+	softwareStore, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
 		Backend:    baseBackend,
 		DEREnabled: true,
 		PEMEnabled: true,
 	})
 	require.NoError(t, err)
 
-	factory := func(backendName string) (pivcert.PIVCertificateStorage, error) {
-		ns, nsErr := storage.NewPrefixBackend(baseBackend, "backends/"+backendName+"/")
+	factory := func(backendName string) (xkms.PIVCertificateStorage, error) {
+		ns, nsErr := xkms.NewStoragePrefixBackend(baseBackend, "backends/"+backendName+"/")
 		if nsErr != nil {
 			return nil, nsErr
 		}
-		return pivfile.NewFileBackend(&pivcert.FileStorageConfig{
+		return xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
 			Backend:    ns,
 			DEREnabled: true,
 			PEMEnabled: true,
 		})
 	}
 
-	xkms.ResetPIV()
+	xkms.XKMSResetPIV()
 	err = xkms.InitializePIV(&xkms.PIVManagerConfig{
-		Stores: map[string]pivcert.PIVCertificateStorage{
+		Stores: map[string]xkms.PIVCertificateStorage{
 			"software": softwareStore,
 		},
 		StoreFactory: factory,

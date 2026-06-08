@@ -17,11 +17,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/stretchr/testify/assert"
@@ -50,7 +50,7 @@ func TestAdminService_SetAuditStore(t *testing.T) {
 	svc := NewAdminService()
 	assert.Nil(t, svc.auditStore)
 
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	svc.SetAuditStore(store)
 	assert.NotNil(t, svc.auditStore)
@@ -348,7 +348,7 @@ func TestAdminService_ExportAuditLogs_WithStore(t *testing.T) {
 	// This test exercises ExportAuditLogs logic beyond auth check.
 	// Since we can't easily be admin in tests, we test the underlying
 	// AuditService.ExportEntries which ExportAuditLogs delegates to.
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "test-key", true, nil, 42)
 

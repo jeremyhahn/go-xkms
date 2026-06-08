@@ -22,6 +22,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +34,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -425,7 +425,7 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend(t *testing.T) {
 	svc := NewSealService(storageDir)
 	svc.SetContext(context.Background())
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Store a valid blob.
@@ -452,7 +452,7 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend_InvalidJSON(t *test
 	svc := NewSealService(storageDir)
 	svc.SetContext(context.Background())
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Store invalid JSON that should be skipped.
@@ -469,7 +469,7 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend_Empty(t *testing.T)
 	svc := NewSealService(storageDir)
 	svc.SetContext(context.Background())
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	entries, err := svc.ListBlobs()
@@ -482,7 +482,7 @@ func TestFinalCoveragePush4_SealService_ListBlobs_ViaBackend_MultipleBlobs(t *te
 	svc := NewSealService(storageDir)
 	svc.SetContext(context.Background())
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Store multiple blobs with different timestamps.
@@ -936,7 +936,7 @@ func TestFinalCoveragePush4_SealService_SetBackend(t *testing.T) {
 	storageDir := t.TempDir()
 	svc := NewSealService(storageDir)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "custom-prefix/")
 
 	assert.NotNil(t, svc.backend)

@@ -27,8 +27,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -318,19 +317,19 @@ func init() {
 
 // openLocalShareStore opens the file-backed share store from the resolved
 // data directory. The store is created if it does not exist.
-func openLocalShareStore() (sharestore.ShareStore, error) {
+func openLocalShareStore() (xkms.ShareStore, error) {
 	dataDir, err := resolveShareDataDir()
 	if err != nil {
 		return nil, err
 	}
 
 	storePath := filepath.Join(dataDir, defaultShareStoreSubdir)
-	backend, err := file.New(storePath)
+	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrShareStoreOpen, err)
 	}
 
-	store, err := sharestore.NewBackendShareStore(backend, defaultShareStorePrefix)
+	store, err := xkms.NewBackendShareStore(backend, defaultShareStorePrefix)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrShareStoreOpen, err)
 	}
@@ -430,7 +429,7 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 	saved := 0
 
 	for _, share := range resp.Shares {
-		entry := &sharestore.ShareEntry{
+		entry := &xkms.ShareEntry{
 			ServerURL:  serverURL,
 			GroupID:    share.GroupID,
 			GroupName:  share.GroupName,
@@ -442,7 +441,7 @@ func runShareReceive(cmd *cobra.Command, _ []string) error {
 		}
 
 		if err := store.Save(ctx, entry); err != nil {
-			if errors.Is(err, sharestore.ErrShareExists) {
+			if errors.Is(err, xkms.ErrShareStoreExists) {
 				logger.Info("share already stored locally",
 					slog.String("group_id", share.GroupID),
 					slog.Int("index", share.ShareIndex),
@@ -478,7 +477,7 @@ func runShareImport(cmd *cobra.Command, _ []string) error {
 	}
 
 	// Parse the share entry.
-	var entry sharestore.ShareEntry
+	var entry xkms.ShareEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
 		return fmt.Errorf("%w: %v", ErrShareImportParse, err)
 	}

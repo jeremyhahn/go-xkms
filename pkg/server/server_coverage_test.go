@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
@@ -208,7 +209,12 @@ func TestServer_CreateCompositeAuthenticator_MTLSSuccess(t *testing.T) {
 // Tests — initializeAuditLogger
 // ============================================================================
 
-func TestServer_InitializeAuditLogger_Enabled(t *testing.T) {
+// TestServer_InitializeAuditLogger_NoQRDBClientUsesNoOp verifies that without a
+// hosted qrdb node (file storage backend => qrdbClient nil) the server selects
+// the NoOp audit logger. xkms owns no audit storage; production emits route to
+// the qrdb HMAC-chained subsystem via QRDBLogger (covered by the audit package
+// round-trip test).
+func TestServer_InitializeAuditLogger_NoQRDBClientUsesNoOp(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -223,10 +229,17 @@ func TestServer_InitializeAuditLogger_Enabled(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.NotNil(t, server.auditLogger)
+	require.NotNil(t, server.auditLogger)
+	_, ok := server.auditLogger.(*audit.NoOpLogger)
+	assert.True(t, ok, "expected NoOpLogger without a qrdb client")
 }
 
-func TestServer_InitializeAuditLogger_EnabledMissingPath(t *testing.T) {
+// TestServer_InitializeAuditLogger_EnabledMissingPathNoLongerErrors verifies
+// that an enabled audit config with an empty path is no longer a fatal error.
+// Audit storage moved to the qrdb node: an empty path simply means the node's
+// in-memory ring buffer is used instead of the HMAC-chained file logger, so
+// server construction succeeds.
+func TestServer_InitializeAuditLogger_EnabledMissingPathNoLongerErrors(t *testing.T) {
 	xkms.Reset()
 	defer xkms.Reset()
 
@@ -236,9 +249,11 @@ func TestServer_InitializeAuditLogger_EnabledMissingPath(t *testing.T) {
 		Path:    "",
 	}
 
-	_, err := New(cfg)
-	assert.Error(t, err)
-	assert.True(t, errors.Is(err, ErrAuditPathRequired))
+	server, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = server.Shutdown() }()
+
+	assert.NotNil(t, server.auditLogger)
 }
 
 // ============================================================================
@@ -339,7 +354,15 @@ func TestServer_InitializeAuthorization_RBACEnabled(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
-	assert.NotNil(t, server.authorizer)
+	// With RBAC enabled, authorization is enforced through the qrdb-backed
+	// Authorizer when a qrdb identity plane is hosted; without one it stays
+	// permissive (nil) by design.
+	if server.qrdbClient != nil {
+		require.NotNil(t, server.rbacAuthorizer)
+		assert.True(t, server.rbacAuthorizer.Enabled())
+	} else {
+		assert.Nil(t, server.rbacAuthorizer)
+	}
 }
 
 // ============================================================================

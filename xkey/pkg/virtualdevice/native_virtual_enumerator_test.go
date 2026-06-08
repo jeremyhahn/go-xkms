@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // TestNativeVirtualDeviceEnumerator_RegisterDevice tests device registration.
@@ -260,7 +260,7 @@ func TestNativeVirtualDeviceEnumerator_Close(t *testing.T) {
 
 // TestNativeVirtualDeviceEnumerator_ImplementsInterface tests interface compliance.
 func TestNativeVirtualDeviceEnumerator_ImplementsInterface(t *testing.T) {
-	var _ fido2.HIDDeviceEnumerator = (*NativeVirtualDeviceEnumerator)(nil)
+	var _ xkms.FIDO2HIDDeviceEnumerator = (*NativeVirtualDeviceEnumerator)(nil)
 }
 
 // TestNativeVirtualDeviceEnumerator_WrapperMethods tests wrapper HIDDevice methods.
@@ -316,9 +316,9 @@ func TestNativeVirtualDeviceEnumerator_WrapperMethods(t *testing.T) {
 
 	// Test Write through wrapper
 	nonce := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-	packet := make([]byte, fido2.HIDPacketSize)
-	binary.BigEndian.PutUint32(packet[0:4], fido2.CIDBroadcast)
-	packet[4] = fido2.CTAPHID_INIT
+	packet := make([]byte, xkms.FIDO2HIDPacketSize)
+	binary.BigEndian.PutUint32(packet[0:4], xkms.FIDO2CIDBroadcast)
+	packet[4] = xkms.FIDO2CTAPHIDInit
 	binary.BigEndian.PutUint16(packet[5:7], uint16(len(nonce)))
 	copy(packet[7:], nonce)
 
@@ -331,17 +331,17 @@ func TestNativeVirtualDeviceEnumerator_WrapperMethods(t *testing.T) {
 	}
 
 	// Test Read through wrapper
-	response := make([]byte, fido2.HIDPacketSize)
+	response := make([]byte, xkms.FIDO2HIDPacketSize)
 	n, err = wrapper.Read(response)
 	if err != nil {
 		t.Fatalf("wrapper Read failed: %v", err)
 	}
-	if n != fido2.HIDPacketSize {
-		t.Errorf("wrapper Read returned %d, want %d", n, fido2.HIDPacketSize)
+	if n != xkms.FIDO2HIDPacketSize {
+		t.Errorf("wrapper Read returned %d, want %d", n, xkms.FIDO2HIDPacketSize)
 	}
 
 	// Verify it's a valid INIT response
-	if response[4] != fido2.CTAPHID_INIT {
+	if response[4] != xkms.FIDO2CTAPHIDInit {
 		t.Errorf("expected INIT response, got 0x%02X", response[4])
 	}
 }

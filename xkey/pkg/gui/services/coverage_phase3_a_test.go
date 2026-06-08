@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -30,9 +31,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
@@ -261,14 +259,14 @@ func TestP3A_PhoneService_KeymasterOriginName_Known(t *testing.T) {
 }
 
 func TestP3A_PhoneService_VerifiedBootStateName_Known(t *testing.T) {
-	assert.Equal(t, "verified", verifiedBootStateName(android.VerifiedBootVerified))
-	assert.Equal(t, "self-signed", verifiedBootStateName(android.VerifiedBootSelfSigned))
-	assert.Equal(t, "unverified", verifiedBootStateName(android.VerifiedBootUnverified))
-	assert.Equal(t, "failed", verifiedBootStateName(android.VerifiedBootFailed))
+	assert.Equal(t, "verified", verifiedBootStateName(xkms.AndroidVerifiedBootVerified))
+	assert.Equal(t, "self-signed", verifiedBootStateName(xkms.AndroidVerifiedBootSelfSigned))
+	assert.Equal(t, "unverified", verifiedBootStateName(xkms.AndroidVerifiedBootUnverified))
+	assert.Equal(t, "failed", verifiedBootStateName(xkms.AndroidVerifiedBootFailed))
 }
 
 func TestP3A_PhoneService_VerifiedBootStateName_Unknown(t *testing.T) {
-	assert.Equal(t, "unknown", verifiedBootStateName(android.VerifiedBootState(99)))
+	assert.Equal(t, "unknown", verifiedBootStateName(xkms.AndroidVerifiedBootState(99)))
 }
 
 func TestP3A_PhoneService_ParseDERChain_EmptySlice(t *testing.T) {
@@ -1026,10 +1024,10 @@ func TestP3A_PlatformPolicyService_ExportPolicy_EmptyDigestsNonEmptyPCRs(t *test
 func TestP3A_PlatformPolicyService_ReadPCRDigests_BankMismatch(t *testing.T) {
 	mock := &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB}},
 				},
 			},
@@ -1045,16 +1043,16 @@ func TestP3A_PlatformPolicyService_ReadPCRDigests_BankMismatch(t *testing.T) {
 func TestP3A_PlatformPolicyService_ReadPCRDigests_MultipleBanks(t *testing.T) {
 	mock := &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA1",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0x01}},
 				},
 			},
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB}},
 				},
 			},
@@ -1085,10 +1083,10 @@ func TestP3A_PlatformPolicyService_VerifyDigests_InvalidStoredHex(t *testing.T) 
 func TestP3A_PlatformPolicyService_VerifyDigests_MissingLivePCR(t *testing.T) {
 	mock := &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs:      []tpm2pkg.PCR{},
+				PCRs:      []xkms.PCR{},
 			},
 		},
 	}
@@ -1268,7 +1266,7 @@ func TestP3A_AdminService_ListBackends_LocalDefaults(t *testing.T) {
 }
 
 func TestP3A_AdminService_GetAuditLogs_WithStore(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "key1", true, nil, 10)
 
@@ -1290,7 +1288,7 @@ func TestP3A_AdminService_GetAuditLogs_NilStore(t *testing.T) {
 }
 
 func TestP3A_AdminService_ExportEntries_InvalidFormat(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	auditSvc := NewAuditService(store)
 	_, err := auditSvc.ExportEntries("yaml", nil)
@@ -1298,7 +1296,7 @@ func TestP3A_AdminService_ExportEntries_InvalidFormat(t *testing.T) {
 }
 
 func TestP3A_AdminService_ExportEntries_NoEntries(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	auditSvc := NewAuditService(store)
 	auditSvc.SetContext(context.Background())
@@ -1308,7 +1306,7 @@ func TestP3A_AdminService_ExportEntries_NoEntries(t *testing.T) {
 }
 
 func TestP3A_AdminService_ExportEntries_JSON(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 5)
 
@@ -1325,7 +1323,7 @@ func TestP3A_AdminService_ExportEntries_JSON(t *testing.T) {
 }
 
 func TestP3A_AdminService_ExportEntries_CSV(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 5)
 
@@ -1368,7 +1366,7 @@ func TestP3A_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 func TestP3A_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	svc.SetAuditStore(store)
 
@@ -1380,7 +1378,7 @@ func TestP3A_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
 }
 
 func TestP3A_AdminService_AuditFilter_WithOperationFilter(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 5)
 	store.LogKeyOperation(audit.OpKeyDeleted, "sw", "k2", true, nil, 3)

@@ -14,17 +14,17 @@
 package services
 
 import (
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
 
 func newTestStaticPWImportService(t *testing.T) *StaticPasswordService {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	return NewStaticPasswordService(store)
 }

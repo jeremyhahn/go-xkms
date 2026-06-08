@@ -26,8 +26,7 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/term"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
 
@@ -120,8 +119,8 @@ func resolveBarrierDataDir() (string, error) {
 // createBarrier creates a Barrier instance from the resolved data directory
 // and strategy preference. The dataDir is used directly as the storage root,
 // matching the GUI and extension serve barrier layout.
-func createBarrier(dataDir string) (*seal.Barrier, error) {
-	backend, err := file.New(dataDir)
+func createBarrier(dataDir string) (*xkms.Barrier, error) {
+	backend, err := xkms.NewFileStorageBackend(dataDir)
 	if err != nil {
 		return nil, &BarrierError{
 			Operation: "create_storage",
@@ -137,17 +136,17 @@ func createBarrier(dataDir string) (*seal.Barrier, error) {
 		}
 	}
 
-	config := seal.BarrierConfig{
+	config := xkms.BarrierConfig{
 		RootKeyPath: defaultBarrierRootKeyPath,
 	}
 
 	// If a strategy preference was specified, set the preference order.
 	if barrierStrategy != "" {
-		stratID := seal.StrategyID(barrierStrategy)
-		config.PreferenceOrder = []seal.StrategyID{stratID}
+		stratID := xkms.StrategyID(barrierStrategy)
+		config.PreferenceOrder = []xkms.StrategyID{stratID}
 	}
 
-	barrier, err := seal.NewBarrier(
+	barrier, err := xkms.NewBarrier(
 		slog.Default(),
 		backend,
 		config,
@@ -165,11 +164,11 @@ func createBarrier(dataDir string) (*seal.Barrier, error) {
 
 // buildStrategies returns all available sealing strategies.
 // Software strategy is always available as a fallback.
-func buildStrategies() []seal.SealingStrategy {
-	strategies := make([]seal.SealingStrategy, 0, 3)
+func buildStrategies() []xkms.SealingStrategy {
+	strategies := make([]xkms.SealingStrategy, 0, 3)
 
 	// Software strategy is always available.
-	strategies = append(strategies, seal.NewSoftwareStrategy())
+	strategies = append(strategies, xkms.NewSoftwareSealStrategy())
 
 	return strategies
 }

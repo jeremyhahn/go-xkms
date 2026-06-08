@@ -35,7 +35,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
@@ -82,28 +81,26 @@ func getBackendDescription(bt types.BackendType) string {
 
 // Typed errors for authorization operations.
 var (
-	// ErrAuthorizationFailed is returned when the authorizer encounters
-	// an internal error while evaluating the request.
-	ErrAuthorizationFailed = errors.New("grpc: authorization error")
-
 	// ErrAccessDenied is returned when the authorizer denies access to the
-	// requested resource.
+	// requested resource without supplying a specific reason.
 	ErrAccessDenied = errors.New("grpc: access denied")
 )
 
 // Service implements the KeystoreService gRPC interface
 type Service struct {
 	pb.UnimplementedKeystoreServiceServer
-	authorizer  keyauthz.Authorizer
+	authorizer  *auth.Authorizer
 	auditLogger audit.Logger
 }
 
 // NewService creates a new gRPC service.
 // The service uses the global xkms service for backend management.
 // If authorizer or auditLogger are nil, no-op implementations are used.
-func NewService(authorizer keyauthz.Authorizer, auditLogger audit.Logger) *Service {
+func NewService(authorizer *auth.Authorizer, auditLogger audit.Logger) *Service {
 	if authorizer == nil {
-		authorizer = &keyauthz.NoOpAuthorizer{}
+		// A nil authorizer disables authorization (allow all), matching the
+		// behavior of an Authorizer constructed with a nil RBAC client.
+		authorizer = auth.NewAuthorizer(nil)
 	}
 	if auditLogger == nil {
 		auditLogger = &audit.NoOpLogger{}
@@ -115,9 +112,10 @@ func NewService(authorizer keyauthz.Authorizer, auditLogger audit.Logger) *Servi
 }
 
 // authorize performs an authorization check for the given resource, action,
-// and resource ID. It extracts the caller's identity from the context, builds
-// an authorization request, calls the authorizer, and logs the audit event.
-// Returns nil if the action is allowed, or a gRPC status error on deny/error.
+// and resource ID. It extracts the caller's identity from the context,
+// delegates the decision to the qrdb-backed Authorizer, and logs the audit
+// event. Returns nil if the action is allowed, or a gRPC status error on
+// deny (PermissionDenied) or missing identity (Unauthenticated).
 func (s *Service) authorize(ctx context.Context, resource, action, resourceID string) error {
 	identity := auth.GetIdentity(ctx)
 
@@ -128,18 +126,10 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 		role = extractRoleFromIdentity(identity)
 	}
 
-	authzReq := &keyauthz.AuthorizationRequest{
-		Subject:  subject,
-		Role:     role,
-		Resource: resource,
-		Action:   action,
-		Context:  map[string]string{"resource_id": resourceID},
-	}
-
-	decision, err := s.authorizer.Authorize(ctx, authzReq)
+	err := s.authorizer.Authorize(ctx, identity, resource, action)
 
 	outcome := audit.OutcomeAllow
-	if err != nil || (decision != nil && !decision.Allowed) {
+	if err != nil {
 		outcome = audit.OutcomeDeny
 	}
 
@@ -159,13 +149,12 @@ func (s *Service) authorize(ctx context.Context, resource, action, resourceID st
 	_ = s.auditLogger.Log(ctx, auditEvent)
 
 	if err != nil {
-		return status.Error(codes.Internal, ErrAuthorizationFailed.Error())
-	}
-
-	if decision != nil && !decision.Allowed {
-		reason := ErrAccessDenied.Error()
-		if decision.Reason != "" {
-			reason = decision.Reason
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			return status.Error(codes.Unauthenticated, err.Error())
+		}
+		reason := err.Error()
+		if reason == "" {
+			reason = ErrAccessDenied.Error()
 		}
 		return status.Error(codes.PermissionDenied, reason)
 	}
@@ -190,7 +179,7 @@ func (s *Service) Health(ctx context.Context, req *pb.HealthRequest) (*pb.Health
 
 // ListBackends returns all available backend providers
 func (s *Service) ListBackends(ctx context.Context, req *pb.ListBackendsRequest) (*pb.ListBackendsResponse, error) {
-	if err := s.authorize(ctx, "backends", "read", ""); err != nil {
+	if err := s.authorize(ctx, "backends", "list", ""); err != nil {
 		return nil, err
 	}
 
@@ -267,7 +256,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 		return nil, status.Error(codes.InvalidArgument, "key_type is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "write", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "create", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -378,7 +367,7 @@ func (s *Service) GenerateKey(ctx context.Context, req *pb.GenerateKeyRequest) (
 	}
 
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to generate key: %v", err)
+		return nil, wrapWriteError(err, codes.Internal, "failed to generate key: %v", err)
 	}
 
 	// Extract public key PEM
@@ -402,7 +391,7 @@ func (s *Service) ListKeys(ctx context.Context, req *pb.ListKeysRequest) (*pb.Li
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "read", ""); err != nil {
+	if err := s.authorize(ctx, "keys", "list", ""); err != nil {
 		return nil, err
 	}
 
@@ -457,7 +446,7 @@ func (s *Service) GetKey(ctx context.Context, req *pb.GetKeyRequest) (*pb.GetKey
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "read", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "get", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -526,7 +515,7 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "use", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "sign", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -552,7 +541,7 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 	if attrs.KeyAlgorithm == x509.Ed25519 {
 		signature, err := signer.Sign(nil, req.Data, crypto.Hash(0))
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to sign: %v", err)
+			return nil, wrapWriteError(err, codes.Internal, "failed to sign: %v", err)
 		}
 		return &pb.SignResponse{
 			Signature: signature,
@@ -576,7 +565,7 @@ func (s *Service) Sign(ctx context.Context, req *pb.SignRequest) (*pb.SignRespon
 	// Sign
 	signature, err := signer.Sign(nil, digest, cryptoHash)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to sign: %v", err)
+		return nil, wrapWriteError(err, codes.Internal, "failed to sign: %v", err)
 	}
 
 	return &pb.SignResponse{
@@ -596,7 +585,7 @@ func (s *Service) Verify(ctx context.Context, req *pb.VerifyRequest) (*pb.Verify
 		return nil, status.Error(codes.InvalidArgument, "signature is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "use", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "verify", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -726,7 +715,7 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "write", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "rotate", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -744,7 +733,7 @@ func (s *Service) RotateKey(ctx context.Context, req *pb.RotateKeyRequest) (*pb.
 	// Rotate the key
 	newKey, err := ks.RotateKey(attrs)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to rotate key: %v", err)
+		return nil, wrapWriteError(err, codes.Internal, "failed to rotate key: %v", err)
 	}
 
 	// Extract public key PEM
@@ -774,7 +763,7 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 		return nil, status.Error(codes.InvalidArgument, "plaintext is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "use", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "encrypt", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -810,7 +799,7 @@ func (s *Service) Encrypt(ctx context.Context, req *pb.EncryptRequest) (*pb.Encr
 	// Encrypt the data
 	encryptedData, err := encrypter.Encrypt(req.Plaintext, opts)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to encrypt: %v", err)
+		return nil, wrapWriteError(err, codes.Internal, "failed to encrypt: %v", err)
 	}
 
 	return &pb.EncryptResponse{
@@ -853,7 +842,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 			return nil, status.Error(codes.InvalidArgument, "backend does not support symmetric decryption")
 		}
 
-		if err := s.authorize(ctx, "keys", "use", req.KeyId); err != nil {
+		if err := s.authorize(ctx, "keys", "decrypt", req.KeyId); err != nil {
 			return nil, err
 		}
 
@@ -874,7 +863,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 
 		plaintext, err = encrypter.Decrypt(encryptedData, decryptOpts)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to decrypt: %v", err)
+			return nil, wrapWriteError(err, codes.Internal, "failed to decrypt: %v", err)
 		}
 	} else {
 		// Asymmetric decryption path
@@ -885,7 +874,7 @@ func (s *Service) Decrypt(ctx context.Context, req *pb.DecryptRequest) (*pb.Decr
 
 		plaintext, err = decrypter.Decrypt(nil, req.Ciphertext, nil)
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to decrypt: %v", err)
+			return nil, wrapWriteError(err, codes.Internal, "failed to decrypt: %v", err)
 		}
 	}
 
@@ -909,7 +898,7 @@ func (s *Service) SaveCert(ctx context.Context, req *pb.SaveCertRequest) (*pb.Sa
 		return nil, status.Errorf(codes.InvalidArgument, "invalid certificate PEM: %v", err)
 	}
 
-	if err := s.authorize(ctx, "certs", "write", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "certs", "generate", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -977,7 +966,7 @@ func (s *Service) DeleteCert(ctx context.Context, req *pb.DeleteCertRequest) (*p
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
-	if err := s.authorize(ctx, "certs", "delete", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "certs", "revoke", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -1006,7 +995,7 @@ func (s *Service) DeleteCert(ctx context.Context, req *pb.DeleteCertRequest) (*p
 
 // ListCerts lists all certificates
 func (s *Service) ListCerts(ctx context.Context, req *pb.ListCertsRequest) (*pb.ListCertsResponse, error) {
-	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "list", ""); err != nil {
 		return nil, err
 	}
 
@@ -1082,7 +1071,7 @@ func (s *Service) SaveCertChain(ctx context.Context, req *pb.SaveCertChainReques
 			return nil, status.Errorf(codes.InvalidArgument, "invalid certificate PEM at index %d: %v", i, err)
 		}
 
-		if err := s.authorize(ctx, "certs", "write", req.KeyId); err != nil {
+		if err := s.authorize(ctx, "certs", "generate", req.KeyId); err != nil {
 			return nil, err
 		}
 		chain[i] = cert
@@ -1228,7 +1217,7 @@ func (s *Service) GetImportParameters(ctx context.Context, req *pb.GetImportPara
 		return nil, status.Error(codes.InvalidArgument, "key_type is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "read", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "import", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -1343,7 +1332,7 @@ func (s *Service) WrapKey(ctx context.Context, req *pb.WrapKeyRequest) (*pb.Wrap
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse wrapping public key: %v", err)
 	}
 
-	if err := s.authorize(ctx, "keys", "use", ""); err != nil {
+	if err := s.authorize(ctx, "keys", "wrap", ""); err != nil {
 		return nil, err
 	}
 
@@ -1409,7 +1398,7 @@ func (s *Service) UnwrapKey(ctx context.Context, req *pb.UnwrapKeyRequest) (*pb.
 		return nil, status.Errorf(codes.InvalidArgument, "failed to parse wrapping public key: %v", err)
 	}
 
-	if err := s.authorize(ctx, "keys", "use", ""); err != nil {
+	if err := s.authorize(ctx, "keys", "unwrap", ""); err != nil {
 		return nil, err
 	}
 
@@ -1479,7 +1468,7 @@ func (s *Service) ImportKey(ctx context.Context, req *pb.ImportKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "key_type is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "write", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "import", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -1584,7 +1573,7 @@ func (s *Service) ExportKey(ctx context.Context, req *pb.ExportKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "wrapping_algorithm is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "read", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "export", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -1639,7 +1628,7 @@ func (s *Service) ExportKeyMaterial(ctx context.Context, req *pb.ExportKeyMateri
 		return nil, status.Error(codes.InvalidArgument, "backend is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "read", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "export", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -1707,7 +1696,7 @@ func (s *Service) WrapKeyByID(ctx context.Context, req *pb.WrapKeyByIDRequest) (
 		return nil, status.Error(codes.InvalidArgument, "algorithm is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "read", req.TargetKeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "wrap", req.TargetKeyId); err != nil {
 		return nil, err
 	}
 
@@ -1809,7 +1798,7 @@ func (s *Service) UnwrapKeyByID(ctx context.Context, req *pb.UnwrapKeyByIDReques
 		return nil, status.Error(codes.InvalidArgument, "target_key_backend is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "write", req.TargetKeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "unwrap", req.TargetKeyId); err != nil {
 		return nil, err
 	}
 
@@ -1970,7 +1959,7 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 		return nil, status.Error(codes.InvalidArgument, "wrapping_algorithm is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "write", req.DestKeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "create", req.DestKeyId); err != nil {
 		return nil, err
 	}
 
@@ -2055,7 +2044,7 @@ func (s *Service) EncryptAsym(ctx context.Context, req *pb.EncryptAsymRequest) (
 		return nil, status.Error(codes.InvalidArgument, "plaintext is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "use", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "encrypt", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -2137,7 +2126,7 @@ func (s *Service) Seal(ctx context.Context, req *pb.SealRequest) (*pb.SealRespon
 		return nil, status.Error(codes.InvalidArgument, "data is required")
 	}
 
-	if err := s.authorize(ctx, "seal", "use", ""); err != nil {
+	if err := s.authorize(ctx, "keys", "encrypt", ""); err != nil {
 		return nil, err
 	}
 
@@ -2206,7 +2195,7 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 		return nil, status.Error(codes.InvalidArgument, "ciphertext is required")
 	}
 
-	if err := s.authorize(ctx, "seal", "use", ""); err != nil {
+	if err := s.authorize(ctx, "keys", "decrypt", ""); err != nil {
 		return nil, err
 	}
 
@@ -2266,7 +2255,7 @@ func (s *Service) Unseal(ctx context.Context, req *pb.UnsealRequest) (*pb.Unseal
 
 // CanSeal checks if a backend supports sealing operations
 func (s *Service) CanSeal(ctx context.Context, req *pb.CanSealRequest) (*pb.CanSealResponse, error) {
-	if err := s.authorize(ctx, "seal", "read", ""); err != nil {
+	if err := s.authorize(ctx, "keys", "get", ""); err != nil {
 		return nil, err
 	}
 
@@ -2294,7 +2283,7 @@ func (s *Service) AttestKey(ctx context.Context, req *pb.AttestKeyRequest) (*pb.
 		return nil, status.Error(codes.InvalidArgument, "key_id is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "read", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "get", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -2380,7 +2369,7 @@ func (s *Service) DeriveKey(ctx context.Context, req *pb.DeriveKeyRequest) (*pb.
 		return nil, status.Errorf(codes.InvalidArgument, "unsupported KDF algorithm: %s", req.Algorithm)
 	}
 
-	if err := s.authorize(ctx, "keys", "use", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "derive", req.KeyId); err != nil {
 		return nil, err
 	}
 
@@ -2474,7 +2463,7 @@ func (s *Service) DeriveKeyECDH(ctx context.Context, req *pb.DeriveKeyECDHReques
 		return nil, status.Error(codes.InvalidArgument, "peer_public_key is required")
 	}
 
-	if err := s.authorize(ctx, "keys", "use", req.KeyId); err != nil {
+	if err := s.authorize(ctx, "keys", "derive", req.KeyId); err != nil {
 		return nil, err
 	}
 

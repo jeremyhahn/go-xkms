@@ -21,8 +21,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/spf13/cobra"
@@ -376,13 +375,13 @@ func runPasswordAdd(cmd *cobra.Command, args []string) error {
 	defer func() { _ = store.Close() }()
 
 	if generate {
-		password, err = staticpw.GeneratePassword(length, charset)
+		password, err = xkms.GenerateStaticPassword(length, charset)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrPasswordGenerateFailed, err)
 		}
 	}
 
-	pw := &staticpw.StaticPassword{
+	pw := &xkms.StaticPassword{
 		Name:     name,
 		Title:    title,
 		Username: username,
@@ -684,12 +683,12 @@ func connectPasswordStore() (PasswordStoreClientService, error) {
 
 // openPasswordStore creates a BackendStore backed by file storage at the
 // given path. The file backend creates the directory if it does not exist.
-func openPasswordStore(storePath string) (*staticpw.BackendStore, error) {
-	backend, err := file.New(storePath)
+func openPasswordStore(storePath string) (*xkms.StaticPasswordBackendStore, error) {
+	backend, err := xkms.NewFileStorageBackend(storePath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPasswordStoreOpenFailed, err)
 	}
-	return staticpw.NewStore(backend), nil
+	return xkms.NewStaticPasswordStore(backend), nil
 }
 
 // PasswordStoreError represents a password store operation error.
@@ -737,7 +736,7 @@ func init() {
 	passwordAddCmd.Flags().String("name", "", "Password name (e.g., DatabaseProd)")
 	passwordAddCmd.Flags().String("password", "", "The password to store")
 	passwordAddCmd.Flags().Bool("generate", false, "Generate a random password")
-	passwordAddCmd.Flags().Int("length", staticpw.DefaultLength, "Generated password length")
+	passwordAddCmd.Flags().Int("length", xkms.StaticPasswordDefaultLength, "Generated password length")
 	passwordAddCmd.Flags().String("charset", "all", "Password charset: all, alphanumeric")
 	passwordAddCmd.Flags().String("notes", "", "Optional notes")
 	passwordAddCmd.Flags().String("title", "", "Display title for credential")

@@ -17,12 +17,11 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // BackendTokenStore implements TokenStore by delegating to a DAOStore.
-// It exists as a backward-compatible wrapper that adapts a storage.Backend
+// It exists as a backward-compatible wrapper that adapts a xkms.StorageBackend
 // into the DAO-backed persistence layer. New callers should prefer
 // NewDAOStore directly.
 type BackendTokenStore struct {
@@ -37,12 +36,12 @@ var _ TokenStore = (*BackendTokenStore)(nil)
 // storage backend. The prefix is retained for migration compatibility
 // but is no longer used for key derivation -- the DAO uses its own
 // "tokens" entity namespace.
-func NewBackendTokenStore(backend storage.Backend, prefix string) (*BackendTokenStore, error) {
+func NewBackendTokenStore(backend xkms.StorageBackend, prefix string) (*BackendTokenStore, error) {
 	if backend == nil {
 		return nil, ErrNilBackend
 	}
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	if err != nil {
 		return nil, ErrDAOCreation{Cause: err}
 	}

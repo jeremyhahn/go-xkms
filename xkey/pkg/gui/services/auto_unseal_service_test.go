@@ -19,7 +19,6 @@ import (
 	"os"
 	"testing"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -73,7 +72,7 @@ func newAutoUnsealTestSvc(t *testing.T, mock *sealMockTPM) (*AutoUnsealService, 
 
 	sealSvc := NewSealService(t.TempDir())
 	sealSvc.SetClientFunc(func() xkms.Client { return mc })
-	sealSvc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	sealSvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	sealSvc.SetContext(context.Background())
 
 	storageSvc := NewStorageService()

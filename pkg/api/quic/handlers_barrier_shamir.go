@@ -81,7 +81,7 @@ func (s *Server) handleBarrierInitializeShamir(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "initialize_shamir") {
 		return
 	}
 
@@ -119,7 +119,7 @@ func (s *Server) handleBarrierUnsealShare(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "barrier", "unseal-share") {
 		return
 	}
 
@@ -161,7 +161,7 @@ func (s *Server) handleBarrierUnsealShares(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "unseal") {
 		return
 	}
 
@@ -200,7 +200,7 @@ func (s *Server) handleBarrierRekey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "rekey") {
 		return
 	}
 
@@ -247,7 +247,7 @@ func (s *Server) handleBarrierGenerateRootToken(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "rotate_root_key") {
 		return
 	}
 
@@ -288,7 +288,7 @@ func (s *Server) handleBarrierGenerateRecoveryKeys(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "generate_recovery") {
 		return
 	}
 
@@ -335,7 +335,7 @@ func (s *Server) handleBarrierRecoverWithKeys(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "recover_with_keys") {
 		return
 	}
 
@@ -374,7 +374,7 @@ func (s *Server) handleBarrierDeleteRecoveryKeys(w http.ResponseWriter, r *http.
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "use") {
+	if !s.authorize(w, r, "seal", "generate_recovery") {
 		return
 	}
 
@@ -402,7 +402,7 @@ func (s *Server) handleBarrierHasRecoveryKeys(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if !s.authorize(w, r, "barrier", "read") {
+	if !s.authorize(w, r, "seal", "status") {
 		return
 	}
 

@@ -149,7 +149,7 @@ func (s *Service) BarrierInitialize(ctx context.Context, req *pb.BarrierInitiali
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "initialize"); err != nil {
+	if err := s.authorize(ctx, "seal", "bootstrap", "initialize"); err != nil {
 		return nil, err
 	}
 
@@ -168,7 +168,7 @@ func (s *Service) BarrierUnseal(ctx context.Context, req *pb.BarrierUnsealReques
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "unseal"); err != nil {
+	if err := s.authorize(ctx, "seal", "unseal", "unseal"); err != nil {
 		return nil, err
 	}
 
@@ -186,7 +186,7 @@ func (s *Service) BarrierSeal(ctx context.Context, _ *emptypb.Empty) (*emptypb.E
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "seal"); err != nil {
+	if err := s.authorize(ctx, "seal", "seal", "seal"); err != nil {
 		return nil, err
 	}
 
@@ -204,7 +204,7 @@ func (s *Service) BarrierStatus(ctx context.Context, _ *emptypb.Empty) (*pb.Barr
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "read", "status"); err != nil {
+	if err := s.authorize(ctx, "seal", "status", "status"); err != nil {
 		return nil, err
 	}
 

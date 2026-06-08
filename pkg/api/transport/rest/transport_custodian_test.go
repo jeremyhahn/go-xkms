@@ -19,24 +19,161 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
+	"github.com/stretchr/testify/require"
 )
+
+// custodianTestClient is an in-memory qrdbtransport.CustodianGroupClient
+// mirroring the embedded go-qrdb node's custodian semantics, used so the REST
+// transport can be exercised against the real REST handlers end to end.
+type custodianTestClient struct {
+	groups map[string]*qrdbtransport.CustodianGroupInfo
+}
+
+func newCustodianTestClient() *custodianTestClient {
+	return &custodianTestClient{groups: make(map[string]*qrdbtransport.CustodianGroupInfo)}
+}
+
+func (f *custodianTestClient) CreateCustodianGroup(_ context.Context, req *qrdbtransport.CreateCustodianGroupRequest) (*qrdbtransport.CreateCustodianGroupResponse, error) {
+	if req.ID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	if req.Name == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupName
+	}
+	if req.Total < 1 {
+		return nil, qrdbsdk.ErrCeremonyInvalidTotal
+	}
+	if req.Threshold < 1 || req.Threshold > req.Total {
+		return nil, qrdbsdk.ErrCeremonyInvalidThreshold
+	}
+	if _, exists := f.groups[req.ID]; exists {
+		return nil, qrdbsdk.ErrCeremonyGroupAlreadyExists
+	}
+	now := time.Now().UTC()
+	g := &qrdbtransport.CustodianGroupInfo{
+		ID: req.ID, TenantID: req.TenantID, Name: req.Name, Purpose: req.Purpose,
+		Threshold: req.Threshold, Total: req.Total,
+		Members: []qrdbtransport.CustodianMemberInfo{}, CreatedAt: now, UpdatedAt: now,
+	}
+	f.groups[req.ID] = g
+	return &qrdbtransport.CreateCustodianGroupResponse{Group: *g}, nil
+}
+
+func (f *custodianTestClient) GetCustodianGroup(_ context.Context, groupID string) (*qrdbtransport.GetCustodianGroupResponse, error) {
+	if groupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[groupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	return &qrdbtransport.GetCustodianGroupResponse{Group: *g}, nil
+}
+
+func (f *custodianTestClient) ListCustodianGroups(_ context.Context) (*qrdbtransport.ListCustodianGroupsResponse, error) {
+	groups := make([]qrdbtransport.CustodianGroupInfo, 0, len(f.groups))
+	for _, g := range f.groups {
+		groups = append(groups, *g)
+	}
+	return &qrdbtransport.ListCustodianGroupsResponse{Groups: groups}, nil
+}
+
+func (f *custodianTestClient) DeleteCustodianGroup(_ context.Context, groupID string) error {
+	if groupID == "" {
+		return qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	if _, ok := f.groups[groupID]; !ok {
+		return qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	delete(f.groups, groupID)
+	return nil
+}
+
+func (f *custodianTestClient) AddCustodianMember(_ context.Context, req *qrdbtransport.AddCustodianMemberRequest) (*qrdbtransport.AddCustodianMemberResponse, error) {
+	if req.GroupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	if req.UserID == "" {
+		return nil, qrdbsdk.ErrCeremonyUserNotFound
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	if len(g.Members) >= g.Total {
+		return nil, qrdbsdk.ErrCeremonyGroupFull
+	}
+	for _, m := range g.Members {
+		if m.UserID == req.UserID {
+			return nil, qrdbsdk.ErrCeremonyMemberAlreadyExists
+		}
+	}
+	member := qrdbtransport.CustodianMemberInfo{
+		ShareIndex: len(g.Members), UserID: req.UserID, Username: req.Username,
+		AssignedAt: time.Now().UTC(), Method: req.Method,
+	}
+	g.Members = append(g.Members, member)
+	g.UpdatedAt = time.Now().UTC()
+	return &qrdbtransport.AddCustodianMemberResponse{Member: member}, nil
+}
+
+func (f *custodianTestClient) RemoveCustodianMember(_ context.Context, req *qrdbtransport.RemoveCustodianMemberRequest) error {
+	if req.GroupID == "" {
+		return qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	for i, m := range g.Members {
+		if m.UserID == req.UserID {
+			g.Members = append(g.Members[:i], g.Members[i+1:]...)
+			g.UpdatedAt = time.Now().UTC()
+			return nil
+		}
+	}
+	return qrdbsdk.ErrCeremonyMemberNotFound
+}
+
+func (f *custodianTestClient) DistributeShares(_ context.Context, req *qrdbtransport.DistributeSharesRequest) (*qrdbtransport.DistributeSharesResponse, error) {
+	if req.GroupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	if len(g.Members) == 0 {
+		return nil, qrdbsdk.ErrCeremonyInsufficientMembers
+	}
+	return &qrdbtransport.DistributeSharesResponse{Distributed: len(g.Members)}, nil
+}
 
 // newCustodianTestTransport creates a REST transport connected to an httptest
 // server backed by real custodian handlers with an in-memory store.
 func newCustodianTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	t.Helper()
 
-	store := custodian.NewMemoryStore()
-	svc, err := custodian.NewService(store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handlers := restapi.NewCustodianHandlers(svc)
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	svc.SetCustodianClient(newCustodianTestClient())
+	t.Cleanup(func() { xkms.Reset() })
+
+	handlers := restapi.NewCustodianHandlers()
 
 	r := chi.NewRouter()
 

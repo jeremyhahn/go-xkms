@@ -18,15 +18,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
@@ -69,7 +67,7 @@ func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_PPSvcFailsSetMode(t *testi
 	})
 	svc.SetInitDataDirFunc(func() error { return nil })
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	staticPWSvc := NewStaticPasswordService(store)
 	ppSvc := NewPasswordProtectionService(filepath.Join(t.TempDir(), "enc.json"), staticPWSvc, nil)
@@ -107,7 +105,7 @@ func TestSetupWizard_ApplySetup_TPMSealedPasswordMode_SealUserPIN(t *testing.T) 
 	sealSvc := newSealServiceWithPlatformPolicy(t, mock)
 	svc.SetSealService(sealSvc)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	staticPWSvc := NewStaticPasswordService(store)
 	ppSvc := NewPasswordProtectionService(
@@ -412,7 +410,7 @@ func TestBarrierService_BestStrategy_AlwaysHasSoftwareFC4(t *testing.T) {
 	best, err := svc.BestStrategy()
 	require.NoError(t, err)
 	require.NotNil(t, best)
-	assert.Equal(t, string(seal.StrategyPassphrase), best.ID)
+	assert.Equal(t, string(xkms.StrategyPassphrase), best.ID)
 }
 
 func TestBarrierService_Initialize_EmptyPasswordFC4(t *testing.T) {
@@ -595,8 +593,8 @@ func TestSealService_ListBlobs_WithBlobFilesFC4(t *testing.T) {
 		Label:      "user_data",
 		SizeBytes:  100,
 		PolicyType: "",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("test"),
 		},
 		CreatedAt: time.Now(),

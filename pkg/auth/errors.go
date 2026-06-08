@@ -33,4 +33,8 @@ var (
 
 	// ErrNoTLSInfo is returned when gRPC peer does not contain TLS authentication info.
 	ErrNoTLSInfo = errors.New("no TLS information in peer")
+
+	// ErrUnauthenticated is returned by the Authorizer when no identity is
+	// present on the request context — authentication must run first.
+	ErrUnauthenticated = errors.New("authentication required")
 )

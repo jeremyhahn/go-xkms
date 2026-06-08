@@ -280,6 +280,7 @@ const (
 	BackendTypeQuantum   = types.BackendTypeQuantum
 	BackendTypeThreshold = types.BackendTypeThreshold
 	BackendTypeSymmetric = types.BackendTypeSymmetric
+	BackendTypePhone     = types.BackendTypePhone
 )
 
 // Key type constants.
@@ -337,6 +338,7 @@ const (
 	StoreQuantum   = types.StoreQuantum
 	StoreThreshold = types.StoreThreshold
 	StoreFrost     = types.StoreFrost
+	StorePhone     = types.StorePhone
 )
 
 // Quantum algorithm constants.
@@ -513,3 +515,15 @@ type KeyECCConfig = types.ECCConfig
 
 // KeyRSAConfig holds RSA-specific configuration for YAML serialization.
 type KeyRSAConfig = types.RSAConfig
+
+// Security level constants.
+const (
+	// SecurityLevelLow indicates software-only key protection.
+	SecurityLevelLow = types.SecurityLevelLow
+	// SecurityLevelVeryHigh indicates hardware-bound, non-exportable keys.
+	SecurityLevelVeryHigh = types.SecurityLevelVeryHigh
+)
+
+// IsRSAPSS reports whether the signature algorithm is an RSA-PSS variant. The
+// equivalent pkg/tpm2/store helper is re-exported as TPMStoreIsRSAPSS in tpm.go.
+var IsRSAPSS = types.IsRSAPSS

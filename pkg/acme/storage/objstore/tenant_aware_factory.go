@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jeremyhahn/go-objstore/pkg/common"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
@@ -29,26 +28,24 @@ import (
 var _ storage.TenantAwareFactory = (*TenantAwareFactory)(nil)
 
 // TenantAwareFactory extends Factory with tenant-scoped DAO creation.
-// It implements the storage.TenantAwareFactory interface using go-objstore,
+// It implements the storage.TenantAwareFactory interface over a go-qrdb KVStore,
 // providing tenant data isolation via key prefix namespacing.
 type TenantAwareFactory struct {
 	Factory
 	tenantID string
 }
 
-// NewTenantAwareFactory creates a new TenantAwareFactory with the provided storage backend.
-func NewTenantAwareFactory(store common.Storage) (*TenantAwareFactory, error) {
-	if store == nil {
+// NewTenantAwareFactoryFromKVStore creates a TenantAwareFactory over a go-qrdb
+// KVStore directly (the datastore path). Callers wrap any storage.Backend —
+// including the object-storage engine — with kvadapter.New and pass it here.
+func NewTenantAwareFactoryFromKVStore(kv xkmssdk.QRDBKVStore) (*TenantAwareFactory, error) {
+	if kv == nil {
 		return nil, xkmssdk.QRDBDAOInvalidConfigError{
-			Field:  "store",
-			Reason: "storage backend not configured",
+			Field:  "kvStore",
+			Reason: "kv store not configured",
 		}
 	}
-	return &TenantAwareFactory{
-		Factory: Factory{
-			kvStore: NewKVStoreAdapter(store),
-		},
-	}, nil
+	return &TenantAwareFactory{Factory: Factory{kvStore: kv}}, nil
 }
 
 // TenantDAO returns a GenericDAO for managing tenants.

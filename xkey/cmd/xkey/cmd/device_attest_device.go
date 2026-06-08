@@ -30,7 +30,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	xkeyTruststore "github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
@@ -307,14 +307,14 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	}
 
 	// Verify attestation using the Android extension parser
-	verifyOpts := &android.VerifyOptions{
+	verifyOpts := &xkms.AndroidVerifyOptions{
 		TrustedRoots:     rootPool,
 		ExpectedNonce:    nonce,
-		MinSecurityLevel: android.SecurityLevelTrustedEnvironment, // TEE minimum
+		MinSecurityLevel: xkms.AndroidSecurityLevelTrustedEnvironment, // TEE minimum
 		VerifyBootState:  true,
 	}
 
-	keyDesc, err := android.VerifyKeyAttestation(certChain, verifyOpts)
+	keyDesc, err := xkms.VerifyAndroidKeyAttestation(certChain, verifyOpts)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrAttestDeviceVerifyFailed, err)
 	}
@@ -325,7 +325,7 @@ func runDeviceAttestDevice(cmd *cobra.Command, args []string) error {
 	if keyDesc.TeeEnforced.RootOfTrust != nil {
 		rot := keyDesc.TeeEnforced.RootOfTrust
 		bootHashHex = hex.EncodeToString(rot.VerifiedBootHash)
-		bootVerified = rot.VerifiedBootState == android.VerifiedBootVerified
+		bootVerified = rot.VerifiedBootState == xkms.AndroidVerifiedBootVerified
 
 		// Validate boot hash hasn't changed if we have a previous value
 		if err := validateBootHashMatch(device, bootHashHex); err != nil {

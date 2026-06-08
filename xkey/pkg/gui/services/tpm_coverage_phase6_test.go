@@ -24,6 +24,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"os"
@@ -33,8 +34,6 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +47,7 @@ import (
 func p6aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 	t.Helper()
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	dataDir := t.TempDir()
 	svc.SetDataDir(dataDir)
 	return svc, dataDir
@@ -58,27 +57,27 @@ func p6aNewTPMService(t *testing.T, mock *mockTPM) (*TPMService, string) {
 func p6aDefaultMock() *mockTPM {
 	return &mockTPM{
 		device: "/dev/tpmrm0",
-		config: &tpm2pkg.Config{
+		config: &xkms.TPMConfig{
 			Hash: "SHA-256",
-			SSRK: &tpm2pkg.SRKConfig{Handle: 0x81000001, KeyAlgorithm: "RSA"},
+			SSRK: &xkms.SRKConfig{Handle: 0x81000001, KeyAlgorithm: "RSA"},
 		},
-		fixedProps: &tpm2pkg.PropertiesFixed{
+		fixedProps: &xkms.PropertiesFixed{
 			Manufacturer:  "P6TestMFG",
 			FwMajor:       7,
 			FwMinor:       85,
 			MaxRSAKeyBits: 2048,
 			MaxECCKeyBits: 384,
 		},
-		ekAttrs: &types.KeyAttributes{
+		ekAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm:  x509.RSA,
-			RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-			TPMAttributes: &types.TPMAttributes{Handle: 0x81010001},
+			RSAAttributes: &xkms.RSAAttributes{KeySize: 2048},
+			TPMAttributes: &xkms.TPMAttributes{Handle: 0x81010001},
 		},
-		ssrkAttrs: &types.KeyAttributes{
+		ssrkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: x509.RSA,
 		},
-		pcrBanks: []tpm2pkg.PCRBank{
-			{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
+		pcrBanks: []xkms.PCRBank{
+			{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
 		},
 		randomBytesVal: []byte{0xDE, 0xAD, 0xBE, 0xEF},
 		supportedAlgos: []string{"RSA", "SHA-256"},
@@ -175,10 +174,10 @@ func TestP6A_ViewKey_EK_Error(t *testing.T) {
 
 func TestP6A_ViewKey_EK_WithPublicKeyBytes(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.ekAttrs = &types.KeyAttributes{
+	mock.ekAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.RSA,
-		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-		TPMAttributes: &types.TPMAttributes{
+		RSAAttributes: &xkms.RSAAttributes{KeySize: 2048},
+		TPMAttributes: &xkms.TPMAttributes{
 			Handle:         0x81010001,
 			PublicKeyBytes: []byte{0x30, 0x82, 0x01, 0x22},
 		},
@@ -206,9 +205,9 @@ func TestP6A_ViewKey_IAK_Error(t *testing.T) {
 
 func TestP6A_ViewKey_IAK_WithPublicKeyBytes(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.iakAttrs = &types.KeyAttributes{
+	mock.iakAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm: x509.ECDSA,
-		TPMAttributes: &types.TPMAttributes{
+		TPMAttributes: &xkms.TPMAttributes{
 			Handle:         0x81020001,
 			PublicKeyBytes: []byte{0x04, 0xAA, 0xBB},
 		},
@@ -235,9 +234,9 @@ func TestP6A_ViewKey_IDevID_Error(t *testing.T) {
 
 func TestP6A_ViewKey_IDevID_WithPublicKeyBytes(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.idevidAttrs = &types.KeyAttributes{
+	mock.idevidAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm: x509.ECDSA,
-		TPMAttributes: &types.TPMAttributes{
+		TPMAttributes: &xkms.TPMAttributes{
 			Handle:         0x81020000,
 			PublicKeyBytes: []byte{0x04, 0xCC, 0xDD},
 		},
@@ -318,7 +317,7 @@ func TestP6A_GenerateQuote_NonceGenError(t *testing.T) {
 
 func TestP6A_ReadNVData_AutoSizeNotFound(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.nvIndexes = []tpm2pkg.NVIndexInfo{}
+	mock.nvIndexes = []xkms.NVIndexInfo{}
 	svc, _ := p6aNewTPMService(t, mock)
 
 	_, err := svc.ReadNVData(0x01800001, 0, "")
@@ -327,7 +326,7 @@ func TestP6A_ReadNVData_AutoSizeNotFound(t *testing.T) {
 
 func TestP6A_ReadNVData_AutoSizeFromIndex(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.nvIndexes = []tpm2pkg.NVIndexInfo{
+	mock.nvIndexes = []xkms.NVIndexInfo{
 		{Handle: 0x01800001, Size: 32, Type: "ordinary"},
 	}
 	mock.nvReadResult = make([]byte, 32)
@@ -713,7 +712,7 @@ func TestP6A_RefreshCompositePolicyPCRs_NoPCRSelections(t *testing.T) {
 	require.NoError(t, err)
 
 	mock := p6aDefaultMock()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 
 	result, err := svc.RefreshCompositePolicyPCRs("no-pcrs")
 	require.NoError(t, err)
@@ -766,8 +765,8 @@ func TestP6A_ListPoliciesWithDigests_PCRReadError(t *testing.T) {
 
 func TestP6A_ListPoliciesWithDigests_UnknownBank(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "CUSTOMALG", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "CUSTOMALG", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
 	svc, dataDir := p6aNewTPMService(t, mock)
 
@@ -787,8 +786,8 @@ func TestP6A_ListPoliciesWithDigests_UnknownBank(t *testing.T) {
 
 func TestP6A_ListPoliciesWithDigests_DigestMismatch(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x11, 0x22}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x11, 0x22}}}},
 	}
 	svc, dataDir := p6aNewTPMService(t, mock)
 
@@ -810,8 +809,8 @@ func TestP6A_ListPoliciesWithDigests_DigestMismatch(t *testing.T) {
 
 func TestP6A_ListPoliciesWithDigests_DigestMatch(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
 	}
 	svc, dataDir := p6aNewTPMService(t, mock)
 
@@ -851,8 +850,8 @@ func TestP6A_ListPoliciesWithDigests_NoSavedDigests(t *testing.T) {
 
 func TestP6A_ListPoliciesWithDigests_MissingSavedKey(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
 	svc, dataDir := p6aNewTPMService(t, mock)
 
@@ -897,8 +896,8 @@ func TestP6A_ListCompositePoliciesWithDigests_NoPCRBanks(t *testing.T) {
 
 func TestP6A_ListCompositePoliciesWithDigests_DigestComparison(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x11, 0x22}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x11, 0x22}}}},
 	}
 	svc, dataDir := p6aNewTPMService(t, mock)
 
@@ -922,8 +921,8 @@ func TestP6A_ListCompositePoliciesWithDigests_DigestComparison(t *testing.T) {
 
 func TestP6A_ListCompositePoliciesWithDigests_MismatchMissingCurrent(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
 	svc, dataDir := p6aNewTPMService(t, mock)
 
@@ -1074,8 +1073,8 @@ func TestP6A_SavePolicyPassword_NilService(t *testing.T) {
 
 func TestP6A_ComparePolicyPCRs_HexDecodeErrors(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
 	svc, dataDir := p6aNewTPMService(t, mock)
 
@@ -1165,8 +1164,8 @@ func TestP6A_GetInfo_TCGCertOverrides(t *testing.T) {
 	require.NoError(t, err)
 
 	mock.ekCert = ekCert
-	mock.iakAttrs = &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}
-	mock.idevidAttrs = &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+	mock.iakAttrs = &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+	mock.idevidAttrs = &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
 	mock.idevidCert = p6aGenCert(t)
 
 	svc, _ := p6aNewTPMService(t, mock)
@@ -1405,12 +1404,12 @@ func TestP6A_GenerateIDevIDCSR_IAKFallback(t *testing.T) {
 	mock := p6aDefaultMock()
 	mock.ekCert = p6aGenCert(t)
 	mock.iakAttrsErr = errors.New("no IAK attrs")
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
-		0x81020001: {KeyAlgorithm: x509.ECDSA, TPMAttributes: &types.TPMAttributes{Handle: 0x81020001}},
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
+		0x81020001: {KeyAlgorithm: x509.ECDSA, TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020001}},
 	}
-	mock.idevidAttrs = &types.KeyAttributes{
+	mock.idevidAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.ECDSA,
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020000},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020000},
 	}
 	mock.createTCGCSRErr = errors.New("CSR creation not supported in mock")
 	svc, _ := p6aNewTPMService(t, mock)
@@ -1434,13 +1433,13 @@ func TestP6A_GenerateIDevIDCSR_IAKNotFound(t *testing.T) {
 func TestP6A_GenerateIDevIDCSR_IDevIDFallback(t *testing.T) {
 	mock := p6aDefaultMock()
 	mock.ekCert = p6aGenCert(t)
-	mock.iakAttrs = &types.KeyAttributes{
+	mock.iakAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.ECDSA,
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020001},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020001},
 	}
 	mock.idevidAttrsErr = errors.New("no IDevID attrs")
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
-		0x81020000: {KeyAlgorithm: x509.ECDSA, TPMAttributes: &types.TPMAttributes{Handle: 0x81020000}},
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
+		0x81020000: {KeyAlgorithm: x509.ECDSA, TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020000}},
 	}
 	mock.createTCGCSRErr = errors.New("CSR mock")
 	svc, _ := p6aNewTPMService(t, mock)
@@ -1453,9 +1452,9 @@ func TestP6A_GenerateIDevIDCSR_IDevIDFallback(t *testing.T) {
 func TestP6A_GenerateIDevIDCSR_IDevIDNotFound(t *testing.T) {
 	mock := p6aDefaultMock()
 	mock.ekCert = p6aGenCert(t)
-	mock.iakAttrs = &types.KeyAttributes{
+	mock.iakAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.ECDSA,
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020001},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020001},
 	}
 	mock.idevidAttrsErr = errors.New("no IDevID")
 	svc, _ := p6aNewTPMService(t, mock)
@@ -1573,8 +1572,8 @@ func TestP6A_SaveHandleDescriptions_EmptyDataDir(t *testing.T) {
 
 func TestP6A_CreatePolicy_WithPCRSelections(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "sha256", PCRs: []tpm2pkg.PCR{
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "sha256", PCRs: []xkms.PCR{
 			{ID: 0, Value: []byte{0xAA, 0xBB}},
 			{ID: 7, Value: []byte{0xCC, 0xDD}},
 		}},
@@ -1603,8 +1602,8 @@ func TestP6A_CreatePolicy_WithPCRSelections(t *testing.T) {
 
 func TestP6A_GetPCRs_SHA384_SHA386Mismatch(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA386", PCRs: []tpm2pkg.PCR{
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA386", PCRs: []xkms.PCR{
 			{ID: 0, Value: []byte{0x11}},
 			{ID: 1, Value: []byte{0x22}},
 		}},
@@ -1619,8 +1618,8 @@ func TestP6A_GetPCRs_SHA384_SHA386Mismatch(t *testing.T) {
 
 func TestP6A_GetPCRs_BankNotSupported(t *testing.T) {
 	mock := p6aDefaultMock()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
 	svc, _ := p6aNewTPMService(t, mock)
 

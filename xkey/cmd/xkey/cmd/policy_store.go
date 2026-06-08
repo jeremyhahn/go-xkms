@@ -15,19 +15,17 @@ package cmd
 
 import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // newFileStorageBackend creates a file-based storage backend at the
 // given directory path. The directory is created if it does not exist.
-func newFileStorageBackend(path string) (storage.Backend, error) {
-	return file.New(path)
+func newFileStorageBackend(path string) (xkms.StorageBackend, error) {
+	return xkms.NewFileStorageBackend(path)
 }
 
-// newKVAdapter wraps a storage.Backend with the kvadapter to produce
+// newKVAdapter wraps a xkms.StorageBackend with the kvadapter to produce
 // a kvstore.KVStore suitable for the DAO layer.
-func newKVAdapter(backend storage.Backend) (qrdbsdk.KVStore, error) {
-	return kvadapter.New(backend)
+func newKVAdapter(backend xkms.StorageBackend) (qrdbsdk.KVStore, error) {
+	return xkms.NewKVStoreAdapter(backend)
 }

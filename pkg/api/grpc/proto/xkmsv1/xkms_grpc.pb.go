@@ -132,6 +132,8 @@ const (
 	KeystoreService_DeleteTenant_FullMethodName                = "/xkms.v1.KeystoreService/DeleteTenant"
 	KeystoreService_TenantBarrierInit_FullMethodName           = "/xkms.v1.KeystoreService/TenantBarrierInit"
 	KeystoreService_TenantBarrierUnseal_FullMethodName         = "/xkms.v1.KeystoreService/TenantBarrierUnseal"
+	KeystoreService_GetClusterStatus_FullMethodName            = "/xkms.v1.KeystoreService/GetClusterStatus"
+	KeystoreService_ListClusterMembers_FullMethodName          = "/xkms.v1.KeystoreService/ListClusterMembers"
 	KeystoreService_PasswordAdd_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordAdd"
 	KeystoreService_PasswordGet_FullMethodName                 = "/xkms.v1.KeystoreService/PasswordGet"
 	KeystoreService_PasswordList_FullMethodName                = "/xkms.v1.KeystoreService/PasswordList"
@@ -413,6 +415,13 @@ type KeystoreServiceClient interface {
 	TenantBarrierInit(ctx context.Context, in *TenantBarrierInitRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	// TenantBarrierUnseal unseals the barrier for a tenant.
 	TenantBarrierUnseal(ctx context.Context, in *TenantBarrierUnsealRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// GetClusterStatus returns the Raft leadership status for the configured
+	// shard. A standalone (non-clustered) node reports a single-node,
+	// non-clustered status.
+	GetClusterStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ClusterStatusResponse, error)
+	// ListClusterMembers returns the Raft replicas for the configured shard. A
+	// standalone node returns an empty membership set.
+	ListClusterMembers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListClusterMembersResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(ctx context.Context, in *PasswordAddRequest, opts ...grpc.CallOption) (*PasswordAddResponse, error)
 	// PasswordGet retrieves a password entry by ID or name.
@@ -1553,6 +1562,26 @@ func (c *keystoreServiceClient) TenantBarrierUnseal(ctx context.Context, in *Ten
 	return out, nil
 }
 
+func (c *keystoreServiceClient) GetClusterStatus(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ClusterStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClusterStatusResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_GetClusterStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ListClusterMembers(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListClusterMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListClusterMembersResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_ListClusterMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *keystoreServiceClient) PasswordAdd(ctx context.Context, in *PasswordAddRequest, opts ...grpc.CallOption) (*PasswordAddResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PasswordAddResponse)
@@ -2021,6 +2050,13 @@ type KeystoreServiceServer interface {
 	TenantBarrierInit(context.Context, *TenantBarrierInitRequest) (*emptypb.Empty, error)
 	// TenantBarrierUnseal unseals the barrier for a tenant.
 	TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) (*emptypb.Empty, error)
+	// GetClusterStatus returns the Raft leadership status for the configured
+	// shard. A standalone (non-clustered) node reports a single-node,
+	// non-clustered status.
+	GetClusterStatus(context.Context, *emptypb.Empty) (*ClusterStatusResponse, error)
+	// ListClusterMembers returns the Raft replicas for the configured shard. A
+	// standalone node returns an empty membership set.
+	ListClusterMembers(context.Context, *emptypb.Empty) (*ListClusterMembersResponse, error)
 	// PasswordAdd adds a new password entry to the encrypted store.
 	PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error)
 	// PasswordGet retrieves a password entry by ID or name.
@@ -2397,6 +2433,12 @@ func (UnimplementedKeystoreServiceServer) TenantBarrierInit(context.Context, *Te
 }
 func (UnimplementedKeystoreServiceServer) TenantBarrierUnseal(context.Context, *TenantBarrierUnsealRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method TenantBarrierUnseal not implemented")
+}
+func (UnimplementedKeystoreServiceServer) GetClusterStatus(context.Context, *emptypb.Empty) (*ClusterStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetClusterStatus not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ListClusterMembers(context.Context, *emptypb.Empty) (*ListClusterMembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListClusterMembers not implemented")
 }
 func (UnimplementedKeystoreServiceServer) PasswordAdd(context.Context, *PasswordAddRequest) (*PasswordAddResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PasswordAdd not implemented")
@@ -4444,6 +4486,42 @@ func _KeystoreService_TenantBarrierUnseal_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _KeystoreService_GetClusterStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).GetClusterStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_GetClusterStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).GetClusterStatus(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ListClusterMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ListClusterMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ListClusterMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ListClusterMembers(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _KeystoreService_PasswordAdd_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PasswordAddRequest)
 	if err := dec(in); err != nil {
@@ -5264,6 +5342,14 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TenantBarrierUnseal",
 			Handler:    _KeystoreService_TenantBarrierUnseal_Handler,
+		},
+		{
+			MethodName: "GetClusterStatus",
+			Handler:    _KeystoreService_GetClusterStatus_Handler,
+		},
+		{
+			MethodName: "ListClusterMembers",
+			Handler:    _KeystoreService_ListClusterMembers_Handler,
 		},
 		{
 			MethodName: "PasswordAdd",

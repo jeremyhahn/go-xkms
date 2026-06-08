@@ -21,6 +21,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -29,7 +30,6 @@ import (
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
@@ -230,7 +230,7 @@ func TestTPMService_GetInfo_ECCCurves(t *testing.T) {
 		curves:  []string{"P-256", "P-384", "P-521"},
 	}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 
 	info, err := svc.GetInfo()
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestTPMService_GetInfo_ECCCurvesError(t *testing.T) {
 		curvesErr: errors.New("no curves"),
 	}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 
 	info, err := svc.GetInfo()
 	require.NoError(t, err)
@@ -259,7 +259,7 @@ func TestTPMService_GetInfo_SupportedCommandsWithValues(t *testing.T) {
 		commands: []string{"TPM2_Sign", "TPM2_Create", "TPM2_Load"},
 	}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 
 	info, err := svc.GetInfo()
 	require.NoError(t, err)

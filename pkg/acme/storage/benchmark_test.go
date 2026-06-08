@@ -26,11 +26,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-objstore/pkg/memory"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -374,12 +375,12 @@ func BenchmarkGetOrder_Parallel(b *testing.B) {
 func setupBenchmarkStorage(b *testing.B) storage.Factory {
 	b.Helper()
 
-	store := memory.New()
-	if err := store.Configure(nil); err != nil {
-		b.Fatalf("failed to configure memory store: %v", err)
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
+	if err != nil {
+		b.Fatalf("failed to create kvadapter: %v", err)
 	}
 
-	factory, err := objstore.NewFactory(store)
+	factory, err := objstore.NewFactoryFromKVStore(kv)
 	if err != nil {
 		b.Fatalf("failed to create storage factory: %v", err)
 	}

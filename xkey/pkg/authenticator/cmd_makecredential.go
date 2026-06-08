@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -866,7 +866,7 @@ func (a *Authenticator) processMakeCredentialExtensions(extensions map[string]in
 //   - publicKeyCOSE: COSE encoded public key
 //   - backendID: the ID of the backend that actually generated the key
 //   - error
-func (a *Authenticator) generateCredentialKeyPair(algorithm int, credentialID []byte) ([]byte, []byte, types.BackendType, error) {
+func (a *Authenticator) generateCredentialKeyPair(algorithm int, credentialID []byte) ([]byte, []byte, xkms.BackendType, error) {
 	if a.keyBackend != nil {
 		// Key backend path: delegate key generation
 		handle, publicKeyCOSE, err := a.keyBackend.GenerateCredentialKey(algorithm, credentialID)
@@ -909,7 +909,7 @@ func (a *Authenticator) generateCredentialKeyPair(algorithm int, credentialID []
 		return nil, nil, "", ErrCryptoError
 	}
 
-	return privateKeyBytes, publicKeyCOSE, types.BackendTypeSoftware, nil
+	return privateKeyBytes, publicKeyCOSE, xkms.BackendTypeSoftware, nil
 }
 
 // storeCredentialParams holds the parameters for credential storage,
@@ -928,7 +928,7 @@ type storeCredentialParams struct {
 	rpUPPolicy      bool
 	rpRKPolicy      string
 	rpAttestPref    string
-	backendID       types.BackendType
+	backendID       xkms.BackendType
 }
 
 // storeCredential persists a newly created credential.
@@ -943,7 +943,7 @@ func (a *Authenticator) storeCredential(
 	discoverable bool,
 	hmacSecretKey []byte,
 	credProtect uint8,
-	backendID types.BackendType,
+	backendID xkms.BackendType,
 ) error {
 	return a.storeCredentialWithPolicy(&storeCredentialParams{
 		credentialID:    credentialID,

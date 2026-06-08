@@ -15,12 +15,11 @@ package services
 
 import (
 	"context"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,16 +36,16 @@ type mockSealer struct {
 	canSeal bool
 }
 
-func (m *mockSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
-	return &types.SealedData{
-		Backend:    types.BackendTypeTPM2,
+func (m *mockSealer) Seal(_ context.Context, data []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
+	return &xkms.SealedData{
+		Backend:    xkms.BackendTypeTPM2,
 		Ciphertext: data,
 		TPMPublic:  []byte("pub"),
 		TPMPrivate: []byte("priv"),
 	}, nil
 }
 
-func (m *mockSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *mockSealer) Unseal(_ context.Context, sealed *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	return sealed.Ciphertext, nil
 }
 
@@ -64,7 +63,7 @@ func TestBarrierService_ProbeStrategies(t *testing.T) {
 	strategies := svc.ProbeStrategies()
 
 	require.Len(t, strategies, 1, "without TPM sealer, only software strategy expected")
-	assert.Equal(t, string(seal.StrategyPassphrase), strategies[0].ID)
+	assert.Equal(t, string(xkms.StrategyPassphrase), strategies[0].ID)
 	assert.True(t, strategies[0].Available, "software strategy must always be available")
 	assert.False(t, strategies[0].HardwareBacked, "software strategy must not be hardware-backed")
 	assert.NotEmpty(t, strategies[0].Label)
@@ -72,7 +71,7 @@ func TestBarrierService_ProbeStrategies(t *testing.T) {
 
 func TestBarrierService_ProbeStrategies_WithTPM(t *testing.T) {
 	svc := newTestBarrierService(t)
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: true}
 	})
 
@@ -81,12 +80,12 @@ func TestBarrierService_ProbeStrategies_WithTPM(t *testing.T) {
 	require.Len(t, strategies, 2, "with TPM sealer, both software and TPM2 expected")
 
 	// First entry is software.
-	assert.Equal(t, string(seal.StrategyPassphrase), strategies[0].ID)
+	assert.Equal(t, string(xkms.StrategyPassphrase), strategies[0].ID)
 	assert.True(t, strategies[0].Available)
 	assert.False(t, strategies[0].HardwareBacked)
 
 	// Second entry is TPM2.
-	assert.Equal(t, string(seal.StrategyTPM2), strategies[1].ID)
+	assert.Equal(t, string(xkms.StrategyTPM2), strategies[1].ID)
 	assert.True(t, strategies[1].Available)
 	assert.True(t, strategies[1].HardwareBacked)
 }
@@ -101,7 +100,7 @@ func TestBarrierService_BestStrategy(t *testing.T) {
 	best, err := svc.BestStrategy()
 	require.NoError(t, err)
 	require.NotNil(t, best)
-	assert.Equal(t, string(seal.StrategyPassphrase), best.ID,
+	assert.Equal(t, string(xkms.StrategyPassphrase), best.ID,
 		"without TPM, best strategy should be software")
 	assert.False(t, best.HardwareBacked)
 }
@@ -109,7 +108,7 @@ func TestBarrierService_BestStrategy(t *testing.T) {
 func TestBarrierService_BestStrategy_TPMCanSealFalse_FallsToSoftware(t *testing.T) {
 	svc := newTestBarrierService(t)
 	// Sealer exists but CanSeal returns false (e.g., SRK not provisioned).
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: false}
 	})
 
@@ -118,14 +117,14 @@ func TestBarrierService_BestStrategy_TPMCanSealFalse_FallsToSoftware(t *testing.
 	require.NotNil(t, best)
 
 	// TPM2 should NOT be selected when CanSeal is false.
-	assert.Equal(t, string(seal.StrategyPassphrase), best.ID,
+	assert.Equal(t, string(xkms.StrategyPassphrase), best.ID,
 		"TPM with CanSeal=false should fall back to software")
 	assert.False(t, best.HardwareBacked)
 }
 
 func TestBarrierService_ProbeStrategies_TPMCanSealFalse(t *testing.T) {
 	svc := newTestBarrierService(t)
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: false}
 	})
 
@@ -133,14 +132,14 @@ func TestBarrierService_ProbeStrategies_TPMCanSealFalse(t *testing.T) {
 	require.Len(t, strategies, 2)
 
 	// TPM2 should be listed but marked as unavailable.
-	assert.Equal(t, string(seal.StrategyTPM2), strategies[1].ID)
+	assert.Equal(t, string(xkms.StrategyTPM2), strategies[1].ID)
 	assert.False(t, strategies[1].Available,
 		"TPM with CanSeal=false should be marked unavailable")
 }
 
 func TestBarrierService_BestStrategy_PrefersTPM(t *testing.T) {
 	svc := newTestBarrierService(t)
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: true}
 	})
 
@@ -149,7 +148,7 @@ func TestBarrierService_BestStrategy_PrefersTPM(t *testing.T) {
 	require.NotNil(t, best)
 
 	// DefaultPreferenceOrder lists TPM2 before software.
-	assert.Equal(t, string(seal.StrategyTPM2), best.ID,
+	assert.Equal(t, string(xkms.StrategyTPM2), best.ID,
 		"with TPM sealer, best strategy should be TPM2")
 	assert.True(t, best.HardwareBacked)
 }
@@ -327,7 +326,7 @@ func TestBarrierService_GetSealInfo_AfterInitialize(t *testing.T) {
 	require.NotNil(t, info)
 	assert.True(t, info.Initialized, "barrier should be initialized after Initialize()")
 	assert.False(t, info.Sealed, "barrier should be unsealed after Initialize()")
-	assert.Equal(t, string(seal.StrategyPassphrase), info.Strategy)
+	assert.Equal(t, string(xkms.StrategyPassphrase), info.Strategy)
 	assert.NotEmpty(t, info.StrategyLabel)
 	assert.False(t, info.HardwareBacked, "software strategy should not be hardware-backed")
 	assert.Contains(t, info.RootKeyPath, "barrier/root_key")

@@ -23,7 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (
@@ -42,7 +42,7 @@ type credentialMeta struct {
 	discoverable bool
 }
 
-// BackendStorage adapts storage.Backend to StatefulCredentialStorage.
+// BackendStorage adapts xkms.StorageBackend to StatefulCredentialStorage.
 // This allows the FIDO2 authenticator to use any go-xkms storage backend
 // for credential persistence, including file-based and cloud storage.
 //
@@ -53,7 +53,7 @@ type credentialMeta struct {
 //
 // Thread-safe using a read-write mutex.
 type BackendStorage struct {
-	backend    storage.Backend
+	backend    xkms.StorageBackend
 	prefix     string // key prefix, e.g., "fido2/authenticator/"
 	rpIndex    map[string][]credentialMeta
 	indexReady atomic.Bool
@@ -70,7 +70,7 @@ type BackendStorage struct {
 //   - "fido2/authenticator/" (default)
 //   - "myapp/fido2/"
 //   - "tenant-123/authenticator/"
-func NewBackendStorage(backend storage.Backend, prefix string) (*BackendStorage, error) {
+func NewBackendStorage(backend xkms.StorageBackend, prefix string) (*BackendStorage, error) {
 	if backend == nil {
 		return nil, ErrNilStorage
 	}
@@ -155,7 +155,7 @@ func (b *BackendStorage) Load(credentialID []byte) (*StoredCredential, error) {
 
 	data, err := b.backend.Get(context.Background(), key)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return nil, ErrCredentialNotFound
 		}
 		return nil, wrapStorageError(err)
@@ -276,7 +276,7 @@ func (b *BackendStorage) Delete(credentialID []byte) error {
 	}
 
 	if err := b.backend.Delete(context.Background(), key); err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return ErrCredentialNotFound
 		}
 		return wrapStorageError(err)
@@ -399,7 +399,7 @@ func (b *BackendStorage) LoadState() (*AuthenticatorState, error) {
 
 	data, err := b.backend.Get(context.Background(), key)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return nil, ErrStateNotFound
 		}
 		return nil, wrapStorageError(err)

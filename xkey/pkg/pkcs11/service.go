@@ -12,7 +12,7 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package pkcs11 provides an EmbeddedTransport implementation of
-// module.PKCS11Transport. It delegates all 20 transport operations to the
+// xkms.PKCS11Transport. It delegates all 20 transport operations to the
 // go-xkms singleton, enabling the PKCS#11 module to operate without a
 // remote daemon connection.
 package pkcs11
@@ -27,21 +27,17 @@ import (
 	"encoding/pem"
 	"fmt"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
-// EmbeddedTransport implements module.PKCS11Transport by delegating all
+// EmbeddedTransport implements xkms.PKCS11Transport by delegating all
 // operations to the go-xkms package singleton. This enables the PKCS#11
 // module to use an in-process xkms without network overhead.
 type EmbeddedTransport struct{}
 
 // Compile-time interface compliance check.
-var _ module.PKCS11Transport = (*EmbeddedTransport)(nil)
+var _ xkms.PKCS11Transport = (*EmbeddedTransport)(nil)
 
 // NewEmbeddedTransport creates a new embedded transport for the PKCS#11 module.
 // The xkms package must be initialized before calling this.
@@ -73,10 +69,10 @@ func (t *EmbeddedTransport) GenerateKey(_ context.Context, req *transport.Genera
 		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
 	}
 
-	attrs := &types.KeyAttributes{
+	attrs := &xkms.KeyAttributes{
 		CN:        req.KeyID,
-		KeyType:   types.KeyTypeSigning,
-		StoreType: types.StoreType(req.Backend),
+		KeyType:   xkms.KeyTypeSigning,
+		StoreType: xkms.StoreType(req.Backend),
 	}
 
 	algorithm := req.Algorithm
@@ -87,33 +83,33 @@ func (t *EmbeddedTransport) GenerateKey(_ context.Context, req *transport.Genera
 	var privKey crypto.PrivateKey
 
 	switch {
-	case types.AlgorithmRSA.Equals(algorithm):
+	case xkms.AlgorithmRSA.Equals(algorithm):
 		keySize := req.KeySize
 		if keySize == 0 {
-			keySize = types.RSAKeySize2048
+			keySize = xkms.RSAKeySize2048
 		}
 		attrs.KeyAlgorithm = x509.RSA
-		attrs.RSAAttributes = &types.RSAAttributes{
+		attrs.RSAAttributes = &xkms.RSAAttributes{
 			KeySize: keySize,
 		}
 		privKey, err = ks.GenerateRSA(attrs)
 
-	case types.AlgorithmECDSA.Equals(algorithm):
+	case xkms.AlgorithmECDSA.Equals(algorithm):
 		curve := req.Curve
 		if curve == "" {
-			curve = string(types.CurveP256)
+			curve = string(xkms.CurveP256)
 		}
 		attrs.KeyAlgorithm = x509.ECDSA
-		parsedCurve, curveErr := types.ParseCurve(curve)
+		parsedCurve, curveErr := xkms.ParseCurve(curve)
 		if curveErr != nil {
 			return nil, fmt.Errorf("invalid curve: %w", curveErr)
 		}
-		attrs.ECCAttributes = &types.ECCAttributes{
+		attrs.ECCAttributes = &xkms.ECCAttributes{
 			Curve: parsedCurve,
 		}
 		privKey, err = ks.GenerateECDSA(attrs)
 
-	case types.AlgorithmEd25519.Equals(algorithm):
+	case xkms.AlgorithmEd25519.Equals(algorithm):
 		attrs.KeyAlgorithm = x509.Ed25519
 		privKey, err = ks.GenerateEd25519(attrs)
 
@@ -225,14 +221,14 @@ func (t *EmbeddedTransport) Encrypt(_ context.Context, req *transport.EncryptReq
 		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
 	}
 
-	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
+	symBackend, ok := ks.KeyProvider().(xkms.SymmetricKeyProvider)
 	if !ok {
 		return nil, fmt.Errorf("%w: backend does not support symmetric encryption", ErrEncryptionFailed)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(&types.KeyAttributes{
+	encrypter, err := symBackend.SymmetricEncrypter(&xkms.KeyAttributes{
 		CN:        req.KeyID,
-		StoreType: types.StoreType(req.Backend),
+		StoreType: xkms.StoreType(req.Backend),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
@@ -261,20 +257,20 @@ func (t *EmbeddedTransport) Decrypt(_ context.Context, req *transport.DecryptReq
 		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
 	}
 
-	symBackend, ok := ks.KeyProvider().(types.SymmetricKeyProvider)
+	symBackend, ok := ks.KeyProvider().(xkms.SymmetricKeyProvider)
 	if !ok {
 		return nil, fmt.Errorf("%w: backend does not support symmetric decryption", ErrDecryptionFailed)
 	}
 
-	encrypter, err := symBackend.SymmetricEncrypter(&types.KeyAttributes{
+	encrypter, err := symBackend.SymmetricEncrypter(&xkms.KeyAttributes{
 		CN:        req.KeyID,
-		StoreType: types.StoreType(req.Backend),
+		StoreType: xkms.StoreType(req.Backend),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
 	}
 
-	plaintext, err := encrypter.Decrypt(&types.EncryptedData{
+	plaintext, err := encrypter.Decrypt(&xkms.EncryptedData{
 		Ciphertext: req.Ciphertext,
 		Nonce:      req.Nonce,
 		Tag:        req.Tag,
@@ -295,9 +291,9 @@ func (t *EmbeddedTransport) DeriveKey(_ context.Context, req *transport.DeriveKe
 	}
 
 	hashAlg := parseHashAlgorithm(req.Hash)
-	adapter := &kdf.HKDFAdapter{}
-	params := &kdf.KDFParams{
-		Algorithm: kdf.AlgorithmHKDF,
+	adapter := &xkms.HKDFAdapter{}
+	params := &xkms.CryptoKDFParams{
+		Algorithm: xkms.AlgorithmHKDF,
 		Salt:      req.Salt,
 		Info:      req.Info,
 		KeyLength: req.KeyLength,
@@ -314,7 +310,7 @@ func (t *EmbeddedTransport) DeriveKey(_ context.Context, req *transport.DeriveKe
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
 		}
-		ieBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+		ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
 		if !ok {
 			return nil, fmt.Errorf("%w: backend does not support key material export for derivation", ErrDerivationFailed)
 		}
@@ -353,7 +349,7 @@ func (t *EmbeddedTransport) DeriveKeyECDH(_ context.Context, req *transport.Deri
 		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
 	}
 
-	kap, ok := ks.KeyProvider().(types.KeyAgreementProvider)
+	kap, ok := ks.KeyProvider().(xkms.KeyAgreementProvider)
 	if !ok {
 		return nil, fmt.Errorf("%w: backend does not support key agreement", ErrDerivationFailed)
 	}
@@ -372,7 +368,7 @@ func (t *EmbeddedTransport) DeriveKeyECDH(_ context.Context, req *transport.Deri
 		keyLength = 32
 	}
 
-	kdfParams := &types.KDFParams{
+	kdfParams := &xkms.KDFParams{
 		Hash:      kdfHash,
 		Salt:      req.KDFSalt,
 		Info:      req.KDFInfo,
@@ -402,13 +398,13 @@ func (t *EmbeddedTransport) WrapKeyByID(_ context.Context, req *transport.WrapKe
 	}
 	targetKID := targetBackend + ":" + req.TargetKeyID
 
-	exported, err := xkms.ExportKey(targetKID, backend.WrappingAlgorithm(""))
+	exported, err := xkms.ExportKey(targetKID, xkms.WrappingAlgorithm(""))
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to export target key: %v", ErrWrappingFailed, err)
 	}
 
 	// Get the import parameters from the wrapping key's backend.
-	wrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
+	wrappingAlg := xkms.WrappingAlgorithm(req.Algorithm)
 	params, err := getImportParams(req.WrappingKeyBackend, req.WrappingKeyID, wrappingAlg)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrWrappingFailed, err)
@@ -432,13 +428,13 @@ func (t *EmbeddedTransport) UnwrapKeyByID(_ context.Context, req *transport.Unwr
 		return nil, ErrNilRequest
 	}
 
-	unwrappingAlg := backend.WrappingAlgorithm(req.Algorithm)
+	unwrappingAlg := xkms.WrappingAlgorithm(req.Algorithm)
 	params, err := getImportParams(req.UnwrappingKeyBackend, req.UnwrappingKeyID, unwrappingAlg)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrWrappingFailed, err)
 	}
 
-	wrapped := &backend.WrappedKeyMaterial{
+	wrapped := &xkms.WrappedKeyMaterial{
 		WrappedKey: req.WrappedKey,
 		Algorithm:  unwrappingAlg,
 	}
@@ -466,7 +462,7 @@ func (t *EmbeddedTransport) ExportKeyMaterial(_ context.Context, req *transport.
 		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, req.Backend)
 	}
 
-	ieBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("%w: backend does not support key material export", ErrExportFailed)
 	}
@@ -533,7 +529,7 @@ func (t *EmbeddedTransport) GeneratePIVCSR(ctx context.Context, req *transport.G
 // ========================================================================
 
 // findKeyAttributes searches for a key by ID in the given keystore.
-func findKeyAttributes(ks xkms.Backend, keyID string) (*types.KeyAttributes, error) {
+func findKeyAttributes(ks xkms.ServiceBackend, keyID string) (*xkms.KeyAttributes, error) {
 	attrs, err := ks.ListKeys()
 	if err != nil {
 		return nil, err
@@ -549,7 +545,7 @@ func findKeyAttributes(ks xkms.Backend, keyID string) (*types.KeyAttributes, err
 }
 
 // getAlgorithmString returns a human-readable algorithm string for key attributes.
-func getAlgorithmString(attr *types.KeyAttributes) string {
+func getAlgorithmString(attr *xkms.KeyAttributes) string {
 	switch attr.KeyAlgorithm {
 	case x509.RSA:
 		return "RSA"
@@ -558,7 +554,7 @@ func getAlgorithmString(attr *types.KeyAttributes) string {
 	case x509.Ed25519:
 		return "Ed25519"
 	default:
-		if attr.KeyType == types.KeyTypeSecret {
+		if attr.KeyType == xkms.KeyTypeSecret {
 			return string(attr.SymmetricAlgorithm)
 		}
 		return "unknown"
@@ -657,13 +653,13 @@ func verifySignature(pubKey crypto.PublicKey, data, signature []byte, hashName s
 }
 
 // getImportParams retrieves import parameters from a backend for key wrapping operations.
-func getImportParams(backendName, keyID string, alg backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+func getImportParams(backendName, keyID string, alg xkms.WrappingAlgorithm) (*xkms.ImportParameters, error) {
 	ks, err := xkms.GetBackend(backendName)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrBackendNotFound, backendName)
 	}
 
-	ieBackend, ok := ks.KeyProvider().(backend.ImportExportBackend)
+	ieBackend, ok := ks.KeyProvider().(xkms.ImportExportBackend)
 	if !ok {
 		return nil, fmt.Errorf("backend %s does not support import/export", backendName)
 	}

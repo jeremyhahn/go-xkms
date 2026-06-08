@@ -16,13 +16,12 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
@@ -33,7 +32,7 @@ import (
 // storage backend for testing.
 func newTestStaticPWService(t *testing.T) (*StaticPasswordService, staticpw.Store) {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	svc := NewStaticPasswordService(store)
 	svc.SetContext(context.Background())
@@ -1192,7 +1191,7 @@ func TestStaticPasswordService_SetStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStaticPWStoreNotSet)
 
 	// Wire a real store.
-	backend, backendErr := filestorage.New(filepath.Join(t.TempDir(), "staticpw"))
+	backend, backendErr := xkms.NewFileStorageBackend(filepath.Join(t.TempDir(), "staticpw"))
 	require.NoError(t, backendErr)
 	store := staticpw.NewStore(backend)
 	svc.SetStore(store)
@@ -1268,7 +1267,7 @@ func (m *mockPasswordStoreClient) PasswordGenerate(_ context.Context, req *trans
 // and a transport client mock.
 func newTestStaticPWServiceWithClient(t *testing.T) (*StaticPasswordService, *mockPasswordStoreClient) {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	svc := NewStaticPasswordService(store)
 	svc.SetContext(context.Background())

@@ -16,31 +16,16 @@ package objstore
 import (
 	"fmt"
 
-	"github.com/jeremyhahn/go-objstore/pkg/common"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// Factory implements the storage.Factory interface using go-objstore via
-// a KVStore adapter. All DAO instances are created through qrdb's built-in
+// Factory implements the storage.Factory interface over a go-qrdb KVStore. All DAO instances are created through qrdb's built-in
 // GenericDAO, which handles codec selection and entity serialization internally.
 type Factory struct {
 	kvStore xkmssdk.QRDBKVStore
-}
-
-// NewFactory creates a new Factory instance with the provided storage backend.
-func NewFactory(store common.Storage) (storage.Factory, error) {
-	if store == nil {
-		return nil, xkmssdk.QRDBDAOInvalidConfigError{
-			Field:  "store",
-			Reason: "storage backend not configured",
-		}
-	}
-	return &Factory{
-		kvStore: NewKVStoreAdapter(store),
-	}, nil
 }
 
 // NewFactoryFromKVStore creates a Factory over a go-qrdb KVStore directly. This

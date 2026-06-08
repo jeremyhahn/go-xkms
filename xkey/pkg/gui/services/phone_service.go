@@ -24,6 +24,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -33,7 +34,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
@@ -989,12 +989,12 @@ func (s *PhoneService) performAttestation(device *phoneConfigDevice) (*Attestati
 	}
 
 	// Verify attestation chain.
-	verifyOpts := &android.VerifyOptions{
+	verifyOpts := &xkms.AndroidVerifyOptions{
 		TrustedRoots:  rootPool,
 		ExpectedNonce: nonce,
 	}
 
-	desc, verifyErr := android.VerifyKeyAttestation(chain, verifyOpts)
+	desc, verifyErr := xkms.VerifyAndroidKeyAttestation(chain, verifyOpts)
 
 	now := time.Now()
 	result := &AttestationResult{
@@ -1493,15 +1493,15 @@ func keymasterOriginName(code int) string {
 }
 
 // verifiedBootStateNames provides O(1) lookup for boot state display names.
-var verifiedBootStateNameMap = map[android.VerifiedBootState]string{
-	android.VerifiedBootVerified:   "verified",
-	android.VerifiedBootSelfSigned: "self-signed",
-	android.VerifiedBootUnverified: "unverified",
-	android.VerifiedBootFailed:     "failed",
+var verifiedBootStateNameMap = map[xkms.AndroidVerifiedBootState]string{
+	xkms.AndroidVerifiedBootVerified:   "verified",
+	xkms.AndroidVerifiedBootSelfSigned: "self-signed",
+	xkms.AndroidVerifiedBootUnverified: "unverified",
+	xkms.AndroidVerifiedBootFailed:     "failed",
 }
 
 // verifiedBootStateName converts an Android VerifiedBootState to a human-readable name.
-func verifiedBootStateName(state android.VerifiedBootState) string {
+func verifiedBootStateName(state xkms.AndroidVerifiedBootState) string {
 	if name, ok := verifiedBootStateNameMap[state]; ok {
 		return name
 	}

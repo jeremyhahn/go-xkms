@@ -19,22 +19,20 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // createPKCS11PIVStorage creates a PKCS#11-backed PIV certificate storage.
 // It opens a new PKCS#11 session using the library path, token label, and PIN
 // from the PIV configuration.
-func createPKCS11PIVStorage(cfg *PIVConfig, logger *slog.Logger) (pivcert.PIVCertificateStorage, error) {
+func createPKCS11PIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateStorage, error) {
 	logger.Info("initializing PKCS#11 PIV certificate storage",
 		slog.String("library", cfg.PKCS11Library),
 		slog.String("token", cfg.PKCS11Token),
 	)
 
 	isYubiKey := strings.Contains(strings.ToLower(cfg.PKCS11Library), "ykcs11")
-	return pivpkcs11.New(&pivcert.PKCS11StorageConfig{
+	return xkms.NewPIVPKCS11Backend(&xkms.PIVPKCS11StorageConfig{
 		LibraryPath: cfg.PKCS11Library,
 		TokenLabel:  cfg.PKCS11Token,
 		SlotID:      -1, // Use TokenLabel for resolution
@@ -69,7 +67,7 @@ func ensurePKCS11Backend(cfg *PIVConfig, logger *slog.Logger) error {
 
 	if err := xkms.AutoInitialize(&xkms.AutoConfig{
 		DefaultBackend: string(xkms.BackendPKCS11),
-		BackendConfigs: map[xkms.BackendType]map[string]interface{}{
+		BackendConfigs: map[xkms.ServiceBackendType]map[string]interface{}{
 			xkms.BackendPKCS11: backendConfig,
 		},
 	}); err != nil {

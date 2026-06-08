@@ -15,10 +15,10 @@ package services
 
 import (
 	"context"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"path/filepath"
 	"testing"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -30,11 +30,11 @@ import (
 // policyMockTPM embeds mockTPM and provides configurable ReadPCRs.
 type policyMockTPM struct {
 	mockTPM
-	pcrBanksOverride []tpm2pkg.PCRBank
+	pcrBanksOverride []xkms.PCRBank
 	pcrBanksErr      error
 }
 
-func (m *policyMockTPM) ReadPCRs(_ []uint) ([]tpm2pkg.PCRBank, error) {
+func (m *policyMockTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {
 	return m.pcrBanksOverride, m.pcrBanksErr
 }
 
@@ -43,10 +43,10 @@ func (m *policyMockTPM) ReadPCRs(_ []uint) ([]tpm2pkg.PCRBank, error) {
 func defaultPolicyMock() *policyMockTPM {
 	return &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB, 0xCC, 0xDD}},
 					{ID: 7, Value: []byte{0x11, 0x22, 0x33, 0x44}},
 				},
@@ -61,7 +61,7 @@ func newPolicyServiceWithMock(t *testing.T, mock *policyMockTPM) *PlatformPolicy
 	t.Helper()
 	policyPath := filepath.Join(t.TempDir(), "platform.policy")
 	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.SetContext(context.Background())
 	return svc
 }
@@ -87,7 +87,7 @@ func TestPlatformPolicyService_SetContext(t *testing.T) {
 func TestPlatformPolicyService_SetTPMAccessor(t *testing.T) {
 	svc := NewPlatformPolicyService("/tmp/test.policy")
 	called := false
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		called = true
 		return nil
 	}))
@@ -104,7 +104,7 @@ func TestPlatformPolicyService_getTPM_NilAccessor(t *testing.T) {
 
 func TestPlatformPolicyService_getTPM_FuncReturnsNil(t *testing.T) {
 	svc := NewPlatformPolicyService("/tmp/test.policy")
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
 	_, err := svc.getTPM()
 	assert.ErrorIs(t, err, ErrPolicyTPMNotAvailable)
 }

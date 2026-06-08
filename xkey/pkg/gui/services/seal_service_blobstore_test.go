@@ -19,8 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -35,9 +33,9 @@ func testBlob(id string) *sealedBlobStorage {
 		SizeBytes:  42,
 		PolicyType: string(PolicyTypeNone),
 		Category:   "user",
-		BackendID:  string(types.BackendTypeTPM2),
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		BackendID:  string(xkms.BackendTypeTPM2),
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("ciphertext-" + id),
 			TPMPublic:  []byte("tpm-public-" + id),
 			TPMPrivate: []byte("tpm-private-" + id),
@@ -54,14 +52,14 @@ func TestSealService_SetBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	assert.Nil(t, svc.Backend())
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 	assert.Equal(t, backend, svc.Backend())
 }
 
 func TestSealService_SetBackend_Nil(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 	require.NotNil(t, svc.Backend())
 
@@ -116,7 +114,7 @@ func TestSealService_SealData_RoutesThroughBackend(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc := newSealServiceWithMockClient(t, mc)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	req := validSealRequest()
@@ -136,7 +134,7 @@ func TestSealService_SealData_StorageTypePersisted(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc := newSealServiceWithMockClient(t, mc)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	req := validSealRequest()
@@ -157,7 +155,7 @@ func TestSealService_ListBlobs_RoutesThroughBackend(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc := newSealServiceWithMockClient(t, mc)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	req1 := validSealRequest()
@@ -179,7 +177,7 @@ func TestSealService_ListBlobs_StorageTypeInEntries(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc := newSealServiceWithMockClient(t, mc)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	req := validSealRequest()
@@ -195,7 +193,7 @@ func TestSealService_ListBlobs_StorageTypeInEntries(t *testing.T) {
 
 func TestSealService_ListBlobs_EmptyBackend(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	svc.SetBackend(storage.NewMemory(), "sealed/")
+	svc.SetBackend(xkms.NewStorageMemory(), "sealed/")
 
 	entries, err := svc.ListBlobs()
 	require.NoError(t, err)
@@ -211,7 +209,7 @@ func TestSealService_DeleteBlob_RoutesThroughBackend(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc := newSealServiceWithMockClient(t, mc)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	req := validSealRequest()
@@ -226,7 +224,7 @@ func TestSealService_DeleteBlob_RoutesThroughBackend(t *testing.T) {
 
 func TestSealService_DeleteBlob_BackendNotFound(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	svc.SetBackend(storage.NewMemory(), "sealed/")
+	svc.SetBackend(xkms.NewStorageMemory(), "sealed/")
 
 	err := svc.DeleteBlob("nonexistent")
 	assert.ErrorIs(t, err, ErrSealBlobNotFound)
@@ -240,7 +238,7 @@ func TestSealService_UnsealData_RoutesThroughBackend(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc := newSealServiceWithMockClient(t, mc)
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	req := validSealRequest()
@@ -257,7 +255,7 @@ func TestSealService_UnsealData_RoutesThroughBackend(t *testing.T) {
 
 func TestSealService_UnsealData_BackendNotFound(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
-	svc.SetBackend(storage.NewMemory(), "sealed/")
+	svc.SetBackend(xkms.NewStorageMemory(), "sealed/")
 
 	_, err := svc.UnsealData("nonexistent", "")
 	assert.ErrorIs(t, err, ErrSealBlobNotFound)
@@ -317,7 +315,7 @@ func TestBlobToEntry_AllFieldsMapped(t *testing.T) {
 		PCRBound:    true,
 		PolicyType:  string(PolicyTypeCustomPCR),
 		Category:    "user",
-		BackendID:   string(types.BackendTypeTPM2),
+		BackendID:   string(xkms.BackendTypeTPM2),
 		StorageType: string(StorageTypeNVRAM),
 		CreatedAt:   time.Date(2025, 6, 15, 12, 0, 0, 0, time.UTC),
 	}
@@ -328,7 +326,7 @@ func TestBlobToEntry_AllFieldsMapped(t *testing.T) {
 	assert.True(t, entry.PCRBound)
 	assert.Equal(t, string(PolicyTypeCustomPCR), entry.PolicyType)
 	assert.Equal(t, "user", entry.Category)
-	assert.Equal(t, string(types.BackendTypeTPM2), entry.BackendID)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), entry.BackendID)
 	assert.Equal(t, string(StorageTypeNVRAM), entry.StorageType)
 	assert.Equal(t, "2025-06-15T12:00:00Z", entry.CreatedAt)
 }
@@ -440,7 +438,7 @@ func TestSealService_SaveBlob_Backend_NilContext(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc.SetClientFunc(func() xkms.Client { return mc })
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	blob := testBlob("nil-ctx-save")
@@ -456,7 +454,7 @@ func TestSealService_LoadBlobByID_Backend_NilContext(t *testing.T) {
 	mc := defaultSealMockClient()
 	svc.SetClientFunc(func() xkms.Client { return mc })
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	blob := testBlob("nil-ctx-load")
@@ -469,7 +467,7 @@ func TestSealService_LoadBlobByID_Backend_NilContext(t *testing.T) {
 
 func TestSealService_DeleteBlob_Backend_NilContext(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	blob := testBlob("nil-ctx-del")
@@ -483,7 +481,7 @@ func TestSealService_DeleteBlob_Backend_NilContext(t *testing.T) {
 
 func TestSealService_ListBlobs_Backend_NilContext(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	blob := testBlob("nil-ctx-list")
@@ -520,7 +518,7 @@ func TestSealService_FullRoundTrip_Backend(t *testing.T) {
 	}
 
 	svc := newSealServiceWithMockClient(t, mc)
-	svc.SetBackend(storage.NewMemory(), "sealed/")
+	svc.SetBackend(xkms.NewStorageMemory(), "sealed/")
 
 	// Seal.
 	req := &SealRequest{

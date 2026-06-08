@@ -514,24 +514,21 @@ func TestValidateAccountConfig_MissingFields(t *testing.T) {
 	}
 }
 
-// TestCreateObjStorage_FilesystemToLocal verifies that the "filesystem" backend
-// string is remapped to "local" before being passed to the storage factory.
-// The factory may fail because the path does not exist on the test host, but
-// we verify the error originates from the storage layer, not from our mapping.
-func TestCreateObjStorage_FilesystemToLocal(t *testing.T) {
+// TestCreateStateBackend_FilesystemToLocal verifies that the "filesystem"
+// backend string is remapped to the always-available "local" object-storage
+// provider before being opened through the storage engine. The error (if any)
+// must come from the storage layer, never an "unsupported provider".
+func TestCreateStateBackend_FilesystemToLocal(t *testing.T) {
 	storageCfg := StorageConfig{
 		Backend: "filesystem",
 		Options: map[string]interface{}{
-			"path": "/nonexistent/test/path",
+			"path": t.TempDir(),
 		},
 	}
-	_, err := createObjStorage(storageCfg)
-	// The storage factory should either succeed (if the local backend accepts
-	// the path lazily) or fail with an error from the objstore layer.
-	// Either way, this confirms the "filesystem" -> "local" mapping occurs
-	// without panicking. If it fails, it should NOT be an "unsupported backend"
-	// error since "local" is a valid backend.
+	backend, err := createStateBackend(storageCfg)
 	if err != nil {
-		assert.NotContains(t, err.Error(), "unsupported backend")
+		assert.NotContains(t, err.Error(), "unsupported provider")
+		return
 	}
+	_ = backend.Close()
 }

@@ -20,7 +20,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -99,7 +99,7 @@ func runBarrierStatus(cmd *cobra.Command, args []string) error {
 	rootKeyPath := filepath.Join(dataDir, defaultBarrierRootKeyPath)
 	data, readErr := os.ReadFile(rootKeyPath)
 	if readErr == nil {
-		var sealed seal.SealedRootKey
+		var sealed xkms.SealedRootKey
 		if jsonErr := json.Unmarshal(data, &sealed); jsonErr == nil {
 			info.Strategy = string(sealed.Strategy)
 		}

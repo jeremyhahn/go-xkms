@@ -15,11 +15,11 @@ package services
 
 import (
 	"context"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +40,7 @@ func TestBarrierService_Initialize_GetSealInfo_ShowsInitialized(t *testing.T) {
 		"GetSealInfo must report Initialized=true after successful Initialize()")
 	assert.False(t, info.Sealed,
 		"barrier should be unsealed immediately after Initialize()")
-	assert.Equal(t, string(seal.StrategyPassphrase), info.Strategy,
+	assert.Equal(t, string(xkms.StrategyPassphrase), info.Strategy,
 		"strategy must match what was passed to Initialize()")
 }
 
@@ -65,7 +65,7 @@ func TestBarrierService_Initialize_GetSealInfo_WithDataDir(t *testing.T) {
 		"GetSealInfo must report Initialized=true after Initialize() with dataDir set")
 	assert.False(t, info.Sealed,
 		"barrier should be unsealed immediately after Initialize()")
-	assert.Equal(t, string(seal.StrategyPassphrase), info.Strategy)
+	assert.Equal(t, string(xkms.StrategyPassphrase), info.Strategy)
 }
 
 // TestBarrierService_Initialize_GetSealInfo_DataDirSetAfterInit reproduces a

@@ -17,7 +17,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func TestErrors_KeyNotFound(t *testing.T) {
@@ -153,13 +153,13 @@ func TestErrors_IsChecks(t *testing.T) {
 }
 
 func TestBackendType_Constants(t *testing.T) {
-	if types.BackendTypeSoftware != "software" {
-		t.Errorf("BackendTypeSoftware = %q, want %q", types.BackendTypeSoftware, "software")
+	if xkms.BackendTypeSoftware != "software" {
+		t.Errorf("BackendTypeSoftware = %q, want %q", xkms.BackendTypeSoftware, "software")
 	}
-	if types.BackendTypeTPM2 != "tpm2" {
-		t.Errorf("BackendTypeTPM2 = %q, want %q", types.BackendTypeTPM2, "tpm2")
+	if xkms.BackendTypeTPM2 != "tpm2" {
+		t.Errorf("BackendTypeTPM2 = %q, want %q", xkms.BackendTypeTPM2, "tpm2")
 	}
-	if types.BackendTypePKCS11 != "pkcs11" {
-		t.Errorf("BackendTypePKCS11 = %q, want %q", types.BackendTypePKCS11, "pkcs11")
+	if xkms.BackendTypePKCS11 != "pkcs11" {
+		t.Errorf("BackendTypePKCS11 = %q, want %q", xkms.BackendTypePKCS11, "pkcs11")
 	}
 }

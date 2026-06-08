@@ -14,7 +14,7 @@
 package keybackend
 
 import (
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // BarrierStateProvider reports whether the barrier is unsealed and auto-UV should be active.
@@ -43,7 +43,7 @@ func NewAutoUVBackend(inner FIDO2KeyBackend, provider BarrierStateProvider) *Aut
 }
 
 // Type returns the inner backend's type identifier.
-func (a *AutoUVBackend) Type() types.BackendType {
+func (a *AutoUVBackend) Type() xkms.BackendType {
 	return a.inner.Type()
 }
 

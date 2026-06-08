@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +32,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -63,7 +63,7 @@ func TestFC3_AdminService_GetBackendInfo_AllLocalIDs(t *testing.T) {
 // checks IsAdmin() first and we are not root, we test the equivalent logic
 // via the underlying AuditService.ExportEntries.
 func TestFC3_AdminService_ExportAuditLogs_FormatValidation(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 
@@ -76,7 +76,7 @@ func TestFC3_AdminService_ExportAuditLogs_FormatValidation(t *testing.T) {
 	})
 
 	t.Run("no entries", func(t *testing.T) {
-		emptyStore, emptyErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+		emptyStore, emptyErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 		require.NoError(t, emptyErr)
 		emptySvc := NewAuditService(emptyStore)
 		emptySvc.SetContext(context.Background())
@@ -94,7 +94,7 @@ func TestFC3_AdminService_ExportAuditLogs_FormatValidation(t *testing.T) {
 // TestFC3_AdminService_GetAuditLogs_DelegateWithNilFilter exercises L230-232
 // where GetAuditLogs delegates to AuditService with a nil filter.
 func TestFC3_AdminService_GetAuditLogs_DelegateWithNilFilter(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyAccessed, "tpm2", "key1", true, nil, 5)
 
@@ -109,7 +109,7 @@ func TestFC3_AdminService_GetAuditLogs_DelegateWithNilFilter(t *testing.T) {
 
 // TestFC3_AdminService_GetAuditLogs_DelegateWithFilter exercises the filter path.
 func TestFC3_AdminService_GetAuditLogs_DelegateWithFilter(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "k2", false, errors.New("fail"), 20)
@@ -127,7 +127,7 @@ func TestFC3_AdminService_GetAuditLogs_DelegateWithFilter(t *testing.T) {
 // TestFC3_AdminService_ExportAuditLogs_JSONMultipleEntries exercises
 // the json.MarshalIndent path at L263.
 func TestFC3_AdminService_ExportAuditLogs_JSONMultipleEntries(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 	store.LogKeyOperation(audit.OpKeyDeleted, "sw", "k2", true, nil, 5)

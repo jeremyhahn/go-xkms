@@ -16,12 +16,11 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,11 +98,11 @@ func (m *barrierMockPolicyStore) Close() error {
 
 type barrierAutoUnsealMockTPM struct {
 	mockTPM
-	pcrBanksOverride []tpm2pkg.PCRBank
+	pcrBanksOverride []xkms.PCRBank
 	pcrBanksErr      error
 }
 
-func (m *barrierAutoUnsealMockTPM) ReadPCRs(_ []uint) ([]tpm2pkg.PCRBank, error) {
+func (m *barrierAutoUnsealMockTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {
 	return m.pcrBanksOverride, m.pcrBanksErr
 }
 
@@ -112,10 +111,10 @@ func (m *barrierAutoUnsealMockTPM) ReadPCRs(_ []uint) ([]tpm2pkg.PCRBank, error)
 func defaultBarrierAutoUnsealMock() *barrierAutoUnsealMockTPM {
 	return &barrierAutoUnsealMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB, 0xCC, 0xDD}},
 					{ID: 7, Value: []byte{0x11, 0x22, 0x33, 0x44}},
 				},
@@ -147,7 +146,7 @@ func newBarrierAutoUnsealSvcWithMock(
 	mock *barrierAutoUnsealMockTPM,
 ) *BarrierAutoUnsealService {
 	t.Helper()
-	accessor := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock })
+	accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock })
 	barrier := newTestBarrierService(t)
 
 	return NewBarrierAutoUnsealService(
@@ -182,7 +181,7 @@ func TestBarrierAutoUnsealService_TryAutoUnseal_PCRMatch(t *testing.T) {
 
 	// Use TPM2 strategy with a mock sealer so the barrier can initialize
 	// and unseal without a password (matching real auto-unseal behavior).
-	svc.barrier.SetTPMSealerFunc(func() types.Sealer {
+	svc.barrier.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: true}
 	})
 	svc.strategyID = "tpm2"
@@ -429,16 +428,16 @@ func TestBarrierAutoUnsealService_CaptureCurrentPCRs_BankFiltering(t *testing.T)
 	store := newBarrierMockPolicyStore()
 	mock := &barrierAutoUnsealMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA1",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0x01}},
 				},
 			},
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0x02}},
 				},
 			},
@@ -459,7 +458,7 @@ func TestBarrierAutoUnsealService_CaptureCurrentPCRs_BankFiltering(t *testing.T)
 func TestBarrierAutoUnsealService_FunctionalOptions(t *testing.T) {
 	store := newBarrierMockPolicyStore()
 	mock := defaultBarrierAutoUnsealMock()
-	accessor := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock })
+	accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock })
 	barrier := newTestBarrierService(t)
 	logger := slog.Default().With("test", "options")
 
@@ -482,7 +481,7 @@ func TestBarrierAutoUnsealService_SetTPMAccessor(t *testing.T) {
 	assert.Nil(t, svc.tpmAccessor)
 
 	mock := defaultBarrierAutoUnsealMock()
-	accessor := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock })
+	accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock })
 	svc.SetTPMAccessor(accessor)
 	assert.Equal(t, accessor, svc.tpmAccessor)
 }

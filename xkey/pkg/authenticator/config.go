@@ -22,7 +22,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 )
 
@@ -157,7 +157,7 @@ type StoredCredential struct {
 	// BackendID identifies which key backend manages this credential's private key.
 	// Values: "software", "tpm2", "pkcs11", "phone". Empty string means software
 	// (backward compatibility with credentials created before this field existed).
-	BackendID types.BackendType `json:"backend_id,omitempty"`
+	BackendID xkms.BackendType `json:"backend_id,omitempty"`
 }
 
 // Config contains authenticator configuration options.

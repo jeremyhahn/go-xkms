@@ -69,3 +69,35 @@ const (
 	// StrategyPassphrase is the passphrase-protected software strategy (impl: go-quicraft).
 	StrategyPassphrase = seal.StrategyPassphrase
 )
+
+// --- Barrier lifecycle (storage barrier owned by go-qrdb, surfaced here) ---
+
+// StrategyID identifies a sealing strategy.
+type StrategyID = seal.StrategyID
+
+// SealingStrategy is the interface implemented by every sealing strategy.
+type SealingStrategy = seal.SealingStrategy
+
+// Barrier is the storage barrier that encrypts all sensitive data at rest.
+type Barrier = seal.Barrier
+
+// BarrierConfig configures a storage barrier.
+type BarrierConfig = seal.BarrierConfig
+
+// BarrierStatus reports a barrier's seal/initialization state.
+type BarrierStatus = seal.BarrierStatus
+
+// SealCredentials are the credentials used to unseal a barrier.
+type SealCredentials = seal.Credentials
+
+// SealedRootKey is a root key sealed by a strategy.
+type SealedRootKey = seal.SealedRootKey
+
+// NewBarrier constructs a storage barrier.
+var NewBarrier = seal.NewBarrier
+
+// NewSoftwareSealStrategy constructs the passphrase-protected software strategy.
+var NewSoftwareSealStrategy = seal.NewSoftwareStrategy
+
+// ErrNoAvailableSealStrategy is returned when no sealing strategy can be selected.
+var ErrNoAvailableSealStrategy = seal.ErrNoAvailableStrategy

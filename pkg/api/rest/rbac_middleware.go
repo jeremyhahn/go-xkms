@@ -19,13 +19,14 @@ import (
 	"net/http"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
 )
 
 // RBACConfig holds configuration for RBAC middleware.
 type RBACConfig struct {
-	// Adapter is the RBAC adapter to use for permission checks.
-	Adapter keyrbac.RBACAdapter
+	// Authorizer is the qrdb-backed authorizer used for permission checks.
+	// A nil authorizer (or one without a backing RBAC client) allows every
+	// request — authorization is treated as disabled.
+	Authorizer *auth.Authorizer
 
 	// Logger is the logging adapter.
 	Logger *slog.Logger
@@ -34,13 +35,13 @@ type RBACConfig struct {
 	SkipPaths map[string]bool
 }
 
-// RBACMiddleware enforces role-based access control on HTTP requests.
-// It checks if the authenticated user has the required permission for the
-// requested resource and action.
+// RBACMiddleware enforces role-based access control on HTTP requests by
+// delegating every decision to the hosted go-qrdb node's RBAC service via
+// the xkms Authorizer. It carries no local role or permission model.
 type RBACMiddleware struct {
-	adapter   keyrbac.RBACAdapter
-	logger    *slog.Logger
-	skipPaths map[string]bool
+	authorizer *auth.Authorizer
+	logger     *slog.Logger
+	skipPaths  map[string]bool
 }
 
 // NewRBACMiddleware creates a new RBAC middleware instance.
@@ -50,22 +51,20 @@ func NewRBACMiddleware(cfg *RBACConfig) *RBACMiddleware {
 	}
 
 	return &RBACMiddleware{
-		adapter:   cfg.Adapter,
-		logger:    cfg.Logger,
-		skipPaths: cfg.SkipPaths,
+		authorizer: cfg.Authorizer,
+		logger:     cfg.Logger,
+		skipPaths:  cfg.SkipPaths,
 	}
 }
 
-// RequirePermission returns middleware that requires a specific permission.
-// This is the most flexible approach - explicitly declare the required permission.
+// RequirePermission returns middleware that requires the authenticated
+// identity to hold the given resource:action permission. The decision is
+// delegated to the qrdb RBAC engine, scoped to the identity's tenant.
 func (m *RBACMiddleware) RequirePermission(resource, action string) func(http.Handler) http.Handler {
-	permission := keyrbac.NewPermission(resource, action)
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			// Get identity from context
 			identity := auth.GetIdentity(ctx)
 			if identity == nil {
 				m.logger.Warn("RBAC check failed: no identity in context",
@@ -75,25 +74,14 @@ func (m *RBACMiddleware) RequirePermission(resource, action string) func(http.Ha
 				return
 			}
 
-			// Check permission using the subject from identity
-			hasPermission, err := m.adapter.CheckPermission(ctx, identity.Subject, permission)
-			if err != nil {
-				m.logger.Error("RBAC permission check failed",
-					slog.String("subject", identity.Subject),
-					slog.String("resource", resource),
-					slog.String("action", action),
-					slog.String("error", err.Error()))
-				writeErrorWithMessage(w, ErrInternalError, "Permission check failed", http.StatusInternalServerError)
-				return
-			}
-
-			if !hasPermission {
+			if err := m.authorizer.Authorize(ctx, identity, resource, action); err != nil {
 				m.logger.Warn("RBAC access denied",
 					slog.String("subject", identity.Subject),
 					slog.String("resource", resource),
 					slog.String("action", action),
 					slog.String("method", r.Method),
-					slog.String("path", r.URL.Path))
+					slog.String("path", r.URL.Path),
+					slog.String("error", err.Error()))
 				writeErrorWithMessage(w, ErrForbidden, "Access denied: insufficient permissions", http.StatusForbidden)
 				return
 			}
@@ -108,68 +96,25 @@ func (m *RBACMiddleware) RequirePermission(resource, action string) func(http.Ha
 	}
 }
 
-// RequireRole returns middleware that requires the user to have a specific role.
+// RequireRole returns middleware that requires the identity to hold a
+// specific role. Roles are read directly from the authenticated identity
+// resolved from the qrdb identity plane.
 func (m *RBACMiddleware) RequireRole(roleName string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-
-			// Get identity from context
-			identity := auth.GetIdentity(ctx)
-			if identity == nil {
-				m.logger.Warn("RBAC role check failed: no identity in context",
-					slog.String("method", r.Method),
-					slog.String("path", r.URL.Path))
-				writeErrorWithMessage(w, ErrUnauthorized, "Authentication required", http.StatusUnauthorized)
-				return
-			}
-
-			// Get user roles
-			roles, err := m.adapter.GetUserRoles(ctx, identity.Subject)
-			if err != nil {
-				m.logger.Error("RBAC role check failed",
-					slog.String("subject", identity.Subject),
-					slog.String("required_role", roleName),
-					slog.String("error", err.Error()))
-				writeErrorWithMessage(w, ErrInternalError, "Role check failed", http.StatusInternalServerError)
-				return
-			}
-
-			// Check if user has the required role
-			hasRole := false
-			for _, role := range roles {
-				if role == roleName {
-					hasRole = true
-					break
-				}
-			}
-
-			if !hasRole {
-				m.logger.Warn("RBAC access denied: missing role",
-					slog.String("subject", identity.Subject),
-					slog.String("required_role", roleName),
-					slog.String("method", r.Method),
-					slog.String("path", r.URL.Path))
-				writeErrorWithMessage(w, ErrForbidden, "Access denied: insufficient role", http.StatusForbidden)
-				return
-			}
-
-			m.logger.Debug("RBAC role check passed",
-				slog.String("subject", identity.Subject),
-				slog.String("role", roleName))
-
-			next.ServeHTTP(w, r)
-		})
-	}
+	return m.RequireAnyRole(roleName)
 }
 
-// RequireAnyRole returns middleware that requires the user to have at least one of the specified roles.
+// RequireAnyRole returns middleware that requires the identity to hold at
+// least one of the specified roles.
 func (m *RBACMiddleware) RequireAnyRole(roleNames ...string) func(http.Handler) http.Handler {
+	required := make(map[string]struct{}, len(roleNames))
+	for _, n := range roleNames {
+		required[n] = struct{}{}
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			// Get identity from context
 			identity := auth.GetIdentity(ctx)
 			if identity == nil {
 				m.logger.Warn("RBAC role check failed: no identity in context",
@@ -179,26 +124,10 @@ func (m *RBACMiddleware) RequireAnyRole(roleNames ...string) func(http.Handler) 
 				return
 			}
 
-			// Get user roles
-			roles, err := m.adapter.GetUserRoles(ctx, identity.Subject)
-			if err != nil {
-				m.logger.Error("RBAC role check failed",
-					slog.String("subject", identity.Subject),
-					slog.String("error", err.Error()))
-				writeErrorWithMessage(w, ErrInternalError, "Role check failed", http.StatusInternalServerError)
-				return
-			}
-
-			// Check if user has any of the required roles
 			hasRole := false
-			for _, userRole := range roles {
-				for _, requiredRole := range roleNames {
-					if userRole == requiredRole {
-						hasRole = true
-						break
-					}
-				}
-				if hasRole {
+			for _, role := range identity.Roles {
+				if _, ok := required[role]; ok {
+					hasRole = true
 					break
 				}
 			}
@@ -213,15 +142,12 @@ func (m *RBACMiddleware) RequireAnyRole(roleNames ...string) func(http.Handler) 
 				return
 			}
 
-			m.logger.Debug("RBAC role check passed",
-				slog.String("subject", identity.Subject))
-
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
-// UserRoleContext is a context key for storing the user's role.
+// userRoleContextKey is a context key for storing the user's role.
 type userRoleContextKey struct{}
 
 // WithUserRole adds the user's role to the context.
@@ -236,32 +162,3 @@ func GetUserRole(ctx context.Context) string {
 	}
 	return ""
 }
-
-// Common permission shortcuts for key operations
-var (
-	PermissionKeysCreate  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionCreate)
-	PermissionKeysRead    = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionRead)
-	PermissionKeysList    = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionList)
-	PermissionKeysDelete  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionDelete)
-	PermissionKeysSign    = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionSign)
-	PermissionKeysVerify  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionVerify)
-	PermissionKeysEncrypt = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionEncrypt)
-	PermissionKeysDecrypt = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionDecrypt)
-	PermissionKeysRotate  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionRotate)
-	PermissionKeysImport  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionImport)
-	PermissionKeysExport  = keyrbac.NewPermission(keyrbac.ResourceKeys, keyrbac.ActionExport)
-
-	PermissionCertsCreate = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionCreate)
-	PermissionCertsRead   = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionRead)
-	PermissionCertsList   = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionList)
-	PermissionCertsDelete = keyrbac.NewPermission(keyrbac.ResourceCertificates, keyrbac.ActionDelete)
-
-	PermissionUsersCreate = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionCreate)
-	PermissionUsersRead   = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionRead)
-	PermissionUsersList   = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionList)
-	PermissionUsersUpdate = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionUpdate)
-	PermissionUsersDelete = keyrbac.NewPermission(keyrbac.ResourceUsers, keyrbac.ActionDelete)
-
-	PermissionBackendsList = keyrbac.NewPermission(keyrbac.ResourceBackends, keyrbac.ActionList)
-	PermissionBackendsRead = keyrbac.NewPermission(keyrbac.ResourceBackends, keyrbac.ActionRead)
-)

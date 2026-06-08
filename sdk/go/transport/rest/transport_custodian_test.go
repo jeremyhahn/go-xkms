@@ -19,47 +19,225 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
-	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
-// newCustodianTestTransport creates a REST transport connected to an httptest
-// server backed by real custodian handlers with an in-memory store.
-func newCustodianTestTransport(t *testing.T) (*Transport, *httptest.Server) {
+// custodianFakeServer is a compact, in-memory implementation of the custodian
+// group HTTP API exercised by the SDK REST CustodianGroupService client. It
+// stands in for the former pkg/custodian-backed handlers (now hosted in the
+// go-qrdb node) so these tests can validate the client's request
+// serialization and response/error mapping against a real HTTP server without
+// depending on any production custodian backend.
+type custodianFakeServer struct {
+	groups map[string]*transport.CustodianGroupInfo
+}
+
+func newCustodianFakeServer() *custodianFakeServer {
+	return &custodianFakeServer{groups: make(map[string]*transport.CustodianGroupInfo)}
+}
+
+// writeJSON writes a JSON body with the given status code.
+func writeJSON(t *testing.T, w http.ResponseWriter, status int, v interface{}) {
 	t.Helper()
-
-	store := custodian.NewMemoryStore()
-	svc, err := custodian.NewService(store)
-	if err != nil {
-		t.Fatal(err)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if v == nil {
+		return
 	}
-	handlers := restapi.NewCustodianHandlers(svc)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Logf("failed to encode response: %v", err)
+	}
+}
 
+// writeErr writes a JSON error body matching the {"error": ...} shape the SDK
+// client extracts for non-2xx responses.
+func writeErr(t *testing.T, w http.ResponseWriter, status int, msg string) {
+	t.Helper()
+	writeJSON(t, w, status, map[string]string{"error": msg})
+}
+
+func (s *custodianFakeServer) createGroup(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req transport.CreateCustodianGroupRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(t, w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.Name == "" {
+			writeErr(t, w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if req.Threshold < 1 {
+			writeErr(t, w, http.StatusBadRequest, "threshold must be at least 1")
+			return
+		}
+		if req.Total < req.Threshold {
+			writeErr(t, w, http.StatusBadRequest, "total must be greater than or equal to threshold")
+			return
+		}
+
+		now := time.Now().UTC()
+		group := &transport.CustodianGroupInfo{
+			ID:        req.ID,
+			TenantID:  req.TenantID,
+			Name:      req.Name,
+			Purpose:   req.Purpose,
+			Threshold: req.Threshold,
+			Total:     req.Total,
+			Members:   []transport.CustodianMemberInfo{},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		s.groups[req.ID] = group
+
+		writeJSON(t, w, http.StatusCreated, transport.CreateCustodianGroupResponse{Group: *group})
+	}
+}
+
+func (s *custodianFakeServer) getGroup(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		group, ok := s.groups[chi.URLParam(r, "id")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "group not found")
+			return
+		}
+		writeJSON(t, w, http.StatusOK, transport.GetCustodianGroupResponse{Group: *group})
+	}
+}
+
+func (s *custodianFakeServer) listGroups(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		groups := make([]transport.CustodianGroupInfo, 0, len(s.groups))
+		for _, g := range s.groups {
+			groups = append(groups, *g)
+		}
+		writeJSON(t, w, http.StatusOK, transport.ListCustodianGroupsResponse{Groups: groups})
+	}
+}
+
+func (s *custodianFakeServer) deleteGroup(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "id")
+		if _, ok := s.groups[id]; !ok {
+			writeErr(t, w, http.StatusNotFound, "group not found")
+			return
+		}
+		delete(s.groups, id)
+		writeJSON(t, w, http.StatusNoContent, nil)
+	}
+}
+
+func (s *custodianFakeServer) addMember(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		group, ok := s.groups[chi.URLParam(r, "id")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "group not found")
+			return
+		}
+
+		var req transport.AddCustodianMemberRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(t, w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.UserID == "" {
+			writeErr(t, w, http.StatusBadRequest, "user_id is required")
+			return
+		}
+		for _, m := range group.Members {
+			if m.UserID == req.UserID {
+				writeErr(t, w, http.StatusConflict, "member already exists")
+				return
+			}
+		}
+
+		member := transport.CustodianMemberInfo{
+			ShareIndex: len(group.Members) + 1,
+			UserID:     req.UserID,
+			Username:   req.Username,
+			AssignedAt: time.Now().UTC(),
+			Method:     req.Method,
+		}
+		group.Members = append(group.Members, member)
+		group.UpdatedAt = time.Now().UTC()
+
+		writeJSON(t, w, http.StatusCreated, transport.AddCustodianMemberResponse{Member: member})
+	}
+}
+
+func (s *custodianFakeServer) removeMember(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		group, ok := s.groups[chi.URLParam(r, "id")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "group not found")
+			return
+		}
+
+		userID := chi.URLParam(r, "userID")
+		idx := -1
+		for i, m := range group.Members {
+			if m.UserID == userID {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			writeErr(t, w, http.StatusNotFound, "member not found")
+			return
+		}
+
+		group.Members = append(group.Members[:idx], group.Members[idx+1:]...)
+		group.UpdatedAt = time.Now().UTC()
+		writeJSON(t, w, http.StatusNoContent, nil)
+	}
+}
+
+func (s *custodianFakeServer) distributeShares(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		group, ok := s.groups[chi.URLParam(r, "id")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "group not found")
+			return
+		}
+		if len(group.Members) == 0 {
+			writeErr(t, w, http.StatusBadRequest, "group has no members")
+			return
+		}
+		writeJSON(t, w, http.StatusOK, transport.DistributeSharesResponse{Distributed: len(group.Members)})
+	}
+}
+
+// router builds the chi router exposing the custodian-group HTTP API plus the
+// /health endpoint required by Transport.Connect().
+func (s *custodianFakeServer) router(t *testing.T) http.Handler {
 	r := chi.NewRouter()
 
-	// Health endpoint required by Connect().
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-			t.Logf("failed to encode health response: %v", err)
-		}
+		writeJSON(t, w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
 	r.Route("/api/v1/custodian/groups", func(r chi.Router) {
-		r.Post("/", handlers.CreateGroupHandler)
-		r.Get("/", handlers.ListGroupsHandler)
-		r.Get("/{id}", handlers.GetGroupHandler)
-		r.Delete("/{id}", handlers.DeleteGroupHandler)
-		r.Post("/{id}/members", handlers.AddMemberHandler)
-		r.Delete("/{id}/members/{userID}", handlers.RemoveMemberHandler)
-		r.Post("/{id}/distribute", handlers.DistributeSharesHandler)
+		r.Post("/", s.createGroup(t))
+		r.Get("/", s.listGroups(t))
+		r.Get("/{id}", s.getGroup(t))
+		r.Delete("/{id}", s.deleteGroup(t))
+		r.Post("/{id}/members", s.addMember(t))
+		r.Delete("/{id}/members/{userID}", s.removeMember(t))
+		r.Post("/{id}/distribute", s.distributeShares(t))
 	})
 
-	server := httptest.NewServer(r)
+	return r
+}
+
+// newCustodianTestTransport creates a REST transport connected to an httptest
+// server backed by an in-memory fake implementing the custodian-group HTTP API.
+func newCustodianTestTransport(t *testing.T) (*Transport, *httptest.Server) {
+	t.Helper()
+
+	server := httptest.NewServer(newCustodianFakeServer().router(t))
 	t.Cleanup(server.Close)
 
 	tr, err := NewWithConfig(&transport.Config{

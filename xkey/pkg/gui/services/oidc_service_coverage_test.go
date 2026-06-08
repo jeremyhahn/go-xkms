@@ -17,12 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,7 +49,7 @@ func (m *mockStorageBackend) Get(_ context.Context, key string) ([]byte, error) 
 	}
 	v, ok := m.data[key]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, xkms.ErrStorageNotFound
 	}
 	return v, nil
 }
@@ -67,7 +67,7 @@ func (m *mockStorageBackend) Delete(_ context.Context, key string) error {
 		return m.delErr
 	}
 	if _, ok := m.data[key]; !ok {
-		return storage.ErrNotFound
+		return xkms.ErrStorageNotFound
 	}
 	delete(m.data, key)
 	return nil

@@ -27,8 +27,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,10 +35,10 @@ import (
 // newTestDAOCredentialStore creates a DAOCredentialStore backed by in-memory storage.
 func newTestDAOCredentialStore(t *testing.T) *DAOCredentialStore {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
 	store, err := NewDAOCredentialStore(kvStore)

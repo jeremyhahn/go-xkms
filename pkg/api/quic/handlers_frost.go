@@ -197,7 +197,7 @@ func (s *Server) handleFrostKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleFrostListKeys handles listing FROST keys
 func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "keys", "read") {
+	if !s.authorize(w, r, "keys", "list") {
 		return
 	}
 
@@ -245,7 +245,7 @@ func (s *Server) handleFrostListKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleFrostGenerateKey handles FROST key generation
 func (s *Server) handleFrostGenerateKey(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r, "keys", "write") {
+	if !s.authorize(w, r, "keys", "create") {
 		return
 	}
 
@@ -407,7 +407,7 @@ func (s *Server) handleFrostKeyOperations(w http.ResponseWriter, r *http.Request
 
 // handleFrostGetKey handles retrieving a FROST key
 func (s *Server) handleFrostGetKey(w http.ResponseWriter, r *http.Request, keyID string) {
-	if !s.authorize(w, r, "keys", "read") {
+	if !s.authorize(w, r, "keys", "get") {
 		return
 	}
 
@@ -498,7 +498,7 @@ func (s *Server) handleFrostGenerateNonces(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "sign") {
 		return
 	}
 
@@ -531,7 +531,7 @@ func (s *Server) handleFrostSignRound(w http.ResponseWriter, r *http.Request, ke
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "sign") {
 		return
 	}
 
@@ -646,7 +646,7 @@ func (s *Server) handleFrostImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "write") {
+	if !s.authorize(w, r, "keys", "import") {
 		return
 	}
 
@@ -734,7 +734,7 @@ func (s *Server) handleFrostAggregate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "sign") {
 		return
 	}
 
@@ -823,7 +823,7 @@ func (s *Server) handleFrostVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "keys", "use") {
+	if !s.authorize(w, r, "keys", "verify") {
 		return
 	}
 

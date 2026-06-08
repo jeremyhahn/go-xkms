@@ -27,6 +27,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"io"
 	"math/big"
 	"os"
@@ -38,9 +39,6 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,11 +52,11 @@ import (
 
 type mockTPM struct {
 	// Configurable returns for methods used by TPMService.
-	fixedProps        *tpm2pkg.PropertiesFixed
+	fixedProps        *xkms.PropertiesFixed
 	fixedPropsErr     error
 	device            string
-	config            *tpm2pkg.Config
-	ekAttrs           *types.KeyAttributes
+	config            *xkms.TPMConfig
+	ekAttrs           *xkms.KeyAttributes
 	ekAttrsErr        error
 	ekCert            *x509.Certificate
 	ekCertErr         error
@@ -68,26 +66,26 @@ type mockTPM struct {
 	ekCertECErr       error
 	ekECC             *ecdsa.PublicKey
 	iakPub            crypto.PublicKey
-	iakAttrs          *types.KeyAttributes
+	iakAttrs          *xkms.KeyAttributes
 	iakAttrsErr       error
 	iakCert           *x509.Certificate
 	iakCertErr        error
 	idevidPub         crypto.PublicKey
-	idevidAttrs       *types.KeyAttributes
+	idevidAttrs       *xkms.KeyAttributes
 	idevidAttrsErr    error
 	idevidCert        *x509.Certificate
 	idevidCertErr     error
 	srkName           tpm2.TPM2BName
 	srkPub            tpm2.TPMTPublic
-	ssrkAttrs         *types.KeyAttributes
+	ssrkAttrs         *xkms.KeyAttributes
 	ssrkAttrsErr      error
-	pcrBanks          []tpm2pkg.PCRBank
+	pcrBanks          []xkms.PCRBank
 	pcrBanksErr       error
 	fips              bool
 	fipsErr           error
-	quoteResult       tpm2pkg.Quote
+	quoteResult       xkms.Quote
 	quoteErr          error
-	parsedEvents      []tpm2pkg.Event
+	parsedEvents      []xkms.TPMEvent
 	parsedEventsErr   error
 	randomBytesVal    []byte
 	randomBytesErr    error
@@ -104,22 +102,22 @@ type mockTPM struct {
 	// Phase 2: handle enumeration (via FixedProperties), NV indexes, lockout reset.
 	persistentHandles []tpm2.TPMHandle
 	transientHandles  []tpm2.TPMHandle
-	nvIndexes         []tpm2pkg.NVIndexInfo
+	nvIndexes         []xkms.NVIndexInfo
 	lockoutResetErr   error
 
 	// Phase 3: SRK and platform key store.
 	readHandleErr    error
-	platformKeyStore tpm2pkg.PlatformKeyStorer
-	handleKeyAttrs   map[tpm2.TPMHandle]*types.KeyAttributes
+	platformKeyStore xkms.PlatformKeyStorer
+	handleKeyAttrs   map[tpm2.TPMHandle]*xkms.KeyAttributes
 
 	// Phase 4: configurable returns for operations that previously panicked.
 	factoryResetErr     error
-	createIAKResult     *types.KeyAttributes
+	createIAKResult     *xkms.KeyAttributes
 	createIAKErr        error
-	createIDevIDResult  *types.KeyAttributes
+	createIDevIDResult  *xkms.KeyAttributes
 	createIDevIDErr     error
 	setHierarchyAuthErr error
-	certifyKeyResult    *tpm2pkg.CertifyResult
+	certifyKeyResult    *xkms.CertifyResult
 	certifyKeyErr       error
 	nvWriteErr          error
 	nvReadResult        []byte
@@ -134,15 +132,15 @@ type mockTPM struct {
 	nvReadExtendResult  []byte
 	nvReadExtendErr     error
 	nvUndefineErr       error
-	createTCGCSRResult  tpm2pkg.TCG_CSR_IDEVID
+	createTCGCSRResult  xkms.TCG_CSR_IDEVID
 	createTCGCSRErr     error
 }
 
 // Methods called by TPMService.
 
 func (m *mockTPM) Device() string          { return m.device }
-func (m *mockTPM) Config() *tpm2pkg.Config { return m.config }
-func (m *mockTPM) FixedProperties() (*tpm2pkg.PropertiesFixed, error) {
+func (m *mockTPM) Config() *xkms.TPMConfig { return m.config }
+func (m *mockTPM) FixedProperties() (*xkms.PropertiesFixed, error) {
 	if m.fixedPropsErr != nil {
 		return nil, m.fixedPropsErr
 	}
@@ -162,7 +160,7 @@ func (m *mockTPM) FixedProperties() (*tpm2pkg.PropertiesFixed, error) {
 	}
 	return props, nil
 }
-func (m *mockTPM) EKAttributes() (*types.KeyAttributes, error) {
+func (m *mockTPM) EKAttributes() (*xkms.KeyAttributes, error) {
 	return m.ekAttrs, m.ekAttrsErr
 }
 func (m *mockTPM) EKCertificate() (*x509.Certificate, error) {
@@ -174,41 +172,41 @@ func (m *mockTPM) EKCertificateRSA() (*x509.Certificate, error) {
 func (m *mockTPM) EKCertificateEC() (*x509.Certificate, error) {
 	return m.ekCertEC, m.ekCertECErr
 }
-func (m *mockTPM) EKECC() (*ecdsa.PublicKey, error)             { return m.ekECC, nil }
-func (m *mockTPM) IAK() (crypto.PublicKey, error)               { return m.iakPub, nil }
-func (m *mockTPM) IAKAttributes() (*types.KeyAttributes, error) { return m.iakAttrs, m.iakAttrsErr }
-func (m *mockTPM) IDevID() (crypto.PublicKey, error)            { return m.idevidPub, nil }
-func (m *mockTPM) IDevIDAttributes() (*types.KeyAttributes, error) {
+func (m *mockTPM) EKECC() (*ecdsa.PublicKey, error)            { return m.ekECC, nil }
+func (m *mockTPM) IAK() (crypto.PublicKey, error)              { return m.iakPub, nil }
+func (m *mockTPM) IAKAttributes() (*xkms.KeyAttributes, error) { return m.iakAttrs, m.iakAttrsErr }
+func (m *mockTPM) IDevID() (crypto.PublicKey, error)           { return m.idevidPub, nil }
+func (m *mockTPM) IDevIDAttributes() (*xkms.KeyAttributes, error) {
 	return m.idevidAttrs, m.idevidAttrsErr
 }
 func (m *mockTPM) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	return m.srkName, m.srkPub, nil
 }
-func (m *mockTPM) SSRKAttributes() (*types.KeyAttributes, error)        { return m.ssrkAttrs, m.ssrkAttrsErr }
-func (m *mockTPM) PlatformSRKAttributes() (*types.KeyAttributes, error) { return nil, nil }
-func (m *mockTPM) SSRK() *tpm2pkg.SRKConfig {
+func (m *mockTPM) SSRKAttributes() (*xkms.KeyAttributes, error)        { return m.ssrkAttrs, m.ssrkAttrsErr }
+func (m *mockTPM) PlatformSRKAttributes() (*xkms.KeyAttributes, error) { return nil, nil }
+func (m *mockTPM) SSRK() *xkms.SRKConfig {
 	if m.config == nil {
 		return nil
 	}
 	return m.config.SSRK
 }
-func (m *mockTPM) PlatformKeyStore() tpm2pkg.PlatformKeyStorer { return m.platformKeyStore }
-func (m *mockTPM) ReadPCRs(pcrList []uint) ([]tpm2pkg.PCRBank, error) {
+func (m *mockTPM) PlatformKeyStore() xkms.PlatformKeyStorer { return m.platformKeyStore }
+func (m *mockTPM) ReadPCRs(pcrList []uint) ([]xkms.PCRBank, error) {
 	return m.pcrBanks, m.pcrBanksErr
 }
 func (m *mockTPM) IsFIPS140_2() (bool, error) { return m.fips, m.fipsErr }
-func (m *mockTPM) Quote(pcrs []uint, nonce []byte) (tpm2pkg.Quote, error) {
+func (m *mockTPM) Quote(pcrs []uint, nonce []byte) (xkms.Quote, error) {
 	return m.quoteResult, m.quoteErr
 }
-func (m *mockTPM) ParsedEventLog() ([]tpm2pkg.Event, error) {
+func (m *mockTPM) ParsedEventLog() ([]xkms.TPMEvent, error) {
 	return m.parsedEvents, m.parsedEventsErr
 }
 func (m *mockTPM) RandomBytes(fixedLength int) ([]byte, error) {
 	return m.randomBytesVal, m.randomBytesErr
 }
 func (m *mockTPM) PlatformPolicyDigestHash() ([]byte, error) { return m.policyHash, m.policyHashErr }
-func (m *mockTPM) Provision(soPIN types.Password) error      { return m.provisionErr }
-func (m *mockTPM) Install(soPIN types.Password, _ *tpm2pkg.InstallOptions) error {
+func (m *mockTPM) Provision(soPIN xkms.Password) error       { return m.provisionErr }
+func (m *mockTPM) Install(soPIN xkms.Password, _ *xkms.InstallOptions) error {
 	return m.installErr
 }
 func (m *mockTPM) WriteEKCert(ekCert []byte) error { return m.writeEKCertErr }
@@ -237,7 +235,7 @@ func (m *mockTPM) DictionaryAttackLockoutReset(_ []byte) error {
 func (m *mockTPM) ActivateCredential(_, _ []byte) ([]byte, error) {
 	panic("mockTPM: ActivateCredential not expected")
 }
-func (m *mockTPM) AKProfile() (tpm2pkg.AKProfile, error) {
+func (m *mockTPM) AKProfile() (xkms.AKProfile, error) {
 	panic("mockTPM: AKProfile not expected")
 }
 func (m *mockTPM) AlgID() tpm2.TPMAlgID { panic("mockTPM: AlgID not expected") }
@@ -247,36 +245,36 @@ func (m *mockTPM) CalculateName(_ tpm2.TPMAlgID, _ []byte) {
 func (m *mockTPM) Clear(_ []byte) error { panic("mockTPM: Clear not expected") }
 func (m *mockTPM) ForceClear() error    { return nil }
 func (m *mockTPM) Close() error         { return nil }
-func (m *mockTPM) CreateECDSA(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*ecdsa.PublicKey, error) {
+func (m *mockTPM) CreateECDSA(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend, _ bool) (*ecdsa.PublicKey, error) {
 	panic("mockTPM: CreateECDSA not expected")
 }
-func (m *mockTPM) CreateEK(_ *types.KeyAttributes) error { panic("mockTPM: CreateEK not expected") }
-func (m *mockTPM) CreateSecretKey(_ *types.KeyAttributes, _ store.KeyBackend) error {
+func (m *mockTPM) CreateEK(_ *xkms.KeyAttributes) error { panic("mockTPM: CreateEK not expected") }
+func (m *mockTPM) CreateSecretKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend) error {
 	panic("mockTPM: CreateSecretKey not expected")
 }
-func (m *mockTPM) CreateIAK(_ *types.KeyAttributes, _ []byte) (*types.KeyAttributes, error) {
+func (m *mockTPM) CreateIAK(_ *xkms.KeyAttributes, _ []byte) (*xkms.KeyAttributes, error) {
 	return m.createIAKResult, m.createIAKErr
 }
-func (m *mockTPM) CreateIDevID(_ *types.KeyAttributes, _ *x509.Certificate, _ []byte) (*types.KeyAttributes, *tpm2pkg.TCG_CSR_IDEVID, error) {
+func (m *mockTPM) CreateIDevID(_ *xkms.KeyAttributes, _ *x509.Certificate, _ []byte) (*xkms.KeyAttributes, *xkms.TCG_CSR_IDEVID, error) {
 	return m.createIDevIDResult, nil, m.createIDevIDErr
 }
 func (m *mockTPM) CreatePlatformPolicy() error { panic("mockTPM: CreatePlatformPolicy not expected") }
-func (m *mockTPM) CreateRSA(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*rsa.PublicKey, error) {
+func (m *mockTPM) CreateRSA(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend, _ bool) (*rsa.PublicKey, error) {
 	panic("mockTPM: CreateRSA not expected")
 }
-func (m *mockTPM) CreateKeySession(_ *types.KeyAttributes) (tpm2.Session, func() error, error) {
+func (m *mockTPM) CreateKeySession(_ *xkms.KeyAttributes) (tpm2.Session, func() error, error) {
 	panic("mockTPM: CreateKeySession not expected")
 }
-func (m *mockTPM) CreateSession(_ *types.KeyAttributes) (tpm2.Session, func() error, error) {
+func (m *mockTPM) CreateSession(_ *xkms.KeyAttributes) (tpm2.Session, func() error, error) {
 	panic("mockTPM: CreateSession not expected")
 }
-func (m *mockTPM) CreateSRK(_ *types.KeyAttributes) error {
+func (m *mockTPM) CreateSRK(_ *xkms.KeyAttributes) error {
 	panic("mockTPM: CreateSRK not expected")
 }
-func (m *mockTPM) CreateTCG_CSR_IDEVID(_ *x509.Certificate, _, _ *types.KeyAttributes) (tpm2pkg.TCG_CSR_IDEVID, error) {
+func (m *mockTPM) CreateTCG_CSR_IDEVID(_ *x509.Certificate, _, _ *xkms.KeyAttributes) (xkms.TCG_CSR_IDEVID, error) {
 	return m.createTCGCSRResult, m.createTCGCSRErr
 }
-func (m *mockTPM) DeleteKey(_ *types.KeyAttributes, _ store.KeyBackend) error {
+func (m *mockTPM) DeleteKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend) error {
 	panic("mockTPM: DeleteKey not expected")
 }
 func (m *mockTPM) EK() (crypto.PublicKey, error) { panic("mockTPM: EK not expected") }
@@ -305,7 +303,7 @@ func (m *mockTPM) IsPlatformPCRExtended() (bool, error) {
 func (m *mockTPM) ExtendPCR(_ int, _ string, _ []byte) error {
 	panic("mockTPM: ExtendPCR not expected")
 }
-func (m *mockTPM) KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, error) {
+func (m *mockTPM) KeyAttributes(handle tpm2.TPMHandle) (*xkms.KeyAttributes, error) {
 	if m.handleKeyAttrs != nil {
 		if attrs, ok := m.handleKeyAttrs[handle]; ok {
 			return attrs, nil
@@ -313,7 +311,7 @@ func (m *mockTPM) KeyAttributes(handle tpm2.TPMHandle) (*types.KeyAttributes, er
 	}
 	return nil, fmt.Errorf("handle 0x%08X not found", handle)
 }
-func (m *mockTPM) LoadKeyPair(_ *types.KeyAttributes, _ *tpm2.Session, _ store.KeyBackend) (*tpm2.LoadResponse, error) {
+func (m *mockTPM) LoadKeyPair(_ *xkms.KeyAttributes, _ *tpm2.Session, _ xkms.TPMKeyBackend) (*tpm2.LoadResponse, error) {
 	panic("mockTPM: LoadKeyPair not expected")
 }
 func (m *mockTPM) MakeCredential(_ tpm2.TPM2BName, _ []byte) ([]byte, []byte, []byte, error) {
@@ -322,34 +320,34 @@ func (m *mockTPM) MakeCredential(_ tpm2.TPM2BName, _ []byte) ([]byte, []byte, []
 func (m *mockTPM) MakeCredentialWithExternalEK(_ *x509.Certificate, _, _ []byte) ([]byte, []byte, []byte, error) {
 	panic("mockTPM: MakeCredentialWithExternalEK not expected")
 }
-func (m *mockTPM) NonceSession(_ types.Password) (tpm2.Session, func() error, error) {
+func (m *mockTPM) NonceSession(_ xkms.Password) (tpm2.Session, func() error, error) {
 	panic("mockTPM: NonceSession not expected")
 }
-func (m *mockTPM) NVRead(_ *types.KeyAttributes, _ uint16) ([]byte, error) {
+func (m *mockTPM) NVRead(_ *xkms.KeyAttributes, _ uint16) ([]byte, error) {
 	return m.nvReadResult, m.nvReadErr
 }
-func (m *mockTPM) NVWrite(_ *types.KeyAttributes) error {
+func (m *mockTPM) NVWrite(_ *xkms.KeyAttributes) error {
 	return m.nvWriteErr
 }
-func (m *mockTPM) NVDefineCounter(_ *types.KeyAttributes) error {
+func (m *mockTPM) NVDefineCounter(_ *xkms.KeyAttributes) error {
 	return m.nvDefineCounterErr
 }
-func (m *mockTPM) NVDefineExtend(_ *types.KeyAttributes) error {
+func (m *mockTPM) NVDefineExtend(_ *xkms.KeyAttributes) error {
 	return m.nvDefineExtendErr
 }
-func (m *mockTPM) NVIncrement(_ *types.KeyAttributes) (uint64, error) {
+func (m *mockTPM) NVIncrement(_ *xkms.KeyAttributes) (uint64, error) {
 	return m.nvIncrementResult, m.nvIncrementErr
 }
-func (m *mockTPM) NVExtend(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTPM) NVExtend(_ *xkms.KeyAttributes, _ []byte) error {
 	return m.nvExtendErr
 }
-func (m *mockTPM) NVReadCounter(_ *types.KeyAttributes) (uint64, error) {
+func (m *mockTPM) NVReadCounter(_ *xkms.KeyAttributes) (uint64, error) {
 	return m.nvReadCounterResult, m.nvReadCounterErr
 }
-func (m *mockTPM) NVReadExtend(_ *types.KeyAttributes) ([]byte, error) {
+func (m *mockTPM) NVReadExtend(_ *xkms.KeyAttributes) ([]byte, error) {
 	return m.nvReadExtendResult, m.nvReadExtendErr
 }
-func (m *mockTPM) NVUndefine(_ *types.KeyAttributes) error {
+func (m *mockTPM) NVUndefine(_ *xkms.KeyAttributes) error {
 	return m.nvUndefineErr
 }
 func (m *mockTPM) Open() error { panic("mockTPM: Open not expected") }
@@ -365,16 +363,16 @@ func (m *mockTPM) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 func (m *mockTPM) PlatformPolicySession(auth []byte) (tpm2.Session, func() error, error) {
 	panic("mockTPM: PlatformPolicySession not expected")
 }
-func (m *mockTPM) PlatformQuote(_ *types.KeyAttributes) (tpm2pkg.Quote, []byte, error) {
+func (m *mockTPM) PlatformQuote(_ *xkms.KeyAttributes) (xkms.Quote, []byte, error) {
 	panic("mockTPM: PlatformQuote not expected")
 }
 func (m *mockTPM) ProvisionEKCert(_, _ []byte) error {
 	panic("mockTPM: ProvisionEKCert not expected")
 }
-func (m *mockTPM) ProvisionOwner(_ types.Password) (*types.KeyAttributes, error) {
+func (m *mockTPM) ProvisionOwner(_ xkms.Password) (*xkms.KeyAttributes, error) {
 	panic("mockTPM: ProvisionOwner not expected")
 }
-func (m *mockTPM) CertifyKey(_ *types.KeyAttributes, _ []byte, _ store.KeyBackend) (*tpm2pkg.CertifyResult, error) {
+func (m *mockTPM) CertifyKey(_ *xkms.KeyAttributes, _ []byte, _ xkms.TPMKeyBackend) (*xkms.CertifyResult, error) {
 	return m.certifyKeyResult, m.certifyKeyErr
 }
 func (m *mockTPM) Random() ([]byte, error) { panic("mockTPM: Random not expected") }
@@ -394,19 +392,19 @@ func (m *mockTPM) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]by
 func (m *mockTPM) RSAEncrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	panic("mockTPM: RSAEncrypt not expected")
 }
-func (m *mockTPM) SaveKeyPair(_ *types.KeyAttributes, _ tpm2.TPM2BPrivate, _ tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic], _ store.KeyBackend, _ bool) error {
+func (m *mockTPM) SaveKeyPair(_ *xkms.KeyAttributes, _ tpm2.TPM2BPrivate, _ tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic], _ xkms.TPMKeyBackend, _ bool) error {
 	panic("mockTPM: SaveKeyPair not expected")
 }
-func (m *mockTPM) Seal(_ context.Context, _ []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (m *mockTPM) Seal(_ context.Context, _ []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	panic("mockTPM: Seal not expected")
 }
-func (m *mockTPM) SealKey(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*tpm2.CreateResponse, error) {
+func (m *mockTPM) SealKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend, _ bool) (*tpm2.CreateResponse, error) {
 	panic("mockTPM: SealKey not expected")
 }
 func (m *mockTPM) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
 	panic("mockTPM: Sign not expected")
 }
-func (m *mockTPM) SetHierarchyAuth(_, _ types.Password, _ *tpm2.TPMHandle) error {
+func (m *mockTPM) SetHierarchyAuth(_, _ xkms.Password, _ *tpm2.TPMHandle) error {
 	return m.setHierarchyAuthErr
 }
 func (m *mockTPM) SecretFromShares(_ []string) (string, error) {
@@ -418,10 +416,10 @@ func (m *mockTPM) ShareSecret(_ []byte, _ int) ([]string, error) {
 func (m *mockTPM) Transport() transport.TPM {
 	panic("mockTPM: Transport not expected")
 }
-func (m *mockTPM) Unseal(_ context.Context, _ *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *mockTPM) Unseal(_ context.Context, _ *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	panic("mockTPM: Unseal not expected")
 }
-func (m *mockTPM) UnsealKey(_ *types.KeyAttributes, _ store.KeyBackend) ([]byte, error) {
+func (m *mockTPM) UnsealKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend) ([]byte, error) {
 	panic("mockTPM: UnsealKey not expected")
 }
 func (m *mockTPM) CanSeal() bool { panic("mockTPM: CanSeal not expected") }
@@ -431,25 +429,25 @@ func (m *mockTPM) DeleteIDevIDCertificate() error {
 func (m *mockTPM) DeleteIAKCertificate() error {
 	panic("mockTPM: DeleteIAKCertificate not expected")
 }
-func (m *mockTPM) VerifyTCGCSR(_ *tpm2pkg.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*types.KeyAttributes, *tpm2pkg.UNPACKED_TCG_CSR_IDEVID, error) {
+func (m *mockTPM) VerifyTCGCSR(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("mockTPM: VerifyTCGCSR not expected")
 }
-func (m *mockTPM) VerifyTCG_CSR_IAK(_ *tpm2pkg.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*types.KeyAttributes, *tpm2pkg.UNPACKED_TCG_CSR_IDEVID, error) {
+func (m *mockTPM) VerifyTCG_CSR_IAK(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("mockTPM: VerifyTCG_CSR_IAK not expected")
 }
-func (m *mockTPM) VerifyTCG_CSR_IDevID(_ *tpm2pkg.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*types.KeyAttributes, *tpm2pkg.UNPACKED_TCG_CSR_IDEVID, error) {
+func (m *mockTPM) VerifyTCG_CSR_IDevID(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("mockTPM: VerifyTCG_CSR_IDevID not expected")
 }
-func (m *mockTPM) SignValidate(_ *types.KeyAttributes, _, _ []byte) ([]byte, error) {
+func (m *mockTPM) SignValidate(_ *xkms.KeyAttributes, _, _ []byte) ([]byte, error) {
 	panic("mockTPM: SignValidate not expected")
 }
-func (m *mockTPM) HashSequence(_ *types.KeyAttributes, _ []byte) ([]byte, []byte, error) {
+func (m *mockTPM) HashSequence(_ *xkms.KeyAttributes, _ []byte) ([]byte, []byte, error) {
 	panic("mockTPM: HashSequence not expected")
 }
-func (m *mockTPM) Hash(_ *types.KeyAttributes, _ []byte) ([]byte, []byte, error) {
+func (m *mockTPM) Hash(_ *xkms.KeyAttributes, _ []byte) ([]byte, []byte, error) {
 	panic("mockTPM: Hash not expected")
 }
-func (m *mockTPM) ECDHZGen(_ *types.KeyAttributes, _ *tpm2.TPMSECCPoint, _ store.KeyBackend) ([]byte, error) {
+func (m *mockTPM) ECDHZGen(_ *xkms.KeyAttributes, _ *tpm2.TPMSECCPoint, _ xkms.TPMKeyBackend) ([]byte, error) {
 	panic("mockTPM: ECDHZGen not expected")
 }
 func (m *mockTPM) SSRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
@@ -467,13 +465,13 @@ func (m *mockTPM) FactoryResetWithClear(_ []byte) error {
 	}
 	return nil
 }
-func (m *mockTPM) GenerateSymmetricKey(_ *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *mockTPM) GenerateSymmetricKey(_ *xkms.KeyAttributes) (xkms.SymmetricKey, error) {
 	panic("mockTPM: GenerateSymmetricKey not expected")
 }
-func (m *mockTPM) GetSymmetricKey(_ *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *mockTPM) GetSymmetricKey(_ *xkms.KeyAttributes) (xkms.SymmetricKey, error) {
 	panic("mockTPM: GetSymmetricKey not expected")
 }
-func (m *mockTPM) SymmetricEncrypter(_ *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (m *mockTPM) SymmetricEncrypter(_ *xkms.KeyAttributes) (xkms.SymmetricEncrypter, error) {
 	panic("mockTPM: SymmetricEncrypter not expected")
 }
 
@@ -481,7 +479,7 @@ func (m *mockTPM) VerifyAuth(_ tpm2.TPMHandle, _ []byte) error    { return nil }
 func (m *mockTPM) ChangeAuth(_ tpm2.TPMHandle, _, _ []byte) error { return nil }
 
 // compile-time check
-var _ tpm2pkg.TrustedPlatformModule = (*mockTPM)(nil)
+var _ xkms.TrustedPlatformModule = (*mockTPM)(nil)
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -518,17 +516,17 @@ func testECCCert() *x509.Certificate {
 type mockPlatformKeyStorer struct {
 	initialized   bool
 	policyEnabled bool
-	srkAttrs      *types.KeyAttributes
+	srkAttrs      *xkms.KeyAttributes
 }
 
-func (m *mockPlatformKeyStorer) SRKAttributes() *types.KeyAttributes { return m.srkAttrs }
-func (m *mockPlatformKeyStorer) Backend() store.KeyBackend           { return nil }
-func (m *mockPlatformKeyStorer) Initialize(_, _ string) error        { return nil }
-func (m *mockPlatformKeyStorer) InitializeWithDefaults() error       { return nil }
-func (m *mockPlatformKeyStorer) IsInitialized() bool                 { return m.initialized }
-func (m *mockPlatformKeyStorer) PlatformPolicyEnabled() bool         { return m.policyEnabled }
-func (m *mockPlatformKeyStorer) VerifyAuth(_ string) error           { return nil }
-func (m *mockPlatformKeyStorer) ChangeAuth(_, _ string) error        { return nil }
+func (m *mockPlatformKeyStorer) SRKAttributes() *xkms.KeyAttributes { return m.srkAttrs }
+func (m *mockPlatformKeyStorer) Backend() xkms.TPMKeyBackend        { return nil }
+func (m *mockPlatformKeyStorer) Initialize(_, _ string) error       { return nil }
+func (m *mockPlatformKeyStorer) InitializeWithDefaults() error      { return nil }
+func (m *mockPlatformKeyStorer) IsInitialized() bool                { return m.initialized }
+func (m *mockPlatformKeyStorer) PlatformPolicyEnabled() bool        { return m.policyEnabled }
+func (m *mockPlatformKeyStorer) VerifyAuth(_ string) error          { return nil }
+func (m *mockPlatformKeyStorer) ChangeAuth(_, _ string) error       { return nil }
 func (m *mockPlatformKeyStorer) GetLockoutInfo() (int, int, int, int, error) {
 	return 0, 10, 0, 300, nil
 }
@@ -541,15 +539,15 @@ func (m *mockPlatformKeyStorer) SetAuthReady(_ bool)                         {}
 func defaultMockTPM() *mockTPM {
 	return &mockTPM{
 		device: "/dev/tpmrm0",
-		config: &tpm2pkg.Config{
+		config: &xkms.TPMConfig{
 			Hash: "SHA-256",
-			SSRK: &tpm2pkg.SRKConfig{
+			SSRK: &xkms.SRKConfig{
 				Handle:         0x81000001,
 				PlatformPolicy: false,
 				KeyAlgorithm:   "RSA",
 			},
 		},
-		fixedProps: &tpm2pkg.PropertiesFixed{
+		fixedProps: &xkms.PropertiesFixed{
 			Manufacturer:       "TestMFG",
 			VendorID:           "TEST",
 			Family:             "2.0\x00",
@@ -573,12 +571,12 @@ func defaultMockTPM() *mockTPM {
 			MaxECCKeyBits:      384,
 			Level:              0,
 		},
-		ekAttrs: &types.KeyAttributes{
+		ekAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: x509.RSA,
-			RSAAttributes: &types.RSAAttributes{
+			RSAAttributes: &xkms.RSAAttributes{
 				KeySize: 2048,
 			},
-			TPMAttributes: &types.TPMAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Handle: 0x81010001,
 			},
 		},
@@ -587,49 +585,49 @@ func defaultMockTPM() *mockTPM {
 		ekCertECErr:  errors.New("not available"),
 		ekECC:        nil,
 		iakPub:       &rsa.PublicKey{},
-		iakAttrs: &types.KeyAttributes{
+		iakAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: x509.RSA,
-			RSAAttributes: &types.RSAAttributes{
+			RSAAttributes: &xkms.RSAAttributes{
 				KeySize: 2048,
 			},
-			TPMAttributes: &types.TPMAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Handle: 0x81010002,
 			},
 		},
 		iakCertErr: errors.New("no cert"),
 		idevidPub:  &rsa.PublicKey{},
-		idevidAttrs: &types.KeyAttributes{
+		idevidAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: x509.ECDSA,
-			ECCAttributes: &types.ECCAttributes{
+			ECCAttributes: &xkms.ECCAttributes{
 				Curve: nil,
 			},
 		},
 		idevidCertErr: errors.New("no cert"),
 		srkName:       tpm2.TPM2BName{Buffer: []byte{0x01, 0x02}},
-		ssrkAttrs: &types.KeyAttributes{
+		ssrkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: x509.RSA,
 		},
-		pcrBanks: []tpm2pkg.PCRBank{
+		pcrBanks: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB}},
 					{ID: 7, Value: []byte{0xCC, 0xDD}},
 				},
 			},
 		},
-		quoteResult: tpm2pkg.Quote{
+		quoteResult: xkms.Quote{
 			Quoted:    []byte{0x01, 0x02},
 			Signature: []byte{0x03, 0x04},
 			PCRs:      []byte{0x05, 0x06},
 			Nonce:     []byte{0xde, 0xad},
 		},
-		parsedEvents: []tpm2pkg.Event{
+		parsedEvents: []xkms.TPMEvent{
 			{
 				PCRIndex:    0,
 				EventType:   "EV_NO_ACTION",
 				DigestCount: 1,
-				Digests: []tpm2pkg.Digest{
+				Digests: []xkms.TPMDigest{
 					{AlgorithmId: "SHA256", Digest: "aabb"},
 				},
 				EventString: "spec_id_event",
@@ -645,7 +643,7 @@ func defaultMockTPM() *mockTPM {
 // via a shared TPMAccessor.
 func newServiceWithMock(mock *mockTPM) *TPMService {
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	return svc
 }
 
@@ -679,7 +677,7 @@ func TestTPMService_SetContext(t *testing.T) {
 func TestTPMService_SetTPMAccessor(t *testing.T) {
 	svc := NewTPMService()
 	called := false
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		called = true
 		return nil
 	}))
@@ -1161,9 +1159,9 @@ func TestTPMService_GetIAKInfo_UsesAttrsNotIAK(t *testing.T) {
 func TestTPMService_GetIAKInfo_NilTPMAttributes(t *testing.T) {
 	// Verify that GetIAKInfo gracefully handles nil TPMAttributes.
 	mock := defaultMockTPM()
-	mock.iakAttrs = &types.KeyAttributes{
+	mock.iakAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm: x509.RSA,
-		RSAAttributes: &types.RSAAttributes{
+		RSAAttributes: &xkms.RSAAttributes{
 			KeySize: 2048,
 		},
 		TPMAttributes: nil, // nil TPMAttributes
@@ -1295,10 +1293,10 @@ func TestTPMService_GetPlatformSRKInfo_WithPolicyEnabled(t *testing.T) {
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized:   true,
 		policyEnabled: true,
-		srkAttrs: &types.KeyAttributes{
+		srkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm:  x509.RSA,
-			RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-			TPMAttributes: &types.TPMAttributes{Handle: 0x81000002},
+			RSAAttributes: &xkms.RSAAttributes{KeySize: 2048},
+			TPMAttributes: &xkms.TPMAttributes{Handle: 0x81000002},
 		},
 	}
 	svc := newServiceWithMock(mock)
@@ -1338,10 +1336,10 @@ func TestTPMService_GetPlatformSRKInfo_NotInitialized(t *testing.T) {
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized:   false,
 		policyEnabled: false,
-		srkAttrs: &types.KeyAttributes{
+		srkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm:  x509.ECDSA,
-			ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
-			TPMAttributes: &types.TPMAttributes{Handle: 0x81000002},
+			ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P256()},
+			TPMAttributes: &xkms.TPMAttributes{Handle: 0x81000002},
 		},
 	}
 	svc := newServiceWithMock(mock)
@@ -1356,7 +1354,7 @@ func TestTPMService_GetPlatformSRKInfo_NotInitialized(t *testing.T) {
 
 func TestTPMService_GetPlatformSRKInfo_HandleFallbackToConfig(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.config.PlatformSRK = &tpm2pkg.PlatformSRKConfig{SRKHandle: 0x81000002}
+	mock.config.PlatformSRK = &xkms.PlatformSRKConfig{SRKHandle: 0x81000002}
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized:   true,
 		policyEnabled: false,
@@ -1403,7 +1401,7 @@ func TestTPMService_GetPCRs_ValidBanks(t *testing.T) {
 
 func TestTPMService_GetPCRs_BankNotSupported(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{} // empty banks — simulates unsupported
+	mock.pcrBanks = []xkms.PCRBank{} // empty banks — simulates unsupported
 	svc := newServiceWithMock(mock)
 	values, err := svc.GetPCRs("sha384")
 	assert.ErrorIs(t, err, ErrTPMBankNotSupported)
@@ -1417,11 +1415,11 @@ func TestTPMService_GetPCRs_BankNotSupported(t *testing.T) {
 func TestDetectPCRBanks_SortedOrder(t *testing.T) {
 	mock := defaultMockTPM()
 	// Return banks in reverse order to verify sorting.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA512", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x00}}}},
-		{Algorithm: "SHA1", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x00}}}},
-		{Algorithm: "SHA384", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x00}}}},
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x00}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA512", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x00}}}},
+		{Algorithm: "SHA1", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x00}}}},
+		{Algorithm: "SHA384", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x00}}}},
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x00}}}},
 	}
 	banks := detectPCRBanks(mock)
 	require.Len(t, banks, 4)
@@ -1433,9 +1431,9 @@ func TestDetectPCRBanks_SortedOrder(t *testing.T) {
 
 func TestDetectPCRBanks_SHA386VariantNormalized(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA386", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x00}}}},
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x00}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA386", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x00}}}},
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x00}}}},
 	}
 	banks := detectPCRBanks(mock)
 	require.Len(t, banks, 2)
@@ -1618,7 +1616,7 @@ func TestTPMService_GetEventLog_ParseError(t *testing.T) {
 
 func TestTPMService_GetEventLog_EmptyDigests(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.parsedEvents = []tpm2pkg.Event{
+	mock.parsedEvents = []xkms.TPMEvent{
 		{PCRIndex: 1, EventType: "EV_SEPARATOR", Digests: nil, EventString: "sep"},
 	}
 	svc := newServiceWithMock(mock)
@@ -1898,14 +1896,14 @@ func TestBuildCapabilities_NoSessionInfo(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKeySize_RSA(t *testing.T) {
-	attrs := &types.KeyAttributes{
-		RSAAttributes: &types.RSAAttributes{KeySize: 4096},
+	attrs := &xkms.KeyAttributes{
+		RSAAttributes: &xkms.RSAAttributes{KeySize: 4096},
 	}
 	assert.Equal(t, 4096, keySize(attrs))
 }
 
 func TestKeySize_NoAttributes(t *testing.T) {
-	attrs := &types.KeyAttributes{}
+	attrs := &xkms.KeyAttributes{}
 	assert.Equal(t, 0, keySize(attrs))
 }
 
@@ -1932,7 +1930,7 @@ func TestTPMService_getTPM_NilAccessor(t *testing.T) {
 
 func TestTPMService_getTPM_FuncReturnsNil(t *testing.T) {
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
 	_, err := svc.getTPM()
 	assert.ErrorIs(t, err, ErrTPMNotAvailable)
 }
@@ -2323,10 +2321,10 @@ func TestTPMService_DeleteCompositePolicy_NotFound(t *testing.T) {
 
 func TestTPMService_ListPoliciesWithDigests_PopulatesDigests(t *testing.T) {
 	mock := &mockTPM{
-		pcrBanks: []tpm2pkg.PCRBank{
+		pcrBanks: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xaa, 0xbb, 0xcc}},
 					{ID: 7, Value: []byte{0xdd, 0xee, 0xff}},
 				},
@@ -2921,7 +2919,7 @@ func TestCreatePolicy_NoPCRSelections_NoDigests(t *testing.T) {
 func TestCreatePolicy_TPMUnavailable_SavesWithoutDigests(t *testing.T) {
 	// Use a nil-returning TPM accessor so getTPM fails.
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
 	svc.SetDataDir(t.TempDir())
 
 	policy := &PCRPolicy{
@@ -3015,7 +3013,7 @@ func TestRefreshPolicyPCRs_PolicyNotFound(t *testing.T) {
 
 func TestRefreshPolicyPCRs_NoTPM(t *testing.T) {
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
 	svc.SetDataDir(t.TempDir())
 
 	// Create a policy file manually.
@@ -3072,10 +3070,10 @@ func TestListPoliciesWithDigests_CompareMode_Mismatch(t *testing.T) {
 	require.NoError(t, svc.CreatePolicy(policy))
 
 	// Change the mock PCR values to simulate a mismatch.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xFF, 0xEE}},
 				{ID: 7, Value: []byte{0xDD, 0xCC}},
 			},
@@ -3150,10 +3148,10 @@ func TestListPoliciesWithDigests_DoesNotOverwriteSavedDigests(t *testing.T) {
 	}
 
 	// Change mock PCR values (simulate TPM state change).
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xFF, 0xFF}},
 				{ID: 7, Value: []byte{0xEE, 0xEE}},
 			},
@@ -3213,8 +3211,8 @@ func TestListCompositePoliciesWithDigests_Mismatch(t *testing.T) {
 	require.NoError(t, svc.CreateCompositePolicy(policy))
 
 	// Change mock PCR values.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xFF}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xFF}}}},
 	}
 
 	policies, err := svc.ListCompositePoliciesWithDigests()
@@ -3357,13 +3355,13 @@ func TestRefreshCompositePolicyPCRs_NoTPM(t *testing.T) {
 // replayTestEvents returns events with lowercase algorithm IDs (as required
 // by CalculatePCRs) and the corresponding mock PCR banks that exactly match
 // the computed replay output.
-func replayTestEvents() ([]tpm2pkg.Event, []tpm2pkg.PCRBank) {
-	events := []tpm2pkg.Event{
+func replayTestEvents() ([]xkms.TPMEvent, []xkms.PCRBank) {
+	events := []xkms.TPMEvent{
 		{
 			PCRIndex:    0,
 			EventType:   "EV_NO_ACTION",
 			DigestCount: 1,
-			Digests: []tpm2pkg.Digest{
+			Digests: []xkms.TPMDigest{
 				{AlgorithmId: "sha256", Digest: "aabb"},
 			},
 			EventString: "spec_id_event",
@@ -3371,17 +3369,17 @@ func replayTestEvents() ([]tpm2pkg.Event, []tpm2pkg.PCRBank) {
 	}
 
 	// Compute expected PCR values by replaying the events.
-	computed := tpm2pkg.CalculatePCRs(events)
+	computed := xkms.CalculatePCRs(events)
 
 	// Build mock PCR banks that match the computed values.
 	// ReadPCRs returns UPPERCASE algorithm names.
-	var banks []tpm2pkg.PCRBank
+	var banks []xkms.PCRBank
 	for algo, pcrMap := range computed {
-		bank := tpm2pkg.PCRBank{
+		bank := xkms.PCRBank{
 			Algorithm: strings.ToUpper(algo),
 		}
 		for idx, val := range pcrMap {
-			bank.PCRs = append(bank.PCRs, tpm2pkg.PCR{
+			bank.PCRs = append(bank.PCRs, xkms.PCR{
 				ID:    int32(idx),
 				Value: val,
 			})
@@ -3420,12 +3418,12 @@ func TestReplayEventLog_Success_AllMatch(t *testing.T) {
 }
 
 func TestReplayEventLog_Mismatch(t *testing.T) {
-	events := []tpm2pkg.Event{
+	events := []xkms.TPMEvent{
 		{
 			PCRIndex:    0,
 			EventType:   "EV_NO_ACTION",
 			DigestCount: 1,
-			Digests: []tpm2pkg.Digest{
+			Digests: []xkms.TPMDigest{
 				{AlgorithmId: "sha256", Digest: "aabb"},
 			},
 			EventString: "spec_id_event",
@@ -3433,10 +3431,10 @@ func TestReplayEventLog_Mismatch(t *testing.T) {
 	}
 
 	// Provide PCR banks that do NOT match the computed replay.
-	mismatchBanks := []tpm2pkg.PCRBank{
+	mismatchBanks := []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xFF, 0xFF}},
 			},
 		},
@@ -3459,7 +3457,7 @@ func TestReplayEventLog_Mismatch(t *testing.T) {
 
 func TestReplayEventLog_NoTPM(t *testing.T) {
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
 
 	_, err := svc.ReplayEventLog()
 	assert.ErrorIs(t, err, ErrTPMNotAvailable)
@@ -3479,7 +3477,7 @@ func TestReplayEventLog_NoEventLog(t *testing.T) {
 func TestReplayEventLog_EmptyEventLog(t *testing.T) {
 	mock := &mockTPM{
 		device:       "/dev/tpmrm0",
-		parsedEvents: []tpm2pkg.Event{},
+		parsedEvents: []xkms.TPMEvent{},
 	}
 	svc := newServiceWithMock(mock)
 
@@ -3493,12 +3491,12 @@ func TestReplayEventLog_EmptyEventLog(t *testing.T) {
 }
 
 func TestReplayEventLog_ReadPCRsFails(t *testing.T) {
-	events := []tpm2pkg.Event{
+	events := []xkms.TPMEvent{
 		{
 			PCRIndex:    0,
 			EventType:   "EV_NO_ACTION",
 			DigestCount: 1,
-			Digests: []tpm2pkg.Digest{
+			Digests: []xkms.TPMDigest{
 				{AlgorithmId: "sha256", Digest: "aabb"},
 			},
 			EventString: "spec_id_event",
@@ -3523,10 +3521,10 @@ func TestComparePolicyPCRs_AllMatch(t *testing.T) {
 	// Mock returns the same PCR values that the policy stores as digests.
 	mock := &mockTPM{
 		device: "/dev/tpmrm0",
-		pcrBanks: []tpm2pkg.PCRBank{
+		pcrBanks: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB}},
 					{ID: 7, Value: []byte{0xCC, 0xDD}},
 				},
@@ -3568,10 +3566,10 @@ func TestComparePolicyPCRs_AllMatch(t *testing.T) {
 func TestComparePolicyPCRs_Mismatch(t *testing.T) {
 	mock := &mockTPM{
 		device: "/dev/tpmrm0",
-		pcrBanks: []tpm2pkg.PCRBank{
+		pcrBanks: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xFF, 0xFF}},
 				},
 			},
@@ -3644,7 +3642,7 @@ func TestComparePolicyPCRs_NoDigests(t *testing.T) {
 
 func TestComparePolicyPCRs_NoTPM(t *testing.T) {
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
 	svc.SetDataDir(t.TempDir())
 
 	// Create a policy with digests.
@@ -4378,7 +4376,7 @@ func TestTPMService_FactoryReset_AuthError(t *testing.T) {
 
 func TestTPMService_ProvisionIAK_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.createIAKResult = &types.KeyAttributes{KeyAlgorithm: x509.RSA}
+	mock.createIAKResult = &xkms.KeyAttributes{KeyAlgorithm: x509.RSA}
 	svc := newServiceWithMock(mock)
 	err := svc.ProvisionIAK("ownerpass")
 	assert.NoError(t, err)
@@ -4421,7 +4419,7 @@ func TestTPMService_ProvisionIAK_AuthError(t *testing.T) {
 
 func TestTPMService_ProvisionIDevID_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.createIDevIDResult = &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+	mock.createIDevIDResult = &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
 	svc := newServiceWithMock(mock)
 	err := svc.ProvisionIDevID("ownerpass")
 	assert.NoError(t, err)
@@ -4465,7 +4463,7 @@ func TestTPMService_ProvisionIDevID_AuthError(t *testing.T) {
 func TestTPMService_ListPersistentHandles_Success(t *testing.T) {
 	mock := defaultMockTPM()
 	mock.persistentHandles = []tpm2.TPMHandle{0x81000001, 0x81010001}
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
 		0x81000001: {KeyAlgorithm: x509.RSA},
 		0x81010001: {KeyAlgorithm: x509.ECDSA},
 	}
@@ -4499,9 +4497,9 @@ func TestTPMService_ListPersistentHandles_Error(t *testing.T) {
 
 func TestTPMService_ListPersistentHandles_WithPlatformSRK(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.config.PlatformSRK = &tpm2pkg.PlatformSRKConfig{SRKHandle: 0x81000003}
+	mock.config.PlatformSRK = &xkms.PlatformSRKConfig{SRKHandle: 0x81000003}
 	mock.persistentHandles = []tpm2.TPMHandle{0x81000003}
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
 		0x81000003: {KeyAlgorithm: x509.RSA},
 	}
 	svc, _ := createTestTPMService(t, mock)
@@ -4515,7 +4513,7 @@ func TestTPMService_ListPersistentHandles_WithPlatformSRK(t *testing.T) {
 func TestTPMService_ListPersistentHandles_UserDescription(t *testing.T) {
 	mock := defaultMockTPM()
 	mock.persistentHandles = []tpm2.TPMHandle{0x81000001}
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
 		0x81000001: {KeyAlgorithm: x509.RSA},
 	}
 	svc, _ := createTestTPMService(t, mock)
@@ -4720,7 +4718,7 @@ func TestTPMService_ForceResetLockout_Error(t *testing.T) {
 
 func TestTPMService_CertifyKey_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.certifyKeyResult = &tpm2pkg.CertifyResult{
+	mock.certifyKeyResult = &xkms.CertifyResult{
 		CertifyInfo: []byte{0xAA, 0xBB},
 		Signature:   []byte{0xCC, 0xDD},
 	}
@@ -4749,7 +4747,7 @@ func TestTPMService_CertifyKey_InvalidHandle(t *testing.T) {
 
 func TestTPMService_CertifyKey_HandleWithoutPrefix(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.certifyKeyResult = &tpm2pkg.CertifyResult{
+	mock.certifyKeyResult = &xkms.CertifyResult{
 		CertifyInfo: []byte{0x01},
 		Signature:   []byte{0x02},
 	}
@@ -4782,7 +4780,7 @@ func TestTPMService_CertifyKey_CertifyFails(t *testing.T) {
 
 func TestTPMService_ViewKey_EKRSA(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.ekAttrs.TPMAttributes = &types.TPMAttributes{
+	mock.ekAttrs.TPMAttributes = &xkms.TPMAttributes{
 		Handle:         0x81010001,
 		PublicKeyBytes: []byte{0x01, 0x02},
 	}
@@ -4841,7 +4839,7 @@ func TestTPMService_ViewKey_IDevID(t *testing.T) {
 
 func TestTPMService_ViewKey_SRK(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.ssrkAttrs.TPMAttributes = &types.TPMAttributes{Handle: 0x81000001}
+	mock.ssrkAttrs.TPMAttributes = &xkms.TPMAttributes{Handle: 0x81000001}
 	svc := newServiceWithMock(mock)
 	data, err := svc.ViewKey("SRK")
 	require.NoError(t, err)
@@ -4973,7 +4971,7 @@ func TestTPMService_ChangeHierarchyAuth_EmptyPasswords(t *testing.T) {
 
 func TestTPMService_GetNVSummary_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.nvIndexes = []tpm2pkg.NVIndexInfo{
+	mock.nvIndexes = []xkms.NVIndexInfo{
 		{Handle: 0x01800001, Type: "ordinary", Size: 64, AuthRead: true, AuthWrite: true},
 		{Handle: 0x01800002, Type: "counter", Size: 8, AuthRead: false, AuthWrite: true},
 	}
@@ -5081,7 +5079,7 @@ func TestTPMService_ReadNVData_Success(t *testing.T) {
 
 func TestTPMService_ReadNVData_AutoDetectSize(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.nvIndexes = []tpm2pkg.NVIndexInfo{
+	mock.nvIndexes = []xkms.NVIndexInfo{
 		{Handle: 0x01800001, Size: 8},
 	}
 	mock.nvReadResult = []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
@@ -5656,22 +5654,22 @@ func TestAlgoDisplayName_Nil(t *testing.T) {
 }
 
 func TestAlgoDisplayName_RSA_SSA(t *testing.T) {
-	attrs := &types.KeyAttributes{KeyAlgorithm: x509.RSA}
+	attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.RSA}
 	assert.Equal(t, "RSA-SSA", algoDisplayName(attrs))
 }
 
 func TestAlgoDisplayName_ECDSA(t *testing.T) {
-	attrs := &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+	attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
 	assert.Equal(t, "ECDSA", algoDisplayName(attrs))
 }
 
 func TestAlgoDisplayName_Ed25519(t *testing.T) {
-	attrs := &types.KeyAttributes{KeyAlgorithm: x509.Ed25519}
+	attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.Ed25519}
 	assert.Equal(t, "Ed25519", algoDisplayName(attrs))
 }
 
 func TestAlgoDisplayName_Default(t *testing.T) {
-	attrs := &types.KeyAttributes{KeyAlgorithm: x509.DSA}
+	attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.DSA}
 	result := algoDisplayName(attrs)
 	assert.NotEmpty(t, result)
 	assert.NotEqual(t, "Unknown", result)
@@ -5928,8 +5926,8 @@ func TestTPMService_GetInfo_FIPSError(t *testing.T) {
 
 func TestTPMService_GetPCRs_SHA384_SHA386Mismatch(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA386", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA386", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 	}
 	svc := newServiceWithMock(mock)
 	values, err := svc.GetPCRs("sha384")
@@ -5958,18 +5956,18 @@ func TestTPMService_GetIDevIDInfo_WithCert(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestKeySize_ECDSA_Fallback(t *testing.T) {
-	attrs := &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+	attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
 	assert.Equal(t, 256, keySize(attrs))
 }
 
 func TestKeySize_RSA_Fallback(t *testing.T) {
-	attrs := &types.KeyAttributes{KeyAlgorithm: x509.RSA}
+	attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.RSA}
 	assert.Equal(t, 2048, keySize(attrs))
 }
 
 func TestKeySize_ECCWithCurve(t *testing.T) {
-	attrs := &types.KeyAttributes{
-		ECCAttributes: &types.ECCAttributes{Curve: elliptic.P384()},
+	attrs := &xkms.KeyAttributes{
+		ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P384()},
 	}
 	assert.Equal(t, 384, keySize(attrs))
 }

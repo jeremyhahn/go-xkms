@@ -36,10 +36,11 @@ import (
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -335,12 +336,12 @@ func setupBenchmarkService(b *testing.B) (*RestService, *TestKey, func()) {
 		b.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	store := local.New()
-	if err := store.Configure(map[string]string{"path": tmpDir}); err != nil {
-		b.Fatalf("failed to configure store: %v", err)
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
+	if err != nil {
+		b.Fatalf("failed to create kvadapter: %v", err)
 	}
 
-	factory, err := objstore.NewFactory(store)
+	factory, err := objstore.NewFactoryFromKVStore(kv)
 	if err != nil {
 		b.Fatalf("failed to create factory: %v", err)
 	}

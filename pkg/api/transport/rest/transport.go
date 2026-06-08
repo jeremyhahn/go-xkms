@@ -2598,3 +2598,35 @@ func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*
 
 	return resp, nil
 }
+
+// ClusterReader methods.
+
+// ClusterStatus returns the Raft leadership status for the configured shard.
+func (t *Transport) ClusterStatus(ctx context.Context) (*transport.ClusterStatusResponse, error) {
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/cluster/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.ClusterStatusResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// ClusterMembers returns the Raft replicas for the configured shard.
+func (t *Transport) ClusterMembers(ctx context.Context) (*transport.ListClusterMembersResponse, error) {
+	data, err := t.DoRawRequest(ctx, http.MethodGet, "/api/v1/cluster/members", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp transport.ListClusterMembersResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return &resp, nil
+}
+
+// Compile-time assertion that the REST transport satisfies the read-only
+// cluster surface the SDK Cluster() accessor type-asserts to.
+var _ transport.ClusterReader = (*Transport)(nil)

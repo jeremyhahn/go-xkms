@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -68,7 +68,7 @@ func (m *mockShareService) BarrierUnsealWithShare(_ context.Context, _ *transpor
 
 // --- Helper: create a local share store from a temp HOME ---
 
-func createTestShareStore(t *testing.T) sharestore.ShareStore {
+func createTestShareStore(t *testing.T) xkms.ShareStore {
 	t.Helper()
 	store, err := openLocalShareStore()
 	require.NoError(t, err)
@@ -76,8 +76,8 @@ func createTestShareStore(t *testing.T) sharestore.ShareStore {
 	return store
 }
 
-func newShareEntry(serverURL, groupID string) *sharestore.ShareEntry {
-	return &sharestore.ShareEntry{
+func newShareEntry(serverURL, groupID string) *xkms.ShareEntry {
+	return &xkms.ShareEntry{
 		ServerURL:  serverURL,
 		GroupID:    groupID,
 		GroupName:  "test-group",
@@ -463,7 +463,7 @@ func TestRunShareImport_InvalidEntry_MissingServerURL(t *testing.T) {
 	t.Setenv("HOME", tempDir)
 
 	// Entry with missing server_url should fail validation.
-	entry := &sharestore.ShareEntry{
+	entry := &xkms.ShareEntry{
 		GroupID:   "some-group",
 		ShareData: []byte("data"),
 	}
@@ -487,7 +487,7 @@ func TestRunShareImport_InvalidEntry_MissingShareData(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
 
-	entry := &sharestore.ShareEntry{
+	entry := &xkms.ShareEntry{
 		ServerURL: "grpc://server:9090",
 		GroupID:   "some-group",
 		// ShareData is empty - should fail validation.
@@ -569,7 +569,7 @@ func TestRunShareExport_Success(t *testing.T) {
 	data, err := os.ReadFile(exportFile)
 	require.NoError(t, err)
 
-	var exported sharestore.ShareEntry
+	var exported xkms.ShareEntry
 	require.NoError(t, json.Unmarshal(data, &exported))
 	assert.Equal(t, "grpc://export-server:9090", exported.ServerURL)
 	assert.Equal(t, "export-group", exported.GroupID)
@@ -823,7 +823,7 @@ func TestRunShareReceive_DuplicateShareSkipped(t *testing.T) {
 	// Pre-save a share so the receive will encounter a duplicate.
 	store := createTestShareStore(t)
 	ctx := context.Background()
-	entry := &sharestore.ShareEntry{
+	entry := &xkms.ShareEntry{
 		ServerURL:  "grpc://dup-recv-server:9090",
 		GroupID:    "dup-group",
 		GroupName:  "Dup Group",
@@ -1118,7 +1118,7 @@ func TestRunShareDelete_Success(t *testing.T) {
 	// Verify it was actually deleted by trying to load it.
 	store2 := createTestShareStore(t)
 	_, err = store2.Load(ctx, "grpc://delete-server:9090", "delete-group", 1)
-	assert.ErrorIs(t, err, sharestore.ErrShareNotFound)
+	assert.ErrorIs(t, err, xkms.ErrShareStoreNotFound)
 }
 
 func TestRunShareDelete_NotFound(t *testing.T) {
@@ -1210,7 +1210,7 @@ func TestShareRoundTrip_ImportListExportDelete(t *testing.T) {
 	// Verify exported content matches.
 	exportData, err := os.ReadFile(exportFile)
 	require.NoError(t, err)
-	var exported sharestore.ShareEntry
+	var exported xkms.ShareEntry
 	require.NoError(t, json.Unmarshal(exportData, &exported))
 	assert.Equal(t, "grpc://roundtrip:9090", exported.ServerURL)
 	assert.Equal(t, "rt-group", exported.GroupID)
@@ -1243,8 +1243,8 @@ func TestOpenLocalShareStore_CreatesStoreDir(t *testing.T) {
 	require.NotNil(t, store)
 	require.NoError(t, store.Close())
 
-	// Verify the shares directory was created.
-	shareDir := filepath.Join(tempDir, ".xkey", "shares")
+	// Verify the shares directory was created under the data dir.
+	shareDir := filepath.Join(tempDir, ".xkey", "data", "shares")
 	info, err := os.Stat(shareDir)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
@@ -1266,7 +1266,7 @@ func TestResolveShareDataDir_Default(t *testing.T) {
 
 	dir, err := resolveShareDataDir()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(tempDir, ".xkey"), dir)
+	assert.Equal(t, filepath.Join(tempDir, ".xkey", "data"), dir)
 }
 
 func TestResolveShareDataDir_EnvOverride(t *testing.T) {

@@ -24,40 +24,48 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// newTestTenantAwareFactory builds a TenantAwareFactory over an in-memory
+// storage.Backend wrapped by the kvadapter datastore path (no go-objstore).
+// Each call yields an isolated store so tests do not share state.
+func newTestTenantAwareFactory(t *testing.T) *TenantAwareFactory {
+	t.Helper()
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
+	require.NoError(t, err)
+	f, err := NewTenantAwareFactoryFromKVStore(kv)
+	require.NoError(t, err)
+	return f
+}
+
 // TestNewTenantAwareFactory verifies successful construction.
 func TestNewTenantAwareFactory(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 	assert.NotNil(t, factory)
 }
 
-// TestNewTenantAwareFactory_NilStore verifies that a nil store returns an InvalidConfigError.
-func TestNewTenantAwareFactory_NilStore(t *testing.T) {
-	_, err := NewTenantAwareFactory(nil)
+// TestNewTenantAwareFactory_NilKVStore verifies that a nil KV store returns an InvalidConfigError.
+func TestNewTenantAwareFactory_NilKVStore(t *testing.T) {
+	_, err := NewTenantAwareFactoryFromKVStore(nil)
 	require.Error(t, err)
 	var cfgErr qrdbsdk.DAOInvalidConfigError
 	assert.True(t, errors.As(err, &cfgErr))
-	assert.Equal(t, "store", cfgErr.Field)
+	assert.Equal(t, "kvStore", cfgErr.Field)
 }
 
 // TestTenantAwareFactory_GetTenantID_Empty verifies GetTenantID returns empty for global factory.
 func TestTenantAwareFactory_GetTenantID_Empty(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 	assert.Equal(t, "", factory.GetTenantID())
 }
 
 // TestTenantAwareFactory_TenantDAO verifies that TenantDAO returns a working DAO.
 func TestTenantAwareFactory_TenantDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	tenantDAO, err := factory.TenantDAO()
 	require.NoError(t, err)
@@ -66,9 +74,7 @@ func TestTenantAwareFactory_TenantDAO(t *testing.T) {
 
 // TestTenantAwareFactory_TenantDAO_SaveAndGet verifies Save and Get round-trip for tenants.
 func TestTenantAwareFactory_TenantDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	tenantDAO, err := factory.TenantDAO()
 	require.NoError(t, err)
@@ -95,9 +101,7 @@ func TestTenantAwareFactory_TenantDAO_SaveAndGet(t *testing.T) {
 
 // TestTenantAwareFactory_ForTenant verifies ForTenant returns a scoped factory.
 func TestTenantAwareFactory_ForTenant(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -106,11 +110,9 @@ func TestTenantAwareFactory_ForTenant(t *testing.T) {
 
 // TestTenantAwareFactory_ForTenant_EmptyID verifies ForTenant rejects empty tenant ID.
 func TestTenantAwareFactory_ForTenant_EmptyID(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
-	_, err = factory.ForTenant("")
+	_, err := factory.ForTenant("")
 	require.Error(t, err)
 	var cfgErr qrdbsdk.DAOInvalidConfigError
 	assert.True(t, errors.As(err, &cfgErr))
@@ -119,9 +121,7 @@ func TestTenantAwareFactory_ForTenant_EmptyID(t *testing.T) {
 
 // TestTenantScopedFactory_AccountDAO verifies tenant-scoped AccountDAO creation.
 func TestTenantScopedFactory_AccountDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -133,9 +133,7 @@ func TestTenantScopedFactory_AccountDAO(t *testing.T) {
 
 // TestTenantScopedFactory_AccountDAO_SaveAndGet verifies CRUD through scoped AccountDAO.
 func TestTenantScopedFactory_AccountDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -161,9 +159,7 @@ func TestTenantScopedFactory_AccountDAO_SaveAndGet(t *testing.T) {
 
 // TestTenantScopedFactory_OrderDAO verifies tenant-scoped OrderDAO creation.
 func TestTenantScopedFactory_OrderDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -175,9 +171,7 @@ func TestTenantScopedFactory_OrderDAO(t *testing.T) {
 
 // TestTenantScopedFactory_OrderDAO_InvalidAccountID verifies zero account ID is rejected.
 func TestTenantScopedFactory_OrderDAO_InvalidAccountID(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -190,9 +184,7 @@ func TestTenantScopedFactory_OrderDAO_InvalidAccountID(t *testing.T) {
 
 // TestTenantScopedFactory_AuthorizationDAO verifies tenant-scoped AuthorizationDAO creation.
 func TestTenantScopedFactory_AuthorizationDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -204,9 +196,7 @@ func TestTenantScopedFactory_AuthorizationDAO(t *testing.T) {
 
 // TestTenantScopedFactory_AuthorizationDAO_InvalidAccountID verifies zero account ID is rejected.
 func TestTenantScopedFactory_AuthorizationDAO_InvalidAccountID(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -219,9 +209,7 @@ func TestTenantScopedFactory_AuthorizationDAO_InvalidAccountID(t *testing.T) {
 
 // TestTenantScopedFactory_ChallengeDAO verifies tenant-scoped ChallengeDAO creation.
 func TestTenantScopedFactory_ChallengeDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -233,9 +221,7 @@ func TestTenantScopedFactory_ChallengeDAO(t *testing.T) {
 
 // TestTenantScopedFactory_ChallengeDAO_InvalidAccountID verifies zero account ID is rejected.
 func TestTenantScopedFactory_ChallengeDAO_InvalidAccountID(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -248,9 +234,7 @@ func TestTenantScopedFactory_ChallengeDAO_InvalidAccountID(t *testing.T) {
 
 // TestTenantScopedFactory_CertificateDAO verifies tenant-scoped CertificateDAO creation.
 func TestTenantScopedFactory_CertificateDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -262,9 +246,7 @@ func TestTenantScopedFactory_CertificateDAO(t *testing.T) {
 
 // TestTenantScopedFactory_NonceDAO verifies tenant-scoped NonceDAO creation.
 func TestTenantScopedFactory_NonceDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -276,9 +258,7 @@ func TestTenantScopedFactory_NonceDAO(t *testing.T) {
 
 // TestTenantScopedFactory_ExternalAccountBindingDAO verifies tenant-scoped EAB DAO creation.
 func TestTenantScopedFactory_ExternalAccountBindingDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -290,9 +270,7 @@ func TestTenantScopedFactory_ExternalAccountBindingDAO(t *testing.T) {
 
 // TestTenantScopedFactory_DataIsolation verifies that tenant A cannot see tenant B's data.
 func TestTenantScopedFactory_DataIsolation(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scopedA, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -339,9 +317,7 @@ func TestTenantScopedFactory_DataIsolation(t *testing.T) {
 
 // TestTenantScopedFactory_DataIsolation_Orders verifies order data isolation between tenants.
 func TestTenantScopedFactory_DataIsolation_Orders(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scopedA, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -373,9 +349,7 @@ func TestTenantScopedFactory_DataIsolation_Orders(t *testing.T) {
 // TestTenantScopedFactory_GlobalVsTenantIsolation verifies that the global
 // factory and tenant-scoped factory use different key namespaces.
 func TestTenantScopedFactory_GlobalVsTenantIsolation(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	ctx := context.Background()
 
@@ -419,9 +393,7 @@ func TestTenantScopedFactory_GlobalVsTenantIsolation(t *testing.T) {
 // TestTenantAwareFactory_EmbeddedFactoryDAOs verifies that the embedded Factory
 // methods (AccountDAO, OrderDAO, etc.) work correctly on TenantAwareFactory.
 func TestTenantAwareFactory_EmbeddedFactoryDAOs(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	t.Run("AccountDAO", func(t *testing.T) {
 		d, err := factory.AccountDAO()
@@ -487,9 +459,7 @@ func TestTenantAwareFactory_EmbeddedFactoryDAOs(t *testing.T) {
 // TestTenantScopedFactory_AllDAOs_SaveAndGet exercises full CRUD through
 // all scoped DAO types to verify key prefixing works for each entity type.
 func TestTenantScopedFactory_AllDAOs_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("tenant-gamma")
 	require.NoError(t, err)
@@ -598,9 +568,7 @@ func TestTenantScopedFactory_AllDAOs_SaveAndGet(t *testing.T) {
 // TestTenantScopedFactory_MultipleTenants verifies that multiple tenants
 // can coexist and each has independent data.
 func TestTenantScopedFactory_MultipleTenants(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	ctx := context.Background()
 	tenantIDs := []string{"tenant-1", "tenant-2", "tenant-3"}
@@ -646,9 +614,7 @@ func TestTenantAwareFactory_CompileTimeInterfaceCheck(t *testing.T) {
 // TestTenantScopedFactory_ImplementsFactory verifies the tenantScopedFactory
 // satisfies the storage.Factory interface.
 func TestTenantScopedFactory_ImplementsFactory(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scoped, err := factory.ForTenant("test-tenant")
 	require.NoError(t, err)
@@ -660,9 +626,7 @@ func TestTenantScopedFactory_ImplementsFactory(t *testing.T) {
 // the expected namespace path by checking that scoped DAOs store data under keys that
 // the global factory cannot find.
 func TestTenantScopedFactory_Prefix_IndirectVerification(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	ctx := context.Background()
 
@@ -690,9 +654,7 @@ func TestTenantScopedFactory_Prefix_IndirectVerification(t *testing.T) {
 
 // TestTenantAwareFactory_TenantDAO_Delete verifies tenant deletion through the TenantDAO.
 func TestTenantAwareFactory_TenantDAO_Delete(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	ctx := context.Background()
 	tenantDAO, err := factory.TenantDAO()
@@ -719,9 +681,7 @@ func TestTenantAwareFactory_TenantDAO_Delete(t *testing.T) {
 
 // TestTenantAwareFactory_TenantDAO_Count verifies counting tenants.
 func TestTenantAwareFactory_TenantDAO_Count(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	ctx := context.Background()
 	tenantDAO, err := factory.TenantDAO()
@@ -748,9 +708,7 @@ func TestTenantAwareFactory_TenantDAO_Count(t *testing.T) {
 // TestTenantScopedFactory_DataIsolation_Certificates verifies certificate
 // data isolation between tenants.
 func TestTenantScopedFactory_DataIsolation_Certificates(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scopedA, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -782,9 +740,7 @@ func TestTenantScopedFactory_DataIsolation_Certificates(t *testing.T) {
 // TestTenantScopedFactory_DataIsolation_Nonces verifies nonce
 // data isolation between tenants.
 func TestTenantScopedFactory_DataIsolation_Nonces(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scopedA, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -815,9 +771,7 @@ func TestTenantScopedFactory_DataIsolation_Nonces(t *testing.T) {
 // TestTenantScopedFactory_DataIsolation_EAB verifies external account binding
 // data isolation between tenants.
 func TestTenantScopedFactory_DataIsolation_EAB(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scopedA, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -849,9 +803,7 @@ func TestTenantScopedFactory_DataIsolation_EAB(t *testing.T) {
 // TestTenantScopedFactory_DataIsolation_Challenges verifies challenge
 // data isolation between tenants.
 func TestTenantScopedFactory_DataIsolation_Challenges(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scopedA, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -883,9 +835,7 @@ func TestTenantScopedFactory_DataIsolation_Challenges(t *testing.T) {
 // TestTenantScopedFactory_DataIsolation_Authorizations verifies authorization
 // data isolation between tenants.
 func TestTenantScopedFactory_DataIsolation_Authorizations(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewTenantAwareFactory(store)
-	require.NoError(t, err)
+	factory := newTestTenantAwareFactory(t)
 
 	scopedA, err := factory.ForTenant("tenant-alpha")
 	require.NoError(t, err)
@@ -915,9 +865,7 @@ func TestTenantScopedFactory_DataIsolation_Authorizations(t *testing.T) {
 
 // TestFactory_AccountDAO_SaveAndGet verifies full Save and Get round-trip through AccountDAO.
 func TestFactory_AccountDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.AccountDAO()
 	require.NoError(t, err)
@@ -940,9 +888,7 @@ func TestFactory_AccountDAO_SaveAndGet(t *testing.T) {
 
 // TestFactory_CertificateDAO_SaveAndGet verifies full Save and Get round-trip through CertificateDAO.
 func TestFactory_CertificateDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.CertificateDAO()
 	require.NoError(t, err)
@@ -965,9 +911,7 @@ func TestFactory_CertificateDAO_SaveAndGet(t *testing.T) {
 
 // TestFactory_NonceDAO_SaveAndGet verifies full Save and Get round-trip through NonceDAO.
 func TestFactory_NonceDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.NonceDAO()
 	require.NoError(t, err)
@@ -991,9 +935,7 @@ func TestFactory_NonceDAO_SaveAndGet(t *testing.T) {
 // TestFactory_ExternalAccountBindingDAO_SaveAndGet verifies full Save and Get
 // round-trip through ExternalAccountBindingDAO.
 func TestFactory_ExternalAccountBindingDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.ExternalAccountBindingDAO()
 	require.NoError(t, err)
@@ -1016,9 +958,7 @@ func TestFactory_ExternalAccountBindingDAO_SaveAndGet(t *testing.T) {
 
 // TestFactory_OrderDAO_SaveAndGet verifies full Save and Get round-trip through OrderDAO.
 func TestFactory_OrderDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.OrderDAO(1)
 	require.NoError(t, err)
@@ -1039,9 +979,7 @@ func TestFactory_OrderDAO_SaveAndGet(t *testing.T) {
 
 // TestFactory_AuthorizationDAO_SaveAndGet verifies full Save and Get round-trip.
 func TestFactory_AuthorizationDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.AuthorizationDAO(1)
 	require.NoError(t, err)
@@ -1062,9 +1000,7 @@ func TestFactory_AuthorizationDAO_SaveAndGet(t *testing.T) {
 
 // TestFactory_ChallengeDAO_SaveAndGet verifies full Save and Get round-trip.
 func TestFactory_ChallengeDAO_SaveAndGet(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.ChallengeDAO(1)
 	require.NoError(t, err)

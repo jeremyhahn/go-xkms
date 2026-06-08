@@ -17,12 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1273,7 +1273,7 @@ func TestStaticPWService_Coverage_SetStore_ReplaceStore(t *testing.T) {
 	assert.ErrorIs(t, err, ErrStaticPWStoreNotSet)
 
 	// Set a store.
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	svc.SetStore(store)
 

@@ -28,7 +28,7 @@ import (
 	"golang.org/x/term"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (
@@ -139,7 +139,18 @@ func createPINService(dataDir string) (*qrdbsdk.PINService, error) {
 		}
 	}
 
-	fileStore, err := filestorage.New(pinDir)
+	fileStore, err := xkms.NewFileStorageBackend(pinDir)
+	if err != nil {
+		return nil, &PINCommandError{
+			Operation: "create_service",
+			Err:       err,
+		}
+	}
+
+	// Wrap the file storage in the PIN adapter so the qrdb software backend
+	// observes the canonical pin.ErrNotFound on a fresh install rather than
+	// xkey's storage.ErrNotFound (which it would treat as a load failure).
+	pinStore, err := xkms.NewPINStoreAdapter(fileStore)
 	if err != nil {
 		return nil, &PINCommandError{
 			Operation: "create_service",
@@ -148,7 +159,7 @@ func createPINService(dataDir string) (*qrdbsdk.PINService, error) {
 	}
 
 	hashConfig := qrdbsdk.AutoDetectHashConfig()
-	backend, err := qrdbsdk.NewSoftwareBackend(fileStore, hashConfig)
+	backend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
 	if err != nil {
 		return nil, &PINCommandError{
 			Operation: "create_service",

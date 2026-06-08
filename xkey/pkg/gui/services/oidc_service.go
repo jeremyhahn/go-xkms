@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net"
 	"net/http"
@@ -32,7 +33,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/pkg/browser"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -185,7 +185,7 @@ type OIDCService struct {
 	ctx           context.Context
 	log           *slog.Logger
 	dataDir       string
-	backend       storage.Backend
+	backend       xkms.StorageBackend
 	backendPrefix string
 	tokenStore    oidc.TokenStore
 	providers     map[string]*OIDCProviderEntry
@@ -232,7 +232,7 @@ func (s *OIDCService) SetDataDir(dir string) {
 // transparent AES-256-GCM encryption). The prefix is prepended to all
 // storage keys (e.g., "oidc/"). When a backend is set, SetDataDir is
 // not required -- all data flows through the backend.
-func (s *OIDCService) SetBackend(backend storage.Backend, prefix string) error {
+func (s *OIDCService) SetBackend(backend xkms.StorageBackend, prefix string) error {
 	if backend == nil {
 		return ErrOIDCTokenStoreUnavailable
 	}
@@ -1503,7 +1503,7 @@ func (s *OIDCService) loadProvidersFromBackend() error {
 	key := s.backendPrefix + oidcProvidersBackendKey
 	data, err := s.backend.Get(context.Background(), key)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return nil
 		}
 		return err

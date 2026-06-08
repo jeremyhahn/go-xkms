@@ -25,7 +25,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/stretchr/testify/require"
 )
@@ -1743,14 +1743,14 @@ type mockAttestingKeyBackend struct {
 	keybackend.FIDO2KeyBackend
 	attestationStmt *keybackend.FIDO2AttestationStatement
 	attestationErr  error
-	backendType     types.BackendType
+	backendType     xkms.BackendType
 }
 
-func (m *mockAttestingKeyBackend) Type() types.BackendType {
+func (m *mockAttestingKeyBackend) Type() xkms.BackendType {
 	if m.backendType != "" {
 		return m.backendType
 	}
-	return types.BackendTypeSoftware
+	return xkms.BackendTypeSoftware
 }
 
 func (m *mockAttestingKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
@@ -1822,8 +1822,8 @@ func (m *mockKeyHandle) Algorithm() int {
 	return m.alg
 }
 
-func (m *mockKeyHandle) BackendID() types.BackendType {
-	return types.BackendTypeSoftware
+func (m *mockKeyHandle) BackendID() xkms.BackendType {
+	return xkms.BackendTypeSoftware
 }
 
 // mockNonAttestingKeyBackend implements only FIDO2KeyBackend (no attestation)
@@ -1831,8 +1831,8 @@ type mockNonAttestingKeyBackend struct {
 	keybackend.FIDO2KeyBackend
 }
 
-func (m *mockNonAttestingKeyBackend) Type() types.BackendType {
-	return types.BackendTypeSoftware
+func (m *mockNonAttestingKeyBackend) Type() xkms.BackendType {
+	return xkms.BackendTypeSoftware
 }
 
 func (m *mockNonAttestingKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
@@ -2007,7 +2007,7 @@ func TestBuildAttestationStatement(t *testing.T) {
 	t.Run("tpm format with attesting backend", func(t *testing.T) {
 		storage := NewMemoryStorage()
 		mockBackend := &mockAttestingKeyBackend{
-			backendType: types.BackendTypeTPM2,
+			backendType: xkms.BackendTypeTPM2,
 			attestationStmt: &keybackend.FIDO2AttestationStatement{
 				Format:    AttestationFormatTPM,
 				Algorithm: COSEAlgES256,
@@ -2218,7 +2218,7 @@ func TestMakeCredential_WithPackedAttestation(t *testing.T) {
 func TestMakeCredential_WithTPMAttestation(t *testing.T) {
 	storage := NewMemoryStorage()
 	mockBackend := &mockAttestingKeyBackend{
-		backendType: types.BackendTypeTPM2,
+		backendType: xkms.BackendTypeTPM2,
 		attestationStmt: &keybackend.FIDO2AttestationStatement{
 			Format:    AttestationFormatTPM,
 			Algorithm: COSEAlgES256,
@@ -2317,7 +2317,7 @@ func TestGenerateCredentialKeyPair_EdDSA(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, privateKeyBytes)
 	require.NotNil(t, publicKeyCOSE)
-	require.Equal(t, types.BackendTypeSoftware, backendID)
+	require.Equal(t, xkms.BackendTypeSoftware, backendID)
 
 	// Verify the public key can be decoded
 	pubKey, alg, err := DecodeCOSEPublicKey(publicKeyCOSE)
@@ -2558,8 +2558,8 @@ type failingKeyGenBackend struct {
 	exportErr error
 }
 
-func (b *failingKeyGenBackend) Type() types.BackendType {
-	return types.BackendTypeSoftware
+func (b *failingKeyGenBackend) Type() xkms.BackendType {
+	return xkms.BackendTypeSoftware
 }
 
 func (b *failingKeyGenBackend) Capabilities() keybackend.FIDO2KeyCapabilities {

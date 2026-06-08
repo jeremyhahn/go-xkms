@@ -19,7 +19,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/viper"
 )
 
@@ -198,7 +198,7 @@ type GUIConfig struct {
 	DeveloperTools bool `mapstructure:"developer_tools" json:"developer_tools"`
 
 	// AutoFillPolicy configures autofill behavior for the browser extension.
-	AutoFillPolicy *autofill.AutoFillPolicy `mapstructure:"autofill_policy" json:"autofill_policy,omitempty"`
+	AutoFillPolicy *xkms.AutoFillPolicy `mapstructure:"autofill_policy" json:"autofill_policy,omitempty"`
 }
 
 // DefaultGUIConfig returns a GUIConfig populated with sensible defaults.

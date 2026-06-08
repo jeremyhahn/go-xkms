@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"io"
 	"log/slog"
 	"net/http"
@@ -29,7 +30,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -40,8 +40,8 @@ func newTestExplorerConfig() *ExplorerConfig {
 		Logger:       slog.Default(),
 		TokenStore:   tokenstore.NewMemoryTokenStore(),
 		Registry:     serverregistry.NewMemoryServerRegistry(),
-		TrustStore:   storage.NewMemory(),
-		HistoryStore: storage.NewMemory(),
+		TrustStore:   xkms.NewStorageMemory(),
+		HistoryStore: xkms.NewStorageMemory(),
 	}
 }
 

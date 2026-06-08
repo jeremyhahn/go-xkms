@@ -17,11 +17,11 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // BackendTypeComposite identifies the composite key backend type.
-const BackendTypeComposite types.BackendType = "composite"
+const BackendTypeComposite xkms.BackendType = "composite"
 
 // CompositeBackend aggregates multiple FIDO2KeyBackend implementations and
 // routes operations to the correct backend based on KeyHandle.BackendID().
@@ -29,43 +29,43 @@ const BackendTypeComposite types.BackendType = "composite"
 // software, TPM2, PKCS#11, and other backends.
 type CompositeBackend struct {
 	mu             sync.RWMutex
-	backends       map[types.BackendType]FIDO2KeyBackend
-	defaultBackend types.BackendType
+	backends       map[xkms.BackendType]FIDO2KeyBackend
+	defaultBackend xkms.BackendType
 }
 
 // NewCompositeBackend creates a CompositeBackend with the given default backend type.
 // The default backend is used for GenerateCredentialKey and ImportPrivateKey when
 // no backend-specific routing information is available.
-func NewCompositeBackend(defaultBackend types.BackendType) *CompositeBackend {
+func NewCompositeBackend(defaultBackend xkms.BackendType) *CompositeBackend {
 	return &CompositeBackend{
-		backends:       make(map[types.BackendType]FIDO2KeyBackend),
+		backends:       make(map[xkms.BackendType]FIDO2KeyBackend),
 		defaultBackend: defaultBackend,
 	}
 }
 
 // Register adds a backend to the composite under the given type.
-func (c *CompositeBackend) Register(bt types.BackendType, backend FIDO2KeyBackend) {
+func (c *CompositeBackend) Register(bt xkms.BackendType, backend FIDO2KeyBackend) {
 	c.mu.Lock()
 	c.backends[bt] = backend
 	c.mu.Unlock()
 }
 
 // Unregister removes a backend from the composite.
-func (c *CompositeBackend) Unregister(bt types.BackendType) {
+func (c *CompositeBackend) Unregister(bt xkms.BackendType) {
 	c.mu.Lock()
 	delete(c.backends, bt)
 	c.mu.Unlock()
 }
 
 // SetDefault changes the default backend for new key generation and import.
-func (c *CompositeBackend) SetDefault(bt types.BackendType) {
+func (c *CompositeBackend) SetDefault(bt xkms.BackendType) {
 	c.mu.Lock()
 	c.defaultBackend = bt
 	c.mu.Unlock()
 }
 
 // DefaultID returns the current default backend type.
-func (c *CompositeBackend) DefaultID() types.BackendType {
+func (c *CompositeBackend) DefaultID() xkms.BackendType {
 	c.mu.RLock()
 	bt := c.defaultBackend
 	c.mu.RUnlock()
@@ -73,7 +73,7 @@ func (c *CompositeBackend) DefaultID() types.BackendType {
 }
 
 // Type returns BackendTypeComposite.
-func (c *CompositeBackend) Type() types.BackendType {
+func (c *CompositeBackend) Type() xkms.BackendType {
 	return BackendTypeComposite
 }
 
@@ -238,7 +238,7 @@ func (c *CompositeBackend) Close() error {
 }
 
 // Backend returns the backend registered under the given type, or nil if not found.
-func (c *CompositeBackend) Backend(bt types.BackendType) FIDO2KeyBackend {
+func (c *CompositeBackend) Backend(bt xkms.BackendType) FIDO2KeyBackend {
 	c.mu.RLock()
 	b := c.backends[bt]
 	c.mu.RUnlock()
@@ -246,11 +246,11 @@ func (c *CompositeBackend) Backend(bt types.BackendType) FIDO2KeyBackend {
 }
 
 // Backends returns a snapshot of all registered backend types.
-func (c *CompositeBackend) Backends() []types.BackendType {
+func (c *CompositeBackend) Backends() []xkms.BackendType {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	bts := make([]types.BackendType, 0, len(c.backends))
+	bts := make([]xkms.BackendType, 0, len(c.backends))
 	for bt := range c.backends {
 		bts = append(bts, bt)
 	}
@@ -269,7 +269,7 @@ func (c *CompositeBackend) resolveDefault() (FIDO2KeyBackend, error) {
 }
 
 // resolveBackend returns the backend for the given type.
-func (c *CompositeBackend) resolveBackend(bt types.BackendType) (FIDO2KeyBackend, error) {
+func (c *CompositeBackend) resolveBackend(bt xkms.BackendType) (FIDO2KeyBackend, error) {
 	c.mu.RLock()
 	b, ok := c.backends[bt]
 	c.mu.RUnlock()

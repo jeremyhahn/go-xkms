@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -470,7 +469,7 @@ func newTestKeyService(mc *mockClient) *KeyService {
 	svc := NewKeyService()
 	svc.SetContext(context.Background())
 	svc.SetClientFunc(func() xkms.Client { return mc })
-	auditStore, err := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	if err != nil {
 		panic("failed to create audit store: " + err.Error())
 	}

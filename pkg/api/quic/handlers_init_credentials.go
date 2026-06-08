@@ -64,7 +64,7 @@ func (s *Server) handleGetInitStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "init", "read") {
+	if !s.authorize(w, r, "ceremony", "status") {
 		return
 	}
 
@@ -92,7 +92,7 @@ func (s *Server) handleClaimCertBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "init", "write") {
+	if !s.authorize(w, r, "ceremony", "claim_cert") {
 		return
 	}
 
@@ -127,7 +127,7 @@ func (s *Server) handleClaimCertComplete(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !s.authorize(w, r, "init", "write") {
+	if !s.authorize(w, r, "ceremony", "claim_cert") {
 		return
 	}
 
@@ -161,7 +161,7 @@ func (s *Server) handleClaimShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "init", "write") {
+	if !s.authorize(w, r, "ceremony", "claim_share_complete") {
 		return
 	}
 
@@ -195,7 +195,7 @@ func (s *Server) handleSignCSRInit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "init", "write") {
+	if !s.authorize(w, r, "ceremony", "sign_csr") {
 		return
 	}
 
@@ -229,7 +229,7 @@ func (s *Server) handleCredentialSubmit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.authorize(w, r, "credentials", "write") {
+	if !s.authorize(w, r, "credentials", "submit") {
 		return
 	}
 
@@ -263,7 +263,7 @@ func (s *Server) handleCredentialStrategy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "credentials", "read") {
+	if !s.authorize(w, r, "credentials", "strategy") {
 		return
 	}
 

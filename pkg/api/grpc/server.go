@@ -25,7 +25,6 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -53,7 +52,7 @@ type ServerConfig struct {
 	Port           int
 	TLSConfig      *tls.Config
 	Authenticator  auth.Authenticator
-	Authorizer     keyauthz.Authorizer
+	Authorizer     *auth.Authorizer
 	AuditLogger    audit.Logger
 	Logger         *slog.Logger
 	EnableLogging  bool
@@ -436,6 +435,11 @@ func errorHandlingUnaryInterceptor(
 	resp, err := handler(ctx, req)
 
 	if err != nil {
+		// Clustered not-leader writes get a dedicated FailedPrecondition status
+		// carrying the leader coordinates so the client can retry on the leader.
+		if translated, ok := notLeaderStatus(err); ok {
+			return resp, translated
+		}
 		// Ensure error is a proper gRPC status error
 		if _, ok := status.FromError(err); !ok {
 			// Convert non-gRPC errors to Internal errors
@@ -456,6 +460,11 @@ func errorHandlingStreamInterceptor(
 	err := handler(srv, ss)
 
 	if err != nil {
+		// Clustered not-leader writes get a dedicated FailedPrecondition status
+		// carrying the leader coordinates so the client can retry on the leader.
+		if translated, ok := notLeaderStatus(err); ok {
+			return translated
+		}
 		// Ensure error is a proper gRPC status error
 		if _, ok := status.FromError(err); !ok {
 			// Convert non-gRPC errors to Internal errors

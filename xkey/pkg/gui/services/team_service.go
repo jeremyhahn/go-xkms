@@ -16,10 +16,9 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"time"
-
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 )
 
 // Team service errors.
@@ -50,7 +49,7 @@ type TeamInfo struct {
 
 // TeamService exposes team management operations to the Wails frontend.
 type TeamService struct {
-	store staticpw.TeamStore
+	store xkms.StaticPasswordTeamStore
 	log   *slog.Logger
 }
 
@@ -64,7 +63,7 @@ func NewTeamService() *TeamService {
 
 // SetStore replaces the team store. This is used for deferred initialization
 // when the data directory is created after construction.
-func (s *TeamService) SetStore(store staticpw.TeamStore) {
+func (s *TeamService) SetStore(store xkms.StaticPasswordTeamStore) {
 	s.store = store
 }
 
@@ -78,7 +77,7 @@ func (s *TeamService) CreateTeam(name string) (*TeamInfo, error) {
 	}
 
 	now := time.Now()
-	entity := &staticpw.TeamEntity{
+	entity := &xkms.StaticPasswordTeamEntity{
 		Name:      name,
 		Members:   []string{},
 		CreatedAt: now,
@@ -125,7 +124,7 @@ func (s *TeamService) GetTeam(name string) (*TeamInfo, error) {
 
 	entity, err := s.store.Get(context.Background(), name)
 	if err != nil {
-		if errors.Is(err, staticpw.ErrTeamNotFound) {
+		if errors.Is(err, xkms.ErrStaticPasswordTeamNotFound) {
 			return nil, ErrTeamNotFound
 		}
 		s.log.Error("failed to get team", "name", name, "error", err)
@@ -146,7 +145,7 @@ func (s *TeamService) DeleteTeam(name string) error {
 	}
 
 	if err := s.store.Delete(context.Background(), name); err != nil {
-		if errors.Is(err, staticpw.ErrTeamNotFound) {
+		if errors.Is(err, xkms.ErrStaticPasswordTeamNotFound) {
 			return ErrTeamNotFound
 		}
 		s.log.Error("failed to delete team", "name", name, "error", err)
@@ -169,7 +168,7 @@ func (s *TeamService) AddMember(teamName, memberID string) error {
 	}
 
 	if err := s.store.AddMember(context.Background(), teamName, memberID); err != nil {
-		if errors.Is(err, staticpw.ErrTeamNotFound) {
+		if errors.Is(err, xkms.ErrStaticPasswordTeamNotFound) {
 			return ErrTeamNotFound
 		}
 		s.log.Error("failed to add member", "team", teamName, "member", memberID, "error", err)
@@ -192,7 +191,7 @@ func (s *TeamService) RemoveMember(teamName, memberID string) error {
 	}
 
 	if err := s.store.RemoveMember(context.Background(), teamName, memberID); err != nil {
-		if errors.Is(err, staticpw.ErrTeamNotFound) {
+		if errors.Is(err, xkms.ErrStaticPasswordTeamNotFound) {
 			return ErrTeamNotFound
 		}
 		s.log.Error("failed to remove member", "team", teamName, "member", memberID, "error", err)
@@ -202,7 +201,7 @@ func (s *TeamService) RemoveMember(teamName, memberID string) error {
 }
 
 // entityToTeamInfo maps a staticpw.TeamEntity to the frontend TeamInfo type.
-func entityToTeamInfo(e *staticpw.TeamEntity) TeamInfo {
+func entityToTeamInfo(e *xkms.StaticPasswordTeamEntity) TeamInfo {
 	members := e.Members
 	if members == nil {
 		members = []string{}

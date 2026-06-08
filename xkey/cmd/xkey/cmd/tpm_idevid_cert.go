@@ -25,9 +25,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -171,8 +169,8 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build CSR subject: start with OpenSSL defaults
-	caSubject := &ca.Subject{}
-	if opensslCfg, _ := ca.LoadOpenSSLConfig(); opensslCfg != nil {
+	caSubject := &xkms.TrustedCASubject{}
+	if opensslCfg, _ := xkms.LoadOpenSSLConfig(); opensslCfg != nil {
 		caSubject.Organization = opensslCfg.Organization
 		caSubject.OrganizationalUnit = opensslCfg.OrganizationalUnit
 		caSubject.Country = opensslCfg.Country
@@ -220,7 +218,7 @@ func runIDevIDCSRExportPEM(cmd *cobra.Command, args []string) error {
 	var sigAlgo x509.SignatureAlgorithm
 	switch idevidAttrs.KeyAlgorithm {
 	case x509.RSA:
-		if store.IsRSAPSS(idevidAttrs.SignatureAlgorithm) {
+		if xkms.TPMStoreIsRSAPSS(idevidAttrs.SignatureAlgorithm) {
 			sigAlgo = x509.SHA256WithRSAPSS
 		} else {
 			sigAlgo = x509.SHA256WithRSA
@@ -342,7 +340,7 @@ func runIDevIDCertImport(cmd *cobra.Command, args []string) error {
 // tpmSigner implements crypto.Signer for TPM-based signing
 type tpmSigner struct {
 	tpm      tpmSignerInterface
-	keyAttrs *types.KeyAttributes
+	keyAttrs *xkms.KeyAttributes
 	pubKey   crypto.PublicKey
 }
 
@@ -359,7 +357,7 @@ func (s *tpmSigner) Public() crypto.PublicKey {
 // Sign signs the digest using the TPM
 func (s *tpmSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	// Create TPM signer opts
-	signerOpts := &store.SignerOpts{
+	signerOpts := &xkms.TPMSignerOpts{
 		KeyAttributes: s.keyAttrs,
 	}
 

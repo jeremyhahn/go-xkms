@@ -16,12 +16,12 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -262,7 +262,7 @@ func TestFinal_FactoryReset_ConfigSaveError(t *testing.T) {
 func TestFinal_PlatformPolicy_VerifyDigests_BadHexInStored(t *testing.T) {
 	// Covers L633-635: storedBytes decode error -> ErrPolicyVerifyFailed.
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return defaultMockTPM()
 	}))
 
@@ -283,7 +283,7 @@ func TestFinal_PlatformPolicy_VerifyDigests_BadHexInStored(t *testing.T) {
 func TestFinal_PlatformPolicy_VerifyDigests_DigestMismatch(t *testing.T) {
 	// Covers L642-644: stored hex is valid but doesn't match live -> false, nil.
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return defaultMockTPM()
 	}))
 

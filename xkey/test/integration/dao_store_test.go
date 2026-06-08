@@ -29,10 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // barrierPassword is the test password used for software barrier initialization.
@@ -41,25 +38,25 @@ const barrierPassword = "integration-test-barrier-pw!"
 // setupBarrier creates a file-backed storage backend, wraps it with a software
 // barrier, initializes and unseals the barrier, and returns the unsealed barrier.
 // The temporary directory and barrier are cleaned up when the test completes.
-func setupBarrier(t *testing.T) (*seal.Barrier, string) {
+func setupBarrier(t *testing.T) (*xkms.Barrier, string) {
 	t.Helper()
 
 	tmpDir := tempDir(t)
 	storeDir := filepath.Join(tmpDir, "store")
 
-	backend, err := filestorage.New(storeDir)
+	backend, err := xkms.NewFileStorageBackend(storeDir)
 	require.NoError(t, err, "failed to create file storage backend")
 	t.Cleanup(func() { backend.Close() })
 
-	strategy := seal.NewSoftwareStrategy()
+	strategy := xkms.NewSoftwareSealStrategy()
 	t.Cleanup(func() { strategy.Close() })
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	barrier, err := seal.NewBarrier(
+	barrier, err := xkms.NewBarrier(
 		logger,
 		backend,
-		seal.BarrierConfig{
+		xkms.BarrierConfig{
 			RootKeyPath: "seal/root.key",
 		},
 		strategy,
@@ -68,7 +65,7 @@ func setupBarrier(t *testing.T) (*seal.Barrier, string) {
 	t.Cleanup(func() { barrier.Close() })
 
 	ctx := context.Background()
-	creds := seal.Credentials{Secret: barrierPassword}
+	creds := xkms.SealCredentials{Secret: barrierPassword}
 
 	err = barrier.Initialize(ctx, creds)
 	require.NoError(t, err, "failed to initialize barrier")
@@ -89,15 +86,15 @@ func TestDAOTeamStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	barrier, _ := setupBarrier(t)
 	ctx := context.Background()
 
-	kvStore, err := kvadapter.New(barrier)
+	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store, err := staticpw.NewDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err, "failed to create DAO team store")
 	t.Cleanup(func() { store.Close() })
 
 	// Create a team with members.
-	team := &staticpw.TeamEntity{
+	team := &xkms.StaticPasswordTeamEntity{
 		Name:     "platform-engineering",
 		TenantID: "tenant-alpha",
 		OwnerID:  "alice",
@@ -126,7 +123,7 @@ func TestDAOTeamStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	assert.Len(t, got.Members, 3)
 
 	// Create a second team and verify list count.
-	err = store.Create(ctx, &staticpw.TeamEntity{
+	err = store.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "security",
 		TenantID: "tenant-alpha",
 		OwnerID:  "eve",
@@ -142,7 +139,7 @@ func TestDAOTeamStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	require.NoError(t, err, "failed to delete team")
 
 	_, err = store.Get(ctx, "security")
-	assert.ErrorIs(t, err, staticpw.ErrTeamNotFound, "deleted team should not be found")
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordTeamNotFound, "deleted team should not be found")
 
 	teams, err = store.List(ctx)
 	require.NoError(t, err, "failed to list teams after delete")
@@ -156,16 +153,16 @@ func TestDAOTeamStore_EncryptionVerification(t *testing.T) {
 	barrier, tmpDir := setupBarrier(t)
 	ctx := context.Background()
 
-	kvStore, err := kvadapter.New(barrier)
+	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store, err := staticpw.NewDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err, "failed to create DAO team store")
 	t.Cleanup(func() { store.Close() })
 
 	// Use a distinctive name that would be easy to find in raw bytes.
 	teamName := "CANARY_ENCRYPTION_CHECK_XYZ_98765"
-	err = store.Create(ctx, &staticpw.TeamEntity{
+	err = store.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     teamName,
 		TenantID: "tenant-secret",
 		OwnerID:  "alice",
@@ -219,11 +216,11 @@ func TestDAOTeamStore_EncryptionVerification(t *testing.T) {
 func TestStaticPasswordStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	barrier, _ := setupBarrier(t)
 
-	store := staticpw.NewStore(barrier)
+	store := xkms.NewStaticPasswordStore(barrier)
 	t.Cleanup(func() { store.Close() })
 
 	// Add a password entry.
-	pw := &staticpw.StaticPassword{
+	pw := &xkms.StaticPassword{
 		Name:     "TestService",
 		Username: "admin@example.com",
 		Password: "s3cret-P@ssw0rd!",
@@ -250,7 +247,7 @@ func TestStaticPasswordStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	assert.Len(t, passwords, 1)
 
 	// Add a second entry and verify list count.
-	err = store.Add(&staticpw.StaticPassword{
+	err = store.Add(&xkms.StaticPassword{
 		Name:     "AnotherService",
 		Password: "another-secret",
 	})
@@ -265,7 +262,7 @@ func TestStaticPasswordStore_RoundTrip_ThroughBarrier(t *testing.T) {
 	require.NoError(t, err, "failed to delete password")
 
 	_, err = store.Get("TestService")
-	assert.ErrorIs(t, err, staticpw.ErrPasswordNotFound, "deleted password should not be found")
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordNotFound, "deleted password should not be found")
 
 	passwords, err = store.List()
 	require.NoError(t, err, "failed to list passwords after delete")
@@ -277,12 +274,12 @@ func TestStaticPasswordStore_RoundTrip_ThroughBarrier(t *testing.T) {
 func TestStaticPasswordStore_EncryptionVerification(t *testing.T) {
 	barrier, tmpDir := setupBarrier(t)
 
-	store := staticpw.NewStore(barrier)
+	store := xkms.NewStaticPasswordStore(barrier)
 	t.Cleanup(func() { store.Close() })
 
 	// Use a distinctive password value that would be easy to find in raw bytes.
 	canaryPassword := "CANARY_PASSWORD_PLAINTEXT_CHECK_54321"
-	err := store.Add(&staticpw.StaticPassword{
+	err := store.Add(&xkms.StaticPassword{
 		Name:     "EncryptionTestEntry",
 		Password: canaryPassword,
 	})
@@ -325,19 +322,19 @@ func TestCrossStoreIsolation_TeamAndPassword(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a DAOTeamStore.
-	kvStore, err := kvadapter.New(barrier)
+	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	teamStore, err := staticpw.NewDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err, "failed to create DAO team store")
 	t.Cleanup(func() { teamStore.Close() })
 
 	// Create a StaticPassword BackendStore.
-	pwStore := staticpw.NewStore(barrier)
+	pwStore := xkms.NewStaticPasswordStore(barrier)
 	t.Cleanup(func() { pwStore.Close() })
 
 	// Write data to both stores.
-	err = teamStore.Create(ctx, &staticpw.TeamEntity{
+	err = teamStore.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "isolation-team",
 		TenantID: "tenant-iso",
 		OwnerID:  "alice",
@@ -345,7 +342,7 @@ func TestCrossStoreIsolation_TeamAndPassword(t *testing.T) {
 	})
 	require.NoError(t, err, "failed to create team for isolation test")
 
-	err = pwStore.Add(&staticpw.StaticPassword{
+	err = pwStore.Add(&xkms.StaticPassword{
 		Name:     "isolation-password",
 		Password: "isolated-secret-value",
 	})
@@ -353,12 +350,12 @@ func TestCrossStoreIsolation_TeamAndPassword(t *testing.T) {
 
 	// Verify team data is NOT in the password store.
 	_, err = pwStore.Get("isolation-team")
-	assert.ErrorIs(t, err, staticpw.ErrPasswordNotFound,
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordNotFound,
 		"team name should not appear in password store")
 
 	// Verify password data is NOT in the team store.
 	_, err = teamStore.Get(ctx, "isolation-password")
-	assert.ErrorIs(t, err, staticpw.ErrTeamNotFound,
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordTeamNotFound,
 		"password name should not appear in team store")
 
 	// Verify each store still returns its own data correctly.
@@ -378,19 +375,19 @@ func TestCrossStoreIsolation_TwoTeamStores(t *testing.T) {
 	barrier, _ := setupBarrier(t)
 	ctx := context.Background()
 
-	kvStore, err := kvadapter.New(barrier)
+	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store1, err := staticpw.NewDAOTeamStore(kvStore)
+	store1, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err, "failed to create first DAO team store")
 	t.Cleanup(func() { store1.Close() })
 
-	store2, err := staticpw.NewDAOTeamStore(kvStore)
+	store2, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err, "failed to create second DAO team store")
 	t.Cleanup(func() { store2.Close() })
 
 	// Write via store1.
-	err = store1.Create(ctx, &staticpw.TeamEntity{
+	err = store1.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:    "shared-team",
 		OwnerID: "alice",
 	})
@@ -414,20 +411,20 @@ func TestDAOTeamStore_PersistenceAcrossSealUnseal(t *testing.T) {
 	storeDir := filepath.Join(tmpDir, "store")
 	ctx := context.Background()
 
-	backend, err := filestorage.New(storeDir)
+	backend, err := xkms.NewFileStorageBackend(storeDir)
 	require.NoError(t, err, "failed to create file storage backend")
 	t.Cleanup(func() { backend.Close() })
 
-	strategy := seal.NewSoftwareStrategy()
+	strategy := xkms.NewSoftwareSealStrategy()
 	t.Cleanup(func() { strategy.Close() })
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	creds := seal.Credentials{Secret: barrierPassword}
+	creds := xkms.SealCredentials{Secret: barrierPassword}
 
-	barrier, err := seal.NewBarrier(
+	barrier, err := xkms.NewBarrier(
 		logger,
 		backend,
-		seal.BarrierConfig{
+		xkms.BarrierConfig{
 			RootKeyPath: "seal/root.key",
 		},
 		strategy,
@@ -442,13 +439,13 @@ func TestDAOTeamStore_PersistenceAcrossSealUnseal(t *testing.T) {
 	// Initialize leaves the barrier unsealed; no separate Unseal needed.
 
 	// Write data via team store.
-	kvStore, err := kvadapter.New(barrier)
+	kvStore, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter")
 
-	store, err := staticpw.NewDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err, "failed to create DAO team store")
 
-	err = store.Create(ctx, &staticpw.TeamEntity{
+	err = store.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "persist-team",
 		TenantID: "tenant-persist",
 		OwnerID:  "alice",
@@ -466,10 +463,10 @@ func TestDAOTeamStore_PersistenceAcrossSealUnseal(t *testing.T) {
 	require.NoError(t, err, "failed to re-unseal barrier")
 
 	// Read the data back through a new store handle.
-	kvStore2, err := kvadapter.New(barrier)
+	kvStore2, err := xkms.NewKVStoreAdapter(barrier)
 	require.NoError(t, err, "failed to create kvstore adapter after re-unseal")
 
-	store2, err := staticpw.NewDAOTeamStore(kvStore2)
+	store2, err := xkms.NewStaticPasswordDAOTeamStore(kvStore2)
 	require.NoError(t, err, "failed to create DAO team store after re-unseal")
 	t.Cleanup(func() { store2.Close() })
 

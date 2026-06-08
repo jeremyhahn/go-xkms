@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -307,7 +307,7 @@ func TestStoredCredential_BackendID_JSONRoundTrip(t *testing.T) {
 		var decoded StoredCredential
 		err = json.Unmarshal(data, &decoded)
 		require.NoError(t, err)
-		require.Equal(t, types.BackendType("tpm2"), decoded.BackendID)
+		require.Equal(t, xkms.BackendType("tpm2"), decoded.BackendID)
 	})
 
 	t.Run("with empty backend ID omitted", func(t *testing.T) {
@@ -330,7 +330,7 @@ func TestStoredCredential_BackendID_JSONRoundTrip(t *testing.T) {
 		var decoded StoredCredential
 		err = json.Unmarshal(data, &decoded)
 		require.NoError(t, err)
-		require.Equal(t, types.BackendType(""), decoded.BackendID)
+		require.Equal(t, xkms.BackendType(""), decoded.BackendID)
 	})
 
 	t.Run("backward compatible with old credentials", func(t *testing.T) {
@@ -342,6 +342,6 @@ func TestStoredCredential_BackendID_JSONRoundTrip(t *testing.T) {
 		var cred StoredCredential
 		err := json.Unmarshal([]byte(oldJSON), &cred)
 		require.NoError(t, err)
-		require.Equal(t, types.BackendType(""), cred.BackendID, "old credentials should have empty BackendID")
+		require.Equal(t, xkms.BackendType(""), cred.BackendID, "old credentials should have empty BackendID")
 	})
 }

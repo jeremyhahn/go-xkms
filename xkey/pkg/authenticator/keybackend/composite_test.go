@@ -19,19 +19,19 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // mockKeyHandle is a test KeyHandle implementation.
 type mockKeyHandle struct {
 	credentialID []byte
 	algorithm    int
-	backendType  types.BackendType
+	backendType  xkms.BackendType
 }
 
-func (h *mockKeyHandle) CredentialID() []byte         { return h.credentialID }
-func (h *mockKeyHandle) Algorithm() int               { return h.algorithm }
-func (h *mockKeyHandle) BackendID() types.BackendType { return h.backendType }
+func (h *mockKeyHandle) CredentialID() []byte        { return h.credentialID }
+func (h *mockKeyHandle) Algorithm() int              { return h.algorithm }
+func (h *mockKeyHandle) BackendID() xkms.BackendType { return h.backendType }
 
 // mockFIDO2Backend is a configurable test backend.
 type mockFIDO2Backend struct {
@@ -67,8 +67,8 @@ func newMockBackend(id string, caps FIDO2KeyCapabilities) *mockFIDO2Backend {
 	}
 }
 
-func (m *mockFIDO2Backend) Type() types.BackendType {
-	return types.BackendType(m.id)
+func (m *mockFIDO2Backend) Type() xkms.BackendType {
+	return xkms.BackendType(m.id)
 }
 
 func (m *mockFIDO2Backend) Capabilities() FIDO2KeyCapabilities {
@@ -83,7 +83,7 @@ func (m *mockFIDO2Backend) GenerateCredentialKey(algorithm int, credentialID []b
 	handle := &mockKeyHandle{
 		credentialID: credentialID,
 		algorithm:    algorithm,
-		backendType:  types.BackendType(m.id),
+		backendType:  xkms.BackendType(m.id),
 	}
 	m.mu.Lock()
 	m.keys[string(credentialID)] = handle
@@ -140,7 +140,7 @@ func (m *mockFIDO2Backend) ImportPrivateKey(credentialID []byte, algorithm int, 
 	handle := &mockKeyHandle{
 		credentialID: credentialID,
 		algorithm:    algorithm,
-		backendType:  types.BackendType(m.id),
+		backendType:  xkms.BackendType(m.id),
 	}
 	m.mu.Lock()
 	m.keys[string(credentialID)] = handle
@@ -154,7 +154,7 @@ func (m *mockFIDO2Backend) Close() error {
 }
 
 func TestCompositeBackend_Type(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 	if cb.Type() != BackendTypeComposite {
 		t.Errorf("Type() = %q, want %q", cb.Type(), BackendTypeComposite)
 	}
@@ -167,7 +167,7 @@ func TestCompositeBackend_Type_Constant(t *testing.T) {
 }
 
 func TestCompositeBackend_Capabilities_Merged(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{-7, -8},
@@ -184,8 +184,8 @@ func TestCompositeBackend_Capabilities_Merged(t *testing.T) {
 		HandlesUserVerification: true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	caps := cb.Capabilities()
 
@@ -225,7 +225,7 @@ func TestCompositeBackend_Capabilities_Merged(t *testing.T) {
 }
 
 func TestCompositeBackend_Capabilities_Empty(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 	caps := cb.Capabilities()
 
 	if len(caps.SupportedAlgorithms) != 0 {
@@ -237,13 +237,13 @@ func TestCompositeBackend_Capabilities_Empty(t *testing.T) {
 }
 
 func TestCompositeBackend_GenerateCredentialKey_RoutesToDefault(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	credID := []byte("cred-123")
 	handle, pubKey, err := cb.GenerateCredentialKey(-7, credID)
@@ -266,13 +266,13 @@ func TestCompositeBackend_GenerateCredentialKey_RoutesToDefault(t *testing.T) {
 	}
 
 	// Handle should report the software backend.
-	if handle.BackendID() != types.BackendTypeSoftware {
-		t.Errorf("handle.BackendID() = %q, want %q", handle.BackendID(), types.BackendTypeSoftware)
+	if handle.BackendID() != xkms.BackendTypeSoftware {
+		t.Errorf("handle.BackendID() = %q, want %q", handle.BackendID(), xkms.BackendTypeSoftware)
 	}
 }
 
 func TestCompositeBackend_GenerateCredentialKey_DefaultNotFound(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendType("nonexistent"))
+	cb := NewCompositeBackend(xkms.BackendType("nonexistent"))
 
 	_, _, err := cb.GenerateCredentialKey(-7, []byte("cred-123"))
 	if !errors.Is(err, ErrBackendNotFound) {
@@ -281,18 +281,18 @@ func TestCompositeBackend_GenerateCredentialKey_DefaultNotFound(t *testing.T) {
 }
 
 func TestCompositeBackend_Sign_RoutesToBackendID(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-456"),
 		algorithm:    -7,
-		backendType:  types.BackendTypeTPM2,
+		backendType:  xkms.BackendTypeTPM2,
 	}
 
 	sig, err := cb.Sign(handle, -7, []byte("data-to-sign"))
@@ -313,15 +313,15 @@ func TestCompositeBackend_Sign_RoutesToBackendID(t *testing.T) {
 }
 
 func TestCompositeBackend_Sign_EmptyBackendID_TriesAll(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	sw.signErr = ErrInvalidKeyHandle
 
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-789"),
@@ -339,7 +339,7 @@ func TestCompositeBackend_Sign_EmptyBackendID_TriesAll(t *testing.T) {
 }
 
 func TestCompositeBackend_Sign_NilHandle(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	_, err := cb.Sign(nil, -7, []byte("data"))
 	if !errors.Is(err, ErrInvalidKeyHandle) {
@@ -348,12 +348,12 @@ func TestCompositeBackend_Sign_NilHandle(t *testing.T) {
 }
 
 func TestCompositeBackend_Sign_BackendNotFound(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
 		algorithm:    -7,
-		backendType:  types.BackendType("nonexistent"),
+		backendType:  xkms.BackendType("nonexistent"),
 	}
 
 	_, err := cb.Sign(handle, -7, []byte("data"))
@@ -363,7 +363,7 @@ func TestCompositeBackend_Sign_BackendNotFound(t *testing.T) {
 }
 
 func TestCompositeBackend_LoadKey_TriesAllBackends(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	// Software backend does not have the key.
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
@@ -375,30 +375,30 @@ func TestCompositeBackend_LoadKey_TriesAllBackends(t *testing.T) {
 	hw.keys[string(credID)] = &mockKeyHandle{
 		credentialID: credID,
 		algorithm:    -7,
-		backendType:  types.BackendTypeTPM2,
+		backendType:  xkms.BackendTypeTPM2,
 	}
 	hw.mu.Unlock()
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	handle, err := cb.LoadKey(credID, -7)
 	if err != nil {
 		t.Fatalf("LoadKey() error = %v", err)
 	}
-	if handle.BackendID() != types.BackendTypeTPM2 {
-		t.Errorf("LoadKey() handle.BackendID() = %q, want %q", handle.BackendID(), types.BackendTypeTPM2)
+	if handle.BackendID() != xkms.BackendTypeTPM2 {
+		t.Errorf("LoadKey() handle.BackendID() = %q, want %q", handle.BackendID(), xkms.BackendTypeTPM2)
 	}
 }
 
 func TestCompositeBackend_LoadKey_NotFound(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	_, err := cb.LoadKey([]byte("nonexistent-cred"), -7)
 	if !errors.Is(err, ErrKeyNotFound) {
@@ -413,12 +413,12 @@ func TestCompositeBackend_LoadKey_NotFound(t *testing.T) {
 }
 
 func TestCompositeBackend_LoadKey_PropagatesNonKeyNotFoundError(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	sw.loadErr = ErrBackendClosed
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 
 	_, err := cb.LoadKey([]byte("cred"), -7)
 	if !errors.Is(err, ErrBackendClosed) {
@@ -427,18 +427,18 @@ func TestCompositeBackend_LoadKey_PropagatesNonKeyNotFoundError(t *testing.T) {
 }
 
 func TestCompositeBackend_DeleteKey_RoutesToBackendID(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-del"),
 		algorithm:    -7,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	err := cb.DeleteKey(handle)
@@ -455,7 +455,7 @@ func TestCompositeBackend_DeleteKey_RoutesToBackendID(t *testing.T) {
 }
 
 func TestCompositeBackend_DeleteKey_NilHandle(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	err := cb.DeleteKey(nil)
 	if !errors.Is(err, ErrInvalidKeyHandle) {
@@ -464,12 +464,12 @@ func TestCompositeBackend_DeleteKey_NilHandle(t *testing.T) {
 }
 
 func TestCompositeBackend_DeleteKey_BackendNotFound(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
 		algorithm:    -7,
-		backendType:  types.BackendType("nonexistent"),
+		backendType:  xkms.BackendType("nonexistent"),
 	}
 
 	err := cb.DeleteKey(handle)
@@ -479,7 +479,7 @@ func TestCompositeBackend_DeleteKey_BackendNotFound(t *testing.T) {
 }
 
 func TestCompositeBackend_ExportPrivateKey_NotSupported(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeTPM2)
+	cb := NewCompositeBackend(xkms.BackendTypeTPM2)
 
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{
 		HardwareBacked: true,
@@ -487,12 +487,12 @@ func TestCompositeBackend_ExportPrivateKey_NotSupported(t *testing.T) {
 	})
 	hw.exportErr = ErrExportNotSupported
 
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-hw"),
 		algorithm:    -7,
-		backendType:  types.BackendTypeTPM2,
+		backendType:  xkms.BackendTypeTPM2,
 	}
 
 	_, err := cb.ExportPrivateKey(handle)
@@ -505,17 +505,17 @@ func TestCompositeBackend_ExportPrivateKey_NotSupported(t *testing.T) {
 }
 
 func TestCompositeBackend_ExportPrivateKey_Success(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportsExport: true,
 	})
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred-export"),
 		algorithm:    -7,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	data, err := cb.ExportPrivateKey(handle)
@@ -528,7 +528,7 @@ func TestCompositeBackend_ExportPrivateKey_Success(t *testing.T) {
 }
 
 func TestCompositeBackend_ExportPrivateKey_NilHandle(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	_, err := cb.ExportPrivateKey(nil)
 	if !errors.Is(err, ErrInvalidKeyHandle) {
@@ -537,12 +537,12 @@ func TestCompositeBackend_ExportPrivateKey_NilHandle(t *testing.T) {
 }
 
 func TestCompositeBackend_ExportPrivateKey_BackendNotFound(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
 		algorithm:    -7,
-		backendType:  types.BackendType("nonexistent"),
+		backendType:  xkms.BackendType("nonexistent"),
 	}
 
 	_, err := cb.ExportPrivateKey(handle)
@@ -552,20 +552,20 @@ func TestCompositeBackend_ExportPrivateKey_BackendNotFound(t *testing.T) {
 }
 
 func TestCompositeBackend_ImportPrivateKey_RoutesToDefault(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{SupportsImport: true})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	handle, err := cb.ImportPrivateKey([]byte("cred-import"), -7, []byte("pkcs8-data"))
 	if err != nil {
 		t.Fatalf("ImportPrivateKey() error = %v", err)
 	}
-	if handle.BackendID() != types.BackendTypeSoftware {
-		t.Errorf("handle.BackendID() = %q, want %q", handle.BackendID(), types.BackendTypeSoftware)
+	if handle.BackendID() != xkms.BackendTypeSoftware {
+		t.Errorf("handle.BackendID() = %q, want %q", handle.BackendID(), xkms.BackendTypeSoftware)
 	}
 
 	if sw.importCalled.Load() != 1 {
@@ -577,7 +577,7 @@ func TestCompositeBackend_ImportPrivateKey_RoutesToDefault(t *testing.T) {
 }
 
 func TestCompositeBackend_ImportPrivateKey_DefaultNotFound(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendType("nonexistent"))
+	cb := NewCompositeBackend(xkms.BackendType("nonexistent"))
 
 	_, err := cb.ImportPrivateKey([]byte("cred"), -7, []byte("key"))
 	if !errors.Is(err, ErrBackendNotFound) {
@@ -586,13 +586,13 @@ func TestCompositeBackend_ImportPrivateKey_DefaultNotFound(t *testing.T) {
 }
 
 func TestCompositeBackend_Close_ClosesAll(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	err := cb.Close()
 	if err != nil {
@@ -608,7 +608,7 @@ func TestCompositeBackend_Close_ClosesAll(t *testing.T) {
 }
 
 func TestCompositeBackend_Close_ReturnsFirstError(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	errClose := errors.New("close failed")
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
@@ -616,8 +616,8 @@ func TestCompositeBackend_Close_ReturnsFirstError(t *testing.T) {
 
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	err := cb.Close()
 	if err == nil {
@@ -633,16 +633,16 @@ func TestCompositeBackend_Close_ReturnsFirstError(t *testing.T) {
 }
 
 func TestCompositeBackend_Register_Unregister(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{-7},
 	})
 
 	// Register and verify.
-	cb.Register(types.BackendTypeSoftware, sw)
-	if b := cb.Backend(types.BackendTypeSoftware); b == nil {
-		t.Fatal("Backend(types.BackendTypeSoftware) should not be nil after Register")
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	if b := cb.Backend(xkms.BackendTypeSoftware); b == nil {
+		t.Fatal("Backend(xkms.BackendTypeSoftware) should not be nil after Register")
 	}
 
 	backends := cb.Backends()
@@ -651,9 +651,9 @@ func TestCompositeBackend_Register_Unregister(t *testing.T) {
 	}
 
 	// Unregister and verify.
-	cb.Unregister(types.BackendTypeSoftware)
-	if b := cb.Backend(types.BackendTypeSoftware); b != nil {
-		t.Error("Backend(types.BackendTypeSoftware) should be nil after Unregister")
+	cb.Unregister(xkms.BackendTypeSoftware)
+	if b := cb.Backend(xkms.BackendTypeSoftware); b != nil {
+		t.Error("Backend(xkms.BackendTypeSoftware) should be nil after Unregister")
 	}
 
 	backends = cb.Backends()
@@ -669,24 +669,24 @@ func TestCompositeBackend_Register_Unregister(t *testing.T) {
 }
 
 func TestCompositeBackend_SetDefault(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	// Change default to tpm2.
-	cb.SetDefault(types.BackendTypeTPM2)
+	cb.SetDefault(xkms.BackendTypeTPM2)
 
 	credID := []byte("cred-new-default")
 	handle, _, err := cb.GenerateCredentialKey(-7, credID)
 	if err != nil {
 		t.Fatalf("GenerateCredentialKey() error = %v", err)
 	}
-	if handle.BackendID() != types.BackendTypeTPM2 {
-		t.Errorf("handle.BackendID() = %q, want %q", handle.BackendID(), types.BackendTypeTPM2)
+	if handle.BackendID() != xkms.BackendTypeTPM2 {
+		t.Errorf("handle.BackendID() = %q, want %q", handle.BackendID(), xkms.BackendTypeTPM2)
 	}
 	if hw.generateCalled.Load() != 1 {
 		t.Errorf("tpm2 backend generateCalled = %d, want 1", hw.generateCalled.Load())
@@ -697,14 +697,14 @@ func TestCompositeBackend_SetDefault(t *testing.T) {
 }
 
 func TestCompositeBackend_Backend_NotFound(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
-	if b := cb.Backend(types.BackendType("nonexistent")); b != nil {
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
+	if b := cb.Backend(xkms.BackendType("nonexistent")); b != nil {
 		t.Error("Backend(\"nonexistent\") should return nil")
 	}
 }
 
 func TestCompositeBackend_Sign_EmptyBackendID_AllFail(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	sw.signErr = ErrInvalidKeyHandle
@@ -712,8 +712,8 @@ func TestCompositeBackend_Sign_EmptyBackendID_AllFail(t *testing.T) {
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 	hw.signErr = ErrSigningFailed
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
@@ -728,7 +728,7 @@ func TestCompositeBackend_Sign_EmptyBackendID_AllFail(t *testing.T) {
 }
 
 func TestCompositeBackend_Sign_NoBackends_EmptyBackendID(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("cred"),
@@ -743,7 +743,7 @@ func TestCompositeBackend_Sign_NoBackends_EmptyBackendID(t *testing.T) {
 }
 
 func TestCompositeBackend_LoadKey_EmptyComposite(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	_, err := cb.LoadKey([]byte("cred"), -7)
 	if !errors.Is(err, ErrKeyNotFound) {
@@ -752,12 +752,12 @@ func TestCompositeBackend_LoadKey_EmptyComposite(t *testing.T) {
 }
 
 func TestCompositeBackend_GenerateCredentialKey_BackendError(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	sw.generateErr = ErrUnsupportedAlgorithm
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 
 	_, _, err := cb.GenerateCredentialKey(-999, []byte("cred"))
 	if !errors.Is(err, ErrUnsupportedAlgorithm) {
@@ -772,29 +772,29 @@ func TestCompositeBackend_InterfaceCompliance(t *testing.T) {
 }
 
 func TestCompositeBackend_DefaultID(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	hw := newMockBackend("tpm2", FIDO2KeyCapabilities{})
 
-	cb.Register(types.BackendTypeSoftware, sw)
-	cb.Register(types.BackendTypeTPM2, hw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeTPM2, hw)
 
 	// DefaultID returns the initial default set in NewCompositeBackend.
-	if got := cb.DefaultID(); got != types.BackendTypeSoftware {
-		t.Errorf("DefaultID() = %q, want %q", got, types.BackendTypeSoftware)
+	if got := cb.DefaultID(); got != xkms.BackendTypeSoftware {
+		t.Errorf("DefaultID() = %q, want %q", got, xkms.BackendTypeSoftware)
 	}
 
 	// After SetDefault, DefaultID returns the new value.
-	cb.SetDefault(types.BackendTypeTPM2)
-	if got := cb.DefaultID(); got != types.BackendTypeTPM2 {
-		t.Errorf("DefaultID() after SetDefault(types.BackendTypeTPM2) = %q, want %q", got, types.BackendTypeTPM2)
+	cb.SetDefault(xkms.BackendTypeTPM2)
+	if got := cb.DefaultID(); got != xkms.BackendTypeTPM2 {
+		t.Errorf("DefaultID() after SetDefault(xkms.BackendTypeTPM2) = %q, want %q", got, xkms.BackendTypeTPM2)
 	}
 
 	// Setting default to a non-registered backend still updates the value.
 	// (Validation happens at operation time, not at SetDefault time.)
-	cb.SetDefault(types.BackendType("nonexistent"))
-	if got := cb.DefaultID(); got != types.BackendType("nonexistent") {
-		t.Errorf("DefaultID() after SetDefault(\"nonexistent\") = %q, want %q", got, types.BackendType("nonexistent"))
+	cb.SetDefault(xkms.BackendType("nonexistent"))
+	if got := cb.DefaultID(); got != xkms.BackendType("nonexistent") {
+		t.Errorf("DefaultID() after SetDefault(\"nonexistent\") = %q, want %q", got, xkms.BackendType("nonexistent"))
 	}
 }

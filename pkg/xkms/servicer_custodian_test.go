@@ -4,68 +4,152 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockCustodianStore implements custodian.CustodianGroupStore for testing.
-type mockCustodianStore struct {
-	groups map[string]*custodian.CustodianGroup
+// fakeCustodianClient is an in-memory implementation of
+// qrdbtransport.CustodianGroupClient used to exercise the XKMSService
+// pass-through servicer. It mirrors the semantics of the embedded go-qrdb
+// node's custodian client, returning the same sentinel errors so the
+// servicer's ErrNotConfigured / ErrNilRequest guards and the error
+// propagation path can be verified in isolation.
+type fakeCustodianClient struct {
+	groups map[string]*qrdbtransport.CustodianGroupInfo
 }
 
-func newMockCustodianStore() *mockCustodianStore {
-	return &mockCustodianStore{groups: make(map[string]*custodian.CustodianGroup)}
+func newFakeCustodianClient() *fakeCustodianClient {
+	return &fakeCustodianClient{groups: make(map[string]*qrdbtransport.CustodianGroupInfo)}
 }
 
-func (m *mockCustodianStore) Create(_ context.Context, group *custodian.CustodianGroup) error {
-	if _, exists := m.groups[group.ID]; exists {
-		return errors.New("group already exists")
+func (f *fakeCustodianClient) CreateCustodianGroup(_ context.Context, req *qrdbtransport.CreateCustodianGroupRequest) (*qrdbtransport.CreateCustodianGroupResponse, error) {
+	if req.ID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
 	}
-	m.groups[group.ID] = group
-	return nil
+	if req.Name == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupName
+	}
+	if req.Total < 1 {
+		return nil, qrdbsdk.ErrCeremonyInvalidTotal
+	}
+	if req.Threshold < 1 || req.Threshold > req.Total {
+		return nil, qrdbsdk.ErrCeremonyInvalidThreshold
+	}
+	if _, exists := f.groups[req.ID]; exists {
+		return nil, qrdbsdk.ErrCeremonyGroupAlreadyExists
+	}
+	now := time.Now().UTC()
+	g := &qrdbtransport.CustodianGroupInfo{
+		ID:        req.ID,
+		TenantID:  req.TenantID,
+		Name:      req.Name,
+		Purpose:   req.Purpose,
+		Threshold: req.Threshold,
+		Total:     req.Total,
+		Members:   []qrdbtransport.CustodianMemberInfo{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	f.groups[req.ID] = g
+	return &qrdbtransport.CreateCustodianGroupResponse{Group: *g}, nil
 }
 
-func (m *mockCustodianStore) Get(_ context.Context, id string) (*custodian.CustodianGroup, error) {
-	g, ok := m.groups[id]
+func (f *fakeCustodianClient) GetCustodianGroup(_ context.Context, groupID string) (*qrdbtransport.GetCustodianGroupResponse, error) {
+	if groupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[groupID]
 	if !ok {
-		return nil, errors.New("group not found")
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
 	}
-	return g, nil
+	return &qrdbtransport.GetCustodianGroupResponse{Group: *g}, nil
 }
 
-func (m *mockCustodianStore) Update(_ context.Context, group *custodian.CustodianGroup) error {
-	if _, exists := m.groups[group.ID]; !exists {
-		return errors.New("group not found")
+func (f *fakeCustodianClient) ListCustodianGroups(_ context.Context) (*qrdbtransport.ListCustodianGroupsResponse, error) {
+	groups := make([]qrdbtransport.CustodianGroupInfo, 0, len(f.groups))
+	for _, g := range f.groups {
+		groups = append(groups, *g)
 	}
-	m.groups[group.ID] = group
+	return &qrdbtransport.ListCustodianGroupsResponse{Groups: groups}, nil
+}
+
+func (f *fakeCustodianClient) DeleteCustodianGroup(_ context.Context, groupID string) error {
+	if groupID == "" {
+		return qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	if _, ok := f.groups[groupID]; !ok {
+		return qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	delete(f.groups, groupID)
 	return nil
 }
 
-func (m *mockCustodianStore) Delete(_ context.Context, id string) error {
-	if _, exists := m.groups[id]; !exists {
-		return errors.New("group not found")
+func (f *fakeCustodianClient) AddCustodianMember(_ context.Context, req *qrdbtransport.AddCustodianMemberRequest) (*qrdbtransport.AddCustodianMemberResponse, error) {
+	if req.GroupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
 	}
-	delete(m.groups, id)
-	return nil
-}
-
-func (m *mockCustodianStore) List(_ context.Context) ([]*custodian.CustodianGroup, error) {
-	result := make([]*custodian.CustodianGroup, 0, len(m.groups))
-	for _, g := range m.groups {
-		result = append(result, g)
+	if req.UserID == "" {
+		return nil, qrdbsdk.ErrCeremonyUserNotFound
 	}
-	return result, nil
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	if len(g.Members) >= g.Total {
+		return nil, qrdbsdk.ErrCeremonyGroupFull
+	}
+	for _, m := range g.Members {
+		if m.UserID == req.UserID {
+			return nil, qrdbsdk.ErrCeremonyMemberAlreadyExists
+		}
+	}
+	member := qrdbtransport.CustodianMemberInfo{
+		ShareIndex: len(g.Members),
+		UserID:     req.UserID,
+		Username:   req.Username,
+		AssignedAt: time.Now().UTC(),
+		Method:     req.Method,
+	}
+	g.Members = append(g.Members, member)
+	g.UpdatedAt = time.Now().UTC()
+	return &qrdbtransport.AddCustodianMemberResponse{Member: member}, nil
 }
 
-func (m *mockCustodianStore) ListByTenant(_ context.Context, _ string) ([]*custodian.CustodianGroup, error) {
-	return nil, nil
+func (f *fakeCustodianClient) RemoveCustodianMember(_ context.Context, req *qrdbtransport.RemoveCustodianMemberRequest) error {
+	if req.GroupID == "" {
+		return qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	for i, m := range g.Members {
+		if m.UserID == req.UserID {
+			g.Members = append(g.Members[:i], g.Members[i+1:]...)
+			g.UpdatedAt = time.Now().UTC()
+			return nil
+		}
+	}
+	return qrdbsdk.ErrCeremonyMemberNotFound
 }
 
-func (m *mockCustodianStore) ListByPurpose(_ context.Context, _ string) ([]*custodian.CustodianGroup, error) {
-	return nil, nil
+func (f *fakeCustodianClient) DistributeShares(_ context.Context, req *qrdbtransport.DistributeSharesRequest) (*qrdbtransport.DistributeSharesResponse, error) {
+	if req.GroupID == "" {
+		return nil, qrdbsdk.ErrCeremonyEmptyGroupID
+	}
+	g, ok := f.groups[req.GroupID]
+	if !ok {
+		return nil, qrdbsdk.ErrCeremonyGroupNotFound
+	}
+	if len(g.Members) == 0 {
+		return nil, qrdbsdk.ErrCeremonyInsufficientMembers
+	}
+	return &qrdbtransport.DistributeSharesResponse{Distributed: len(g.Members)}, nil
 }
 
 // --- ErrNotConfigured guards ---
@@ -179,10 +263,7 @@ func TestDistributeShares_NilRequest(t *testing.T) {
 func setupServiceWithCustodian(t *testing.T) *XKMSService {
 	t.Helper()
 	svc, _, _ := setupServiceWithProviders(t)
-	store := newMockCustodianStore()
-	svcCust, err := custodian.NewService(store)
-	require.NoError(t, err)
-	svc.SetCustodianService(svcCust)
+	svc.SetCustodianClient(newFakeCustodianClient())
 	return svc
 }
 
@@ -223,6 +304,7 @@ func TestGetCustodianGroup_NotFound(t *testing.T) {
 
 	_, err := svc.GetCustodianGroup(context.Background(), "nonexistent")
 	require.Error(t, err)
+	assert.True(t, errors.Is(err, qrdbsdk.ErrCeremonyGroupNotFound))
 }
 
 func TestListCustodianGroups_Success(t *testing.T) {
@@ -264,6 +346,7 @@ func TestDeleteCustodianGroup_NotFound(t *testing.T) {
 
 	err := svc.DeleteCustodianGroup(context.Background(), "ghost")
 	require.Error(t, err)
+	assert.True(t, errors.Is(err, qrdbsdk.ErrCeremonyGroupNotFound))
 }
 
 func TestAddCustodianMember_Success(t *testing.T) {
@@ -284,7 +367,7 @@ func TestAddCustodianMember_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "user-1", resp.Member.UserID)
 	assert.Equal(t, "alice", resp.Member.Username)
-	assert.Equal(t, 1, resp.Member.ShareIndex)
+	assert.Equal(t, 0, resp.Member.ShareIndex)
 }
 
 func TestRemoveCustodianMember_Success(t *testing.T) {
@@ -352,7 +435,7 @@ func TestListCustodianGroups_WithMembers(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// List groups -- custodianGroupToInfo must iterate over members.
+	// List groups -- the pass-through must surface members from the node.
 	resp, err := svc.ListCustodianGroups(ctx)
 	require.NoError(t, err)
 	require.Len(t, resp.Groups, 1)

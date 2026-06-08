@@ -28,6 +28,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -39,9 +40,6 @@ import (
 	"github.com/google/go-tpm/tpm2"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"github.com/jeremyhahn/go-xkms/pkg/certstore"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
@@ -167,41 +165,41 @@ type TPMStatus struct {
 
 // TPMInfo holds extended information about the TPM hardware.
 type TPMInfo struct {
-	Manufacturer       string                `json:"manufacturer"`
-	VendorID           string                `json:"vendor_id"`
-	ManufacturerID     string                `json:"manufacturer_id,omitempty"`
-	FirmwareVersion    string                `json:"firmware_version"`
-	Family             string                `json:"family"`
-	Level              int                   `json:"level"`
-	Revision           string                `json:"revision"`
-	Version            string                `json:"version,omitempty"`
-	MaxRSAKeySize      int                   `json:"max_rsa_key_size"`
-	MaxECCKeySize      int                   `json:"max_ecc_key_size"`
-	PCRBanks           []string              `json:"pcr_banks"`
-	Algorithms         []string              `json:"algorithms"`
-	FIPSMode           bool                  `json:"fips_mode"`
-	Capabilities       []string              `json:"capabilities"`
-	MaxNVBufferSize    int                   `json:"max_nv_buffer_size"`
-	LockoutCounter     int                   `json:"lockout_counter"`
-	MaxAuthFail        int                   `json:"max_auth_fail"`
-	Model              string                `json:"model"`
-	ActiveSessionsMax  int                   `json:"active_sessions_max"`
-	AuthSessionsLoaded int                   `json:"auth_sessions_loaded"`
-	AuthSessionsActive int                   `json:"auth_sessions_active"`
-	PersistentLoaded   int                   `json:"persistent_loaded"`
-	PersistentAvail    int                   `json:"persistent_avail"`
-	TransientAvail     int                   `json:"transient_avail"`
-	NVIndexesDefined   int                   `json:"nv_indexes_defined"`
-	NVIndexesMax       int                   `json:"nv_indexes_max"`
-	Commands           []tpm2pkg.CommandInfo `json:"commands"`
-	ECCCurves          []string              `json:"ecc_curves"`
-	InputBufferMax     int                   `json:"input_buffer_max"`
-	MaxDigestSize      int                   `json:"max_digest_size"`
-	MaxObjectContext   int                   `json:"max_object_context"`
-	LockoutInterval    int                   `json:"lockout_interval"`
-	LockoutRecovery    int                   `json:"lockout_recovery"`
-	FixedProperties    []tpm2pkg.TPMProperty `json:"fixed_properties,omitempty"`
-	VariableProperties []tpm2pkg.TPMProperty `json:"variable_properties,omitempty"`
+	Manufacturer       string             `json:"manufacturer"`
+	VendorID           string             `json:"vendor_id"`
+	ManufacturerID     string             `json:"manufacturer_id,omitempty"`
+	FirmwareVersion    string             `json:"firmware_version"`
+	Family             string             `json:"family"`
+	Level              int                `json:"level"`
+	Revision           string             `json:"revision"`
+	Version            string             `json:"version,omitempty"`
+	MaxRSAKeySize      int                `json:"max_rsa_key_size"`
+	MaxECCKeySize      int                `json:"max_ecc_key_size"`
+	PCRBanks           []string           `json:"pcr_banks"`
+	Algorithms         []string           `json:"algorithms"`
+	FIPSMode           bool               `json:"fips_mode"`
+	Capabilities       []string           `json:"capabilities"`
+	MaxNVBufferSize    int                `json:"max_nv_buffer_size"`
+	LockoutCounter     int                `json:"lockout_counter"`
+	MaxAuthFail        int                `json:"max_auth_fail"`
+	Model              string             `json:"model"`
+	ActiveSessionsMax  int                `json:"active_sessions_max"`
+	AuthSessionsLoaded int                `json:"auth_sessions_loaded"`
+	AuthSessionsActive int                `json:"auth_sessions_active"`
+	PersistentLoaded   int                `json:"persistent_loaded"`
+	PersistentAvail    int                `json:"persistent_avail"`
+	TransientAvail     int                `json:"transient_avail"`
+	NVIndexesDefined   int                `json:"nv_indexes_defined"`
+	NVIndexesMax       int                `json:"nv_indexes_max"`
+	Commands           []xkms.CommandInfo `json:"commands"`
+	ECCCurves          []string           `json:"ecc_curves"`
+	InputBufferMax     int                `json:"input_buffer_max"`
+	MaxDigestSize      int                `json:"max_digest_size"`
+	MaxObjectContext   int                `json:"max_object_context"`
+	LockoutInterval    int                `json:"lockout_interval"`
+	LockoutRecovery    int                `json:"lockout_recovery"`
+	FixedProperties    []xkms.TPMProperty `json:"fixed_properties,omitempty"`
+	VariableProperties []xkms.TPMProperty `json:"variable_properties,omitempty"`
 }
 
 // TPMKey describes a key managed by the TPM.
@@ -679,7 +677,7 @@ func (s *TPMService) GetConflictingAssignments(keyHandles []string) (retVal []Co
 // getTPM acquires the shared TPM accessor and returns the current TPM instance.
 // Callers MUST defer s.tpmAccessor.Release() after a successful call to
 // serialise all operations against the single /dev/tpmrm0 file descriptor.
-func (s *TPMService) getTPM() (tpm2pkg.TrustedPlatformModule, error) {
+func (s *TPMService) getTPM() (xkms.TrustedPlatformModule, error) {
 	if s.tpmAccessor == nil {
 		return nil, ErrTPMNotAvailable
 	}
@@ -850,15 +848,15 @@ func (s *TPMService) GetInfo() (info *TPMInfo, retErr error) {
 
 	// Commands: try detailed SupportedCommandsInfo via type assertion,
 	// fall back to SupportedCommands and wrap each string in CommandInfo.
-	if concrete, ok := tpm.(*tpm2pkg.TPM2); ok {
+	if concrete, ok := tpm.(*xkms.TPM2); ok {
 		if cmdInfos, cmdErr := concrete.SupportedCommandsInfo(); cmdErr == nil && len(cmdInfos) > 0 {
 			info.Commands = cmdInfos
 		}
 	} else {
 		if cmds, cmdErr := tpm.SupportedCommands(); cmdErr == nil && len(cmds) > 0 {
-			infos := make([]tpm2pkg.CommandInfo, len(cmds))
+			infos := make([]xkms.CommandInfo, len(cmds))
 			for i, name := range cmds {
-				infos[i] = tpm2pkg.CommandInfo{Name: name, Description: "TPM 2.0 command"}
+				infos[i] = xkms.CommandInfo{Name: name, Description: "TPM 2.0 command"}
 			}
 			info.Commands = infos
 		}
@@ -872,7 +870,7 @@ func (s *TPMService) GetInfo() (info *TPMInfo, retErr error) {
 	info.LockoutRecovery = int(props.LockoutRecovery)
 
 	// All TPM properties for detailed view.
-	if concrete, ok := tpm.(*tpm2pkg.TPM2); ok {
+	if concrete, ok := tpm.(*xkms.TPM2); ok {
 		if fixedProps, fpErr := concrete.AllFixedProperties(); fpErr == nil {
 			info.FixedProperties = fixedProps
 		}
@@ -899,7 +897,7 @@ func (s *TPMService) GetInfo() (info *TPMInfo, retErr error) {
 	// EK cert values override TPM property values when the cert provides
 	// richer data (e.g., a real model string vs a numeric vendor type ID).
 	if ekCert, ekErr := tpm.EKCertificate(); ekErr == nil && ekCert != nil {
-		tcg := certstore.ParseTCGAttributes(ekCert)
+		tcg := xkms.ParseTCGCertAttributes(ekCert)
 		if tcg.Manufacturer != "" {
 			info.ManufacturerID = tcg.Manufacturer
 			info.VendorID = tcg.Manufacturer
@@ -933,7 +931,7 @@ func (s *TPMService) GetInfo() (info *TPMInfo, retErr error) {
 // detectPCRBanks queries the TPM for PCR bank 0 and returns normalized
 // lowercase bank names for each bank that is present. Results are sorted
 // in the standard order: sha1, sha256, sha384, sha512.
-func detectPCRBanks(tpm tpm2pkg.TrustedPlatformModule) []string {
+func detectPCRBanks(tpm xkms.TrustedPlatformModule) []string {
 	testPCRs, bankErr := tpm.ReadPCRs([]uint{0})
 	if bankErr != nil {
 		return nil
@@ -1340,9 +1338,9 @@ func (s *TPMService) Provision(opts *ProvisionOptions) (retErr error) {
 	var opErr error
 	switch opts.Mode {
 	case ProvisionModeInstall:
-		opErr = tpm.Install(types.NewPassword([]byte(opts.OwnerAuth)), nil)
+		opErr = tpm.Install(xkms.NewPassword([]byte(opts.OwnerAuth)), nil)
 	case ProvisionModeProvision, "":
-		opErr = tpm.Provision(types.NewPassword([]byte(opts.OwnerAuth)))
+		opErr = tpm.Provision(xkms.NewPassword([]byte(opts.OwnerAuth)))
 	default:
 		return ErrTPMInvalidProvisionMode
 	}
@@ -1383,9 +1381,9 @@ func (s *TPMService) Install(ownerAuth string) (retErr error) {
 
 	// Pass nil when no owner auth is provided so Install skips
 	// SetHierarchyAuth and just provisions keys.
-	var auth types.Password
+	var auth xkms.Password
 	if ownerAuth != "" {
-		auth = types.NewPassword([]byte(ownerAuth))
+		auth = xkms.NewPassword([]byte(ownerAuth))
 	}
 	if err := tpm.Install(auth, nil); err != nil {
 		if isTPMAuthError(err) {
@@ -1501,7 +1499,7 @@ func (s *TPMService) ProvisionIAK(ownerAuth string) (retErr error) {
 		return ErrTPMProvisionIAKFailed
 	}
 
-	ekAttrs.TPMAttributes.HierarchyAuth = types.NewPassword([]byte(ownerAuth))
+	ekAttrs.TPMAttributes.HierarchyAuth = xkms.NewPassword([]byte(ownerAuth))
 
 	if _, err := tpm.CreateIAK(ekAttrs, nil); err != nil {
 		if isTPMAuthError(err) {
@@ -1534,7 +1532,7 @@ func (s *TPMService) ProvisionIDevID(ownerAuth string) (retErr error) {
 		return ErrTPMProvisionIDevIDFailed
 	}
 
-	iakAttrs.TPMAttributes.HierarchyAuth = types.NewPassword([]byte(ownerAuth))
+	iakAttrs.TPMAttributes.HierarchyAuth = xkms.NewPassword([]byte(ownerAuth))
 
 	// Get EK certificate for IDevID CSR (optional, may not exist)
 	ekCert, _ := tpm.EKCertificate()
@@ -2163,8 +2161,8 @@ func (s *TPMService) CertifyKey(keyHandleHex string) (retVal *CertifyKeyResult, 
 	}
 
 	// Build key attributes for the target key.
-	keyAttrs := &types.KeyAttributes{
-		TPMAttributes: &types.TPMAttributes{
+	keyAttrs := &xkms.KeyAttributes{
+		TPMAttributes: &xkms.TPMAttributes{
 			Handle: tpm2.TPMHandle(handle),
 		},
 	}
@@ -2403,12 +2401,12 @@ func (s *TPMService) changeHierarchyAuth(oldAuth, newAuth string, hierarchy tpm2
 	}
 	defer s.tpmAccessor.Release()
 
-	var oldPwd, newPwd types.Password
+	var oldPwd, newPwd xkms.Password
 	if oldAuth != "" {
-		oldPwd = types.NewPassword([]byte(oldAuth))
+		oldPwd = xkms.NewPassword([]byte(oldAuth))
 	}
 	if newAuth != "" {
-		newPwd = types.NewPassword([]byte(newAuth))
+		newPwd = xkms.NewPassword([]byte(newAuth))
 	}
 
 	h := hierarchy
@@ -2509,7 +2507,7 @@ func (s *TPMService) DefineNVOrdinary(handle uint32, size int, ownerAuth string)
 	defer s.tpmAccessor.Release()
 
 	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
-	keyAttrs.SealData = types.NewPassword(make([]byte, size))
+	keyAttrs.SealData = xkms.NewPassword(make([]byte, size))
 
 	return tpm.NVWrite(keyAttrs)
 }
@@ -2617,7 +2615,7 @@ func (s *TPMService) WriteNVData(handle uint32, hexData string, ownerAuth string
 	defer s.tpmAccessor.Release()
 
 	keyAttrs := s.buildNVKeyAttributes(handle, ownerAuth, tpm2.TPMAlgSHA256)
-	keyAttrs.SealData = types.NewPassword(data)
+	keyAttrs.SealData = xkms.NewPassword(data)
 
 	return tpm.NVWrite(keyAttrs)
 }
@@ -2731,20 +2729,20 @@ func (s *TPMService) DeleteNVIndex(handle uint32, ownerAuth string) (retErr erro
 }
 
 // buildNVKeyAttributes constructs KeyAttributes for NV index operations.
-func (s *TPMService) buildNVKeyAttributes(handle uint32, ownerAuth string, hashAlg tpm2.TPMIAlgHash) *types.KeyAttributes {
-	var hierarchyAuth types.Password
+func (s *TPMService) buildNVKeyAttributes(handle uint32, ownerAuth string, hashAlg tpm2.TPMIAlgHash) *xkms.KeyAttributes {
+	var hierarchyAuth xkms.Password
 	if ownerAuth != "" {
-		hierarchyAuth = types.NewPassword([]byte(ownerAuth))
+		hierarchyAuth = xkms.NewPassword([]byte(ownerAuth))
 	}
 
-	return &types.KeyAttributes{
-		TPMAttributes: &types.TPMAttributes{
+	return &xkms.KeyAttributes{
+		TPMAttributes: &xkms.TPMAttributes{
 			Handle:    tpm2.TPMHandle(handle),
 			Hierarchy: tpm2.TPMRHOwner,
 			HashAlg:   hashAlg,
 		},
-		Parent: &types.KeyAttributes{
-			TPMAttributes: &types.TPMAttributes{
+		Parent: &xkms.KeyAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Hierarchy:     tpm2.TPMRHOwner,
 				HierarchyAuth: hierarchyAuth,
 			},
@@ -2896,13 +2894,13 @@ func certToPEM(cert *x509.Certificate) string {
 
 // algoDisplayName returns a human-readable algorithm name that distinguishes
 // RSA-SSA from RSA-PSS, which is critical for FIPS 140-2 compliance display.
-func algoDisplayName(attrs *types.KeyAttributes) string {
+func algoDisplayName(attrs *xkms.KeyAttributes) string {
 	if attrs == nil {
 		return "Unknown"
 	}
 	switch attrs.KeyAlgorithm {
 	case x509.RSA:
-		if types.IsRSAPSS(attrs.SignatureAlgorithm) {
+		if xkms.IsRSAPSS(attrs.SignatureAlgorithm) {
 			return "RSA-PSS"
 		}
 		return "RSA-SSA"
@@ -2917,7 +2915,7 @@ func algoDisplayName(attrs *types.KeyAttributes) string {
 
 // keySize extracts the key size from KeyAttributes, handling RSA and ECC.
 // Falls back to standard sizes when sub-attributes are not populated.
-func keySize(attrs *types.KeyAttributes) int {
+func keySize(attrs *xkms.KeyAttributes) int {
 	if attrs == nil {
 		return 0
 	}
@@ -3009,7 +3007,7 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 	// Build extended key usage strings.
 	extKeyUsageStrs := make([]string, len(cert.ExtKeyUsage))
 	for i, eku := range cert.ExtKeyUsage {
-		extKeyUsageStrs[i] = certstore.ExtKeyUsageToString(eku)
+		extKeyUsageStrs[i] = xkms.ExtKeyUsageToString(eku)
 	}
 
 	// Build extensions list.
@@ -3017,9 +3015,9 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 	for i, ext := range cert.Extensions {
 		extensions[i] = ExtensionInfo{
 			OID:      ext.Id.String(),
-			Name:     certstore.OIDToName(ext.Id),
+			Name:     xkms.OIDToName(ext.Id),
 			Critical: ext.Critical,
-			Value:    certstore.ParseExtensionValue(ext),
+			Value:    xkms.ParseCertExtensionValue(ext),
 		}
 	}
 
@@ -3057,7 +3055,7 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 		FingerprintMD5:    formatFingerprint(md5Hash[:]),
 
 		// Public Key
-		PublicKeyAlgorithm: certstore.PublicKeyTypeString(cert.PublicKey),
+		PublicKeyAlgorithm: xkms.PublicKeyTypeString(cert.PublicKey),
 		PublicKeySize:      publicKeyBitSize(cert.PublicKey),
 		PublicKeyHex:       hex.EncodeToString(cert.RawSubjectPublicKeyInfo),
 		SubjectKeyID:       hex.EncodeToString(cert.SubjectKeyId),
@@ -3068,7 +3066,7 @@ func (s *TPMService) ParseCertificate(certPEM string) (retVal *CertificateDetail
 		MaxPathLenZero: cert.MaxPathLenZero,
 
 		// Key usage
-		KeyUsage:    certstore.KeyUsageToString(cert.KeyUsage),
+		KeyUsage:    xkms.KeyUsageToString(cert.KeyUsage),
 		ExtKeyUsage: extKeyUsageStrs,
 
 		// SAN
@@ -3290,7 +3288,7 @@ func (s *TPMService) savePolicies(policies []PCRPolicy) error {
 // specified selections and returns a map of "bank:index" -> hex digest.
 // Read errors for individual banks are silently skipped so that partial
 // results are still returned.
-func (s *TPMService) readPCRDigests(tpm tpm2pkg.TrustedPlatformModule, selections []PCRSelection) map[string]string {
+func (s *TPMService) readPCRDigests(tpm xkms.TrustedPlatformModule, selections []PCRSelection) map[string]string {
 	digests := make(map[string]string)
 
 	// Group PCR selections by bank.
@@ -3585,7 +3583,7 @@ func (s *TPMService) savePolicyDigestBinary(filePath, policyJSON string) error {
 		}
 	}
 
-	policyDigest, err := tpm2pkg.ComputePolicyPCRDigest(pcrBank, pcrIndices, digestMap)
+	policyDigest, err := xkms.ComputePolicyPCRDigest(pcrBank, pcrIndices, digestMap)
 	if err != nil {
 		return ErrTPMPolicyExportFailed
 	}
@@ -4780,7 +4778,7 @@ func (s *TPMService) ReplayEventLog() (retVal *EventLogReplayResult, retErr erro
 	}
 
 	// Compute expected PCR values from event log replay.
-	computed := tpm2pkg.CalculatePCRs(events)
+	computed := xkms.CalculatePCRs(events)
 
 	// Collect all PCR indices across all banks.
 	allIndices := make(map[uint]struct{})

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // NativeVirtualDeviceEnumerator errors.
@@ -78,10 +78,10 @@ func (w *nativeVirtualDeviceWrapper) Close() error {
 	return nil
 }
 
-// Ensure nativeVirtualDeviceWrapper implements fido2.HIDDevice.
-var _ fido2.HIDDevice = (*nativeVirtualDeviceWrapper)(nil)
+// Ensure nativeVirtualDeviceWrapper implements xkms.FIDO2HIDDevice.
+var _ xkms.FIDO2HIDDevice = (*nativeVirtualDeviceWrapper)(nil)
 
-// NativeVirtualDeviceEnumerator implements fido2.HIDDeviceEnumerator for NativeVirtualDevice.
+// NativeVirtualDeviceEnumerator implements xkms.FIDO2HIDDeviceEnumerator for NativeVirtualDevice.
 // It manages a registry of native virtual devices that can be enumerated and opened
 // like physical HID devices.
 type NativeVirtualDeviceEnumerator struct {
@@ -133,11 +133,11 @@ func (e *NativeVirtualDeviceEnumerator) UnregisterDevice(path string) error {
 // native virtual devices are returned.
 // Returns wrappers that don't close the underlying devices, allowing them
 // to be reused across multiple operations.
-func (e *NativeVirtualDeviceEnumerator) Enumerate(vendorID, productID uint16) ([]fido2.HIDDevice, error) {
+func (e *NativeVirtualDeviceEnumerator) Enumerate(vendorID, productID uint16) ([]xkms.FIDO2HIDDevice, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	var devices []fido2.HIDDevice
+	var devices []xkms.FIDO2HIDDevice
 	for _, device := range e.devices {
 		// Match all if both IDs are 0
 		if vendorID == 0 && productID == 0 {
@@ -164,7 +164,7 @@ func (e *NativeVirtualDeviceEnumerator) Enumerate(vendorID, productID uint16) ([
 // Open opens a native virtual device by its path.
 // Returns a wrapper that doesn't close the underlying device, allowing it
 // to be reused across multiple operations.
-func (e *NativeVirtualDeviceEnumerator) Open(path string) (fido2.HIDDevice, error) {
+func (e *NativeVirtualDeviceEnumerator) Open(path string) (xkms.FIDO2HIDDevice, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
@@ -207,5 +207,5 @@ func (e *NativeVirtualDeviceEnumerator) Close() error {
 	return nil
 }
 
-// Ensure NativeVirtualDeviceEnumerator implements fido2.HIDDeviceEnumerator.
-var _ fido2.HIDDeviceEnumerator = (*NativeVirtualDeviceEnumerator)(nil)
+// Ensure NativeVirtualDeviceEnumerator implements xkms.FIDO2HIDDeviceEnumerator.
+var _ xkms.FIDO2HIDDeviceEnumerator = (*NativeVirtualDeviceEnumerator)(nil)

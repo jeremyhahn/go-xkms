@@ -14,11 +14,11 @@
 package services
 
 import (
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"sync"
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,12 +28,12 @@ import (
 // provided (they will panic if called, but the accessor never calls TPM
 // methods directly -- it only returns the reference).
 type stubTPM struct {
-	tpm2pkg.TrustedPlatformModule
+	xkms.TrustedPlatformModule
 }
 
 func TestTPMAccessor_Acquire_Success(t *testing.T) {
 	stub := &stubTPM{}
-	acc := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return stub })
+	acc := NewTPMAccessor(func() xkms.TrustedPlatformModule { return stub })
 
 	tpm, err := acc.Acquire()
 	require.NoError(t, err)
@@ -50,7 +50,7 @@ func TestTPMAccessor_Acquire_NilFunc(t *testing.T) {
 }
 
 func TestTPMAccessor_Acquire_NilTPM(t *testing.T) {
-	acc := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil })
+	acc := NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil })
 
 	tpm, err := acc.Acquire()
 	assert.Nil(t, tpm)
@@ -59,7 +59,7 @@ func TestTPMAccessor_Acquire_NilTPM(t *testing.T) {
 
 func TestTPMAccessor_Shutdown_RejectsNew(t *testing.T) {
 	stub := &stubTPM{}
-	acc := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return stub })
+	acc := NewTPMAccessor(func() xkms.TrustedPlatformModule { return stub })
 
 	acc.Shutdown()
 
@@ -70,7 +70,7 @@ func TestTPMAccessor_Shutdown_RejectsNew(t *testing.T) {
 
 func TestTPMAccessor_Shutdown_WaitsForInflight(t *testing.T) {
 	stub := &stubTPM{}
-	acc := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return stub })
+	acc := NewTPMAccessor(func() xkms.TrustedPlatformModule { return stub })
 
 	// Acquire the TPM (simulates an in-flight operation).
 	tpm, err := acc.Acquire()
@@ -114,7 +114,7 @@ func TestTPMAccessor_Shutdown_WaitsForInflight(t *testing.T) {
 
 func TestTPMAccessor_Shutdown_Idempotent(t *testing.T) {
 	stub := &stubTPM{}
-	acc := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return stub })
+	acc := NewTPMAccessor(func() xkms.TrustedPlatformModule { return stub })
 
 	acc.Shutdown()
 	acc.Shutdown() // Must not panic or deadlock.
@@ -126,7 +126,7 @@ func TestTPMAccessor_Shutdown_Idempotent(t *testing.T) {
 
 func TestTPMAccessor_ConcurrentAcquire(t *testing.T) {
 	stub := &stubTPM{}
-	acc := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return stub })
+	acc := NewTPMAccessor(func() xkms.TrustedPlatformModule { return stub })
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -146,7 +146,7 @@ func TestTPMAccessor_ConcurrentAcquire(t *testing.T) {
 
 func TestTPMAccessor_ConcurrentAcquireDuringShutdown(t *testing.T) {
 	stub := &stubTPM{}
-	acc := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return stub })
+	acc := NewTPMAccessor(func() xkms.TrustedPlatformModule { return stub })
 
 	var wg sync.WaitGroup
 

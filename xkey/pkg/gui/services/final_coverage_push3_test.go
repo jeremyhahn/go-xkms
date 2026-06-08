@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -35,7 +36,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
@@ -86,8 +86,8 @@ func fcp5NewExplorer(t *testing.T, opts ...func(*ExplorerConfig)) *APIExplorerSe
 	cfg := &ExplorerConfig{
 		TokenStore:   tokenstore.NewMemoryTokenStore(),
 		Registry:     serverregistry.NewMemoryServerRegistry(),
-		TrustStore:   storage.NewMemory(),
-		HistoryStore: storage.NewMemory(),
+		TrustStore:   xkms.NewStorageMemory(),
+		HistoryStore: xkms.NewStorageMemory(),
 	}
 	for _, fn := range opts {
 		fn(cfg)
@@ -773,7 +773,7 @@ func TestFCP5_APIExplorer_Execute_ConnectionRefused(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFCP5_APIExplorer_RecordHistory(t *testing.T) {
-	histBackend := storage.NewMemory()
+	histBackend := xkms.NewStorageMemory()
 	explorer := fcp5NewExplorer(t, func(c *ExplorerConfig) {
 		c.HistoryStore = histBackend
 	})
@@ -967,7 +967,7 @@ func TestFCP5_NewAPIExplorerService_NilHistoryStore(t *testing.T) {
 	_, err := NewAPIExplorerService(&ExplorerConfig{
 		TokenStore: tokenstore.NewMemoryTokenStore(),
 		Registry:   serverregistry.NewMemoryServerRegistry(),
-		TrustStore: storage.NewMemory(),
+		TrustStore: xkms.NewStorageMemory(),
 	})
 	assert.ErrorIs(t, err, ErrExplorerNilHistoryStore)
 }

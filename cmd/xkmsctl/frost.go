@@ -28,10 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/frost"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -208,11 +205,11 @@ Examples:
 			keyID, algorithm, threshold, total, isDealerMode)
 
 		// Generate all packages using trusted dealer
-		td := frost.NewTrustedDealer()
-		frostConfig := frost.FrostConfig{
+		td := client.NewFrostTrustedDealer()
+		frostConfig := client.FrostConfig{
 			Threshold:     threshold,
 			Total:         total,
-			Algorithm:     types.FrostAlgorithm(algorithm),
+			Algorithm:     client.FrostAlgorithm(algorithm),
 			ParticipantID: 1, // Not used for generation
 		}
 
@@ -301,7 +298,7 @@ Examples:
 			}
 
 			// Find this participant's package
-			var myPackage *frost.KeyPackage
+			var myPackage *client.FrostKeyPackage
 			for _, pkg := range packages {
 				if pkg.ParticipantID == participantID {
 					myPackage = pkg
@@ -314,7 +311,7 @@ Examples:
 			}
 
 			// Create backend and store
-			be, err := createFrostBackend(cfg, types.FrostAlgorithm(algorithm), participantID, threshold, total, participants)
+			be, err := createFrostBackend(cfg, client.FrostAlgorithm(algorithm), participantID, threshold, total, participants)
 			if err != nil {
 				handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 				return
@@ -322,12 +319,12 @@ Examples:
 			defer func() { _ = be.Close() }()
 
 			// Generate key via backend (which handles storage)
-			attrs := &types.KeyAttributes{
+			attrs := &client.KeyAttributes{
 				CN:        keyID,
-				KeyType:   types.KeyTypeSigning,
-				StoreType: types.StoreFrost,
-				FrostAttributes: &types.FrostAttributes{
-					Algorithm:     types.FrostAlgorithm(algorithm),
+				KeyType:   client.KeyTypeSigning,
+				StoreType: client.StoreFrost,
+				FrostAttributes: &client.FrostAttributes{
+					Algorithm:     client.FrostAlgorithm(algorithm),
 					Threshold:     threshold,
 					Total:         total,
 					Participants:  participants,
@@ -341,7 +338,7 @@ Examples:
 				return
 			}
 
-			handle := key.(*frost.FrostKeyHandle)
+			handle := key.(*client.FrostKeyHandle)
 
 			result := map[string]interface{}{
 				"key_id":           keyID,
@@ -432,13 +429,13 @@ Example:
 			return
 		}
 
-		publicStorage, err := file.New(publicDir)
+		publicStorage, err := client.NewFileStorageBackend(publicDir)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create public storage: %w", err))
 			return
 		}
 
-		secretStorage, err := file.New(secretDir)
+		secretStorage, err := client.NewFileStorageBackend(secretDir)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create secret storage: %w", err))
 			return
@@ -447,28 +444,28 @@ Example:
 		secretBackend := newFileSecretBackend(secretStorage)
 
 		// Create KeyStore and store package
-		ks := frost.NewKeyStore(publicStorage, secretBackend)
+		ks := client.NewFrostKeyStore(publicStorage, secretBackend)
 
-		keyPackage := &frost.KeyPackage{
+		keyPackage := &client.FrostKeyPackage{
 			ParticipantID: pkg.ParticipantID,
-			SecretShare: &frost.SecretKeyShare{
+			SecretShare: &client.FrostSecretKeyShare{
 				Value: secretShare,
 			},
 			GroupPublicKey:     groupPublicKey,
 			VerificationShares: verificationShares,
 			MinSigners:         uint32(pkg.Threshold),
 			MaxSigners:         uint32(pkg.Total),
-			Algorithm:          types.FrostAlgorithm(pkg.Algorithm),
+			Algorithm:          client.FrostAlgorithm(pkg.Algorithm),
 		}
 
-		metadata := &frost.KeyMetadata{
+		metadata := &client.FrostKeyMetadata{
 			KeyID:             pkg.KeyID,
-			Algorithm:         types.FrostAlgorithm(pkg.Algorithm),
+			Algorithm:         client.FrostAlgorithm(pkg.Algorithm),
 			Threshold:         pkg.Threshold,
 			Total:             pkg.Total,
 			ParticipantID:     pkg.ParticipantID,
 			CreatedAt:         time.Now().Unix(),
-			SecretBackendType: types.BackendTypeSoftware,
+			SecretBackendType: client.BackendTypeSoftware,
 		}
 
 		if err := ks.StoreKeyPackage(pkg.KeyID, keyPackage, metadata); err != nil {
@@ -505,7 +502,7 @@ var frostListCmd = &cobra.Command{
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 		format, _ := cmd.Flags().GetString("format")
 
-		be, err := createFrostBackend(cfg, types.FrostAlgorithmEd25519, 1, 2, 3, nil)
+		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 			return
@@ -559,17 +556,17 @@ var frostInfoCmd = &cobra.Command{
 		printer := NewPrinter(cfg.OutputFormat, os.Stdout)
 		showPubKey, _ := cmd.Flags().GetBool("show-public-key")
 
-		be, err := createFrostBackend(cfg, types.FrostAlgorithmEd25519, 1, 2, 3, nil)
+		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 			return
 		}
 		defer func() { _ = be.Close() }()
 
-		attrs := &types.KeyAttributes{
+		attrs := &client.KeyAttributes{
 			CN:        keyID,
-			KeyType:   types.KeyTypeSigning,
-			StoreType: types.StoreFrost,
+			KeyType:   client.KeyTypeSigning,
+			StoreType: client.StoreFrost,
 		}
 
 		key, err := be.GetKey(attrs)
@@ -578,7 +575,7 @@ var frostInfoCmd = &cobra.Command{
 			return
 		}
 
-		handle := key.(*frost.FrostKeyHandle)
+		handle := key.(*client.FrostKeyHandle)
 
 		result := map[string]interface{}{
 			"key_id":         keyID,
@@ -618,17 +615,17 @@ var frostDeleteCmd = &cobra.Command{
 			}
 		}
 
-		be, err := createFrostBackend(cfg, types.FrostAlgorithmEd25519, 1, 2, 3, nil)
+		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 			return
 		}
 		defer func() { _ = be.Close() }()
 
-		attrs := &types.KeyAttributes{
+		attrs := &client.KeyAttributes{
 			CN:        keyID,
-			KeyType:   types.KeyTypeSigning,
-			StoreType: types.StoreFrost,
+			KeyType:   client.KeyTypeSigning,
+			StoreType: client.StoreFrost,
 		}
 
 		if err := be.DeleteKey(attrs); err != nil {
@@ -644,18 +641,18 @@ var frostDeleteCmd = &cobra.Command{
 
 // CommitmentFile represents the JSON structure for round1 output
 type CommitmentFile struct {
-	ParticipantID uint32                    `json:"participant_id"`
-	SessionID     string                    `json:"session_id"`
-	Commitments   *frost.SigningCommitments `json:"commitments"`
+	ParticipantID uint32                          `json:"participant_id"`
+	SessionID     string                          `json:"session_id"`
+	Commitments   *client.FrostSigningCommitments `json:"commitments"`
 	// Nonces are stored separately and kept secret
-	nonces *frost.SigningNonces
+	nonces *client.FrostSigningNonces
 }
 
 // NonceFile represents the internal nonce storage (kept secret)
 type NonceFile struct {
-	ParticipantID uint32               `json:"participant_id"`
-	SessionID     string               `json:"session_id"`
-	Nonces        *frost.SigningNonces `json:"nonces"`
+	ParticipantID uint32                     `json:"participant_id"`
+	SessionID     string                     `json:"session_id"`
+	Nonces        *client.FrostSigningNonces `json:"nonces"`
 }
 
 // frostRound1Cmd generates nonces for round 1
@@ -670,7 +667,7 @@ var frostRound1Cmd = &cobra.Command{
 		keyID, _ := cmd.Flags().GetString("key-id")
 		outputPath, _ := cmd.Flags().GetString("output")
 
-		be, err := createFrostBackend(cfg, types.FrostAlgorithmEd25519, 1, 2, 3, nil)
+		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 			return
@@ -755,7 +752,7 @@ var frostRound2Cmd = &cobra.Command{
 			return
 		}
 
-		be, err := createFrostBackend(cfg, types.FrostAlgorithmEd25519, 1, 2, 3, nil)
+		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 			return
@@ -795,7 +792,7 @@ var frostRound2Cmd = &cobra.Command{
 		}
 
 		// Build NoncePackage
-		noncePackage := &frost.NoncePackage{
+		noncePackage := &client.FrostNoncePackage{
 			ParticipantID: nonceFile.ParticipantID,
 			SessionID:     nonceFile.SessionID,
 			Nonces:        nonceFile.Nonces,
@@ -804,7 +801,7 @@ var frostRound2Cmd = &cobra.Command{
 
 		// Load all commitments
 		commitmentFiles := strings.Split(commitmentsStr, ",")
-		var commitments []*frost.Commitment
+		var commitments []*client.FrostCommitment
 		for _, cf := range commitmentFiles {
 			cf = strings.TrimSpace(cf)
 			data, err := os.ReadFile(cf)
@@ -819,7 +816,7 @@ var frostRound2Cmd = &cobra.Command{
 				return
 			}
 
-			commitments = append(commitments, &frost.Commitment{
+			commitments = append(commitments, &client.FrostCommitment{
 				ParticipantID: c.ParticipantID,
 				Commitments:   c.Commitments,
 			})
@@ -892,7 +889,7 @@ var frostAggregateCmd = &cobra.Command{
 			return
 		}
 
-		be, err := createFrostBackend(cfg, types.FrostAlgorithmEd25519, 1, 2, 3, nil)
+		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 			return
@@ -901,7 +898,7 @@ var frostAggregateCmd = &cobra.Command{
 
 		// Load commitments
 		commitmentFiles := strings.Split(commitmentsStr, ",")
-		var commitments []*frost.Commitment
+		var commitments []*client.FrostCommitment
 		for _, cf := range commitmentFiles {
 			cf = strings.TrimSpace(cf)
 			data, err := os.ReadFile(cf)
@@ -916,7 +913,7 @@ var frostAggregateCmd = &cobra.Command{
 				return
 			}
 
-			commitments = append(commitments, &frost.Commitment{
+			commitments = append(commitments, &client.FrostCommitment{
 				ParticipantID: c.ParticipantID,
 				Commitments:   c.Commitments,
 			})
@@ -924,7 +921,7 @@ var frostAggregateCmd = &cobra.Command{
 
 		// Load shares
 		shareFiles := strings.Split(sharesStr, ",")
-		var shares []*frost.SignatureShare
+		var shares []*client.FrostSignatureShare
 		for _, sf := range shareFiles {
 			sf = strings.TrimSpace(sf)
 			data, err := os.ReadFile(sf)
@@ -945,7 +942,7 @@ var frostAggregateCmd = &cobra.Command{
 				return
 			}
 
-			shares = append(shares, &frost.SignatureShare{
+			shares = append(shares, &client.FrostSignatureShare{
 				ParticipantID: s.ParticipantID,
 				SessionID:     s.SessionID,
 				Share:         shareBytes,
@@ -1042,7 +1039,7 @@ var frostVerifyCmd = &cobra.Command{
 			return
 		}
 
-		be, err := createFrostBackend(cfg, types.FrostAlgorithmEd25519, 1, 2, 3, nil)
+		be, err := createFrostBackend(cfg, client.FrostAlgorithmEd25519, 1, 2, 3, nil)
 		if err != nil {
 			handleError(fmt.Errorf("failed to create FROST backend: %w", err))
 			return
@@ -1106,14 +1103,14 @@ func truncateMessage(msg []byte, maxLen int) string {
 }
 
 // createFrostBackend creates a FROST backend with appropriate configuration
-func createFrostBackend(cfg *Config, algorithm types.FrostAlgorithm, participantID uint32, threshold, total int, participants []string) (*frost.FrostBackend, error) {
+func createFrostBackend(cfg *Config, algorithm client.FrostAlgorithm, participantID uint32, threshold, total int, participants []string) (*client.FrostBackend, error) {
 	// Create public storage
 	publicDir := filepath.Join(cfg.KeyDir, "frost", "public")
 	if err := os.MkdirAll(publicDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create public directory: %w", err)
 	}
 
-	publicStorage, err := file.New(publicDir)
+	publicStorage, err := client.NewFileStorageBackend(publicDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create public storage: %w", err)
 	}
@@ -1124,7 +1121,7 @@ func createFrostBackend(cfg *Config, algorithm types.FrostAlgorithm, participant
 		return nil, fmt.Errorf("failed to create secret directory: %w", err)
 	}
 
-	secretStorage, err := file.New(secretDir)
+	secretStorage, err := client.NewFileStorageBackend(secretDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create secret storage: %w", err)
 	}
@@ -1132,7 +1129,7 @@ func createFrostBackend(cfg *Config, algorithm types.FrostAlgorithm, participant
 	// Create a simple file-based secret backend
 	secretBackend := newFileSecretBackend(secretStorage)
 
-	frostConfig := &frost.Config{
+	frostConfig := &client.FrostBackendConfig{
 		PublicStorage:       publicStorage,
 		SecretBackend:       secretBackend,
 		Algorithm:           algorithm,
@@ -1143,24 +1140,24 @@ func createFrostBackend(cfg *Config, algorithm types.FrostAlgorithm, participant
 		EnableNonceTracking: true,
 	}
 
-	return frost.NewBackend(frostConfig)
+	return client.NewFrostBackend(frostConfig)
 }
 
 // fileSecretBackend is a simple file-based backend for storing FROST secrets
 type fileSecretBackend struct {
-	storage storage.Backend
+	storage client.StorageBackend
 }
 
-func newFileSecretBackend(storage storage.Backend) *fileSecretBackend {
+func newFileSecretBackend(storage client.StorageBackend) *fileSecretBackend {
 	return &fileSecretBackend{storage: storage}
 }
 
-func (b *fileSecretBackend) Type() types.BackendType {
-	return types.BackendTypeSoftware
+func (b *fileSecretBackend) Type() client.BackendType {
+	return client.BackendTypeSoftware
 }
 
-func (b *fileSecretBackend) Capabilities() types.Capabilities {
-	return types.Capabilities{
+func (b *fileSecretBackend) Capabilities() client.Capabilities {
+	return client.Capabilities{
 		Keys:           true,
 		Signing:        false,
 		Decryption:     false,
@@ -1171,7 +1168,7 @@ func (b *fileSecretBackend) Capabilities() types.Capabilities {
 	}
 }
 
-func (b *fileSecretBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *fileSecretBackend) GenerateKey(attrs *client.KeyAttributes) (crypto.PrivateKey, error) {
 	// For FROST, we store the secret share data from SealData
 	if attrs.SealData != nil {
 		data := attrs.SealData.Bytes()
@@ -1186,7 +1183,7 @@ func (b *fileSecretBackend) GenerateKey(attrs *types.KeyAttributes) (crypto.Priv
 	return nil, nil
 }
 
-func (b *fileSecretBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (b *fileSecretBackend) GetKey(attrs *client.KeyAttributes) (crypto.PrivateKey, error) {
 	// For FROST, we retrieve the secret share data
 	path := "frost/secrets/" + attrs.CN + ".secret"
 	data, err := b.storage.Get(context.Background(), path)
@@ -1199,24 +1196,24 @@ func (b *fileSecretBackend) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKe
 	return data, nil
 }
 
-func (b *fileSecretBackend) DeleteKey(attrs *types.KeyAttributes) error {
+func (b *fileSecretBackend) DeleteKey(attrs *client.KeyAttributes) error {
 	path := "frost/secrets/" + attrs.CN + ".secret"
 	return b.storage.Delete(context.Background(), path)
 }
 
-func (b *fileSecretBackend) ListKeys() ([]*types.KeyAttributes, error) {
+func (b *fileSecretBackend) ListKeys() ([]*client.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (b *fileSecretBackend) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (b *fileSecretBackend) Signer(attrs *client.KeyAttributes) (crypto.Signer, error) {
 	return nil, fmt.Errorf("not implemented for file secret backend")
 }
 
-func (b *fileSecretBackend) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (b *fileSecretBackend) Decrypter(attrs *client.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, fmt.Errorf("not implemented for file secret backend")
 }
 
-func (b *fileSecretBackend) RotateKey(attrs *types.KeyAttributes) error {
+func (b *fileSecretBackend) RotateKey(attrs *client.KeyAttributes) error {
 	return nil
 }
 
@@ -1225,6 +1222,6 @@ func (b *fileSecretBackend) Close() error {
 }
 
 // Storage returns the underlying storage backend
-func (b *fileSecretBackend) Storage() storage.Backend {
+func (b *fileSecretBackend) Storage() client.StorageBackend {
 	return b.storage
 }

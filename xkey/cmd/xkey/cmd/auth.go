@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"time"
 
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
@@ -482,7 +481,7 @@ func openServerRegistry(logger *slog.Logger) (serverregistry.ServerRegistry, fun
 		return nil, nil, errors.Join(ErrAuthStorageCreationFailed, err)
 	}
 
-	backend, err := filestorage.New(storagePath)
+	backend, err := xkms.NewFileStorageBackend(storagePath)
 	if err != nil {
 		return nil, nil, errors.Join(ErrAuthStorageCreationFailed, err)
 	}
@@ -511,7 +510,7 @@ func openTokenStore(logger *slog.Logger) (tokenstore.TokenStore, func(), error) 
 		return nil, nil, errors.Join(ErrAuthStorageCreationFailed, err)
 	}
 
-	backend, err := filestorage.New(storagePath)
+	backend, err := xkms.NewFileStorageBackend(storagePath)
 	if err != nil {
 		return nil, nil, errors.Join(ErrAuthStorageCreationFailed, err)
 	}

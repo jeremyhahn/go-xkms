@@ -30,7 +30,7 @@ func (s *Server) handleIssueEKCertificate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 
@@ -64,7 +64,7 @@ func (s *Server) handleIssueAKCertificate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 
@@ -98,7 +98,7 @@ func (s *Server) handleSignTCGCSR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 
@@ -133,7 +133,7 @@ func (s *Server) handleEnrollDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 

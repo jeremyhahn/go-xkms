@@ -26,8 +26,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -80,7 +78,7 @@ func defaultSealMockClient() *sealMockClient {
 			}, nil
 		},
 		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
-			if backend == string(types.BackendTypeTPM2) {
+			if backend == string(xkms.BackendTypeTPM2) {
 				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
 			}
 			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
@@ -114,7 +112,7 @@ func TestNewSealService(t *testing.T) {
 	require.NotNil(t, svc)
 	assert.NotNil(t, svc.log)
 	assert.Equal(t, "/tmp/test-seal", svc.storageDir)
-	assert.Equal(t, string(types.BackendTypeTPM2), svc.defaultBackend)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.defaultBackend)
 }
 
 func TestSealService_SetContext(t *testing.T) {
@@ -165,7 +163,7 @@ func TestSealService_getClient_ReturnsNil(t *testing.T) {
 
 func TestSealService_SetDefaultBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	assert.Equal(t, string(types.BackendTypeTPM2), svc.defaultBackend)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.defaultBackend)
 
 	svc.SetDefaultBackend("software")
 	assert.Equal(t, "software", svc.defaultBackend)
@@ -247,8 +245,8 @@ func TestSealService_MigrateFrom_Success(t *testing.T) {
 	blob1 := &sealedBlobStorage{
 		ID:    "blob-001",
 		Label: "legacy-secret-1",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data-1"),
 		},
 		CreatedAt: time.Now(),
@@ -256,8 +254,8 @@ func TestSealService_MigrateFrom_Success(t *testing.T) {
 	blob2 := &sealedBlobStorage{
 		ID:    "blob-002",
 		Label: "legacy-secret-2",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data-2"),
 		},
 		CreatedAt: time.Now(),
@@ -471,8 +469,8 @@ func TestSealService_ListBlobs_AfterSealing(t *testing.T) {
 	// Newest first.
 	assert.Equal(t, "second-secret", blobs[0].Label)
 	assert.Equal(t, "first-secret", blobs[1].Label)
-	assert.Equal(t, string(types.BackendTypeTPM2), blobs[0].BackendID)
-	assert.Equal(t, string(types.BackendTypeTPM2), blobs[1].BackendID)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), blobs[0].BackendID)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), blobs[1].BackendID)
 }
 
 func TestSealService_ListBlobs_SkipsNonJSON(t *testing.T) {
@@ -552,7 +550,7 @@ func TestSealService_SealData_Success(t *testing.T) {
 	assert.False(t, entry.PCRBound)
 	assert.NotEmpty(t, entry.CreatedAt)
 	assert.Equal(t, "none", entry.PolicyType)
-	assert.Equal(t, string(types.BackendTypeTPM2), entry.BackendID)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), entry.BackendID)
 
 	// Verify the file was created on disk.
 	path := svc.blobPath(entry.ID)
@@ -665,7 +663,7 @@ func TestSealService_SealData_WithExplicitBackend(t *testing.T) {
 	svc := newSealServiceWithMockClient(t, defaultSealMockClient())
 
 	req := validSealRequest()
-	req.Backend = string(types.BackendTypeTPM2)
+	req.Backend = string(xkms.BackendTypeTPM2)
 
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
@@ -722,7 +720,7 @@ func TestSealService_SealData_PolicyTypePlatformPolicy_Success(t *testing.T) {
 	policyMock := defaultPolicyMock()
 	policyPath := filepath.Join(t.TempDir(), "platform.policy")
 	policySvc := NewPlatformPolicyService(policyPath)
-	policySvc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return policyMock }))
+	policySvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return policyMock }))
 
 	_, err := policySvc.CreatePolicy([]int{0, 7}, "sha256")
 	require.NoError(t, err)
@@ -854,7 +852,7 @@ func TestSealService_SealData_SDKRequestReceivesCorrectParams(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, capturedReq)
 
-	assert.Equal(t, string(types.BackendTypeTPM2), capturedReq.Backend)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), capturedReq.Backend)
 	assert.Equal(t, []byte("my-data"), capturedReq.Data)
 	assert.Equal(t, "sha256", capturedReq.PCRHashAlg)
 	assert.Contains(t, capturedReq.PCRs, 0)
@@ -1005,7 +1003,7 @@ func TestSealService_UnsealData_BackwardCompatEmptyBackend(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "legacy-blob",
 		Label: "legacy",
-		SealedData: &types.SealedData{
+		SealedData: &xkms.SealedData{
 			Backend:    "", // empty = pre-Phase 3
 			Ciphertext: []byte("old-data"),
 			TPMPublic:  []byte("pub"),
@@ -1171,8 +1169,8 @@ func TestSealService_saveBlob_And_loadBlob(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-blob-001",
 		Label: "test-label",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("sealed-data"),
 			TPMPublic:  []byte("public"),
 			TPMPrivate: []byte("private"),
@@ -1233,7 +1231,7 @@ func TestSealService_AvailableSealers_OnlyTPM(t *testing.T) {
 	require.Len(t, infos, 1)
 
 	tpmInfo := infos[0]
-	assert.Equal(t, string(types.BackendTypeTPM2), tpmInfo.ID)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), tpmInfo.ID)
 	assert.True(t, tpmInfo.Available)
 	assert.True(t, tpmInfo.IsDefault)
 	assert.True(t, tpmInfo.HardwareBacked)
@@ -1272,7 +1270,7 @@ func TestSealService_BestSealer_ReturnsHighestAvailable(t *testing.T) {
 	best := svc.BestSealer()
 	require.NotNil(t, best)
 	assert.True(t, best.Available)
-	assert.Equal(t, string(types.BackendTypeTPM2), best.ID)
+	assert.Equal(t, string(xkms.BackendTypeTPM2), best.ID)
 }
 
 func TestSealService_BestSealer_NoneAvailable(t *testing.T) {
@@ -1294,7 +1292,7 @@ func TestSealService_AutoSelectDefault_SelectsHighestLevel(t *testing.T) {
 	mc := &sealMockClient{
 		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
 			// Only software is available.
-			if backend == string(types.BackendTypeSoftware) {
+			if backend == string(xkms.BackendTypeSoftware) {
 				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
 			}
 			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
@@ -1302,7 +1300,7 @@ func TestSealService_AutoSelectDefault_SelectsHighestLevel(t *testing.T) {
 	}
 	svc := newSealServiceWithMockClient(t, mc)
 	svc.autoSelectDefault()
-	assert.Equal(t, string(types.BackendTypeSoftware), svc.DefaultBackend())
+	assert.Equal(t, string(xkms.BackendTypeSoftware), svc.DefaultBackend())
 }
 
 func TestSealService_AutoSelectDefault_TPMPreferred(t *testing.T) {
@@ -1313,7 +1311,7 @@ func TestSealService_AutoSelectDefault_TPMPreferred(t *testing.T) {
 	}
 	svc := newSealServiceWithMockClient(t, mc)
 	svc.autoSelectDefault()
-	assert.Equal(t, string(types.BackendTypeTPM2), svc.DefaultBackend())
+	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.DefaultBackend())
 }
 
 func TestSealService_AutoSelectDefault_NoClient(t *testing.T) {
@@ -1321,7 +1319,7 @@ func TestSealService_AutoSelectDefault_NoClient(t *testing.T) {
 	// default is tpm2.
 	svc.autoSelectDefault()
 	// Should not change since there's no client.
-	assert.Equal(t, string(types.BackendTypeTPM2), svc.DefaultBackend())
+	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.DefaultBackend())
 }
 
 // ---------------------------------------------------------------------------

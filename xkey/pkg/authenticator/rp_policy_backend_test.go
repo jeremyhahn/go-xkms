@@ -18,15 +18,15 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 )
 
 // createRPPolicyStore creates a BackendRPPolicyStore backed by an in-memory
-// storage.Backend, suitable for unit testing.
+// xkms.StorageBackend, suitable for unit testing.
 func createRPPolicyStore(t *testing.T) *BackendRPPolicyStore {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendRPPolicyStore(backend, "test/rp-policies/")
 	require.NoError(t, err)
 	return store
@@ -611,7 +611,7 @@ func TestBackendRPPolicyStoreClose(t *testing.T) {
 
 	t.Run("close does not close underlying backend", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 
 		store, err := NewBackendRPPolicyStore(backend, "test/rp-policies/")
 		require.NoError(t, err)
@@ -649,7 +649,7 @@ func TestBackendRPPolicyStoreDefaultPrefix(t *testing.T) {
 
 	t.Run("empty prefix uses default", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		store, err := NewBackendRPPolicyStore(backend, "")
@@ -661,7 +661,7 @@ func TestBackendRPPolicyStoreDefaultPrefix(t *testing.T) {
 
 	t.Run("default prefix is used in storage keys", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		store, err := NewBackendRPPolicyStore(backend, "")
@@ -681,7 +681,7 @@ func TestBackendRPPolicyStoreCustomPrefix(t *testing.T) {
 
 	t.Run("custom prefix is used", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		store, err := NewBackendRPPolicyStore(backend, "myapp/policies/")
@@ -693,7 +693,7 @@ func TestBackendRPPolicyStoreCustomPrefix(t *testing.T) {
 
 	t.Run("custom prefix without trailing slash gets one appended", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		store, err := NewBackendRPPolicyStore(backend, "myapp/policies")
@@ -705,7 +705,7 @@ func TestBackendRPPolicyStoreCustomPrefix(t *testing.T) {
 
 	t.Run("custom prefix isolates data from default prefix", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		storeA, err := NewBackendRPPolicyStore(backend, "namespace-a/")
@@ -817,7 +817,7 @@ func TestBackendRPPolicyStorePersistence(t *testing.T) {
 
 	t.Run("policies persist across store instances", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		// First instance stores policies

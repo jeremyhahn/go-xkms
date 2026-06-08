@@ -22,7 +22,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
@@ -35,7 +35,7 @@ const (
 	envSocketPath = "XKEY_IPC_SOCKET"
 )
 
-// IPCTransport implements module.PKCS11Transport by communicating with
+// IPCTransport implements xkms.PKCS11Transport by communicating with
 // a running xkey instance over a Unix domain socket. If xkey is not
 // running, operations return connection errors.
 type IPCTransport struct {
@@ -44,7 +44,7 @@ type IPCTransport struct {
 }
 
 // Compile-time interface compliance check.
-var _ module.PKCS11Transport = (*IPCTransport)(nil)
+var _ xkms.PKCS11Transport = (*IPCTransport)(nil)
 
 // NewIPCTransport creates a new IPC transport. The socketPath can be
 // empty, in which case XKEY_IPC_SOCKET env var is checked, then the

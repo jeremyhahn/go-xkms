@@ -15,76 +15,114 @@ package rest
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func newTestRBACMiddleware(t *testing.T) (*RBACMiddleware, *keyrbac.MemoryRBACAdapter) {
+// fakeRBACClient is a stand-in for the qrdb RBAC client. It admits a request
+// when the identity holds one of the allowRoles and the requested
+// resource:action is in the allow set (or the allow set is nil, meaning the
+// role may do anything). It mirrors the qrdb authorizer's contract: nil on
+// allow, a non-nil error on deny.
+type fakeRBACClient struct {
+	// allowRoles maps a role name to the set of "resource:action" it may
+	// perform. A nil set grants every action to that role.
+	allowRoles map[string]map[string]bool
+}
+
+var errFakeDenied = errors.New("fake: permission denied")
+
+func (f *fakeRBACClient) Authorize(_ context.Context, id *qrdbtransport.Identity, resource, action string) error {
+	if id == nil {
+		return errFakeDenied
+	}
+	want := resource + ":" + action
+	for _, role := range id.Roles {
+		set, ok := f.allowRoles[role]
+		if !ok {
+			continue
+		}
+		if set == nil || set[want] {
+			return nil
+		}
+	}
+	return errFakeDenied
+}
+
+func (f *fakeRBACClient) ListPermissions(_ context.Context, _ *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
+	return nil, nil
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// newTestRBACMiddleware builds a middleware whose Authorizer admits the admin
+// role for everything and grants the user role only key crypto + read.
+func newTestRBACMiddleware(t *testing.T) *RBACMiddleware {
 	t.Helper()
-	adapter := keyrbac.NewMemoryRBACAdapter(true)
-	// Create a discard logger for tests
-	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
-	middleware := NewRBACMiddleware(&RBACConfig{
-		Adapter:   adapter,
-		Logger:    discardLogger,
-		SkipPaths: map[string]bool{"/health": true},
+	client := &fakeRBACClient{
+		allowRoles: map[string]map[string]bool{
+			"admin": nil, // admin may do anything
+			"user": {
+				"keys:sign":    true,
+				"keys:verify":  true,
+				"keys:encrypt": true,
+				"keys:decrypt": true,
+				"keys:get":     true,
+			},
+		},
+	}
+	return NewRBACMiddleware(&RBACConfig{
+		Authorizer: auth.NewAuthorizer(client),
+		Logger:     discardLogger(),
+		SkipPaths:  map[string]bool{"/health": true},
 	})
+}
 
-	return middleware, adapter
+func okHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
 }
 
 func TestNewRBACMiddleware(t *testing.T) {
-	adapter := keyrbac.NewMemoryRBACAdapter(true)
-	discardLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
-
 	t.Run("creates middleware with config", func(t *testing.T) {
-		middleware := NewRBACMiddleware(&RBACConfig{
-			Adapter:   adapter,
-			Logger:    discardLogger,
-			SkipPaths: map[string]bool{"/health": true},
+		m := NewRBACMiddleware(&RBACConfig{
+			Authorizer: auth.NewAuthorizer(&fakeRBACClient{}),
+			Logger:     discardLogger(),
+			SkipPaths:  map[string]bool{"/health": true},
 		})
-		assert.NotNil(t, middleware)
+		assert.NotNil(t, m)
 	})
 
 	t.Run("initializes empty SkipPaths if nil", func(t *testing.T) {
-		middleware := NewRBACMiddleware(&RBACConfig{
-			Adapter:   adapter,
-			Logger:    discardLogger,
-			SkipPaths: nil,
+		m := NewRBACMiddleware(&RBACConfig{
+			Authorizer: auth.NewAuthorizer(&fakeRBACClient{}),
+			Logger:     discardLogger(),
+			SkipPaths:  nil,
 		})
-		assert.NotNil(t, middleware.skipPaths)
+		assert.NotNil(t, m.skipPaths)
 	})
 }
 
 func TestRBACMiddleware_RequirePermission(t *testing.T) {
-	middleware, adapter := newTestRBACMiddleware(t)
-	ctx := context.Background()
-
-	// Create test users
-	_ = adapter.AssignRole(ctx, "admin@example.com", keyrbac.RoleAdmin)
-	_ = adapter.AssignRole(ctx, "user@example.com", keyrbac.RoleUser)
-
-	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
+	m := newTestRBACMiddleware(t)
 
 	t.Run("grants access with valid permission", func(t *testing.T) {
-		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionCreate)(nextHandler)
-
+		handler := m.RequirePermission(auth.ResourceKeys, auth.ActionCreate)(okHandler())
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", nil)
-		// Add identity to context
-		identity := &auth.Identity{Subject: "admin@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+		id := &auth.Identity{Subject: "admin@example.com", Roles: []string{"admin"}}
+		req = req.WithContext(auth.WithIdentity(req.Context(), id))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -94,12 +132,11 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 	})
 
 	t.Run("denies access without permission", func(t *testing.T) {
-		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionDelete)(nextHandler)
-
+		// user role cannot delete keys.
+		handler := m.RequirePermission(auth.ResourceKeys, auth.ActionDelete)(okHandler())
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/keys/123", nil)
-		// User role cannot delete keys
-		identity := &auth.Identity{Subject: "user@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+		id := &auth.Identity{Subject: "user@example.com", Roles: []string{"user"}}
+		req = req.WithContext(auth.WithIdentity(req.Context(), id))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -108,10 +145,8 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 	})
 
 	t.Run("returns 401 without identity", func(t *testing.T) {
-		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionRead)(nextHandler)
-
+		handler := m.RequirePermission(auth.ResourceKeys, auth.ActionGet)(okHandler())
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
-		// No identity in context
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -119,39 +154,44 @@ func TestRBACMiddleware_RequirePermission(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, w.Code)
 	})
 
-	t.Run("returns 403 for nonexistent user", func(t *testing.T) {
-		handler := middleware.RequirePermission(keyrbac.ResourceKeys, keyrbac.ActionRead)(nextHandler)
-
+	t.Run("returns 403 for identity without roles", func(t *testing.T) {
+		handler := m.RequirePermission(auth.ResourceKeys, auth.ActionGet)(okHandler())
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys", nil)
-		identity := &auth.Identity{Subject: "nonexistent@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+		id := &auth.Identity{Subject: "nobody@example.com"}
+		req = req.WithContext(auth.WithIdentity(req.Context(), id))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
 	})
+
+	t.Run("allows everything when authorization disabled", func(t *testing.T) {
+		// A nil RBAC client disables enforcement (allow all).
+		disabled := NewRBACMiddleware(&RBACConfig{
+			Authorizer: auth.NewAuthorizer(nil),
+			Logger:     discardLogger(),
+		})
+		handler := disabled.RequirePermission(auth.ResourceKeys, auth.ActionDelete)(okHandler())
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1/keys/1", nil)
+		id := &auth.Identity{Subject: "user@example.com", Roles: []string{"user"}}
+		req = req.WithContext(auth.WithIdentity(req.Context(), id))
+
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }
 
 func TestRBACMiddleware_RequireRole(t *testing.T) {
-	middleware, adapter := newTestRBACMiddleware(t)
-	ctx := context.Background()
-
-	// Create test users
-	_ = adapter.AssignRole(ctx, "admin@example.com", keyrbac.RoleAdmin)
-	_ = adapter.AssignRole(ctx, "operator@example.com", keyrbac.RoleOperator)
-
-	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
+	m := newTestRBACMiddleware(t)
 
 	t.Run("grants access with correct role", func(t *testing.T) {
-		handler := middleware.RequireRole(keyrbac.RoleAdmin)(nextHandler)
-
+		handler := m.RequireRole("admin")(okHandler())
 		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
-		identity := &auth.Identity{Subject: "admin@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+		id := &auth.Identity{Subject: "admin@example.com", Roles: []string{"admin"}}
+		req = req.WithContext(auth.WithIdentity(req.Context(), id))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -160,11 +200,10 @@ func TestRBACMiddleware_RequireRole(t *testing.T) {
 	})
 
 	t.Run("denies access with wrong role", func(t *testing.T) {
-		handler := middleware.RequireRole(keyrbac.RoleAdmin)(nextHandler)
-
+		handler := m.RequireRole("admin")(okHandler())
 		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
-		identity := &auth.Identity{Subject: "operator@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+		id := &auth.Identity{Subject: "operator@example.com", Roles: []string{"operator"}}
+		req = req.WithContext(auth.WithIdentity(req.Context(), id))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -173,8 +212,7 @@ func TestRBACMiddleware_RequireRole(t *testing.T) {
 	})
 
 	t.Run("returns 401 without identity", func(t *testing.T) {
-		handler := middleware.RequireRole(keyrbac.RoleAdmin)(nextHandler)
-
+		handler := m.RequireRole("admin")(okHandler())
 		req := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
 
 		w := httptest.NewRecorder()
@@ -185,47 +223,31 @@ func TestRBACMiddleware_RequireRole(t *testing.T) {
 }
 
 func TestRBACMiddleware_RequireAnyRole(t *testing.T) {
-	middleware, adapter := newTestRBACMiddleware(t)
-	ctx := context.Background()
-
-	// Create test users
-	_ = adapter.AssignRole(ctx, "admin@example.com", keyrbac.RoleAdmin)
-	_ = adapter.AssignRole(ctx, "operator@example.com", keyrbac.RoleOperator)
-	_ = adapter.AssignRole(ctx, "user@example.com", keyrbac.RoleUser)
-
-	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
+	m := newTestRBACMiddleware(t)
 
 	t.Run("grants access with any matching role", func(t *testing.T) {
-		handler := middleware.RequireAnyRole(keyrbac.RoleAdmin, keyrbac.RoleOperator)(nextHandler)
+		handler := m.RequireAnyRole("admin", "operator")(okHandler())
 
-		// Admin has access
 		req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
-		identity := &auth.Identity{Subject: "admin@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
-
+		req = req.WithContext(auth.WithIdentity(req.Context(),
+			&auth.Identity{Subject: "admin@example.com", Roles: []string{"admin"}}))
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		// Operator also has access
 		req = httptest.NewRequest(http.MethodGet, "/api/keys", nil)
-		identity = &auth.Identity{Subject: "operator@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
-
+		req = req.WithContext(auth.WithIdentity(req.Context(),
+			&auth.Identity{Subject: "operator@example.com", Roles: []string{"operator"}}))
 		w = httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("denies access without matching role", func(t *testing.T) {
-		handler := middleware.RequireAnyRole(keyrbac.RoleAdmin, keyrbac.RoleOperator)(nextHandler)
-
+		handler := m.RequireAnyRole("admin", "operator")(okHandler())
 		req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
-		identity := &auth.Identity{Subject: "user@example.com"}
-		req = req.WithContext(auth.WithIdentity(req.Context(), identity))
+		req = req.WithContext(auth.WithIdentity(req.Context(),
+			&auth.Identity{Subject: "user@example.com", Roles: []string{"user"}}))
 
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -234,8 +256,7 @@ func TestRBACMiddleware_RequireAnyRole(t *testing.T) {
 	})
 
 	t.Run("returns 401 without identity", func(t *testing.T) {
-		handler := middleware.RequireAnyRole(keyrbac.RoleAdmin, keyrbac.RoleOperator)(nextHandler)
-
+		handler := m.RequireAnyRole("admin", "operator")(okHandler())
 		req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
 
 		w := httptest.NewRecorder()
@@ -247,56 +268,11 @@ func TestRBACMiddleware_RequireAnyRole(t *testing.T) {
 
 func TestUserRoleContext(t *testing.T) {
 	t.Run("stores and retrieves role", func(t *testing.T) {
-		ctx := context.Background()
-		ctx = WithUserRole(ctx, "admin")
-
-		role := GetUserRole(ctx)
-		assert.Equal(t, "admin", role)
+		ctx := WithUserRole(context.Background(), "admin")
+		assert.Equal(t, "admin", GetUserRole(ctx))
 	})
 
 	t.Run("returns empty string for missing role", func(t *testing.T) {
-		ctx := context.Background()
-		role := GetUserRole(ctx)
-		assert.Equal(t, "", role)
+		assert.Equal(t, "", GetUserRole(context.Background()))
 	})
-}
-
-func TestPermissionConstants(t *testing.T) {
-	// Verify permission constants are correctly defined
-	tests := []struct {
-		name       string
-		permission keyrbac.Permission
-		resource   string
-		action     string
-	}{
-		{"PermissionKeysCreate", PermissionKeysCreate, keyrbac.ResourceKeys, keyrbac.ActionCreate},
-		{"PermissionKeysRead", PermissionKeysRead, keyrbac.ResourceKeys, keyrbac.ActionRead},
-		{"PermissionKeysList", PermissionKeysList, keyrbac.ResourceKeys, keyrbac.ActionList},
-		{"PermissionKeysDelete", PermissionKeysDelete, keyrbac.ResourceKeys, keyrbac.ActionDelete},
-		{"PermissionKeysSign", PermissionKeysSign, keyrbac.ResourceKeys, keyrbac.ActionSign},
-		{"PermissionKeysVerify", PermissionKeysVerify, keyrbac.ResourceKeys, keyrbac.ActionVerify},
-		{"PermissionKeysEncrypt", PermissionKeysEncrypt, keyrbac.ResourceKeys, keyrbac.ActionEncrypt},
-		{"PermissionKeysDecrypt", PermissionKeysDecrypt, keyrbac.ResourceKeys, keyrbac.ActionDecrypt},
-		{"PermissionKeysRotate", PermissionKeysRotate, keyrbac.ResourceKeys, keyrbac.ActionRotate},
-		{"PermissionKeysImport", PermissionKeysImport, keyrbac.ResourceKeys, keyrbac.ActionImport},
-		{"PermissionKeysExport", PermissionKeysExport, keyrbac.ResourceKeys, keyrbac.ActionExport},
-		{"PermissionCertsCreate", PermissionCertsCreate, keyrbac.ResourceCertificates, keyrbac.ActionCreate},
-		{"PermissionCertsRead", PermissionCertsRead, keyrbac.ResourceCertificates, keyrbac.ActionRead},
-		{"PermissionCertsList", PermissionCertsList, keyrbac.ResourceCertificates, keyrbac.ActionList},
-		{"PermissionCertsDelete", PermissionCertsDelete, keyrbac.ResourceCertificates, keyrbac.ActionDelete},
-		{"PermissionUsersCreate", PermissionUsersCreate, keyrbac.ResourceUsers, keyrbac.ActionCreate},
-		{"PermissionUsersRead", PermissionUsersRead, keyrbac.ResourceUsers, keyrbac.ActionRead},
-		{"PermissionUsersList", PermissionUsersList, keyrbac.ResourceUsers, keyrbac.ActionList},
-		{"PermissionUsersUpdate", PermissionUsersUpdate, keyrbac.ResourceUsers, keyrbac.ActionUpdate},
-		{"PermissionUsersDelete", PermissionUsersDelete, keyrbac.ResourceUsers, keyrbac.ActionDelete},
-		{"PermissionBackendsList", PermissionBackendsList, keyrbac.ResourceBackends, keyrbac.ActionList},
-		{"PermissionBackendsRead", PermissionBackendsRead, keyrbac.ResourceBackends, keyrbac.ActionRead},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.resource, tt.permission.Resource)
-			require.Equal(t, tt.action, tt.permission.Action)
-		})
-	}
 }

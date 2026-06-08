@@ -27,11 +27,9 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -79,9 +77,22 @@ type XKMSService struct {
 	platformStore     seal.PlatformStore
 	policyManager     *policy.Manager
 	webauthnService   *webauthn.Service
-	custodianService  *custodian.Service
-	shareStore        sharestore.ShareStore
+	custodians        qrdbtransport.CustodianGroupClient
+	shares            qrdbtransport.ShareClient
 	credentialService *credentialspkg.Service
+
+	// cluster reads Raft shard leadership and membership from the embedded
+	// go-qrdb node's cluster client. It is nil when the node runs standalone
+	// (non-clustered), in which case the servicer reports single-node status.
+	cluster ClusterReader
+
+	// clusterShardID is the Raft shard (group) identifier the servicer reports
+	// on. It is sourced from xkms Config.Cluster.ShardID (default 1).
+	clusterShardID uint64
+
+	// clusterNodeID is this node's Raft replica identifier, surfaced in the
+	// cluster status DTO. Zero when standalone.
+	clusterNodeID uint64
 
 	// passwordStoreManager manages per-tenant password stores with
 	// session lock state and TenantBarrier-backed encryption.
@@ -173,11 +184,31 @@ func (s *XKMSService) SetPolicyManager(p *policy.Manager) { s.policyManager = p 
 // SetWebAuthn sets the WebAuthn/FIDO2 subsystem.
 func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService = w }
 
-// SetCustodianService sets the custodian group management subsystem.
-func (s *XKMSService) SetCustodianService(c *custodian.Service) { s.custodianService = c }
+// SetCustodianClient wires the embedded qrdb node's custodian group client
+// into the service. xkms presents its own custodian API on top of it; qrdb is
+// an internal implementation detail.
+func (s *XKMSService) SetCustodianClient(c qrdbtransport.CustodianGroupClient) {
+	s.custodians = c
+}
 
-// SetShareStore sets the Shamir share store subsystem.
-func (s *XKMSService) SetShareStore(ss sharestore.ShareStore) { s.shareStore = ss }
+// SetShareClient wires the embedded qrdb node's share client into the service.
+// xkms presents its own Shamir share API on top of it; qrdb is an internal
+// implementation detail.
+func (s *XKMSService) SetShareClient(c qrdbtransport.ShareClient) {
+	s.shares = c
+}
+
+// SetClusterClient wires the embedded qrdb node's cluster client into the
+// service along with the Raft shard and this node's replica identifier. xkms
+// presents its own read-only cluster API on top of it; qrdb is an internal
+// implementation detail. Passing a nil reader configures the service for a
+// standalone (non-clustered) node, in which case ClusterStatus reports a
+// single-node, non-clustered status and ClusterMembers returns an empty set.
+func (s *XKMSService) SetClusterClient(c ClusterReader, shardID, nodeID uint64) {
+	s.cluster = c
+	s.clusterShardID = shardID
+	s.clusterNodeID = nodeID
+}
 
 // SetBarrierRegistry sets the barrier registry for multi-tenant barrier management.
 func (s *XKMSService) SetBarrierRegistry(r *seal.BarrierRegistry) { s.barrierRegistry = r }

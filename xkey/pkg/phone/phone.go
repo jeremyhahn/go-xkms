@@ -35,7 +35,7 @@ import (
 	"time"
 
 	"github.com/flynn/noise"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -43,7 +43,7 @@ import (
 
 // Backend type constant.
 const (
-	BackendTypePhone types.BackendType = types.BackendTypePhone
+	BackendTypePhone xkms.BackendType = xkms.BackendTypePhone
 )
 
 // BLE configuration constants.
@@ -153,7 +153,7 @@ func (h *phoneKeyHandle) Algorithm() int {
 }
 
 // BackendID returns the identifier of the backend that manages this key.
-func (h *phoneKeyHandle) BackendID() types.BackendType {
+func (h *phoneKeyHandle) BackendID() xkms.BackendType {
 	return BackendTypePhone
 }
 
@@ -281,7 +281,7 @@ func newPhoneKeyBackend(cfg *PhoneKeyBackendConfig, transport Transport) (*Phone
 }
 
 // Type returns the backend type.
-func (b *PhoneKeyBackend) Type() types.BackendType {
+func (b *PhoneKeyBackend) Type() xkms.BackendType {
 	return BackendTypePhone
 }
 

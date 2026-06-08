@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ErrMigration is returned when migration of an individual key fails.
@@ -38,13 +38,13 @@ func (e ErrMigration) Unwrap() error {
 }
 
 // MigrateFromBackend scans old prefix-keyed token entries from a
-// storage.Backend and saves them into the DAOStore. After each entry
+// xkms.StorageBackend and saves them into the DAOStore. After each entry
 // is migrated successfully, the old key is deleted. Entries that fail
 // to unmarshal are skipped and reported via ErrMigration (collected).
 //
 // The prefix should match the original BackendTokenStore prefix
 // (e.g., "oidc/tokens/").
-func MigrateFromBackend(ctx context.Context, backend storage.Backend, daoStore *DAOStore, prefix string) []error {
+func MigrateFromBackend(ctx context.Context, backend xkms.StorageBackend, daoStore *DAOStore, prefix string) []error {
 	if backend == nil || daoStore == nil {
 		return nil
 	}

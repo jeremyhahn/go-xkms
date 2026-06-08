@@ -17,15 +17,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
@@ -1206,13 +1204,13 @@ func TestSetupCov_TPMSealedPasswordProtection(t *testing.T) {
 	// Create a SealService for the PasswordProtectionService.
 	ppSealSvc := NewSealService(filepath.Join(tmpDir, "pp-seals"))
 	wireSealMockClient(ppSealSvc, ppMockTPM)
-	ppSealSvc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	ppSealSvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return ppMockTPM
 	}))
 	ppSealSvc.SetContext(context.Background())
 
 	// Create the PasswordProtectionService backed by the working SealService.
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	staticPWSvc := NewStaticPasswordService(store)
 	staticPWSvc.SetContext(context.Background())
@@ -1259,7 +1257,7 @@ func TestSetupCov_TPMSealedUserPinSealSuccess(t *testing.T) {
 	// Shared SealService for both PP and wizard.
 	sealSvc := NewSealService(filepath.Join(tmpDir, "seals"))
 	wireSealMockClient(sealSvc, mockTPMInst)
-	sealSvc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	sealSvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return mockTPMInst
 	}))
 	sealSvc.SetContext(context.Background())
@@ -1268,9 +1266,9 @@ func TestSetupCov_TPMSealedUserPinSealSuccess(t *testing.T) {
 	policyPath := filepath.Join(tmpDir, "platform_policy.json")
 	policyMock := &mockTPM{
 		device: "/dev/tpmrm0",
-		pcrBanks: []tpm2pkg.PCRBank{{
+		pcrBanks: []xkms.PCRBank{{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA}},
 				{ID: 7, Value: []byte{0xBB}},
 			},
@@ -1278,7 +1276,7 @@ func TestSetupCov_TPMSealedUserPinSealSuccess(t *testing.T) {
 	}
 	ppPolicySvc := NewPlatformPolicyService(policyPath)
 	ppPolicySvc.SetContext(context.Background())
-	ppPolicySvc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	ppPolicySvc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return policyMock
 	}))
 	_, err := ppPolicySvc.CreatePolicy([]int{0, 7}, "sha256")
@@ -1286,7 +1284,7 @@ func TestSetupCov_TPMSealedUserPinSealSuccess(t *testing.T) {
 	sealSvc.SetPlatformPolicyService(ppPolicySvc)
 
 	// PasswordProtectionService.
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	staticPWSvc := NewStaticPasswordService(store)
 	staticPWSvc.SetContext(context.Background())
@@ -1492,16 +1490,16 @@ type fscSealer struct {
 }
 
 func (s *fscSealer) CanSeal() bool { return s.canSeal }
-func (s *fscSealer) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (s *fscSealer) Seal(_ context.Context, data []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	if s.sealErr != nil {
 		return nil, s.sealErr
 	}
-	return &types.SealedData{
-		Backend:    types.BackendTypeTPM2,
+	return &xkms.SealedData{
+		Backend:    xkms.BackendTypeTPM2,
 		Ciphertext: data,
 	}, nil
 }
-func (s *fscSealer) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (s *fscSealer) Unseal(_ context.Context, sealed *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	return sealed.Ciphertext, nil
 }
 

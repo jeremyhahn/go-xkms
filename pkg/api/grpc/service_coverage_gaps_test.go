@@ -31,7 +31,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -3000,17 +2999,10 @@ func TestUnseal_NoBackendsAvailable(t *testing.T) {
 
 // ===================== Authorization deny tests for barrier shamir methods =====================
 
-// denyAllAuthorizer always denies authorization.
-type denyAllAuthorizer struct{}
-
-func (d *denyAllAuthorizer) Authorize(_ context.Context, _ *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
-	return &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied"}, nil
-}
-
 func TestAuthzDeny_BarrierShamirMethods(t *testing.T) {
 	setupBarrier(t)
-	svc := NewService(&denyAllAuthorizer{}, nil)
-	ctx := context.Background()
+	svc := newDeniedService()
+	ctx := deniedCtx()
 
 	tests := []struct {
 		name string
@@ -3065,8 +3057,8 @@ func TestAuthzDeny_BarrierShamirMethods(t *testing.T) {
 
 func TestAuthzDeny_PINMethods(t *testing.T) {
 	setupPINManager(t)
-	svc := NewService(&denyAllAuthorizer{}, nil)
-	ctx := context.Background()
+	svc := newDeniedService()
+	ctx := deniedCtx()
 
 	tests := []struct {
 		name string

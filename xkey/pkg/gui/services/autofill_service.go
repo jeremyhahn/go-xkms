@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -28,7 +29,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -99,21 +99,21 @@ type EnterpriseExtensionPolicy struct {
 // rate limiting, and audit logging.
 // PolicyPersistFunc is called after policy changes to persist the updated
 // policy to the config file. It receives the full current policy.
-type PolicyPersistFunc func(policy *autofill.AutoFillPolicy) error
+type PolicyPersistFunc func(policy *xkms.AutoFillPolicy) error
 
 // AutoFillService struct fields.
 type AutoFillService struct {
 	ctx              context.Context
 	log              *slog.Logger
-	policy           atomic.Pointer[autofill.AutoFillPolicy]
+	policy           atomic.Pointer[xkms.AutoFillPolicy]
 	passwordSvc      *StaticPasswordService
 	oathSvc          *OATHService
 	appLockSvc       *AppLockService
 	auditStore       audit.Logger
-	rateLimiter      *autofill.RateLimiter
+	rateLimiter      *xkms.AutoFillRateLimiter
 	enabled          atomic.Bool // master toggle: browser extension enabled
 	auth             *authenticator.Authenticator
-	verifier         *autofill.AssertionVerifier
+	verifier         *xkms.AssertionVerifier
 	credID           []byte
 	registrationDir  string
 	registrationMu   sync.Mutex
@@ -134,14 +134,14 @@ func NewAutoFillService(
 	if logger == nil {
 		logger = slog.Default()
 	}
-	defaultPolicy := autofill.DefaultPolicy()
+	defaultPolicy := xkms.DefaultAutoFillPolicy()
 	svc := &AutoFillService{
 		log:         logger.With("component", "autofill_service"),
 		passwordSvc: passwordSvc,
 		oathSvc:     oathSvc,
 		appLockSvc:  appLockSvc,
 		auditStore:  auditStore,
-		rateLimiter: autofill.NewRateLimiter(defaultPolicy.MaxFillsPerMinute),
+		rateLimiter: xkms.NewAutoFillRateLimiter(defaultPolicy.MaxFillsPerMinute),
 	}
 	svc.policy.Store(defaultPolicy)
 	svc.enabled.Store(false)
@@ -220,7 +220,7 @@ func (s *AutoFillService) GetEnterprisePolicy() *EnterpriseExtensionPolicy {
 
 // SetPolicy validates and stores a new autofill policy, updating the rate
 // limiter limit to match.
-func (s *AutoFillService) SetPolicy(policy *autofill.AutoFillPolicy) error {
+func (s *AutoFillService) SetPolicy(policy *xkms.AutoFillPolicy) error {
 	if policy == nil {
 		return ErrAutoFillNotConfigured
 	}
@@ -233,7 +233,7 @@ func (s *AutoFillService) SetPolicy(policy *autofill.AutoFillPolicy) error {
 }
 
 // GetPolicy returns the current autofill policy.
-func (s *AutoFillService) GetPolicy() *autofill.AutoFillPolicy {
+func (s *AutoFillService) GetPolicy() *xkms.AutoFillPolicy {
 	return s.policy.Load()
 }
 
@@ -305,7 +305,7 @@ func (s *AutoFillService) SearchCredentials(domain string) ([]ipc.AutofillCreden
 		if entry.URL == "" {
 			continue
 		}
-		if !autofill.MatchesEntry(domain, entry.URL, entry.MatchPatterns) {
+		if !xkms.AutoFillMatchesEntry(domain, entry.URL, entry.MatchPatterns) {
 			continue
 		}
 		hasTotp, totpID := s.matchOATHAccount(domain, oathAccounts)
@@ -430,7 +430,7 @@ func (s *AutoFillService) SaveCredential(domain, username, password, title strin
 		if entry.URL == "" {
 			continue
 		}
-		if autofill.MatchesEntry(domain, entry.URL, entry.MatchPatterns) &&
+		if xkms.AutoFillMatchesEntry(domain, entry.URL, entry.MatchPatterns) &&
 			strings.EqualFold(entry.Username, username) {
 			return &ipc.AutofillResult{Exists: true}, nil
 		}
@@ -787,7 +787,7 @@ func (s *AutoFillService) registerCredential() error {
 	s.credID = authData.CredentialID
 	pubKeyCOSE := authData.PublicKey
 
-	verifier, err := autofill.NewAssertionVerifier(autofillRPID, pubKeyCOSE)
+	verifier, err := xkms.NewAssertionVerifier(autofillRPID, pubKeyCOSE)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrAutoFillAuthFailed, err)
 	}
@@ -824,7 +824,7 @@ func (s *AutoFillService) loadRegistration() bool {
 		return false
 	}
 
-	verifier, err := autofill.NewAssertionVerifier(autofillRPID, reg.PublicKeyCOSE)
+	verifier, err := xkms.NewAssertionVerifier(autofillRPID, reg.PublicKeyCOSE)
 	if err != nil {
 		s.log.Warn("failed to create verifier from stored registration", "error", err)
 		return false

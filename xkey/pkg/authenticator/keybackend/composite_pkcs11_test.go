@@ -19,27 +19,27 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const (
 	// pkcs11LibYKCS11 is the backend type for the YubiKey PKCS#11 module.
-	pkcs11LibYKCS11 types.BackendType = "pkcs11-libykcs11"
+	pkcs11LibYKCS11 xkms.BackendType = "pkcs11-libykcs11"
 )
 
 // TestCompositeRegisterPKCS11Backend verifies that a PKCS#11 backend can be
 // registered in the composite and discovered via Backend() and Backends().
 func TestCompositeRegisterPKCS11Backend(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{-7, -8},
 		SupportsExport:      true,
 		SupportsImport:      true,
 	})
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 
 	initialCount := len(cb.Backends())
 
@@ -73,7 +73,7 @@ func TestCompositeRegisterPKCS11Backend(t *testing.T) {
 // TestCompositeRegisterPKCS11Backend_NilLookupBeforeRegister verifies that
 // looking up a PKCS#11 backend before registration returns nil.
 func TestCompositeRegisterPKCS11Backend_NilLookupBeforeRegister(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	got := cb.Backend(pkcs11LibYKCS11)
 	assert.Nil(t, got, "Backend(%q) must be nil before registration", pkcs11LibYKCS11)
@@ -82,7 +82,7 @@ func TestCompositeRegisterPKCS11Backend_NilLookupBeforeRegister(t *testing.T) {
 // TestCompositeSetDefaultToPKCS11 verifies that after SetDefault to a PKCS#11
 // backend, GenerateCredentialKey routes to that backend instead of software.
 func TestCompositeSetDefaultToPKCS11(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{-7},
@@ -92,7 +92,7 @@ func TestCompositeSetDefaultToPKCS11(t *testing.T) {
 		HardwareBacked:      true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 
 	cb.SetDefault(pkcs11LibYKCS11)
@@ -117,7 +117,7 @@ func TestCompositeSetDefaultToPKCS11(t *testing.T) {
 // TestCompositeSetDefaultToPKCS11_ImportAlsoRoutes verifies that ImportPrivateKey
 // also routes to the PKCS#11 backend when it is the default.
 func TestCompositeSetDefaultToPKCS11_ImportAlsoRoutes(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{SupportsImport: true})
 	pkcs11Backend := newMockBackend(string(pkcs11LibYKCS11), FIDO2KeyCapabilities{
@@ -125,7 +125,7 @@ func TestCompositeSetDefaultToPKCS11_ImportAlsoRoutes(t *testing.T) {
 		HardwareBacked: true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 	cb.SetDefault(pkcs11LibYKCS11)
 
@@ -140,14 +140,14 @@ func TestCompositeSetDefaultToPKCS11_ImportAlsoRoutes(t *testing.T) {
 // TestCompositeSignRoutesToCorrectBackend verifies that Sign routes to the
 // PKCS#11 backend when the KeyHandle has BackendID = "pkcs11-libykcs11".
 func TestCompositeSignRoutesToCorrectBackend(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	pkcs11Backend := newMockBackend(string(pkcs11LibYKCS11), FIDO2KeyCapabilities{
 		HardwareBacked: true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 
 	handle := &mockKeyHandle{
@@ -170,21 +170,21 @@ func TestCompositeSignRoutesToCorrectBackend(t *testing.T) {
 // handle targeting "software" still routes to the software backend even when
 // PKCS#11 is the default.
 func TestCompositeSignRoutesToCorrectBackend_SoftwareHandle(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	pkcs11Backend := newMockBackend(string(pkcs11LibYKCS11), FIDO2KeyCapabilities{
 		HardwareBacked: true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 	cb.SetDefault(pkcs11LibYKCS11)
 
 	handle := &mockKeyHandle{
 		credentialID: []byte("sw-cred"),
 		algorithm:    -7,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 
 	sig, err := cb.Sign(handle, -7, []byte("data"))
@@ -198,15 +198,15 @@ func TestCompositeSignRoutesToCorrectBackend_SoftwareHandle(t *testing.T) {
 // to a non-existent PKCS#11 backend causes GenerateCredentialKey to fail, and
 // that the software backend remains available for explicit routing.
 func TestCompositeDefaultFallsBackToSoftware(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{-7},
 	})
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 
 	// SetDefault to a backend that is not registered.
-	cb.SetDefault(types.BackendType("pkcs11-nonexistent"))
+	cb.SetDefault(xkms.BackendType("pkcs11-nonexistent"))
 
 	// GenerateCredentialKey should fail because the default is missing.
 	_, _, err := cb.GenerateCredentialKey(-7, []byte("cred-fallback"))
@@ -222,7 +222,7 @@ func TestCompositeDefaultFallsBackToSoftware(t *testing.T) {
 	handle := &mockKeyHandle{
 		credentialID: []byte("sw-cred"),
 		algorithm:    -7,
-		backendType:  types.BackendTypeSoftware,
+		backendType:  xkms.BackendTypeSoftware,
 	}
 	sig, err := cb.Sign(handle, -7, []byte("data"))
 	require.NoError(t, err)
@@ -233,36 +233,36 @@ func TestCompositeDefaultFallsBackToSoftware(t *testing.T) {
 // TestCompositeDefaultFallsBackToSoftware_RestoreDefault verifies that after
 // a failed SetDefault, restoring the default to software recovers generation.
 func TestCompositeDefaultFallsBackToSoftware_RestoreDefault(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 
-	cb.SetDefault(types.BackendType("pkcs11-nonexistent"))
+	cb.SetDefault(xkms.BackendType("pkcs11-nonexistent"))
 	_, _, err := cb.GenerateCredentialKey(-7, []byte("cred"))
 	require.Error(t, err)
 
 	// Restore default.
-	cb.SetDefault(types.BackendTypeSoftware)
+	cb.SetDefault(xkms.BackendTypeSoftware)
 
 	handle, pubKey, err := cb.GenerateCredentialKey(-7, []byte("cred-restored"))
 	require.NoError(t, err)
 	require.NotNil(t, handle)
 	require.NotEmpty(t, pubKey)
-	assert.Equal(t, types.BackendTypeSoftware, handle.BackendID())
+	assert.Equal(t, xkms.BackendTypeSoftware, handle.BackendID())
 }
 
 // TestCompositeUnregisterPKCS11 verifies that unregistering the PKCS#11 backend
 // removes it from the composite and causes operations targeting it to fail.
 func TestCompositeUnregisterPKCS11(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	pkcs11Backend := newMockBackend(string(pkcs11LibYKCS11), FIDO2KeyCapabilities{
 		HardwareBacked: true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 	cb.SetDefault(pkcs11LibYKCS11)
 
@@ -292,14 +292,14 @@ func TestCompositeUnregisterPKCS11(t *testing.T) {
 // TestCompositeUnregisterPKCS11_SignWithStaleHandle verifies that Sign fails
 // when the PKCS#11 backend has been unregistered but a handle still references it.
 func TestCompositeUnregisterPKCS11_SignWithStaleHandle(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{})
 	pkcs11Backend := newMockBackend(string(pkcs11LibYKCS11), FIDO2KeyCapabilities{
 		HardwareBacked: true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 
 	// Create a handle targeting PKCS#11 before unregistration.
@@ -319,7 +319,7 @@ func TestCompositeUnregisterPKCS11_SignWithStaleHandle(t *testing.T) {
 // TestCompositeCapabilitiesMergePKCS11 verifies that capabilities from a
 // PKCS#11 backend are correctly merged with those from a software backend.
 func TestCompositeCapabilitiesMergePKCS11(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{-7, -8},
@@ -336,7 +336,7 @@ func TestCompositeCapabilitiesMergePKCS11(t *testing.T) {
 		SupportsAttestation: true,
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 
 	caps := cb.Capabilities()
@@ -363,7 +363,7 @@ func TestCompositeCapabilitiesMergePKCS11(t *testing.T) {
 // TestCompositeCapabilitiesMergePKCS11_NoDuplicateAlgorithms verifies that
 // overlapping algorithm IDs between software and PKCS#11 are deduplicated.
 func TestCompositeCapabilitiesMergePKCS11_NoDuplicateAlgorithms(t *testing.T) {
-	cb := NewCompositeBackend(types.BackendTypeSoftware)
+	cb := NewCompositeBackend(xkms.BackendTypeSoftware)
 
 	sw := newMockBackend("software", FIDO2KeyCapabilities{
 		SupportedAlgorithms: []int{-7, -8, -35},
@@ -372,7 +372,7 @@ func TestCompositeCapabilitiesMergePKCS11_NoDuplicateAlgorithms(t *testing.T) {
 		SupportedAlgorithms: []int{-7, -35, -36},
 	})
 
-	cb.Register(types.BackendTypeSoftware, sw)
+	cb.Register(xkms.BackendTypeSoftware, sw)
 	cb.Register(pkcs11LibYKCS11, pkcs11Backend)
 
 	caps := cb.Capabilities()

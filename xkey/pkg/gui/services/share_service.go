@@ -25,7 +25,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
 
@@ -60,7 +59,7 @@ type ShareService struct {
 	ctx     context.Context
 	log     *slog.Logger
 	mu      sync.RWMutex
-	store   sharestore.ShareStore
+	store   xkms.ShareStore
 	emitter func(events.Event)
 }
 
@@ -82,7 +81,7 @@ func (s *ShareService) SetEventEmitter(fn func(events.Event)) {
 }
 
 // SetShareStore sets the backing share store.
-func (s *ShareService) SetShareStore(store sharestore.ShareStore) {
+func (s *ShareService) SetShareStore(store xkms.ShareStore) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.store = store
@@ -131,7 +130,7 @@ func (s *ShareService) ImportShare(filePath string) (*ShareInfo, error) {
 		return nil, ErrShareImportFailed
 	}
 
-	var entry sharestore.ShareEntry
+	var entry xkms.ShareEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
 		s.log.Error("failed to parse share file", "path", filePath, "error", err)
 		return nil, ErrShareImportFailed
@@ -229,7 +228,7 @@ func (s *ShareService) ReceiveShares(serverURL, spkiPin string) ([]ShareInfo, er
 
 	received := make([]ShareInfo, 0, len(resp.Shares))
 	for _, si := range resp.Shares {
-		entry := &sharestore.ShareEntry{
+		entry := &xkms.ShareEntry{
 			ServerURL:  si.ServerURL,
 			GroupID:    si.GroupID,
 			GroupName:  si.GroupName,
@@ -239,7 +238,7 @@ func (s *ShareService) ReceiveShares(serverURL, spkiPin string) ([]ShareInfo, er
 			TenantID:   si.TenantID,
 		}
 		if err := store.Save(ctx, entry); err != nil {
-			if errors.Is(err, sharestore.ErrShareExists) {
+			if errors.Is(err, xkms.ErrShareStoreExists) {
 				continue // already stored
 			}
 			s.log.Warn("failed to save received share", "group", si.GroupID, "error", err)
@@ -363,7 +362,7 @@ func (s *ShareService) emit(eventType events.EventType, payload any) {
 }
 
 // entryToShareInfo converts a ShareEntry to frontend-safe ShareInfo.
-func entryToShareInfo(e *sharestore.ShareEntry) ShareInfo {
+func entryToShareInfo(e *xkms.ShareEntry) ShareInfo {
 	return ShareInfo{
 		ServerURL:  e.ServerURL,
 		GroupID:    e.GroupID,

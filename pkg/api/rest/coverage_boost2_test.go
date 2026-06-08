@@ -29,7 +29,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -40,7 +39,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 )
 
 // ==========================================================================
@@ -97,18 +95,17 @@ func TestNewServer_WithRBACEnabled_DefaultAdapter(t *testing.T) {
 	server, err := NewServer(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
-	assert.NotNil(t, server.rbacAdapter)
+	// RBAC enabled wires the middleware; authorization itself is delegated to
+	// the hosted qrdb node's RBAC service via the Authorizer.
 	assert.NotNil(t, server.rbacMiddleware)
 }
 
 func TestNewServer_WithCustodianService(t *testing.T) {
 	ks := newMockKeyStore()
-	custSvc, err := custodian.NewService(custodian.NewMemoryStore())
-	require.NoError(t, err)
 
 	cfg := &Config{
 		Backends:         map[string]xkms.Backend{"test": ks},
-		CustodianService: custSvc,
+		CustodianEnabled: true,
 	}
 
 	server, err := NewServer(cfg)
@@ -117,13 +114,12 @@ func TestNewServer_WithCustodianService(t *testing.T) {
 	assert.NotNil(t, server.custodianHandlers)
 }
 
-func TestNewServer_WithShareStore(t *testing.T) {
+func TestNewServer_WithShareEnabled(t *testing.T) {
 	ks := newMockKeyStore()
-	ss := sharestore.NewMemoryShareStore()
 
 	cfg := &Config{
-		Backends:   map[string]xkms.Backend{"test": ks},
-		ShareStore: ss,
+		Backends:     map[string]xkms.Backend{"test": ks},
+		ShareEnabled: true,
 	}
 
 	server, err := NewServer(cfg)
@@ -672,9 +668,7 @@ func TestBarrierSealHandler_NotInitialized(t *testing.T) {
 // ==========================================================================
 
 func TestRemoveMemberHandler_CustodianMissingGroupID(t *testing.T) {
-	custSvc, err := custodian.NewService(custodian.NewMemoryStore())
-	require.NoError(t, err)
-	h := NewCustodianHandlers(custSvc)
+	h, _ := setupCustodianTestHandlers(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/custodian/groups//members/user1", nil)
 	w := httptest.NewRecorder()
@@ -683,9 +677,7 @@ func TestRemoveMemberHandler_CustodianMissingGroupID(t *testing.T) {
 }
 
 func TestRemoveMemberHandler_CustodianMissingUserID(t *testing.T) {
-	custSvc, err := custodian.NewService(custodian.NewMemoryStore())
-	require.NoError(t, err)
-	h := NewCustodianHandlers(custSvc)
+	h, _ := setupCustodianTestHandlers(t)
 
 	req := httptest.NewRequest(http.MethodDelete, "/custodian/groups/grp1/members/", nil)
 	req = chiContext(req, map[string]string{"id": "grp1", "userID": ""})

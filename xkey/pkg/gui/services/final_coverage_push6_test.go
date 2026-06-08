@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +32,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -68,7 +68,7 @@ func (m *p8MockOIDCTokenStore) Close() error            { return nil }
 // ---------------------------------------------------------------------------
 
 type p8FailingHistoryStore struct {
-	storage.Backend
+	xkms.StorageBackend
 	putErr  error
 	getErr  error
 	listErr error
@@ -94,7 +94,7 @@ func (s *p8FailingHistoryStore) Get(_ context.Context, key string) ([]byte, erro
 	}
 	d, ok := s.data[key]
 	if !ok {
-		return nil, storage.ErrNotFound
+		return nil, xkms.ErrStorageNotFound
 	}
 	return d, nil
 }

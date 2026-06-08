@@ -19,11 +19,7 @@ import (
 	"os"
 	"testing"
 
-	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,19 +44,19 @@ func skipIfNoSoftHSM(t *testing.T) {
 // newPKCS11Adapter creates a BackendAdapter backed by a real PKCS#11 backend using SoftHSM.
 func newPKCS11Adapter(t *testing.T) *BackendAdapter {
 	t.Helper()
-	config := &pkcs11backend.Config{
+	config := &xkms.PKCS11BackendConfig{
 		Library:     "/usr/lib/softhsm/libsofthsm2.so",
 		TokenLabel:  "e2e-piv-test",
 		PIN:         "123456",
-		KeyStorage:  storage.NewMemory(),
-		CertStorage: storage.NewMemory(),
+		KeyStorage:  xkms.NewStorageMemory(),
+		CertStorage: xkms.NewStorageMemory(),
 	}
-	backend, err := pkcs11backend.NewBackend(config)
+	backend, err := xkms.NewPKCS11Backend(config)
 	require.NoError(t, err)
 	err = backend.Login()
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	return NewBackendAdapter(backend, types.BackendTypePKCS11)
+	return NewBackendAdapter(backend, xkms.BackendTypePKCS11)
 }
 
 // ---------------------------------------------------------------------------
@@ -69,20 +65,20 @@ func newPKCS11Adapter(t *testing.T) *BackendAdapter {
 
 // newPKCS11AdapterWithSlotModel creates a BackendAdapter backed by SoftHSM
 // with a PIVSlotModel attached for auto-allocation testing.
-func newPKCS11AdapterWithSlotModel(t *testing.T) (*BackendAdapter, pivcert.SlotModel) {
+func newPKCS11AdapterWithSlotModel(t *testing.T) (*BackendAdapter, xkms.PIVSlotModel) {
 	t.Helper()
 	skipIfNoSoftHSM(t)
 
 	adapter := newPKCS11Adapter(t)
 
 	// Extract the session pool from the PKCS#11 backend via type assertion.
-	p11Backend, ok := adapter.provider.(*pkcs11backend.Backend)
-	require.True(t, ok, "adapter.provider should be *pkcs11backend.Backend")
+	p11Backend, ok := adapter.provider.(*xkms.PKCS11Backend)
+	require.True(t, ok, "adapter.provider should be *xkms.PKCS11Backend")
 
 	pool := p11Backend.Pool()
 	require.NotNil(t, pool, "PKCS#11 backend pool must not be nil after Login")
 
-	sm, err := pivpkcs11.NewPIVSlotModel(pool)
+	sm, err := xkms.NewPIVPKCS11SlotModel(pool)
 	require.NoError(t, err, "NewPIVSlotModel should succeed against SoftHSM")
 
 	adapter.SetSlotModel(sm)
@@ -193,7 +189,7 @@ func TestPKCS11_SlotModel_OccupancyTracking(t *testing.T) {
 	availBefore, err := sm.AvailableSlots()
 	require.NoError(t, err)
 
-	occupiedSet := make(map[pivcert.PIVSlot]struct{}, len(occupiedBefore))
+	occupiedSet := make(map[xkms.PIVSlot]struct{}, len(occupiedBefore))
 	for _, s := range occupiedBefore {
 		occupiedSet[s] = struct{}{}
 	}
@@ -235,13 +231,13 @@ func TestPKCS11_SlotModel_OccupancyTracking(t *testing.T) {
 		"occupied slot count should increase by 1 after key generation")
 
 	// Verify SlotOccupancy returns detailed info for an occupied slot.
-	occupiedAfterSet := make(map[pivcert.PIVSlot]struct{}, len(occupiedAfter))
+	occupiedAfterSet := make(map[xkms.PIVSlot]struct{}, len(occupiedAfter))
 	for _, s := range occupiedAfter {
 		occupiedAfterSet[s] = struct{}{}
 	}
 
 	// Find the newly occupied slot (present in after but not before).
-	var newlyOccupied pivcert.PIVSlot
+	var newlyOccupied xkms.PIVSlot
 	for _, s := range occupiedAfter {
 		if _, wasBefore := occupiedSet[s]; !wasBefore {
 			newlyOccupied = s

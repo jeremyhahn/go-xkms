@@ -22,8 +22,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/pflag"
 
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
@@ -75,10 +74,10 @@ func resetPolicyFlags() {
 func newTestPolicyStore(t *testing.T) pcrpolicy.PolicyStore {
 	t.Helper()
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	if err != nil {
 		t.Fatalf("failed to create kvstore adapter: %v", err)
 	}

@@ -14,6 +14,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -39,6 +40,7 @@ type Config struct {
 	Metrics     MetricsConfig             `yaml:"metrics"`
 	Health      HealthConfig              `yaml:"health"`
 	Storage     StorageConfig             `yaml:"storage"`
+	Cluster     ClusterConfig             `yaml:"cluster"`
 	RNG         RNGConfig                 `yaml:"rng"`
 	Default     DefaultConfig             `yaml:"default_backend"`
 	Backends    BackendsConfig            `yaml:"backends"`
@@ -273,6 +275,122 @@ type QRDBConfig struct {
 
 	// TLS configures the TLS settings for the QRDB connection.
 	TLS TLSConfig `yaml:"tls"`
+}
+
+// ErrClusterRaftTLSIncomplete is returned when cluster Raft mTLS is partially
+// configured. The CA certificate, certificate, and key file paths must either
+// all be set (mTLS enabled) or all be empty (mTLS disabled).
+var ErrClusterRaftTLSIncomplete = errors.New(
+	"cluster: raft_tls requires ca_cert_file, cert_file, and key_file to all be set or all be empty")
+
+// ClusterConfig configures Raft clustering for high availability. When enabled,
+// xkms hosts a clustered go-qrdb node (via NewClusteredNode) so all datastore
+// state — keys, users, RBAC, custodian, shares, CA serials/revocations, etc. —
+// is replicated across nodes. Clustering requires the embedded "qrdb" storage
+// backend (PebbleDB-backed). These fields map onto go-qrdb's Raft config.
+type ClusterConfig struct {
+	// Enabled turns on Raft clustering. Requires Storage.Backend == "qrdb".
+	Enabled bool `yaml:"enabled"`
+
+	// NodeID is this node's Raft replica ID within the shard. Must be unique
+	// across the cluster and non-zero.
+	NodeID uint64 `yaml:"node_id"`
+
+	// ShardID is the Raft shard (group) identifier. Defaults to 1.
+	ShardID uint64 `yaml:"shard_id"`
+
+	// DeploymentID isolates clusters that share a network. Optional.
+	DeploymentID uint64 `yaml:"deployment_id"`
+
+	// RaftAddress is this node's advertised address for Raft peer communication
+	// (e.g., "10.0.0.1:63001").
+	RaftAddress string `yaml:"raft_address"`
+
+	// ListenAddress is the Raft bind address. Defaults to RaftAddress.
+	ListenAddress string `yaml:"listen_address"`
+
+	// Peers lists the initial cluster members as comma-separated
+	// "nodeID=address" pairs (e.g., "1=10.0.0.1:63001,2=10.0.0.2:63001").
+	// Must include this node's own NodeID=RaftAddress when bootstrapping.
+	Peers string `yaml:"peers"`
+
+	// Join indicates this node is joining an existing cluster rather than
+	// bootstrapping a new one.
+	Join bool `yaml:"join"`
+
+	// RaftTLS configures mutual TLS for the inter-node Raft transport. It is
+	// meaningful only for multi-node clusters (more than one peer). The PEM
+	// material is operator-supplied and MUST NOT be the runtime xkms CA: the
+	// CA is hosted by the very node the Raft transport replicates, so binding
+	// Raft mTLS to it would be circular. When unset, Raft peers communicate
+	// without TLS (suitable only for a trusted private network).
+	RaftTLS RaftTLSConfig `yaml:"raft_tls"`
+}
+
+// RaftTLSConfig holds the operator-supplied PEM file paths for mutual TLS on
+// the inter-node Raft transport. Either all three fields are set (mTLS on) or
+// all three are empty (mTLS off); a partial configuration is rejected at
+// validation time. The files are read at boot, not at validation time, so they
+// need not exist when Validate runs.
+type RaftTLSConfig struct {
+	// CACertFile is the path to the PEM-encoded CA certificate used to verify
+	// peer Raft certificates.
+	CACertFile string `yaml:"ca_cert_file"`
+
+	// CertFile is the path to this node's PEM-encoded Raft certificate.
+	CertFile string `yaml:"cert_file"`
+
+	// KeyFile is the path to this node's PEM-encoded Raft private key.
+	KeyFile string `yaml:"key_file"`
+}
+
+// Enabled reports whether Raft mTLS is configured. It is true only when all
+// three PEM file paths are set; IsComplete distinguishes a partial (invalid)
+// configuration from a fully-disabled one.
+func (r RaftTLSConfig) Enabled() bool {
+	return r.CACertFile != "" && r.CertFile != "" && r.KeyFile != ""
+}
+
+// IsComplete reports whether the configuration is internally consistent: all
+// three fields set, or all three empty. A partial configuration returns false.
+func (r RaftTLSConfig) IsComplete() bool {
+	set := 0
+	if r.CACertFile != "" {
+		set++
+	}
+	if r.CertFile != "" {
+		set++
+	}
+	if r.KeyFile != "" {
+		set++
+	}
+	return set == 0 || set == 3
+}
+
+// Members parses Peers into the replicaID→address map that go-qrdb's
+// NewClusteredNode expects. It returns a typed error for malformed entries.
+func (c ClusterConfig) Members() (map[uint64]string, error) {
+	members := make(map[uint64]string)
+	for _, entry := range strings.Split(c.Peers, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		id, addr, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, fmt.Errorf("cluster: peer %q is not in nodeID=address form", entry)
+		}
+		replicaID, err := strconv.ParseUint(strings.TrimSpace(id), 10, 64)
+		if err != nil || replicaID == 0 {
+			return nil, fmt.Errorf("cluster: peer %q has an invalid node ID", entry)
+		}
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			return nil, fmt.Errorf("cluster: peer %q has an empty address", entry)
+		}
+		members[replicaID] = addr
+	}
+	return members, nil
 }
 
 // RNGConfig controls random number generation settings
@@ -540,6 +658,46 @@ func applyEnvOverrides(cfg *Config) {
 		if port, err := strconv.Atoi(mcpPort); err == nil && port >= 1 && port <= 65535 {
 			cfg.Server.MCPPort = port
 		}
+	}
+
+	// Clustering settings
+	if v := os.Getenv("XKMS_CLUSTER_ENABLED"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Cluster.Enabled = b
+		}
+	}
+	if v := os.Getenv("XKMS_CLUSTER_NODE_ID"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			cfg.Cluster.NodeID = id
+		}
+	}
+	if v := os.Getenv("XKMS_CLUSTER_SHARD_ID"); v != "" {
+		if id, err := strconv.ParseUint(v, 10, 64); err == nil {
+			cfg.Cluster.ShardID = id
+		}
+	}
+	if v := os.Getenv("XKMS_CLUSTER_RAFT_ADDRESS"); v != "" {
+		cfg.Cluster.RaftAddress = v
+	}
+	if v := os.Getenv("XKMS_CLUSTER_LISTEN_ADDRESS"); v != "" {
+		cfg.Cluster.ListenAddress = v
+	}
+	if v := os.Getenv("XKMS_CLUSTER_PEERS"); v != "" {
+		cfg.Cluster.Peers = v
+	}
+	if v := os.Getenv("XKMS_CLUSTER_JOIN"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.Cluster.Join = b
+		}
+	}
+	if v := os.Getenv("XKMS_CLUSTER_RAFT_CA_CERT"); v != "" {
+		cfg.Cluster.RaftTLS.CACertFile = v
+	}
+	if v := os.Getenv("XKMS_CLUSTER_RAFT_CERT"); v != "" {
+		cfg.Cluster.RaftTLS.CertFile = v
+	}
+	if v := os.Getenv("XKMS_CLUSTER_RAFT_KEY"); v != "" {
+		cfg.Cluster.RaftTLS.KeyFile = v
 	}
 
 	// Unix socket settings
@@ -955,6 +1113,41 @@ func (c *Config) Validate() error {
 	// Validate ACME configuration (no-op unless acme.enabled is true).
 	if err := c.ACME.Validate(); err != nil {
 		return err
+	}
+
+	// Validate clustering. When enabled it requires the embedded, replicated
+	// "qrdb" backend and a complete, parseable membership.
+	if c.Cluster.Enabled {
+		if c.Cluster.ShardID == 0 {
+			c.Cluster.ShardID = 1
+		}
+		if strings.ToLower(c.Storage.Backend) != "qrdb" {
+			return fmt.Errorf("cluster.enabled requires storage.backend \"qrdb\" (got %q)", c.Storage.Backend)
+		}
+		if c.Cluster.NodeID == 0 {
+			return fmt.Errorf("cluster.node_id is required and must be non-zero")
+		}
+		if c.Cluster.RaftAddress == "" {
+			return fmt.Errorf("cluster.raft_address is required")
+		}
+		members, err := c.Cluster.Members()
+		if err != nil {
+			return err
+		}
+		if len(members) == 0 {
+			return fmt.Errorf("cluster.peers must list at least this node (nodeID=address)")
+		}
+		if !c.Cluster.Join {
+			if _, ok := members[c.Cluster.NodeID]; !ok {
+				return fmt.Errorf("cluster.peers must include this node's own node_id (%d) when bootstrapping", c.Cluster.NodeID)
+			}
+		}
+		// Raft mTLS is all-or-nothing: a partial configuration (some but not
+		// all of CA/cert/key set) is a hard error. The PEM files are loaded at
+		// boot, so their existence is not checked here.
+		if !c.Cluster.RaftTLS.IsComplete() {
+			return ErrClusterRaftTLSIncomplete
+		}
 	}
 
 	return nil

@@ -17,7 +17,7 @@ package keybackend
 import (
 	"crypto/x509"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // FIDO2KeyCapabilities describes what a key backend can do.
@@ -59,7 +59,7 @@ type KeyHandle interface {
 	Algorithm() int
 
 	// BackendID returns the type of the backend that manages this key.
-	BackendID() types.BackendType
+	BackendID() xkms.BackendType
 }
 
 // FIDO2AttestationStatement contains attestation data.
@@ -84,7 +84,7 @@ type FIDO2AttestationStatement struct {
 // Implementations must be safe for concurrent use.
 type FIDO2KeyBackend interface {
 	// Type returns the backend type identifier.
-	Type() types.BackendType
+	Type() xkms.BackendType
 
 	// Capabilities returns what this backend supports.
 	Capabilities() FIDO2KeyCapabilities

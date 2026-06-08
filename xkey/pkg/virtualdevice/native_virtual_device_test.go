@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
 )
@@ -139,9 +139,9 @@ func TestNativeVirtualDevice_Init(t *testing.T) {
 
 	// Create INIT packet
 	nonce := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-	packet := make([]byte, fido2.HIDPacketSize)
-	binary.BigEndian.PutUint32(packet[0:4], fido2.CIDBroadcast)
-	packet[4] = fido2.CTAPHID_INIT
+	packet := make([]byte, xkms.FIDO2HIDPacketSize)
+	binary.BigEndian.PutUint32(packet[0:4], xkms.FIDO2CIDBroadcast)
+	packet[4] = xkms.FIDO2CTAPHIDInit
 	binary.BigEndian.PutUint16(packet[5:7], uint16(len(nonce)))
 	copy(packet[7:], nonce)
 
@@ -155,19 +155,19 @@ func TestNativeVirtualDevice_Init(t *testing.T) {
 	}
 
 	// Read response
-	response := make([]byte, fido2.HIDPacketSize)
+	response := make([]byte, xkms.FIDO2HIDPacketSize)
 	n, err = device.Read(response)
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
-	if n != fido2.HIDPacketSize {
-		t.Errorf("Read returned %d, want %d", n, fido2.HIDPacketSize)
+	if n != xkms.FIDO2HIDPacketSize {
+		t.Errorf("Read returned %d, want %d", n, xkms.FIDO2HIDPacketSize)
 	}
 
 	// Verify response
 	cmd := response[4]
-	if cmd != fido2.CTAPHID_INIT {
-		t.Errorf("expected INIT response (0x%02X), got 0x%02X", fido2.CTAPHID_INIT, cmd)
+	if cmd != xkms.FIDO2CTAPHIDInit {
+		t.Errorf("expected INIT response (0x%02X), got 0x%02X", xkms.FIDO2CTAPHIDInit, cmd)
 	}
 
 	// Verify nonce echo
@@ -178,7 +178,7 @@ func TestNativeVirtualDevice_Init(t *testing.T) {
 
 	// Verify CID allocation
 	cid := binary.BigEndian.Uint32(response[15:19])
-	if cid == 0 || cid == fido2.CIDBroadcast {
+	if cid == 0 || cid == xkms.FIDO2CIDBroadcast {
 		t.Errorf("invalid CID allocated: 0x%08X", cid)
 	}
 }
@@ -196,9 +196,9 @@ func TestNativeVirtualDevice_Ping(t *testing.T) {
 
 	// Create PING packet
 	pingData := []byte("Hello, FIDO!")
-	packet := make([]byte, fido2.HIDPacketSize)
+	packet := make([]byte, xkms.FIDO2HIDPacketSize)
 	binary.BigEndian.PutUint32(packet[0:4], cid)
-	packet[4] = fido2.CTAPHID_PING
+	packet[4] = xkms.FIDO2CTAPHIDPing
 	binary.BigEndian.PutUint16(packet[5:7], uint16(len(pingData)))
 	copy(packet[7:], pingData)
 
@@ -209,14 +209,14 @@ func TestNativeVirtualDevice_Ping(t *testing.T) {
 	}
 
 	// Read response
-	response := make([]byte, fido2.HIDPacketSize)
+	response := make([]byte, xkms.FIDO2HIDPacketSize)
 	_, err = device.Read(response)
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
 
 	// Verify response
-	if response[4] != fido2.CTAPHID_PING {
+	if response[4] != xkms.FIDO2CTAPHIDPing {
 		t.Errorf("expected PING response, got 0x%02X", response[4])
 	}
 
@@ -247,11 +247,11 @@ func TestNativeVirtualDevice_GetInfo(t *testing.T) {
 	cid := initializeChannel(t, device)
 
 	// Create GetInfo packet
-	packet := make([]byte, fido2.HIDPacketSize)
+	packet := make([]byte, xkms.FIDO2HIDPacketSize)
 	binary.BigEndian.PutUint32(packet[0:4], cid)
-	packet[4] = fido2.CTAPHID_CBOR
+	packet[4] = xkms.FIDO2CTAPHIDCBOR
 	binary.BigEndian.PutUint16(packet[5:7], 1) // Just command byte
-	packet[7] = fido2.CmdGetInfo
+	packet[7] = xkms.FIDO2CmdGetInfo
 
 	// Write packet
 	_, err = device.Write(packet)
@@ -296,7 +296,7 @@ func TestNativeVirtualDevice_MakeCredential(t *testing.T) {
 	// Build CBOR request manually (simplified)
 	cborData := buildMakeCredentialCBOR(clientDataHash, "example.com", "Example", []byte{1, 2, 3, 4}, "testuser", "Test User")
 
-	payload := append([]byte{fido2.CmdMakeCredential}, cborData...)
+	payload := append([]byte{xkms.FIDO2CmdMakeCredential}, cborData...)
 
 	// Send CBOR command
 	sendCBORCommand(t, device, cid, payload)
@@ -337,7 +337,7 @@ func TestNativeVirtualDevice_GetAssertion(t *testing.T) {
 	}
 
 	cborData := buildMakeCredentialCBOR(clientDataHash, "example.com", "Example", []byte{1, 2, 3, 4}, "testuser", "Test User")
-	payload := append([]byte{fido2.CmdMakeCredential}, cborData...)
+	payload := append([]byte{xkms.FIDO2CmdMakeCredential}, cborData...)
 	sendCBORCommand(t, device, cid, payload)
 
 	// Read MakeCredential response to get credential ID
@@ -348,7 +348,7 @@ func TestNativeVirtualDevice_GetAssertion(t *testing.T) {
 
 	// Now try GetAssertion
 	gaPayload := buildGetAssertionCBOR(clientDataHash, "example.com")
-	sendCBORCommand(t, device, cid, append([]byte{fido2.CmdGetAssertion}, gaPayload...))
+	sendCBORCommand(t, device, cid, append([]byte{xkms.FIDO2CmdGetAssertion}, gaPayload...))
 
 	// Read response
 	response := readFullResponse(t, device, cid)
@@ -371,7 +371,7 @@ func TestNativeVirtualDevice_Close(t *testing.T) {
 	}
 
 	// Write should fail after close
-	packet := make([]byte, fido2.HIDPacketSize)
+	packet := make([]byte, xkms.FIDO2HIDPacketSize)
 	_, err = device.Write(packet)
 	if err != ErrNativeDeviceClosed {
 		t.Errorf("expected ErrNativeDeviceClosed, got %v", err)
@@ -399,7 +399,7 @@ func TestNativeVirtualDevice_HIDDevice(t *testing.T) {
 	defer func() { _ = device.Close() }()
 
 	// Verify all HIDDevice methods
-	var hid fido2.HIDDevice = device
+	var hid xkms.FIDO2HIDDevice = device
 
 	if hid.Path() == "" {
 		t.Error("Path() empty")
@@ -467,9 +467,9 @@ func TestNativeVirtualDevice_Concurrency(t *testing.T) {
 			defer func() { done <- true }()
 
 			pingData := []byte{byte(id)}
-			packet := make([]byte, fido2.HIDPacketSize)
+			packet := make([]byte, xkms.FIDO2HIDPacketSize)
 			binary.BigEndian.PutUint32(packet[0:4], cid)
-			packet[4] = fido2.CTAPHID_PING
+			packet[4] = xkms.FIDO2CTAPHIDPing
 			binary.BigEndian.PutUint16(packet[5:7], uint16(len(pingData)))
 			copy(packet[7:], pingData)
 
@@ -560,7 +560,7 @@ func TestNativeVirtualDevice_ReadAfterChannelClose(t *testing.T) {
 	}
 
 	// Read should return ErrNativeDeviceClosed
-	data := make([]byte, fido2.HIDPacketSize)
+	data := make([]byte, xkms.FIDO2HIDPacketSize)
 	_, err = device.Read(data)
 	if err != ErrNativeDeviceClosed {
 		t.Errorf("expected ErrNativeDeviceClosed, got %v", err)
@@ -588,9 +588,9 @@ func TestNativeVirtualDevice_ConcurrentWritesWithOverflow(t *testing.T) {
 			defer wg.Done()
 
 			pingData := []byte{byte(id)}
-			packet := make([]byte, fido2.HIDPacketSize)
+			packet := make([]byte, xkms.FIDO2HIDPacketSize)
 			binary.BigEndian.PutUint32(packet[0:4], cid)
-			packet[4] = fido2.CTAPHID_PING
+			packet[4] = xkms.FIDO2CTAPHIDPing
 			binary.BigEndian.PutUint16(packet[5:7], uint16(len(pingData)))
 			copy(packet[7:], pingData)
 
@@ -624,9 +624,9 @@ func initializeChannel(t *testing.T, device *NativeVirtualDevice) uint32 {
 	t.Helper()
 
 	nonce := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
-	packet := make([]byte, fido2.HIDPacketSize)
-	binary.BigEndian.PutUint32(packet[0:4], fido2.CIDBroadcast)
-	packet[4] = fido2.CTAPHID_INIT
+	packet := make([]byte, xkms.FIDO2HIDPacketSize)
+	binary.BigEndian.PutUint32(packet[0:4], xkms.FIDO2CIDBroadcast)
+	packet[4] = xkms.FIDO2CTAPHIDInit
 	binary.BigEndian.PutUint16(packet[5:7], uint16(len(nonce)))
 	copy(packet[7:], nonce)
 
@@ -635,13 +635,13 @@ func initializeChannel(t *testing.T, device *NativeVirtualDevice) uint32 {
 		t.Fatalf("INIT Write failed: %v", err)
 	}
 
-	response := make([]byte, fido2.HIDPacketSize)
+	response := make([]byte, xkms.FIDO2HIDPacketSize)
 	_, err = device.Read(response)
 	if err != nil {
 		t.Fatalf("INIT Read failed: %v", err)
 	}
 
-	if response[4] != fido2.CTAPHID_INIT {
+	if response[4] != xkms.FIDO2CTAPHIDInit {
 		t.Fatalf("expected INIT response, got 0x%02X", response[4])
 	}
 
@@ -654,9 +654,9 @@ func sendCBORCommand(t *testing.T, device *NativeVirtualDevice, cid uint32, payl
 	t.Helper()
 
 	// Create init packet
-	packet := make([]byte, fido2.HIDPacketSize)
+	packet := make([]byte, xkms.FIDO2HIDPacketSize)
 	binary.BigEndian.PutUint32(packet[0:4], cid)
-	packet[4] = fido2.CTAPHID_CBOR
+	packet[4] = xkms.FIDO2CTAPHIDCBOR
 	binary.BigEndian.PutUint16(packet[5:7], uint16(len(payload)))
 
 	// Copy first portion of payload
@@ -680,7 +680,7 @@ func sendCBORCommand(t *testing.T, device *NativeVirtualDevice, cid uint32, payl
 	remaining := payload[initPayload:]
 	seq := byte(0)
 	for len(remaining) > 0 {
-		contPacket := make([]byte, fido2.HIDPacketSize)
+		contPacket := make([]byte, xkms.FIDO2HIDPacketSize)
 		binary.BigEndian.PutUint32(contPacket[0:4], cid)
 		contPacket[4] = seq
 
@@ -709,14 +709,14 @@ func readFullResponse(t *testing.T, device *NativeVirtualDevice, cid uint32) []b
 	// Read packets, skipping keepalives that are sent during long-running operations
 	var packet []byte
 	for {
-		pkt := make([]byte, fido2.HIDPacketSize)
+		pkt := make([]byte, xkms.FIDO2HIDPacketSize)
 		_, err := device.Read(pkt)
 		if err != nil {
 			t.Fatalf("Read failed: %v", err)
 		}
 
 		cmd := pkt[4]
-		if cmd == fido2.CTAPHID_KEEPALIVE {
+		if cmd == xkms.FIDO2CTAPHIDKeepalive {
 			// Skip keepalive packets - these are expected during
 			// MakeCredential and GetAssertion processing
 			continue
@@ -732,11 +732,11 @@ func readFullResponse(t *testing.T, device *NativeVirtualDevice, cid uint32) []b
 	}
 
 	cmd := packet[4]
-	if cmd == fido2.CTAPHID_ERROR {
+	if cmd == xkms.FIDO2CTAPHIDError {
 		return []byte{packet[7]} // Return error code as status
 	}
 
-	if cmd != fido2.CTAPHID_CBOR {
+	if cmd != xkms.FIDO2CTAPHIDCBOR {
 		t.Fatalf("expected CBOR response, got 0x%02X", cmd)
 	}
 
@@ -756,7 +756,7 @@ func readFullResponse(t *testing.T, device *NativeVirtualDevice, cid uint32) []b
 
 	// Read continuation packets
 	for len(result) < payloadLen {
-		contPacket := make([]byte, fido2.HIDPacketSize)
+		contPacket := make([]byte, xkms.FIDO2HIDPacketSize)
 		_, err := device.Read(contPacket)
 		if err != nil {
 			t.Fatalf("continuation Read failed: %v", err)

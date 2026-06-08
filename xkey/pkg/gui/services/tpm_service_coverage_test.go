@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -30,8 +31,6 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,17 +92,17 @@ func (m *mockTPMWithClear) Clear(_ []byte) error {
 // Helper: create a TPMService wired to a mock TPM.
 // ---------------------------------------------------------------------------
 
-func newCoverageTPMService(tpm tpm2pkg.TrustedPlatformModule) *TPMService {
+func newCoverageTPMService(tpm xkms.TrustedPlatformModule) *TPMService {
 	svc := NewTPMService()
 	svc.SetContext(context.Background())
 	if tpm != nil {
-		accessor := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return tpm })
+		accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule { return tpm })
 		svc.SetTPMAccessor(accessor)
 	}
 	return svc
 }
 
-func newCoverageTPMServiceWithDataDir(t *testing.T, tpm tpm2pkg.TrustedPlatformModule) *TPMService {
+func newCoverageTPMServiceWithDataDir(t *testing.T, tpm xkms.TrustedPlatformModule) *TPMService {
 	t.Helper()
 	svc := newCoverageTPMService(tpm)
 	svc.SetDataDir(t.TempDir())
@@ -1885,17 +1884,17 @@ func TestTPMService_Coverage_algoDisplayName(t *testing.T) {
 	})
 
 	t.Run("rsa_ssa", func(t *testing.T) {
-		attrs := &types.KeyAttributes{KeyAlgorithm: x509.RSA}
+		attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.RSA}
 		assert.Equal(t, "RSA-SSA", algoDisplayName(attrs))
 	})
 
 	t.Run("ecdsa", func(t *testing.T) {
-		attrs := &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+		attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
 		assert.Equal(t, "ECDSA", algoDisplayName(attrs))
 	})
 
 	t.Run("ed25519", func(t *testing.T) {
-		attrs := &types.KeyAttributes{KeyAlgorithm: x509.Ed25519}
+		attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.Ed25519}
 		assert.Equal(t, "Ed25519", algoDisplayName(attrs))
 	})
 }
@@ -1906,9 +1905,9 @@ func TestTPMService_Coverage_keySize(t *testing.T) {
 	})
 
 	t.Run("rsa_attrs", func(t *testing.T) {
-		attrs := &types.KeyAttributes{
+		attrs := &xkms.KeyAttributes{
 			KeyAlgorithm: x509.RSA,
-			RSAAttributes: &types.RSAAttributes{
+			RSAAttributes: &xkms.RSAAttributes{
 				KeySize: 4096,
 			},
 		}
@@ -1916,9 +1915,9 @@ func TestTPMService_Coverage_keySize(t *testing.T) {
 	})
 
 	t.Run("ecc_attrs", func(t *testing.T) {
-		attrs := &types.KeyAttributes{
+		attrs := &xkms.KeyAttributes{
 			KeyAlgorithm: x509.ECDSA,
-			ECCAttributes: &types.ECCAttributes{
+			ECCAttributes: &xkms.ECCAttributes{
 				Curve: elliptic.P384(),
 			},
 		}
@@ -1926,12 +1925,12 @@ func TestTPMService_Coverage_keySize(t *testing.T) {
 	})
 
 	t.Run("rsa_fallback", func(t *testing.T) {
-		attrs := &types.KeyAttributes{KeyAlgorithm: x509.RSA}
+		attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.RSA}
 		assert.Equal(t, 2048, keySize(attrs))
 	})
 
 	t.Run("ecdsa_fallback", func(t *testing.T) {
-		attrs := &types.KeyAttributes{KeyAlgorithm: x509.ECDSA}
+		attrs := &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA}
 		assert.Equal(t, 256, keySize(attrs))
 	})
 }
@@ -1978,10 +1977,10 @@ func TestTPMService_Coverage_certToPEM(t *testing.T) {
 func TestTPMService_Coverage_detectPCRBanks(t *testing.T) {
 	t.Run("returns_sorted_banks", func(t *testing.T) {
 		mock := defaultMockTPM()
-		mock.pcrBanks = []tpm2pkg.PCRBank{
-			{Algorithm: "SHA512", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
-			{Algorithm: "SHA1", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
-			{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
+		mock.pcrBanks = []xkms.PCRBank{
+			{Algorithm: "SHA512", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
+			{Algorithm: "SHA1", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
+			{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
 		}
 		banks := detectPCRBanks(mock)
 		require.Len(t, banks, 3)
@@ -1999,8 +1998,8 @@ func TestTPMService_Coverage_detectPCRBanks(t *testing.T) {
 
 	t.Run("sha384_variant", func(t *testing.T) {
 		mock := defaultMockTPM()
-		mock.pcrBanks = []tpm2pkg.PCRBank{
-			{Algorithm: "SHA386", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
+		mock.pcrBanks = []xkms.PCRBank{
+			{Algorithm: "SHA386", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
 		}
 		banks := detectPCRBanks(mock)
 		require.Len(t, banks, 1)

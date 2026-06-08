@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,7 +31,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/serverregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
 )
@@ -116,8 +116,8 @@ type ExplorerConfig struct {
 	Logger       *slog.Logger
 	TokenStore   tokenstore.TokenStore
 	Registry     serverregistry.ServerRegistry
-	TrustStore   storage.Backend
-	HistoryStore storage.Backend
+	TrustStore   xkms.StorageBackend
+	HistoryStore xkms.StorageBackend
 	OIDCService  *OIDCService
 	FIDO2Service *FIDO2Service
 }
@@ -130,8 +130,8 @@ type APIExplorerService struct {
 	log          *slog.Logger
 	tokenStore   tokenstore.TokenStore
 	registry     serverregistry.ServerRegistry
-	trustStore   storage.Backend
-	historyStore storage.Backend
+	trustStore   xkms.StorageBackend
+	historyStore xkms.StorageBackend
 	oidcService  *OIDCService
 	fido2Service *FIDO2Service
 	httpClient   *http.Client
@@ -531,7 +531,7 @@ func (s *APIExplorerService) DeleteHistoryEntry(id string) error {
 	key := historyKeyPrefix + id + ".json"
 	err := s.historyStore.Delete(context.Background(), key)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return ErrExplorerHistoryNotFound
 		}
 		return err

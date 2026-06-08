@@ -19,7 +19,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ErrPIVTPM2NotImplemented indicates that TPM2 PIV storage is not yet implemented.
@@ -27,6 +27,6 @@ var ErrPIVTPM2NotImplemented = errors.New("piv: TPM2 storage backend not yet imp
 
 // createTPM2PIVStorage creates a TPM2-backed PIV certificate storage.
 // This is a placeholder for future TPM2 NV storage support.
-func createTPM2PIVStorage(_ *PIVConfig, _ *slog.Logger) (pivcert.PIVCertificateStorage, error) {
+func createTPM2PIVStorage(_ *PIVConfig, _ *slog.Logger) (xkms.PIVCertificateStorage, error) {
 	return nil, ErrPIVTPM2NotImplemented
 }

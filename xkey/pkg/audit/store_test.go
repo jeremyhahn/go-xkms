@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +32,7 @@ import (
 func TestNewBackendStore(t *testing.T) {
 
 	t.Run("with explicit max size", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 500, nil)
 		require.NoError(t, err)
 		require.NotNil(t, store)
@@ -41,7 +41,7 @@ func TestNewBackendStore(t *testing.T) {
 	})
 
 	t.Run("zero max size defaults to 10000", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 0, nil)
 		require.NoError(t, err)
 		require.NotNil(t, store)
@@ -49,7 +49,7 @@ func TestNewBackendStore(t *testing.T) {
 	})
 
 	t.Run("negative max size defaults to 10000", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, -5, nil)
 		require.NoError(t, err)
 		require.NotNil(t, store)
@@ -57,7 +57,7 @@ func TestNewBackendStore(t *testing.T) {
 	})
 
 	t.Run("cache slice is initialized", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 		require.NotNil(t, store)
@@ -67,7 +67,7 @@ func TestNewBackendStore(t *testing.T) {
 	})
 
 	t.Run("prefix is set correctly", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 		assert.Equal(t, "audit/", store.prefix)
@@ -96,7 +96,7 @@ func TestNewBackendStore_NilBackend(t *testing.T) {
 func TestBackendStore_Log(t *testing.T) {
 
 	t.Run("entries are stored in cache and backend", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -133,7 +133,7 @@ func TestBackendStore_Log(t *testing.T) {
 	})
 
 	t.Run("multiple entries are stored in order", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -163,7 +163,7 @@ func TestBackendStore_Log(t *testing.T) {
 func TestBackendStore_LogPersistence(t *testing.T) {
 
 	t.Run("entries survive store recreation", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 
 		// Create first store and log entries.
 		store1, err := NewBackendStore(backend, 100, nil)
@@ -199,7 +199,7 @@ func TestBackendStore_LogPersistence(t *testing.T) {
 	})
 
 	t.Run("loaded entries maintain correct operations", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 
 		store1, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
@@ -230,7 +230,7 @@ func TestBackendStore_LogPersistence(t *testing.T) {
 
 func TestBackendStore_Query_ByOperation(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 100, nil)
 	require.NoError(t, err)
 
@@ -261,7 +261,7 @@ func TestBackendStore_Query_ByOperation(t *testing.T) {
 
 func TestBackendStore_Query_ByBackend(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 100, nil)
 	require.NoError(t, err)
 
@@ -292,7 +292,7 @@ func TestBackendStore_Query_ByBackend(t *testing.T) {
 
 func TestBackendStore_Query_BySuccess(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 100, nil)
 	require.NoError(t, err)
 
@@ -325,7 +325,7 @@ func TestBackendStore_Query_BySuccess(t *testing.T) {
 
 func TestBackendStore_Query_TimeRange(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 100, nil)
 	require.NoError(t, err)
 
@@ -366,7 +366,7 @@ func TestBackendStore_Query_TimeRange(t *testing.T) {
 
 func TestBackendStore_Query_LimitOffset(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 100, nil)
 	require.NoError(t, err)
 
@@ -421,7 +421,7 @@ func TestBackendStore_Query_LimitOffset(t *testing.T) {
 
 func TestBackendStore_Query_NoMatch(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 100, nil)
 	require.NoError(t, err)
 
@@ -449,7 +449,7 @@ func TestBackendStore_Query_NoMatch(t *testing.T) {
 	})
 
 	t.Run("empty store returns empty", func(t *testing.T) {
-		emptyBackend := storage.NewMemory()
+		emptyBackend := xkms.NewStorageMemory()
 		emptyStore, storeErr := NewBackendStore(emptyBackend, 100, nil)
 		require.NoError(t, storeErr)
 		results := emptyStore.Query(QueryFilter{})
@@ -459,7 +459,7 @@ func TestBackendStore_Query_NoMatch(t *testing.T) {
 
 func TestBackendStore_Query_CombinedFilters(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 100, nil)
 	require.NoError(t, err)
 
@@ -491,7 +491,7 @@ func TestBackendStore_Query_CombinedFilters(t *testing.T) {
 func TestBackendStore_RingBufferEviction(t *testing.T) {
 
 	t.Run("evicts oldest entries when full", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 3, nil)
 		require.NoError(t, err)
 
@@ -519,7 +519,7 @@ func TestBackendStore_RingBufferEviction(t *testing.T) {
 	})
 
 	t.Run("max size of 1 keeps only latest in cache", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 1, nil)
 		require.NoError(t, err)
 
@@ -533,7 +533,7 @@ func TestBackendStore_RingBufferEviction(t *testing.T) {
 	})
 
 	t.Run("loadFromBackend respects maxSize", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 
 		// Create a store with large buffer and log 10 entries.
 		store1, err := NewBackendStore(backend, 100, nil)
@@ -565,7 +565,7 @@ func TestBackendStore_RingBufferEviction(t *testing.T) {
 func TestBackendStore_MigrateBackend(t *testing.T) {
 
 	t.Run("migrates all entries to new backend", func(t *testing.T) {
-		oldBackend := storage.NewMemory()
+		oldBackend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(oldBackend, 100, nil)
 		require.NoError(t, err)
 
@@ -584,7 +584,7 @@ func TestBackendStore_MigrateBackend(t *testing.T) {
 			Success:   true,
 		})
 
-		newBackend := storage.NewMemory()
+		newBackend := xkms.NewStorageMemory()
 		require.NoError(t, store.MigrateBackend(newBackend))
 
 		// Verify entries exist in the new backend.
@@ -613,7 +613,7 @@ func TestBackendStore_MigrateBackend(t *testing.T) {
 	})
 
 	t.Run("old backend is no longer written to after migration", func(t *testing.T) {
-		oldBackend := storage.NewMemory()
+		oldBackend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(oldBackend, 100, nil)
 		require.NoError(t, err)
 
@@ -628,7 +628,7 @@ func TestBackendStore_MigrateBackend(t *testing.T) {
 		require.NoError(t, listErr)
 		oldCount := len(oldKeys)
 
-		newBackend := storage.NewMemory()
+		newBackend := xkms.NewStorageMemory()
 		require.NoError(t, store.MigrateBackend(newBackend))
 
 		// Log after migration.
@@ -649,7 +649,7 @@ func TestBackendStore_MigrateBackend(t *testing.T) {
 func TestBackendStore_MigrateBackend_NilBackend(t *testing.T) {
 
 	t.Run("returns error for nil new backend", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -659,7 +659,7 @@ func TestBackendStore_MigrateBackend_NilBackend(t *testing.T) {
 	})
 
 	t.Run("store remains usable after nil migration attempt", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -677,14 +677,14 @@ func TestBackendStore_MigrateBackend_NilBackend(t *testing.T) {
 func TestBackendStore_Count(t *testing.T) {
 
 	t.Run("empty store returns 0", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 		assert.Equal(t, 0, store.Count())
 	})
 
 	t.Run("count increments with each log", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -695,7 +695,7 @@ func TestBackendStore_Count(t *testing.T) {
 	})
 
 	t.Run("count does not exceed max size", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 3, nil)
 		require.NoError(t, err)
 
@@ -709,7 +709,7 @@ func TestBackendStore_Count(t *testing.T) {
 func TestBackendStore_AllLogMethods(t *testing.T) {
 
 	t.Run("LogKeyOperation", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -730,7 +730,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogKeyOperation with error", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -744,7 +744,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogCryptoOperation", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -762,7 +762,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogCryptoOperation with error", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -776,7 +776,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogConnectionEvent with details", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -794,7 +794,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogConnectionEvent without details", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -808,7 +808,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogServiceEvent with details", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -822,7 +822,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogServiceEvent without details", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -835,7 +835,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogPINOperation", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -850,7 +850,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogPINOperation with error", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -864,7 +864,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogTPMOperation", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -879,7 +879,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogTPMOperation with error", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -893,7 +893,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogPasswordStoreOperation", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -907,7 +907,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogPasswordStoreOperation nil details initializes map", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -919,7 +919,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogUserPresenceEvent", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -933,7 +933,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 	})
 
 	t.Run("LogUserPresenceEvent nil details initializes map", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -947,7 +947,7 @@ func TestBackendStore_AllLogMethods(t *testing.T) {
 
 func TestBackendStore_Concurrency(t *testing.T) {
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, 1000, nil)
 	require.NoError(t, err)
 
@@ -999,7 +999,7 @@ func TestBackendStore_WithSlogLogger(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewTextHandler(&buf, nil))
 
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, logger)
 		require.NoError(t, err)
 		require.NotNil(t, store.slog)
@@ -1028,7 +1028,7 @@ func TestBackendStore_WithSlogLogger(t *testing.T) {
 	})
 
 	t.Run("nil slog logger does not panic", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 		assert.Nil(t, store.slog)
@@ -1049,7 +1049,7 @@ func TestBackendStore_WithSlogLogger(t *testing.T) {
 	})
 
 	t.Run("all helper methods work without slog", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -1074,7 +1074,7 @@ func TestBackendStore_StoreInterface(t *testing.T) {
 func TestBackendStore_EntryKey(t *testing.T) {
 
 	t.Run("keys are deterministic and sorted chronologically", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -1089,7 +1089,7 @@ func TestBackendStore_EntryKey(t *testing.T) {
 	})
 
 	t.Run("keys have correct prefix", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 
@@ -1099,7 +1099,7 @@ func TestBackendStore_EntryKey(t *testing.T) {
 	})
 
 	t.Run("concurrent keys are unique", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		store, err := NewBackendStore(backend, 100, nil)
 		require.NoError(t, err)
 

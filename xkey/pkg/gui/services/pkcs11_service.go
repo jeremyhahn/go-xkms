@@ -17,14 +17,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/manager"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
@@ -113,7 +112,7 @@ type PKCS11DisconnectHook func(moduleID string, slotID uint)
 type PKCS11Service struct {
 	ctx            context.Context
 	log            *slog.Logger
-	manager        manager.Manager
+	manager        xkms.PKCS11Manager
 	registry       backendregistry.Registry
 	connectHook    PKCS11ConnectHook
 	disconnectHook PKCS11DisconnectHook
@@ -128,7 +127,7 @@ type PKCS11Service struct {
 
 // NewPKCS11Service creates a new PKCS11Service with a fresh manager.
 func NewPKCS11Service() *PKCS11Service {
-	m := manager.New()
+	m := xkms.NewPKCS11Manager()
 	slog.Info("pkcs11_service: created", "manager_available", m.IsAvailable())
 	return &PKCS11Service{
 		log:           slog.Default().With("component", "pkcs11_service"),
@@ -157,12 +156,12 @@ func (s *PKCS11Service) SetDisconnectHook(fn PKCS11DisconnectHook) {
 
 // SetManager sets the underlying PKCS#11 manager.
 // This allows injecting a manager with custom configuration or for testing.
-func (s *PKCS11Service) SetManager(m manager.Manager) {
+func (s *PKCS11Service) SetManager(m xkms.PKCS11Manager) {
 	s.manager = m
 }
 
 // GetManager returns the underlying PKCS#11 manager.
-func (s *PKCS11Service) GetManager() manager.Manager {
+func (s *PKCS11Service) GetManager() xkms.PKCS11Manager {
 	return s.manager
 }
 
@@ -192,7 +191,7 @@ func (s *PKCS11Service) Close() error {
 // ProbeModules detects available PKCS#11 modules on the system.
 // Returns a list of library paths and suggested display names.
 func (s *PKCS11Service) ProbeModules() []ProbeResult {
-	probed := manager.ProbeModulesWithNames()
+	probed := xkms.ProbePKCS11Modules()
 	results := make([]ProbeResult, len(probed))
 	for i, p := range probed {
 		results[i] = ProbeResult{
@@ -759,7 +758,7 @@ func (s *PKCS11Service) ListConnections() []PKCS11ConnectionInfo {
 }
 
 // convertModule converts a manager.ModuleInfo to PKCS11ModuleInfo.
-func convertModule(m *manager.ModuleInfo) *PKCS11ModuleInfo {
+func convertModule(m *xkms.PKCS11ModuleInfo) *PKCS11ModuleInfo {
 	return &PKCS11ModuleInfo{
 		ID:          m.ID,
 		DisplayName: m.DisplayName,
@@ -771,7 +770,7 @@ func convertModule(m *manager.ModuleInfo) *PKCS11ModuleInfo {
 }
 
 // convertSlots converts a slice of manager.SlotInfo to PKCS11SlotInfo.
-func convertSlots(slots []manager.SlotInfo) []PKCS11SlotInfo {
+func convertSlots(slots []xkms.PKCS11SlotInfo) []PKCS11SlotInfo {
 	result := make([]PKCS11SlotInfo, len(slots))
 	for i, slot := range slots {
 		result[i] = PKCS11SlotInfo{
@@ -935,7 +934,7 @@ type SlotOccupancyInfo struct {
 // pkcs11.Backend type does. This local interface allows a clean type assertion
 // without importing the concrete backend package.
 type slotModelProvider interface {
-	SlotModel() pivcert.SlotModel
+	SlotModel() xkms.PIVSlotModel
 }
 
 // GetSlotOccupancy returns PIV slot occupancy for the connected PKCS#11 token.

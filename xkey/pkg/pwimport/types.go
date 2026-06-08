@@ -19,7 +19,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Import format constants.
@@ -116,7 +116,7 @@ type ParsedEntry struct {
 }
 
 // ToStaticPassword converts a ParsedEntry to a StaticPassword.
-func (p *ParsedEntry) ToStaticPassword() *staticpw.StaticPassword {
+func (p *ParsedEntry) ToStaticPassword() *xkms.StaticPassword {
 	now := time.Now()
 
 	createdAt := p.CreatedAt
@@ -137,7 +137,7 @@ func (p *ParsedEntry) ToStaticPassword() *staticpw.StaticPassword {
 		name = "Unnamed Entry"
 	}
 
-	sp := &staticpw.StaticPassword{
+	sp := &xkms.StaticPassword{
 		Name:       name,
 		Title:      p.Title,
 		Username:   p.Username,
@@ -151,7 +151,7 @@ func (p *ParsedEntry) ToStaticPassword() *staticpw.StaticPassword {
 	}
 
 	// Generate deterministic ID.
-	sp.ID = staticpw.GenerateID(sp.Name, sp.FolderPath)
+	sp.ID = xkms.GenerateStaticPasswordID(sp.Name, sp.FolderPath)
 
 	return sp
 }

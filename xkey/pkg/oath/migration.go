@@ -19,7 +19,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ErrMigrationFailed is returned when migration from the legacy backend fails.
@@ -39,14 +39,14 @@ func (e ErrMigrationFailed) Unwrap() error {
 }
 
 // MigrateFromBackend migrates all OATH credentials from a legacy
-// storage.Backend (flat key/value store) to a DAOStore. Each credential
+// xkms.StorageBackend (flat key/value store) to a DAOStore. Each credential
 // stored under the given prefix is unmarshaled, converted to an entity,
 // and saved via the DAO. Successfully migrated keys are deleted from the
 // legacy backend.
 //
 // The function is idempotent: credentials that already exist in the
 // DAOStore (by name) are skipped without error.
-func MigrateFromBackend(ctx context.Context, backend storage.Backend, prefix string, daoStore *DAOStore) error {
+func MigrateFromBackend(ctx context.Context, backend xkms.StorageBackend, prefix string, daoStore *DAOStore) error {
 	if backend == nil {
 		return ErrNilBackend
 	}
@@ -62,7 +62,7 @@ func MigrateFromBackend(ctx context.Context, backend storage.Backend, prefix str
 	for _, key := range keys {
 		data, err := backend.Get(ctx, key)
 		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, xkms.ErrStorageNotFound) {
 				continue
 			}
 			return ErrMigrationFailed{Key: key, Cause: err}

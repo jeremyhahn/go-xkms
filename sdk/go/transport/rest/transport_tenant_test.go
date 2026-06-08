@@ -16,74 +16,186 @@ package rest
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
-	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
-// newTenantTestTransport creates a REST transport connected to an httptest
-// server backed by real tenant handlers with a real barrier registry.
-func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
-	t.Helper()
+// tenantState tracks a single tenant plus the unseal state of its per-tenant
+// barrier, reproducing the lifecycle the SDK TenantService client exercises.
+type tenantState struct {
+	info     transport.TenantInfo
+	unsealed bool
+}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	base := storage.NewMemory()
-	barrier, err := seal.NewBarrier(
-		logger,
-		base,
-		seal.BarrierConfig{
-			RootKeyPath:     "core/seal",
-			PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase},
-		},
-		seal.NewSoftwareStrategy(),
-	)
-	if err != nil {
-		t.Fatal(err)
+// tenantFakeServer is a compact, in-memory implementation of the tenant and
+// per-tenant-barrier HTTP API exercised by the SDK REST TenantService client.
+// It stands in for the former seal.BarrierRegistry-backed handlers (now hosted
+// in the go-qrdb node) so these tests can validate the client's request
+// serialization and response/error mapping against a real HTTP server without
+// depending on any production barrier backend.
+type tenantFakeServer struct {
+	tenants map[string]*tenantState
+}
+
+func newTenantFakeServer() *tenantFakeServer {
+	return &tenantFakeServer{tenants: make(map[string]*tenantState)}
+}
+
+func (s *tenantFakeServer) createTenant(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req transport.CreateTenantRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(t, w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.ID == "" {
+			writeErr(t, w, http.StatusBadRequest, "id is required")
+			return
+		}
+		if req.Name == "" {
+			writeErr(t, w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if _, ok := s.tenants[req.ID]; ok {
+			writeErr(t, w, http.StatusConflict, "tenant already exists")
+			return
+		}
+
+		now := time.Now().UTC()
+		info := transport.TenantInfo{
+			ID:            req.ID,
+			Name:          req.Name,
+			IsolationType: req.IsolationType,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		s.tenants[req.ID] = &tenantState{info: info}
+
+		writeJSON(t, w, http.StatusCreated, transport.CreateTenantResponse{Tenant: info})
 	}
+}
 
-	ctx := context.Background()
-	creds := seal.Credentials{Secret: "test-password"}
-	if err := barrier.Initialize(ctx, creds); err != nil {
-		t.Fatal(err)
+func (s *tenantFakeServer) getTenant(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ts, ok := s.tenants[chi.URLParam(r, "tenantID")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "tenant not found")
+			return
+		}
+		writeJSON(t, w, http.StatusOK, transport.GetTenantResponse{Tenant: ts.info})
 	}
+}
 
-	registry, err := seal.NewBarrierRegistry(barrier)
-	if err != nil {
-		t.Fatal(err)
+func (s *tenantFakeServer) listTenants(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		tenants := make([]transport.TenantInfo, 0, len(s.tenants))
+		for _, ts := range s.tenants {
+			tenants = append(tenants, ts.info)
+		}
+		writeJSON(t, w, http.StatusOK, transport.ListTenantsResponse{Tenants: tenants})
 	}
+}
 
-	handlers := restapi.NewTenantHandlers(registry)
+func (s *tenantFakeServer) deleteTenant(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := chi.URLParam(r, "tenantID")
+		if _, ok := s.tenants[id]; !ok {
+			writeErr(t, w, http.StatusNotFound, "tenant not found")
+			return
+		}
+		delete(s.tenants, id)
+		writeJSON(t, w, http.StatusNoContent, nil)
+	}
+}
 
+func (s *tenantFakeServer) barrierInit(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ts, ok := s.tenants[chi.URLParam(r, "tenantID")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "tenant not found")
+			return
+		}
+
+		var req transport.TenantBarrierInitRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(t, w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		// The software (passphrase) strategy auto-unseals on initialization.
+		ts.unsealed = true
+		writeJSON(t, w, http.StatusOK, map[string]bool{"initialized": true})
+	}
+}
+
+func (s *tenantFakeServer) barrierUnseal(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ts, ok := s.tenants[chi.URLParam(r, "tenantID")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "tenant not found")
+			return
+		}
+
+		var req transport.TenantBarrierUnsealRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(t, w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+
+		if ts.unsealed {
+			writeErr(t, w, http.StatusConflict, "barrier already unsealed")
+			return
+		}
+
+		ts.unsealed = true
+		writeJSON(t, w, http.StatusOK, map[string]bool{"unsealed": true})
+	}
+}
+
+func (s *tenantFakeServer) barrierStatus(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ts, ok := s.tenants[chi.URLParam(r, "tenantID")]
+		if !ok {
+			writeErr(t, w, http.StatusNotFound, "tenant not found")
+			return
+		}
+		writeJSON(t, w, http.StatusOK, map[string]bool{"unsealed": ts.unsealed})
+	}
+}
+
+// router builds the chi router exposing the tenant and per-tenant-barrier HTTP
+// API plus the /health endpoint required by Transport.Connect().
+func (s *tenantFakeServer) router(t *testing.T) http.Handler {
 	r := chi.NewRouter()
 
-	// Health endpoint required by Connect().
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-			t.Logf("failed to encode health response: %v", err)
-		}
+		writeJSON(t, w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
 	r.Route("/api/v1/tenants", func(r chi.Router) {
-		r.Post("/", handlers.CreateTenantHandler)
-		r.Get("/", handlers.ListTenantsHandler)
-		r.Get("/{tenantID}", handlers.GetTenantHandler)
-		r.Delete("/{tenantID}", handlers.DeleteTenantHandler)
-		r.Get("/{tenantID}/barrier/status", handlers.TenantBarrierStatusHandler)
-		r.Post("/{tenantID}/barrier/init", handlers.TenantBarrierInitHandler)
-		r.Post("/{tenantID}/barrier/unseal", handlers.TenantBarrierUnsealHandler)
+		r.Post("/", s.createTenant(t))
+		r.Get("/", s.listTenants(t))
+		r.Get("/{tenantID}", s.getTenant(t))
+		r.Delete("/{tenantID}", s.deleteTenant(t))
+		r.Get("/{tenantID}/barrier/status", s.barrierStatus(t))
+		r.Post("/{tenantID}/barrier/init", s.barrierInit(t))
+		r.Post("/{tenantID}/barrier/unseal", s.barrierUnseal(t))
 	})
 
-	server := httptest.NewServer(r)
+	return r
+}
+
+// newTenantTestTransport creates a REST transport connected to an httptest
+// server backed by an in-memory fake implementing the tenant HTTP API.
+func newTenantTestTransport(t *testing.T) (*Transport, *httptest.Server) {
+	t.Helper()
+
+	server := httptest.NewServer(newTenantFakeServer().router(t))
 	t.Cleanup(server.Close)
 
 	tr, err := NewWithConfig(&transport.Config{

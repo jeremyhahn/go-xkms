@@ -23,8 +23,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jeremyhahn/go-xkms/pkg/certstore"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	xkeyAttestation "github.com/jeremyhahn/go-xkms/xkey/pkg/attestation"
 	"github.com/spf13/cobra"
 )
@@ -197,7 +196,7 @@ func runEKShow(cmd *cobra.Command, args []string) error {
 		ekCert, err = tpm.EKCertificateEC()
 		// Update attributes to reflect EC key
 		ekAttrs.KeyAlgorithm = x509.ECDSA
-		ekAttrs.ECCAttributes = &types.ECCAttributes{
+		ekAttrs.ECCAttributes = &xkms.ECCAttributes{
 			Curve: elliptic.P256(),
 		}
 		ekAttrs.RSAAttributes = nil
@@ -214,7 +213,7 @@ func runEKShow(cmd *cobra.Command, args []string) error {
 	}
 }
 
-func outputEKText(ekAttrs *types.KeyAttributes, cert *x509.Certificate) error {
+func outputEKText(ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
 	// Use standard KeyAttributes formatting (matches xkmsctl output.go PrintKeyInfo)
 	fmt.Println("Key Information:")
 	fmt.Printf("  CN:        %s\n", ekAttrs.CN)
@@ -240,8 +239,8 @@ func outputEKText(ekAttrs *types.KeyAttributes, cert *x509.Certificate) error {
 	fmt.Println()
 
 	if cert != nil {
-		// Use certstore.ToString for detailed certificate output
-		fmt.Print(certstore.ToString(cert))
+		// Use xkms.CertToString for detailed certificate output
+		fmt.Print(xkms.CertToString(cert))
 
 		// Attempt EK certificate verification against TPM manufacturer roots
 		fmt.Println()
@@ -253,7 +252,7 @@ func outputEKText(ekAttrs *types.KeyAttributes, cert *x509.Certificate) error {
 	return nil
 }
 
-func outputEKJSON(ekAttrs *types.KeyAttributes, cert *x509.Certificate) error {
+func outputEKJSON(ekAttrs *xkms.KeyAttributes, cert *x509.Certificate) error {
 	info := map[string]interface{}{
 		"cn":        ekAttrs.CN,
 		"type":      ekAttrs.KeyType.String(),

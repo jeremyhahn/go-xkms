@@ -29,9 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -109,18 +106,18 @@ type fmSealMock struct {
 }
 
 func (m *fmSealMock) CanSeal() bool { return m.canSeal }
-func (m *fmSealMock) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (m *fmSealMock) Seal(_ context.Context, data []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	if m.sealErr != nil {
 		return nil, m.sealErr
 	}
-	return &types.SealedData{
-		Backend:    types.BackendTypeTPM2,
+	return &xkms.SealedData{
+		Backend:    xkms.BackendTypeTPM2,
 		Ciphertext: data,
 		TPMPublic:  []byte("tpm-public"),
 		TPMPrivate: []byte("tpm-private"),
 	}, nil
 }
-func (m *fmSealMock) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *fmSealMock) Unseal(_ context.Context, sealed *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	if m.unsealErr != nil {
 		return nil, m.unsealErr
 	}
@@ -164,7 +161,7 @@ func fmNewSealSvc(t *testing.T, mock *fmSealMock) *SealService {
 
 	svc := NewSealService(t.TempDir())
 	svc.SetClientFunc(func() xkms.Client { return mc })
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.SetContext(context.Background())
 	return svc
 }
@@ -561,7 +558,7 @@ func TestFM_FindMatchingTrustRoot_EmptyChain(t *testing.T) {
 // GetStatus with nil config returns mode "none".
 func TestFM_PasswordProtection_GetStatus_NilConfig(t *testing.T) {
 	dir := t.TempDir()
-	pwStore := staticpw.NewStore(storage.NewMemory())
+	pwStore := staticpw.NewStore(xkms.NewStorageMemory())
 	staticSvc := NewStaticPasswordService(pwStore)
 	svc := NewPasswordProtectionService(filepath.Join(dir, "enc.json"), staticSvc, nil)
 
@@ -858,7 +855,7 @@ func TestFM_AutoUnseal_TryAutoUnseal_InvalidBase64(t *testing.T) {
 		ID:        blobID,
 		Label:     "auto-unseal-passphrase",
 		CreatedAt: time.Now(),
-		SealedData: &types.SealedData{
+		SealedData: &xkms.SealedData{
 			Ciphertext: []byte("not-base64-at-all!!!"),
 		},
 	}

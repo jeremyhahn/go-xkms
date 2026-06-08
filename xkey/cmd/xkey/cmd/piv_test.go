@@ -24,7 +24,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/viper"
 	"math/big"
 	"os"
@@ -2876,7 +2876,7 @@ func TestPIVKeyGenerateConfig_AllCombinations(t *testing.T) {
 			for _, touchPolicy := range touchPolicies {
 				for _, slot := range slots {
 					cfg := &PIVKeyGenerateConfig{
-						Slot:        pivcert.PIVSlot(slot),
+						Slot:        xkms.PIVSlot(slot),
 						Algorithm:   alg,
 						PINPolicy:   pinPolicy,
 						TouchPolicy: touchPolicy,

@@ -27,7 +27,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/stretchr/testify/require"
 )
@@ -157,30 +157,30 @@ func testWebAuthnFlow(t *testing.T, auth *Authenticator, algorithm int) {
 	require.True(t, valid, "RP-side signature verification must pass (ASN.1/DER format)")
 }
 
-// mockKeyProvider implements types.KeyProvider using in-memory ECDSA keys
+// mockKeyProvider implements xkms.KeyProvider using in-memory ECDSA keys
 // for testing the WebAuthn verification flow through the BackendAdapter.
 type mockKeyProvider struct {
 	keys         map[string]crypto.PrivateKey
-	capabilities types.Capabilities
+	capabilities xkms.Capabilities
 }
 
 func newMockKeyProvider() *mockKeyProvider {
 	return &mockKeyProvider{
 		keys:         make(map[string]crypto.PrivateKey),
-		capabilities: types.Capabilities{Signing: true, Keys: true},
+		capabilities: xkms.Capabilities{Signing: true, Keys: true},
 	}
 }
 
-func (m *mockKeyProvider) Type() types.BackendType                    { return types.BackendTypeSoftware }
-func (m *mockKeyProvider) Capabilities() types.Capabilities           { return m.capabilities }
-func (m *mockKeyProvider) Close() error                               { return nil }
-func (m *mockKeyProvider) ListKeys() ([]*types.KeyAttributes, error)  { return nil, nil }
-func (m *mockKeyProvider) RotateKey(attrs *types.KeyAttributes) error { return nil }
-func (m *mockKeyProvider) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (m *mockKeyProvider) Type() xkms.BackendType                    { return xkms.BackendTypeSoftware }
+func (m *mockKeyProvider) Capabilities() xkms.Capabilities           { return m.capabilities }
+func (m *mockKeyProvider) Close() error                              { return nil }
+func (m *mockKeyProvider) ListKeys() ([]*xkms.KeyAttributes, error)  { return nil, nil }
+func (m *mockKeyProvider) RotateKey(attrs *xkms.KeyAttributes) error { return nil }
+func (m *mockKeyProvider) Decrypter(attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, nil
 }
 
-func (m *mockKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	var key crypto.PrivateKey
 	var err error
 	switch {
@@ -198,7 +198,7 @@ func (m *mockKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.Privat
 	return key, nil
 }
 
-func (m *mockKeyProvider) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockKeyProvider) GetKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, fmt.Errorf("key not found: %s", attrs.CN)
@@ -206,12 +206,12 @@ func (m *mockKeyProvider) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey,
 	return key, nil
 }
 
-func (m *mockKeyProvider) DeleteKey(attrs *types.KeyAttributes) error {
+func (m *mockKeyProvider) DeleteKey(attrs *xkms.KeyAttributes) error {
 	delete(m.keys, attrs.CN)
 	return nil
 }
 
-func (m *mockKeyProvider) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (m *mockKeyProvider) Signer(attrs *xkms.KeyAttributes) (crypto.Signer, error) {
 	key, ok := m.keys[attrs.CN]
 	if !ok {
 		return nil, fmt.Errorf("key not found: %s", attrs.CN)
@@ -229,7 +229,7 @@ func (m *mockKeyProvider) Signer(attrs *types.KeyAttributes) (crypto.Signer, err
 func TestWebAuthnVerification_SoftwareBackend(t *testing.T) {
 	t.Parallel()
 
-	adapter := keybackend.NewBackendAdapter(newMockKeyProvider(), types.BackendTypeSoftware)
+	adapter := keybackend.NewBackendAdapter(newMockKeyProvider(), xkms.BackendTypeSoftware)
 	config := DefaultConfig()
 	config.Storage = NewMemoryStorage()
 	config.KeyBackend = adapter
@@ -246,7 +246,7 @@ func TestWebAuthnVerification_SoftwareBackend(t *testing.T) {
 func TestWebAuthnVerification_SoftwareBackend_ES384(t *testing.T) {
 	t.Parallel()
 
-	adapter := keybackend.NewBackendAdapter(newMockKeyProvider(), types.BackendTypeSoftware)
+	adapter := keybackend.NewBackendAdapter(newMockKeyProvider(), xkms.BackendTypeSoftware)
 	config := DefaultConfig()
 	config.Storage = NewMemoryStorage()
 	config.KeyBackend = adapter
@@ -266,12 +266,12 @@ func TestWebAuthnVerification_TPM2Backend(t *testing.T) {
 
 	// Use a mock KeyProvider with HardwareBacked=true to simulate TPM2.
 	provider := newMockKeyProvider()
-	provider.capabilities = types.Capabilities{
+	provider.capabilities = xkms.Capabilities{
 		Signing:        true,
 		Keys:           true,
 		HardwareBacked: true,
 	}
-	adapter := keybackend.NewBackendAdapter(provider, types.BackendTypeTPM2)
+	adapter := keybackend.NewBackendAdapter(provider, xkms.BackendTypeTPM2)
 
 	config := DefaultConfig()
 	config.Storage = NewMemoryStorage()

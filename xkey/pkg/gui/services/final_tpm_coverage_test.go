@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -27,8 +28,6 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -51,7 +50,7 @@ func ftCreatePolicyService(t *testing.T, mock *policyMockTPM) *PlatformPolicySer
 	t.Helper()
 	policyPath := filepath.Join(t.TempDir(), "platform.policy")
 	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.SetContext(context.Background())
 	return svc
 }
@@ -892,12 +891,12 @@ func TestFT_GetSharedSRKInfo_SSRKAttrsError(t *testing.T) {
 
 func TestFT_GetIAKInfo_WithCert(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.iakAttrs = &types.KeyAttributes{
+	mock.iakAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm: 1, // RSA
-		RSAAttributes: &types.RSAAttributes{
+		RSAAttributes: &xkms.RSAAttributes{
 			KeySize: 2048,
 		},
-		TPMAttributes: &types.TPMAttributes{
+		TPMAttributes: &xkms.TPMAttributes{
 			Handle: 0x81020001,
 		},
 	}
@@ -1067,7 +1066,7 @@ func TestFT_PlatformPolicy_CreatePolicy_SaveError(t *testing.T) {
 	policyPath := filepath.Join("/dev/null", "subdir", "platform.policy")
 	svc := NewPlatformPolicyService(policyPath)
 	mock := defaultPolicyMock()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 
 	_, err := svc.CreatePolicy([]int{0, 7}, "sha256")
 	assert.ErrorIs(t, err, ErrPolicySaveFailed)
@@ -1154,10 +1153,10 @@ func TestFT_PlatformPolicy_VerifyPolicy_Mismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Change PCR values to simulate drift
-	mock.pcrBanksOverride = []tpm2pkg.PCRBank{
+	mock.pcrBanksOverride = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}}, // Different from stored
 				{ID: 7, Value: []byte{0x11, 0x22, 0x33, 0x44}},
 			},
@@ -1468,9 +1467,9 @@ func TestFT_GetPlatformSRKInfo_WithPKS(t *testing.T) {
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized:   true,
 		policyEnabled: true,
-		srkAttrs: &types.KeyAttributes{
+		srkAttrs: &xkms.KeyAttributes{
 			KeyAlgorithm: 1, // RSA
-			TPMAttributes: &types.TPMAttributes{
+			TPMAttributes: &xkms.TPMAttributes{
 				Handle: 0x81800001,
 			},
 		},
@@ -1505,12 +1504,12 @@ func TestFT_GetEKECCInfo_NilCertNoError(t *testing.T) {
 
 func TestFT_GetIDevIDInfo_WithCert(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.idevidAttrs = &types.KeyAttributes{
+	mock.idevidAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm: 3, // ECDSA
-		ECCAttributes: &types.ECCAttributes{
+		ECCAttributes: &xkms.ECCAttributes{
 			Curve: elliptic.P256(),
 		},
-		TPMAttributes: &types.TPMAttributes{
+		TPMAttributes: &xkms.TPMAttributes{
 			Handle: 0x81020000,
 		},
 	}

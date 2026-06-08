@@ -25,7 +25,7 @@ import (
 	"github.com/godbus/dbus/v5"
 	"github.com/godbus/dbus/v5/introspect"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 )
 
@@ -34,7 +34,7 @@ import (
 type Daemon struct {
 	mu     sync.RWMutex
 	config *ServiceConfig
-	store  staticpw.Store
+	store  xkms.StaticPasswordStore
 	conn   *dbus.Conn
 	mapper *PathMapper
 	logger *slog.Logger
@@ -61,7 +61,7 @@ type Daemon struct {
 }
 
 // NewDaemon creates a new Secret Service daemon.
-func NewDaemon(store staticpw.Store, config *ServiceConfig, logger *slog.Logger) (*Daemon, error) {
+func NewDaemon(store xkms.StaticPasswordStore, config *ServiceConfig, logger *slog.Logger) (*Daemon, error) {
 	if store == nil {
 		return nil, ErrNilPasswordStore
 	}

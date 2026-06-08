@@ -1,0 +1,103 @@
+# Dockerfile.xkmsd — builds xkmsd with -tags raft for the 3-node cluster
+# integration test harness.
+#
+# The image is purpose-built for the cluster test: it bakes the raft-tagged
+# binary into the image so the compose stack can start three identical nodes
+# with only environment-variable differences. Build context is the repo root;
+# sibling module trees are provided via docker compose additional_contexts.
+
+FROM golang:1.26.1-bookworm AS builder
+
+ENV GOTOOLCHAIN=auto
+
+# Build dependencies for CGO (PKCS#11 support pulled in transitively).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    libusb-1.0-0-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy module manifests for cache-efficient dependency download.
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
+# Materialise the sibling modules from docker compose additional_contexts.
+COPY --from=go-codec     . /go-codec
+COPY --from=go-frost     . /go-frost
+COPY --from=go-objstore  . /go-objstore
+COPY --from=go-qrdb      . /go-qrdb
+COPY --from=go-quicraft  . /go-quicraft
+COPY --from=go-truststrap . /go-truststrap
+
+# Write a build-time Go workspace so all in-house modules resolve locally.
+ENV GOWORK=/tmp/go.work
+RUN cat > /tmp/go.work <<'EOF'
+go 1.26.4
+
+use (
+	/build
+	/build/sdk/go
+	/build/xkey
+	/go-codec
+	/go-frost
+	/go-objstore
+	/go-qrdb
+	/go-qrdb/sdk/go
+	/go-quicraft
+	/go-truststrap
+)
+
+replace (
+	github.com/jeremyhahn/go-codec v0.0.0 => /go-codec
+	github.com/jeremyhahn/go-frost v0.0.0 => /go-frost
+	github.com/jeremyhahn/go-objstore v0.0.0 => /go-objstore
+	github.com/jeremyhahn/go-qrdb v0.0.0 => /go-qrdb
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.0.0 => /go-qrdb/sdk/go
+	github.com/jeremyhahn/go-quicraft v0.0.0 => /go-quicraft
+	github.com/jeremyhahn/go-truststrap v0.0.0 => /go-truststrap
+	github.com/jeremyhahn/go-xkms v0.0.0 => /build
+	github.com/jeremyhahn/go-xkms/sdk/go v0.0.0 => /build/sdk/go
+	github.com/jeremyhahn/go-xkms/xkey v0.0.0 => /build/xkey
+)
+EOF
+
+RUN go mod download
+
+# Copy the full source tree.
+COPY . .
+
+# Build xkmsd with the raft tag so NewClusteredNode is available.
+RUN CGO_ENABLED=1 go build -buildvcs=false \
+    -tags "raft pkcs8 codec_cbor codec_json codec_msgpack" \
+    -ldflags "-w -s" \
+    -o /out/xkmsd \
+    ./cmd/xkmsd/
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Runtime image: Debian bookworm slim for glibc compatibility with the CGO
+# binary. We do not use Alpine because the CGO binary links against glibc.
+# ──────────────────────────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    libusb-1.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /out/xkmsd /app/xkmsd
+
+# Data directory created at runtime; cluster nodes each get a named volume.
+RUN mkdir -p /data/storage /data/keys/pkcs8 /etc/xkms
+
+EXPOSE 8443
+EXPOSE 63001
+
+HEALTHCHECK --interval=5s --timeout=3s --retries=20 --start-period=10s \
+    CMD wget --quiet --tries=1 --spider http://localhost:8443/health || exit 1
+
+ENTRYPOINT ["/app/xkmsd"]

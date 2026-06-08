@@ -16,61 +16,63 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Typed errors for custodian, share, and tenant gRPC operations.
 var (
-	// ErrCustodianServiceNotConfigured is returned when the custodian service
-	// has not been configured via SetCustodianService.
-	ErrCustodianServiceNotConfigured = errors.New("grpc: custodian service not configured")
+	// ErrCustodianClientNotConfigured is returned when the custodian group
+	// client has not been configured via SetCustodianClient.
+	ErrCustodianClientNotConfigured = errors.New("grpc: custodian group client not configured")
 
-	// ErrShareStoreNotConfigured is returned when the share store has not
-	// been configured via SetShareStore.
-	ErrShareStoreNotConfigured = errors.New("grpc: share store not configured")
+	// ErrShareClientNotConfigured is returned when the share client has not
+	// been configured via SetShareClient.
+	ErrShareClientNotConfigured = errors.New("grpc: share client not configured")
 
 	// ErrBarrierRegistryNotConfigured is returned when the barrier registry
 	// has not been configured via SetBarrierRegistry.
 	ErrBarrierRegistryNotConfigured = errors.New("grpc: barrier registry not configured")
 )
 
+// Default custodian field values applied when the gRPC request omits them.
+// The proto CreateCustodianGroupRequest has no purpose field and the
+// AddCustodianMemberRequest role may be empty.
+const (
+	defaultCustodianPurpose = "barrier"
+	defaultCustodianMethod  = "manual"
+)
+
 // custodianErrorToGRPC maps custodian domain errors to gRPC status codes.
 var custodianErrorToGRPC = map[error]codes.Code{
-	custodian.ErrGroupNotFound:        codes.NotFound,
-	custodian.ErrGroupAlreadyExists:   codes.AlreadyExists,
-	custodian.ErrGroupFull:            codes.FailedPrecondition,
-	custodian.ErrMemberAlreadyExists:  codes.AlreadyExists,
-	custodian.ErrMemberNotFound:       codes.NotFound,
-	custodian.ErrEmptyGroupID:         codes.InvalidArgument,
-	custodian.ErrEmptyGroupName:       codes.InvalidArgument,
-	custodian.ErrEmptyUserID:          codes.InvalidArgument,
-	custodian.ErrInvalidThreshold:     codes.InvalidArgument,
-	custodian.ErrInvalidTotalShares:   codes.InvalidArgument,
-	custodian.ErrInvalidPurpose:       codes.InvalidArgument,
-	custodian.ErrGroupEmpty:           codes.FailedPrecondition,
-	custodian.ErrShareAlreadyReceived: codes.AlreadyExists,
+	qrdbsdk.ErrCeremonyGroupNotFound:       codes.NotFound,
+	qrdbsdk.ErrCeremonyMemberNotFound:      codes.NotFound,
+	qrdbsdk.ErrCeremonyUserNotFound:        codes.NotFound,
+	qrdbsdk.ErrCeremonyGroupAlreadyExists:  codes.AlreadyExists,
+	qrdbsdk.ErrCeremonyMemberAlreadyExists: codes.AlreadyExists,
+	qrdbsdk.ErrCeremonyGroupFull:           codes.FailedPrecondition,
+	qrdbsdk.ErrCeremonyInsufficientMembers: codes.FailedPrecondition,
+	qrdbsdk.ErrCeremonyEmptyGroupID:        codes.InvalidArgument,
+	qrdbsdk.ErrCeremonyEmptyGroupName:      codes.InvalidArgument,
+	qrdbsdk.ErrCeremonyInvalidThreshold:    codes.InvalidArgument,
+	qrdbsdk.ErrCeremonyInvalidTotal:        codes.InvalidArgument,
 }
 
-// shareErrorToGRPC maps sharestore domain errors to gRPC status codes.
+// shareErrorToGRPC maps share domain errors (surfaced by the embedded go-qrdb
+// node's share client) to gRPC status codes.
 var shareErrorToGRPC = map[error]codes.Code{
-	sharestore.ErrShareNotFound:    codes.NotFound,
-	sharestore.ErrShareExists:      codes.AlreadyExists,
-	sharestore.ErrInvalidServerURL: codes.InvalidArgument,
-	sharestore.ErrInvalidGroupID:   codes.InvalidArgument,
-	sharestore.ErrEmptyShare:       codes.InvalidArgument,
-	sharestore.ErrNilEntry:         codes.InvalidArgument,
-	sharestore.ErrStoreClosed:      codes.Unavailable,
+	qrdbsdk.ErrCeremonyShareNotFound: codes.NotFound,
 }
 
 // tenantErrorToGRPC maps seal/tenant domain errors to gRPC status codes.
@@ -92,31 +94,36 @@ var tenantErrorToGRPC = map[error]codes.Code{
 
 // Package-level service references, set via their respective setter functions.
 var (
-	custodianService *custodian.Service
-	shareStore       sharestore.ShareStore
-	barrierRegistry  *seal.BarrierRegistry
+	custodianClient qrdbtransport.CustodianGroupClient
+	shareClient     qrdbtransport.ShareClient
+	barrierRegistry *seal.BarrierRegistry
 )
 
-// SetCustodianService configures the custodian service for the gRPC service.
-// This must be called before any custodian RPCs can be used.
-func SetCustodianService(svc *custodian.Service) {
-	custodianService = svc
+// SetCustodianClient configures the custodian group client for the gRPC
+// service. Custodian state is owned by the embedded go-qrdb node; the gRPC
+// handlers convert proto messages to the node's transport types and pass the
+// calls through. This must be called before any custodian RPCs can be used.
+func SetCustodianClient(c qrdbtransport.CustodianGroupClient) {
+	custodianClient = c
 }
 
-// GetCustodianService returns the configured custodian service, or nil if not set.
-func GetCustodianService() *custodian.Service {
-	return custodianService
+// GetCustodianClient returns the configured custodian group client, or nil if
+// not set.
+func GetCustodianClient() qrdbtransport.CustodianGroupClient {
+	return custodianClient
 }
 
-// SetShareStore configures the share store for the gRPC service.
-// This must be called before any share RPCs can be used.
-func SetShareStore(ss sharestore.ShareStore) {
-	shareStore = ss
+// SetShareClient configures the share client for the gRPC service. Share state
+// is owned by the embedded go-qrdb node; the gRPC handlers convert proto
+// messages to the node's transport types and pass the calls through. This must
+// be called before any share RPCs can be used.
+func SetShareClient(c qrdbtransport.ShareClient) {
+	shareClient = c
 }
 
-// GetShareStore returns the configured share store, or nil if not set.
-func GetShareStore() sharestore.ShareStore {
-	return shareStore
+// GetShareClient returns the configured share client, or nil if not set.
+func GetShareClient() qrdbtransport.ShareClient {
+	return shareClient
 }
 
 // SetBarrierRegistry configures the barrier registry for tenant operations.
@@ -175,16 +182,12 @@ func mapTenantError(err error, operation string) error {
 	return status.Errorf(codes.Internal, "%s: %v", operation, err)
 }
 
-// custodianGroupToProto converts a domain CustodianGroup to its proto
-// representation.
-func custodianGroupToProto(g *custodian.CustodianGroup) *pb.CustodianGroup {
+// custodianGroupToProto converts a qrdb-transport CustodianGroupInfo to its
+// proto representation.
+func custodianGroupToProto(g *qrdbtransport.CustodianGroupInfo) *pb.CustodianGroup {
 	members := make([]*pb.CustodianMember, 0, len(g.Members))
-	for _, m := range g.Members {
-		members = append(members, &pb.CustodianMember{
-			UserId: m.UserID,
-			Name:   m.Username,
-			Role:   m.Method,
-		})
+	for i := range g.Members {
+		members = append(members, custodianMemberToProto(&g.Members[i]))
 	}
 	return &pb.CustodianGroup{
 		Id:          g.ID,
@@ -197,9 +200,9 @@ func custodianGroupToProto(g *custodian.CustodianGroup) *pb.CustodianGroup {
 	}
 }
 
-// custodianMemberToProto converts a domain CustodianMember to its proto
-// representation.
-func custodianMemberToProto(m *custodian.CustodianMember) *pb.CustodianMember {
+// custodianMemberToProto converts a qrdb-transport CustodianMemberInfo to its
+// proto representation.
+func custodianMemberToProto(m *qrdbtransport.CustodianMemberInfo) *pb.CustodianMember {
 	return &pb.CustodianMember{
 		UserId: m.UserID,
 		Name:   m.Username,
@@ -207,16 +210,17 @@ func custodianMemberToProto(m *custodian.CustodianMember) *pb.CustodianMember {
 	}
 }
 
-// shareEntryToProto converts a domain ShareEntry to its proto representation.
-func shareEntryToProto(e *sharestore.ShareEntry) *pb.ShareInfo {
+// shareInfoToProto converts a qrdb-transport ShareInfo to its proto
+// representation.
+func shareInfoToProto(info *qrdbtransport.ShareInfo) *pb.ShareInfo {
 	return &pb.ShareInfo{
-		GroupId:     e.GroupID,
-		ServerUrl:   e.ServerURL,
-		GroupName:   e.GroupName,
-		ShareIndex:  int32(e.ShareIndex), // #nosec G115 - share index fits in int32
-		Purpose:     e.Purpose,
-		TenantId:    e.TenantID,
-		SubmittedAt: e.ReceivedAt.Format(time.RFC3339),
+		GroupId:     info.GroupID,
+		ServerUrl:   info.ServerURL,
+		GroupName:   info.GroupName,
+		ShareIndex:  int32(info.ShareIndex), // #nosec G115 - share index fits in int32
+		Purpose:     info.Purpose,
+		TenantId:    info.TenantID,
+		SubmittedAt: info.ReceivedAt.Format(time.RFC3339),
 	}
 }
 
@@ -224,11 +228,11 @@ func shareEntryToProto(e *sharestore.ShareEntry) *pb.ShareInfo {
 
 // CreateCustodianGroup creates a new custodian group for Shamir threshold ceremonies.
 func (s *Service) CreateCustodianGroup(ctx context.Context, req *pb.CreateCustodianGroupRequest) (*pb.CreateCustodianGroupResponse, error) {
-	if custodianService == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrCustodianServiceNotConfigured.Error())
+	if custodianClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "custodian", "write", "create-group"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "enroll_custodian", "create-group"); err != nil {
 		return nil, err
 	}
 
@@ -247,26 +251,31 @@ func (s *Service) CreateCustodianGroup(ctx context.Context, req *pb.CreateCustod
 	// proto does not carry a total field.
 	purpose := req.GetDescription()
 	if purpose == "" {
-		purpose = custodian.PurposeBarrier
+		purpose = defaultCustodianPurpose
 	}
 
-	group, err := custodianService.CreateGroup(ctx, "", "", name, purpose, threshold, threshold)
+	resp, err := custodianClient.CreateCustodianGroup(ctx, &qrdbtransport.CreateCustodianGroupRequest{
+		Name:      name,
+		Purpose:   purpose,
+		Threshold: threshold,
+		Total:     threshold,
+	})
 	if err != nil {
 		return nil, mapCustodianError(err, "create custodian group")
 	}
 
 	return &pb.CreateCustodianGroupResponse{
-		Group: custodianGroupToProto(group),
+		Group: custodianGroupToProto(&resp.Group),
 	}, nil
 }
 
 // GetCustodianGroup retrieves a custodian group by ID.
 func (s *Service) GetCustodianGroup(ctx context.Context, req *pb.GetCustodianGroupRequest) (*pb.GetCustodianGroupResponse, error) {
-	if custodianService == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrCustodianServiceNotConfigured.Error())
+	if custodianClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "custodian", "read", "get-group"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "status", "get-group"); err != nil {
 		return nil, err
 	}
 
@@ -275,34 +284,34 @@ func (s *Service) GetCustodianGroup(ctx context.Context, req *pb.GetCustodianGro
 		return nil, status.Error(codes.InvalidArgument, "group_id is required")
 	}
 
-	group, err := custodianService.GetGroup(ctx, groupID)
+	resp, err := custodianClient.GetCustodianGroup(ctx, groupID)
 	if err != nil {
 		return nil, mapCustodianError(err, "get custodian group")
 	}
 
 	return &pb.GetCustodianGroupResponse{
-		Group: custodianGroupToProto(group),
+		Group: custodianGroupToProto(&resp.Group),
 	}, nil
 }
 
 // ListCustodianGroups returns all custodian groups.
 func (s *Service) ListCustodianGroups(ctx context.Context, _ *pb.ListCustodianGroupsRequest) (*pb.ListCustodianGroupsResponse, error) {
-	if custodianService == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrCustodianServiceNotConfigured.Error())
+	if custodianClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "custodian", "read", "list-groups"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "status", "list-groups"); err != nil {
 		return nil, err
 	}
 
-	groups, err := custodianService.ListGroups(ctx)
+	resp, err := custodianClient.ListCustodianGroups(ctx)
 	if err != nil {
 		return nil, mapCustodianError(err, "list custodian groups")
 	}
 
-	pbGroups := make([]*pb.CustodianGroup, 0, len(groups))
-	for _, g := range groups {
-		pbGroups = append(pbGroups, custodianGroupToProto(g))
+	pbGroups := make([]*pb.CustodianGroup, 0, len(resp.Groups))
+	for i := range resp.Groups {
+		pbGroups = append(pbGroups, custodianGroupToProto(&resp.Groups[i]))
 	}
 
 	return &pb.ListCustodianGroupsResponse{
@@ -312,11 +321,11 @@ func (s *Service) ListCustodianGroups(ctx context.Context, _ *pb.ListCustodianGr
 
 // DeleteCustodianGroup deletes a custodian group.
 func (s *Service) DeleteCustodianGroup(ctx context.Context, req *pb.DeleteCustodianGroupRequest) (*emptypb.Empty, error) {
-	if custodianService == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrCustodianServiceNotConfigured.Error())
+	if custodianClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "custodian", "write", "delete-group"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "revoke_custodian", "delete-group"); err != nil {
 		return nil, err
 	}
 
@@ -325,7 +334,7 @@ func (s *Service) DeleteCustodianGroup(ctx context.Context, req *pb.DeleteCustod
 		return nil, status.Error(codes.InvalidArgument, "group_id is required")
 	}
 
-	if err := custodianService.DeleteGroup(ctx, groupID); err != nil {
+	if err := custodianClient.DeleteCustodianGroup(ctx, groupID); err != nil {
 		return nil, mapCustodianError(err, "delete custodian group")
 	}
 
@@ -334,11 +343,11 @@ func (s *Service) DeleteCustodianGroup(ctx context.Context, req *pb.DeleteCustod
 
 // AddCustodianMember adds a member to a custodian group.
 func (s *Service) AddCustodianMember(ctx context.Context, req *pb.AddCustodianMemberRequest) (*pb.AddCustodianMemberResponse, error) {
-	if custodianService == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrCustodianServiceNotConfigured.Error())
+	if custodianClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "custodian", "write", "add-member"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "enroll_custodian", "add-member"); err != nil {
 		return nil, err
 	}
 
@@ -356,26 +365,31 @@ func (s *Service) AddCustodianMember(ctx context.Context, req *pb.AddCustodianMe
 	username := req.GetName()
 	method := req.GetRole()
 	if method == "" {
-		method = custodian.MethodManual
+		method = defaultCustodianMethod
 	}
 
-	member, err := custodianService.AddMember(ctx, groupID, userID, username, method)
+	resp, err := custodianClient.AddCustodianMember(ctx, &qrdbtransport.AddCustodianMemberRequest{
+		GroupID:  groupID,
+		UserID:   userID,
+		Username: username,
+		Method:   method,
+	})
 	if err != nil {
 		return nil, mapCustodianError(err, "add custodian member")
 	}
 
 	return &pb.AddCustodianMemberResponse{
-		Member: custodianMemberToProto(member),
+		Member: custodianMemberToProto(&resp.Member),
 	}, nil
 }
 
 // RemoveCustodianMember removes a member from a custodian group.
 func (s *Service) RemoveCustodianMember(ctx context.Context, req *pb.RemoveCustodianMemberRequest) (*emptypb.Empty, error) {
-	if custodianService == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrCustodianServiceNotConfigured.Error())
+	if custodianClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "custodian", "write", "remove-member"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "revoke_custodian", "remove-member"); err != nil {
 		return nil, err
 	}
 
@@ -389,7 +403,10 @@ func (s *Service) RemoveCustodianMember(ctx context.Context, req *pb.RemoveCusto
 		return nil, status.Error(codes.InvalidArgument, "user_id is required")
 	}
 
-	if err := custodianService.RemoveMember(ctx, groupID, userID); err != nil {
+	if err := custodianClient.RemoveCustodianMember(ctx, &qrdbtransport.RemoveCustodianMemberRequest{
+		GroupID: groupID,
+		UserID:  userID,
+	}); err != nil {
 		return nil, mapCustodianError(err, "remove custodian member")
 	}
 
@@ -398,11 +415,11 @@ func (s *Service) RemoveCustodianMember(ctx context.Context, req *pb.RemoveCusto
 
 // DistributeShares triggers share distribution for a custodian group.
 func (s *Service) DistributeShares(ctx context.Context, req *pb.DistributeSharesRequest) (*pb.DistributeSharesResponse, error) {
-	if custodianService == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrCustodianServiceNotConfigured.Error())
+	if custodianClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrCustodianClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "custodian", "write", "distribute-shares"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "claim_share_begin", "distribute-shares"); err != nil {
 		return nil, err
 	}
 
@@ -411,25 +428,28 @@ func (s *Service) DistributeShares(ctx context.Context, req *pb.DistributeShares
 		return nil, status.Error(codes.InvalidArgument, "group_id is required")
 	}
 
-	count, err := custodianService.DistributeShares(ctx, groupID)
+	resp, err := custodianClient.DistributeShares(ctx, &qrdbtransport.DistributeSharesRequest{
+		GroupID: groupID,
+	})
 	if err != nil {
 		return nil, mapCustodianError(err, "distribute shares")
 	}
 
 	return &pb.DistributeSharesResponse{
-		Distributed: int32(count), // #nosec G115 - member count fits in int32
+		Distributed: int32(resp.Distributed), // #nosec G115 - member count fits in int32
 	}, nil
 }
 
 // ==================== Share Operations ====================
 
-// SubmitShare submits a Shamir share for storage.
+// SubmitShare submits a Shamir share for storage. The request is passed through
+// to the embedded go-qrdb node's share client.
 func (s *Service) SubmitShare(ctx context.Context, req *pb.SubmitShareRequest) (*pb.SubmitShareResponse, error) {
-	if shareStore == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrShareStoreNotConfigured.Error())
+	if shareClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "share", "write", "submit"); err != nil {
+	if err := s.authorize(ctx, "barrier", "unseal-share", "submit"); err != nil {
 		return nil, err
 	}
 
@@ -448,45 +468,44 @@ func (s *Service) SubmitShare(ctx context.Context, req *pb.SubmitShareRequest) (
 		return nil, status.Error(codes.InvalidArgument, "server_url is required")
 	}
 
-	entry := &sharestore.ShareEntry{
+	shareIndex := int(req.GetShareIndex())
+	if _, err := shareClient.SubmitShare(ctx, &qrdbtransport.SubmitShareRequest{
 		ServerURL:  serverURL,
 		GroupID:    groupID,
 		GroupName:  req.GetGroupName(),
-		ShareIndex: int(req.GetShareIndex()),
+		ShareIndex: shareIndex,
 		ShareData:  []byte(shareData),
 		Purpose:    req.GetPurpose(),
-		ReceivedAt: time.Now().UTC(),
 		TenantID:   req.GetTenantId(),
-	}
-
-	if err := shareStore.Save(ctx, entry); err != nil {
+	}); err != nil {
 		return nil, mapShareError(err, "submit share")
 	}
 
 	return &pb.SubmitShareResponse{
-		Id:      entry.Key(),
+		Id:      fmt.Sprintf("%s/%s/%d", serverURL, groupID, shareIndex),
 		Message: "share submitted successfully",
 	}, nil
 }
 
 // ListShares returns all stored shares without exposing sensitive share data.
+// The request is passed through to the embedded go-qrdb node's share client.
 func (s *Service) ListShares(ctx context.Context, _ *pb.ListSharesRequest) (*pb.ListSharesResponse, error) {
-	if shareStore == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrShareStoreNotConfigured.Error())
+	if shareClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "share", "read", "list"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "status", "list"); err != nil {
 		return nil, err
 	}
 
-	entries, err := shareStore.List(ctx)
+	resp, err := shareClient.ListShares(ctx)
 	if err != nil {
 		return nil, mapShareError(err, "list shares")
 	}
 
-	shares := make([]*pb.ShareInfo, 0, len(entries))
-	for _, entry := range entries {
-		shares = append(shares, shareEntryToProto(entry))
+	shares := make([]*pb.ShareInfo, 0, len(resp.Shares))
+	for i := range resp.Shares {
+		shares = append(shares, shareInfoToProto(&resp.Shares[i]))
 	}
 
 	return &pb.ListSharesResponse{
@@ -494,13 +513,15 @@ func (s *Service) ListShares(ctx context.Context, _ *pb.ListSharesRequest) (*pb.
 	}, nil
 }
 
-// GetShareCollectionStatus returns the share collection status for a group.
+// GetShareCollectionStatus returns the share collection status for a group. The
+// request is passed through to the embedded go-qrdb node's share client, which
+// reports threshold progress for the group.
 func (s *Service) GetShareCollectionStatus(ctx context.Context, req *pb.GetShareCollectionStatusRequest) (*pb.ShareCollectionStatusResponse, error) {
-	if shareStore == nil {
-		return nil, status.Error(codes.FailedPrecondition, ErrShareStoreNotConfigured.Error())
+	if shareClient == nil {
+		return nil, status.Error(codes.FailedPrecondition, ErrShareClientNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "share", "read", "collection-status"); err != nil {
+	if err := s.authorize(ctx, "ceremony", "status", "collection-status"); err != nil {
 		return nil, err
 	}
 
@@ -509,34 +530,16 @@ func (s *Service) GetShareCollectionStatus(ctx context.Context, req *pb.GetShare
 		return nil, status.Error(codes.InvalidArgument, "group_id is required")
 	}
 
-	entries, err := shareStore.List(ctx)
+	collectionStatus, err := shareClient.GetShareCollectionStatus(ctx, groupID)
 	if err != nil {
 		return nil, mapShareError(err, "get share collection status")
 	}
 
-	collected := int32(0)
-	for _, entry := range entries {
-		if entry.GroupID == groupID {
-			collected++
-		}
-	}
-
-	// Determine required threshold from the custodian group if available.
-	var required int32
-	var complete bool
-	if custodianService != nil {
-		group, groupErr := custodianService.GetGroup(ctx, groupID)
-		if groupErr == nil {
-			required = int32(group.Threshold) // #nosec G115 - threshold fits in int32
-			complete = collected >= required
-		}
-	}
-
 	return &pb.ShareCollectionStatusResponse{
-		GroupId:   groupID,
-		Collected: collected,
-		Required:  required,
-		Complete:  complete,
+		GroupId:   collectionStatus.GroupID,
+		Collected: int32(collectionStatus.Collected), // #nosec G115 - collected count fits in int32
+		Required:  int32(collectionStatus.Threshold), // #nosec G115 - threshold fits in int32
+		Complete:  collectionStatus.Ready,
 	}, nil
 }
 
@@ -548,7 +551,7 @@ func (s *Service) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest)
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant", "write", "create"); err != nil {
+	if err := s.authorize(ctx, "tenants", "create", "create"); err != nil {
 		return nil, err
 	}
 
@@ -589,7 +592,7 @@ func (s *Service) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (*pb.
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant", "read", "get"); err != nil {
+	if err := s.authorize(ctx, "tenants", "read", "get"); err != nil {
 		return nil, err
 	}
 
@@ -622,7 +625,7 @@ func (s *Service) ListTenants(ctx context.Context, _ *pb.ListTenantsRequest) (*p
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant", "read", "list"); err != nil {
+	if err := s.authorize(ctx, "tenants", "list", "list"); err != nil {
 		return nil, err
 	}
 
@@ -657,7 +660,7 @@ func (s *Service) DeleteTenant(ctx context.Context, req *pb.DeleteTenantRequest)
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant", "write", "delete"); err != nil {
+	if err := s.authorize(ctx, "tenants", "delete", "delete"); err != nil {
 		return nil, err
 	}
 
@@ -683,7 +686,7 @@ func (s *Service) TenantBarrierInit(ctx context.Context, req *pb.TenantBarrierIn
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant", "write", "barrier-init"); err != nil {
+	if err := s.authorize(ctx, "tenant_barrier", "init", "barrier-init"); err != nil {
 		return nil, err
 	}
 
@@ -717,7 +720,7 @@ func (s *Service) TenantBarrierUnseal(ctx context.Context, req *pb.TenantBarrier
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierRegistryNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "tenant", "write", "barrier-unseal"); err != nil {
+	if err := s.authorize(ctx, "tenant_barrier", "unseal", "barrier-unseal"); err != nil {
 		return nil, err
 	}
 

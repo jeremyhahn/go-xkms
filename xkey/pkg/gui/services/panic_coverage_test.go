@@ -23,6 +23,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"io"
 	"math/big"
 	"path/filepath"
@@ -31,9 +32,6 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -49,7 +47,7 @@ type allPanicTPM struct{}
 func (m *allPanicTPM) ActivateCredential(_, _ []byte) ([]byte, error) {
 	panic("allPanicTPM: ActivateCredential")
 }
-func (m *allPanicTPM) AKProfile() (tpm2pkg.AKProfile, error) {
+func (m *allPanicTPM) AKProfile() (xkms.AKProfile, error) {
 	panic("allPanicTPM: AKProfile")
 }
 func (m *allPanicTPM) AlgID() tpm2.TPMAlgID { panic("allPanicTPM: AlgID") }
@@ -59,35 +57,35 @@ func (m *allPanicTPM) CalculateName(_ tpm2.TPMAlgID, _ []byte) {
 func (m *allPanicTPM) Clear(_ []byte) error    { panic("allPanicTPM: Clear") }
 func (m *allPanicTPM) ForceClear() error       { panic("allPanicTPM: ForceClear") }
 func (m *allPanicTPM) Close() error            { panic("allPanicTPM: Close") }
-func (m *allPanicTPM) Config() *tpm2pkg.Config { panic("allPanicTPM: Config") }
-func (m *allPanicTPM) CreateECDSA(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*ecdsa.PublicKey, error) {
+func (m *allPanicTPM) Config() *xkms.TPMConfig { panic("allPanicTPM: Config") }
+func (m *allPanicTPM) CreateECDSA(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend, _ bool) (*ecdsa.PublicKey, error) {
 	panic("allPanicTPM: CreateECDSA")
 }
-func (m *allPanicTPM) CreateEK(_ *types.KeyAttributes) error { panic("allPanicTPM: CreateEK") }
-func (m *allPanicTPM) CreateSecretKey(_ *types.KeyAttributes, _ store.KeyBackend) error {
+func (m *allPanicTPM) CreateEK(_ *xkms.KeyAttributes) error { panic("allPanicTPM: CreateEK") }
+func (m *allPanicTPM) CreateSecretKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend) error {
 	panic("allPanicTPM: CreateSecretKey")
 }
-func (m *allPanicTPM) CreateIAK(_ *types.KeyAttributes, _ []byte) (*types.KeyAttributes, error) {
+func (m *allPanicTPM) CreateIAK(_ *xkms.KeyAttributes, _ []byte) (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: CreateIAK")
 }
-func (m *allPanicTPM) CreateIDevID(_ *types.KeyAttributes, _ *x509.Certificate, _ []byte) (*types.KeyAttributes, *tpm2pkg.TCG_CSR_IDEVID, error) {
+func (m *allPanicTPM) CreateIDevID(_ *xkms.KeyAttributes, _ *x509.Certificate, _ []byte) (*xkms.KeyAttributes, *xkms.TCG_CSR_IDEVID, error) {
 	panic("allPanicTPM: CreateIDevID")
 }
 func (m *allPanicTPM) CreatePlatformPolicy() error { panic("allPanicTPM: CreatePlatformPolicy") }
-func (m *allPanicTPM) CreateRSA(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*rsa.PublicKey, error) {
+func (m *allPanicTPM) CreateRSA(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend, _ bool) (*rsa.PublicKey, error) {
 	panic("allPanicTPM: CreateRSA")
 }
-func (m *allPanicTPM) CreateKeySession(_ *types.KeyAttributes) (tpm2.Session, func() error, error) {
+func (m *allPanicTPM) CreateKeySession(_ *xkms.KeyAttributes) (tpm2.Session, func() error, error) {
 	panic("allPanicTPM: CreateKeySession")
 }
-func (m *allPanicTPM) CreateSession(_ *types.KeyAttributes) (tpm2.Session, func() error, error) {
+func (m *allPanicTPM) CreateSession(_ *xkms.KeyAttributes) (tpm2.Session, func() error, error) {
 	panic("allPanicTPM: CreateSession")
 }
-func (m *allPanicTPM) CreateSRK(_ *types.KeyAttributes) error { panic("allPanicTPM: CreateSRK") }
-func (m *allPanicTPM) CreateTCG_CSR_IDEVID(_ *x509.Certificate, _, _ *types.KeyAttributes) (tpm2pkg.TCG_CSR_IDEVID, error) {
+func (m *allPanicTPM) CreateSRK(_ *xkms.KeyAttributes) error { panic("allPanicTPM: CreateSRK") }
+func (m *allPanicTPM) CreateTCG_CSR_IDEVID(_ *x509.Certificate, _, _ *xkms.KeyAttributes) (xkms.TCG_CSR_IDEVID, error) {
 	panic("allPanicTPM: CreateTCG_CSR_IDEVID")
 }
-func (m *allPanicTPM) DeleteKey(_ *types.KeyAttributes, _ store.KeyBackend) error {
+func (m *allPanicTPM) DeleteKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend) error {
 	panic("allPanicTPM: DeleteKey")
 }
 func (m *allPanicTPM) Device() string                { panic("allPanicTPM: Device") }
@@ -95,7 +93,7 @@ func (m *allPanicTPM) EK() (crypto.PublicKey, error) { panic("allPanicTPM: EK") 
 func (m *allPanicTPM) EKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	panic("allPanicTPM: EKPublic")
 }
-func (m *allPanicTPM) EKAttributes() (*types.KeyAttributes, error) {
+func (m *allPanicTPM) EKAttributes() (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: EKAttributes")
 }
 func (m *allPanicTPM) EKCertificate() (*x509.Certificate, error) {
@@ -110,7 +108,7 @@ func (m *allPanicTPM) EKCertificateEC() (*x509.Certificate, error) {
 func (m *allPanicTPM) EKECC() (*ecdsa.PublicKey, error) { panic("allPanicTPM: EKECC") }
 func (m *allPanicTPM) EKRSA() (*rsa.PublicKey, error)   { panic("allPanicTPM: EKRSA") }
 func (m *allPanicTPM) EventLog() ([]byte, error)        { panic("allPanicTPM: EventLog") }
-func (m *allPanicTPM) FixedProperties() (*tpm2pkg.PropertiesFixed, error) {
+func (m *allPanicTPM) FixedProperties() (*xkms.PropertiesFixed, error) {
 	panic("allPanicTPM: FixedProperties")
 }
 func (m *allPanicTPM) Flush(_ tpm2.TPMHandle)              { panic("allPanicTPM: Flush") }
@@ -123,11 +121,11 @@ func (m *allPanicTPM) HMACSession(_ []byte) (tpm2.Session, func() error, error) 
 	panic("allPanicTPM: HMACSession")
 }
 func (m *allPanicTPM) IAK() (crypto.PublicKey, error) { panic("allPanicTPM: IAK") }
-func (m *allPanicTPM) IAKAttributes() (*types.KeyAttributes, error) {
+func (m *allPanicTPM) IAKAttributes() (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: IAKAttributes")
 }
 func (m *allPanicTPM) IDevID() (crypto.PublicKey, error) { panic("allPanicTPM: IDevID") }
-func (m *allPanicTPM) IDevIDAttributes() (*types.KeyAttributes, error) {
+func (m *allPanicTPM) IDevIDAttributes() (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: IDevIDAttributes")
 }
 func (m *allPanicTPM) Info() (string, error)      { panic("allPanicTPM: Info") }
@@ -138,13 +136,13 @@ func (m *allPanicTPM) IsPlatformPCRExtended() (bool, error) {
 func (m *allPanicTPM) ExtendPCR(_ int, _ string, _ []byte) error {
 	panic("allPanicTPM: ExtendPCR")
 }
-func (m *allPanicTPM) Install(_ types.Password, _ *tpm2pkg.InstallOptions) error {
+func (m *allPanicTPM) Install(_ xkms.Password, _ *xkms.InstallOptions) error {
 	panic("allPanicTPM: Install")
 }
-func (m *allPanicTPM) KeyAttributes(_ tpm2.TPMHandle) (*types.KeyAttributes, error) {
+func (m *allPanicTPM) KeyAttributes(_ tpm2.TPMHandle) (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: KeyAttributes")
 }
-func (m *allPanicTPM) LoadKeyPair(_ *types.KeyAttributes, _ *tpm2.Session, _ store.KeyBackend) (*tpm2.LoadResponse, error) {
+func (m *allPanicTPM) LoadKeyPair(_ *xkms.KeyAttributes, _ *tpm2.Session, _ xkms.TPMKeyBackend) (*tpm2.LoadResponse, error) {
 	panic("allPanicTPM: LoadKeyPair")
 }
 func (m *allPanicTPM) MakeCredential(_ tpm2.TPM2BName, _ []byte) ([]byte, []byte, []byte, error) {
@@ -153,37 +151,37 @@ func (m *allPanicTPM) MakeCredential(_ tpm2.TPM2BName, _ []byte) ([]byte, []byte
 func (m *allPanicTPM) MakeCredentialWithExternalEK(_ *x509.Certificate, _, _ []byte) ([]byte, []byte, []byte, error) {
 	panic("allPanicTPM: MakeCredentialWithExternalEK")
 }
-func (m *allPanicTPM) NonceSession(_ types.Password) (tpm2.Session, func() error, error) {
+func (m *allPanicTPM) NonceSession(_ xkms.Password) (tpm2.Session, func() error, error) {
 	panic("allPanicTPM: NonceSession")
 }
-func (m *allPanicTPM) NVRead(_ *types.KeyAttributes, _ uint16) ([]byte, error) {
+func (m *allPanicTPM) NVRead(_ *xkms.KeyAttributes, _ uint16) ([]byte, error) {
 	panic("allPanicTPM: NVRead")
 }
-func (m *allPanicTPM) NVWrite(_ *types.KeyAttributes) error { panic("allPanicTPM: NVWrite") }
-func (m *allPanicTPM) NVDefineCounter(_ *types.KeyAttributes) error {
+func (m *allPanicTPM) NVWrite(_ *xkms.KeyAttributes) error { panic("allPanicTPM: NVWrite") }
+func (m *allPanicTPM) NVDefineCounter(_ *xkms.KeyAttributes) error {
 	panic("allPanicTPM: NVDefineCounter")
 }
-func (m *allPanicTPM) NVDefineExtend(_ *types.KeyAttributes) error {
+func (m *allPanicTPM) NVDefineExtend(_ *xkms.KeyAttributes) error {
 	panic("allPanicTPM: NVDefineExtend")
 }
-func (m *allPanicTPM) NVIncrement(_ *types.KeyAttributes) (uint64, error) {
+func (m *allPanicTPM) NVIncrement(_ *xkms.KeyAttributes) (uint64, error) {
 	panic("allPanicTPM: NVIncrement")
 }
-func (m *allPanicTPM) NVExtend(_ *types.KeyAttributes, _ []byte) error {
+func (m *allPanicTPM) NVExtend(_ *xkms.KeyAttributes, _ []byte) error {
 	panic("allPanicTPM: NVExtend")
 }
-func (m *allPanicTPM) NVReadCounter(_ *types.KeyAttributes) (uint64, error) {
+func (m *allPanicTPM) NVReadCounter(_ *xkms.KeyAttributes) (uint64, error) {
 	panic("allPanicTPM: NVReadCounter")
 }
-func (m *allPanicTPM) NVReadExtend(_ *types.KeyAttributes) ([]byte, error) {
+func (m *allPanicTPM) NVReadExtend(_ *xkms.KeyAttributes) ([]byte, error) {
 	panic("allPanicTPM: NVReadExtend")
 }
-func (m *allPanicTPM) NVUndefine(_ *types.KeyAttributes) error { panic("allPanicTPM: NVUndefine") }
-func (m *allPanicTPM) Open() error                             { panic("allPanicTPM: Open") }
+func (m *allPanicTPM) NVUndefine(_ *xkms.KeyAttributes) error { panic("allPanicTPM: NVUndefine") }
+func (m *allPanicTPM) Open() error                            { panic("allPanicTPM: Open") }
 func (m *allPanicTPM) ParseEKCertificate(_ []byte) (*x509.Certificate, error) {
 	panic("allPanicTPM: ParseEKCertificate")
 }
-func (m *allPanicTPM) ParsedEventLog() ([]tpm2pkg.Event, error) {
+func (m *allPanicTPM) ParsedEventLog() ([]xkms.TPMEvent, error) {
 	panic("allPanicTPM: ParsedEventLog")
 }
 func (m *allPanicTPM) ParsePublicKey(_ []byte) (crypto.PublicKey, error) {
@@ -198,20 +196,20 @@ func (m *allPanicTPM) PlatformPolicyDigest() (tpm2.TPM2BDigest, error) {
 func (m *allPanicTPM) PlatformPolicySession(auth []byte) (tpm2.Session, func() error, error) {
 	panic("allPanicTPM: PlatformPolicySession")
 }
-func (m *allPanicTPM) PlatformQuote(_ *types.KeyAttributes) (tpm2pkg.Quote, []byte, error) {
+func (m *allPanicTPM) PlatformQuote(_ *xkms.KeyAttributes) (xkms.Quote, []byte, error) {
 	panic("allPanicTPM: PlatformQuote")
 }
-func (m *allPanicTPM) Provision(_ types.Password) error { panic("allPanicTPM: Provision") }
+func (m *allPanicTPM) Provision(_ xkms.Password) error { panic("allPanicTPM: Provision") }
 func (m *allPanicTPM) ProvisionEKCert(_, _ []byte) error {
 	panic("allPanicTPM: ProvisionEKCert")
 }
-func (m *allPanicTPM) ProvisionOwner(_ types.Password) (*types.KeyAttributes, error) {
+func (m *allPanicTPM) ProvisionOwner(_ xkms.Password) (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: ProvisionOwner")
 }
-func (m *allPanicTPM) Quote(_ []uint, _ []byte) (tpm2pkg.Quote, error) {
+func (m *allPanicTPM) Quote(_ []uint, _ []byte) (xkms.Quote, error) {
 	panic("allPanicTPM: Quote")
 }
-func (m *allPanicTPM) CertifyKey(_ *types.KeyAttributes, _ []byte, _ store.KeyBackend) (*tpm2pkg.CertifyResult, error) {
+func (m *allPanicTPM) CertifyKey(_ *xkms.KeyAttributes, _ []byte, _ xkms.TPMKeyBackend) (*xkms.CertifyResult, error) {
 	panic("allPanicTPM: CertifyKey")
 }
 func (m *allPanicTPM) Random() ([]byte, error)           { panic("allPanicTPM: Random") }
@@ -222,7 +220,7 @@ func (m *allPanicTPM) Read(_ []byte) (int, error)        { panic("allPanicTPM: R
 func (m *allPanicTPM) ReadHandle(_ tpm2.TPMHandle) (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	panic("allPanicTPM: ReadHandle")
 }
-func (m *allPanicTPM) ReadPCRs(_ []uint) ([]tpm2pkg.PCRBank, error) {
+func (m *allPanicTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {
 	panic("allPanicTPM: ReadPCRs")
 }
 func (m *allPanicTPM) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
@@ -231,19 +229,19 @@ func (m *allPanicTPM) RSADecrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) (
 func (m *allPanicTPM) RSAEncrypt(_ tpm2.TPMHandle, _ tpm2.TPM2BName, _ []byte) ([]byte, error) {
 	panic("allPanicTPM: RSAEncrypt")
 }
-func (m *allPanicTPM) SaveKeyPair(_ *types.KeyAttributes, _ tpm2.TPM2BPrivate, _ tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic], _ store.KeyBackend, _ bool) error {
+func (m *allPanicTPM) SaveKeyPair(_ *xkms.KeyAttributes, _ tpm2.TPM2BPrivate, _ tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic], _ xkms.TPMKeyBackend, _ bool) error {
 	panic("allPanicTPM: SaveKeyPair")
 }
-func (m *allPanicTPM) Seal(_ context.Context, _ []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (m *allPanicTPM) Seal(_ context.Context, _ []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	panic("allPanicTPM: Seal")
 }
-func (m *allPanicTPM) SealKey(_ *types.KeyAttributes, _ store.KeyBackend, _ bool) (*tpm2.CreateResponse, error) {
+func (m *allPanicTPM) SealKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend, _ bool) (*tpm2.CreateResponse, error) {
 	panic("allPanicTPM: SealKey")
 }
 func (m *allPanicTPM) Sign(_ io.Reader, _ []byte, _ crypto.SignerOpts) ([]byte, error) {
 	panic("allPanicTPM: Sign")
 }
-func (m *allPanicTPM) SetHierarchyAuth(_, _ types.Password, _ *tpm2.TPMHandle) error {
+func (m *allPanicTPM) SetHierarchyAuth(_, _ xkms.Password, _ *tpm2.TPMHandle) error {
 	panic("allPanicTPM: SetHierarchyAuth")
 }
 func (m *allPanicTPM) SecretFromShares(_ []string) (string, error) {
@@ -255,14 +253,14 @@ func (m *allPanicTPM) ShareSecret(_ []byte, _ int) ([]string, error) {
 func (m *allPanicTPM) SRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	panic("allPanicTPM: SRKPublic")
 }
-func (m *allPanicTPM) SSRKAttributes() (*types.KeyAttributes, error) {
+func (m *allPanicTPM) SSRKAttributes() (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: SSRKAttributes")
 }
-func (m *allPanicTPM) PlatformSRKAttributes() (*types.KeyAttributes, error) {
+func (m *allPanicTPM) PlatformSRKAttributes() (*xkms.KeyAttributes, error) {
 	panic("allPanicTPM: PlatformSRKAttributes")
 }
-func (m *allPanicTPM) SSRK() *tpm2pkg.SRKConfig { panic("allPanicTPM: SSRK") }
-func (m *allPanicTPM) PlatformKeyStore() tpm2pkg.PlatformKeyStorer {
+func (m *allPanicTPM) SSRK() *xkms.SRKConfig { panic("allPanicTPM: SSRK") }
+func (m *allPanicTPM) PlatformKeyStore() xkms.PlatformKeyStorer {
 	panic("allPanicTPM: PlatformKeyStore")
 }
 func (m *allPanicTPM) SupportedAlgorithms() ([]string, error) {
@@ -273,10 +271,10 @@ func (m *allPanicTPM) SupportedECCCurves() ([]string, error) {
 	panic("allPanicTPM: SupportedECCCurves")
 }
 func (m *allPanicTPM) Transport() transport.TPM { panic("allPanicTPM: Transport") }
-func (m *allPanicTPM) Unseal(_ context.Context, _ *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *allPanicTPM) Unseal(_ context.Context, _ *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	panic("allPanicTPM: Unseal")
 }
-func (m *allPanicTPM) UnsealKey(_ *types.KeyAttributes, _ store.KeyBackend) ([]byte, error) {
+func (m *allPanicTPM) UnsealKey(_ *xkms.KeyAttributes, _ xkms.TPMKeyBackend) ([]byte, error) {
 	panic("allPanicTPM: UnsealKey")
 }
 func (m *allPanicTPM) CanSeal() bool              { panic("allPanicTPM: CanSeal") }
@@ -295,13 +293,13 @@ func (m *allPanicTPM) ProvisionIAKCert(_ *x509.Certificate) error {
 	panic("allPanicTPM: ProvisionIAKCert")
 }
 func (m *allPanicTPM) DeleteIAKCertificate() error { panic("allPanicTPM: DeleteIAKCertificate") }
-func (m *allPanicTPM) VerifyTCGCSR(_ *tpm2pkg.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*types.KeyAttributes, *tpm2pkg.UNPACKED_TCG_CSR_IDEVID, error) {
+func (m *allPanicTPM) VerifyTCGCSR(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("allPanicTPM: VerifyTCGCSR")
 }
-func (m *allPanicTPM) VerifyTCG_CSR_IAK(_ *tpm2pkg.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*types.KeyAttributes, *tpm2pkg.UNPACKED_TCG_CSR_IDEVID, error) {
+func (m *allPanicTPM) VerifyTCG_CSR_IAK(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("allPanicTPM: VerifyTCG_CSR_IAK")
 }
-func (m *allPanicTPM) VerifyTCG_CSR_IDevID(_ *tpm2pkg.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*types.KeyAttributes, *tpm2pkg.UNPACKED_TCG_CSR_IDEVID, error) {
+func (m *allPanicTPM) VerifyTCG_CSR_IDevID(_ *xkms.TCG_CSR_IDEVID, _ x509.SignatureAlgorithm) (*xkms.KeyAttributes, *xkms.UNPACKED_TCG_CSR_IDEVID, error) {
 	panic("allPanicTPM: VerifyTCG_CSR_IDevID")
 }
 func (m *allPanicTPM) FactoryReset(_ []byte) error { panic("allPanicTPM: FactoryReset") }
@@ -311,28 +309,28 @@ func (m *allPanicTPM) FactoryResetWithClear(_ []byte) error {
 func (m *allPanicTPM) DictionaryAttackLockoutReset(_ []byte) error {
 	panic("allPanicTPM: DictionaryAttackLockoutReset")
 }
-func (m *allPanicTPM) SignValidate(_ *types.KeyAttributes, _, _ []byte) ([]byte, error) {
+func (m *allPanicTPM) SignValidate(_ *xkms.KeyAttributes, _, _ []byte) ([]byte, error) {
 	panic("allPanicTPM: SignValidate")
 }
-func (m *allPanicTPM) HashSequence(_ *types.KeyAttributes, _ []byte) ([]byte, []byte, error) {
+func (m *allPanicTPM) HashSequence(_ *xkms.KeyAttributes, _ []byte) ([]byte, []byte, error) {
 	panic("allPanicTPM: HashSequence")
 }
-func (m *allPanicTPM) Hash(_ *types.KeyAttributes, _ []byte) ([]byte, []byte, error) {
+func (m *allPanicTPM) Hash(_ *xkms.KeyAttributes, _ []byte) ([]byte, []byte, error) {
 	panic("allPanicTPM: Hash")
 }
-func (m *allPanicTPM) ECDHZGen(_ *types.KeyAttributes, _ *tpm2.TPMSECCPoint, _ store.KeyBackend) ([]byte, error) {
+func (m *allPanicTPM) ECDHZGen(_ *xkms.KeyAttributes, _ *tpm2.TPMSECCPoint, _ xkms.TPMKeyBackend) ([]byte, error) {
 	panic("allPanicTPM: ECDHZGen")
 }
 func (m *allPanicTPM) SSRKPublic() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 	panic("allPanicTPM: SSRKPublic")
 }
-func (m *allPanicTPM) GenerateSymmetricKey(_ *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *allPanicTPM) GenerateSymmetricKey(_ *xkms.KeyAttributes) (xkms.SymmetricKey, error) {
 	panic("allPanicTPM: GenerateSymmetricKey")
 }
-func (m *allPanicTPM) GetSymmetricKey(_ *types.KeyAttributes) (types.SymmetricKey, error) {
+func (m *allPanicTPM) GetSymmetricKey(_ *xkms.KeyAttributes) (xkms.SymmetricKey, error) {
 	panic("allPanicTPM: GetSymmetricKey")
 }
-func (m *allPanicTPM) SymmetricEncrypter(_ *types.KeyAttributes) (types.SymmetricEncrypter, error) {
+func (m *allPanicTPM) SymmetricEncrypter(_ *xkms.KeyAttributes) (xkms.SymmetricEncrypter, error) {
 	panic("allPanicTPM: SymmetricEncrypter")
 }
 
@@ -342,7 +340,7 @@ func (m *allPanicTPM) ChangeAuth(_ tpm2.TPMHandle, _, _ []byte) error {
 }
 
 // compile-time check
-var _ tpm2pkg.TrustedPlatformModule = (*allPanicTPM)(nil)
+var _ xkms.TrustedPlatformModule = (*allPanicTPM)(nil)
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -353,7 +351,7 @@ func panicTPMService(t *testing.T) *TPMService {
 	t.Helper()
 	svc := NewTPMService()
 	svc.SetDataDir(t.TempDir())
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &allPanicTPM{}
 	}))
 	return svc
@@ -365,7 +363,7 @@ func panicTPMServiceWithSafeMock(t *testing.T) *TPMService {
 	t.Helper()
 	svc := NewTPMService()
 	svc.SetDataDir(t.TempDir())
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return defaultMockTPM()
 	}))
 	return svc
@@ -373,7 +371,7 @@ func panicTPMServiceWithSafeMock(t *testing.T) *TPMService {
 
 // switchToPanicTPM replaces the service's TPM accessor with the allPanicTPM mock.
 func switchToPanicTPM(svc *TPMService) {
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &allPanicTPM{}
 	}))
 }
@@ -383,7 +381,7 @@ func switchToPanicTPM(svc *TPMService) {
 func panicPlatformPolicyService(t *testing.T) *PlatformPolicyService {
 	t.Helper()
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &allPanicTPM{}
 	}))
 	svc.policy.Store(&PlatformPolicyDefinition{

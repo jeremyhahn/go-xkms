@@ -18,9 +18,11 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Common errors
@@ -98,10 +100,54 @@ func mapErrorToStatusCode(err error) int {
 }
 
 // handleError is a convenience function that maps the error to a status code
-// and writes the error response.
+// and writes the error response. A clustered not-leader condition is handled
+// specially: it is surfaced as 421 Misdirected Request with the leader's
+// coordinates so the client can retry against the leader.
 func handleError(w http.ResponseWriter, err error) {
+	if nl, ok := xkms.AsNotLeader(err); ok {
+		writeNotLeader(w, nl)
+		return
+	}
 	statusCode := mapErrorToStatusCode(err)
 	writeError(w, err, statusCode)
+}
+
+// NotLeaderResponse is the JSON body returned for a clustered not-leader
+// condition. It carries the leader's Raft coordinates so the client can retry
+// the write against the current leader.
+//
+// TODO(cluster): transparent leader-forwarding needs a raft->API address map;
+// until then the client retries using out-of-band knowledge of the topology.
+type NotLeaderResponse struct {
+	Error         string `json:"error"`
+	ShardID       uint64 `json:"shard_id"`
+	LeaderID      uint64 `json:"leader_id"`
+	LeaderAddress string `json:"leader_address,omitempty"`
+}
+
+// writeNotLeader writes a 421 Misdirected Request response for a clustered
+// write that reached a follower. The leader's Raft address (when known) is
+// echoed in the X-XKMS-Leader-Address header and the JSON body.
+func writeNotLeader(w http.ResponseWriter, nl *xkms.ErrNotLeader) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-XKMS-Shard-ID", strconv.FormatUint(nl.ShardID, 10))
+	if nl.LeaderID != 0 {
+		w.Header().Set("X-XKMS-Leader-ID", strconv.FormatUint(nl.LeaderID, 10))
+	}
+	if nl.LeaderAddress != "" {
+		w.Header().Set("X-XKMS-Leader-Address", nl.LeaderAddress)
+	}
+	w.WriteHeader(http.StatusMisdirectedRequest)
+
+	resp := NotLeaderResponse{
+		Error:         nl.Error(),
+		ShardID:       nl.ShardID,
+		LeaderID:      nl.LeaderID,
+		LeaderAddress: nl.LeaderAddress,
+	}
+	if encErr := json.NewEncoder(w).Encode(resp); encErr != nil {
+		log.Printf("Failed to encode not-leader response: %v", encErr)
+	}
 }
 
 // writeJSON writes a JSON response with the given status code.

@@ -19,7 +19,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ErrPIVPKCS11BuildTagRequired indicates that the binary was not compiled with
@@ -28,7 +28,7 @@ var ErrPIVPKCS11BuildTagRequired = errors.New("piv: PKCS#11 support requires the
 
 // createPKCS11PIVStorage returns an error because PKCS#11 support is not
 // compiled into this binary.
-func createPKCS11PIVStorage(_ *PIVConfig, _ *slog.Logger) (pivcert.PIVCertificateStorage, error) {
+func createPKCS11PIVStorage(_ *PIVConfig, _ *slog.Logger) (xkms.PIVCertificateStorage, error) {
 	return nil, ErrPIVPKCS11BuildTagRequired
 }
 

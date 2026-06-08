@@ -19,14 +19,13 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func newTestDAOStore(t *testing.T) *DAOStore {
 	t.Helper()
-	backend := storage.NewMemory()
-	kvStore, err := kvadapter.New(backend)
+	backend := xkms.NewStorageMemory()
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	if err != nil {
 		t.Fatalf("failed to create kvstore adapter: %v", err)
 	}

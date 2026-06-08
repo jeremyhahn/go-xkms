@@ -397,6 +397,17 @@ service KeystoreService {
   // TenantBarrierUnseal unseals the barrier for a tenant.
   rpc TenantBarrierUnseal(TenantBarrierUnsealRequest) returns (google.protobuf.Empty);
 
+  // ==================== Cluster Operations ====================
+
+  // GetClusterStatus returns the Raft leadership status for the configured
+  // shard. A standalone (non-clustered) node reports a single-node,
+  // non-clustered status.
+  rpc GetClusterStatus(google.protobuf.Empty) returns (ClusterStatusResponse);
+
+  // ListClusterMembers returns the Raft replicas for the configured shard. A
+  // standalone node returns an empty membership set.
+  rpc ListClusterMembers(google.protobuf.Empty) returns (ListClusterMembersResponse);
+
   // ==================== Password Store Operations ====================
 
   // PasswordAdd adds a new password entry to the encrypted store.
@@ -528,6 +539,46 @@ message UserCredential {
 // ListUserCredentialsResponse returns a user's credentials.
 message ListUserCredentialsResponse {
   repeated UserCredential credentials = 1;
+}
+
+// ==================== Cluster Messages ====================
+
+// ClusterStatusResponse describes the Raft cluster status for the configured
+// shard. When the node is not clustered (standalone), clustered is false and
+// leader_id/node_id reflect the single-node node id.
+message ClusterStatusResponse {
+  // shard_id is the Raft shard (group) the status pertains to.
+  uint64 shard_id = 1;
+
+  // leader_id is the replica ID of the current shard leader. Zero when no
+  // leader is known.
+  uint64 leader_id = 2;
+
+  // has_leader is true when the shard currently has an elected leader.
+  bool has_leader = 3;
+
+  // node_id is this node's Raft replica identifier. Zero when standalone.
+  uint64 node_id = 4;
+
+  // clustered is true when the node participates in a Raft cluster.
+  bool clustered = 5;
+}
+
+// ClusterMember describes a single Raft replica in the configured shard.
+message ClusterMember {
+  // node_id is the replica's identifier within the shard.
+  uint64 node_id = 1;
+
+  // address is the replica's Raft network address.
+  string address = 2;
+
+  // is_leader is true when this replica is the shard's current leader.
+  bool is_leader = 3;
+}
+
+// ListClusterMembersResponse returns the Raft replicas for the configured shard.
+message ListClusterMembersResponse {
+  repeated ClusterMember members = 1;
 }
 
 // HealthRequest is the request for health check

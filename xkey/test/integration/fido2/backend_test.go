@@ -34,14 +34,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
-	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	tpm2store "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/stretchr/testify/assert"
@@ -199,17 +192,17 @@ type backendTestCase struct {
 // newSoftwareBackendAdapter creates a software KeyProvider wrapped in a
 // BackendAdapter for integration testing.
 func newSoftwareBackendAdapter() (keybackend.FIDO2KeyBackend, error) {
-	keyStorage, err := storage.NewMemoryBackend()
+	keyStorage, err := xkms.NewMemoryBackend()
 	if err != nil {
 		return nil, err
 	}
-	provider, err := softwarebackend.NewBackend(&softwarebackend.Config{
+	provider, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{
 		KeyStorage: keyStorage,
 	})
 	if err != nil {
 		return nil, err
 	}
-	return keybackend.NewBackendAdapter(provider, types.BackendTypeSoftware), nil
+	return keybackend.NewBackendAdapter(provider, xkms.BackendTypeSoftware), nil
 }
 
 // sharedTPM2Backend holds a single TPM2 backend adapter shared across all
@@ -252,13 +245,13 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	fsBackend, err := filestorage.New(tmpDir)
+	fsBackend, err := xkms.NewFileStorageBackend(tmpDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create file storage: %w", err)
 	}
-	keyBackend := tpm2store.NewFileBackend(logger, fsBackend)
+	keyBackend := xkms.NewFileBackend(logger, fsBackend)
 
-	tpmConfig := pkgtpm2.DefaultConfig
+	tpmConfig := xkms.DefaultTPMConfig
 	tpmConfig.UseSimulator = true
 	tpmConfig.EK.PlatformPolicy = false
 	tpmConfig.EK.HierarchyAuth = ""
@@ -267,7 +260,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	tpmConfig.IDevID = nil
 	tpmConfig.IAK = nil
 
-	tpm, err := pkgtpm2.NewTPM2(&pkgtpm2.Params{
+	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
 		Config:  &tpmConfig,
 		Backend: keyBackend,
 		Logger:  logger,
@@ -276,7 +269,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		return nil, fmt.Errorf("failed to open TPM simulator: %w", err)
 	}
 	if err != nil {
-		ekAttrs, ekErr := pkgtpm2.EKAttributesFromConfig(*tpmConfig.EK, nil, nil)
+		ekAttrs, ekErr := xkms.EKAttributesFromConfig(*tpmConfig.EK, nil, nil)
 		if ekErr != nil {
 			tpm.Close()
 			return nil, fmt.Errorf("failed to build EK attributes: %w", ekErr)
@@ -285,7 +278,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 			tpm.Close()
 			return nil, fmt.Errorf("failed to create EK: %w", ekCreateErr)
 		}
-		srkAttrs, srkErr := pkgtpm2.SRKAttributesFromConfig(*tpmConfig.SSRK, nil)
+		srkAttrs, srkErr := xkms.SRKAttributesFromConfig(*tpmConfig.SSRK, nil)
 		if srkErr != nil {
 			tpm.Close()
 			return nil, fmt.Errorf("failed to build SRK attributes: %w", srkErr)
@@ -297,7 +290,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		}
 	}
 
-	provider, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
+	provider, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
 		TPM:        tpm,
 		KeyBackend: keyBackend,
 		Logger:     logger,
@@ -306,7 +299,7 @@ func initTPM2BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		tpm.Close()
 		return nil, fmt.Errorf("failed to create TPM2 backend: %w", err)
 	}
-	return keybackend.NewBackendAdapter(provider, types.BackendTypeTPM2), nil
+	return keybackend.NewBackendAdapter(provider, xkms.BackendTypeTPM2), nil
 }
 
 // newPKCS11BackendAdapter creates a PKCS#11 KeyProvider (via SoftHSM2)
@@ -317,16 +310,16 @@ func newPKCS11BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 	pin := envOrDefault("PKCS11_PIN", "1234")
 	soPin := envOrDefault("PKCS11_SO_PIN", "1234")
 
-	keyStorage, err := storage.NewMemoryBackend()
+	keyStorage, err := xkms.NewMemoryBackend()
 	if err != nil {
 		return nil, err
 	}
-	certStorage, err := storage.NewMemoryBackend()
+	certStorage, err := xkms.NewMemoryBackend()
 	if err != nil {
 		return nil, err
 	}
 
-	provider, err := pkcs11backend.NewBackend(&pkcs11backend.Config{
+	provider, err := xkms.NewPKCS11Backend(&xkms.PKCS11BackendConfig{
 		Library:     library,
 		TokenLabel:  tokenLabel,
 		PIN:         pin,
@@ -342,7 +335,7 @@ func newPKCS11BackendAdapter() (keybackend.FIDO2KeyBackend, error) {
 		return nil, fmt.Errorf("failed to initialize PKCS#11 token: %w", err)
 	}
 
-	return keybackend.NewBackendAdapter(provider, types.BackendTypePKCS11), nil
+	return keybackend.NewBackendAdapter(provider, xkms.BackendTypePKCS11), nil
 }
 
 // envOrDefault reads an environment variable or returns the default value.

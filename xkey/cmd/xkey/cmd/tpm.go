@@ -21,7 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // TPM error types
@@ -114,32 +114,32 @@ func init() {
 }
 
 // openTPM creates and initializes a TPM connection with the configured settings
-func openTPM() (tpm2.TrustedPlatformModule, error) {
+func openTPM() (xkms.TrustedPlatformModule, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
 
-	config := &tpm2.Config{
+	config := &xkms.TPMConfig{
 		Device:       tpmCfg.device,
 		UseSimulator: tpmCfg.useSimulator,
 		Hash:         "SHA-256",
-		EK: &tpm2.EKConfig{
+		EK: &xkms.EKConfig{
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
 			KeyAlgorithm:  "RSA",
 			HierarchyAuth: tpmCfg.hierarchyAuth,
 		},
-		SSRK: &tpm2.SRKConfig{
+		SSRK: &xkms.SRKConfig{
 			Handle:       0x81000001,
 			KeyAlgorithm: "RSA",
 		},
-		IAK: &tpm2.IAKConfig{
+		IAK: &xkms.IAKConfig{
 			Handle:             0x81010002,
 			Hash:               "SHA-256",
 			KeyAlgorithm:       "RSA",
 			SignatureAlgorithm: "SHA256-RSA-PSS",
 		},
-		IDevID: &tpm2.IDevIDConfig{
+		IDevID: &xkms.IDevIDConfig{
 			Handle:             0x81020000,
 			CertHandle:         0x01C90000,
 			Hash:               "SHA-256",
@@ -152,14 +152,14 @@ func openTPM() (tpm2.TrustedPlatformModule, error) {
 		PlatformPCRBank: "sha256",
 	}
 
-	params := &tpm2.Params{
+	params := &xkms.TPMParams{
 		Config: config,
 		Logger: logger,
 	}
 
-	tpm, err := tpm2.NewTPM2(params)
+	tpm, err := xkms.NewTPM2(params)
 	if err != nil {
-		if errors.Is(err, tpm2.ErrNotInitialized) {
+		if errors.Is(err, xkms.ErrTPMNotInitialized) {
 			return tpm, ErrTPMNotInitialized
 		}
 		return nil, err
@@ -169,7 +169,7 @@ func openTPM() (tpm2.TrustedPlatformModule, error) {
 }
 
 // openTPMForProvisioning creates a TPM connection that allows for unprovisioned TPMs
-func openTPMForProvisioning() (tpm2.TrustedPlatformModule, error) {
+func openTPMForProvisioning() (xkms.TrustedPlatformModule, error) {
 	return openTPMForProvisioningWithPCROverrides("", nil, 0)
 }
 
@@ -178,7 +178,7 @@ func openTPMForProvisioning() (tpm2.TrustedPlatformModule, error) {
 // - pcrBank: override the platform PCR bank (empty string uses default "sha256")
 // - goldenPCRs: override which PCRs to include in golden measurement (nil uses config default)
 // - platformPCR: override which PCR to extend with golden measurement (0 uses default 16)
-func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, platformPCR int) (tpm2.TrustedPlatformModule, error) {
+func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, platformPCR int) (xkms.TrustedPlatformModule, error) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: getLogLevel(),
 	}))
@@ -195,27 +195,27 @@ func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, p
 		effectivePlatformPCR = uint(platformPCR)
 	}
 
-	config := &tpm2.Config{
+	config := &xkms.TPMConfig{
 		Device:       tpmCfg.device,
 		UseSimulator: tpmCfg.useSimulator,
 		Hash:         "SHA-256",
-		EK: &tpm2.EKConfig{
+		EK: &xkms.EKConfig{
 			Handle:        0x81010001,
 			CertHandle:    0x01C00002,
 			KeyAlgorithm:  "RSA",
 			HierarchyAuth: tpmCfg.hierarchyAuth,
 		},
-		SSRK: &tpm2.SRKConfig{
+		SSRK: &xkms.SRKConfig{
 			Handle:       0x81000001,
 			KeyAlgorithm: "RSA",
 		},
-		IAK: &tpm2.IAKConfig{
+		IAK: &xkms.IAKConfig{
 			Handle:             0x81010002,
 			Hash:               "SHA-256",
 			KeyAlgorithm:       "RSA",
 			SignatureAlgorithm: "SHA256-RSA-PSS",
 		},
-		IDevID: &tpm2.IDevIDConfig{
+		IDevID: &xkms.IDevIDConfig{
 			Handle:             0x81020000,
 			CertHandle:         0x01C90000,
 			Hash:               "SHA-256",
@@ -229,15 +229,15 @@ func openTPMForProvisioningWithPCROverrides(pcrBank string, goldenPCRs []uint, p
 		PlatformPCRBank: effectivePCRBank,
 	}
 
-	params := &tpm2.Params{
+	params := &xkms.TPMParams{
 		Config: config,
 		Logger: logger,
 	}
 
 	// For provisioning, we accept ErrNotInitialized since we're about to initialize
-	tpm, err := tpm2.NewTPM2(params)
+	tpm, err := xkms.NewTPM2(params)
 	if err != nil {
-		if errors.Is(err, tpm2.ErrNotInitialized) {
+		if errors.Is(err, xkms.ErrTPMNotInitialized) {
 			// Return the TPM handle - it's valid for provisioning
 			return tpm, nil
 		}

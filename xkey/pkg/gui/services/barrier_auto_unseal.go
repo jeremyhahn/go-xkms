@@ -17,9 +17,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	pcrpolicy "github.com/jeremyhahn/go-xkms/xkey/pkg/pcr_policy"
 )
 
@@ -364,7 +364,7 @@ func (s *BarrierAutoUnsealService) ClearAutoUnsealPolicy() error {
 
 // acquireTPM obtains the TPM instance via the shared accessor.
 // The caller MUST call s.tpmAccessor.Release() after a successful call.
-func (s *BarrierAutoUnsealService) acquireTPM() (tpm2pkg.TrustedPlatformModule, error) {
+func (s *BarrierAutoUnsealService) acquireTPM() (xkms.TrustedPlatformModule, error) {
 	if s.tpmAccessor == nil {
 		return nil, ErrBarrierAutoUnsealTPMUnavailable
 	}

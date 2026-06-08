@@ -17,12 +17,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -360,10 +360,10 @@ func TestPlatformPolicy_Coverage_VerifyPolicy_MismatchedDigests(t *testing.T) {
 	require.NoError(t, err)
 
 	// Change the mock PCR values so digests no longer match.
-	mock.pcrBanksOverride = []tpm2pkg.PCRBank{
+	mock.pcrBanksOverride = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
 				{ID: 7, Value: []byte{0x11, 0x22, 0x33, 0x44}},
 			},

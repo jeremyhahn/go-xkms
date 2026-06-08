@@ -27,13 +27,10 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // ---------------------------------------------------------------------------
@@ -79,11 +76,11 @@ func (m *saPanicPINBackend) SetMaxAttempts(_ int) {
 // and verifyDigests.
 type saPanicTPM struct {
 	mockTPM
-	pcrBanksOverride []tpm2pkg.PCRBank
+	pcrBanksOverride []xkms.PCRBank
 	pcrBanksErr      error
 }
 
-func (m *saPanicTPM) ReadPCRs(_ []uint) ([]tpm2pkg.PCRBank, error) {
+func (m *saPanicTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {
 	panic("saPanic: ReadPCRs")
 }
 
@@ -93,7 +90,7 @@ type saSealer struct {
 	canSeal   bool
 	sealErr   error
 	unsealErr error
-	sealData  *types.SealedData
+	sealData  *xkms.SealedData
 }
 
 // saWireSealClient wires a sealMockClient into the given SealService,
@@ -152,7 +149,7 @@ func saWirePanicClient(svc *SealService) {
 // but recover() returns nil, so the panic branch is not taken.
 func TestSA_PlatformPolicy_GetStatus_InnerRecovery(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -182,7 +179,7 @@ func TestSA_PlatformPolicy_GetStatus_InnerRecovery(t *testing.T) {
 // in ReadPCRs is caught internally and returned as an error to CreatePolicy.
 func TestSA_PlatformPolicy_CreatePolicy_InnerRecovery(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -204,11 +201,11 @@ func TestSA_PlatformPolicy_CreatePolicy_SaveFails(t *testing.T) {
 	policyPath := filepath.Join(unwritable, "subdir", "policy.json")
 
 	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &policyMockTPM{
 			mockTPM: *defaultMockTPM(),
-			pcrBanksOverride: []tpm2pkg.PCRBank{
-				{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+			pcrBanksOverride: []xkms.PCRBank{
+				{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 			},
 		}
 	}))
@@ -223,7 +220,7 @@ func TestSA_PlatformPolicy_CreatePolicy_SaveFails(t *testing.T) {
 // UpdatePolicy calls readPCRDigests which catches its own panic.
 func TestSA_PlatformPolicy_UpdatePolicy_InnerRecovery(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -249,11 +246,11 @@ func TestSA_PlatformPolicy_UpdatePolicy_SaveFails(t *testing.T) {
 	policyPath := filepath.Join(unwritable, "subdir", "policy.json")
 
 	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &policyMockTPM{
 			mockTPM: *defaultMockTPM(),
-			pcrBanksOverride: []tpm2pkg.PCRBank{
-				{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+			pcrBanksOverride: []xkms.PCRBank{
+				{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 			},
 		}
 	}))
@@ -295,7 +292,7 @@ func TestSA_PlatformPolicy_DeletePolicy_RemoveError(t *testing.T) {
 // own panic recovery. The inner recovery catches the TPM panic.
 func TestSA_PlatformPolicy_VerifyPolicy_InnerRecovery(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -340,7 +337,7 @@ func TestSA_PlatformPolicy_ExportPolicy_NormalPath(t *testing.T) {
 // returns a policy with Valid=nil (unknown state).
 func TestSA_PlatformPolicy_GetPlatformPolicyAsPCRPolicy_InnerRecovery(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -368,7 +365,7 @@ func TestSA_PlatformPolicy_GetPlatformPolicyAsPCRPolicy_InnerRecovery(t *testing
 // and returns an error. RefreshPlatformPolicyPCRs receives that error.
 func TestSA_PlatformPolicy_RefreshPlatformPolicyPCRs_InnerRecovery(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -393,11 +390,11 @@ func TestSA_PlatformPolicy_RefreshPolicyPCRs_SaveFails(t *testing.T) {
 	policyPath := filepath.Join(unwritable, "subdir", "policy.json")
 
 	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &policyMockTPM{
 			mockTPM: *defaultMockTPM(),
-			pcrBanksOverride: []tpm2pkg.PCRBank{
-				{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}}},
+			pcrBanksOverride: []xkms.PCRBank{
+				{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA}}}},
 			},
 		}
 	}))
@@ -418,7 +415,7 @@ func TestSA_PlatformPolicy_RefreshPolicyPCRs_SaveFails(t *testing.T) {
 // Panic recovery in readPCRDigests.
 func TestSA_PlatformPolicy_ReadPCRDigests_Panic(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -433,7 +430,7 @@ func TestSA_PlatformPolicy_ReadPCRDigests_Panic(t *testing.T) {
 // Panic recovery in verifyDigests.
 func TestSA_PlatformPolicy_VerifyDigests_Panic(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.json"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return &saPanicTPM{mockTPM: *defaultMockTPM()}
 	}))
 	svc.SetContext(context.Background())
@@ -473,11 +470,11 @@ func TestSA_PlatformPolicy_VerifyDigests_BadStoredHex(t *testing.T) {
 func TestSA_PlatformPolicy_VerifyDigests_PCRNotFound(t *testing.T) {
 	mock := &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
 				// PCR 0 present but PCR 7 missing in live data
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0xAA, 0xBB}},
 				},
 			},
@@ -505,10 +502,10 @@ func TestSA_PlatformPolicy_VerifyDigests_Match(t *testing.T) {
 	pcrValue := []byte{0xAA, 0xBB, 0xCC, 0xDD}
 	mock := &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: pcrValue},
 				},
 			},
@@ -532,10 +529,10 @@ func TestSA_PlatformPolicy_VerifyDigests_Match(t *testing.T) {
 func TestSA_PlatformPolicy_VerifyDigests_Mismatch(t *testing.T) {
 	mock := &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
+		pcrBanksOverride: []xkms.PCRBank{
 			{
 				Algorithm: "SHA256",
-				PCRs: []tpm2pkg.PCR{
+				PCRs: []xkms.PCR{
 					{ID: 0, Value: []byte{0x11, 0x22}},
 				},
 			},
@@ -781,14 +778,14 @@ func TestSA_SealService_ListBlobs_WithBlobs(t *testing.T) {
 		Label:      "user_pin", // user category (deletable from UI)
 		SizeBytes:  100,
 		PolicyType: "password",
-		SealedData: &types.SealedData{Backend: types.BackendTypeTPM2, Ciphertext: []byte("a")},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeTPM2, Ciphertext: []byte("a")},
 		CreatedAt:  now.Add(-1 * time.Hour),
 	}
 	blob2 := &sealedBlobStorage{
 		ID:         "blob-newer",
 		Label:      "my-secret", // user category, no PolicyType (defaults to "none")
 		SizeBytes:  200,
-		SealedData: &types.SealedData{Backend: types.BackendTypeTPM2, Ciphertext: []byte("b")},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeTPM2, Ciphertext: []byte("b")},
 		CreatedAt:  now,
 	}
 
@@ -1017,8 +1014,8 @@ func TestSA_SealService_UnsealData_Panic(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-blob-id",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("encrypted"),
 		},
 		CreatedAt: time.Now(),
@@ -1059,8 +1056,8 @@ func TestSA_SealService_SaveBlob_StorageDirNotSet(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-id",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1084,8 +1081,8 @@ func TestSA_SealService_SaveBlob_WriteFileFail(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-id",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1104,8 +1101,8 @@ func TestSA_SealService_SaveBlob_Success(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-save",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1136,7 +1133,7 @@ func TestSA_SealService_HandlePolicyPlatformPolicy_UnknownBank(t *testing.T) {
 	svc.SetPlatformPolicyService(ppSvc)
 
 	req := &SealRequest{Label: "test", Data: base64.StdEncoding.EncodeToString([]byte("data"))}
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 
 	err := handlePolicyPlatformPolicy(svc, req, opts)
 	assert.NoError(t, err)
@@ -1238,7 +1235,7 @@ func TestSA_SealService_SealData_ExplicitBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
 	saWireSealClient(svc, &saSealer{canSeal: true})
-	svc.SetDefaultBackend(string(types.BackendTypeTPM2)) // set a different default
+	svc.SetDefaultBackend(string(xkms.BackendTypeTPM2)) // set a different default
 
 	req := &SealRequest{
 		Label:   "test-explicit",
@@ -1262,8 +1259,8 @@ func TestSA_SealService_UnsealData_BackendNotFound(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-unseal-nobe",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendType("nonexistent"),
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendType("nonexistent"),
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1288,8 +1285,8 @@ func TestSA_SealService_UnsealData_Success(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-unseal-ok",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: plaintext,
 		},
 		CreatedAt: time.Now(),
@@ -1346,8 +1343,8 @@ func TestSA_SealService_UnsealData_PasswordRequired(t *testing.T) {
 		Label:      "test",
 		PolicyType: string(PolicyTypePassword),
 		Password:   "somehash:somevalue",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1377,8 +1374,8 @@ func TestSA_SealService_UnsealData_PasswordMismatch(t *testing.T) {
 		Label:      "test",
 		PolicyType: string(PolicyTypePassword),
 		Password:   hash,
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1408,8 +1405,8 @@ func TestSA_SealService_UnsealData_PasswordSuccess(t *testing.T) {
 		Label:      "test",
 		PolicyType: string(PolicyTypePassword),
 		Password:   hash,
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: plaintext,
 		},
 		CreatedAt: time.Now(),
@@ -1467,8 +1464,8 @@ func TestSA_SealService_UnsealData_UnsealerError(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-unseal-err",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),

@@ -21,7 +21,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -143,7 +142,7 @@ func TestSealService_CanSeal_WithLocalClient(t *testing.T) {
 	// as sealable.
 	mc := &sealMockClient{
 		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
-			if backend == string(types.BackendTypeTPM2) {
+			if backend == string(xkms.BackendTypeTPM2) {
 				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
 			}
 			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
@@ -168,7 +167,7 @@ func TestSealService_AvailableSealers_WithLocalClient(t *testing.T) {
 	// Local client reports only the software backend as available.
 	mc := &sealMockClient{
 		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
-			if backend == string(types.BackendTypeSoftware) {
+			if backend == string(xkms.BackendTypeSoftware) {
 				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
 			}
 			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
@@ -182,7 +181,7 @@ func TestSealService_AvailableSealers_WithLocalClient(t *testing.T) {
 	// Find the software backend and verify it is marked available.
 	var softwareFound bool
 	for _, si := range sealers {
-		if si.ID == string(types.BackendTypeSoftware) {
+		if si.ID == string(xkms.BackendTypeSoftware) {
 			assert.True(t, si.Available,
 				"software backend should be available when local client reports CanSeal=true")
 			softwareFound = true

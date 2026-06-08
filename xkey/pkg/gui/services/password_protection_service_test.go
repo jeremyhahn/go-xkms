@@ -16,9 +16,9 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 	"github.com/stretchr/testify/assert"
@@ -32,7 +32,7 @@ func newTestPasswordProtectionService(t *testing.T) (
 ) {
 	t.Helper()
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store := staticpw.NewStore(backend)
 	staticPWSvc := NewStaticPasswordService(store)
 	staticPWSvc.SetContext(context.Background())

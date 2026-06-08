@@ -174,6 +174,15 @@ type TPM2BackendExternalConfig = tpm2backend.ExternalTPMConfig
 // instance provided via TPM2BackendExternalConfig.
 var NewTPM2BackendWithTPM = tpm2backend.NewBackendWithTPM
 
+// TPM2Backend is the TPM 2.0 hardware crypto backend.
+type TPM2Backend = tpm2backend.Backend
+
+// TPM2BackendConfig configures the TPM 2.0 crypto backend.
+type TPM2BackendConfig = tpm2backend.Config
+
+// NewTPM2Backend creates a new TPM 2.0 crypto backend from a TPM2BackendConfig.
+var NewTPM2Backend = tpm2backend.NewBackend
+
 // ---------------------------------------------------------------------------
 // Quantum backend (from pkg/backend/quantum/)
 //

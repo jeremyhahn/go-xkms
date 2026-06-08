@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +45,7 @@ func TestBackendTokenStore_NewBackendTokenStore_NilBackend(t *testing.T) {
 }
 
 func TestBackendTokenStore_NewBackendTokenStore_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -57,7 +57,7 @@ func TestBackendTokenStore_NewBackendTokenStore_Success(t *testing.T) {
 }
 
 func TestBackendTokenStore_Save_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -81,7 +81,7 @@ func TestBackendTokenStore_Save_Success(t *testing.T) {
 }
 
 func TestBackendTokenStore_Save_NilEntry(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -93,7 +93,7 @@ func TestBackendTokenStore_Save_NilEntry(t *testing.T) {
 }
 
 func TestBackendTokenStore_Save_EmptyServer(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -107,7 +107,7 @@ func TestBackendTokenStore_Save_EmptyServer(t *testing.T) {
 }
 
 func TestBackendTokenStore_Save_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -120,7 +120,7 @@ func TestBackendTokenStore_Save_Closed(t *testing.T) {
 }
 
 func TestBackendTokenStore_Save_Overwrite(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -146,7 +146,7 @@ func TestBackendTokenStore_Save_Overwrite(t *testing.T) {
 }
 
 func TestBackendTokenStore_Load_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -166,7 +166,7 @@ func TestBackendTokenStore_Load_Success(t *testing.T) {
 }
 
 func TestBackendTokenStore_Load_NotFound(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -179,7 +179,7 @@ func TestBackendTokenStore_Load_NotFound(t *testing.T) {
 }
 
 func TestBackendTokenStore_Load_EmptyServer(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -192,7 +192,7 @@ func TestBackendTokenStore_Load_EmptyServer(t *testing.T) {
 }
 
 func TestBackendTokenStore_Load_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -206,7 +206,7 @@ func TestBackendTokenStore_Load_Closed(t *testing.T) {
 }
 
 func TestBackendTokenStore_Delete_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -226,7 +226,7 @@ func TestBackendTokenStore_Delete_Success(t *testing.T) {
 }
 
 func TestBackendTokenStore_Delete_NotFound(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -238,7 +238,7 @@ func TestBackendTokenStore_Delete_NotFound(t *testing.T) {
 }
 
 func TestBackendTokenStore_Delete_EmptyServer(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -250,7 +250,7 @@ func TestBackendTokenStore_Delete_EmptyServer(t *testing.T) {
 }
 
 func TestBackendTokenStore_Delete_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -263,7 +263,7 @@ func TestBackendTokenStore_Delete_Closed(t *testing.T) {
 }
 
 func TestBackendTokenStore_List_Empty(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -276,7 +276,7 @@ func TestBackendTokenStore_List_Empty(t *testing.T) {
 }
 
 func TestBackendTokenStore_List_MultipleSorted(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -308,7 +308,7 @@ func TestBackendTokenStore_List_MultipleSorted(t *testing.T) {
 }
 
 func TestBackendTokenStore_List_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -322,7 +322,7 @@ func TestBackendTokenStore_List_Closed(t *testing.T) {
 }
 
 func TestBackendTokenStore_Close_Idempotent(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -334,7 +334,7 @@ func TestBackendTokenStore_Close_Idempotent(t *testing.T) {
 }
 
 func TestBackendTokenStore_Close_DoesNotCloseBackend(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -353,7 +353,7 @@ func TestBackendTokenStore_Close_DoesNotCloseBackend(t *testing.T) {
 }
 
 func TestBackendTokenStore_ServerNormalization(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -386,7 +386,7 @@ func TestBackendTokenStore_ServerNormalization(t *testing.T) {
 }
 
 func TestBackendTokenStore_Concurrency(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")
@@ -432,7 +432,7 @@ func TestBackendTokenStore_Concurrency(t *testing.T) {
 }
 
 func TestBackendTokenStore_ImplementsInterface(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	store, err := NewBackendTokenStore(backend, "tokens/")

@@ -20,13 +20,13 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/tokenstore"
@@ -914,7 +914,7 @@ func TestCoverageBoostPhase2_AutoFillService_EnsureRegistered_FastPath(t *testin
 	svc := NewAutoFillService(nil, nil, nil, nil, slog.Default())
 	// Simulate already registered state with a zero-value verifier.
 	svc.credID = []byte{0x01}
-	svc.verifier = &autofill.AssertionVerifier{}
+	svc.verifier = &xkms.AssertionVerifier{}
 
 	err := svc.ensureRegistered()
 	assert.NoError(t, err)

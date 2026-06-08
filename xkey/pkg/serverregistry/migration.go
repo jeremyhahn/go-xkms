@@ -19,7 +19,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // MigrateToDAO migrates server entries from the legacy BackendServerRegistry
@@ -29,7 +29,7 @@ import (
 //
 // Entries that already exist in the DAOStore are skipped (idempotent).
 // Returns the number of entries migrated and any error encountered.
-func MigrateToDAO(ctx context.Context, oldBackend storage.Backend, prefix string, newStore *DAOStore) (int, error) {
+func MigrateToDAO(ctx context.Context, oldBackend xkms.StorageBackend, prefix string, newStore *DAOStore) (int, error) {
 	if oldBackend == nil {
 		return 0, ErrMigration{Cause: ErrNilBackend}
 	}
@@ -46,7 +46,7 @@ func MigrateToDAO(ctx context.Context, oldBackend storage.Backend, prefix string
 	for _, key := range keys {
 		data, err := oldBackend.Get(ctx, key)
 		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, xkms.ErrStorageNotFound) {
 				// Entry disappeared between List and Get; skip.
 				continue
 			}

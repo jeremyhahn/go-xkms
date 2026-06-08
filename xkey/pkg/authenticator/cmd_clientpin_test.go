@@ -26,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/hkdf"
@@ -2896,8 +2896,8 @@ type mockUVKeyBackend struct {
 	handlesUV bool
 }
 
-func (m *mockUVKeyBackend) Type() types.BackendType {
-	return types.BackendTypeSoftware
+func (m *mockUVKeyBackend) Type() xkms.BackendType {
+	return xkms.BackendTypeSoftware
 }
 
 func (m *mockUVKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {

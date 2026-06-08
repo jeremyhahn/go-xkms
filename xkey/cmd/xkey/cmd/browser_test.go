@@ -15,11 +15,11 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,14 +62,18 @@ func TestBrowserLaunchCmd_BrowserFlag(t *testing.T) {
 
 func TestBrowserLaunchCmd_MaxArgs(t *testing.T) {
 	// The command allows at most 1 positional argument (the URL).
-	// Passing 2 arguments should produce an error.
-	cmd := *browserLaunchCmd
-	cmd.RunE = func(c *cobra.Command, args []string) error { return nil }
-	cmd.SetArgs([]string{"https://a.com", "https://b.com"})
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	err := cmd.Execute()
-	assert.Error(t, err, "should reject more than one positional argument")
+	// Validate the Args constraint directly: passing two arguments must be
+	// rejected, while zero or one argument is accepted. Calling the validator
+	// avoids cobra's Execute()-time root traversal, which (on a shallow copy
+	// that still references the global RootCmd) would dispatch the real root
+	// command rather than this launch command.
+	require.NotNil(t, browserLaunchCmd.Args, "launch command should declare an Args validator")
+	assert.Error(t, browserLaunchCmd.Args(browserLaunchCmd, []string{"https://a.com", "https://b.com"}),
+		"should reject more than one positional argument")
+	assert.NoError(t, browserLaunchCmd.Args(browserLaunchCmd, []string{"https://a.com"}),
+		"should accept a single positional argument")
+	assert.NoError(t, browserLaunchCmd.Args(browserLaunchCmd, nil),
+		"should accept zero positional arguments")
 }
 
 // --- Error on missing trust store ---
@@ -93,8 +97,18 @@ func TestRunBrowserLaunch_MissingTrustStore(t *testing.T) {
 
 func TestRunBrowserLaunch_EmptyTrustStoreNoBrowsers(t *testing.T) {
 	// Create an empty but valid trust store directory so initialization
-	// succeeds, then verify we get ErrBrowserNoBrowsers when no browser
-	// is installed and --browser is not set.
+	// succeeds. With no --browser set and an empty trust store, the launch
+	// must fail. The exact terminal error depends on whether the host has a
+	// supported browser installed:
+	//
+	//   - no browser present  -> auto-detect yields zero browsers and
+	//                            runBrowserLaunch returns ErrBrowserNoBrowsers.
+	//   - a browser present   -> auto-detect picks it, then LaunchBrowser
+	//                            rejects the empty trust store, surfaced as
+	//                            ErrBrowserLaunchFailed.
+	//
+	// Both outcomes prove the empty trust store prevents a successful launch;
+	// asserting on host browser availability would make the test flaky.
 	tmpDir := t.TempDir()
 	trustDir := filepath.Join(tmpDir, ".xkey", "data", "trust")
 	require.NoError(t, os.MkdirAll(trustDir, 0700))
@@ -117,7 +131,9 @@ func TestRunBrowserLaunch_EmptyTrustStoreNoBrowsers(t *testing.T) {
 
 	err := runBrowserLaunch(&cmd, nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBrowserNoBrowsers)
+	if !errors.Is(err, ErrBrowserNoBrowsers) && !errors.Is(err, ErrBrowserLaunchFailed) {
+		t.Fatalf("expected ErrBrowserNoBrowsers or ErrBrowserLaunchFailed, got %v", err)
+	}
 }
 
 // --- Error types ---

@@ -17,14 +17,13 @@ import (
 	"context"
 	"crypto/x509"
 	"encoding/json"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -45,7 +44,7 @@ type tpcbPanicTPM struct {
 	panicOnRandomBytes      bool
 }
 
-func (m *tpcbPanicTPM) SetHierarchyAuth(_, _ types.Password, _ *tpm2.TPMHandle) error {
+func (m *tpcbPanicTPM) SetHierarchyAuth(_, _ xkms.Password, _ *tpm2.TPMHandle) error {
 	if m.panicOnSetHierarchyAuth {
 		panic("tpcbPanicTPM: SetHierarchyAuth panic")
 	}
@@ -79,11 +78,11 @@ func newTPCBPanicMock() *tpcbPanicTPM {
 	}
 }
 
-func newTPCBTPMService(tpm tpm2pkg.TrustedPlatformModule) *TPMService {
+func newTPCBTPMService(tpm xkms.TrustedPlatformModule) *TPMService {
 	svc := NewTPMService()
 	svc.SetContext(context.Background())
 	if tpm != nil {
-		accessor := NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return tpm })
+		accessor := NewTPMAccessor(func() xkms.TrustedPlatformModule { return tpm })
 		svc.SetTPMAccessor(accessor)
 	}
 	return svc

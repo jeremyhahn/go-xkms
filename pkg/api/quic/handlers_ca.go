@@ -40,7 +40,7 @@ func (s *Server) handleGetCABundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "read") {
+	if !s.authorize(w, r, "certs", "read") {
 		return
 	}
 
@@ -73,7 +73,7 @@ func (s *Server) handleGetCACertificate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "read") {
+	if !s.authorize(w, r, "certs", "read") {
 		return
 	}
 
@@ -105,7 +105,7 @@ func (s *Server) handleSignCSR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 
@@ -139,7 +139,7 @@ func (s *Server) handleIssueCertificate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "generate") {
 		return
 	}
 
@@ -173,7 +173,7 @@ func (s *Server) handleRevokeCertificate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "revoke") {
 		return
 	}
 
@@ -207,7 +207,7 @@ func (s *Server) handleGenerateCRL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "write") {
+	if !s.authorize(w, r, "certs", "read") {
 		return
 	}
 
@@ -241,7 +241,7 @@ func (s *Server) handleIsRevoked(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.authorize(w, r, "ca", "read") {
+	if !s.authorize(w, r, "certs", "read") {
 		return
 	}
 

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -28,8 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	xkmstypes "github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -1135,7 +1134,7 @@ func TestP5B_AdminService_IsAdmin_NonRoot(t *testing.T) {
 // TestP5B_AdminService_GetAuditLogs_WithStore verifies that GetAuditLogs
 // delegates to the audit service with a real store.
 func TestP5B_AdminService_GetAuditLogs_WithStore(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	store.LogKeyOperation("generate", "software", "key-1", true, nil, 10)
 
@@ -1164,7 +1163,7 @@ func TestP5B_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 // ExportAuditLogs returns ErrAuditNoEntries when there are no entries.
 func TestP5B_AdminService_ExportAuditLogs_EmptyEntries(t *testing.T) {
 	svc := NewAdminService()
-	store, storeErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, storeErr)
 	svc.SetAuditStore(store)
 	svc.SetContext(context.Background())
@@ -1540,7 +1539,7 @@ func TestP5B_BarrierService_ProbeStrategies_NoTPMFunc(t *testing.T) {
 func TestP5B_BarrierService_ProbeStrategies_TPMFuncReturnsNil(t *testing.T) {
 	dir := t.TempDir()
 	svc := NewBarrierService(dir, slog.Default())
-	svc.SetTPMSealerFunc(func() xkmstypes.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return nil
 	})
 

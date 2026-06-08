@@ -56,7 +56,7 @@ if [ ! -f "$GOWORK_FILE" ]; then
 
 	echo "ensure-gowork: generating ${GOWORK_FILE} (repo=${REPO})"
 	cat > "$GOWORK_FILE" <<EOF
-go 1.26.3
+go 1.26.4
 
 use (
 	${REPO}

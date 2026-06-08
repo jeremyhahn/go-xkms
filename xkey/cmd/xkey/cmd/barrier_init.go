@@ -19,7 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // barrierInitCmd initializes the barrier for first-time setup.
@@ -98,7 +98,7 @@ func runBarrierInit(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = barrier.Close() }()
 
-	creds := seal.Credentials{Secret: password}
+	creds := xkms.SealCredentials{Secret: password}
 	if err := barrier.Initialize(context.Background(), creds); err != nil {
 		return &BarrierError{
 			Operation: "initialize",

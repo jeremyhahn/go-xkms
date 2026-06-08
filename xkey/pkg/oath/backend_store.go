@@ -21,7 +21,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // BackendStore errors.
@@ -31,12 +31,12 @@ var (
 	ErrDuplicateCredential = errors.New("oath: duplicate credential")
 )
 
-// BackendStore implements Store using a storage.Backend for persistence.
+// BackendStore implements Store using a xkms.StorageBackend for persistence.
 // Each credential is stored as an individual JSON entry keyed by its ID,
 // enabling encrypted storage when backed by a barrier.
 type BackendStore struct {
 	mu      sync.RWMutex
-	backend storage.Backend
+	backend xkms.StorageBackend
 	prefix  string
 	closed  bool
 }
@@ -44,7 +44,7 @@ type BackendStore struct {
 // NewBackendStore creates a new BackendStore using the given storage backend.
 // The prefix is prepended to all storage keys (e.g., "oath/" produces keys
 // like "oath/cred-id.json").
-func NewBackendStore(backend storage.Backend, prefix string) (*BackendStore, error) {
+func NewBackendStore(backend xkms.StorageBackend, prefix string) (*BackendStore, error) {
 	if backend == nil {
 		return nil, ErrNilBackend
 	}
@@ -114,7 +114,7 @@ func (s *BackendStore) Get(idOrName string) (*Credential, error) {
 	}
 
 	// If the error is not "not found", propagate it
-	if !errors.Is(err, storage.ErrNotFound) {
+	if !errors.Is(err, xkms.ErrStorageNotFound) {
 		return nil, err
 	}
 
@@ -141,7 +141,7 @@ func (s *BackendStore) List() ([]*Credential, error) {
 		data, err := s.backend.Get(context.Background(), key)
 		if err != nil {
 			// Skip entries that disappeared between List and Get
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, xkms.ErrStorageNotFound) {
 				continue
 			}
 			return nil, err
@@ -207,7 +207,7 @@ func (s *BackendStore) Delete(idOrName string) error {
 	}
 
 	// If the error is not "not found", propagate it
-	if !errors.Is(err, storage.ErrNotFound) {
+	if !errors.Is(err, xkms.ErrStorageNotFound) {
 		return err
 	}
 
@@ -247,7 +247,7 @@ func (s *BackendStore) findByNameOrID(idOrName string) (*Credential, error) {
 	for _, key := range keys {
 		data, err := s.backend.Get(context.Background(), key)
 		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, xkms.ErrStorageNotFound) {
 				continue
 			}
 			return nil, err
@@ -280,7 +280,7 @@ func (s *BackendStore) checkDuplicateName(name, excludeID string) error {
 	for _, key := range keys {
 		data, err := s.backend.Get(context.Background(), key)
 		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, xkms.ErrStorageNotFound) {
 				continue
 			}
 			return err

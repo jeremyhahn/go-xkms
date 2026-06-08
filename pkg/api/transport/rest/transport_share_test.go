@@ -16,23 +16,107 @@ package rest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
+	"github.com/stretchr/testify/require"
 )
 
-// newShareTestTransport creates a REST transport connected to an httptest
-// server backed by real share handlers with an in-memory store.
+// errDuplicateShare mirrors the embedded go-qrdb node's rejection of a share
+// already submitted for the same server URL, group, and index.
+var errDuplicateShare = errors.New("share already submitted")
+
+// shareTestClient is an in-memory qrdbtransport.ShareClient mirroring the
+// embedded go-qrdb node's share semantics, used to drive the REST share
+// handlers through the SDK transport without a real node.
+type shareTestClient struct {
+	shares []qrdbtransport.ShareInfo
+}
+
+func (c *shareTestClient) SubmitShare(_ context.Context, req *qrdbtransport.SubmitShareRequest) (*qrdbtransport.SubmitShareResponse, error) {
+	for _, s := range c.shares {
+		if s.ServerURL == req.ServerURL && s.GroupID == req.GroupID && s.ShareIndex == req.ShareIndex {
+			return nil, errDuplicateShare
+		}
+	}
+	c.shares = append(c.shares, qrdbtransport.ShareInfo{
+		ServerURL:  req.ServerURL,
+		GroupID:    req.GroupID,
+		GroupName:  req.GroupName,
+		ShareIndex: req.ShareIndex,
+		ShareData:  req.ShareData,
+		Purpose:    req.Purpose,
+		ReceivedAt: time.Now().UTC(),
+		TenantID:   req.TenantID,
+	})
+	return &qrdbtransport.SubmitShareResponse{Accepted: true}, nil
+}
+
+func (c *shareTestClient) ListShares(_ context.Context) (*qrdbtransport.ListSharesResponse, error) {
+	return &qrdbtransport.ListSharesResponse{Shares: c.shares}, nil
+}
+
+func (c *shareTestClient) GetShare(_ context.Context, serverURL, groupID string, shareIndex int) (*qrdbtransport.ShareInfo, error) {
+	for i := range c.shares {
+		s := c.shares[i]
+		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
+			return &s, nil
+		}
+	}
+	return nil, qrdbsdk.ErrCeremonyShareNotFound
+}
+
+func (c *shareTestClient) DeleteShare(_ context.Context, serverURL, groupID string, shareIndex int) error {
+	for i := range c.shares {
+		s := c.shares[i]
+		if s.ServerURL == serverURL && s.GroupID == groupID && s.ShareIndex == shareIndex {
+			c.shares = append(c.shares[:i], c.shares[i+1:]...)
+			return nil
+		}
+	}
+	return qrdbsdk.ErrCeremonyShareNotFound
+}
+
+func (c *shareTestClient) GetShareCollectionStatus(_ context.Context, groupID string) (*qrdbtransport.ShareCollectionStatus, error) {
+	collected := 0
+	for i := range c.shares {
+		if c.shares[i].GroupID == groupID {
+			collected++
+		}
+	}
+	return &qrdbtransport.ShareCollectionStatus{
+		GroupID:   groupID,
+		Collected: collected,
+	}, nil
+}
+
+// newShareTestTransport creates a REST transport connected to an httptest server
+// backed by real share handlers wired to an in-memory share client through the
+// XKMSService singleton, mirroring production wiring in pkg/server/server.go.
 func newShareTestTransport(t *testing.T) (*Transport, *httptest.Server) {
 	t.Helper()
 
-	store := sharestore.NewMemoryShareStore()
-	handlers := restapi.NewShareHandlers(store)
+	xkms.Reset()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"mem": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "mem",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	svc.SetShareClient(&shareTestClient{})
+	t.Cleanup(func() { xkms.Reset() })
+
+	handlers := restapi.NewShareHandlers()
 
 	r := chi.NewRouter()
 

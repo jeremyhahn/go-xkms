@@ -55,18 +55,14 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
 	"github.com/jeremyhahn/go-xkms/pkg/health"
 	initialize "github.com/jeremyhahn/go-xkms/pkg/init"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
-	"github.com/jeremyhahn/go-xkms/pkg/keyrbac"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/seal/policy"
 	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
@@ -107,8 +103,9 @@ type Server struct {
 	// XKMSService.SetWebAuthn). It is non-nil only when WebAuthn is enabled.
 	webauthnService *webauthn.Service
 
-	// Authorization
-	authorizer keyauthz.Authorizer
+	// Authorization. rbacAuthorizer is the single qrdb-backed authorizer that
+	// gates every transport (REST, gRPC, QUIC).
+	rbacAuthorizer *auth.Authorizer
 
 	// Audit logging
 	auditLogger audit.Logger
@@ -130,12 +127,6 @@ type Server struct {
 
 	// Policy manager
 	policyManager *policy.Manager
-
-	// Custodian group management
-	custodianService *custodian.Service
-
-	// Share store for Shamir share management
-	shareStore sharestore.ShareStore
 
 	// Health checker
 	healthChecker *health.Checker
@@ -175,6 +166,14 @@ type Server struct {
 	// Roles, factors, barrier). For embedded hosting it is node.Client(); for
 	// remote deployments it is the dialed cluster client.
 	qrdbClient *qrdbsdk.Client
+
+	// qrdbAuditSink is the compliance-grade audit sink supplied to the
+	// embedded qrdb node at construction (sdk.WithAuditLogger). It is the
+	// HMAC-chained file logger when file audit is configured, otherwise an
+	// in-memory ring buffer so audit emission and querying always function.
+	// It backs Client().Audit(); the server owns its lifecycle and closes it
+	// during Shutdown. It is nil for non-embedded (remote) qrdb deployments.
+	qrdbAuditSink qrdbsdk.NodeAuditLogger
 
 	// Lifecycle
 	ctx        context.Context
@@ -268,20 +267,6 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "barrier registry", Err: err}
 	}
 
-	// Initialize custodian group service
-	if err := s.initializeCustodianService(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "custodian service", Err: err}
-	}
-
-	// Initialize share store
-	if err := s.initializeShareStore(); err != nil {
-		cancel()
-		s.closeBackends()
-		return nil, &ErrServiceInit{Service: "share store", Err: err}
-	}
-
 	// Initialize PIN manager
 	if err := s.initializePINManager(); err != nil {
 		cancel()
@@ -372,11 +357,24 @@ func New(cfg *config.Config) (*Server, error) {
 		if s.policyManager != nil {
 			svc.SetPolicyManager(s.policyManager)
 		}
-		if s.custodianService != nil {
-			svc.SetCustodianService(s.custodianService)
+		if s.qrdbClient != nil {
+			svc.SetCustodianClient(s.qrdbClient.CustodianGroups())
 		}
-		if s.shareStore != nil {
-			svc.SetShareStore(s.shareStore)
+		if s.qrdbClient != nil {
+			svc.SetShareClient(s.qrdbClient.Shares())
+		}
+		// Wire the read-only cluster surface. Only attach the live qrdb
+		// cluster client when clustering is enabled; a standalone node leaves
+		// the reader nil and the servicer reports single-node status. The
+		// shard and this node's replica id come from operator cluster config.
+		if s.qrdbClient != nil && s.config.Cluster.Enabled {
+			svc.SetClusterClient(
+				&clusterReaderAdapter{cluster: s.qrdbClient.Cluster()},
+				s.config.Cluster.ShardID,
+				s.config.Cluster.NodeID,
+			)
+		} else {
+			svc.SetClusterClient(nil, s.config.Cluster.ShardID, s.config.Cluster.NodeID)
 		}
 		if s.barrierRegistry != nil {
 			svc.SetBarrierRegistry(s.barrierRegistry)
@@ -852,45 +850,48 @@ func (s *Server) initializeWebAuthnService() error {
 	return nil
 }
 
-// initializeAuthorization sets up the authorization subsystem.
-// When RBAC is enabled, it creates an RBACAuthorizer backed by a MemoryRBACAdapter.
-// Otherwise, it uses a NoOpAuthorizer that permits all requests.
+// initializeAuthorization sets up the authorization subsystem. All transports
+// (REST, gRPC, QUIC) authorize through the single qrdb-backed Authorizer — the
+// canonical role/permission engine. When RBAC is disabled, or enabled without a
+// hosted qrdb identity plane (non-qrdb storage backends), the Authorizer is left
+// nil so the gate stays open (allow all) rather than denying every request —
+// mirroring the mTLS identity fallback.
 func (s *Server) initializeAuthorization() error {
 	s.logger.Info("Initializing authorization...")
 
-	if s.config.Auth.EnableRBAC {
-		adapter := keyrbac.NewMemoryRBACAdapter(true)
-		s.authorizer = keyauthz.NewRBACAuthorizer(adapter)
-		s.logger.Info("RBAC authorization enabled")
+	if s.config.Auth.EnableRBAC && s.qrdbClient != nil {
+		s.rbacAuthorizer = auth.NewAuthorizer(s.qrdbClient.RBAC())
+		s.logger.Info("RBAC authorization enabled (qrdb-backed)")
 	} else {
-		s.authorizer = &keyauthz.NoOpAuthorizer{}
-		s.logger.Info("Authorization disabled, using NoOp authorizer")
+		s.rbacAuthorizer = nil
+		if s.config.Auth.EnableRBAC {
+			s.logger.Warn("RBAC enabled but no qrdb identity plane; authorization is permissive")
+		} else {
+			s.logger.Info("Authorization disabled (allow all)")
+		}
 	}
 
 	return nil
 }
 
-// initializeAuditLogger sets up the audit logging subsystem.
-// When audit logging is enabled, it creates a FileLogger at the configured path.
-// Otherwise, it uses a NoOpLogger that discards all events.
+// initializeAuditLogger selects the audit emission Logger. xkms owns no audit
+// storage: emits are routed to the hosted qrdb node's HMAC-chained audit
+// subsystem through Client().Audit() (QRDBLogger). The node's audit sink — the
+// HMAC-chained file logger or in-memory ring buffer — was wired in at node
+// construction by initEmbeddedQRDBNode (see newQRDBAuditSink), so this runs
+// after the node is up and a live client exists.
+//
+// When no qrdb client is present (non-qrdb storage backends with no identity
+// plane), a NoOpLogger discards events.
 func (s *Server) initializeAuditLogger() error {
 	s.logger.Info("Initializing audit logger...")
 
-	if s.config.Auth.Audit != nil && s.config.Auth.Audit.Enabled {
-		if s.config.Auth.Audit.Path == "" {
-			return ErrAuditPathRequired
-		}
-		fileLogger, err := audit.NewFileLogger(&audit.FileLoggerConfig{
-			Path: s.config.Auth.Audit.Path,
-		})
-		if err != nil {
-			return &ErrServiceInit{Service: "audit file logger", Err: err}
-		}
-		s.auditLogger = fileLogger
-		s.logger.Info("Audit logging enabled", "path", s.config.Auth.Audit.Path)
+	if s.qrdbClient != nil {
+		s.auditLogger = audit.NewQRDBLogger(s.qrdbClient.Audit())
+		s.logger.Info("Audit logging routed to qrdb HMAC-chained subsystem")
 	} else {
 		s.auditLogger = &audit.NoOpLogger{}
-		s.logger.Info("Audit logging disabled, using NoOp logger")
+		s.logger.Info("No qrdb client; audit logging using NoOp logger")
 	}
 
 	return nil
@@ -1013,25 +1014,6 @@ func (s *Server) initializeBarrierRegistry() error {
 	s.barrierRegistry = registry
 	s.logger.Info("Barrier registry initialized")
 
-	return nil
-}
-
-// initializeCustodianService creates the custodian group management service.
-func (s *Server) initializeCustodianService() error {
-	store := custodian.NewMemoryStore()
-	svc, err := custodian.NewService(store)
-	if err != nil {
-		return &ErrServiceInit{Service: "custodian service", Err: err}
-	}
-	s.custodianService = svc
-	s.logger.Info("Custodian group service initialized")
-	return nil
-}
-
-// initializeShareStore creates the Shamir share store.
-func (s *Server) initializeShareStore() error {
-	s.shareStore = sharestore.NewMemoryShareStore()
-	s.logger.Info("Share store initialized")
 	return nil
 }
 
@@ -1728,7 +1710,7 @@ func (s *Server) startREST() {
 		Version:           getBuildVersion(),
 		Authenticator:     s.authenticator,
 		EnableRBAC:        s.config.Auth.EnableRBAC,
-		Authorizer:        s.authorizer,
+		RBACAuthorizer:    s.rbacAuthorizer,
 		AuditLogger:       s.auditLogger,
 		Barrier:           s.barrier,
 		PINManager:        s.pinManager,
@@ -1736,8 +1718,8 @@ func (s *Server) startREST() {
 		PlatformStore:     s.platformStore,
 		PolicyManager:     s.policyManager,
 		BarrierRegistry:   s.barrierRegistry,
-		CustodianService:  s.custodianService,
-		ShareStore:        s.shareStore,
+		CustodianEnabled:  s.qrdbClient != nil,
+		ShareEnabled:      s.qrdbClient != nil,
 		CeremonyService:   s.ceremonyService,
 		CredentialService: s.credentialService,
 	}
@@ -1841,7 +1823,7 @@ func (s *Server) startGRPC() {
 	s.mu.Unlock()
 
 	// Create and register gRPC service (uses xkms service)
-	service := grpcinternal.NewService(s.authorizer, s.auditLogger)
+	service := grpcinternal.NewService(s.rbacAuthorizer, s.auditLogger)
 
 	// Wire barrier and PIN manager into gRPC service
 	if s.barrier != nil {
@@ -1852,11 +1834,11 @@ func (s *Server) startGRPC() {
 	}
 
 	// Wire custodian, share, and tenant services into gRPC
-	if s.custodianService != nil {
-		grpcinternal.SetCustodianService(s.custodianService)
+	if s.qrdbClient != nil {
+		grpcinternal.SetCustodianClient(s.qrdbClient.CustodianGroups())
 	}
-	if s.shareStore != nil {
-		grpcinternal.SetShareStore(s.shareStore)
+	if s.qrdbClient != nil {
+		grpcinternal.SetShareClient(s.qrdbClient.Shares())
 	}
 	if s.barrierRegistry != nil {
 		grpcinternal.SetBarrierRegistry(s.barrierRegistry)
@@ -2256,7 +2238,7 @@ func (s *Server) startQUIC() {
 		TLSConfig:     tlsConfig,
 		Logger:        s.logger.With("component", "quic"),
 		Authenticator: s.authenticator,
-		Authorizer:    s.authorizer,
+		Authorizer:    s.rbacAuthorizer,
 		AuditLogger:   s.auditLogger,
 	}
 

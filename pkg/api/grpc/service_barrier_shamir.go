@@ -33,7 +33,7 @@ func (s *Service) BarrierInitializeShamir(ctx context.Context, req *pb.BarrierIn
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "initialize-shamir"); err != nil {
+	if err := s.authorize(ctx, "seal", "initialize_shamir", "initialize-shamir"); err != nil {
 		return nil, err
 	}
 
@@ -58,7 +58,7 @@ func (s *Service) BarrierUnsealShare(ctx context.Context, req *pb.BarrierUnsealS
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "unseal-share"); err != nil {
+	if err := s.authorize(ctx, "barrier", "unseal-share", "unseal-share"); err != nil {
 		return nil, err
 	}
 
@@ -89,7 +89,7 @@ func (s *Service) BarrierUnsealShares(ctx context.Context, req *pb.BarrierUnseal
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "unseal-shares"); err != nil {
+	if err := s.authorize(ctx, "seal", "unseal", "unseal-shares"); err != nil {
 		return nil, err
 	}
 
@@ -108,7 +108,7 @@ func (s *Service) BarrierRekey(ctx context.Context, req *pb.BarrierRekeyRequest)
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "rekey"); err != nil {
+	if err := s.authorize(ctx, "seal", "rekey", "rekey"); err != nil {
 		return nil, err
 	}
 
@@ -134,7 +134,7 @@ func (s *Service) BarrierGenerateRecoveryKeys(ctx context.Context, req *pb.Barri
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "generate-recovery-keys"); err != nil {
+	if err := s.authorize(ctx, "seal", "generate_recovery", "generate-recovery-keys"); err != nil {
 		return nil, err
 	}
 
@@ -157,7 +157,7 @@ func (s *Service) BarrierRecoverWithKeys(ctx context.Context, req *pb.BarrierRec
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "recover-with-keys"); err != nil {
+	if err := s.authorize(ctx, "seal", "recover_with_keys", "recover-with-keys"); err != nil {
 		return nil, err
 	}
 
@@ -175,7 +175,7 @@ func (s *Service) BarrierDeleteRecoveryKeys(ctx context.Context, _ *emptypb.Empt
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "delete-recovery-keys"); err != nil {
+	if err := s.authorize(ctx, "seal", "generate_recovery", "delete-recovery-keys"); err != nil {
 		return nil, err
 	}
 
@@ -195,7 +195,7 @@ func (s *Service) BarrierGenerateRootToken(ctx context.Context, req *pb.BarrierG
 		return nil, status.Error(codes.FailedPrecondition, ErrBarrierNotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "barrier", "write", "generate-root-token"); err != nil {
+	if err := s.authorize(ctx, "seal", "rotate_root_key", "generate-root-token"); err != nil {
 		return nil, err
 	}
 

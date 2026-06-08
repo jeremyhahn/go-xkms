@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // AttestationMode specifies the attestation method.
@@ -69,7 +69,7 @@ type LaptopAttestor interface {
 // LaptopAttestorConfig configures the laptop attestor.
 type LaptopAttestorConfig struct {
 	Mode   AttestationMode
-	TPM    tpm2.TrustedPlatformModule // nil if TPM2 not available
+	TPM    xkms.TrustedPlatformModule // nil if TPM2 not available
 	Logger *slog.Logger
 	// PCRs to include in TPM2 quote (default: 0, 1, 7)
 	PCRs []uint
@@ -172,7 +172,7 @@ func (a *laptopAttestor) generateTPM2Attestation(nonce []byte) (*RemoteAttestDev
 	}
 
 	// Decode PCR values from the quote
-	pcrBanks, err := tpm2.DecodePCRs(quote.PCRs)
+	pcrBanks, err := xkms.DecodePCRs(quote.PCRs)
 	if err != nil {
 		a.log.Warn("failed to decode PCRs from quote", slog.String("error", err.Error()))
 		// Continue without PCR values - they're optional for the response

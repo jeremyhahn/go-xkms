@@ -22,9 +22,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 	"github.com/stretchr/testify/assert"
@@ -32,16 +32,34 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// mockAuthorizer is a test double for keyauthz.Authorizer.
-type mockAuthorizer struct {
-	decision *keyauthz.AuthorizationDecision
-	err      error
-	lastReq  *keyauthz.AuthorizationRequest
+// errFakeDenied is the typed denial returned by recordingRBAC when configured
+// to deny. The qrdb RBAC contract is: nil on allow, a non-nil error on deny —
+// the *auth.Authorizer surfaces this verbatim to the QUIC authorize helper.
+var errFakeDenied = errors.New("permission denied: viewer may not read backends")
+
+// recordingRBAC is a test double for qrdbtransport.RBACClient. It records the
+// last identity, resource, and action it was asked to authorize and returns
+// either nil (allow) or errFakeDenied (deny) per the deny flag. It is wrapped
+// with auth.NewAuthorizer to exercise the real authorization seam end to end.
+type recordingRBAC struct {
+	deny         bool
+	lastIdentity *qrdbtransport.Identity
+	lastResource string
+	lastAction   string
 }
 
-func (m *mockAuthorizer) Authorize(_ context.Context, req *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
-	m.lastReq = req
-	return m.decision, m.err
+func (r *recordingRBAC) Authorize(_ context.Context, id *qrdbtransport.Identity, resource, action string) error {
+	r.lastIdentity = id
+	r.lastResource = resource
+	r.lastAction = action
+	if r.deny {
+		return errFakeDenied
+	}
+	return nil
+}
+
+func (r *recordingRBAC) ListPermissions(_ context.Context, _ *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
+	return nil, nil
 }
 
 // mockAuditLogger is a test double for audit.Logger.
@@ -82,12 +100,12 @@ func (a *identityAuthenticator) AuthenticateGRPC(_ context.Context, _ metadata.M
 	return nil, errors.New("not implemented")
 }
 
-// createAuthzTestServer creates a test server with configurable authorizer, audit logger,
-// and identity. The identity is provided via a custom authenticator to properly flow
-// through the authentication middleware.
+// createAuthzTestServer creates a test server with a configurable authorizer,
+// audit logger, and identity. The identity is provided via a custom
+// authenticator to properly flow through the authentication middleware.
 func createAuthzTestServer(
 	t *testing.T,
-	authorizer keyauthz.Authorizer,
+	authorizer *auth.Authorizer,
 	auditLogger audit.Logger,
 	identity *auth.Identity,
 ) (*Server, *xkmsmocks.MockKeyStore) {
@@ -120,17 +138,16 @@ func createAuthzTestServer(
 }
 
 // TestAuthzAuthorize_AllowedRequest verifies that an allowed authorization
-// decision lets the request proceed to the handler.
+// decision lets the request proceed to the handler and forwards the correct
+// identity, resource, and action to the qrdb RBAC client.
 func TestAuthzAuthorize_AllowedRequest(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true, Reason: "admin"},
-	}
+	rbac := &recordingRBAC{deny: false}
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{
 		Subject: "admin@example.com",
 		Roles:   []string{"admin"},
 	}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+	server, _ := createAuthzTestServer(t, auth.NewAuthorizer(rbac), logger, identity)
 	defer xkms.Reset()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -140,26 +157,24 @@ func TestAuthzAuthorize_AllowedRequest(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// Verify authorizer received correct request
-	require.NotNil(t, authorizer.lastReq)
-	assert.Equal(t, "admin@example.com", authorizer.lastReq.Subject)
-	assert.Equal(t, "admin", authorizer.lastReq.Role)
-	assert.Equal(t, "backends", authorizer.lastReq.Resource)
-	assert.Equal(t, "read", authorizer.lastReq.Action)
+	// Verify the RBAC client received the remapped qrdb vocabulary.
+	require.NotNil(t, rbac.lastIdentity)
+	assert.Equal(t, "admin@example.com", rbac.lastIdentity.Subject)
+	assert.Equal(t, []string{"admin"}, rbac.lastIdentity.Roles)
+	assert.Equal(t, "backends", rbac.lastResource)
+	assert.Equal(t, "list", rbac.lastAction)
 }
 
 // TestAuthzAuthorize_DeniedRequest verifies that a denied authorization
-// decision returns HTTP 403 Forbidden with the denial reason.
+// returns HTTP 403 Forbidden carrying the qrdb denial message.
 func TestAuthzAuthorize_DeniedRequest(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "insufficient permissions"},
-	}
+	rbac := &recordingRBAC{deny: true}
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{
 		Subject: "viewer@example.com",
 		Roles:   []string{"viewer"},
 	}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+	server, _ := createAuthzTestServer(t, auth.NewAuthorizer(rbac), logger, identity)
 	defer xkms.Reset()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -168,112 +183,15 @@ func TestAuthzAuthorize_DeniedRequest(t *testing.T) {
 	server.handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "insufficient permissions")
+	assert.Contains(t, w.Body.String(), "permission denied")
 }
 
-// TestAuthzAuthorize_DeniedRequestDefaultReason verifies that a denied
-// authorization with an empty reason falls back to the default "access denied" message.
-func TestAuthzAuthorize_DeniedRequestDefaultReason(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: ""},
-	}
+// TestAuthzAuthorize_DisabledAllowsAll verifies that a nil-backed Authorizer
+// (authorization disabled) admits every request.
+func TestAuthzAuthorize_DisabledAllowsAll(t *testing.T) {
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{Subject: "user@example.com"}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
-	defer xkms.Reset()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-	w := httptest.NewRecorder()
-
-	server.handler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "access denied")
-}
-
-// TestAuthzAuthorize_AuthzError verifies that an authorization error returns
-// HTTP 500 Internal Server Error.
-func TestAuthzAuthorize_AuthzError(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: nil,
-		err:      errors.New("database connection failed"),
-	}
-	logger := &mockAuditLogger{}
-	identity := &auth.Identity{
-		Subject: "admin@example.com",
-		Roles:   []string{"admin"},
-	}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
-	defer xkms.Reset()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-	w := httptest.NewRecorder()
-
-	server.handler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "authorization error")
-}
-
-// TestAuthzAuthorize_NoIdentity verifies that requests without an identity
-// in the context reach the authorizer with the "anonymous" subject from the
-// NoOp authenticator (which is what the authentication middleware provides).
-func TestAuthzAuthorize_NoIdentity(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
-	logger := &mockAuditLogger{}
-	// nil identity -> identityAuthenticator returns anonymous
-	server, _ := createAuthzTestServer(t, authorizer, logger, nil)
-	defer xkms.Reset()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-	w := httptest.NewRecorder()
-
-	server.handler.ServeHTTP(w, req)
-
-	// The authenticator returns "anonymous" when no identity is configured
-	require.NotNil(t, authorizer.lastReq)
-	assert.Equal(t, "anonymous", authorizer.lastReq.Subject)
-	assert.Equal(t, "", authorizer.lastReq.Role)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-// TestAuthzAuthorize_NoIdentityDenied verifies that anonymous requests can be
-// denied by the authorizer.
-func TestAuthzAuthorize_NoIdentityDenied(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "anonymous access denied"},
-	}
-	logger := &mockAuditLogger{}
-	// nil identity -> identityAuthenticator returns anonymous
-	server, _ := createAuthzTestServer(t, authorizer, logger, nil)
-	defer xkms.Reset()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-	w := httptest.NewRecorder()
-
-	server.handler.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusForbidden, w.Code)
-	assert.Contains(t, w.Body.String(), "anonymous access denied")
-
-	// Verify audit event has "anonymous" subject (from authenticator)
-	require.Len(t, logger.events, 1)
-	assert.Equal(t, "anonymous", logger.events[0].Subject)
-}
-
-// TestAuthzAuthorize_NilDecisionAllowed verifies that a nil decision with
-// no error is treated as allowed (permissive by default).
-func TestAuthzAuthorize_NilDecisionAllowed(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: nil,
-		err:      nil,
-	}
-	logger := &mockAuditLogger{}
-	identity := &auth.Identity{Subject: "admin@example.com"}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+	server, _ := createAuthzTestServer(t, auth.NewAuthorizer(nil), logger, identity)
 	defer xkms.Reset()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -282,16 +200,49 @@ func TestAuthzAuthorize_NilDecisionAllowed(t *testing.T) {
 	server.handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestAuthzAuthorize_NoIdentityUnauthenticated verifies that an enabled
+// authorizer rejects a request with no identity as 401 Unauthorized.
+func TestAuthzAuthorize_NoIdentityUnauthenticated(t *testing.T) {
+	rbac := &recordingRBAC{deny: false}
+	logger := &mockAuditLogger{}
+	// An authenticator that yields a nil identity forces the unauthenticated
+	// path inside the authorize helper.
+	server, _ := createAuthzTestServer(t, auth.NewAuthorizer(rbac), logger, nil)
+	defer xkms.Reset()
+	// Replace the authenticator with one that returns a nil identity so the
+	// authorize helper observes auth.ErrUnauthenticated.
+	server.authenticator = &nilIdentityAuthenticator{}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
+	w := httptest.NewRecorder()
+
+	server.handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// nilIdentityAuthenticator authenticates successfully but yields no identity,
+// exercising the authorize helper's ErrUnauthenticated branch.
+type nilIdentityAuthenticator struct{}
+
+func (a *nilIdentityAuthenticator) Name() string { return "nil-identity" }
+
+func (a *nilIdentityAuthenticator) AuthenticateHTTP(_ *http.Request) (*auth.Identity, error) {
+	return nil, nil
+}
+
+func (a *nilIdentityAuthenticator) AuthenticateGRPC(_ context.Context, _ metadata.MD) (*auth.Identity, error) {
+	return nil, errors.New("not implemented")
 }
 
 // TestAuthzAuthorize_HealthEndpointSkipsAuthz verifies that the /health
 // endpoint does not require authorization.
 func TestAuthzAuthorize_HealthEndpointSkipsAuthz(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "deny everything"},
-	}
+	rbac := &recordingRBAC{deny: true}
 	logger := &mockAuditLogger{}
-	server, _ := createAuthzTestServer(t, authorizer, logger, nil)
+	server, _ := createAuthzTestServer(t, auth.NewAuthorizer(rbac), logger, nil)
 	defer xkms.Reset()
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -299,26 +250,23 @@ func TestAuthzAuthorize_HealthEndpointSkipsAuthz(t *testing.T) {
 
 	server.handler.ServeHTTP(w, req)
 
-	// Health endpoint should succeed regardless of authorizer denial
+	// Health endpoint should succeed regardless of authorizer denial.
 	assert.Equal(t, http.StatusOK, w.Code)
 
-	// The authorizer should NOT have been called (no lastReq set)
-	assert.Nil(t, authorizer.lastReq)
+	// The RBAC client should NOT have been called.
+	assert.Nil(t, rbac.lastIdentity)
 }
 
 // TestAuthzAuditLogging verifies that audit events are logged correctly for
 // both allowed and denied requests.
 func TestAuthzAuditLogging(t *testing.T) {
 	t.Run("logs allow event on authorized request", func(t *testing.T) {
-		authorizer := &mockAuthorizer{
-			decision: &keyauthz.AuthorizationDecision{Allowed: true},
-		}
 		logger := &mockAuditLogger{}
 		identity := &auth.Identity{
 			Subject: "operator@example.com",
 			Roles:   []string{"operator"},
 		}
-		server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+		server, _ := createAuthzTestServer(t, auth.NewAuthorizer(&recordingRBAC{deny: false}), logger, identity)
 		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -330,7 +278,7 @@ func TestAuthzAuditLogging(t *testing.T) {
 		require.Len(t, logger.events, 1)
 		event := logger.events[0]
 		assert.Equal(t, "operator@example.com", event.Subject)
-		assert.Equal(t, "read", event.Action)
+		assert.Equal(t, "list", event.Action)
 		assert.Equal(t, "backends", event.Resource)
 		assert.Equal(t, "/api/v1/backends", event.ResourceID)
 		assert.Equal(t, audit.OutcomeAllow, event.Outcome)
@@ -341,15 +289,12 @@ func TestAuthzAuditLogging(t *testing.T) {
 	})
 
 	t.Run("logs deny event on unauthorized request", func(t *testing.T) {
-		authorizer := &mockAuthorizer{
-			decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "no permission"},
-		}
 		logger := &mockAuditLogger{}
 		identity := &auth.Identity{
 			Subject: "viewer@example.com",
 			Roles:   []string{"viewer"},
 		}
-		server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+		server, _ := createAuthzTestServer(t, auth.NewAuthorizer(&recordingRBAC{deny: true}), logger, identity)
 		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -361,7 +306,7 @@ func TestAuthzAuditLogging(t *testing.T) {
 		require.Len(t, logger.events, 1)
 		event := logger.events[0]
 		assert.Equal(t, "viewer@example.com", event.Subject)
-		assert.Equal(t, "read", event.Action)
+		assert.Equal(t, "list", event.Action)
 		assert.Equal(t, "backends", event.Resource)
 		assert.Equal(t, "/api/v1/backends", event.ResourceID)
 		assert.Equal(t, audit.OutcomeDeny, event.Outcome)
@@ -370,34 +315,13 @@ func TestAuthzAuditLogging(t *testing.T) {
 		assert.Equal(t, "viewer", event.Details["role"])
 	})
 
-	t.Run("logs deny event on authorizer error", func(t *testing.T) {
-		authorizer := &mockAuthorizer{
-			err: errors.New("policy engine unavailable"),
-		}
-		logger := &mockAuditLogger{}
-		identity := &auth.Identity{Subject: "admin@example.com"}
-		server, _ := createAuthzTestServer(t, authorizer, logger, identity)
-		defer xkms.Reset()
-
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-		w := httptest.NewRecorder()
-
-		server.handler.ServeHTTP(w, req)
-
-		require.Len(t, logger.events, 1)
-		assert.Equal(t, audit.OutcomeDeny, logger.events[0].Outcome)
-	})
-
 	t.Run("omits role from details when empty", func(t *testing.T) {
-		authorizer := &mockAuthorizer{
-			decision: &keyauthz.AuthorizationDecision{Allowed: true},
-		}
 		logger := &mockAuditLogger{}
 		identity := &auth.Identity{
 			Subject: "service-account",
 			// No roles claim
 		}
-		server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+		server, _ := createAuthzTestServer(t, auth.NewAuthorizer(&recordingRBAC{deny: false}), logger, identity)
 		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -411,14 +335,11 @@ func TestAuthzAuditLogging(t *testing.T) {
 	})
 
 	t.Run("audit logger error does not affect request processing", func(t *testing.T) {
-		authorizer := &mockAuthorizer{
-			decision: &keyauthz.AuthorizationDecision{Allowed: true},
-		}
 		logger := &mockAuditLogger{
 			err: errors.New("audit log write failed"),
 		}
 		identity := &auth.Identity{Subject: "admin@example.com"}
-		server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+		server, _ := createAuthzTestServer(t, auth.NewAuthorizer(&recordingRBAC{deny: false}), logger, identity)
 		defer xkms.Reset()
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
@@ -426,63 +347,9 @@ func TestAuthzAuditLogging(t *testing.T) {
 
 		server.handler.ServeHTTP(w, req)
 
-		// Request should still succeed despite audit failure
+		// Request should still succeed despite audit failure.
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
-}
-
-// TestAuthzRoleExtraction verifies that the first role on an Identity flows
-// through into the audit/authz request.
-func TestAuthzRoleExtraction(t *testing.T) {
-	tests := []struct {
-		name         string
-		roles        []string
-		expectedRole string
-	}{
-		{
-			name:         "first of multiple",
-			roles:        []string{"admin", "operator"},
-			expectedRole: "admin",
-		},
-		{
-			name:         "single role",
-			roles:        []string{"user"},
-			expectedRole: "user",
-		},
-		{
-			name:         "empty slice returns empty",
-			roles:        []string{},
-			expectedRole: "",
-		},
-		{
-			name:         "nil slice returns empty",
-			roles:        nil,
-			expectedRole: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			authorizer := &mockAuthorizer{
-				decision: &keyauthz.AuthorizationDecision{Allowed: true},
-			}
-			logger := &mockAuditLogger{}
-			identity := &auth.Identity{
-				Subject: "test@example.com",
-				Roles:   tt.roles,
-			}
-			server, _ := createAuthzTestServer(t, authorizer, logger, identity)
-			defer xkms.Reset()
-
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-			w := httptest.NewRecorder()
-
-			server.handler.ServeHTTP(w, req)
-
-			require.NotNil(t, authorizer.lastReq)
-			assert.Equal(t, tt.expectedRole, authorizer.lastReq.Role)
-		})
-	}
 }
 
 // TestAuthzExtractRole_DirectFunction verifies the extractRole function
@@ -496,32 +363,15 @@ func TestAuthzExtractRole_DirectFunction(t *testing.T) {
 		identity := &auth.Identity{Subject: "test"}
 		assert.Equal(t, "", extractRole(identity))
 	})
-}
 
-// TestAuthzAuthorize_ContextMapInitialized verifies that the Context map
-// in the AuthorizationRequest is properly initialized.
-func TestAuthzAuthorize_ContextMapInitialized(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
-	logger := &mockAuditLogger{}
-	identity := &auth.Identity{Subject: "admin@example.com"}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
-	defer xkms.Reset()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/backends", nil)
-	w := httptest.NewRecorder()
-
-	server.handler.ServeHTTP(w, req)
-
-	require.NotNil(t, authorizer.lastReq)
-	assert.NotNil(t, authorizer.lastReq.Context)
-	assert.Equal(t, "backends", authorizer.lastReq.Resource)
-	assert.Equal(t, "read", authorizer.lastReq.Action)
+	t.Run("first of multiple roles", func(t *testing.T) {
+		identity := &auth.Identity{Subject: "test", Roles: []string{"admin", "operator"}}
+		assert.Equal(t, "admin", extractRole(identity))
+	})
 }
 
 // TestAuthzNewServer_DefaultAuthorizerAndAuditLogger verifies that the server
-// defaults to NoOp implementations when no authorizer/audit logger are provided.
+// defaults to a disabled authorizer and NoOp audit logger when none provided.
 func TestAuthzNewServer_DefaultAuthorizerAndAuditLogger(t *testing.T) {
 	setupTestXKMS(t)
 	defer cleanupXKMS()
@@ -537,18 +387,17 @@ func TestAuthzNewServer_DefaultAuthorizerAndAuditLogger(t *testing.T) {
 	require.NotNil(t, server)
 
 	assert.NotNil(t, server.authorizer)
+	assert.False(t, server.authorizer.Enabled())
 	assert.NotNil(t, server.auditLogger)
 }
 
-// TestAuthzNewServer_WithCustomAuthorizerAndAuditLogger verifies that custom
+// TestAuthzNewServer_WithCustomAuthorizerAndAuditLogger verifies that a custom
 // authorizer and audit logger are properly set on the server.
 func TestAuthzNewServer_WithCustomAuthorizerAndAuditLogger(t *testing.T) {
 	setupTestXKMS(t)
 	defer cleanupXKMS()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer := auth.NewAuthorizer(&recordingRBAC{})
 	logger := &mockAuditLogger{}
 
 	cfg := &Config{
@@ -566,116 +415,114 @@ func TestAuthzNewServer_WithCustomAuthorizerAndAuditLogger(t *testing.T) {
 	assert.Equal(t, logger, server.auditLogger)
 }
 
-// TestAuthzKeysDenied verifies authorization enforcement on key operations.
+// TestAuthzKeysDenied verifies authorization enforcement on key operations and
+// confirms the remapped qrdb resource/action vocabulary at each route.
 func TestAuthzKeysDenied(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "keys access denied"},
-	}
+	rbac := &recordingRBAC{deny: true}
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{Subject: "viewer@example.com"}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+	server, _ := createAuthzTestServer(t, auth.NewAuthorizer(rbac), logger, identity)
 	defer xkms.Reset()
 
 	t.Run("list keys denied", func(t *testing.T) {
-		authorizer.lastReq = nil
+		rbac.lastIdentity = nil
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/keys?backend=software", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		require.NotNil(t, authorizer.lastReq)
-		assert.Equal(t, "keys", authorizer.lastReq.Resource)
-		assert.Equal(t, "read", authorizer.lastReq.Action)
+		require.NotNil(t, rbac.lastIdentity)
+		assert.Equal(t, "keys", rbac.lastResource)
+		assert.Equal(t, "list", rbac.lastAction)
 	})
 
 	t.Run("generate key denied", func(t *testing.T) {
-		authorizer.lastReq = nil
+		rbac.lastIdentity = nil
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		require.NotNil(t, authorizer.lastReq)
-		assert.Equal(t, "keys", authorizer.lastReq.Resource)
-		assert.Equal(t, "write", authorizer.lastReq.Action)
+		require.NotNil(t, rbac.lastIdentity)
+		assert.Equal(t, "keys", rbac.lastResource)
+		assert.Equal(t, "create", rbac.lastAction)
 	})
 
 	t.Run("delete key denied", func(t *testing.T) {
-		authorizer.lastReq = nil
+		rbac.lastIdentity = nil
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/keys/my-key?backend=software", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		require.NotNil(t, authorizer.lastReq)
-		assert.Equal(t, "keys", authorizer.lastReq.Resource)
-		assert.Equal(t, "delete", authorizer.lastReq.Action)
+		require.NotNil(t, rbac.lastIdentity)
+		assert.Equal(t, "keys", rbac.lastResource)
+		assert.Equal(t, "delete", rbac.lastAction)
 	})
 }
 
-// TestAuthzCertsDenied verifies authorization enforcement on certificate operations.
+// TestAuthzCertsDenied verifies authorization enforcement on certificate
+// operations and confirms the remapped qrdb resource/action vocabulary.
 func TestAuthzCertsDenied(t *testing.T) {
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "certs access denied"},
-	}
+	rbac := &recordingRBAC{deny: true}
 	logger := &mockAuditLogger{}
 	identity := &auth.Identity{Subject: "viewer@example.com"}
-	server, _ := createAuthzTestServer(t, authorizer, logger, identity)
+	server, _ := createAuthzTestServer(t, auth.NewAuthorizer(rbac), logger, identity)
 	defer xkms.Reset()
 
 	t.Run("list certs denied", func(t *testing.T) {
-		authorizer.lastReq = nil
+		rbac.lastIdentity = nil
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/certs", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		require.NotNil(t, authorizer.lastReq)
-		assert.Equal(t, "certs", authorizer.lastReq.Resource)
-		assert.Equal(t, "read", authorizer.lastReq.Action)
+		require.NotNil(t, rbac.lastIdentity)
+		assert.Equal(t, "certs", rbac.lastResource)
+		assert.Equal(t, "list", rbac.lastAction)
 	})
 
 	t.Run("save cert denied", func(t *testing.T) {
-		authorizer.lastReq = nil
+		rbac.lastIdentity = nil
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/certs", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		require.NotNil(t, authorizer.lastReq)
-		assert.Equal(t, "certs", authorizer.lastReq.Resource)
-		assert.Equal(t, "write", authorizer.lastReq.Action)
+		require.NotNil(t, rbac.lastIdentity)
+		assert.Equal(t, "certs", rbac.lastResource)
+		assert.Equal(t, "generate", rbac.lastAction)
 	})
 
 	t.Run("get cert denied", func(t *testing.T) {
-		authorizer.lastReq = nil
+		rbac.lastIdentity = nil
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/certs/my-cert", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		require.NotNil(t, authorizer.lastReq)
-		assert.Equal(t, "certs", authorizer.lastReq.Resource)
-		assert.Equal(t, "read", authorizer.lastReq.Action)
+		require.NotNil(t, rbac.lastIdentity)
+		assert.Equal(t, "certs", rbac.lastResource)
+		assert.Equal(t, "read", rbac.lastAction)
 	})
 
 	t.Run("delete cert denied", func(t *testing.T) {
-		authorizer.lastReq = nil
+		rbac.lastIdentity = nil
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1/certs/my-cert", nil)
 		w := httptest.NewRecorder()
 
 		server.handler.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusForbidden, w.Code)
-		require.NotNil(t, authorizer.lastReq)
-		assert.Equal(t, "certs", authorizer.lastReq.Resource)
-		assert.Equal(t, "delete", authorizer.lastReq.Action)
+		require.NotNil(t, rbac.lastIdentity)
+		assert.Equal(t, "certs", rbac.lastResource)
+		assert.Equal(t, "revoke", rbac.lastAction)
 	})
 }
 

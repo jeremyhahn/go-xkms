@@ -36,8 +36,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	p11 "github.com/miekg/pkcs11"
 )
 
@@ -130,10 +129,10 @@ func generateTestCertWithSubject(t *testing.T, cn string) *x509.Certificate {
 }
 
 // newPKCS11Storage creates a PKCS11CertStorage connected to the test SoftHSM2 token.
-func newPKCS11Storage(t *testing.T, libPath string, slotID int) *pivpkcs11.PKCS11CertStorage {
+func newPKCS11Storage(t *testing.T, libPath string, slotID int) *xkms.PIVPKCS11Backend {
 	t.Helper()
 
-	storage, err := pivpkcs11.New(&pivcert.PKCS11StorageConfig{
+	storage, err := xkms.NewPIVPKCS11Backend(&xkms.PIVPKCS11StorageConfig{
 		LibraryPath: libPath,
 		SlotID:      slotID,
 		PIN:         testPIN,
@@ -150,7 +149,7 @@ func newPKCS11Storage(t *testing.T, libPath string, slotID int) *pivpkcs11.PKCS1
 // newSOSessionStorage opens a raw PKCS#11 context and session, logs in as
 // CKU_USER, then creates a PKCS11CertStorage via NewFromSessionWithSO.
 // Returns the storage. Cleanup closes the session and finalizes the context.
-func newSOSessionStorage(t *testing.T, libPath string, slotID int) *pivpkcs11.PKCS11CertStorage {
+func newSOSessionStorage(t *testing.T, libPath string, slotID int) *xkms.PIVPKCS11Backend {
 	t.Helper()
 
 	ctx := p11.New(libPath)
@@ -174,7 +173,7 @@ func newSOSessionStorage(t *testing.T, libPath string, slotID int) *pivpkcs11.PK
 		}
 	}
 
-	storage, err := pivpkcs11.NewFromSessionWithSO(ctx, session, uint(slotID), testSOPIN, testPIN)
+	storage, err := xkms.NewPIVPKCS11BackendFromSessionWithSO(ctx, session, uint(slotID), testSOPIN, testPIN)
 	require.NoError(t, err, "NewFromSessionWithSO failed")
 
 	t.Cleanup(func() {
@@ -204,11 +203,11 @@ func TestPKCS11CertStorage_FullLifecycle(t *testing.T) {
 	cert := generateTestCertWithSubject(t, "test-full-lifecycle")
 
 	// Step 1: Store certificate in slot 9a
-	err := storage.Store(pivcert.PIVSlotAuthentication, cert)
+	err := storage.Store(xkms.PIVSlotAuthentication, cert)
 	require.NoError(t, err, "Store should succeed")
 
 	// Step 2: Retrieve and verify cert matches
-	retrieved, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err := storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err, "Retrieve should succeed")
 	assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName,
 		"retrieved certificate subject should match stored certificate")
@@ -221,7 +220,7 @@ func TestPKCS11CertStorage_FullLifecycle(t *testing.T) {
 
 	found := false
 	for _, info := range slots {
-		if info.Slot == pivcert.PIVSlotAuthentication {
+		if info.Slot == xkms.PIVSlotAuthentication {
 			found = true
 			assert.Contains(t, info.Subject, "test-full-lifecycle",
 				"listed slot info should contain the certificate subject")
@@ -231,14 +230,14 @@ func TestPKCS11CertStorage_FullLifecycle(t *testing.T) {
 	assert.True(t, found, "slot 9a should appear in List result")
 
 	// Step 4: Delete slot 9a
-	err = storage.Delete(pivcert.PIVSlotAuthentication)
+	err = storage.Delete(xkms.PIVSlotAuthentication)
 	require.NoError(t, err, "Delete should succeed")
 
 	// Step 5: List -- verify slot 9a is gone
 	slots, err = storage.List()
 	require.NoError(t, err, "List after delete should succeed")
 	for _, info := range slots {
-		assert.NotEqual(t, pivcert.PIVSlotAuthentication, info.Slot,
+		assert.NotEqual(t, xkms.PIVSlotAuthentication, info.Slot,
 			"slot 9a should not appear after deletion")
 	}
 
@@ -262,10 +261,10 @@ func TestPKCS11CertStorage_StoreRetrieveRoundtrip(t *testing.T) {
 
 	cert := generateTestCertWithSubject(t, "test-roundtrip")
 
-	err := storage.Store(pivcert.PIVSlotAuthentication, cert)
+	err := storage.Store(xkms.PIVSlotAuthentication, cert)
 	require.NoError(t, err)
 
-	retrieved, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err := storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err)
 
 	assert.Equal(t, cert.Raw, retrieved.Raw,
@@ -289,15 +288,15 @@ func TestPKCS11CertStorage_Overwrite(t *testing.T) {
 	cert2 := generateTestCertWithSubject(t, "cert-overwrite-replacement")
 
 	// Store cert1 in slot 9a
-	err := storage.Store(pivcert.PIVSlotAuthentication, cert1)
+	err := storage.Store(xkms.PIVSlotAuthentication, cert1)
 	require.NoError(t, err, "first Store should succeed")
 
 	// Overwrite with cert2 in same slot
-	err = storage.Store(pivcert.PIVSlotAuthentication, cert2)
+	err = storage.Store(xkms.PIVSlotAuthentication, cert2)
 	require.NoError(t, err, "overwrite Store should succeed")
 
 	// Retrieve -- should get cert2
-	retrieved, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err := storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err)
 
 	assert.Equal(t, "cert-overwrite-replacement", retrieved.Subject.CommonName,
@@ -312,7 +311,7 @@ func TestPKCS11CertStorage_Overwrite(t *testing.T) {
 	require.NoError(t, err)
 	count := 0
 	for _, info := range slots {
-		if info.Slot == pivcert.PIVSlotAuthentication {
+		if info.Slot == xkms.PIVSlotAuthentication {
 			count++
 		}
 	}
@@ -333,18 +332,18 @@ func TestPKCS11CertStorage_MultiSlot(t *testing.T) {
 	storage := newPKCS11Storage(t, libPath, slotID)
 
 	type slotCert struct {
-		slot pivcert.PIVSlot
+		slot xkms.PIVSlot
 		cn   string
 	}
 
 	entries := []slotCert{
-		{pivcert.PIVSlotAuthentication, "multi-9a"},
-		{pivcert.PIVSlotDigitalSignature, "multi-9c"},
-		{pivcert.PIVSlotKeyManagement, "multi-9d"},
-		{pivcert.PIVSlotCardAuthentication, "multi-9e"},
+		{xkms.PIVSlotAuthentication, "multi-9a"},
+		{xkms.PIVSlotDigitalSignature, "multi-9c"},
+		{xkms.PIVSlotKeyManagement, "multi-9d"},
+		{xkms.PIVSlotCardAuthentication, "multi-9e"},
 	}
 
-	certs := make(map[pivcert.PIVSlot]*x509.Certificate, len(entries))
+	certs := make(map[xkms.PIVSlot]*x509.Certificate, len(entries))
 
 	// Store different certs in each slot
 	for _, e := range entries {
@@ -387,11 +386,11 @@ func TestPKCS11CertStorage_ImportExportDER(t *testing.T) {
 	originalDER := cert.Raw
 
 	// Import as DER
-	err := storage.Import(pivcert.PIVSlotAuthentication, originalDER, pivcert.FormatDER)
+	err := storage.Import(xkms.PIVSlotAuthentication, originalDER, xkms.PIVFormatDER)
 	require.NoError(t, err, "Import DER should succeed")
 
 	// Export as DER
-	exportedDER, err := storage.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
+	exportedDER, err := storage.Export(xkms.PIVSlotAuthentication, xkms.PIVFormatDER)
 	require.NoError(t, err, "Export DER should succeed")
 
 	assert.Equal(t, originalDER, exportedDER,
@@ -420,11 +419,11 @@ func TestPKCS11CertStorage_ImportExportPEM(t *testing.T) {
 	require.NotNil(t, pemData, "PEM encoding should not be nil")
 
 	// Import as PEM
-	err := storage.Import(pivcert.PIVSlotAuthentication, pemData, pivcert.FormatPEM)
+	err := storage.Import(xkms.PIVSlotAuthentication, pemData, xkms.PIVFormatPEM)
 	require.NoError(t, err, "Import PEM should succeed")
 
 	// Export as PEM
-	exportedPEM, err := storage.Export(pivcert.PIVSlotAuthentication, pivcert.FormatPEM)
+	exportedPEM, err := storage.Export(xkms.PIVSlotAuthentication, xkms.PIVFormatPEM)
 	require.NoError(t, err, "Export PEM should succeed")
 
 	// Decode exported PEM and verify the certificate matches
@@ -454,9 +453,9 @@ func TestPKCS11CertStorage_DeleteNotFound(t *testing.T) {
 
 	storage := newPKCS11Storage(t, libPath, slotID)
 
-	err := storage.Delete(pivcert.PIVSlotAuthentication)
+	err := storage.Delete(xkms.PIVSlotAuthentication)
 	require.Error(t, err, "Delete from empty slot should return an error")
-	assert.True(t, errors.Is(err, pivcert.ErrCertificateNotFound),
+	assert.True(t, errors.Is(err, xkms.ErrPIVCertificateNotFound),
 		"error should be ErrCertificateNotFound, got: %v", err)
 }
 
@@ -473,9 +472,9 @@ func TestPKCS11CertStorage_RetrieveNotFound(t *testing.T) {
 
 	storage := newPKCS11Storage(t, libPath, slotID)
 
-	_, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	_, err := storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.Error(t, err, "Retrieve from empty slot should return an error")
-	assert.True(t, errors.Is(err, pivcert.ErrCertificateNotFound),
+	assert.True(t, errors.Is(err, xkms.ErrPIVCertificateNotFound),
 		"error should be ErrCertificateNotFound, got: %v", err)
 }
 
@@ -496,11 +495,11 @@ func TestPKCS11CertStorage_CKAIDMapping(t *testing.T) {
 
 	// Expected CKA_ID mapping from the implementation:
 	//   9a -> 0x01, 9c -> 0x02, 9d -> 0x03, 9e -> 0x04
-	expectedCKAIDs := map[pivcert.PIVSlot]byte{
-		pivcert.PIVSlotAuthentication:     0x01,
-		pivcert.PIVSlotDigitalSignature:   0x02,
-		pivcert.PIVSlotKeyManagement:      0x03,
-		pivcert.PIVSlotCardAuthentication: 0x04,
+	expectedCKAIDs := map[xkms.PIVSlot]byte{
+		xkms.PIVSlotAuthentication:     0x01,
+		xkms.PIVSlotDigitalSignature:   0x02,
+		xkms.PIVSlotKeyManagement:      0x03,
+		xkms.PIVSlotCardAuthentication: 0x04,
 	}
 
 	// Store certs in all 4 primary slots
@@ -525,7 +524,7 @@ func TestPKCS11CertStorage_CKAIDMapping(t *testing.T) {
 	assert.Len(t, slots, 4, "List should return exactly 4 slots")
 
 	// Verify each listed slot has the expected slot identifier
-	listedSlots := make(map[pivcert.PIVSlot]bool)
+	listedSlots := make(map[xkms.PIVSlot]bool)
 	for _, info := range slots {
 		listedSlots[info.Slot] = true
 	}
@@ -537,9 +536,9 @@ func TestPKCS11CertStorage_CKAIDMapping(t *testing.T) {
 
 	// Cross-verify: store and retrieve in one slot does not affect another
 	// (i.e., CKA_IDs are distinct and correctly mapped)
-	cert9a, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	cert9a, err := storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err)
-	cert9c, err := storage.Retrieve(pivcert.PIVSlotDigitalSignature)
+	cert9c, err := storage.Retrieve(xkms.PIVSlotDigitalSignature)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, cert9a.Raw, cert9c.Raw,
@@ -563,11 +562,11 @@ func TestPKCS11CertStorage_NewFromSessionWithSO(t *testing.T) {
 	cert := generateTestCertWithSubject(t, "so-session-lifecycle")
 
 	// Store via SO-elevated session
-	err := storage.Store(pivcert.PIVSlotAuthentication, cert)
+	err := storage.Store(xkms.PIVSlotAuthentication, cert)
 	require.NoError(t, err, "Store via SO session should succeed")
 
 	// Retrieve and verify
-	retrieved, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err := storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err, "Retrieve after SO Store should succeed")
 	assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName,
 		"retrieved certificate subject should match stored certificate")
@@ -579,7 +578,7 @@ func TestPKCS11CertStorage_NewFromSessionWithSO(t *testing.T) {
 	require.NoError(t, err, "List should succeed")
 	found := false
 	for _, info := range slots {
-		if info.Slot == pivcert.PIVSlotAuthentication {
+		if info.Slot == xkms.PIVSlotAuthentication {
 			found = true
 			assert.Contains(t, info.Subject, "so-session-lifecycle")
 			break
@@ -588,11 +587,11 @@ func TestPKCS11CertStorage_NewFromSessionWithSO(t *testing.T) {
 	assert.True(t, found, "slot 9a should appear in List after SO Store")
 
 	// Delete via SO-elevated session
-	err = storage.Delete(pivcert.PIVSlotAuthentication)
+	err = storage.Delete(xkms.PIVSlotAuthentication)
 	require.NoError(t, err, "Delete via SO session should succeed")
 
 	// Confirm deletion
-	_, err = storage.Retrieve(pivcert.PIVSlotAuthentication)
+	_, err = storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.Error(t, err, "Retrieve after Delete should fail")
 }
 
@@ -616,21 +615,21 @@ func TestPKCS11CertStorage_SOSessionOverwrite(t *testing.T) {
 	cert2 := generateTestCertWithSubject(t, "so-overwrite-replacement")
 
 	// Store first cert
-	err := storage.Store(pivcert.PIVSlotAuthentication, cert1)
+	err := storage.Store(xkms.PIVSlotAuthentication, cert1)
 	require.NoError(t, err, "first Store via SO session should succeed")
 
 	// Verify first cert
-	retrieved, err := storage.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err := storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err)
 	assert.Equal(t, "so-overwrite-original", retrieved.Subject.CommonName)
 
 	// Overwrite with second cert (this is the operation that previously failed
 	// with CKR_USER_TYPE_INVALID because the delete phase needed SO login)
-	err = storage.Store(pivcert.PIVSlotAuthentication, cert2)
+	err = storage.Store(xkms.PIVSlotAuthentication, cert2)
 	require.NoError(t, err, "overwrite Store via SO session should succeed")
 
 	// Verify the replacement cert is stored
-	retrieved, err = storage.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err = storage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err, "Retrieve after overwrite should succeed")
 	assert.Equal(t, "so-overwrite-replacement", retrieved.Subject.CommonName,
 		"retrieved certificate should be the replacement, not the original")
@@ -644,7 +643,7 @@ func TestPKCS11CertStorage_SOSessionOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	count := 0
 	for _, info := range slots {
-		if info.Slot == pivcert.PIVSlotAuthentication {
+		if info.Slot == xkms.PIVSlotAuthentication {
 			count++
 		}
 	}
@@ -654,7 +653,7 @@ func TestPKCS11CertStorage_SOSessionOverwrite(t *testing.T) {
 // TestPKCS11CertStorage_NewFromSessionWithSO_InvalidConfig verifies that
 // NewFromSessionWithSO returns an error when called with a nil context.
 func TestPKCS11CertStorage_NewFromSessionWithSO_InvalidConfig(t *testing.T) {
-	_, err := pivpkcs11.NewFromSessionWithSO(nil, 0, 0, testSOPIN, testPIN)
+	_, err := xkms.NewPIVPKCS11BackendFromSessionWithSO(nil, 0, 0, testSOPIN, testPIN)
 	require.Error(t, err, "NewFromSessionWithSO with nil ctx should return an error")
 	assert.Contains(t, err.Error(), "NewFromSessionWithSO",
 		"error should identify the constructor")
@@ -677,12 +676,12 @@ func TestPKCS11CertStorage_SOSessionStore_ThenRegularRetrieve(t *testing.T) {
 
 	// Store via SO-elevated session
 	soStorage := newSOSessionStorage(t, libPath, slotID)
-	err := soStorage.Store(pivcert.PIVSlotAuthentication, cert)
+	err := soStorage.Store(xkms.PIVSlotAuthentication, cert)
 	require.NoError(t, err, "Store via SO session should succeed")
 
 	// Retrieve via a separate regular (non-SO) session
 	regularStorage := newPKCS11Storage(t, libPath, slotID)
-	retrieved, err := regularStorage.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err := regularStorage.Retrieve(xkms.PIVSlotAuthentication)
 	require.NoError(t, err, "Retrieve via regular session should succeed")
 
 	assert.Equal(t, cert.Subject.CommonName, retrieved.Subject.CommonName,

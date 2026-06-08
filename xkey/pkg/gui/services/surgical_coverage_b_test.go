@@ -16,6 +16,7 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,8 +26,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/staticpw"
 )
@@ -461,7 +460,7 @@ func TestSB_Barrier_GetBackend_NilBarrier(t *testing.T) {
 // tpmSealerFn returns nil sealer.
 func TestSB_Barrier_ProbeStrategies_WithTPMNil(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return nil
 	})
 
@@ -502,10 +501,10 @@ func TestSB_Barrier_AssembleStrategy(t *testing.T) {
 	// Passphrase always works.
 	strategy, err := svc.assembleStrategy("passphrase")
 	require.NoError(t, err)
-	assert.Equal(t, seal.StrategyPassphrase, strategy.ID())
+	assert.Equal(t, xkms.StrategyPassphrase, strategy.ID())
 
 	// TPM2 with nil-returning sealer → error.
-	svc.SetTPMSealerFunc(func() types.Sealer { return nil })
+	svc.SetTPMSealerFunc(func() xkms.Sealer { return nil })
 	_, err = svc.assembleStrategy("tpm2")
 	assert.Error(t, err)
 }

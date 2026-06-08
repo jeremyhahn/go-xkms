@@ -25,7 +25,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 )
 
@@ -141,7 +141,7 @@ func runPivImport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print success message with certificate info
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Printf("Certificate imported into slot %s (%s)\n", slot, slotName)
 	fmt.Print(formatCertInfo(cert))
 
@@ -181,11 +181,11 @@ func loadCertificateFromFile(path string) (*x509.Certificate, error) {
 
 // verifyCertMatchesSlotKey verifies that the certificate's public key matches
 // the public key stored in the PIV slot.
-func verifyCertMatchesSlotKey(storage pivcert.PIVCertificateStorage, cert *x509.Certificate, slot pivcert.PIVSlot) error {
+func verifyCertMatchesSlotKey(storage xkms.PIVCertificateStorage, cert *x509.Certificate, slot xkms.PIVSlot) error {
 	// Retrieve existing certificate from slot to get its public key
 	existingCert, err := storage.Retrieve(slot)
 	if err != nil {
-		if errors.Is(err, pivcert.ErrCertificateNotFound) {
+		if errors.Is(err, xkms.ErrPIVCertificateNotFound) {
 			return errors.Join(ErrPIVSlotKeyNotFound, err)
 		}
 		return errors.Join(ErrPIVVerificationFailed, err)

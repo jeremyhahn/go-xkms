@@ -23,9 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivcertfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -241,9 +239,9 @@ type PIVSlotInfo struct {
 }
 
 // validatePIVSlot checks if a slot identifier is valid.
-func validatePIVSlot(slot string) (pivcert.PIVSlot, error) {
-	s := pivcert.PIVSlot(strings.ToLower(slot))
-	if err := pivcert.ValidateSlot(s); err != nil {
+func validatePIVSlot(slot string) (xkms.PIVSlot, error) {
+	s := xkms.PIVSlot(strings.ToLower(slot))
+	if err := xkms.ValidatePIVSlot(s); err != nil {
 		return "", ErrPIVInvalidSlot
 	}
 	return s, nil
@@ -508,7 +506,7 @@ func buildPIVConfig() *PIVConfig {
 }
 
 // createPIVStorage creates the appropriate certificate storage backend.
-func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (pivcert.PIVCertificateStorage, error) {
+func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (xkms.PIVCertificateStorage, error) {
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -522,16 +520,16 @@ func createPIVStorage(cfg *PIVConfig, logger *slog.Logger) (pivcert.PIVCertifica
 	switch cfg.StorageType {
 	case PIVStorageTypeFile:
 		// Create file storage backend
-		backend, err := filestorage.New(cfg.StoragePath)
+		backend, err := xkms.NewFileStorageBackend(cfg.StoragePath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create file storage backend: %w", err)
 		}
-		fileConfig := &pivcert.FileStorageConfig{
+		fileConfig := &xkms.PIVFileStorageConfig{
 			Backend:    backend,
 			DEREnabled: true,
 			PEMEnabled: true,
 		}
-		return pivcertfile.NewFileBackend(fileConfig)
+		return xkms.NewPIVFileBackend(fileConfig)
 
 	case PIVStorageTypeTPM2:
 		return createTPM2PIVStorage(cfg, logger)
@@ -568,7 +566,7 @@ func runPIVList(cmd *cobra.Command, args []string) error {
 	fmt.Printf("PIV Certificates (%d):\n\n", len(slots))
 
 	for _, slot := range slots {
-		slotName := pivcert.SlotName(slot.Slot)
+		slotName := xkms.PIVSlotName(slot.Slot)
 		fmt.Printf("  Slot:        %s (%s)\n", slot.Slot, slotName)
 		fmt.Printf("  Subject:     %s\n", slot.Subject)
 		fmt.Printf("  Issuer:      %s\n", slot.Issuer)
@@ -605,7 +603,7 @@ func runPIVShow(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrPIVCertificateNotFound, err)
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Printf("PIV Certificate - Slot %s (%s)\n", slot, slotName)
 	fmt.Printf("========================================\n\n")
 
@@ -672,7 +670,7 @@ func runPIVStore(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrPIVStoreFailed, err)
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Printf("Certificate stored in slot %s (%s)\n", slot, slotName)
 	fmt.Printf("  Subject:  %s\n", cert.Subject.CommonName)
 	fmt.Printf("  Format:   %s\n", format)
@@ -704,7 +702,7 @@ func runPIVDelete(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrPIVCertificateNotFound, err)
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 
 	if !force {
 		fmt.Printf("Delete certificate from slot %s (%s)?\n", slot, slotName)
@@ -750,12 +748,12 @@ func runPIVExport(cmd *cobra.Command, args []string) error {
 	}
 
 	// Convert to pivcert format
-	var pivFormat pivcert.CertFormat
+	var pivFormat xkms.PIVCertFormat
 	switch format {
 	case CertFormatPEM:
-		pivFormat = pivcert.FormatPEM
+		pivFormat = xkms.PIVFormatPEM
 	case CertFormatDER:
-		pivFormat = pivcert.FormatDER
+		pivFormat = xkms.PIVFormatDER
 	}
 
 	storage, err := createPIVStorage(cfg, logger)
@@ -773,7 +771,7 @@ func runPIVExport(cmd *cobra.Command, args []string) error {
 		if err := os.WriteFile(outputPath, data, 0600); err != nil {
 			return errors.Join(ErrPIVExportFailed, err)
 		}
-		slotName := pivcert.SlotName(slot)
+		slotName := xkms.PIVSlotName(slot)
 		fmt.Printf("Certificate exported from slot %s (%s) to %s\n", slot, slotName, outputPath)
 	} else {
 		// Write to stdout
@@ -826,16 +824,16 @@ func runPIVStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Build map of occupied slots
-	occupied := make(map[pivcert.PIVSlot]pivcert.PIVSlotInfo)
+	occupied := make(map[xkms.PIVSlot]xkms.PIVSlotInfo)
 	for _, s := range slots {
 		occupied[s.Slot] = s
 	}
 
 	// Display all slots
-	allSlots := pivcert.PrimarySlots()
+	allSlots := xkms.PIVPrimarySlots()
 
 	for _, slot := range allSlots {
-		slotName := pivcert.SlotName(slot)
+		slotName := xkms.PIVSlotName(slot)
 		if info, ok := occupied[slot]; ok {
 			fmt.Printf("  [%s] %s\n", slot, slotName)
 			fmt.Printf("        Subject:  %s\n", info.Subject)

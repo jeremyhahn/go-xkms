@@ -115,7 +115,7 @@ func (s *Service) GetCACertificate(ctx context.Context, req *pb.GetCACertificate
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "read", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
 		return nil, err
 	}
 
@@ -152,7 +152,7 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "write", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
 		return nil, err
 	}
 
@@ -167,7 +167,7 @@ func (s *Service) SignCSR(ctx context.Context, req *pb.SignCSRRequest) (*pb.Sign
 
 	cert, err := signer.SignCSRRaw(req.GetCsrPem(), req.GetProfile(), int(req.GetValidityDays()))
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to sign CSR: %v", err)
+		return nil, wrapWriteError(err, codes.Internal, "failed to sign CSR: %v", err)
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{
@@ -200,7 +200,7 @@ func (s *Service) IssueCertificate(ctx context.Context, req *pb.IssueCertificate
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "write", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "generate", ""); err != nil {
 		return nil, err
 	}
 
@@ -240,7 +240,7 @@ func (s *Service) RevokeCertificate(ctx context.Context, req *pb.RevokeCertifica
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "write", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "revoke", ""); err != nil {
 		return nil, err
 	}
 
@@ -275,7 +275,7 @@ func (s *Service) GenerateCRL(ctx context.Context, req *pb.GenerateCRLRequest) (
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "read", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
 		return nil, err
 	}
 
@@ -306,7 +306,7 @@ func (s *Service) IsRevoked(ctx context.Context, req *pb.IsRevokedRequest) (*pb.
 		return nil, status.Error(codes.Unavailable, ErrCANotConfigured.Error())
 	}
 
-	if err := s.authorize(ctx, "ca", "read", ""); err != nil {
+	if err := s.authorize(ctx, "certs", "read", ""); err != nil {
 		return nil, err
 	}
 

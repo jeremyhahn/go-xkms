@@ -27,11 +27,11 @@ import (
 	"sync"
 	"time"
 
-	objstorecommon "github.com/jeremyhahn/go-objstore/pkg/common"
-	objstorefactory "github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/client"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 )
 
 // Compile-time interface check.
@@ -195,13 +195,17 @@ func (am *accountManager) StorageFactory(name string) (storage.Factory, error) {
 	if cached, ok := am.factories.Load(name); ok {
 		return cached.(storage.Factory), nil
 	}
-	store, err := createObjStorage(am.config.Storage)
+	stateBackend, err := createStateBackend(am.config.Storage)
+	if err != nil {
+		return nil, ErrStorageFactory{Err: err}
+	}
+	kv, err := kvadapter.New(stateBackend)
 	if err != nil {
 		return nil, ErrStorageFactory{Err: err}
 	}
 	var factory storage.Factory
 	if am.config.TenantID != "" {
-		taf, err := objstore.NewTenantAwareFactory(store)
+		taf, err := objstore.NewTenantAwareFactoryFromKVStore(kv)
 		if err != nil {
 			return nil, ErrStorageFactory{Err: err}
 		}
@@ -210,7 +214,7 @@ func (am *accountManager) StorageFactory(name string) (storage.Factory, error) {
 			return nil, ErrStorageFactory{Err: err}
 		}
 	} else {
-		factory, err = objstore.NewFactory(store)
+		factory, err = objstore.NewFactoryFromKVStore(kv)
 		if err != nil {
 			return nil, ErrStorageFactory{Err: err}
 		}
@@ -287,17 +291,27 @@ func generateSigner(keyCfg *KeyConfig) (crypto.Signer, error) {
 	return generator(keyCfg)
 }
 
-// createObjStorage creates a go-objstore Storage backend from StorageConfig.
-func createObjStorage(cfg StorageConfig) (objstorecommon.Storage, error) {
-	settings := make(map[string]string, len(cfg.Options))
+// createStateBackend builds a storage.Backend for ACME client state from the
+// configured backend/provider. It routes through the object-storage engine,
+// which handles every go-objstore provider: "local"/"filesystem" persist to
+// local files, while cloud providers ("s3", "gcs", "azure", …) are used when
+// the binary is built with go-objstore's matching tag. File and cloud share one
+// code path, and direct go-objstore usage is gone — it is reached only through
+// the go-qrdb storage engine.
+func createStateBackend(cfg StorageConfig) (xkmsstorage.Backend, error) {
+	provider := cfg.Backend
+	if provider == "" || provider == "filesystem" {
+		provider = "local"
+	}
+	options := make(map[string]string, len(cfg.Options))
 	for k, v := range cfg.Options {
-		settings[k] = fmt.Sprintf("%v", v)
+		options[k] = fmt.Sprintf("%v", v)
 	}
-	backend := cfg.Backend
-	if backend == "" || backend == "filesystem" {
-		backend = "local"
-	}
-	return objstorefactory.NewStorage(backend, settings)
+	return xkmsstorage.OpenEngine(xkmsstorage.EngineConfig{
+		Kind:     xkmsstorage.EngineObjstore,
+		Provider: provider,
+		Options:  options,
+	})
 }
 
 // validateAccountConfig checks that the account configuration has all required fields.

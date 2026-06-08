@@ -15,10 +15,9 @@ package services
 
 import (
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"sync"
 	"sync/atomic"
-
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
 )
 
 // ErrTPMShuttingDown indicates the TPM accessor has been shut down and is
@@ -30,20 +29,20 @@ var ErrTPMShuttingDown = errors.New("tpm_service: TPM accessor is shutting down"
 // to ensure cross-service serialization of TPM commands.
 type TPMAccessor struct {
 	mu      sync.Mutex
-	tpmFunc func() tpm2pkg.TrustedPlatformModule
+	tpmFunc func() xkms.TrustedPlatformModule
 	closed  atomic.Bool
 }
 
 // NewTPMAccessor creates a new TPMAccessor with the given function to
 // obtain the TrustedPlatformModule instance.
-func NewTPMAccessor(fn func() tpm2pkg.TrustedPlatformModule) *TPMAccessor {
+func NewTPMAccessor(fn func() xkms.TrustedPlatformModule) *TPMAccessor {
 	return &TPMAccessor{tpmFunc: fn}
 }
 
 // Acquire locks the shared TPM mutex and returns the TPM instance.
 // On success the caller MUST call Release when done with the TPM.
 // On error (TPM unavailable or shutting down) the mutex is NOT held.
-func (a *TPMAccessor) Acquire() (tpm2pkg.TrustedPlatformModule, error) {
+func (a *TPMAccessor) Acquire() (xkms.TrustedPlatformModule, error) {
 	if a.closed.Load() {
 		return nil, ErrTPMShuttingDown
 	}

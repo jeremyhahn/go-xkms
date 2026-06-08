@@ -23,8 +23,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -649,5 +647,5 @@ func TestSurg_ZeroBytes(t *testing.T) {
 }
 
 // Ensure unused imports are referenced.
-var _ = seal.StrategyPassphrase
-var _ types.SealedData
+var _ = xkms.StrategyPassphrase
+var _ xkms.SealedData

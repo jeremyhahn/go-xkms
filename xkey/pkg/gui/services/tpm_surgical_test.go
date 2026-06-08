@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -30,8 +31,6 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -213,7 +212,7 @@ func TestTS_GenerateQuote_QuoteError(t *testing.T) {
 
 func TestTS_GenerateQuote_QuoteSuccess(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.quoteResult = tpm2pkg.Quote{
+	mock.quoteResult = xkms.Quote{
 		Quoted:    []byte{0x01},
 		Signature: []byte{0x02},
 		PCRs:      []byte{0x03},
@@ -287,7 +286,7 @@ func TestTS_GenerateIDevIDCSR_Success(t *testing.T) {
 	mock.idevidAttrsErr = nil
 	mock.createTCGCSRErr = nil
 	// Zero CSR will marshal to a binary; we just verify no error.
-	mock.createTCGCSRResult = tpm2pkg.TCG_CSR_IDEVID{}
+	mock.createTCGCSRResult = xkms.TCG_CSR_IDEVID{}
 
 	svc := newServiceWithMock(mock)
 
@@ -660,7 +659,7 @@ func TestTS_ImportCompositePolicy_Duplicate(t *testing.T) {
 func TestTS_ImportCompositePolicy_SaveError(t *testing.T) {
 	svc := NewTPMService()
 	// No dataDir set -> saveCompositePolicies returns ErrTPMDataDirNotSet
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return defaultMockTPM()
 	}))
 
@@ -728,7 +727,7 @@ func TestTS_ImportBinaryPolicyDigest_DuplicateNameTimestamp(t *testing.T) {
 func TestTS_ImportBinaryPolicyDigest_CreatePolicyError(t *testing.T) {
 	svc := NewTPMService()
 	// No dataDir -> CreatePolicy calls savePolicies which returns ErrTPMDataDirNotSet
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule {
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule {
 		return defaultMockTPM()
 	}))
 
@@ -835,10 +834,10 @@ func TestTS_ListCompositePoliciesWithDigests_PCRReadError(t *testing.T) {
 func TestTS_ListCompositePoliciesWithDigests_BankNormalization(t *testing.T) {
 	mock := defaultMockTPM()
 	// Use a bank name not in bankNameMap to trigger L3979 fallback.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA3-256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA}},
 			},
 		},
@@ -873,10 +872,10 @@ func TestTS_ListCompositePoliciesWithDigests_BankNormalization(t *testing.T) {
 func TestTS_ListCompositePoliciesWithDigests_NoCurrentDigest(t *testing.T) {
 	mock := defaultMockTPM()
 	// Return PCR banks that do not include the bank the policy needs.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 7, Value: []byte{0xCC}}, // PCR 7 exists but not PCR 0
 			},
 		},
@@ -938,10 +937,10 @@ func TestTS_SaveCompositePolicies_NoDataDir(t *testing.T) {
 
 func TestTS_ListPoliciesWithDigests_MissingSavedDigest(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs:      []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA}}},
+			PCRs:      []xkms.PCR{{ID: 0, Value: []byte{0xAA}}},
 		},
 	}
 
@@ -1105,10 +1104,10 @@ func TestTS_DeletePolicyPassword_NilService(t *testing.T) {
 
 func TestTS_ComparePolicyPCRs_NonHexDigests(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 			},
 		},
@@ -1185,10 +1184,10 @@ func TestTS_ComparePolicyPCRs_NoTPM(t *testing.T) {
 
 func TestTS_ListPoliciesWithDigests_DigestMismatch(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 				{ID: 7, Value: []byte{0xCC, 0xDD}},
 			},
@@ -1221,10 +1220,10 @@ func TestTS_ListPoliciesWithDigests_DigestMismatch(t *testing.T) {
 
 func TestTS_ListCompositePoliciesWithDigests_MatchingDigests(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 			},
 		},
@@ -1258,10 +1257,10 @@ func TestTS_ListCompositePoliciesWithDigests_MatchingDigests(t *testing.T) {
 func TestTS_ListCompositePoliciesWithDigests_BankNotInResults(t *testing.T) {
 	mock := defaultMockTPM()
 	// Mock returns SHA384 data but policy uses sha256.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA384",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA}},
 			},
 		},
@@ -1305,7 +1304,7 @@ func TestTS_CreatePolicy_WhitespaceOnlyName(t *testing.T) {
 
 func TestTS_ReadNVData_AutoDetectSize(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.nvIndexes = []tpm2pkg.NVIndexInfo{
+	mock.nvIndexes = []xkms.NVIndexInfo{
 		{Handle: tpm2.TPMHandle(0x01500001), Size: 32},
 	}
 	mock.nvReadResult = make([]byte, 32)
@@ -1320,7 +1319,7 @@ func TestTS_ReadNVData_AutoDetectSize(t *testing.T) {
 
 func TestTS_ReadNVData_AutoDetectNotFound(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.nvIndexes = []tpm2pkg.NVIndexInfo{} // No indexes
+	mock.nvIndexes = []xkms.NVIndexInfo{} // No indexes
 
 	svc := newServiceWithMock(mock)
 
@@ -1355,10 +1354,10 @@ func TestTS_FindPolicyPasswordEntry_NilService(t *testing.T) {
 
 func TestTS_ComparePolicyPCRs_MatchingDigests(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 			},
 		},
@@ -1462,7 +1461,7 @@ func TestTS_GenerateIDevIDCSR_IAKFallback(t *testing.T) {
 	mock.ekCertErr = nil
 	// IAKAttributes fails -> fallback to KeyAttributes.
 	mock.iakAttrsErr = errors.New("iak not available")
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{} // empty -> fallback fails too
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{} // empty -> fallback fails too
 	mock.idevidAttrsErr = nil
 
 	svc := newServiceWithMock(mock)
@@ -1479,14 +1478,14 @@ func TestTS_GenerateIDevIDCSR_IDevIDFallback(t *testing.T) {
 	mock.ekCert = testCert()
 	mock.ekCertErr = nil
 	mock.iakAttrsErr = nil
-	mock.iakAttrs = &types.KeyAttributes{
+	mock.iakAttrs = &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.RSA,
-		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020001},
+		RSAAttributes: &xkms.RSAAttributes{KeySize: 2048},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020001},
 	}
 	// IDevIDAttributes fails -> fallback to KeyAttributes.
 	mock.idevidAttrsErr = errors.New("idevid not available")
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{} // empty -> fallback fails too
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{} // empty -> fallback fails too
 
 	svc := newServiceWithMock(mock)
 
@@ -1502,17 +1501,17 @@ func TestTS_GenerateIDevIDCSR_IAKFallbackSuccess(t *testing.T) {
 	mock.ekCertErr = nil
 	mock.iakAttrsErr = errors.New("iak not available")
 	// Provide fallback handle attributes.
-	iakFallbackAttrs := &types.KeyAttributes{
+	iakFallbackAttrs := &xkms.KeyAttributes{
 		KeyAlgorithm:  x509.RSA,
-		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-		TPMAttributes: &types.TPMAttributes{Handle: 0x81020001},
+		RSAAttributes: &xkms.RSAAttributes{KeySize: 2048},
+		TPMAttributes: &xkms.TPMAttributes{Handle: 0x81020001},
 	}
-	mock.handleKeyAttrs = map[tpm2.TPMHandle]*types.KeyAttributes{
+	mock.handleKeyAttrs = map[tpm2.TPMHandle]*xkms.KeyAttributes{
 		0x81020001: iakFallbackAttrs,
 	}
 	mock.idevidAttrsErr = nil
 	mock.createTCGCSRErr = nil
-	mock.createTCGCSRResult = tpm2pkg.TCG_CSR_IDEVID{}
+	mock.createTCGCSRResult = xkms.TCG_CSR_IDEVID{}
 
 	svc := newServiceWithMock(mock)
 
@@ -1523,7 +1522,7 @@ func TestTS_GenerateIDevIDCSR_IAKFallbackSuccess(t *testing.T) {
 
 func TestTS_ReadNVData_AutoDetectWithMatchingHandle(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.nvIndexes = []tpm2pkg.NVIndexInfo{
+	mock.nvIndexes = []xkms.NVIndexInfo{
 		{Handle: tpm2.TPMHandle(0x01400001), Size: 16},
 		{Handle: tpm2.TPMHandle(0x01500002), Size: 64},
 	}

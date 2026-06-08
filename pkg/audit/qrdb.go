@@ -1,0 +1,87 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package audit
+
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
+
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+)
+
+// QRDBLogger routes xkms audit events to the hosted qrdb node's HMAC-chained
+// audit subsystem. It is the single production audit sink: it adapts xkms's
+// transport-facing Event DTO onto the qrdb AuditEvent and emits it through the
+// node's AuditClient (Client().Audit()), which appends it to the tamper-evident
+// chain owned by the node.
+//
+// Emission is best-effort and must never block or fail the request: the
+// underlying qrdb logger absorbs transient write failures, and every xkms emit
+// site already ignores the returned error. QRDBLogger therefore surfaces the
+// AuditClient error for symmetry but expects callers not to act on it.
+type QRDBLogger struct {
+	client qrdbtransport.AuditClient
+}
+
+// NewQRDBLogger returns a Logger that emits to the qrdb node's audit subsystem
+// through the supplied AuditClient (typically Client().Audit()).
+func NewQRDBLogger(client qrdbtransport.AuditClient) *QRDBLogger {
+	return &QRDBLogger{client: client}
+}
+
+// Log converts the xkms Event to a qrdb AuditEvent and emits it through the
+// node's audit subsystem. The actor, action, resource, and outcome map
+// directly; ResourceID and all Details entries are carried in Attributes so no
+// detail is lost in the chain. The remote address and role are lifted into the
+// dedicated ClientIP/Role fields when present, and the tenant id is resolved
+// from the authenticated identity on the context so per-tenant queries work.
+func (l *QRDBLogger) Log(ctx context.Context, event *Event) error {
+	if event == nil {
+		return ErrNilEvent
+	}
+
+	attributes := make(map[string]any, len(event.Details)+1)
+	for k, v := range event.Details {
+		attributes[k] = v
+	}
+	if event.ResourceID != "" {
+		attributes["resource_id"] = event.ResourceID
+	}
+
+	ev := qrdbtransport.AuditEvent{
+		Timestamp:  event.Timestamp,
+		Actor:      event.Subject,
+		Action:     event.Action,
+		Resource:   event.Resource,
+		Outcome:    event.Outcome,
+		Attributes: attributes,
+		ClientIP:   event.Details["remote_addr"],
+		Role:       event.Details["role"],
+	}
+	if id := auth.GetIdentity(ctx); id != nil {
+		ev.TenantID = id.TenantID
+	}
+
+	return l.client.EmitAudit(ctx, ev)
+}
+
+// Close is a no-op: QRDBLogger does not own the AuditClient lifecycle. The
+// underlying node sink is closed by the server when it tears down the node.
+func (l *QRDBLogger) Close() error {
+	return nil
+}
+
+// Compile-time interface compliance check.
+var _ Logger = (*QRDBLogger)(nil)

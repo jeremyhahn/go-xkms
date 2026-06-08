@@ -698,7 +698,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 				s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			if !s.authorize(w, r, "passwords", "write") {
+			if !s.authorize(w, r, "passwords", "unlock") {
 				return
 			}
 			handlers.UnlockHandler(w, r)
@@ -708,7 +708,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 				s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			if !s.authorize(w, r, "passwords", "write") {
+			if !s.authorize(w, r, "passwords", "lock") {
 				return
 			}
 			handlers.LockHandler(w, r)
@@ -728,7 +728,7 @@ func (s *Server) setupPasswordRoutes(mux *http.ServeMux) {
 				s.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			if !s.authorize(w, r, "passwords", "write") {
+			if !s.authorize(w, r, "passwords", "generate") {
 				return
 			}
 			handlers.GeneratePasswordHandler(w, r)

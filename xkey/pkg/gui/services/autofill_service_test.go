@@ -16,12 +16,11 @@ package services
 import (
 	"context"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -80,7 +79,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 	t.Helper()
 
 	// Static password store backed by in-memory storage.
-	memBackend, err := storage.NewMemoryBackend()
+	memBackend, err := xkms.NewMemoryBackend()
 	require.NoError(t, err)
 	pwStore := staticpw.NewStore(memBackend)
 
@@ -130,7 +129,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 	appLockSvc := NewAppLockService(pinSvc, &autofillMockBarrier{unsealed: true})
 
 	// Audit store.
-	auditStore, auditErr := audit.NewBackendStore(storage.NewMemory(), 100, nil)
+	auditStore, auditErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
 	require.NoError(t, auditErr)
 
 	svc := NewAutoFillService(passwordSvc, oathSvc, appLockSvc, auditStore, slog.Default())
@@ -139,7 +138,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 
 	// Disable authentication by default for unit tests that don't
 	// need the full CTAP2 flow.
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = false
 	require.NoError(t, svc.SetPolicy(policy))
 
@@ -179,15 +178,15 @@ func TestAutoFillService_EnableDisable(t *testing.T) {
 func TestAutoFillService_SetPolicy(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 
-	policy := autofill.DefaultPolicy()
-	policy.FillMode = autofill.FillModeAutoFill
+	policy := xkms.DefaultAutoFillPolicy()
+	policy.FillMode = xkms.FillModeAutoFill
 	policy.MaxFillsPerMinute = 20
 
 	err := svc.SetPolicy(policy)
 	require.NoError(t, err)
 
 	got := svc.GetPolicy()
-	assert.Equal(t, autofill.FillModeAutoFill, got.FillMode)
+	assert.Equal(t, xkms.FillModeAutoFill, got.FillMode)
 	assert.Equal(t, 20, got.MaxFillsPerMinute)
 }
 
@@ -199,7 +198,7 @@ func TestAutoFillService_SetPolicy_Nil(t *testing.T) {
 
 func TestAutoFillService_SetPolicy_Invalid(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
-	policy := &autofill.AutoFillPolicy{
+	policy := &xkms.AutoFillPolicy{
 		FillMode: "bogus",
 	}
 	err := svc.SetPolicy(policy)
@@ -210,8 +209,8 @@ func TestAutoFillService_GetAutoFillPolicy(t *testing.T) {
 	svc := NewAutoFillService(nil, nil, nil, nil, nil)
 	result := svc.GetAutoFillPolicy()
 	assert.NotNil(t, result)
-	assert.Equal(t, string(autofill.FillModeClickToFill), result.FillMode)
-	assert.Equal(t, string(autofill.TOTPPolicyPrompt), result.TOTPPolicy)
+	assert.Equal(t, string(xkms.FillModeClickToFill), result.FillMode)
+	assert.Equal(t, string(xkms.TOTPPolicyPrompt), result.TOTPPolicy)
 	assert.True(t, result.RequireAuthentication)
 }
 
@@ -260,7 +259,7 @@ func TestAutoFillService_SearchCredentials_AppLocked(t *testing.T) {
 func TestAutoFillService_SearchCredentials_BlockedDomain(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = false
 	policy.BlockedDomains = []string{"github.com"}
 	require.NoError(t, svc.SetPolicy(policy))
@@ -273,7 +272,7 @@ func TestAutoFillService_SearchCredentials_RateLimit(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 
 	// Set a very restrictive rate limit.
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = false
 	policy.MaxFillsPerMinute = 1
 	require.NoError(t, svc.SetPolicy(policy))
@@ -342,7 +341,7 @@ func TestAutoFillService_GetCredential_Disabled(t *testing.T) {
 func TestAutoFillService_GetCredential_AuthRequired_NoChallengeReturnsError(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = true
 	require.NoError(t, svc.SetPolicy(policy))
 
@@ -366,7 +365,7 @@ func TestAutoFillService_GetCredential_AuthRequired_NoChallengeReturnsError(t *t
 func TestAutoFillService_GetCredential_AuthRequired_NoAuthenticatorReturnsError(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = true
 	require.NoError(t, svc.SetPolicy(policy))
 
@@ -390,7 +389,7 @@ func TestAutoFillService_GetCredential_AuthRequired_NoAuthenticatorReturnsError(
 func TestAutoFillService_GetCredential_AuthRequired_InvalidChallengeEncoding(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = true
 	require.NoError(t, svc.SetPolicy(policy))
 
@@ -437,7 +436,7 @@ func TestAutoFillService_SetAuthenticator_ResetsRegistration(t *testing.T) {
 
 	// Simulate existing registration state.
 	svc.credID = []byte("old-cred")
-	svc.verifier = &autofill.AssertionVerifier{}
+	svc.verifier = &xkms.AssertionVerifier{}
 
 	auth := createTestAuthenticatorForAutofill(t)
 	svc.SetAuthenticator(auth)
@@ -541,7 +540,7 @@ func TestAutoFillService_GetStatus(t *testing.T) {
 	assert.True(t, status.Available)
 	assert.False(t, status.AppLocked)
 	assert.True(t, status.ExtensionEnabled)
-	assert.Equal(t, string(autofill.FillModeClickToFill), status.FillMode)
+	assert.Equal(t, string(xkms.FillModeClickToFill), status.FillMode)
 }
 
 func TestAutoFillService_GetStatus_Locked(t *testing.T) {
@@ -627,7 +626,7 @@ func TestAutoFillService_HandleAutofillPolicy(t *testing.T) {
 	result, err := svc.HandleAutofillPolicy()
 	require.NoError(t, err)
 	require.NotNil(t, result.Policy)
-	assert.Equal(t, string(autofill.FillModeClickToFill), result.Policy.FillMode)
+	assert.Equal(t, string(xkms.FillModeClickToFill), result.Policy.FillMode)
 }
 
 // ---------------------------------------------------------------------------
@@ -711,7 +710,7 @@ func TestAutoFillService_SetRequireAuthentication_Enable(t *testing.T) {
 	// Verify the policy object was updated, not replaced entirely.
 	p := svc.GetPolicy()
 	assert.True(t, p.RequireAuthentication)
-	assert.Equal(t, autofill.FillModeClickToFill, p.FillMode, "other fields preserved")
+	assert.Equal(t, xkms.FillModeClickToFill, p.FillMode, "other fields preserved")
 }
 
 func TestAutoFillService_SetRequireAuthentication_Toggle(t *testing.T) {
@@ -730,8 +729,8 @@ func TestAutoFillService_SetRequireAuthentication_Toggle(t *testing.T) {
 
 func TestAutoFillService_SetRequireAuthentication_PersistCallback(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
-	var persisted *autofill.AutoFillPolicy
-	svc.SetPolicyPersistFunc(func(policy *autofill.AutoFillPolicy) error {
+	var persisted *xkms.AutoFillPolicy
+	svc.SetPolicyPersistFunc(func(policy *xkms.AutoFillPolicy) error {
 		persisted = policy
 		return nil
 	})
@@ -745,7 +744,7 @@ func TestAutoFillService_SetRequireAuthentication_PersistCallback(t *testing.T) 
 func TestAutoFillService_SetRequireAuthentication_PersistError(t *testing.T) {
 	svc, _ := newTestAutoFillService(t)
 	persistErr := errors.New("disk full")
-	svc.SetPolicyPersistFunc(func(policy *autofill.AutoFillPolicy) error {
+	svc.SetPolicyPersistFunc(func(policy *xkms.AutoFillPolicy) error {
 		return persistErr
 	})
 
@@ -851,7 +850,7 @@ func TestAutoFillService_EnterpriseForceAudit(t *testing.T) {
 	svc, auditStore := newTestAutoFillService(t)
 
 	// Disable audit in user policy.
-	policy := autofill.DefaultPolicy()
+	policy := xkms.DefaultAutoFillPolicy()
 	policy.RequireAuthentication = false
 	policy.AuditEnabled = false
 	require.NoError(t, svc.SetPolicy(policy))

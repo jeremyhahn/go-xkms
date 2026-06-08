@@ -23,8 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ProvisionResult holds the result of a provisioning operation
@@ -250,11 +249,11 @@ func runTPMInstall(cmd *cobra.Command, args []string) error {
 	fmt.Println("Installing xKey TPM keys (safe mode - preserves manufacturer keys)...")
 
 	// Determine the authorization password
-	var soPIN types.Password
+	var soPIN xkms.Password
 	if installHierarchyAuth != "" {
-		soPIN = store.NewPassword([]byte(installHierarchyAuth))
+		soPIN = xkms.NewTPMStorePassword([]byte(installHierarchyAuth))
 	} else if tpmCfg.hierarchyAuth != "" {
-		soPIN = store.NewPassword([]byte(tpmCfg.hierarchyAuth))
+		soPIN = xkms.NewTPMStorePassword([]byte(tpmCfg.hierarchyAuth))
 	}
 
 	// Run Install (safe provisioning)
@@ -332,11 +331,11 @@ func runTPMProvision(cmd *cobra.Command, args []string) error {
 	fmt.Println("Performing FULL TPM provisioning (destructive)...")
 
 	// Determine the authorization password
-	var soPIN types.Password
+	var soPIN xkms.Password
 	if provisionHierarchyAuth != "" {
-		soPIN = store.NewPassword([]byte(provisionHierarchyAuth))
+		soPIN = xkms.NewTPMStorePassword([]byte(provisionHierarchyAuth))
 	} else if tpmCfg.hierarchyAuth != "" {
-		soPIN = store.NewPassword([]byte(tpmCfg.hierarchyAuth))
+		soPIN = xkms.NewTPMStorePassword([]byte(tpmCfg.hierarchyAuth))
 	}
 
 	// Run full Provision (destructive)

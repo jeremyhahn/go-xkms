@@ -19,7 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // barrierUnsealCmd unseals the barrier by prompting for the password.
@@ -79,7 +79,7 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = barrier.Close() }()
 
-	creds := seal.Credentials{Secret: password}
+	creds := xkms.SealCredentials{Secret: password}
 	if err := barrier.Unseal(context.Background(), creds); err != nil {
 		return &BarrierError{
 			Operation: "unseal",

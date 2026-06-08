@@ -21,7 +21,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/spf13/cobra"
 )
@@ -188,7 +188,7 @@ func createFIDO2RPPolicyStore(cfg *FIDO2Config) (authenticator.RPPolicyStore, er
 		return authenticator.NewMemoryRPPolicyStore(), nil
 
 	case FIDO2StorageTypeFile:
-		backend, err := file.New(cfg.StoragePath)
+		backend, err := xkms.NewFileStorageBackend(cfg.StoragePath)
 		if err != nil {
 			return nil, errors.Join(ErrRPPolicyStoreCreationFailed, err)
 		}

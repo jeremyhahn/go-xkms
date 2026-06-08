@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (
@@ -347,9 +347,9 @@ func (s *DAOCredentialStore) LoadState() (*AuthenticatorState, error) {
 
 	data, err := s.kvStore.Get(context.Background(), daoStateKey)
 	if err != nil {
-		// The KVStore adapter wraps storage.ErrNotFound in a QRDBError.
+		// The KVStore adapter wraps xkms.ErrStorageNotFound in a QRDBError.
 		// Check the full error chain for the sentinel.
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return nil, ErrStateNotFound
 		}
 		return nil, wrapStorageError(err)

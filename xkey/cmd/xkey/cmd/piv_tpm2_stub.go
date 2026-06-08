@@ -19,7 +19,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // ErrPIVTPM2BuildTagRequired indicates that the binary was not compiled with
@@ -28,6 +28,6 @@ var ErrPIVTPM2BuildTagRequired = errors.New("piv: TPM2 support requires the tpm2
 
 // createTPM2PIVStorage returns an error because TPM2 support is not compiled
 // into this binary.
-func createTPM2PIVStorage(_ *PIVConfig, _ *slog.Logger) (pivcert.PIVCertificateStorage, error) {
+func createTPM2PIVStorage(_ *PIVConfig, _ *slog.Logger) (xkms.PIVCertificateStorage, error) {
 	return nil, ErrPIVTPM2BuildTagRequired
 }

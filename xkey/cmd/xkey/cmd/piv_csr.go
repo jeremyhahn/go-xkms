@@ -19,8 +19,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 )
@@ -149,7 +148,7 @@ func runPivCSR(cmd *cobra.Command, args []string) error {
 		if err := os.WriteFile(outputPath, resp.CSR, 0600); err != nil {
 			return errors.Join(ErrPIVCSROutputFailed, err)
 		}
-		slotName := pivcert.SlotName(slot)
+		slotName := xkms.PIVSlotName(slot)
 		fmt.Printf("CSR generated for slot %s (%s) and written to %s\n", slot, slotName, outputPath)
 	} else {
 		// Write to stdout

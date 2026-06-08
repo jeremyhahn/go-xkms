@@ -21,6 +21,16 @@ import (
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
+// followerRead requests follower-read consistency: every replica serves the
+// read from its local state machine once it has applied up to its committed
+// index, without a leader ReadIndex round-trip. This is the correct level for a
+// replicated key store read on any node — it reflects all committed entries
+// (read-your-committed-writes) yet, unlike linearizable reads, never blocks a
+// follower on leader confirmation. Linearizable reads on a follower can stall
+// indefinitely when the leader's ReadIndex confirmation does not return, which
+// would hang every key-existence check and health probe on non-leader nodes.
+var followerRead = transport.WithConsistency(transport.ConsistencyFollower)
+
 // Backend wraps a go-qrdb KVClient to satisfy storage.Backend.
 // Error translation maps QRDB transport errors to storage sentinel errors.
 // When created via factory constructors, Close() tears down the underlying
@@ -59,7 +69,7 @@ func SetNotFoundError(err error) {
 // Get retrieves the value for the given key from the QRDB cluster.
 // Returns ErrNotFound when the key does not exist.
 func (b *Backend) Get(ctx context.Context, key string) ([]byte, error) {
-	value, err := b.client.Get(ctx, key)
+	value, err := b.client.Get(ctx, key, followerRead)
 	if err != nil {
 		var knf *transport.KeyNotFoundError
 		if errors.As(err, &knf) {
@@ -96,7 +106,7 @@ func (b *Backend) Delete(ctx context.Context, key string) error {
 // List returns all keys matching the given prefix from the QRDB cluster.
 // An empty prefix returns all keys.
 func (b *Backend) List(ctx context.Context, prefix string) ([]string, error) {
-	keys, err := b.client.List(ctx, prefix)
+	keys, err := b.client.List(ctx, prefix, followerRead)
 	if err != nil {
 		return nil, &BackendError{Op: "list", Key: prefix, Err: err}
 	}
@@ -107,7 +117,7 @@ func (b *Backend) List(ctx context.Context, prefix string) ([]string, error) {
 // QRDB cluster. An empty prefix visits all pairs. Return a non-nil error
 // from fn to stop iteration early.
 func (b *Backend) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
-	pairs, err := b.client.Scan(ctx, prefix)
+	pairs, err := b.client.Scan(ctx, prefix, followerRead)
 	if err != nil {
 		return &BackendError{Op: "scan", Key: prefix, Err: err}
 	}
@@ -122,7 +132,7 @@ func (b *Backend) Scan(ctx context.Context, prefix string, fn func(key string, v
 // Exists checks whether the given key exists in the QRDB cluster.
 // Delegates directly to the client's Exists method.
 func (b *Backend) Exists(ctx context.Context, key string) (bool, error) {
-	exists, err := b.client.Exists(ctx, key)
+	exists, err := b.client.Exists(ctx, key, followerRead)
 	if err != nil {
 		return false, &BackendError{Op: "exists", Key: key, Err: err}
 	}

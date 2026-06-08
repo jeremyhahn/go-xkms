@@ -22,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -444,7 +442,7 @@ func TestFIDO2Service_SetStorage(t *testing.T) {
 	assert.ErrorIs(t, err, ErrFIDO2StorageNotSet)
 
 	// Wire storage.
-	backend, backendErr := filestorage.New(filepath.Join(t.TempDir(), "fido2"))
+	backend, backendErr := xkms.NewFileStorageBackend(filepath.Join(t.TempDir(), "fido2"))
 	require.NoError(t, backendErr)
 	storage, storageErr := authenticator.NewBackendStorage(backend, "test/")
 	require.NoError(t, storageErr)
@@ -660,10 +658,10 @@ func TestFIDO2Service_ErrorSentinels(t *testing.T) {
 // stubFIDO2Backend is a minimal FIDO2KeyBackend for testing service methods
 // that only need a registered backend (not actual crypto operations).
 type stubFIDO2Backend struct {
-	bt types.BackendType
+	bt xkms.BackendType
 }
 
-func (s *stubFIDO2Backend) Type() types.BackendType { return s.bt }
+func (s *stubFIDO2Backend) Type() xkms.BackendType { return s.bt }
 func (s *stubFIDO2Backend) Capabilities() keybackend.FIDO2KeyCapabilities {
 	return keybackend.FIDO2KeyCapabilities{}
 }
@@ -681,7 +679,7 @@ func (s *stubFIDO2Backend) Close() error { return nil }
 
 // newTestCompositeBackend creates a CompositeBackend with a stub backend
 // registered under the given default type.
-func newTestCompositeBackend(defaultType types.BackendType) *keybackend.CompositeBackend {
+func newTestCompositeBackend(defaultType xkms.BackendType) *keybackend.CompositeBackend {
 	cb := keybackend.NewCompositeBackend(defaultType)
 	cb.Register(defaultType, &stubFIDO2Backend{bt: defaultType})
 	return cb
@@ -691,7 +689,7 @@ func TestFIDO2Service_SetKeyBackend(t *testing.T) {
 	svc := NewFIDO2Service(nil)
 	assert.Nil(t, svc.keyBackend)
 
-	cb := newTestCompositeBackend(types.BackendTypeSoftware)
+	cb := newTestCompositeBackend(xkms.BackendTypeSoftware)
 	svc.SetKeyBackend(cb)
 	assert.NotNil(t, svc.keyBackend)
 }
@@ -704,43 +702,43 @@ func TestFIDO2Service_SetKeyBackend_Nil(t *testing.T) {
 
 func TestFIDO2Service_SetDefaultBackend_NilKeyBackend(t *testing.T) {
 	svc := NewFIDO2Service(nil)
-	err := svc.SetDefaultBackend(types.BackendTypeSoftware)
+	err := svc.SetDefaultBackend(xkms.BackendTypeSoftware)
 	assert.ErrorIs(t, err, ErrFIDO2KeyBackendNotSet)
 }
 
 func TestFIDO2Service_SetDefaultBackend_BackendNotFound(t *testing.T) {
 	svc := NewFIDO2Service(nil)
-	svc.SetKeyBackend(newTestCompositeBackend(types.BackendTypeSoftware))
+	svc.SetKeyBackend(newTestCompositeBackend(xkms.BackendTypeSoftware))
 
-	err := svc.SetDefaultBackend(types.BackendType("nonexistent"))
+	err := svc.SetDefaultBackend(xkms.BackendType("nonexistent"))
 	assert.ErrorIs(t, err, ErrFIDO2BackendNotFound)
 }
 
 func TestFIDO2Service_SetDefaultBackend_Success(t *testing.T) {
 	svc := NewFIDO2Service(nil)
-	cb := keybackend.NewCompositeBackend(types.BackendTypeSoftware)
-	cb.Register(types.BackendTypeSoftware, &stubFIDO2Backend{bt: types.BackendTypeSoftware})
-	cb.Register(types.BackendType("other"), &stubFIDO2Backend{bt: types.BackendTypeSoftware})
+	cb := keybackend.NewCompositeBackend(xkms.BackendTypeSoftware)
+	cb.Register(xkms.BackendTypeSoftware, &stubFIDO2Backend{bt: xkms.BackendTypeSoftware})
+	cb.Register(xkms.BackendType("other"), &stubFIDO2Backend{bt: xkms.BackendTypeSoftware})
 	svc.SetKeyBackend(cb)
 
 	// Default starts as "software".
-	assert.Equal(t, types.BackendTypeSoftware, svc.DefaultBackend())
+	assert.Equal(t, xkms.BackendTypeSoftware, svc.DefaultBackend())
 
 	// Switch to "other".
-	err := svc.SetDefaultBackend(types.BackendType("other"))
+	err := svc.SetDefaultBackend(xkms.BackendType("other"))
 	require.NoError(t, err)
-	assert.Equal(t, types.BackendType("other"), svc.DefaultBackend())
+	assert.Equal(t, xkms.BackendType("other"), svc.DefaultBackend())
 }
 
 func TestFIDO2Service_DefaultBackend_NilKeyBackend(t *testing.T) {
 	svc := NewFIDO2Service(nil)
-	assert.Equal(t, types.BackendType(""), svc.DefaultBackend())
+	assert.Equal(t, xkms.BackendType(""), svc.DefaultBackend())
 }
 
 func TestFIDO2Service_DefaultBackend_WithKeyBackend(t *testing.T) {
 	svc := NewFIDO2Service(nil)
-	svc.SetKeyBackend(newTestCompositeBackend(types.BackendTypeSoftware))
-	assert.Equal(t, types.BackendTypeSoftware, svc.DefaultBackend())
+	svc.SetKeyBackend(newTestCompositeBackend(xkms.BackendTypeSoftware))
+	assert.Equal(t, xkms.BackendTypeSoftware, svc.DefaultBackend())
 }
 
 func TestFIDO2Service_ListKeyBackends_NilKeyBackend(t *testing.T) {
@@ -750,13 +748,13 @@ func TestFIDO2Service_ListKeyBackends_NilKeyBackend(t *testing.T) {
 
 func TestFIDO2Service_ListKeyBackends_WithBackends(t *testing.T) {
 	svc := NewFIDO2Service(nil)
-	cb := keybackend.NewCompositeBackend(types.BackendTypeSoftware)
-	cb.Register(types.BackendTypeSoftware, &stubFIDO2Backend{bt: types.BackendTypeSoftware})
-	cb.Register(types.BackendType("tpm2"), &stubFIDO2Backend{bt: types.BackendTypeSoftware})
+	cb := keybackend.NewCompositeBackend(xkms.BackendTypeSoftware)
+	cb.Register(xkms.BackendTypeSoftware, &stubFIDO2Backend{bt: xkms.BackendTypeSoftware})
+	cb.Register(xkms.BackendType("tpm2"), &stubFIDO2Backend{bt: xkms.BackendTypeSoftware})
 	svc.SetKeyBackend(cb)
 
 	ids := svc.ListKeyBackends()
 	require.Len(t, ids, 2)
-	assert.Contains(t, ids, types.BackendTypeSoftware)
-	assert.Contains(t, ids, types.BackendType("tpm2"))
+	assert.Contains(t, ids, xkms.BackendTypeSoftware)
+	assert.Contains(t, ids, xkms.BackendType("tpm2"))
 }

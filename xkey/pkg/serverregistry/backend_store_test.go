@@ -18,7 +18,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +42,7 @@ func TestBackendServerRegistry_New_NilBackend(t *testing.T) {
 }
 
 func TestBackendServerRegistry_New_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -55,7 +55,7 @@ func TestBackendServerRegistry_New_Success(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Register_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -79,7 +79,7 @@ func TestBackendServerRegistry_Register_Success(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Register_NilEntry(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -91,7 +91,7 @@ func TestBackendServerRegistry_Register_NilEntry(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Register_EmptyURL(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -104,7 +104,7 @@ func TestBackendServerRegistry_Register_EmptyURL(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Register_Duplicate(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -123,7 +123,7 @@ func TestBackendServerRegistry_Register_Duplicate(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Register_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -136,7 +136,7 @@ func TestBackendServerRegistry_Register_Closed(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Lookup_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -157,7 +157,7 @@ func TestBackendServerRegistry_Lookup_Success(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Lookup_NotFound(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -170,7 +170,7 @@ func TestBackendServerRegistry_Lookup_NotFound(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Lookup_EmptyURL(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -183,7 +183,7 @@ func TestBackendServerRegistry_Lookup_EmptyURL(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Lookup_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -197,7 +197,7 @@ func TestBackendServerRegistry_Lookup_Closed(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Update_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -224,7 +224,7 @@ func TestBackendServerRegistry_Update_Success(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Update_NotFound(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -240,7 +240,7 @@ func TestBackendServerRegistry_Update_NotFound(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Update_NilEntry(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -252,7 +252,7 @@ func TestBackendServerRegistry_Update_NilEntry(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Update_EmptyURL(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -265,7 +265,7 @@ func TestBackendServerRegistry_Update_EmptyURL(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Update_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -278,7 +278,7 @@ func TestBackendServerRegistry_Update_Closed(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Delete_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -299,7 +299,7 @@ func TestBackendServerRegistry_Delete_Success(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Delete_NotFound(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -311,7 +311,7 @@ func TestBackendServerRegistry_Delete_NotFound(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Delete_EmptyURL(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -323,7 +323,7 @@ func TestBackendServerRegistry_Delete_EmptyURL(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Delete_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -336,7 +336,7 @@ func TestBackendServerRegistry_Delete_Closed(t *testing.T) {
 }
 
 func TestBackendServerRegistry_List_Empty(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -349,7 +349,7 @@ func TestBackendServerRegistry_List_Empty(t *testing.T) {
 }
 
 func TestBackendServerRegistry_List_MultipleEntries_Sorted(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -386,7 +386,7 @@ func TestBackendServerRegistry_List_MultipleEntries_Sorted(t *testing.T) {
 }
 
 func TestBackendServerRegistry_List_Closed(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -400,7 +400,7 @@ func TestBackendServerRegistry_List_Closed(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Close_Idempotent(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -412,7 +412,7 @@ func TestBackendServerRegistry_Close_Idempotent(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Close_DoesNotCloseBackend(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -431,7 +431,7 @@ func TestBackendServerRegistry_Close_DoesNotCloseBackend(t *testing.T) {
 }
 
 func TestBackendServerRegistry_ImplementsInterface(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -442,7 +442,7 @@ func TestBackendServerRegistry_ImplementsInterface(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Concurrency(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -500,7 +500,7 @@ func TestBackendServerRegistry_Concurrency(t *testing.T) {
 }
 
 func TestBackendServerRegistry_RegisteredAt_SetAutomatically(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)
@@ -525,7 +525,7 @@ func TestBackendServerRegistry_RegisteredAt_SetAutomatically(t *testing.T) {
 }
 
 func TestBackendServerRegistry_Update_SetsLastConnectedAt(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer backend.Close()
 
 	reg, err := NewBackendServerRegistry(backend, testPrefix)

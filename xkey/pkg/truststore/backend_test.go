@@ -19,13 +19,13 @@ import (
 	"encoding/pem"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // newTestBackendStore creates a BackendStore backed by in-memory storage.
 func newTestBackendStore(t *testing.T) *BackendStore {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "trust/")
 	if err != nil {
 		t.Fatalf("failed to create backend store: %v", err)
@@ -36,7 +36,7 @@ func newTestBackendStore(t *testing.T) *BackendStore {
 // --- NewBackendStore tests ---
 
 func TestBackendStore_NewBackendStore_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "trust/")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -57,7 +57,7 @@ func TestBackendStore_NewBackendStore_NilBackend(t *testing.T) {
 }
 
 func TestBackendStore_NewBackendStore_EmptyPrefix(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -68,7 +68,7 @@ func TestBackendStore_NewBackendStore_EmptyPrefix(t *testing.T) {
 }
 
 func TestBackendStore_NewBackendStore_LoadsExisting(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	cert := generateTestCert(t, "Preloaded CA")
 	fp := Fingerprint(cert)
 
@@ -1007,7 +1007,7 @@ func TestBackendStore_Close_ClearsPool(t *testing.T) {
 // --- Persistence round-trip test ---
 
 func TestBackendStore_PersistenceRoundTrip(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	cert := generateTestCert(t, "Roundtrip CA")
 	fp := Fingerprint(cert)
 
@@ -1070,7 +1070,7 @@ func TestBackendStore_PersistenceRoundTrip(t *testing.T) {
 // --- Rebuild from certs test (metadata-less recovery) ---
 
 func TestBackendStore_RebuildFromCertsOnly(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	cert := generateTestCert(t, "Orphan CA")
 	fp := Fingerprint(cert)
 

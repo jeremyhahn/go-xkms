@@ -26,15 +26,7 @@ import (
 	"syscall"
 	"time"
 
-	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
@@ -588,7 +580,7 @@ type fido2Device struct {
 	running         bool
 	keyboard        *keyboard.Keyboard
 	ipcServer       *ipc.Server
-	pwStore         *staticpw.BackendStore
+	pwStore         *xkms.StaticPasswordBackendStore
 	socketHandler   *authenticator.SocketHandler
 	notifier        notify.Notifier
 	defaultPassword string
@@ -790,13 +782,13 @@ func (d *fido2Device) initSupplementarySubsystems(ctx context.Context) {
 
 	// Open password store
 	if d.cfg.PasswordStorePath != "" {
-		backend, err := file.New(d.cfg.PasswordStorePath)
+		backend, err := xkms.NewFileStorageBackend(d.cfg.PasswordStorePath)
 		if err != nil {
 			d.logger.Warn("password store unavailable",
 				slog.String("error", err.Error()),
 				slog.String("path", d.cfg.PasswordStorePath))
 		} else {
-			d.pwStore = staticpw.NewStore(backend)
+			d.pwStore = xkms.NewStaticPasswordStore(backend)
 			d.logger.Info("password store opened",
 				slog.String("path", d.cfg.PasswordStorePath))
 		}
@@ -1118,7 +1110,7 @@ func createFIDO2Storage(cfg *FIDO2Config) (authenticator.StatefulCredentialStora
 		return authenticator.NewMemoryStorage(), nil
 
 	case FIDO2StorageTypeFile:
-		backend, err := file.New(cfg.StoragePath)
+		backend, err := xkms.NewFileStorageBackend(cfg.StoragePath)
 		if err != nil {
 			return nil, err
 		}
@@ -1164,7 +1156,7 @@ func createBarrierStorage(cfg *FIDO2Config) (authenticator.StatefulCredentialSto
 	}
 
 	// Create file backend over the data directory.
-	fileBackend, err := file.New(dataDir)
+	fileBackend, err := xkms.NewFileStorageBackend(dataDir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrFIDO2BarrierUnsealFailed, err)
 	}
@@ -1375,19 +1367,19 @@ func createFIDO2SoftwareKeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keyba
 		return createFIDO2XKMSSoftwareKeyBackend(logger)
 	}
 
-	keyStorage, err := storage.NewMemoryBackend()
+	keyStorage, err := xkms.NewMemoryBackend()
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2BackendCreationFailed, err)
 	}
 
-	backend, err := softwarebackend.NewBackend(&softwarebackend.Config{
+	backend, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{
 		KeyStorage: keyStorage,
 	})
 	if err != nil {
 		return nil, errors.Join(ErrFIDO2BackendCreationFailed, err)
 	}
 
-	return keybackend.NewBackendAdapter(backend, types.BackendTypeSoftware), nil
+	return keybackend.NewBackendAdapter(backend, xkms.BackendTypeSoftware), nil
 }
 
 // createFIDO2XKMSSoftwareKeyBackend initializes the xkms service and creates
@@ -1419,7 +1411,7 @@ func createFIDO2XKMSSoftwareKeyBackend(logger *slog.Logger) (keybackend.FIDO2Key
 		return nil, errors.Join(ErrFIDO2BackendCreationFailed, err)
 	}
 
-	adapter := keybackend.NewBackendAdapter(swBackend.KeyProvider(), types.BackendTypeSoftware)
+	adapter := keybackend.NewBackendAdapter(swBackend.KeyProvider(), xkms.BackendTypeSoftware)
 	adapter.SetLogger(logger)
 
 	logger.Info("xkms software key backend initialized", slog.String("keys_dir", keysDir))
@@ -1432,8 +1424,8 @@ func createFIDO2XKMSSoftwareKeyBackend(logger *slog.Logger) (keybackend.FIDO2Key
 func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybackend.FIDO2KeyBackend, error) {
 	logger.Info("opening TPM device", slog.String("device", cfg.TPMDevice))
 
-	tpm, err := pkgtpm2.NewTPM2(&pkgtpm2.Params{
-		Config: &pkgtpm2.Config{
+	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
+		Config: &xkms.TPMConfig{
 			Device: cfg.TPMDevice,
 		},
 		Logger: logger,
@@ -1442,14 +1434,14 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 		return nil, errors.Join(ErrFIDO2TPMOpenFailed, err)
 	}
 
-	memStorage, err := storage.NewMemoryBackend()
+	memStorage, err := xkms.NewMemoryBackend()
 	if err != nil {
 		tpm.Close()
 		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err)
 	}
-	keyBackend := store.NewFileBackend(logger, memStorage)
+	keyBackend := xkms.NewFileBackend(logger, memStorage)
 
-	backend, err := tpm2backend.NewBackendWithTPM(&tpm2backend.ExternalTPMConfig{
+	backend, err := xkms.NewTPM2BackendWithTPM(&xkms.TPM2BackendExternalConfig{
 		TPM:        tpm,
 		KeyBackend: keyBackend,
 		Logger:     logger,
@@ -1460,7 +1452,7 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	}
 
 	logger.Info("using TPM2 key backend", slog.String("device", cfg.TPMDevice))
-	return keybackend.NewBackendAdapter(backend, types.BackendTypeTPM2), nil
+	return keybackend.NewBackendAdapter(backend, xkms.BackendTypeTPM2), nil
 }
 
 // formatCID formats a channel ID from a HID packet for logging.

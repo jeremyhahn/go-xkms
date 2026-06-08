@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
@@ -199,7 +198,7 @@ func (s *FIDO2Service) SetKeyBackend(kb *keybackend.CompositeBackend) {
 
 // SetDefaultBackend switches the active FIDO2 key backend used for new credential
 // creation. The backendID must match a registered backend in the composite.
-func (s *FIDO2Service) SetDefaultBackend(backendID types.BackendType) error {
+func (s *FIDO2Service) SetDefaultBackend(backendID xkms.BackendType) error {
 	if s.keyBackend == nil {
 		return ErrFIDO2KeyBackendNotSet
 	}
@@ -212,7 +211,7 @@ func (s *FIDO2Service) SetDefaultBackend(backendID types.BackendType) error {
 }
 
 // DefaultBackend returns the current default FIDO2 key backend ID.
-func (s *FIDO2Service) DefaultBackend() types.BackendType {
+func (s *FIDO2Service) DefaultBackend() xkms.BackendType {
 	if s.keyBackend == nil {
 		return ""
 	}
@@ -220,7 +219,7 @@ func (s *FIDO2Service) DefaultBackend() types.BackendType {
 }
 
 // ListKeyBackends returns the IDs of all registered FIDO2 key backends.
-func (s *FIDO2Service) ListKeyBackends() []types.BackendType {
+func (s *FIDO2Service) ListKeyBackends() []xkms.BackendType {
 	if s.keyBackend == nil {
 		return nil
 	}

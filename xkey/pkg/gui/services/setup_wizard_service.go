@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"os"
@@ -27,9 +28,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
@@ -455,9 +453,9 @@ func (s *SetupWizardService) emitProgress(step int, label string) {
 func sealBackendForBarrierSealer(sealer string) string {
 	switch sealer {
 	case "tpm2":
-		return string(types.BackendTypeTPM2)
+		return string(xkms.BackendTypeTPM2)
 	case "passphrase", "software":
-		return string(types.BackendTypeSoftware)
+		return string(xkms.BackendTypeSoftware)
 	default:
 		return ""
 	}
@@ -627,8 +625,8 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 				status, sErr := s.storageSvc.GetStatus()
 				if sErr == nil && status.IsMounted {
 					mountPoint := status.MountPoint
-					s.barrierSvc.SetBaseBackendFactory(func(_ string) (storage.Backend, error) {
-						return filestorage.New(mountPoint)
+					s.barrierSvc.SetBaseBackendFactory(func(_ string) (xkms.StorageBackend, error) {
+						return xkms.NewFileStorageBackend(mountPoint)
 					})
 				}
 			}
@@ -788,7 +786,7 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 					"sha256",
 					policyType,
 					policyName,
-					string(types.BackendTypeTPM2),
+					string(xkms.BackendTypeTPM2),
 				); err != nil {
 					result.Warnings = append(result.Warnings,
 						fmt.Sprintf("auto-unseal setup: %v", err))

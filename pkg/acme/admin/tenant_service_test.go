@@ -29,13 +29,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/qrdb"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2479,13 +2480,11 @@ func TestTenantAwareAdminService_GetTenantEABDAO_WithTenantAwareFactory(t *testi
 }
 
 func TestTenantAwareAdminService_GetTenantEABDAO_FallbackToGlobal(t *testing.T) {
-	// Use a non-tenant-aware factory (NewFactory returns storage.Factory, not TenantAwareFactory)
-	storageDir := t.TempDir()
-	store := local.New()
-	err := store.Configure(map[string]string{"path": storageDir})
+	// Use a non-tenant-aware factory (NewFactoryFromKVStore returns storage.Factory, not TenantAwareFactory)
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
-	factory, err := acmeobjstore.NewFactory(store)
+	factory, err := acmeobjstore.NewFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
 	logger := slog.Default()

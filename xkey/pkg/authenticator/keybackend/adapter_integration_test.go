@@ -28,10 +28,7 @@ import (
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
-	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,27 +87,27 @@ func skipIfNoTPM(t *testing.T) {
 // newSoftwareAdapter creates a BackendAdapter backed by a real software backend.
 func newSoftwareAdapter(t *testing.T) *BackendAdapter {
 	t.Helper()
-	config := &softwarebackend.Config{
-		KeyStorage: storage.NewMemory(),
+	config := &xkms.SoftwareBackendConfig{
+		KeyStorage: xkms.NewStorageMemory(),
 	}
-	backend, err := softwarebackend.NewBackend(config)
+	backend, err := xkms.NewSoftwareBackend(config)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	return NewBackendAdapter(backend, types.BackendTypeSoftware)
+	return NewBackendAdapter(backend, xkms.BackendTypeSoftware)
 }
 
 // newTPM2Adapter creates a BackendAdapter backed by a real TPM2 backend.
 func newTPM2Adapter(t *testing.T) *BackendAdapter {
 	t.Helper()
 	keyDir := t.TempDir()
-	config := &tpm2backend.Config{
+	config := &xkms.TPM2BackendConfig{
 		Device: "/dev/tpmrm0",
 		KeyDir: keyDir,
 	}
-	backend, err := tpm2backend.NewBackend(config)
+	backend, err := xkms.NewTPM2Backend(config)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
-	return NewBackendAdapter(backend, types.BackendTypeTPM2)
+	return NewBackendAdapter(backend, xkms.BackendTypeTPM2)
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +267,7 @@ func TestAllBackends_GenerateES256(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, handle)
 
-			assert.Equal(t, types.BackendType(be.name), handle.BackendID())
+			assert.Equal(t, xkms.BackendType(be.name), handle.BackendID())
 			assert.Equal(t, COSEAlgES256, handle.Algorithm())
 			assert.Equal(t, credID, handle.CredentialID())
 
@@ -508,27 +505,27 @@ func TestAllBackends_StoreTypeMapping(t *testing.T) {
 	// Verify every known backend type maps to its expected StoreType (not the
 	// default fallthrough). This is a pure function test, no hardware needed.
 	testCases := []struct {
-		backendType types.BackendType
-		expected    types.StoreType
+		backendType xkms.BackendType
+		expected    xkms.StoreType
 	}{
-		{types.BackendTypeSoftware, types.StoreSoftware},
-		{types.BackendTypeTPM2, types.StoreTPM2},
-		{types.BackendTypePKCS11, types.StorePKCS11},
-		{types.BackendTypeAWSKMS, types.StoreAWSKMS},
-		{types.BackendTypeGCPKMS, types.StoreGCPKMS},
-		{types.BackendTypeAzureKV, types.StoreAzureKV},
-		{types.BackendTypeVault, types.StoreVault},
-		{types.BackendTypePhone, types.StorePhone},
+		{xkms.BackendTypeSoftware, xkms.StoreSoftware},
+		{xkms.BackendTypeTPM2, xkms.StoreTPM2},
+		{xkms.BackendTypePKCS11, xkms.StorePKCS11},
+		{xkms.BackendTypeAWSKMS, xkms.StoreAWSKMS},
+		{xkms.BackendTypeGCPKMS, xkms.StoreGCPKMS},
+		{xkms.BackendTypeAzureKV, xkms.StoreAzureKV},
+		{xkms.BackendTypeVault, xkms.StoreVault},
+		{xkms.BackendTypePhone, xkms.StorePhone},
 		// Module-ID-style backend types use prefix matching.
-		{"pkcs11-libykcs11", types.StorePKCS11},
-		{"pkcs11-softhsm-slot-0", types.StorePKCS11},
-		{"tpm2-custom", types.StoreTPM2},
-		{"awskms-prod", types.StoreAWSKMS},
-		{"gcpkms-prod", types.StoreGCPKMS},
-		{"azurekv-prod", types.StoreAzureKV},
-		{"vault-dev", types.StoreVault},
+		{"pkcs11-libykcs11", xkms.StorePKCS11},
+		{"pkcs11-softhsm-slot-0", xkms.StorePKCS11},
+		{"tpm2-custom", xkms.StoreTPM2},
+		{"awskms-prod", xkms.StoreAWSKMS},
+		{"gcpkms-prod", xkms.StoreGCPKMS},
+		{"azurekv-prod", xkms.StoreAzureKV},
+		{"vault-dev", xkms.StoreVault},
 		// Unknown backend falls through to StoreType(bt).
-		{"unknown-backend", types.StoreType("unknown-backend")},
+		{"unknown-backend", xkms.StoreType("unknown-backend")},
 	}
 
 	for _, tc := range testCases {
@@ -546,11 +543,11 @@ func TestAllBackends_StoreTypeMapping(t *testing.T) {
 			got := storeTypeForBackend(adapter.Type())
 			switch be.name {
 			case "software":
-				assert.Equal(t, types.StoreSoftware, got)
+				assert.Equal(t, xkms.StoreSoftware, got)
 			case "tpm2":
-				assert.Equal(t, types.StoreTPM2, got)
+				assert.Equal(t, xkms.StoreTPM2, got)
 			case "pkcs11":
-				assert.Equal(t, types.StorePKCS11, got)
+				assert.Equal(t, xkms.StorePKCS11, got)
 			}
 		})
 	}

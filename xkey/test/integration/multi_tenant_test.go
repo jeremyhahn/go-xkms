@@ -23,10 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // TestTenantIsolatedPasswordStores verifies that tenant-scoped password stores
@@ -35,18 +32,18 @@ import (
 func TestTenantIsolatedPasswordStores(t *testing.T) {
 	dir := tempDir(t)
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := staticpw.NewTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := staticpw.NewTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
 	require.NoError(t, err)
 
 	// Add a password to tenant-A.
-	err = storeA.Add(&staticpw.StaticPassword{
+	err = storeA.Add(&xkms.StaticPassword{
 		Name:     "db-cred",
 		Password: "s3cret-A",
 		Username: "admin-a",
@@ -54,7 +51,7 @@ func TestTenantIsolatedPasswordStores(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add a password to tenant-B.
-	err = storeB.Add(&staticpw.StaticPassword{
+	err = storeB.Add(&xkms.StaticPassword{
 		Name:     "api-key",
 		Password: "s3cret-B",
 		Username: "admin-b",
@@ -77,11 +74,11 @@ func TestTenantIsolatedPasswordStores(t *testing.T) {
 
 	// Cross-tenant isolation: tenant-A cannot retrieve tenant-B's password.
 	_, err = storeA.Get("api-key")
-	assert.ErrorIs(t, err, staticpw.ErrPasswordNotFound)
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordNotFound)
 
 	// Cross-tenant isolation: tenant-B cannot retrieve tenant-A's password.
 	_, err = storeB.Get("db-cred")
-	assert.ErrorIs(t, err, staticpw.ErrPasswordNotFound)
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordNotFound)
 }
 
 // TestTenantIsolatedPasswordStores_SameNameDifferentTenants verifies that two
@@ -89,24 +86,24 @@ func TestTenantIsolatedPasswordStores(t *testing.T) {
 func TestTenantIsolatedPasswordStores_SameNameDifferentTenants(t *testing.T) {
 	dir := tempDir(t)
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := staticpw.NewTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := staticpw.NewTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
 	require.NoError(t, err)
 
 	// Both tenants add a password with the same name.
-	err = storeA.Add(&staticpw.StaticPassword{
+	err = storeA.Add(&xkms.StaticPassword{
 		Name:     "shared-name",
 		Password: "value-from-A",
 	})
 	require.NoError(t, err)
 
-	err = storeB.Add(&staticpw.StaticPassword{
+	err = storeB.Add(&xkms.StaticPassword{
 		Name:     "shared-name",
 		Password: "value-from-B",
 	})
@@ -130,32 +127,32 @@ func TestTenantIsolatedTeamStores(t *testing.T) {
 
 	// Create separate file backends for each tenant, using subdirectories
 	// to simulate tenant-namespaced storage.
-	backendA, err := filestorage.New(filepath.Join(dir, "tenant-A"))
+	backendA, err := xkms.NewFileStorageBackend(filepath.Join(dir, "tenant-A"))
 	require.NoError(t, err)
 	t.Cleanup(func() { backendA.Close() })
 
-	backendB, err := filestorage.New(filepath.Join(dir, "tenant-B"))
+	backendB, err := xkms.NewFileStorageBackend(filepath.Join(dir, "tenant-B"))
 	require.NoError(t, err)
 	t.Cleanup(func() { backendB.Close() })
 
-	kvStoreA, err := kvadapter.New(backendA)
+	kvStoreA, err := xkms.NewKVStoreAdapter(backendA)
 	require.NoError(t, err)
 
-	kvStoreB, err := kvadapter.New(backendB)
+	kvStoreB, err := xkms.NewKVStoreAdapter(backendB)
 	require.NoError(t, err)
 
-	teamStoreA, err := staticpw.NewDAOTeamStore(kvStoreA)
+	teamStoreA, err := xkms.NewStaticPasswordDAOTeamStore(kvStoreA)
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStoreA.Close() })
 
-	teamStoreB, err := staticpw.NewDAOTeamStore(kvStoreB)
+	teamStoreB, err := xkms.NewStaticPasswordDAOTeamStore(kvStoreB)
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStoreB.Close() })
 
 	ctx := context.Background()
 
 	// Create a team with the same name in both tenants.
-	err = teamStoreA.Create(ctx, &staticpw.TeamEntity{
+	err = teamStoreA.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "ops",
 		TenantID: "tenant-A",
 		OwnerID:  "alice",
@@ -163,7 +160,7 @@ func TestTenantIsolatedTeamStores(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = teamStoreB.Create(ctx, &staticpw.TeamEntity{
+	err = teamStoreB.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "ops",
 		TenantID: "tenant-B",
 		OwnerID:  "bob",
@@ -195,35 +192,35 @@ func TestTenantIsolatedTeamStores_ListByTenant(t *testing.T) {
 	dir := tempDir(t)
 
 	// Use a single shared backend to verify ListByTenant filtering.
-	sharedBackend, err := filestorage.New(dir)
+	sharedBackend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { sharedBackend.Close() })
 
-	kvStore, err := kvadapter.New(sharedBackend)
+	kvStore, err := xkms.NewKVStoreAdapter(sharedBackend)
 	require.NoError(t, err)
 
-	teamStore, err := staticpw.NewDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStore.Close() })
 
 	ctx := context.Background()
 
 	// Create teams belonging to different tenants in the same store.
-	err = teamStore.Create(ctx, &staticpw.TeamEntity{
+	err = teamStore.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "ops-alpha",
 		TenantID: "tenant-alpha",
 		OwnerID:  "alice",
 	})
 	require.NoError(t, err)
 
-	err = teamStore.Create(ctx, &staticpw.TeamEntity{
+	err = teamStore.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "ops-beta",
 		TenantID: "tenant-beta",
 		OwnerID:  "bob",
 	})
 	require.NoError(t, err)
 
-	err = teamStore.Create(ctx, &staticpw.TeamEntity{
+	err = teamStore.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "dev-alpha",
 		TenantID: "tenant-alpha",
 		OwnerID:  "carol",
@@ -251,17 +248,17 @@ func TestTenantIsolatedTeamStores_ListByTenant(t *testing.T) {
 	assert.Empty(t, emptyTeams)
 }
 
-// mockBarrierRegistry implements staticpw.BarrierRegistryAccessor for testing
-// the TenantDAOFactory. Each tenant maps to a separate storage.Backend,
+// mockBarrierRegistry implements xkms.StaticPasswordBarrierRegistryAccessor for testing
+// the TenantDAOFactory. Each tenant maps to a separate xkms.StorageBackend,
 // providing data isolation without requiring a real barrier/encryption layer.
 type mockBarrierRegistry struct {
-	tenants map[string]storage.Backend
+	tenants map[string]xkms.StorageBackend
 }
 
-func (m *mockBarrierRegistry) GetTenantBarrier(tenantID string) (storage.Backend, error) {
+func (m *mockBarrierRegistry) GetTenantBarrier(tenantID string) (xkms.StorageBackend, error) {
 	b, ok := m.tenants[tenantID]
 	if !ok {
-		return nil, staticpw.ErrInvalidTenant{TenantID: tenantID}
+		return nil, xkms.ErrStaticPasswordInvalidTenant{TenantID: tenantID}
 	}
 	return b, nil
 }
@@ -273,29 +270,29 @@ func TestTenantDAOFactory_IsolatedPasswordStores(t *testing.T) {
 	dir := tempDir(t)
 
 	// Create separate file backends per tenant.
-	backendA, err := filestorage.New(filepath.Join(dir, "tenant-A"))
+	backendA, err := xkms.NewFileStorageBackend(filepath.Join(dir, "tenant-A"))
 	require.NoError(t, err)
 	t.Cleanup(func() { backendA.Close() })
 
-	backendB, err := filestorage.New(filepath.Join(dir, "tenant-B"))
+	backendB, err := xkms.NewFileStorageBackend(filepath.Join(dir, "tenant-B"))
 	require.NoError(t, err)
 	t.Cleanup(func() { backendB.Close() })
 
-	systemBackend, err := filestorage.New(filepath.Join(dir, "system"))
+	systemBackend, err := xkms.NewFileStorageBackend(filepath.Join(dir, "system"))
 	require.NoError(t, err)
 	t.Cleanup(func() { systemBackend.Close() })
 
-	systemKV, err := kvadapter.New(systemBackend)
+	systemKV, err := xkms.NewKVStoreAdapter(systemBackend)
 	require.NoError(t, err)
 
 	registry := &mockBarrierRegistry{
-		tenants: map[string]storage.Backend{
+		tenants: map[string]xkms.StorageBackend{
 			"tenant-A": backendA,
 			"tenant-B": backendB,
 		},
 	}
 
-	factory, err := staticpw.NewTenantDAOFactory(systemKV, registry)
+	factory, err := xkms.NewStaticPasswordTenantDAOFactory(systemKV, registry)
 	require.NoError(t, err)
 
 	// Get tenant-scoped password stores via the factory.
@@ -307,14 +304,14 @@ func TestTenantDAOFactory_IsolatedPasswordStores(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add a password via tenant-A's store.
-	err = pwStoreA.Add(&staticpw.StaticPassword{
+	err = pwStoreA.Add(&xkms.StaticPassword{
 		Name:     "db-cred",
 		Password: "tenant-A-secret",
 	})
 	require.NoError(t, err)
 
 	// Add a password via tenant-B's store.
-	err = pwStoreB.Add(&staticpw.StaticPassword{
+	err = pwStoreB.Add(&xkms.StaticPassword{
 		Name:     "api-key",
 		Password: "tenant-B-secret",
 	})
@@ -334,11 +331,11 @@ func TestTenantDAOFactory_IsolatedPasswordStores(t *testing.T) {
 
 	// Cross-tenant: tenant-A cannot find tenant-B's password.
 	_, err = pwStoreA.Get("api-key")
-	assert.ErrorIs(t, err, staticpw.ErrPasswordNotFound)
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordNotFound)
 
 	// Cross-tenant: tenant-B cannot find tenant-A's password.
 	_, err = pwStoreB.Get("db-cred")
-	assert.ErrorIs(t, err, staticpw.ErrPasswordNotFound)
+	assert.ErrorIs(t, err, xkms.ErrStaticPasswordNotFound)
 }
 
 // TestTenantDAOFactory_IsolatedTeamStores verifies that the TenantDAOFactory
@@ -346,29 +343,29 @@ func TestTenantDAOFactory_IsolatedPasswordStores(t *testing.T) {
 func TestTenantDAOFactory_IsolatedTeamStores(t *testing.T) {
 	dir := tempDir(t)
 
-	backendA, err := filestorage.New(filepath.Join(dir, "tenant-A"))
+	backendA, err := xkms.NewFileStorageBackend(filepath.Join(dir, "tenant-A"))
 	require.NoError(t, err)
 	t.Cleanup(func() { backendA.Close() })
 
-	backendB, err := filestorage.New(filepath.Join(dir, "tenant-B"))
+	backendB, err := xkms.NewFileStorageBackend(filepath.Join(dir, "tenant-B"))
 	require.NoError(t, err)
 	t.Cleanup(func() { backendB.Close() })
 
-	systemBackend, err := filestorage.New(filepath.Join(dir, "system"))
+	systemBackend, err := xkms.NewFileStorageBackend(filepath.Join(dir, "system"))
 	require.NoError(t, err)
 	t.Cleanup(func() { systemBackend.Close() })
 
-	systemKV, err := kvadapter.New(systemBackend)
+	systemKV, err := xkms.NewKVStoreAdapter(systemBackend)
 	require.NoError(t, err)
 
 	registry := &mockBarrierRegistry{
-		tenants: map[string]storage.Backend{
+		tenants: map[string]xkms.StorageBackend{
 			"tenant-A": backendA,
 			"tenant-B": backendB,
 		},
 	}
 
-	factory, err := staticpw.NewTenantDAOFactory(systemKV, registry)
+	factory, err := xkms.NewStaticPasswordTenantDAOFactory(systemKV, registry)
 	require.NoError(t, err)
 
 	teamStoreA, err := factory.TeamStoreForTenant("tenant-A")
@@ -380,14 +377,14 @@ func TestTenantDAOFactory_IsolatedTeamStores(t *testing.T) {
 	ctx := context.Background()
 
 	// Create "ops" team in both tenants (same name, different tenant).
-	err = teamStoreA.Create(ctx, &staticpw.TeamEntity{
+	err = teamStoreA.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "ops",
 		TenantID: "tenant-A",
 		OwnerID:  "alice",
 	})
 	require.NoError(t, err)
 
-	err = teamStoreB.Create(ctx, &staticpw.TeamEntity{
+	err = teamStoreB.Create(ctx, &xkms.StaticPasswordTeamEntity{
 		Name:     "ops",
 		TenantID: "tenant-B",
 		OwnerID:  "bob",
@@ -411,18 +408,18 @@ func TestTenantDAOFactory_IsolatedTeamStores(t *testing.T) {
 func TestTenantDAOFactory_InvalidTenant(t *testing.T) {
 	dir := tempDir(t)
 
-	systemBackend, err := filestorage.New(filepath.Join(dir, "system"))
+	systemBackend, err := xkms.NewFileStorageBackend(filepath.Join(dir, "system"))
 	require.NoError(t, err)
 	t.Cleanup(func() { systemBackend.Close() })
 
-	systemKV, err := kvadapter.New(systemBackend)
+	systemKV, err := xkms.NewKVStoreAdapter(systemBackend)
 	require.NoError(t, err)
 
 	registry := &mockBarrierRegistry{
-		tenants: map[string]storage.Backend{},
+		tenants: map[string]xkms.StorageBackend{},
 	}
 
-	factory, err := staticpw.NewTenantDAOFactory(systemKV, registry)
+	factory, err := xkms.NewStaticPasswordTenantDAOFactory(systemKV, registry)
 	require.NoError(t, err)
 
 	// Empty tenant ID should fail validation.
@@ -446,20 +443,20 @@ func TestTenantDAOFactory_InvalidTenant(t *testing.T) {
 func TestTenantDAOFactory_NilInputs(t *testing.T) {
 	dir := tempDir(t)
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
 	// Nil system KVStore.
-	_, err = staticpw.NewTenantDAOFactory(nil, &mockBarrierRegistry{})
-	assert.ErrorAs(t, err, &staticpw.ErrNilSystemKVStore{})
+	_, err = xkms.NewStaticPasswordTenantDAOFactory(nil, &mockBarrierRegistry{})
+	assert.ErrorAs(t, err, &xkms.ErrStaticPasswordNilSystemKVStore{})
 
 	// Nil barrier registry.
-	_, err = staticpw.NewTenantDAOFactory(kvStore, nil)
-	assert.ErrorAs(t, err, &staticpw.ErrNilBarrierRegistryAccessor{})
+	_, err = xkms.NewStaticPasswordTenantDAOFactory(kvStore, nil)
+	assert.ErrorAs(t, err, &xkms.ErrStaticPasswordNilBarrierRegistryAccessor{})
 }
 
 // TestTenantCleanupIsolation verifies that deleting all data in one tenant
@@ -467,19 +464,19 @@ func TestTenantDAOFactory_NilInputs(t *testing.T) {
 func TestTenantCleanupIsolation(t *testing.T) {
 	dir := tempDir(t)
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := staticpw.NewTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := staticpw.NewTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
 	require.NoError(t, err)
 
 	// Populate both tenants.
 	for _, name := range []string{"cred-1", "cred-2", "cred-3"} {
-		err = storeA.Add(&staticpw.StaticPassword{
+		err = storeA.Add(&xkms.StaticPassword{
 			Name:     name,
 			Password: "A-" + name,
 		})
@@ -487,7 +484,7 @@ func TestTenantCleanupIsolation(t *testing.T) {
 	}
 
 	for _, name := range []string{"key-1", "key-2"} {
-		err = storeB.Add(&staticpw.StaticPassword{
+		err = storeB.Add(&xkms.StaticPassword{
 			Name:     name,
 			Password: "B-" + name,
 		})
@@ -529,7 +526,7 @@ func TestTenantCleanupIsolation(t *testing.T) {
 func TestTenantStore_InvalidTenantID(t *testing.T) {
 	dir := tempDir(t)
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
@@ -546,8 +543,8 @@ func TestTenantStore_InvalidTenantID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := staticpw.NewTenantStore(backend, tt.tenantID)
-			assert.ErrorIs(t, err, staticpw.ErrInvalidTenantID)
+			_, err := xkms.NewStaticPasswordTenantStore(backend, tt.tenantID)
+			assert.ErrorIs(t, err, xkms.ErrStaticPasswordInvalidTenantID)
 		})
 	}
 }
@@ -557,14 +554,14 @@ func TestTenantStore_InvalidTenantID(t *testing.T) {
 func TestTenantIsolatedFolders(t *testing.T) {
 	dir := tempDir(t)
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	storeA, err := staticpw.NewTenantStore(backend, "tenant-A")
+	storeA, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-A")
 	require.NoError(t, err)
 
-	storeB, err := staticpw.NewTenantStore(backend, "tenant-B")
+	storeB, err := xkms.NewStaticPasswordTenantStore(backend, "tenant-B")
 	require.NoError(t, err)
 
 	// Create a folder in each tenant.
@@ -575,7 +572,7 @@ func TestTenantIsolatedFolders(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add a password in tenant-A's Work folder.
-	err = storeA.Add(&staticpw.StaticPassword{
+	err = storeA.Add(&xkms.StaticPassword{
 		Name:       "work-cred",
 		Password:   "secret",
 		FolderPath: "Work",

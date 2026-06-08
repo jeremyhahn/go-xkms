@@ -17,12 +17,12 @@ package services
 
 import (
 	"context"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"runtime"
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -76,47 +76,47 @@ type IdentityConfig struct {
 // package does not import the gui package (avoiding import cycles).
 // The gui.App is responsible for creating this from gui.GUIConfig.
 type GUIConfigData struct {
-	AutoTray                  bool                     `json:"auto_tray"`
-	Theme                     string                   `json:"theme"`
-	StartMinimized            bool                     `json:"start_minimized"`
-	Notifications             bool                     `json:"notifications"`
-	WindowWidth               int                      `json:"window_width"`
-	WindowHeight              int                      `json:"window_height"`
-	RememberPosition          bool                     `json:"remember_position"`
-	WindowX                   int                      `json:"window_x"`
-	WindowY                   int                      `json:"window_y"`
-	ServerAddress             string                   `json:"server_address"`
-	ServerProtocol            string                   `json:"server_protocol"`
-	ServerTLSEnabled          bool                     `json:"server_tls_enabled"`
-	ServerTLSSkipVerify       bool                     `json:"server_tls_skip_verify"`
-	ServerTLSCAFile           string                   `json:"server_tls_ca_file"`
-	ServerAutoConnect         bool                     `json:"server_auto_connect"`
-	AutoUnsealEnabled         bool                     `json:"auto_unseal_enabled"`
-	AutoUnsealBlobID          string                   `json:"auto_unseal_blob_id"`
-	AutoUnsealPCRs            []int                    `json:"auto_unseal_pcrs"`
-	AutoUnsealPCRBank         string                   `json:"auto_unseal_pcr_bank"`
-	AutoUnsealPolicyType      string                   `json:"auto_unseal_policy_type"`
-	AutoUnsealPolicyName      string                   `json:"auto_unseal_policy_name"`
-	AutoUnsealBackend         string                   `json:"auto_unseal_backend"`
-	FIDO2AuthenticatorEnabled bool                     `json:"fido2_authenticator_enabled"`
-	ClipboardTimeout          int                      `json:"clipboard_timeout"`
-	RequireAuth               bool                     `json:"require_auth"`
-	SetupComplete             bool                     `json:"setup_complete"`
-	StorageType               string                   `json:"storage_type"`
-	BarrierInitialized        bool                     `json:"barrier_initialized"`
-	BarrierStrategy           string                   `json:"barrier_strategy"`
-	BarrierAutoUnsealBlobID   string                   `json:"barrier_auto_unseal_blob_id,omitempty"`
-	BarrierAutoUnsealEnabled  bool                     `json:"barrier_auto_unseal_enabled"`
-	AppAutoLockMinutes        int                      `json:"app_auto_lock_minutes"`
-	AppLockOnScreenLock       bool                     `json:"app_lock_on_screen_lock"`
-	SealerBackend             string                   `json:"sealer_backend,omitempty"`
-	APIExplorerSandboxPolicy  string                   `json:"api_explorer_sandbox_policy"`
-	BrowserExtensionEnabled   bool                     `json:"browser_extension_enabled"`
-	DeveloperTools            bool                     `json:"developer_tools"`
-	FIDO2RequireUserPresence  bool                     `json:"fido2_require_user_presence"`
-	FIDO2UserIntentCheck      bool                     `json:"fido2_user_intent_check"`
-	AutoFillPolicy            *autofill.AutoFillPolicy `json:"autofill_policy,omitempty"`
-	Identity                  IdentityConfig           `json:"identity"`
+	AutoTray                  bool                 `json:"auto_tray"`
+	Theme                     string               `json:"theme"`
+	StartMinimized            bool                 `json:"start_minimized"`
+	Notifications             bool                 `json:"notifications"`
+	WindowWidth               int                  `json:"window_width"`
+	WindowHeight              int                  `json:"window_height"`
+	RememberPosition          bool                 `json:"remember_position"`
+	WindowX                   int                  `json:"window_x"`
+	WindowY                   int                  `json:"window_y"`
+	ServerAddress             string               `json:"server_address"`
+	ServerProtocol            string               `json:"server_protocol"`
+	ServerTLSEnabled          bool                 `json:"server_tls_enabled"`
+	ServerTLSSkipVerify       bool                 `json:"server_tls_skip_verify"`
+	ServerTLSCAFile           string               `json:"server_tls_ca_file"`
+	ServerAutoConnect         bool                 `json:"server_auto_connect"`
+	AutoUnsealEnabled         bool                 `json:"auto_unseal_enabled"`
+	AutoUnsealBlobID          string               `json:"auto_unseal_blob_id"`
+	AutoUnsealPCRs            []int                `json:"auto_unseal_pcrs"`
+	AutoUnsealPCRBank         string               `json:"auto_unseal_pcr_bank"`
+	AutoUnsealPolicyType      string               `json:"auto_unseal_policy_type"`
+	AutoUnsealPolicyName      string               `json:"auto_unseal_policy_name"`
+	AutoUnsealBackend         string               `json:"auto_unseal_backend"`
+	FIDO2AuthenticatorEnabled bool                 `json:"fido2_authenticator_enabled"`
+	ClipboardTimeout          int                  `json:"clipboard_timeout"`
+	RequireAuth               bool                 `json:"require_auth"`
+	SetupComplete             bool                 `json:"setup_complete"`
+	StorageType               string               `json:"storage_type"`
+	BarrierInitialized        bool                 `json:"barrier_initialized"`
+	BarrierStrategy           string               `json:"barrier_strategy"`
+	BarrierAutoUnsealBlobID   string               `json:"barrier_auto_unseal_blob_id,omitempty"`
+	BarrierAutoUnsealEnabled  bool                 `json:"barrier_auto_unseal_enabled"`
+	AppAutoLockMinutes        int                  `json:"app_auto_lock_minutes"`
+	AppLockOnScreenLock       bool                 `json:"app_lock_on_screen_lock"`
+	SealerBackend             string               `json:"sealer_backend,omitempty"`
+	APIExplorerSandboxPolicy  string               `json:"api_explorer_sandbox_policy"`
+	BrowserExtensionEnabled   bool                 `json:"browser_extension_enabled"`
+	DeveloperTools            bool                 `json:"developer_tools"`
+	FIDO2RequireUserPresence  bool                 `json:"fido2_require_user_presence"`
+	FIDO2UserIntentCheck      bool                 `json:"fido2_user_intent_check"`
+	AutoFillPolicy            *xkms.AutoFillPolicy `json:"autofill_policy,omitempty"`
+	Identity                  IdentityConfig       `json:"identity"`
 }
 
 // ConfigUpdater is called by AppService.UpdateConfig to persist changes.

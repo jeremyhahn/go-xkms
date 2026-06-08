@@ -19,22 +19,27 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// newTestFactory builds a Factory over an in-memory storage.Backend wrapped by
+// the kvadapter datastore path (no go-objstore). Each call yields an isolated
+// store so tests do not share state.
+func newTestFactory(t *testing.T) *Factory {
+	t.Helper()
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
+	require.NoError(t, err)
+	f, err := NewFactoryFromKVStore(kv)
+	require.NoError(t, err)
+	return f.(*Factory)
+}
+
 func TestFactory_AccountDAO(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.AccountDAO()
 	assert.NoError(t, err)
@@ -42,15 +47,7 @@ func TestFactory_AccountDAO(t *testing.T) {
 }
 
 func TestFactory_OrderDAO(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.OrderDAO(1)
 	assert.NoError(t, err)
@@ -58,31 +55,15 @@ func TestFactory_OrderDAO(t *testing.T) {
 }
 
 func TestFactory_OrderDAO_InvalidAccountID(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
+	factory := newTestFactory(t)
 
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	_, err = factory.OrderDAO(0)
+	_, err := factory.OrderDAO(0)
 	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
 func TestFactory_AuthorizationDAO(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.AuthorizationDAO(1)
 	assert.NoError(t, err)
@@ -90,31 +71,15 @@ func TestFactory_AuthorizationDAO(t *testing.T) {
 }
 
 func TestFactory_AuthorizationDAO_InvalidAccountID(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
+	factory := newTestFactory(t)
 
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	_, err = factory.AuthorizationDAO(0)
+	_, err := factory.AuthorizationDAO(0)
 	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
 func TestFactory_ChallengeDAO(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.ChallengeDAO(1)
 	assert.NoError(t, err)
@@ -122,31 +87,15 @@ func TestFactory_ChallengeDAO(t *testing.T) {
 }
 
 func TestFactory_ChallengeDAO_InvalidAccountID(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
+	factory := newTestFactory(t)
 
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	_, err = factory.ChallengeDAO(0)
+	_, err := factory.ChallengeDAO(0)
 	var idErr qrdbsdk.DAOInvalidEntityIDError
 	assert.True(t, errors.As(err, &idErr))
 }
 
 func TestFactory_CertificateDAO(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.CertificateDAO()
 	assert.NoError(t, err)
@@ -154,15 +103,7 @@ func TestFactory_CertificateDAO(t *testing.T) {
 }
 
 func TestFactory_NonceDAO(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.NonceDAO()
 	assert.NoError(t, err)
@@ -170,105 +111,15 @@ func TestFactory_NonceDAO(t *testing.T) {
 }
 
 func TestFactory_ExternalAccountBindingDAO(t *testing.T) {
-	tmpDir, cleanup := setupTestStore(t)
-	defer cleanup()
-
-	store := local.New()
-	err := store.Configure(map[string]string{"path": tmpDir})
-	require.NoError(t, err)
-
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
+	factory := newTestFactory(t)
 
 	d, err := factory.ExternalAccountBindingDAO()
 	assert.NoError(t, err)
 	assert.NotNil(t, d)
 }
 
-func TestNewFactory_NilStore(t *testing.T) {
-	_, err := NewFactory(nil)
+func TestNewFactory_NilKVStore(t *testing.T) {
+	_, err := NewFactoryFromKVStore(nil)
 	var cfgErr qrdbsdk.DAOInvalidConfigError
 	assert.True(t, errors.As(err, &cfgErr))
-}
-
-// Mock storage tests for Factory
-
-func TestFactory_MockStorage_AccountDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	d, err := factory.AccountDAO()
-	assert.NoError(t, err)
-	assert.NotNil(t, d)
-}
-
-func TestFactory_MockStorage_OrderDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	d, err := factory.OrderDAO(1)
-	assert.NoError(t, err)
-	assert.NotNil(t, d)
-}
-
-func TestFactory_MockStorage_OrderDAO_InvalidAccountID(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	_, err = factory.OrderDAO(0)
-	var idErr qrdbsdk.DAOInvalidEntityIDError
-	assert.True(t, errors.As(err, &idErr))
-}
-
-func TestFactory_MockStorage_AuthorizationDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	d, err := factory.AuthorizationDAO(1)
-	assert.NoError(t, err)
-	assert.NotNil(t, d)
-}
-
-func TestFactory_MockStorage_ChallengeDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	d, err := factory.ChallengeDAO(1)
-	assert.NoError(t, err)
-	assert.NotNil(t, d)
-}
-
-func TestFactory_MockStorage_CertificateDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	d, err := factory.CertificateDAO()
-	assert.NoError(t, err)
-	assert.NotNil(t, d)
-}
-
-func TestFactory_MockStorage_NonceDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	d, err := factory.NonceDAO()
-	assert.NoError(t, err)
-	assert.NotNil(t, d)
-}
-
-func TestFactory_MockStorage_ExternalAccountBindingDAO(t *testing.T) {
-	store := newMockStorage()
-	factory, err := NewFactory(store)
-	require.NoError(t, err)
-
-	d, err := factory.ExternalAccountBindingDAO()
-	assert.NoError(t, err)
-	assert.NotNil(t, d)
 }

@@ -22,8 +22,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Share handler typed errors.
@@ -70,18 +71,33 @@ type shareCollectionStatusResponse struct {
 	Collected int    `json:"collected"`
 }
 
-// ShareHandlers provides REST handlers for Shamir share management.
-type ShareHandlers struct {
-	store sharestore.ShareStore
+// shareInfoToStatus converts a transport.ShareInfo to a shareStatusResponse,
+// omitting the sensitive share data.
+func shareInfoToStatus(info *transport.ShareInfo) shareStatusResponse {
+	return shareStatusResponse{
+		ServerURL:  info.ServerURL,
+		GroupID:    info.GroupID,
+		GroupName:  info.GroupName,
+		ShareIndex: info.ShareIndex,
+		Purpose:    info.Purpose,
+		ReceivedAt: info.ReceivedAt.Format(time.RFC3339),
+		TenantID:   info.TenantID,
+	}
 }
 
-// NewShareHandlers creates a new ShareHandlers with the given store.
-func NewShareHandlers(store sharestore.ShareStore) *ShareHandlers {
-	return &ShareHandlers{store: store}
+// ShareHandlers serves the Shamir share REST endpoints. Share state is owned by
+// the embedded go-qrdb node; the handlers delegate to the unified XKMSService
+// servicer, which passes calls through to the node's share client. The handlers
+// hold no local state.
+type ShareHandlers struct{}
+
+// NewShareHandlers creates a new ShareHandlers.
+func NewShareHandlers() *ShareHandlers {
+	return &ShareHandlers{}
 }
 
 // SubmitShareHandler handles POST /shares/submit requests.
-// It saves a Shamir share to the share store.
+// It submits a Shamir share to the embedded go-qrdb node's share client.
 //
 // Request body (JSON):
 //
@@ -95,7 +111,8 @@ func NewShareHandlers(store sharestore.ShareStore) *ShareHandlers {
 //	  "tenant_id": "string (optional)"
 //	}
 func (h *ShareHandlers) SubmitShareHandler(w http.ResponseWriter, r *http.Request) {
-	if h.store == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -121,30 +138,27 @@ func (h *ShareHandlers) SubmitShareHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	entry := &sharestore.ShareEntry{
+	if _, err := svc.SubmitShare(r.Context(), &transport.SubmitShareRequest{
 		ServerURL:  req.ServerURL,
 		GroupID:    req.GroupID,
 		GroupName:  req.GroupName,
 		ShareIndex: req.ShareIndex,
 		ShareData:  req.ShareData,
 		Purpose:    req.Purpose,
-		ReceivedAt: time.Now().UTC(),
 		TenantID:   req.TenantID,
-	}
-
-	if err := h.store.Save(r.Context(), entry); err != nil {
+	}); err != nil {
 		handleShareError(w, err)
 		return
 	}
 
 	resp := shareStatusResponse{
-		ServerURL:  entry.ServerURL,
-		GroupID:    entry.GroupID,
-		GroupName:  entry.GroupName,
-		ShareIndex: entry.ShareIndex,
-		Purpose:    entry.Purpose,
-		ReceivedAt: entry.ReceivedAt.Format(time.RFC3339),
-		TenantID:   entry.TenantID,
+		ServerURL:  req.ServerURL,
+		GroupID:    req.GroupID,
+		GroupName:  req.GroupName,
+		ShareIndex: req.ShareIndex,
+		Purpose:    req.Purpose,
+		ReceivedAt: time.Now().UTC().Format(time.RFC3339),
+		TenantID:   req.TenantID,
 	}
 	writeJSON(w, resp, http.StatusCreated)
 }
@@ -152,28 +166,21 @@ func (h *ShareHandlers) SubmitShareHandler(w http.ResponseWriter, r *http.Reques
 // ListSharesHandler handles GET /shares requests.
 // Returns all stored shares without exposing the sensitive share data.
 func (h *ShareHandlers) ListSharesHandler(w http.ResponseWriter, r *http.Request) {
-	if h.store == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
 
-	entries, err := h.store.List(r.Context())
+	resp, err := svc.ListShares(r.Context())
 	if err != nil {
 		handleShareError(w, err)
 		return
 	}
 
-	shares := make([]shareStatusResponse, 0, len(entries))
-	for _, entry := range entries {
-		shares = append(shares, shareStatusResponse{
-			ServerURL:  entry.ServerURL,
-			GroupID:    entry.GroupID,
-			GroupName:  entry.GroupName,
-			ShareIndex: entry.ShareIndex,
-			Purpose:    entry.Purpose,
-			ReceivedAt: entry.ReceivedAt.Format(time.RFC3339),
-			TenantID:   entry.TenantID,
-		})
+	shares := make([]shareStatusResponse, 0, len(resp.Shares))
+	for i := range resp.Shares {
+		shares = append(shares, shareInfoToStatus(&resp.Shares[i]))
 	}
 
 	pageReq := parsePageRequest(r)
@@ -191,7 +198,8 @@ func (h *ShareHandlers) ListSharesHandler(w http.ResponseWriter, r *http.Request
 //   - groupID: custodian group identifier (required)
 //   - shareIndex: 1-based share index within the group (required)
 func (h *ShareHandlers) GetShareHandler(w http.ResponseWriter, r *http.Request) {
-	if h.store == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -221,22 +229,13 @@ func (h *ShareHandlers) GetShareHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	entry, err := h.store.Load(r.Context(), serverURL, groupID, shareIndex)
+	info, err := svc.GetShare(r.Context(), serverURL, groupID, shareIndex)
 	if err != nil {
 		handleShareError(w, err)
 		return
 	}
 
-	resp := shareStatusResponse{
-		ServerURL:  entry.ServerURL,
-		GroupID:    entry.GroupID,
-		GroupName:  entry.GroupName,
-		ShareIndex: entry.ShareIndex,
-		Purpose:    entry.Purpose,
-		ReceivedAt: entry.ReceivedAt.Format(time.RFC3339),
-		TenantID:   entry.TenantID,
-	}
-	writeJSON(w, resp, http.StatusOK)
+	writeJSON(w, shareInfoToStatus(info), http.StatusOK)
 }
 
 // DeleteShareHandler handles DELETE /shares/{serverURL}/{groupID}/{shareIndex} requests.
@@ -247,7 +246,8 @@ func (h *ShareHandlers) GetShareHandler(w http.ResponseWriter, r *http.Request) 
 //   - groupID: custodian group identifier (required)
 //   - shareIndex: 1-based share index within the group (required)
 func (h *ShareHandlers) DeleteShareHandler(w http.ResponseWriter, r *http.Request) {
-	if h.store == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -277,7 +277,7 @@ func (h *ShareHandlers) DeleteShareHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.store.Delete(r.Context(), serverURL, groupID, shareIndex); err != nil {
+	if err := svc.DeleteShare(r.Context(), serverURL, groupID, shareIndex); err != nil {
 		handleShareError(w, err)
 		return
 	}
@@ -286,12 +286,13 @@ func (h *ShareHandlers) DeleteShareHandler(w http.ResponseWriter, r *http.Reques
 }
 
 // GetShareCollectionStatusHandler handles GET /shares/status/{groupID} requests.
-// It counts shares submitted for a given group across all server URLs.
+// It reports the number of shares submitted for a given group.
 //
 // URL parameters:
 //   - groupID: custodian group identifier (required)
 func (h *ShareHandlers) GetShareCollectionStatusHandler(w http.ResponseWriter, r *http.Request) {
-	if h.store == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -302,40 +303,27 @@ func (h *ShareHandlers) GetShareCollectionStatusHandler(w http.ResponseWriter, r
 		return
 	}
 
-	entries, err := h.store.List(r.Context())
+	status, err := svc.GetShareCollectionStatus(r.Context(), groupID)
 	if err != nil {
 		handleShareError(w, err)
 		return
 	}
 
-	collected := 0
-	for _, entry := range entries {
-		if entry.GroupID == groupID {
-			collected++
-		}
-	}
-
 	writeJSON(w, shareCollectionStatusResponse{
-		GroupID:   groupID,
-		Collected: collected,
+		GroupID:   status.GroupID,
+		Collected: status.Collected,
 	}, http.StatusOK)
 }
 
-// handleShareError maps sharestore errors to HTTP status codes and writes
-// the appropriate error response.
+// handleShareError maps share domain errors (surfaced by the go-qrdb node's
+// share client through the XKMSService servicer) to HTTP status codes and
+// writes the appropriate error response.
 func handleShareError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, sharestore.ErrShareNotFound):
+	case errors.Is(err, xkms.ErrNotConfigured):
+		writeError(w, ErrShareNotConfigured, http.StatusServiceUnavailable)
+	case errors.Is(err, qrdbsdk.ErrCeremonyShareNotFound):
 		writeError(w, err, http.StatusNotFound)
-	case errors.Is(err, sharestore.ErrShareExists):
-		writeError(w, err, http.StatusConflict)
-	case errors.Is(err, sharestore.ErrInvalidServerURL),
-		errors.Is(err, sharestore.ErrInvalidGroupID),
-		errors.Is(err, sharestore.ErrEmptyShare),
-		errors.Is(err, sharestore.ErrNilEntry):
-		writeError(w, err, http.StatusBadRequest)
-	case errors.Is(err, sharestore.ErrStoreClosed):
-		writeError(w, err, http.StatusServiceUnavailable)
 	default:
 		writeError(w, ErrInternalError, http.StatusInternalServerError)
 	}

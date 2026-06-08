@@ -6,11 +6,11 @@
 package services
 
 import (
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/manager"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -24,15 +24,15 @@ func TestConnect_PassesSOPIN(t *testing.T) {
 	var called atomic.Bool
 
 	mock := &pkcs11MockManager{
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true, Label: "YubiKey PIV"},
 				},
 			}, nil
 		},
-		connectFn: func(_ string, _ uint, userPin, soPin string) (manager.Backend, error) {
+		connectFn: func(_ string, _ uint, userPin, soPin string) (xkms.PKCS11ManagerBackend, error) {
 			capturedUserPin = userPin
 			capturedSoPin = soPin
 			called.Store(true)
@@ -60,10 +60,10 @@ func TestTestConnection_ReusesRegisteredModule(t *testing.T) {
 			registerCount.Add(1)
 			return "mod-1", nil
 		},
-		getModuleFn: func(_ string) (*manager.ModuleInfo, error) {
-			return &manager.ModuleInfo{
+		getModuleFn: func(_ string) (*xkms.PKCS11ModuleInfo, error) {
+			return &xkms.PKCS11ModuleInfo{
 				ID: "mod-1",
-				Slots: []manager.SlotInfo{
+				Slots: []xkms.PKCS11SlotInfo{
 					{SlotID: 0, TokenPresent: true, Initialized: true, Label: "YubiKey PIV"},
 				},
 			}, nil

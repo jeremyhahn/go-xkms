@@ -22,8 +22,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -51,7 +50,7 @@ type Config struct {
 // Thread-safe: Yes, delegates to thread-safe TCGCA.
 type Service struct {
 	config *Config
-	ca     ca.TCGCA
+	ca     xkms.TCGCA
 }
 
 // NewService creates a new embedded CA service wrapping the given TCGCA.
@@ -61,7 +60,7 @@ type Service struct {
 //
 // Returns ErrNilConfig if config is nil.
 // Returns ErrNilCA if tcgCA is nil.
-func NewService(config *Config, tcgCA ca.TCGCA) (*Service, error) {
+func NewService(config *Config, tcgCA xkms.TCGCA) (*Service, error) {
 	if config == nil {
 		return nil, ErrNilConfig
 	}
@@ -75,14 +74,14 @@ func NewService(config *Config, tcgCA ca.TCGCA) (*Service, error) {
 }
 
 // CA returns the underlying TCGCA instance.
-func (s *Service) CA() ca.TCGCA {
+func (s *Service) CA() xkms.TCGCA {
 	return s.ca
 }
 
 // IssueEKCertificate issues an Endorsement Key certificate per TCG EK
 // Credential Profile. The request provides subject/SAN information, and
 // ekPubKey is the EK public key extracted from the TPM.
-func (s *Service) IssueEKCertificate(request *ca.CertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (s *Service) IssueEKCertificate(request *xkms.TrustedCACertificateRequest, ekPubKey crypto.PublicKey) (*x509.Certificate, error) {
 	if request == nil {
 		return nil, ErrNilRequest
 	}
@@ -96,7 +95,7 @@ func (s *Service) IssueEKCertificate(request *ca.CertificateRequest, ekPubKey cr
 // IssueAKCertificate issues an Attestation Key certificate per TCG spec.
 // The request provides subject/SAN information, and pubKey is the AK
 // public key extracted from the TPM.
-func (s *Service) IssueAKCertificate(request *ca.CertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
+func (s *Service) IssueAKCertificate(request *xkms.TrustedCACertificateRequest, pubKey crypto.PublicKey) (*x509.Certificate, error) {
 	if request == nil {
 		return nil, ErrNilRequest
 	}
@@ -109,7 +108,7 @@ func (s *Service) IssueAKCertificate(request *ca.CertificateRequest, pubKey cryp
 
 // SignTCGCSRIDevID verifies and signs a TCG-CSR-IDEVID, issuing both IAK
 // and IDevID certificates. Returns DER-encoded IAK and IDevID certificates.
-func (s *Service) SignTCGCSRIDevID(tcgCSR *tpm2.TCG_CSR_IDEVID, request *ca.CertificateRequest) (iakDER, idevidDER []byte, err error) {
+func (s *Service) SignTCGCSRIDevID(tcgCSR *xkms.TCG_CSR_IDEVID, request *xkms.TrustedCACertificateRequest) (iakDER, idevidDER []byte, err error) {
 	if tcgCSR == nil {
 		return nil, nil, ErrNilTCGCSR
 	}
@@ -127,7 +126,7 @@ func (s *Service) SignTCGCSRIDevID(tcgCSR *tpm2.TCG_CSR_IDEVID, request *ca.Cert
 // generates a MakeCredential challenge, and prepares certificates. The
 // caller must complete the ActivateCredential challenge/response before
 // delivering the certificates to the device.
-func (s *Service) EnrollDevice(packedCSR []byte, request *ca.CertificateRequest) (*ca.TCGEnrollmentResult, error) {
+func (s *Service) EnrollDevice(packedCSR []byte, request *xkms.TrustedCACertificateRequest) (*xkms.TCGEnrollmentResult, error) {
 	if len(packedCSR) == 0 {
 		return nil, ErrEmptyPackedCSR
 	}
@@ -143,7 +142,7 @@ func (s *Service) EnrollDevice(packedCSR []byte, request *ca.CertificateRequest)
 
 // SetTPM configures the TPM instance for enrollment operations requiring
 // MakeCredentialWithExternalEK (server-side credential challenge).
-func (s *Service) SetTPM(tpm tpm2.TrustedPlatformModule) {
+func (s *Service) SetTPM(tpm xkms.TrustedPlatformModule) {
 	s.ca.SetTPM(tpm)
 }
 
@@ -229,7 +228,7 @@ func (s *Service) SignCSR(_ context.Context, req *transport.SignCSRRequest) (*tr
 		return nil, ErrEmptyCSR
 	}
 
-	opts := &ca.SignOptions{
+	opts := &xkms.TrustedCASignOptions{
 		Profile:      req.Profile,
 		ValidityDays: req.ValidityDays,
 	}
@@ -274,8 +273,8 @@ func (s *Service) IssueCertificate(_ context.Context, req *transport.IssueCertif
 	}
 
 	// Build the certificate request from the transport request.
-	certReq := &ca.CertificateRequest{
-		Subject: ca.Subject{
+	certReq := &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{
 			CommonName:   req.CommonName,
 			Organization: req.Organization,
 		},
@@ -287,7 +286,7 @@ func (s *Service) IssueCertificate(_ context.Context, req *transport.IssueCertif
 		certReq.SANS = parseSANs(req.SANs)
 	}
 
-	var issued *ca.IssuedCertificate
+	var issued *xkms.TrustedCAIssuedCertificate
 	var err error
 
 	if req.Profile != "" {
@@ -393,8 +392,8 @@ func (s *Service) IsRevoked(_ context.Context, req *transport.IsRevokedRequest) 
 // parseSANs converts a string slice of SANs into a SubjectAlternativeNames
 // structure. Each entry is prefixed with its type: "DNS:", "IP:", "Email:".
 // Entries without a recognized prefix are treated as DNS names.
-func parseSANs(sans []string) *ca.SubjectAlternativeNames {
-	result := &ca.SubjectAlternativeNames{}
+func parseSANs(sans []string) *xkms.TrustedCASubjectAlternativeNames {
+	result := &xkms.TrustedCASubjectAlternativeNames{}
 
 	for _, san := range sans {
 		switch {

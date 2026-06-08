@@ -30,8 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // generateTestCertificate creates a self-signed test certificate with ECDSA P-256.
@@ -169,7 +168,7 @@ func generateLargeCertificate(t *testing.T) *x509.Certificate {
 	}
 
 	// Create a large extension to make the certificate exceed 16KB
-	largeExtension := make([]byte, pivcert.MaxCertSizeFile+1024)
+	largeExtension := make([]byte, xkms.PIVMaxCertSizeFile+1024)
 	for i := range largeExtension {
 		largeExtension[i] = byte(i % 256)
 	}
@@ -207,9 +206,9 @@ func generateLargeCertificate(t *testing.T) *x509.Certificate {
 }
 
 // createValidConfig creates a valid FileStorageConfig with a memory backend.
-func createValidConfig() *pivcert.FileStorageConfig {
-	return &pivcert.FileStorageConfig{
-		Backend:    storage.NewMemory(),
+func createValidConfig() *xkms.PIVFileStorageConfig {
+	return &xkms.PIVFileStorageConfig{
+		Backend:    xkms.NewStorageMemory(),
 		DEREnabled: true,
 		PEMEnabled: true,
 	}
@@ -247,13 +246,13 @@ func TestNewFileBackend(t *testing.T) {
 			}
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidConfig) {
-			t.Errorf("NewFileBackend(nil) error = %v, want %v", err, pivcert.ErrInvalidConfig)
+		if !errors.Is(err, xkms.ErrPIVInvalidConfig) {
+			t.Errorf("NewFileBackend(nil) error = %v, want %v", err, xkms.ErrPIVInvalidConfig)
 		}
 	})
 
 	t.Run("nil backend returns error", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
+		config := &xkms.PIVFileStorageConfig{
 			Backend:    nil,
 			DEREnabled: true,
 		}
@@ -266,14 +265,14 @@ func TestNewFileBackend(t *testing.T) {
 			}
 			return
 		}
-		if !errors.Is(err, pivcert.ErrMissingBackend) {
-			t.Errorf("NewFileBackend() error = %v, want %v", err, pivcert.ErrMissingBackend)
+		if !errors.Is(err, xkms.ErrPIVMissingBackend) {
+			t.Errorf("NewFileBackend() error = %v, want %v", err, xkms.ErrPIVMissingBackend)
 		}
 	})
 
 	t.Run("no format enabled returns error", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
-			Backend:    storage.NewMemory(),
+		config := &xkms.PIVFileStorageConfig{
+			Backend:    xkms.NewStorageMemory(),
 			DEREnabled: false,
 			PEMEnabled: false,
 		}
@@ -286,14 +285,14 @@ func TestNewFileBackend(t *testing.T) {
 			}
 			return
 		}
-		if !errors.Is(err, pivcert.ErrNoFormatEnabled) {
-			t.Errorf("NewFileBackend() error = %v, want %v", err, pivcert.ErrNoFormatEnabled)
+		if !errors.Is(err, xkms.ErrPIVNoFormatEnabled) {
+			t.Errorf("NewFileBackend() error = %v, want %v", err, xkms.ErrPIVNoFormatEnabled)
 		}
 	})
 
 	t.Run("DER only config is valid", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
-			Backend:    storage.NewMemory(),
+		config := &xkms.PIVFileStorageConfig{
+			Backend:    xkms.NewStorageMemory(),
 			DEREnabled: true,
 			PEMEnabled: false,
 		}
@@ -306,8 +305,8 @@ func TestNewFileBackend(t *testing.T) {
 	})
 
 	t.Run("PEM only config is valid", func(t *testing.T) {
-		config := &pivcert.FileStorageConfig{
-			Backend:    storage.NewMemory(),
+		config := &xkms.PIVFileStorageConfig{
+			Backend:    xkms.NewStorageMemory(),
 			DEREnabled: false,
 			PEMEnabled: true,
 		}
@@ -330,7 +329,7 @@ func TestFileBackend_Store(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-store")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Errorf("Store() error = %v", err)
 		}
@@ -363,7 +362,7 @@ func TestFileBackend_Store(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-metadata")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Errorf("Store() error = %v", err)
 		}
@@ -376,7 +375,7 @@ func TestFileBackend_Store(t *testing.T) {
 		if len(slots) != 1 {
 			t.Errorf("expected 1 slot, got %d", len(slots))
 		}
-		if len(slots) > 0 && slots[0].Slot != pivcert.PIVSlotAuthentication {
+		if len(slots) > 0 && slots[0].Slot != xkms.PIVSlotAuthentication {
 			t.Errorf("expected slot 9a, got %s", slots[0].Slot)
 		}
 	})
@@ -390,13 +389,13 @@ func TestFileBackend_Store(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-invalid-slot")
-		err = backend.Store(pivcert.PIVSlot("invalid"), cert)
+		err = backend.Store(xkms.PIVSlot("invalid"), cert)
 		if err == nil {
 			t.Error("Store() with invalid slot expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidSlot) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrInvalidSlot)
+		if !errors.Is(err, xkms.ErrPIVInvalidSlot) {
+			t.Errorf("Store() error = %v, want %v", err, xkms.ErrPIVInvalidSlot)
 		}
 	})
 
@@ -408,13 +407,13 @@ func TestFileBackend_Store(t *testing.T) {
 		}
 		defer backend.Close()
 
-		err = backend.Store(pivcert.PIVSlotAuthentication, nil)
+		err = backend.Store(xkms.PIVSlotAuthentication, nil)
 		if err == nil {
 			t.Error("Store() with nil certificate expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
+		if !errors.Is(err, xkms.ErrPIVInvalidCertificate) {
+			t.Errorf("Store() error = %v, want %v", err, xkms.ErrPIVInvalidCertificate)
 		}
 	})
 
@@ -428,13 +427,13 @@ func TestFileBackend_Store(t *testing.T) {
 		backend.Close()
 
 		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err == nil {
 			t.Error("Store() on closed backend expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrStorageClosed)
+		if !errors.Is(err, xkms.ErrPIVStorageClosed) {
+			t.Errorf("Store() error = %v, want %v", err, xkms.ErrPIVStorageClosed)
 		}
 	})
 
@@ -447,19 +446,19 @@ func TestFileBackend_Store(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateLargeCertificate(t)
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err == nil {
 			t.Error("Store() with large certificate expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrCertificateTooLarge) {
-			t.Errorf("Store() error = %v, want %v", err, pivcert.ErrCertificateTooLarge)
+		if !errors.Is(err, xkms.ErrPIVCertificateTooLarge) {
+			t.Errorf("Store() error = %v, want %v", err, xkms.ErrPIVCertificateTooLarge)
 		}
 	})
 
 	t.Run("store DER only", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
+		memBackend := xkms.NewStorageMemory()
+		config := &xkms.PIVFileStorageConfig{
 			Backend:    memBackend,
 			DEREnabled: true,
 			PEMEnabled: false,
@@ -471,7 +470,7 @@ func TestFileBackend_Store(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-der-only")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Errorf("Store() error = %v", err)
 		}
@@ -496,8 +495,8 @@ func TestFileBackend_Store(t *testing.T) {
 	})
 
 	t.Run("store PEM only", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
+		memBackend := xkms.NewStorageMemory()
+		config := &xkms.PIVFileStorageConfig{
 			Backend:    memBackend,
 			DEREnabled: false,
 			PEMEnabled: true,
@@ -509,7 +508,7 @@ func TestFileBackend_Store(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-pem-only")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Errorf("Store() error = %v", err)
 		}
@@ -544,12 +543,12 @@ func TestFileBackend_Retrieve(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-retrieve")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
+		retrieved, err := backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err != nil {
 			t.Errorf("Retrieve() error = %v", err)
 		}
@@ -569,13 +568,13 @@ func TestFileBackend_Retrieve(t *testing.T) {
 		}
 		defer backend.Close()
 
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
+		_, err = backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err == nil {
 			t.Error("Retrieve() non-existent certificate expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrCertificateNotFound)
+		if !errors.Is(err, xkms.ErrPIVCertificateNotFound) {
+			t.Errorf("Retrieve() error = %v, want %v", err, xkms.ErrPIVCertificateNotFound)
 		}
 	})
 
@@ -587,13 +586,13 @@ func TestFileBackend_Retrieve(t *testing.T) {
 		}
 		defer backend.Close()
 
-		_, err = backend.Retrieve(pivcert.PIVSlot("invalid"))
+		_, err = backend.Retrieve(xkms.PIVSlot("invalid"))
 		if err == nil {
 			t.Error("Retrieve() with invalid slot expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidSlot) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidSlot)
+		if !errors.Is(err, xkms.ErrPIVInvalidSlot) {
+			t.Errorf("Retrieve() error = %v, want %v", err, xkms.ErrPIVInvalidSlot)
 		}
 	})
 
@@ -605,26 +604,26 @@ func TestFileBackend_Retrieve(t *testing.T) {
 		}
 
 		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
 		backend.Close()
 
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
+		_, err = backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err == nil {
 			t.Error("Retrieve() on closed backend expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrStorageClosed)
+		if !errors.Is(err, xkms.ErrPIVStorageClosed) {
+			t.Errorf("Retrieve() error = %v, want %v", err, xkms.ErrPIVStorageClosed)
 		}
 	})
 
 	t.Run("retrieve from PEM only storage", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
+		memBackend := xkms.NewStorageMemory()
+		config := &xkms.PIVFileStorageConfig{
 			Backend:    memBackend,
 			DEREnabled: false,
 			PEMEnabled: true,
@@ -636,12 +635,12 @@ func TestFileBackend_Retrieve(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-pem-retrieve")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
+		retrieved, err := backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err != nil {
 			t.Errorf("Retrieve() error = %v", err)
 		}
@@ -654,8 +653,8 @@ func TestFileBackend_Retrieve(t *testing.T) {
 	})
 
 	t.Run("retrieve invalid DER returns error", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
+		memBackend := xkms.NewStorageMemory()
+		config := &xkms.PIVFileStorageConfig{
 			Backend:    memBackend,
 			DEREnabled: true,
 			PEMEnabled: false,
@@ -672,19 +671,19 @@ func TestFileBackend_Retrieve(t *testing.T) {
 			t.Fatalf("failed to write invalid DER: %v", err)
 		}
 
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
+		_, err = backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err == nil {
 			t.Error("Retrieve() with invalid DER expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
+		if !errors.Is(err, xkms.ErrPIVInvalidCertificate) {
+			t.Errorf("Retrieve() error = %v, want %v", err, xkms.ErrPIVInvalidCertificate)
 		}
 	})
 
 	t.Run("retrieve invalid PEM returns error", func(t *testing.T) {
-		memBackend := storage.NewMemory()
-		config := &pivcert.FileStorageConfig{
+		memBackend := xkms.NewStorageMemory()
+		config := &xkms.PIVFileStorageConfig{
 			Backend:    memBackend,
 			DEREnabled: false,
 			PEMEnabled: true,
@@ -701,13 +700,13 @@ func TestFileBackend_Retrieve(t *testing.T) {
 			t.Fatalf("failed to write invalid PEM: %v", err)
 		}
 
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
+		_, err = backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err == nil {
 			t.Error("Retrieve() with invalid PEM expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Retrieve() error = %v, want %v", err, pivcert.ErrInvalidFormat)
+		if !errors.Is(err, xkms.ErrPIVInvalidFormat) {
+			t.Errorf("Retrieve() error = %v, want %v", err, xkms.ErrPIVInvalidFormat)
 		}
 	})
 }
@@ -722,19 +721,19 @@ func TestFileBackend_Delete(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-delete")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
+		err = backend.Delete(xkms.PIVSlotAuthentication)
 		if err != nil {
 			t.Errorf("Delete() error = %v", err)
 		}
 
 		// Verify certificate was deleted
-		_, err = backend.Retrieve(pivcert.PIVSlotAuthentication)
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
+		_, err = backend.Retrieve(xkms.PIVSlotAuthentication)
+		if !errors.Is(err, xkms.ErrPIVCertificateNotFound) {
 			t.Errorf("expected ErrCertificateNotFound after delete, got %v", err)
 		}
 	})
@@ -748,12 +747,12 @@ func TestFileBackend_Delete(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-delete-metadata")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
+		err = backend.Delete(xkms.PIVSlotAuthentication)
 		if err != nil {
 			t.Errorf("Delete() error = %v", err)
 		}
@@ -776,13 +775,13 @@ func TestFileBackend_Delete(t *testing.T) {
 		}
 		defer backend.Close()
 
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
+		err = backend.Delete(xkms.PIVSlotAuthentication)
 		if err == nil {
 			t.Error("Delete() non-existent certificate expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Errorf("Delete() error = %v, want %v", err, pivcert.ErrCertificateNotFound)
+		if !errors.Is(err, xkms.ErrPIVCertificateNotFound) {
+			t.Errorf("Delete() error = %v, want %v", err, xkms.ErrPIVCertificateNotFound)
 		}
 	})
 
@@ -794,13 +793,13 @@ func TestFileBackend_Delete(t *testing.T) {
 		}
 		defer backend.Close()
 
-		err = backend.Delete(pivcert.PIVSlot("invalid"))
+		err = backend.Delete(xkms.PIVSlot("invalid"))
 		if err == nil {
 			t.Error("Delete() with invalid slot expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidSlot) {
-			t.Errorf("Delete() error = %v, want %v", err, pivcert.ErrInvalidSlot)
+		if !errors.Is(err, xkms.ErrPIVInvalidSlot) {
+			t.Errorf("Delete() error = %v, want %v", err, xkms.ErrPIVInvalidSlot)
 		}
 	})
 
@@ -812,20 +811,20 @@ func TestFileBackend_Delete(t *testing.T) {
 		}
 
 		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
 		backend.Close()
 
-		err = backend.Delete(pivcert.PIVSlotAuthentication)
+		err = backend.Delete(xkms.PIVSlotAuthentication)
 		if err == nil {
 			t.Error("Delete() on closed backend expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Delete() error = %v, want %v", err, pivcert.ErrStorageClosed)
+		if !errors.Is(err, xkms.ErrPIVStorageClosed) {
+			t.Errorf("Delete() error = %v, want %v", err, xkms.ErrPIVStorageClosed)
 		}
 	})
 }
@@ -857,10 +856,10 @@ func TestFileBackend_List(t *testing.T) {
 		defer backend.Close()
 
 		// Store certificates in multiple slots
-		slots := []pivcert.PIVSlot{
-			pivcert.PIVSlotAuthentication,
-			pivcert.PIVSlotDigitalSignature,
-			pivcert.PIVSlotKeyManagement,
+		slots := []xkms.PIVSlot{
+			xkms.PIVSlotAuthentication,
+			xkms.PIVSlotDigitalSignature,
+			xkms.PIVSlotKeyManagement,
 		}
 
 		for i, slot := range slots {
@@ -895,8 +894,8 @@ func TestFileBackend_List(t *testing.T) {
 			t.Error("List() on closed backend expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("List() error = %v, want %v", err, pivcert.ErrStorageClosed)
+		if !errors.Is(err, xkms.ErrPIVStorageClosed) {
+			t.Errorf("List() error = %v, want %v", err, xkms.ErrPIVStorageClosed)
 		}
 	})
 
@@ -909,7 +908,7 @@ func TestFileBackend_List(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateRSACertificate(t, "test-list-metadata")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
@@ -923,7 +922,7 @@ func TestFileBackend_List(t *testing.T) {
 		}
 
 		slotInfo := slots[0]
-		if slotInfo.Slot != pivcert.PIVSlotAuthentication {
+		if slotInfo.Slot != xkms.PIVSlotAuthentication {
 			t.Errorf("expected slot 9a, got %s", slotInfo.Slot)
 		}
 		if slotInfo.Algorithm != "RSA" {
@@ -949,12 +948,12 @@ func TestFileBackend_Import(t *testing.T) {
 
 		cert := generateTestCertificate(t, "test-import-der")
 
-		err = backend.Import(pivcert.PIVSlotAuthentication, cert.Raw, pivcert.FormatDER)
+		err = backend.Import(xkms.PIVSlotAuthentication, cert.Raw, xkms.PIVFormatDER)
 		if err != nil {
 			t.Errorf("Import() error = %v", err)
 		}
 
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
+		retrieved, err := backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err != nil {
 			t.Fatalf("Retrieve() error = %v", err)
 		}
@@ -977,12 +976,12 @@ func TestFileBackend_Import(t *testing.T) {
 			Bytes: cert.Raw,
 		})
 
-		err = backend.Import(pivcert.PIVSlotAuthentication, pemData, pivcert.FormatPEM)
+		err = backend.Import(xkms.PIVSlotAuthentication, pemData, xkms.PIVFormatPEM)
 		if err != nil {
 			t.Errorf("Import() error = %v", err)
 		}
 
-		retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
+		retrieved, err := backend.Retrieve(xkms.PIVSlotAuthentication)
 		if err != nil {
 			t.Fatalf("Retrieve() error = %v", err)
 		}
@@ -999,13 +998,13 @@ func TestFileBackend_Import(t *testing.T) {
 		}
 		defer backend.Close()
 
-		err = backend.Import(pivcert.PIVSlotAuthentication, []byte{}, pivcert.FormatDER)
+		err = backend.Import(xkms.PIVSlotAuthentication, []byte{}, xkms.PIVFormatDER)
 		if err == nil {
 			t.Error("Import() with empty data expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
+		if !errors.Is(err, xkms.ErrPIVInvalidCertificate) {
+			t.Errorf("Import() error = %v, want %v", err, xkms.ErrPIVInvalidCertificate)
 		}
 	})
 
@@ -1017,13 +1016,13 @@ func TestFileBackend_Import(t *testing.T) {
 		}
 		defer backend.Close()
 
-		err = backend.Import(pivcert.PIVSlotAuthentication, []byte("invalid-der"), pivcert.FormatDER)
+		err = backend.Import(xkms.PIVSlotAuthentication, []byte("invalid-der"), xkms.PIVFormatDER)
 		if err == nil {
 			t.Error("Import() with invalid DER expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidCertificate) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidCertificate)
+		if !errors.Is(err, xkms.ErrPIVInvalidCertificate) {
+			t.Errorf("Import() error = %v, want %v", err, xkms.ErrPIVInvalidCertificate)
 		}
 	})
 
@@ -1035,13 +1034,13 @@ func TestFileBackend_Import(t *testing.T) {
 		}
 		defer backend.Close()
 
-		err = backend.Import(pivcert.PIVSlotAuthentication, []byte("invalid-pem"), pivcert.FormatPEM)
+		err = backend.Import(xkms.PIVSlotAuthentication, []byte("invalid-pem"), xkms.PIVFormatPEM)
 		if err == nil {
 			t.Error("Import() with invalid PEM expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidFormat)
+		if !errors.Is(err, xkms.ErrPIVInvalidFormat) {
+			t.Errorf("Import() error = %v, want %v", err, xkms.ErrPIVInvalidFormat)
 		}
 	})
 
@@ -1054,13 +1053,13 @@ func TestFileBackend_Import(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-import-unknown")
-		err = backend.Import(pivcert.PIVSlotAuthentication, cert.Raw, pivcert.CertFormat(99))
+		err = backend.Import(xkms.PIVSlotAuthentication, cert.Raw, xkms.PIVCertFormat(99))
 		if err == nil {
 			t.Error("Import() with unknown format expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Import() error = %v, want %v", err, pivcert.ErrInvalidFormat)
+		if !errors.Is(err, xkms.ErrPIVInvalidFormat) {
+			t.Errorf("Import() error = %v, want %v", err, xkms.ErrPIVInvalidFormat)
 		}
 	})
 }
@@ -1075,12 +1074,12 @@ func TestFileBackend_Export(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-export-der")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
-		data, err := backend.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
+		data, err := backend.Export(xkms.PIVSlotAuthentication, xkms.PIVFormatDER)
 		if err != nil {
 			t.Errorf("Export() error = %v", err)
 		}
@@ -1098,12 +1097,12 @@ func TestFileBackend_Export(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-export-pem")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
-		data, err := backend.Export(pivcert.PIVSlotAuthentication, pivcert.FormatPEM)
+		data, err := backend.Export(xkms.PIVSlotAuthentication, xkms.PIVFormatPEM)
 		if err != nil {
 			t.Errorf("Export() error = %v", err)
 		}
@@ -1126,13 +1125,13 @@ func TestFileBackend_Export(t *testing.T) {
 		}
 		defer backend.Close()
 
-		_, err = backend.Export(pivcert.PIVSlotAuthentication, pivcert.FormatDER)
+		_, err = backend.Export(xkms.PIVSlotAuthentication, xkms.PIVFormatDER)
 		if err == nil {
 			t.Error("Export() non-existent certificate expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrCertificateNotFound) {
-			t.Errorf("Export() error = %v, want %v", err, pivcert.ErrCertificateNotFound)
+		if !errors.Is(err, xkms.ErrPIVCertificateNotFound) {
+			t.Errorf("Export() error = %v, want %v", err, xkms.ErrPIVCertificateNotFound)
 		}
 	})
 
@@ -1145,18 +1144,18 @@ func TestFileBackend_Export(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "test-export-unknown")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
 
-		_, err = backend.Export(pivcert.PIVSlotAuthentication, pivcert.CertFormat(99))
+		_, err = backend.Export(xkms.PIVSlotAuthentication, xkms.PIVCertFormat(99))
 		if err == nil {
 			t.Error("Export() with unknown format expected error, got nil")
 			return
 		}
-		if !errors.Is(err, pivcert.ErrInvalidFormat) {
-			t.Errorf("Export() error = %v, want %v", err, pivcert.ErrInvalidFormat)
+		if !errors.Is(err, xkms.ErrPIVInvalidFormat) {
+			t.Errorf("Export() error = %v, want %v", err, xkms.ErrPIVInvalidFormat)
 		}
 	})
 }
@@ -1169,8 +1168,8 @@ func TestFileBackend_Type(t *testing.T) {
 	}
 	defer backend.Close()
 
-	if backend.Type() != pivcert.StorageTypeFile {
-		t.Errorf("Type() = %v, want %v", backend.Type(), pivcert.StorageTypeFile)
+	if backend.Type() != xkms.PIVStorageTypeFile {
+		t.Errorf("Type() = %v, want %v", backend.Type(), xkms.PIVStorageTypeFile)
 	}
 }
 
@@ -1189,9 +1188,9 @@ func TestFileBackend_Close(t *testing.T) {
 
 		// Verify operations fail after close
 		cert := generateTestCertificate(t, "test-closed")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
-		if !errors.Is(err, pivcert.ErrStorageClosed) {
-			t.Errorf("Store() after Close() error = %v, want %v", err, pivcert.ErrStorageClosed)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
+		if !errors.Is(err, xkms.ErrPIVStorageClosed) {
+			t.Errorf("Store() after Close() error = %v, want %v", err, xkms.ErrPIVStorageClosed)
 		}
 	})
 }
@@ -1205,11 +1204,11 @@ func TestFileBackend_ConcurrentAccess(t *testing.T) {
 	defer backend.Close()
 
 	// Create test certificates for different slots
-	slots := []pivcert.PIVSlot{
-		pivcert.PIVSlotAuthentication,
-		pivcert.PIVSlotDigitalSignature,
-		pivcert.PIVSlotKeyManagement,
-		pivcert.PIVSlotCardAuthentication,
+	slots := []xkms.PIVSlot{
+		xkms.PIVSlotAuthentication,
+		xkms.PIVSlotDigitalSignature,
+		xkms.PIVSlotKeyManagement,
+		xkms.PIVSlotCardAuthentication,
 	}
 
 	var wg sync.WaitGroup
@@ -1218,7 +1217,7 @@ func TestFileBackend_ConcurrentAccess(t *testing.T) {
 	// Concurrent stores
 	for _, slot := range slots {
 		wg.Add(1)
-		go func(s pivcert.PIVSlot) {
+		go func(s xkms.PIVSlot) {
 			defer wg.Done()
 			cert := generateTestCertificate(t, "concurrent-"+string(s))
 			if err := backend.Store(s, cert); err != nil {
@@ -1232,7 +1231,7 @@ func TestFileBackend_ConcurrentAccess(t *testing.T) {
 	// Concurrent retrieves
 	for _, slot := range slots {
 		wg.Add(1)
-		go func(s pivcert.PIVSlot) {
+		go func(s xkms.PIVSlot) {
 			defer wg.Done()
 			if _, err := backend.Retrieve(s); err != nil {
 				errChan <- err
@@ -1270,7 +1269,7 @@ func TestFileBackend_AllSlots(t *testing.T) {
 	defer backend.Close()
 
 	// Test all primary slots
-	primarySlots := pivcert.PrimarySlots()
+	primarySlots := xkms.PIVPrimarySlots()
 	for _, slot := range primarySlots {
 		t.Run("primary_slot_"+string(slot), func(t *testing.T) {
 			cert := generateTestCertificate(t, "primary-"+string(slot))
@@ -1308,7 +1307,7 @@ func TestFileBackend_KeyAlgorithms(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateTestCertificate(t, "ecdsa-cert")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
@@ -1334,7 +1333,7 @@ func TestFileBackend_KeyAlgorithms(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateRSACertificate(t, "rsa-cert")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
@@ -1363,7 +1362,7 @@ func TestFileBackend_KeyAlgorithms(t *testing.T) {
 		defer backend.Close()
 
 		cert := generateEd25519Certificate(t, "ed25519-cert")
-		err = backend.Store(pivcert.PIVSlotAuthentication, cert)
+		err = backend.Store(xkms.PIVSlotAuthentication, cert)
 		if err != nil {
 			t.Fatalf("Store() error = %v", err)
 		}
@@ -1394,20 +1393,20 @@ func TestFileBackend_OverwriteCertificate(t *testing.T) {
 
 	// Store first certificate
 	cert1 := generateTestCertificate(t, "cert-1")
-	err = backend.Store(pivcert.PIVSlotAuthentication, cert1)
+	err = backend.Store(xkms.PIVSlotAuthentication, cert1)
 	if err != nil {
 		t.Fatalf("Store() first cert error = %v", err)
 	}
 
 	// Store second certificate in same slot
 	cert2 := generateTestCertificate(t, "cert-2")
-	err = backend.Store(pivcert.PIVSlotAuthentication, cert2)
+	err = backend.Store(xkms.PIVSlotAuthentication, cert2)
 	if err != nil {
 		t.Fatalf("Store() second cert error = %v", err)
 	}
 
 	// Retrieve should return second certificate
-	retrieved, err := backend.Retrieve(pivcert.PIVSlotAuthentication)
+	retrieved, err := backend.Retrieve(xkms.PIVSlotAuthentication)
 	if err != nil {
 		t.Fatalf("Retrieve() error = %v", err)
 	}

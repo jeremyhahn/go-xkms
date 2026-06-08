@@ -32,6 +32,8 @@ import (
 	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	acmeobjstore "github.com/jeremyhahn/go-xkms/pkg/acme/storage/objstore"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	xkmsstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -112,7 +114,6 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	// Create temporary directories
 	tmpDir := t.TempDir()
 	caDir := tmpDir + "/ca"
-	storageDir := tmpDir + "/storage"
 
 	// Create CA storage backends
 	keyStorageBackend, err := xkmssdk.NewFileStorageBackend(caDir + "/keys")
@@ -201,12 +202,11 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 	testCA, ok := intermediate.(ca.TCGCA)
 	require.True(t, ok, "intermediate CA must implement TCGCA")
 
-	// Create ACME storage
-	acmeStorage := local.New()
-	err = acmeStorage.Configure(map[string]string{"path": storageDir})
+	// Create ACME storage over the kvadapter datastore path.
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
-	storageFactory, err := acmeobjstore.NewFactory(acmeStorage)
+	storageFactory, err := acmeobjstore.NewFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
 	cleanup := func() {
@@ -218,17 +218,15 @@ func createTestInfrastructure(t *testing.T) (ca.TCGCA, acmestorage.Factory, func
 }
 
 // newTenantAwareTestService creates a TenantAwareAdminService backed by an
-// in-memory objstore TenantAwareFactory. This provides a real tenantDAO for
-// tests that need to create, get, update, or delete tenants.
+// in-memory TenantAwareFactory over the kvadapter datastore path. This provides
+// a real tenantDAO for tests that need to create, get, update, or delete tenants.
 func newTenantAwareTestService(t *testing.T) *TenantAwareAdminService {
 	t.Helper()
 
-	storageDir := t.TempDir()
-	store := local.New()
-	err := store.Configure(map[string]string{"path": storageDir})
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
 	require.NoError(t, err)
 
-	factory, err := acmeobjstore.NewTenantAwareFactory(store)
+	factory, err := acmeobjstore.NewTenantAwareFactoryFromKVStore(kv)
 	require.NoError(t, err)
 
 	logger := slog.Default()

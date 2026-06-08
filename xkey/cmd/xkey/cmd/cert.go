@@ -24,8 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	xkmspkg "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
@@ -251,7 +249,7 @@ func runCertRequest(cmd *cobra.Command, args []string) error {
 
 	// Step 2: Generate CSR using the PIV slot key via xkms.
 	ctx := cmd.Context()
-	csrResp, err := xkmspkg.GeneratePIVCSR(ctx, &transport.GeneratePIVCSRRequest{
+	csrResp, err := xkms.GeneratePIVCSR(ctx, &transport.GeneratePIVCSRRequest{
 		Backend: string(pivCfg.Backend),
 		Slot:    string(slot),
 		Subject: cn,
@@ -316,7 +314,7 @@ func runCertRequest(cmd *cobra.Command, args []string) error {
 	}
 
 	// Print certificate summary
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Printf("Certificate issued and stored in slot %s (%s)\n\n", slot, slotName)
 	fmt.Printf("  Subject:       %s\n", signedCert.Subject.String())
 	fmt.Printf("  Issuer:        %s\n", signedCert.Issuer.String())
@@ -350,7 +348,7 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrCertNotFound, err)
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Printf("Client Certificate - Slot %s (%s)\n", slot, slotName)
 	fmt.Printf("==========================================\n\n")
 	fmt.Printf("Subject:       %s\n", cert.Subject.String())
@@ -430,7 +428,7 @@ func runCertExport(cmd *cobra.Command, args []string) error {
 		return errors.Join(ErrCertExportFailed, err)
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Printf("Certificate exported from slot %s (%s) to %s\n", slot, slotName, filePath)
 	fmt.Printf("  Subject: %s\n", cert.Subject.String())
 	fmt.Printf("  Issuer:  %s\n", cert.Issuer.String())

@@ -19,41 +19,124 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
-	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
-// newShareTestTransport creates a REST transport connected to an httptest
-// server backed by real share handlers with an in-memory store.
-func newShareTestTransport(t *testing.T) (*Transport, *httptest.Server) {
-	t.Helper()
+// shareFakeServer is a compact, in-memory implementation of the share-store
+// HTTP API exercised by the SDK REST ShareService client. It stands in for the
+// former pkg/sharestore-backed handlers (now hosted in the go-qrdb node) so
+// these tests can validate the client's request serialization and
+// response/error mapping against a real HTTP server without depending on any
+// production share backend. Shares are keyed by server URL + group ID, matching
+// the uniqueness contract enforced by the production store.
+type shareFakeServer struct {
+	shares map[string]*transport.ShareInfo
+}
 
-	store := sharestore.NewMemoryShareStore()
-	handlers := restapi.NewShareHandlers(store)
+func newShareFakeServer() *shareFakeServer {
+	return &shareFakeServer{shares: make(map[string]*transport.ShareInfo)}
+}
 
+// shareKey builds the composite uniqueness key for a stored share.
+func shareKey(serverURL, groupID string) string {
+	return serverURL + "\x00" + groupID
+}
+
+func (s *shareFakeServer) submitShare(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req transport.SubmitShareRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(t, w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if req.ServerURL == "" {
+			writeErr(t, w, http.StatusBadRequest, "server_url is required")
+			return
+		}
+		if req.GroupID == "" {
+			writeErr(t, w, http.StatusBadRequest, "group_id is required")
+			return
+		}
+		if len(req.ShareData) == 0 {
+			writeErr(t, w, http.StatusBadRequest, "share_data is required")
+			return
+		}
+
+		key := shareKey(req.ServerURL, req.GroupID)
+		if _, ok := s.shares[key]; ok {
+			writeErr(t, w, http.StatusConflict, "share already exists")
+			return
+		}
+
+		s.shares[key] = &transport.ShareInfo{
+			ServerURL:  req.ServerURL,
+			GroupID:    req.GroupID,
+			GroupName:  req.GroupName,
+			ShareIndex: req.ShareIndex,
+			ShareData:  req.ShareData,
+			Purpose:    req.Purpose,
+			ReceivedAt: time.Now().UTC(),
+			TenantID:   req.TenantID,
+		}
+
+		writeJSON(t, w, http.StatusCreated, transport.SubmitShareResponse{Accepted: true})
+	}
+}
+
+func (s *shareFakeServer) listShares(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		shares := make([]transport.ShareInfo, 0, len(s.shares))
+		for _, sh := range s.shares {
+			shares = append(shares, *sh)
+		}
+		writeJSON(t, w, http.StatusOK, transport.ListSharesResponse{Shares: shares})
+	}
+}
+
+func (s *shareFakeServer) collectionStatus(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		groupID := chi.URLParam(r, "groupID")
+		collected := 0
+		for _, sh := range s.shares {
+			if sh.GroupID == groupID {
+				collected++
+			}
+		}
+		writeJSON(t, w, http.StatusOK, transport.ShareCollectionStatus{
+			GroupID:   groupID,
+			Collected: collected,
+			Ready:     false,
+		})
+	}
+}
+
+// router builds the chi router exposing the share-store HTTP API plus the
+// /health endpoint required by Transport.Connect().
+func (s *shareFakeServer) router(t *testing.T) http.Handler {
 	r := chi.NewRouter()
 
-	// Health endpoint required by Connect().
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
-			t.Logf("failed to encode health response: %v", err)
-		}
+		writeJSON(t, w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
 	r.Route("/api/v1/shares", func(r chi.Router) {
-		r.Post("/submit", handlers.SubmitShareHandler)
-		r.Get("/", handlers.ListSharesHandler)
-		r.Get("/status/{groupID}", handlers.GetShareCollectionStatusHandler)
-		r.Get("/{serverURL}/{groupID}", handlers.GetShareHandler)
-		r.Delete("/{serverURL}/{groupID}", handlers.DeleteShareHandler)
+		r.Post("/submit", s.submitShare(t))
+		r.Get("/", s.listShares(t))
+		r.Get("/status/{groupID}", s.collectionStatus(t))
 	})
 
-	server := httptest.NewServer(r)
+	return r
+}
+
+// newShareTestTransport creates a REST transport connected to an httptest
+// server backed by an in-memory fake implementing the share-store HTTP API.
+func newShareTestTransport(t *testing.T) (*Transport, *httptest.Server) {
+	t.Helper()
+
+	server := httptest.NewServer(newShareFakeServer().router(t))
 	t.Cleanup(server.Close)
 
 	tr, err := NewWithConfig(&transport.Config{

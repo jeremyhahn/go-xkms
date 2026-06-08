@@ -1,0 +1,27 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
+package xkms
+
+import pivfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
+
+// PIV file-backed certificate storage constructor re-exported so the xkey
+// GUI/CLI build a file-backed PIV store through the SDK. The PKCS#11-backed
+// constructors are gated behind the pkcs11 build tag in
+// pivcert_backends_pkcs11.go.
+//
+// The name carries a PIV prefix because the bare NewFileBackend SDK name (tpm.go)
+// already aliases tpm2/store.NewFileBackend.
+
+// NewPIVFileBackend constructs a file-backed PIV certificate store.
+var NewPIVFileBackend = pivfile.NewFileBackend

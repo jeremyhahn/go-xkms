@@ -29,22 +29,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
-	"github.com/jeremyhahn/go-xkms/pkg/certstore"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockTrustedCA implements ca.TCGCA for unit testing.
+// mockTrustedCA implements xkms.TCGCA for unit testing.
 type mockTrustedCA struct {
 	caCert          *x509.Certificate
 	caBundlePEM     []byte
 	signCSRCert     *x509.Certificate
-	issuedCert      *ca.IssuedCertificate
+	issuedCert      *xkms.TrustedCAIssuedCertificate
 	crlDER          []byte
 	revokedSerials  map[string]bool
 	initErr         error
@@ -65,7 +61,7 @@ type mockTrustedCA struct {
 	akCert        *x509.Certificate
 	iakCertDER    []byte
 	idevidCertDER []byte
-	enrollResult  *ca.TCGEnrollmentResult
+	enrollResult  *xkms.TCGEnrollmentResult
 	issueEKErr    error
 	issueAKErr    error
 	signTCGCSRErr error
@@ -73,23 +69,23 @@ type mockTrustedCA struct {
 	tpmSet        bool
 }
 
-func (m *mockTrustedCA) Init() error                    { return m.initErr }
-func (m *mockTrustedCA) Load() error                    { return m.loadErr }
-func (m *mockTrustedCA) IsInitialized() bool            { return m.initialized }
-func (m *mockTrustedCA) Config() *ca.Identity           { return &ca.Identity{} }
-func (m *mockTrustedCA) Identity() string               { return "Test CA" }
-func (m *mockTrustedCA) KeyStore() xkms.Backend         { return nil }
-func (m *mockTrustedCA) CertStore() certstore.CertStore { return nil }
+func (m *mockTrustedCA) Init() error                     { return m.initErr }
+func (m *mockTrustedCA) Load() error                     { return m.loadErr }
+func (m *mockTrustedCA) IsInitialized() bool             { return m.initialized }
+func (m *mockTrustedCA) Config() *xkms.TrustedCAIdentity { return &xkms.TrustedCAIdentity{} }
+func (m *mockTrustedCA) Identity() string                { return "Test CA" }
+func (m *mockTrustedCA) KeyStore() xkms.ServiceBackend   { return nil }
+func (m *mockTrustedCA) CertStore() xkms.CertStore       { return nil }
 func (m *mockTrustedCA) Verify(_ *x509.Certificate, _ ...crypto.Signer) ([][]*x509.Certificate, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) TLSCertificate(_ *types.KeyAttributes) (tls.Certificate, error) {
+func (m *mockTrustedCA) TLSCertificate(_ *xkms.KeyAttributes) (tls.Certificate, error) {
 	return tls.Certificate{}, nil
 }
-func (m *mockTrustedCA) TLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+func (m *mockTrustedCA) TLSConfig(_ *xkms.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
-func (m *mockTrustedCA) CreateCSR(_ *ca.CertificateRequest) ([]byte, error) {
+func (m *mockTrustedCA) CreateCSR(_ *xkms.TrustedCACertificateRequest) ([]byte, error) {
 	return nil, nil
 }
 
@@ -121,21 +117,21 @@ func (m *mockTrustedCA) CABundle() ([]byte, error) {
 	return m.caBundlePEM, nil
 }
 
-func (m *mockTrustedCA) SignCSR(_ []byte, _ *ca.SignOptions) (*x509.Certificate, error) {
+func (m *mockTrustedCA) SignCSR(_ []byte, _ *xkms.TrustedCASignOptions) (*x509.Certificate, error) {
 	if m.signCSRErr != nil {
 		return nil, m.signCSRErr
 	}
 	return m.signCSRCert, nil
 }
 
-func (m *mockTrustedCA) IssueCertificate(_ *ca.CertificateRequest) (*ca.IssuedCertificate, error) {
+func (m *mockTrustedCA) IssueCertificate(_ *xkms.TrustedCACertificateRequest) (*xkms.TrustedCAIssuedCertificate, error) {
 	if m.issueErr != nil {
 		return nil, m.issueErr
 	}
 	return m.issuedCert, nil
 }
 
-func (m *mockTrustedCA) IssueCertificateWithProfile(_ *ca.CertificateRequest, _ string) (*ca.IssuedCertificate, error) {
+func (m *mockTrustedCA) IssueCertificateWithProfile(_ *xkms.TrustedCACertificateRequest, _ string) (*xkms.TrustedCAIssuedCertificate, error) {
 	if m.issueProfileErr != nil {
 		return nil, m.issueProfileErr
 	}
@@ -170,49 +166,49 @@ func (m *mockTrustedCA) IsRevoked(serial *big.Int) (bool, error) {
 	return m.revokedSerials[serial.Text(10)], nil
 }
 
-func (m *mockTrustedCA) IssueEKCertificate(_ *ca.CertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
+func (m *mockTrustedCA) IssueEKCertificate(_ *xkms.TrustedCACertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
 	if m.issueEKErr != nil {
 		return nil, m.issueEKErr
 	}
 	return m.ekCert, nil
 }
 
-func (m *mockTrustedCA) IssueAKCertificate(_ *ca.CertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
+func (m *mockTrustedCA) IssueAKCertificate(_ *xkms.TrustedCACertificateRequest, _ crypto.PublicKey) (*x509.Certificate, error) {
 	if m.issueAKErr != nil {
 		return nil, m.issueAKErr
 	}
 	return m.akCert, nil
 }
 
-func (m *mockTrustedCA) SignTCGCSRIDevID(_ *tpm2.TCG_CSR_IDEVID, _ *ca.CertificateRequest) ([]byte, []byte, error) {
+func (m *mockTrustedCA) SignTCGCSRIDevID(_ *xkms.TCG_CSR_IDEVID, _ *xkms.TrustedCACertificateRequest) ([]byte, []byte, error) {
 	if m.signTCGCSRErr != nil {
 		return nil, nil, m.signTCGCSRErr
 	}
 	return m.iakCertDER, m.idevidCertDER, nil
 }
 
-func (m *mockTrustedCA) EnrollDevice(_ []byte, _ *ca.CertificateRequest) (*ca.TCGEnrollmentResult, error) {
+func (m *mockTrustedCA) EnrollDevice(_ []byte, _ *xkms.TrustedCACertificateRequest) (*xkms.TCGEnrollmentResult, error) {
 	if m.enrollErr != nil {
 		return nil, m.enrollErr
 	}
 	return m.enrollResult, nil
 }
 
-func (m *mockTrustedCA) SetTPM(_ tpm2.TrustedPlatformModule) {
+func (m *mockTrustedCA) SetTPM(_ xkms.TrustedPlatformModule) {
 	m.tpmSet = true
 }
 
 // --- TrustedCA / TCGCA interface methods added for SDK reconciliation ---
 
-func (m *mockTrustedCA) Blob(_ []byte) ([]byte, error)        { return nil, nil }
-func (m *mockTrustedCA) ImportBlob(_, _ []byte) error         { return nil }
-func (m *mockTrustedCA) SignedBlob(_ []byte) ([]byte, error)  { return nil, nil }
-func (m *mockTrustedCA) Signer() (crypto.Signer, error)       { return nil, nil }
-func (m *mockTrustedCA) Hash() crypto.Hash                    { return crypto.SHA256 }
-func (m *mockTrustedCA) DefaultValidityPeriod() int           { return 0 }
-func (m *mockTrustedCA) IsAutoImportingIssuerCAs() bool       { return false }
-func (m *mockTrustedCA) IssuingIdentity() ca.Identity         { return ca.Identity{} }
-func (m *mockTrustedCA) CAConfig() ca.CAConfig                { return ca.CAConfig{} }
+func (m *mockTrustedCA) Blob(_ []byte) ([]byte, error)           { return nil, nil }
+func (m *mockTrustedCA) ImportBlob(_, _ []byte) error            { return nil }
+func (m *mockTrustedCA) SignedBlob(_ []byte) ([]byte, error)     { return nil, nil }
+func (m *mockTrustedCA) Signer() (crypto.Signer, error)          { return nil, nil }
+func (m *mockTrustedCA) Hash() crypto.Hash                       { return crypto.SHA256 }
+func (m *mockTrustedCA) DefaultValidityPeriod() int              { return 0 }
+func (m *mockTrustedCA) IsAutoImportingIssuerCAs() bool          { return false }
+func (m *mockTrustedCA) IssuingIdentity() xkms.TrustedCAIdentity { return xkms.TrustedCAIdentity{} }
+func (m *mockTrustedCA) CAConfig() xkms.TrustedCAConfig          { return xkms.TrustedCAConfig{} }
 
 func (m *mockTrustedCA) DefaultKeyAlgorithm() x509.PublicKeyAlgorithm {
 	return x509.ECDSA
@@ -226,19 +222,19 @@ func (m *mockTrustedCA) CABundleCertPool() (*x509.CertPool, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) CABundleFiltered(_ types.StoreType, _ x509.PublicKeyAlgorithm) ([]byte, error) {
+func (m *mockTrustedCA) CABundleFiltered(_ xkms.StoreType, _ x509.PublicKeyAlgorithm) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) CAKeyAttributes(_ types.StoreType) (*types.KeyAttributes, error) {
+func (m *mockTrustedCA) CAKeyAttributes(_ xkms.StoreType) (*xkms.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) CASigner(_ types.StoreType, _ x509.PublicKeyAlgorithm) (crypto.Signer, error) {
+func (m *mockTrustedCA) CASigner(_ xkms.StoreType, _ x509.PublicKeyAlgorithm) (crypto.Signer, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) Certificate(_ *types.KeyAttributes) (*x509.Certificate, error) {
+func (m *mockTrustedCA) Certificate(_ *xkms.KeyAttributes) (*x509.Certificate, error) {
 	return nil, nil
 }
 
@@ -246,11 +242,11 @@ func (m *mockTrustedCA) CertificatePEM(_ string) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) ClientTLSConfig(_ *types.KeyAttributes, _ string) (*tls.Config, error) {
+func (m *mockTrustedCA) ClientTLSConfig(_ *xkms.KeyAttributes, _ string) (*tls.Config, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) CrossSignedPEM(_ *types.KeyAttributes) ([]byte, error) {
+func (m *mockTrustedCA) CrossSignedPEM(_ *xkms.KeyAttributes) ([]byte, error) {
 	return nil, nil
 }
 
@@ -270,23 +266,23 @@ func (m *mockTrustedCA) ParseBundle(_ []byte) ([]*x509.Certificate, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) PEM(_ *types.KeyAttributes) ([]byte, error) {
+func (m *mockTrustedCA) PEM(_ *xkms.KeyAttributes) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) PrivateKey(_ *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (m *mockTrustedCA) PrivateKey(_ *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) PubKey(_ *types.KeyAttributes) (crypto.PublicKey, error) {
+func (m *mockTrustedCA) PubKey(_ *xkms.KeyAttributes) (crypto.PublicKey, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) QuantumSafeTLSConfig(_ *types.KeyAttributes) (*tls.Config, error) {
+func (m *mockTrustedCA) QuantumSafeTLSConfig(_ *xkms.KeyAttributes) (*tls.Config, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) RevokeCert(_ *x509.Certificate, _ ca.RevokeOptions) error {
+func (m *mockTrustedCA) RevokeCert(_ *x509.Certificate, _ xkms.RevokeOptions) error {
 	return nil
 }
 
@@ -294,19 +290,19 @@ func (m *mockTrustedCA) RootCertificate(_ *x509.Certificate) (*x509.Certificate,
 	return nil, nil
 }
 
-func (m *mockTrustedCA) ServerTLSConfig(_ *types.KeyAttributes, _ bool) (*tls.Config, error) {
+func (m *mockTrustedCA) ServerTLSConfig(_ *xkms.KeyAttributes, _ bool) (*tls.Config, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) TLSBundle(_ *types.KeyAttributes) ([]byte, error) {
+func (m *mockTrustedCA) TLSBundle(_ *xkms.KeyAttributes) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) TLSBundleWithCrossSigner(_ *types.KeyAttributes, _ crypto.Signer) ([]byte, error) {
+func (m *mockTrustedCA) TLSBundleWithCrossSigner(_ *xkms.KeyAttributes, _ crypto.Signer) ([]byte, error) {
 	return nil, nil
 }
 
-func (m *mockTrustedCA) TLSConfigWithXSigner(_ *types.KeyAttributes, _ crypto.Signer) (*tls.Config, error) {
+func (m *mockTrustedCA) TLSConfigWithXSigner(_ *xkms.KeyAttributes, _ crypto.Signer) (*tls.Config, error) {
 	return nil, nil
 }
 
@@ -334,7 +330,7 @@ func (m *mockTrustedCA) TrustedRootCertPoolWithXSigner(_ *x509.Certificate, _ cr
 	return nil, nil
 }
 
-func (m *mockTrustedCA) XSignedCertificate(_ string, _ *types.KeyAttributes) (*x509.Certificate, error) {
+func (m *mockTrustedCA) XSignedCertificate(_ string, _ *xkms.KeyAttributes) (*x509.Certificate, error) {
 	return nil, nil
 }
 
@@ -346,27 +342,27 @@ func (m *mockTrustedCA) XSignedRootCertificate(_ string, _ *x509.Certificate) (*
 	return nil, nil
 }
 
-func (m *mockTrustedCA) ImportAttestation(_ *types.KeyAttributes, _ string, _ []byte) error {
+func (m *mockTrustedCA) ImportAttestation(_ *xkms.KeyAttributes, _ string, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) ImportAttestationEventLog(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTrustedCA) ImportAttestationEventLog(_ *xkms.KeyAttributes, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) ImportAttestationKeyCertificate(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTrustedCA) ImportAttestationKeyCertificate(_ *xkms.KeyAttributes, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) ImportAttestationPCRs(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTrustedCA) ImportAttestationPCRs(_ *xkms.KeyAttributes, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) ImportAttestationQuote(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTrustedCA) ImportAttestationQuote(_ *xkms.KeyAttributes, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) ImportLocalAttestation(_ *types.KeyAttributes, _ *tpm2.Quote) error {
+func (m *mockTrustedCA) ImportLocalAttestation(_ *xkms.KeyAttributes, _ *xkms.Quote) error {
 	return nil
 }
 
@@ -390,19 +386,19 @@ func (m *mockTrustedCA) ImportXSignedCertificate(_ string, _ *x509.Certificate) 
 	return nil
 }
 
-func (m *mockTrustedCA) VerifyAttestationEventLog(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTrustedCA) VerifyAttestationEventLog(_ *xkms.KeyAttributes, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) VerifyAttestationPCRs(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTrustedCA) VerifyAttestationPCRs(_ *xkms.KeyAttributes, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) VerifyAttestationQuote(_ *types.KeyAttributes, _ []byte) error {
+func (m *mockTrustedCA) VerifyAttestationQuote(_ *xkms.KeyAttributes, _ []byte) error {
 	return nil
 }
 
-func (m *mockTrustedCA) VerifyQuote(_ *types.KeyAttributes, _ *tpm2.Quote, _ []byte) error {
+func (m *mockTrustedCA) VerifyQuote(_ *xkms.KeyAttributes, _ *xkms.Quote, _ []byte) error {
 	return nil
 }
 
@@ -485,7 +481,7 @@ func newTestService(t *testing.T) (*Service, *mockTrustedCA) {
 		caCert:      cert,
 		caBundlePEM: certPEM,
 		signCSRCert: cert,
-		issuedCert: &ca.IssuedCertificate{
+		issuedCert: &xkms.TrustedCAIssuedCertificate{
 			Certificate:    cert,
 			CertificatePEM: certPEM,
 			ChainPEM:       certPEM,
@@ -504,7 +500,7 @@ func newTestService(t *testing.T) (*Service, *mockTrustedCA) {
 		akCert:        cert,
 		iakCertDER:    cert.Raw,
 		idevidCertDER: cert.Raw,
-		enrollResult: &ca.TCGEnrollmentResult{
+		enrollResult: &xkms.TCGEnrollmentResult{
 			IAKCertDER:      cert.Raw,
 			IDevIDCertDER:   cert.Raw,
 			CredentialBlob:  []byte("test-credential-blob"),
@@ -1082,8 +1078,8 @@ func TestIssueEKCertificate_Success(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	cert, err := svc.IssueEKCertificate(&ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "EK Certificate"},
+	cert, err := svc.IssueEKCertificate(&xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "EK Certificate"},
 	}, &key.PublicKey)
 	require.NoError(t, err)
 	require.NotNil(t, cert)
@@ -1108,8 +1104,8 @@ func TestIssueEKCertificate_IssuanceError(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	cert, err := svc.IssueEKCertificate(&ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "EK Certificate"},
+	cert, err := svc.IssueEKCertificate(&xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "EK Certificate"},
 	}, &key.PublicKey)
 	assert.Nil(t, cert)
 	assert.ErrorIs(t, err, ErrTCGCertIssuance)
@@ -1121,8 +1117,8 @@ func TestIssueAKCertificate_Success(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	cert, err := svc.IssueAKCertificate(&ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "AK Certificate"},
+	cert, err := svc.IssueAKCertificate(&xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "AK Certificate"},
 	}, &key.PublicKey)
 	require.NoError(t, err)
 	require.NotNil(t, cert)
@@ -1147,8 +1143,8 @@ func TestIssueAKCertificate_IssuanceError(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	cert, err := svc.IssueAKCertificate(&ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "AK Certificate"},
+	cert, err := svc.IssueAKCertificate(&xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "AK Certificate"},
 	}, &key.PublicKey)
 	assert.Nil(t, cert)
 	assert.ErrorIs(t, err, ErrTCGCertIssuance)
@@ -1157,8 +1153,8 @@ func TestIssueAKCertificate_IssuanceError(t *testing.T) {
 func TestSignTCGCSRIDevID_Success(t *testing.T) {
 	svc, _ := newTestService(t)
 
-	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(&tpm2.TCG_CSR_IDEVID{}, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Device Identity"},
+	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(&xkms.TCG_CSR_IDEVID{}, &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "Device Identity"},
 	})
 	require.NoError(t, err)
 	assert.NotEmpty(t, iakDER)
@@ -1168,8 +1164,8 @@ func TestSignTCGCSRIDevID_Success(t *testing.T) {
 func TestSignTCGCSRIDevID_NilCSR(t *testing.T) {
 	svc, _ := newTestService(t)
 
-	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(nil, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Device Identity"},
+	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(nil, &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "Device Identity"},
 	})
 	assert.Nil(t, iakDER)
 	assert.Nil(t, idevidDER)
@@ -1179,7 +1175,7 @@ func TestSignTCGCSRIDevID_NilCSR(t *testing.T) {
 func TestSignTCGCSRIDevID_NilRequest(t *testing.T) {
 	svc, _ := newTestService(t)
 
-	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(&tpm2.TCG_CSR_IDEVID{}, nil)
+	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(&xkms.TCG_CSR_IDEVID{}, nil)
 	assert.Nil(t, iakDER)
 	assert.Nil(t, idevidDER)
 	assert.ErrorIs(t, err, ErrNilRequest)
@@ -1189,8 +1185,8 @@ func TestSignTCGCSRIDevID_SigningError(t *testing.T) {
 	svc, mock := newTestService(t)
 	mock.signTCGCSRErr = errors.New("CSR signature verification failed")
 
-	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(&tpm2.TCG_CSR_IDEVID{}, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Device Identity"},
+	iakDER, idevidDER, err := svc.SignTCGCSRIDevID(&xkms.TCG_CSR_IDEVID{}, &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "Device Identity"},
 	})
 	assert.Nil(t, iakDER)
 	assert.Nil(t, idevidDER)
@@ -1200,8 +1196,8 @@ func TestSignTCGCSRIDevID_SigningError(t *testing.T) {
 func TestEnrollDevice_Success(t *testing.T) {
 	svc, _ := newTestService(t)
 
-	result, err := svc.EnrollDevice([]byte("fake-packed-csr"), &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Enrolled Device"},
+	result, err := svc.EnrollDevice([]byte("fake-packed-csr"), &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "Enrolled Device"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1215,8 +1211,8 @@ func TestEnrollDevice_Success(t *testing.T) {
 func TestEnrollDevice_EmptyCSR(t *testing.T) {
 	svc, _ := newTestService(t)
 
-	result, err := svc.EnrollDevice([]byte{}, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Enrolled Device"},
+	result, err := svc.EnrollDevice([]byte{}, &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "Enrolled Device"},
 	})
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrEmptyPackedCSR)
@@ -1225,8 +1221,8 @@ func TestEnrollDevice_EmptyCSR(t *testing.T) {
 func TestEnrollDevice_NilCSR(t *testing.T) {
 	svc, _ := newTestService(t)
 
-	result, err := svc.EnrollDevice(nil, &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Enrolled Device"},
+	result, err := svc.EnrollDevice(nil, &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "Enrolled Device"},
 	})
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrEmptyPackedCSR)
@@ -1244,8 +1240,8 @@ func TestEnrollDevice_EnrollmentError(t *testing.T) {
 	svc, mock := newTestService(t)
 	mock.enrollErr = errors.New("MakeCredential failed")
 
-	result, err := svc.EnrollDevice([]byte("fake-packed-csr"), &ca.CertificateRequest{
-		Subject: ca.Subject{CommonName: "Enrolled Device"},
+	result, err := svc.EnrollDevice([]byte("fake-packed-csr"), &xkms.TrustedCACertificateRequest{
+		Subject: xkms.TrustedCASubject{CommonName: "Enrolled Device"},
 	})
 	assert.Nil(t, result)
 	assert.ErrorIs(t, err, ErrTCGEnrollment)

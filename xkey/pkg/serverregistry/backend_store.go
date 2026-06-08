@@ -22,14 +22,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// BackendServerRegistry implements ServerRegistry using a storage.Backend
+// BackendServerRegistry implements ServerRegistry using a xkms.StorageBackend
 // for persistence. When backed by a barrier, server entries are encrypted at rest.
 type BackendServerRegistry struct {
 	mu      sync.RWMutex
-	backend storage.Backend
+	backend xkms.StorageBackend
 	prefix  string
 	closed  bool
 }
@@ -40,7 +40,7 @@ var _ ServerRegistry = (*BackendServerRegistry)(nil)
 // NewBackendServerRegistry creates a new BackendServerRegistry using the given
 // storage backend. The prefix is prepended to all storage keys (e.g.,
 // "servers/" produces keys like "servers/https_xkms.company.com_8443.json").
-func NewBackendServerRegistry(backend storage.Backend, prefix string) (*BackendServerRegistry, error) {
+func NewBackendServerRegistry(backend xkms.StorageBackend, prefix string) (*BackendServerRegistry, error) {
 	if backend == nil {
 		return nil, ErrNilBackend
 	}
@@ -113,7 +113,7 @@ func (s *BackendServerRegistry) Lookup(_ context.Context, url string) (*ServerEn
 
 	data, err := s.backend.Get(context.Background(), s.serverKey(url))
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return nil, ErrServerNotFound
 		}
 		return nil, err
@@ -183,7 +183,7 @@ func (s *BackendServerRegistry) List(_ context.Context) ([]*ServerEntry, error) 
 		data, err := s.backend.Get(context.Background(), key)
 		if err != nil {
 			// Skip entries that disappeared between List and Get.
-			if errors.Is(err, storage.ErrNotFound) {
+			if errors.Is(err, xkms.ErrStorageNotFound) {
 				continue
 			}
 			return nil, err
@@ -218,7 +218,7 @@ func (s *BackendServerRegistry) Delete(_ context.Context, url string) error {
 
 	err := s.backend.Delete(context.Background(), s.serverKey(url))
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return ErrServerNotFound
 		}
 		return err

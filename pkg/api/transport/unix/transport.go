@@ -2915,6 +2915,64 @@ func (t *Transport) ListUserCredentials(ctx context.Context, username string) (*
 // Compile-time assertion that Transport implements the transport.Client interface.
 var _ transport.Client = (*Transport)(nil)
 
+// ==================== Cluster Operations ====================
+//
+// The cluster surface is read-only. These methods satisfy the
+// transport.ClusterReader interface the SDK Cluster() accessor type-asserts to,
+// giving the gRPC (and unix, which is gRPC-over-uds) transports parity with the
+// REST transport.
+
+// ClusterStatus returns the Raft leadership status for the configured shard.
+func (t *Transport) ClusterStatus(ctx context.Context) (*transport.ClusterStatusResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.GetClusterStatus(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, err
+	}
+
+	return &transport.ClusterStatusResponse{
+		Status: transport.ClusterStatusInfo{
+			ShardID:   resp.GetShardId(),
+			LeaderID:  resp.GetLeaderId(),
+			HasLeader: resp.GetHasLeader(),
+			NodeID:    resp.GetNodeId(),
+			Clustered: resp.GetClustered(),
+		},
+	}, nil
+}
+
+// ClusterMembers returns the Raft replicas for the configured shard.
+func (t *Transport) ClusterMembers(ctx context.Context) (*transport.ListClusterMembersResponse, error) {
+	if t.client == nil {
+		return nil, ErrNotConnected
+	}
+
+	resp, err := t.client.ListClusterMembers(ctx, &emptypb.Empty{})
+	if err != nil {
+		return nil, err
+	}
+
+	members := make([]transport.ClusterMemberInfo, len(resp.GetMembers()))
+	for i, m := range resp.GetMembers() {
+		members[i] = transport.ClusterMemberInfo{
+			NodeID:   m.GetNodeId(),
+			Address:  m.GetAddress(),
+			IsLeader: m.GetIsLeader(),
+		}
+	}
+
+	return &transport.ListClusterMembersResponse{
+		Members: members,
+	}, nil
+}
+
+// Compile-time assertion that Transport satisfies the read-only cluster surface
+// the SDK Cluster() accessor type-asserts to.
+var _ transport.ClusterReader = (*Transport)(nil)
+
 // Helper functions for converting between SDK types and protobuf types
 
 // pbCustodianGroupToTransport converts a protobuf CustodianGroup to the transport type.

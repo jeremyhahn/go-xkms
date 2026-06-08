@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +34,7 @@ func TestNewBackendStorage(t *testing.T) {
 
 	t.Run("creates storage with backend", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		s, err := NewBackendStorage(backend, "test/")
@@ -52,7 +52,7 @@ func TestNewBackendStorage(t *testing.T) {
 
 	t.Run("uses default prefix when empty", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		s, err := NewBackendStorage(backend, "")
@@ -67,7 +67,7 @@ func TestNewBackendStorage(t *testing.T) {
 
 	t.Run("adds trailing slash to prefix", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		s, err := NewBackendStorage(backend, "test")
@@ -831,7 +831,7 @@ func TestBackendStorage_Close(t *testing.T) {
 
 	t.Run("does not close underlying backend", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 
 		s, _ := NewBackendStorage(backend, "test/")
 		s.WaitForIndex()
@@ -853,7 +853,7 @@ func TestBackendStorage_Close(t *testing.T) {
 func TestBackendStorage_CredentialKey(t *testing.T) {
 	t.Parallel()
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	defer func() { _ = backend.Close() }()
 
 	s, _ := NewBackendStorage(backend, "myapp/fido2/")
@@ -874,7 +874,7 @@ func TestBackendStorage_Persistence(t *testing.T) {
 	t.Run("credentials persist across storage instances", func(t *testing.T) {
 		t.Parallel()
 		// Use the same backend for multiple storage instances
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		// First instance stores credentials
@@ -905,7 +905,7 @@ func TestBackendStorage_Persistence(t *testing.T) {
 
 	t.Run("state persists across storage instances", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		// First instance saves state
@@ -944,7 +944,7 @@ func TestBackendStorage_NamespaceIsolation(t *testing.T) {
 
 	t.Run("different prefixes isolate data", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		s1, _ := NewBackendStorage(backend, "app1/")
@@ -1369,7 +1369,7 @@ func (m *mockBackend) Get(_ context.Context, key string) ([]byte, error) {
 	if data, ok := m.data[key]; ok {
 		return data, nil
 	}
-	return nil, storage.ErrNotFound
+	return nil, xkms.ErrStorageNotFound
 }
 
 func (m *mockBackend) Put(_ context.Context, key string, value []byte) error {
@@ -1391,7 +1391,7 @@ func (m *mockBackend) Delete(_ context.Context, key string) error {
 		return m.deleteErr
 	}
 	if _, ok := m.data[key]; !ok {
-		return storage.ErrNotFound
+		return xkms.ErrStorageNotFound
 	}
 	delete(m.data, key)
 	return nil
@@ -1444,7 +1444,7 @@ func (m *mockBackend) Close() error {
 
 func createBackendStorage(t *testing.T) *BackendStorage {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	s, err := NewBackendStorage(backend, "test/")
 	if err != nil {
 		t.Fatalf("failed to create BackendStorage: %v", err)
@@ -1477,7 +1477,7 @@ func TestBackendStorageRPIndex_BuiltAtInit(t *testing.T) {
 
 	t.Run("index populated from existing credentials", func(t *testing.T) {
 		t.Parallel()
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		defer func() { _ = backend.Close() }()
 
 		// Store credentials directly in the backend before constructing BackendStorage

@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func TestPIVStorageType_IsValid(t *testing.T) {
@@ -893,7 +893,7 @@ func TestFileStorageConfig_Validate(t *testing.T) {
 		{
 			name: "valid config with both formats",
 			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
+				Backend:    xkms.NewStorageMemory(),
 				DEREnabled: true,
 				PEMEnabled: true,
 			},
@@ -902,7 +902,7 @@ func TestFileStorageConfig_Validate(t *testing.T) {
 		{
 			name: "valid config with DER only",
 			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
+				Backend:    xkms.NewStorageMemory(),
 				DEREnabled: true,
 				PEMEnabled: false,
 			},
@@ -911,7 +911,7 @@ func TestFileStorageConfig_Validate(t *testing.T) {
 		{
 			name: "valid config with PEM only",
 			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
+				Backend:    xkms.NewStorageMemory(),
 				DEREnabled: false,
 				PEMEnabled: true,
 			},
@@ -934,7 +934,7 @@ func TestFileStorageConfig_Validate(t *testing.T) {
 		{
 			name: "no format enabled",
 			config: &FileStorageConfig{
-				Backend:    storage.NewMemory(),
+				Backend:    xkms.NewStorageMemory(),
 				DEREnabled: false,
 				PEMEnabled: false,
 			},
@@ -1071,7 +1071,7 @@ func TestPIVConfig_Validate(t *testing.T) {
 			config: &PIVConfig{
 				StorageType: StorageTypeFile,
 				FileConfig: &FileStorageConfig{
-					Backend:    storage.NewMemory(),
+					Backend:    xkms.NewStorageMemory(),
 					DEREnabled: true,
 				},
 			},

@@ -148,7 +148,7 @@ func (s *Server) handleGetPIVCertificate(w http.ResponseWriter, r *http.Request,
 // handleStorePIVCertificate stores a certificate in a PIV slot.
 // POST /api/v1/piv/slots/{slot}/certificate
 func (s *Server) handleStorePIVCertificate(w http.ResponseWriter, r *http.Request, slot string) {
-	if !s.authorize(w, r, "piv", "use") {
+	if !s.authorize(w, r, "piv", "write") {
 		return
 	}
 
@@ -180,7 +180,7 @@ func (s *Server) handleStorePIVCertificate(w http.ResponseWriter, r *http.Reques
 // handleDeletePIVCertificate removes a certificate from a PIV slot.
 // DELETE /api/v1/piv/slots/{slot}/certificate?backend={backend}
 func (s *Server) handleDeletePIVCertificate(w http.ResponseWriter, r *http.Request, slot, backendParam string) {
-	if !s.authorize(w, r, "piv", "use") {
+	if !s.authorize(w, r, "piv", "delete") {
 		return
 	}
 
@@ -212,7 +212,7 @@ func (s *Server) handlePIVGenerateKey(w http.ResponseWriter, r *http.Request, sl
 		return
 	}
 
-	if !s.authorize(w, r, "piv", "use") {
+	if !s.authorize(w, r, "piv", "write") {
 		return
 	}
 
@@ -247,7 +247,7 @@ func (s *Server) handlePIVImportCertificate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if !s.authorize(w, r, "piv", "use") {
+	if !s.authorize(w, r, "piv", "write") {
 		return
 	}
 

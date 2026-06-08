@@ -19,37 +19,60 @@ import (
 	"sync"
 	"testing"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// mockAuthorizer is a test authorizer that returns configurable decisions.
-type mockAuthorizer struct {
-	decision *keyauthz.AuthorizationDecision
-	err      error
+// fakeRBACClient is a configurable stand-in for the qrdb RBAC client. It
+// records the last Authorize call and returns a fixed error (nil = allow).
+type fakeRBACClient struct {
+	err error
 
-	mu          sync.Mutex
-	lastRequest *keyauthz.AuthorizationRequest
+	mu       sync.Mutex
+	lastID   *qrdbtransport.Identity
+	lastRes  string
+	lastAct  string
+	lastSeen bool
 }
 
-func (m *mockAuthorizer) Authorize(_ context.Context, req *keyauthz.AuthorizationRequest) (*keyauthz.AuthorizationDecision, error) {
-	m.mu.Lock()
-	m.lastRequest = req
-	m.mu.Unlock()
-	return m.decision, m.err
+func (f *fakeRBACClient) Authorize(_ context.Context, id *qrdbtransport.Identity, resource, action string) error {
+	f.mu.Lock()
+	f.lastID = id
+	f.lastRes = resource
+	f.lastAct = action
+	f.lastSeen = true
+	f.mu.Unlock()
+	return f.err
 }
 
-func (m *mockAuthorizer) LastRequest() *keyauthz.AuthorizationRequest {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.lastRequest
+func (f *fakeRBACClient) ListPermissions(_ context.Context, _ *qrdbtransport.Identity) ([]qrdbtransport.PermissionInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeRBACClient) Last() (id *qrdbtransport.Identity, resource, action string, seen bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lastID, f.lastRes, f.lastAct, f.lastSeen
+}
+
+// allowAuthorizer returns an enabled Authorizer that admits every request.
+func allowAuthorizer() (*auth.Authorizer, *fakeRBACClient) {
+	c := &fakeRBACClient{err: nil}
+	return auth.NewAuthorizer(c), c
+}
+
+// denyAuthorizer returns an enabled Authorizer that denies every request with
+// the given reason.
+func denyAuthorizer(reason string) (*auth.Authorizer, *fakeRBACClient) {
+	c := &fakeRBACClient{err: errors.New(reason)}
+	return auth.NewAuthorizer(c), c
 }
 
 // mockAuditLogger records audit events for verification.
@@ -88,7 +111,7 @@ func (m *mockAuditLogger) LastEvent() *audit.Event {
 
 // setupAuthzServiceTest initializes the xkms and returns a service with
 // the given authorizer and audit logger.
-func setupAuthzServiceTest(t *testing.T, authorizer keyauthz.Authorizer, auditLogger audit.Logger) *Service {
+func setupAuthzServiceTest(t *testing.T, authorizer *auth.Authorizer, auditLogger audit.Logger) *Service {
 	t.Helper()
 	xkms.Reset()
 
@@ -128,9 +151,7 @@ func setupAuthzServiceTest(t *testing.T, authorizer keyauthz.Authorizer, auditLo
 func TestAuthz_AuthorizeAllowed(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true, Reason: "test-allow"},
-	}
+	authorizer, rbac := allowAuthorizer()
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
@@ -139,33 +160,27 @@ func TestAuthz_AuthorizeAllowed(t *testing.T) {
 		Roles:   []string{"admin"},
 	})
 
-	err := svc.authorize(ctx, "keys", "read", "test-key")
+	err := svc.authorize(ctx, "keys", "get", "test-key")
 	if err != nil {
 		t.Fatalf("Expected nil error, got: %v", err)
 	}
 
-	// Verify the authorization request was correct
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request, got nil")
+	// Verify the identity / resource / action threaded to the RBAC client.
+	id, resource, action, seen := rbac.Last()
+	if !seen {
+		t.Fatal("Expected RBAC Authorize to be called")
 	}
-	if req.Subject != "user-1" {
-		t.Errorf("Expected subject 'user-1', got '%s'", req.Subject)
+	if id == nil || id.Subject != "user-1" {
+		t.Errorf("Expected subject 'user-1', got '%+v'", id)
 	}
-	if req.Role != "admin" {
-		t.Errorf("Expected role 'admin', got '%s'", req.Role)
+	if resource != "keys" {
+		t.Errorf("Expected resource 'keys', got '%s'", resource)
 	}
-	if req.Resource != "keys" {
-		t.Errorf("Expected resource 'keys', got '%s'", req.Resource)
-	}
-	if req.Action != "read" {
-		t.Errorf("Expected action 'read', got '%s'", req.Action)
-	}
-	if req.Context["resource_id"] != "test-key" {
-		t.Errorf("Expected resource_id 'test-key', got '%s'", req.Context["resource_id"])
+	if action != "get" {
+		t.Errorf("Expected action 'get', got '%s'", action)
 	}
 
-	// Verify audit log
+	// Verify audit log.
 	event := auditLog.LastEvent()
 	if event == nil {
 		t.Fatal("Expected audit event, got nil")
@@ -182,14 +197,15 @@ func TestAuthz_AuthorizeAllowed(t *testing.T) {
 	if event.ResourceID != "test-key" {
 		t.Errorf("Expected audit resource_id 'test-key', got '%s'", event.ResourceID)
 	}
+	if event.Details["role"] != "admin" {
+		t.Errorf("Expected audit role 'admin', got '%s'", event.Details["role"])
+	}
 }
 
 func TestAuthz_AuthorizeDenied(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "insufficient privileges"},
-	}
+	authorizer, _ := denyAuthorizer("insufficient privileges")
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
@@ -198,7 +214,7 @@ func TestAuthz_AuthorizeDenied(t *testing.T) {
 		Roles:   []string{"reader"},
 	})
 
-	err := svc.authorize(ctx, "keys", "write", "my-key")
+	err := svc.authorize(ctx, "keys", "create", "my-key")
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
@@ -214,7 +230,7 @@ func TestAuthz_AuthorizeDenied(t *testing.T) {
 		t.Errorf("Expected 'insufficient privileges', got '%s'", st.Message())
 	}
 
-	// Verify audit log records deny
+	// Verify audit log records deny.
 	event := auditLog.LastEvent()
 	if event == nil {
 		t.Fatal("Expected audit event, got nil")
@@ -224,16 +240,16 @@ func TestAuthz_AuthorizeDenied(t *testing.T) {
 	}
 }
 
-func TestAuthz_AuthorizeDeniedDefaultReason(t *testing.T) {
+func TestAuthz_AuthorizeUnauthenticated(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: ""},
-	}
+	// Enabled authorizer with no identity on the context returns
+	// ErrUnauthenticated, which the helper maps to codes.Unauthenticated.
+	authorizer, _ := allowAuthorizer()
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
-	err := svc.authorize(context.Background(), "keys", "read", "")
+	err := svc.authorize(context.Background(), "keys", "get", "")
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}
@@ -242,40 +258,11 @@ func TestAuthz_AuthorizeDeniedDefaultReason(t *testing.T) {
 	if !ok {
 		t.Fatalf("Expected gRPC status error, got: %v", err)
 	}
-	if st.Code() != codes.PermissionDenied {
-		t.Errorf("Expected PermissionDenied, got %s", st.Code())
-	}
-	if st.Message() != ErrAccessDenied.Error() {
-		t.Errorf("Expected default access denied message, got '%s'", st.Message())
-	}
-}
-
-func TestAuthz_AuthorizeError(t *testing.T) {
-	defer xkms.Reset()
-
-	authorizer := &mockAuthorizer{
-		err: errors.New("policy engine unavailable"),
-	}
-	auditLog := &mockAuditLogger{}
-	svc := setupAuthzServiceTest(t, authorizer, auditLog)
-
-	err := svc.authorize(context.Background(), "keys", "read", "my-key")
-	if err == nil {
-		t.Fatal("Expected error, got nil")
+	if st.Code() != codes.Unauthenticated {
+		t.Errorf("Expected Unauthenticated, got %s", st.Code())
 	}
 
-	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("Expected gRPC status error, got: %v", err)
-	}
-	if st.Code() != codes.Internal {
-		t.Errorf("Expected Internal, got %s", st.Code())
-	}
-	if st.Message() != ErrAuthorizationFailed.Error() {
-		t.Errorf("Expected '%s', got '%s'", ErrAuthorizationFailed.Error(), st.Message())
-	}
-
-	// Verify audit log records deny on error
+	// Verify audit log records deny on missing identity.
 	event := auditLog.LastEvent()
 	if event == nil {
 		t.Fatal("Expected audit event, got nil")
@@ -285,32 +272,25 @@ func TestAuthz_AuthorizeError(t *testing.T) {
 	}
 }
 
-func TestAuthz_AuthorizeNilIdentity(t *testing.T) {
+func TestAuthz_AuthorizeDisabledAllowsAll(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	// A nil RBAC client disables authorization (allow all), even without an
+	// identity on the context.
+	authorizer := auth.NewAuthorizer(nil)
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
-	// Context without identity
-	err := svc.authorize(context.Background(), "backends", "read", "")
-	if err != nil {
-		t.Fatalf("Expected nil error, got: %v", err)
-	}
-
-	req := authorizer.LastRequest()
-	if req.Subject != "" {
-		t.Errorf("Expected empty subject for nil identity, got '%s'", req.Subject)
-	}
-	if req.Role != "" {
-		t.Errorf("Expected empty role for nil identity, got '%s'", req.Role)
+	if err := svc.authorize(context.Background(), "backends", "list", ""); err != nil {
+		t.Fatalf("Expected nil error when authorization disabled, got: %v", err)
 	}
 
 	event := auditLog.LastEvent()
-	if event.Subject != "" {
-		t.Errorf("Expected empty audit subject, got '%s'", event.Subject)
+	if event == nil {
+		t.Fatal("Expected audit event, got nil")
+	}
+	if event.Outcome != audit.OutcomeAllow {
+		t.Errorf("Expected outcome 'allow', got '%s'", event.Outcome)
 	}
 }
 
@@ -365,26 +345,24 @@ func TestAuthz_NewServiceNilDefaults(t *testing.T) {
 		t.Fatal("Expected non-nil service")
 	}
 	if svc.authorizer == nil {
-		t.Fatal("Expected non-nil authorizer (NoOp default)")
+		t.Fatal("Expected non-nil authorizer (disabled default)")
 	}
 	if svc.auditLogger == nil {
 		t.Fatal("Expected non-nil auditLogger (NoOp default)")
 	}
 
-	// Verify NoOp authorizer always allows
-	decision, err := svc.authorizer.Authorize(context.Background(), &keyauthz.AuthorizationRequest{})
-	if err != nil {
-		t.Fatalf("NoOp authorizer should not error: %v", err)
+	// The default authorizer is disabled (allow-all) since no RBAC client is
+	// wired; Enabled() must report false and Authorize must permit.
+	if svc.authorizer.Enabled() {
+		t.Error("Expected default authorizer to be disabled (allow-all)")
 	}
-	if !decision.Allowed {
-		t.Error("NoOp authorizer should always allow")
+	if err := svc.authorizer.Authorize(context.Background(), nil, "keys", "get"); err != nil {
+		t.Fatalf("Disabled authorizer should not error: %v", err)
 	}
 }
 
 func TestAuthz_NewServiceCustomAuthorizer(t *testing.T) {
-	customAuthz := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "custom"},
-	}
+	customAuthz := auth.NewAuthorizer(&fakeRBACClient{})
 	customAudit := &mockAuditLogger{}
 
 	svc := NewService(customAuthz, customAudit)
@@ -400,194 +378,143 @@ func TestAuthz_NewServiceCustomAuthorizer(t *testing.T) {
 
 // authzMapping defines the expected authorization resource and action for a method.
 type authzMapping struct {
-	resource   string
-	action     string
-	resourceID string
+	resource string
+	action   string
 }
 
 func TestAuthz_ListBackendsMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.ListBackends(context.Background(), &pb.ListBackendsRequest{})
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.ListBackends(ctx, &pb.ListBackendsRequest{})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "backends", action: "read", resourceID: ""})
+	assertMapping(t, rbac, authzMapping{resource: "backends", action: "list"})
 }
 
 func TestAuthz_GetBackendInfoMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.GetBackendInfo(context.Background(), &pb.GetBackendInfoRequest{Name: "software"})
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.GetBackendInfo(ctx, &pb.GetBackendInfoRequest{Name: "software"})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "backends", action: "read", resourceID: "software"})
+	assertMapping(t, rbac, authzMapping{resource: "backends", action: "read"})
 }
 
 func TestAuthz_GenerateKeyMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   "gen-key-1",
 		Backend: "software",
 		KeyType: "ecdsa",
 	})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "keys", action: "write", resourceID: "gen-key-1"})
+	assertMapping(t, rbac, authzMapping{resource: "keys", action: "create"})
 }
 
 func TestAuthz_ListKeysMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.ListKeys(context.Background(), &pb.ListKeysRequest{Backend: "software"})
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.ListKeys(ctx, &pb.ListKeysRequest{Backend: "software"})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "keys", action: "read", resourceID: ""})
+	assertMapping(t, rbac, authzMapping{resource: "keys", action: "list"})
 }
 
 func TestAuthz_SignMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.Sign(context.Background(), &pb.SignRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.Sign(ctx, &pb.SignRequest{
 		KeyId:   "sign-key",
 		Backend: "software",
 	})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "keys", action: "use", resourceID: "sign-key"})
+	assertMapping(t, rbac, authzMapping{resource: "keys", action: "sign"})
 }
 
 func TestAuthz_DeleteKeyMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.DeleteKey(context.Background(), &pb.DeleteKeyRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.DeleteKey(ctx, &pb.DeleteKeyRequest{
 		KeyId:   "del-key",
 		Backend: "software",
 	})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "keys", action: "delete", resourceID: "del-key"})
+	assertMapping(t, rbac, authzMapping{resource: "keys", action: "delete"})
 }
 
 func TestAuthz_SealMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.Seal(context.Background(), &pb.SealRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.Seal(ctx, &pb.SealRequest{
 		Backend: "software",
 		Data:    []byte("test"),
 	})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "seal", action: "use", resourceID: ""})
+	assertMapping(t, rbac, authzMapping{resource: "keys", action: "encrypt"})
 }
 
 func TestAuthz_CanSealMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.CanSeal(context.Background(), &pb.CanSealRequest{})
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.CanSeal(ctx, &pb.CanSealRequest{})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "seal", action: "read", resourceID: ""})
+	assertMapping(t, rbac, authzMapping{resource: "keys", action: "get"})
 }
 
 func TestAuthz_ListCertsMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.ListCerts(context.Background(), &pb.ListCertsRequest{})
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.ListCerts(ctx, &pb.ListCertsRequest{})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "certs", action: "read", resourceID: ""})
+	assertMapping(t, rbac, authzMapping{resource: "certs", action: "list"})
 }
 
 func TestAuthz_DeleteCertMapping(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, rbac := allowAuthorizer()
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, _ = svc.DeleteCert(context.Background(), &pb.DeleteCertRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, _ = svc.DeleteCert(ctx, &pb.DeleteCertRequest{
 		KeyId: "cert-to-delete",
 	})
 
-	req := authorizer.LastRequest()
-	if req == nil {
-		t.Fatal("Expected authorization request")
-	}
-	assertMapping(t, req, authzMapping{resource: "certs", action: "delete", resourceID: "cert-to-delete"})
+	assertMapping(t, rbac, authzMapping{resource: "certs", action: "revoke"})
 }
 
 // --- Deny propagation tests ---
@@ -595,12 +522,11 @@ func TestAuthz_DeleteCertMapping(t *testing.T) {
 func TestAuthz_ListBackendsDenied(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied"},
-	}
+	authorizer, _ := denyAuthorizer("denied")
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, err := svc.ListBackends(context.Background(), &pb.ListBackendsRequest{})
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, err := svc.ListBackends(ctx, &pb.ListBackendsRequest{})
 	if err == nil {
 		t.Fatal("Expected error on denied authorization")
 	}
@@ -613,12 +539,11 @@ func TestAuthz_ListBackendsDenied(t *testing.T) {
 func TestAuthz_GenerateKeyDenied(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "no write access"},
-	}
+	authorizer, _ := denyAuthorizer("no write access")
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, err := svc.GenerateKey(ctx, &pb.GenerateKeyRequest{
 		KeyId:   "denied-key",
 		Backend: "software",
 		KeyType: "ecdsa",
@@ -638,12 +563,11 @@ func TestAuthz_GenerateKeyDenied(t *testing.T) {
 func TestAuthz_SignDenied(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "use denied"},
-	}
+	authorizer, _ := denyAuthorizer("use denied")
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, err := svc.Sign(context.Background(), &pb.SignRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, err := svc.Sign(ctx, &pb.SignRequest{
 		KeyId:   "sign-key",
 		Backend: "software",
 	})
@@ -659,12 +583,11 @@ func TestAuthz_SignDenied(t *testing.T) {
 func TestAuthz_DeleteKeyDenied(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "delete denied"},
-	}
+	authorizer, _ := denyAuthorizer("delete denied")
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	_, err := svc.DeleteKey(context.Background(), &pb.DeleteKeyRequest{
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "u"})
+	_, err := svc.DeleteKey(ctx, &pb.DeleteKeyRequest{
 		KeyId:   "del-key",
 		Backend: "software",
 	})
@@ -682,10 +605,8 @@ func TestAuthz_DeleteKeyDenied(t *testing.T) {
 func TestAuthz_HealthNoAuthzCheck(t *testing.T) {
 	defer xkms.Reset()
 
-	// Use a denying authorizer to prove Health is not checked
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "deny all"},
-	}
+	// Use a denying authorizer to prove Health is not checked.
+	authorizer, rbac := denyAuthorizer("deny all")
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
 	resp, err := svc.Health(context.Background(), &pb.HealthRequest{})
@@ -696,8 +617,8 @@ func TestAuthz_HealthNoAuthzCheck(t *testing.T) {
 		t.Errorf("Expected status 'healthy', got '%s'", resp.Status)
 	}
 
-	// Verify no authorization request was made
-	if authorizer.LastRequest() != nil {
+	// Verify no authorization request was made.
+	if _, _, _, seen := rbac.Last(); seen {
 		t.Error("Health endpoint should not trigger authorization")
 	}
 }
@@ -707,9 +628,7 @@ func TestAuthz_HealthNoAuthzCheck(t *testing.T) {
 func TestAuthz_AuditLogOnAllow(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: true},
-	}
+	authorizer, _ := allowAuthorizer()
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
@@ -732,8 +651,8 @@ func TestAuthz_AuditLogOnAllow(t *testing.T) {
 	if event.Subject != "audited-user" {
 		t.Errorf("Expected subject 'audited-user', got '%s'", event.Subject)
 	}
-	if event.Action != "read" {
-		t.Errorf("Expected action 'read', got '%s'", event.Action)
+	if event.Action != "list" {
+		t.Errorf("Expected action 'list', got '%s'", event.Action)
 	}
 	if event.Resource != "backends" {
 		t.Errorf("Expected resource 'backends', got '%s'", event.Resource)
@@ -749,9 +668,7 @@ func TestAuthz_AuditLogOnAllow(t *testing.T) {
 func TestAuthz_AuditLogOnDeny(t *testing.T) {
 	defer xkms.Reset()
 
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "denied"},
-	}
+	authorizer, _ := denyAuthorizer("denied")
 	auditLog := &mockAuditLogger{}
 	svc := setupAuthzServiceTest(t, authorizer, auditLog)
 
@@ -783,48 +700,16 @@ func TestAuthz_AuditLogOnDeny(t *testing.T) {
 	}
 }
 
-// --- Authorizer error propagation ---
-
-func TestAuthz_AuthorizerErrorReturnsInternal(t *testing.T) {
-	defer xkms.Reset()
-
-	authorizer := &mockAuthorizer{
-		err: errors.New("policy engine timeout"),
-	}
-	auditLog := &mockAuditLogger{}
-	svc := setupAuthzServiceTest(t, authorizer, auditLog)
-
-	_, err := svc.ListKeys(context.Background(), &pb.ListKeysRequest{Backend: "software"})
-	if err == nil {
-		t.Fatal("Expected error on authorizer failure")
-	}
-	st, _ := status.FromError(err)
-	if st.Code() != codes.Internal {
-		t.Errorf("Expected Internal, got %s", st.Code())
-	}
-
-	// Verify audit log still records on error
-	event := auditLog.LastEvent()
-	if event == nil {
-		t.Fatal("Expected audit event even on authorizer error")
-	}
-	if event.Outcome != audit.OutcomeDeny {
-		t.Errorf("Expected outcome 'deny' on error, got '%s'", event.Outcome)
-	}
-}
-
 // --- Validation still happens before authz ---
 
 func TestAuthz_ValidationBeforeAuthz(t *testing.T) {
 	defer xkms.Reset()
 
-	// Create a denying authorizer to ensure authz is not reached
-	authorizer := &mockAuthorizer{
-		decision: &keyauthz.AuthorizationDecision{Allowed: false, Reason: "should not reach"},
-	}
+	// Create a denying authorizer to ensure authz is not reached.
+	authorizer, rbac := denyAuthorizer("should not reach")
 	svc := setupAuthzServiceTest(t, authorizer, &mockAuditLogger{})
 
-	// Call with invalid arguments (missing required fields)
+	// Call with invalid arguments (missing required fields).
 	_, err := svc.GenerateKey(context.Background(), &pb.GenerateKeyRequest{
 		// Missing KeyId, Backend, KeyType
 	})
@@ -836,22 +721,23 @@ func TestAuthz_ValidationBeforeAuthz(t *testing.T) {
 		t.Errorf("Expected InvalidArgument (validation first), got %s", st.Code())
 	}
 
-	// Authorizer should not have been called
-	if authorizer.LastRequest() != nil {
+	// Authorizer should not have been called.
+	if _, _, _, seen := rbac.Last(); seen {
 		t.Error("Authorizer should not be called when validation fails")
 	}
 }
 
-// assertMapping verifies the authorization request matches the expected mapping.
-func assertMapping(t *testing.T, req *keyauthz.AuthorizationRequest, expected authzMapping) {
+// assertMapping verifies the RBAC client received the expected resource/action.
+func assertMapping(t *testing.T, rbac *fakeRBACClient, expected authzMapping) {
 	t.Helper()
-	if req.Resource != expected.resource {
-		t.Errorf("Expected resource '%s', got '%s'", expected.resource, req.Resource)
+	_, resource, action, seen := rbac.Last()
+	if !seen {
+		t.Fatal("Expected authorization request")
 	}
-	if req.Action != expected.action {
-		t.Errorf("Expected action '%s', got '%s'", expected.action, req.Action)
+	if resource != expected.resource {
+		t.Errorf("Expected resource '%s', got '%s'", expected.resource, resource)
 	}
-	if req.Context["resource_id"] != expected.resourceID {
-		t.Errorf("Expected resource_id '%s', got '%s'", expected.resourceID, req.Context["resource_id"])
+	if action != expected.action {
+		t.Errorf("Expected action '%s', got '%s'", expected.action, action)
 	}
 }

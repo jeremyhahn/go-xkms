@@ -31,10 +31,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
-	softwarebackend "github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
@@ -134,13 +131,13 @@ type TestDeviceConfig struct {
 // createTestSoftwareBackend creates a software key backend adapter for tests.
 func createTestSoftwareBackend(t *testing.T) keybackend.FIDO2KeyBackend {
 	t.Helper()
-	keyStorage, err := storage.NewMemoryBackend()
+	keyStorage, err := xkms.NewMemoryBackend()
 	require.NoError(t, err, "failed to create memory backend")
-	provider, err := softwarebackend.NewBackend(&softwarebackend.Config{
+	provider, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{
 		KeyStorage: keyStorage,
 	})
 	require.NoError(t, err, "failed to create software key backend")
-	return keybackend.NewBackendAdapter(provider, types.BackendTypeSoftware)
+	return keybackend.NewBackendAdapter(provider, xkms.BackendTypeSoftware)
 }
 
 // DefaultTestConfig returns a default test configuration.
@@ -179,7 +176,7 @@ func NewTestDevice(t *testing.T, cfg *TestDeviceConfig) *TestDevice {
 		} else {
 			storageDir = cfg.StoragePath
 		}
-		backend, err := file.New(storageDir)
+		backend, err := xkms.NewFileStorageBackend(storageDir)
 		require.NoError(t, err)
 		storage, err = authenticator.NewBackendStorage(backend, "xkey/")
 		require.NoError(t, err)

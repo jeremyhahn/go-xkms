@@ -21,7 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/uhid"
@@ -114,7 +114,7 @@ type NativeVirtualDeviceConfig struct {
 	Logger *slog.Logger
 }
 
-// NativeVirtualDevice implements fido2.HIDDevice using the native Go authenticator.
+// NativeVirtualDevice implements xkms.FIDO2HIDDevice using the native Go authenticator.
 // This provides a pure Go implementation without external dependencies.
 //
 // All methods are safe for concurrent use.
@@ -349,5 +349,5 @@ func (d *NativeVirtualDevice) HIDHandler() *authenticator.CTAPHIDHandler {
 	return d.hidHandler
 }
 
-// Ensure NativeVirtualDevice implements fido2.HIDDevice.
-var _ fido2.HIDDevice = (*NativeVirtualDevice)(nil)
+// Ensure NativeVirtualDevice implements xkms.FIDO2HIDDevice.
+var _ xkms.FIDO2HIDDevice = (*NativeVirtualDevice)(nil)

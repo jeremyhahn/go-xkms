@@ -18,14 +18,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func newTestImporter(t *testing.T) *Importer {
 	t.Helper()
-	backend := storage.NewMemory()
-	store := staticpw.NewStore(backend)
+	backend := xkms.NewStorageMemory()
+	store := xkms.NewStaticPasswordStore(backend)
 	return NewImporter(store)
 }
 
@@ -294,8 +293,8 @@ func TestImporter_Preview(t *testing.T) {
 	}
 
 	// Verify entries are not stored.
-	backend := storage.NewMemory()
-	store := staticpw.NewStore(backend)
+	backend := xkms.NewStorageMemory()
+	store := xkms.NewStaticPasswordStore(backend)
 	list, _ := store.List()
 	if len(list) != 0 {
 		t.Error("Preview() should not store entries")
@@ -313,8 +312,8 @@ func TestImporter_Import_WithTargetFolder(t *testing.T) {
 		t.Fatalf("Failed to write test file: %v", err)
 	}
 
-	backend := storage.NewMemory()
-	store := staticpw.NewStore(backend)
+	backend := xkms.NewStorageMemory()
+	store := xkms.NewStaticPasswordStore(backend)
 	imp := NewImporter(store)
 
 	result, err := imp.Import(&ImportOptions{

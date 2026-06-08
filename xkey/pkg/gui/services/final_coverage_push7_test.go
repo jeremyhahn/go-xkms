@@ -19,6 +19,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"math/big"
 	"testing"
@@ -27,8 +28,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/autofill"
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 )
@@ -100,23 +99,23 @@ type p9FailingStaticPWStore struct {
 	listErr error
 }
 
-func (m *p9FailingStaticPWStore) Add(*staticpw.StaticPassword) error { return nil }
-func (m *p9FailingStaticPWStore) Get(string) (*staticpw.StaticPassword, error) {
+func (m *p9FailingStaticPWStore) Add(*xkms.StaticPassword) error { return nil }
+func (m *p9FailingStaticPWStore) Get(string) (*xkms.StaticPassword, error) {
 	return nil, errors.New("not found")
 }
-func (m *p9FailingStaticPWStore) List() ([]*staticpw.StaticPassword, error) {
+func (m *p9FailingStaticPWStore) List() ([]*xkms.StaticPassword, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
 	}
 	return nil, nil
 }
-func (m *p9FailingStaticPWStore) Update(*staticpw.StaticPassword) error { return nil }
-func (m *p9FailingStaticPWStore) Delete(string) error                   { return nil }
-func (m *p9FailingStaticPWStore) ForceDelete(string) error              { return nil }
-func (m *p9FailingStaticPWStore) ListByFolder(string) ([]*staticpw.StaticPassword, error) {
+func (m *p9FailingStaticPWStore) Update(*xkms.StaticPassword) error { return nil }
+func (m *p9FailingStaticPWStore) Delete(string) error               { return nil }
+func (m *p9FailingStaticPWStore) ForceDelete(string) error          { return nil }
+func (m *p9FailingStaticPWStore) ListByFolder(string) ([]*xkms.StaticPassword, error) {
 	return nil, nil
 }
-func (m *p9FailingStaticPWStore) ListByFolderDirect(string) ([]*staticpw.StaticPassword, error) {
+func (m *p9FailingStaticPWStore) ListByFolderDirect(string) ([]*xkms.StaticPassword, error) {
 	return nil, nil
 }
 func (m *p9FailingStaticPWStore) ListFolders() ([]string, error)    { return nil, nil }
@@ -301,7 +300,7 @@ func TestP9_AutoFill_GetCredential_RateLimited(t *testing.T) {
 	svc.enabled.Store(true)
 
 	// Set rate limiter to 1 fill per minute.
-	svc.rateLimiter = autofill.NewRateLimiter(1)
+	svc.rateLimiter = xkms.NewAutoFillRateLimiter(1)
 
 	// Exhaust the rate limiter with a SearchCredentials call
 	// (SearchCredentials and GetCredential share the same rate limiter).

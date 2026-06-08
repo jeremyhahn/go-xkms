@@ -19,17 +19,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // Importer handles importing passwords from various formats.
 type Importer struct {
 	parsers map[string]Parser
-	store   staticpw.Store
+	store   xkms.StaticPasswordStore
 }
 
 // NewImporter creates a new importer with the given password store.
-func NewImporter(store staticpw.Store) *Importer {
+func NewImporter(store xkms.StaticPasswordStore) *Importer {
 	imp := &Importer{
 		parsers: make(map[string]Parser),
 		store:   store,

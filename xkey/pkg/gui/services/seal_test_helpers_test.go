@@ -17,8 +17,6 @@ import (
 	"context"
 	"testing"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
@@ -38,7 +36,7 @@ type sealMockTPM struct {
 	sealedData []byte // optional: data returned by Seal
 }
 
-func (m *sealMockTPM) Seal(_ context.Context, data []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (m *sealMockTPM) Seal(_ context.Context, data []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	if m.sealErr != nil {
 		return nil, m.sealErr
 	}
@@ -46,15 +44,15 @@ func (m *sealMockTPM) Seal(_ context.Context, data []byte, _ *types.SealOptions)
 	if m.sealedData != nil {
 		ciphertext = m.sealedData
 	}
-	return &types.SealedData{
-		Backend:    types.BackendTypeTPM2,
+	return &xkms.SealedData{
+		Backend:    xkms.BackendTypeTPM2,
 		Ciphertext: ciphertext,
 		TPMPublic:  []byte("tpm-public"),
 		TPMPrivate: []byte("tpm-private"),
 	}, nil
 }
 
-func (m *sealMockTPM) Unseal(_ context.Context, sealed *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *sealMockTPM) Unseal(_ context.Context, sealed *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	if m.unsealErr != nil {
 		return nil, m.unsealErr
 	}
@@ -124,7 +122,7 @@ func newSealServiceWithMock(t *testing.T, mock *sealMockTPM) *SealService {
 
 	svc := NewSealService(t.TempDir())
 	wireSealMockClient(svc, mock)
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.SetContext(context.Background())
 
 	return svc

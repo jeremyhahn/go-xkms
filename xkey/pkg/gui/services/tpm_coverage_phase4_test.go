@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"net"
 	"net/url"
@@ -33,8 +34,6 @@ import (
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -223,7 +222,7 @@ func TestP4A_GetInfo_SupportedCommandsElseBranch_WithCommands(t *testing.T) {
 		curves:   []string{"P-256", "P-384"},
 	}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 
 	info, err := svc.GetInfo()
 	require.NoError(t, err)
@@ -245,7 +244,7 @@ func TestP4A_GetInfo_SupportedCommandsElseBranch_ErrorReturnsEmpty(t *testing.T)
 		commandsErr: errors.New("commands not supported"),
 	}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 
 	info, err := svc.GetInfo()
 	require.NoError(t, err)
@@ -332,10 +331,10 @@ func TestP4A_GetEKECCInfo_CertNotVerifiedByTrustStore(t *testing.T) {
 
 func TestP4A_ListCompositePoliciesWithDigests_AllMatch(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB, 0xCC}},
 				{ID: 7, Value: []byte{0xDD, 0xEE, 0xFF}},
 			},
@@ -368,10 +367,10 @@ func TestP4A_ListCompositePoliciesWithDigests_AllMatch(t *testing.T) {
 func TestP4A_ListCompositePoliciesWithDigests_Mismatch(t *testing.T) {
 	mock := defaultMockTPM()
 	// Start with initial PCR values that will be captured at creation time.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB, 0xCC}},
 			},
 		},
@@ -390,10 +389,10 @@ func TestP4A_ListCompositePoliciesWithDigests_Mismatch(t *testing.T) {
 	}))
 
 	// Now change the mock PCR values to simulate drift.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0x11, 0x22, 0x33}},
 			},
 		},
@@ -487,10 +486,10 @@ func TestP4A_ListCompositePoliciesWithDigests_NoPCRElements(t *testing.T) {
 
 func TestP4A_ListCompositePoliciesWithDigests_MissingSavedDigest(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
+	mock.pcrBanks = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xAA, 0xBB}},
 				{ID: 7, Value: []byte{0xCC, 0xDD}},
 			},
@@ -536,8 +535,8 @@ func TestP4A_ListCompositePoliciesWithDigests_MissingSavedDigest(t *testing.T) {
 
 func TestP4A_ComparePolicyPCRs_AllMatch(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
 	}
 	svc, _ := createTestTPMService(t, mock)
 	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
@@ -558,8 +557,8 @@ func TestP4A_ComparePolicyPCRs_AllMatch(t *testing.T) {
 func TestP4A_ComparePolicyPCRs_Mismatch(t *testing.T) {
 	mock := defaultMockTPM()
 	// Initial values captured at policy creation time.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
 	}
 	svc, _ := createTestTPMService(t, mock)
 	require.NoError(t, svc.CreatePolicy(&PCRPolicy{
@@ -568,8 +567,8 @@ func TestP4A_ComparePolicyPCRs_Mismatch(t *testing.T) {
 	}))
 
 	// Simulate PCR drift by changing mock values after policy creation.
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x11, 0x22}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x11, 0x22}}}},
 	}
 
 	result, err := svc.ComparePolicyPCRs("cmp-mismatch")
@@ -635,15 +634,15 @@ func TestP4A_ComparePolicyPCRs_TPMUnavailable(t *testing.T) {
 
 func TestP4A_ReplayEventLog_Success(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.parsedEvents = []tpm2pkg.Event{
+	mock.parsedEvents = []xkms.TPMEvent{
 		{
 			PCRIndex: 0, EventType: "EV_S_CRTM_CONTENTS", DigestCount: 1,
-			Digests:     []tpm2pkg.Digest{{AlgorithmId: "sha256", Digest: hex.EncodeToString([]byte{0x01, 0x02, 0x03})}},
+			Digests:     []xkms.TPMDigest{{AlgorithmId: "sha256", Digest: hex.EncodeToString([]byte{0x01, 0x02, 0x03})}},
 			EventString: "firmware",
 		},
 	}
-	mock.pcrBanks = []tpm2pkg.PCRBank{
-		{Algorithm: "sha256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xDE, 0xAD}}}},
+	mock.pcrBanks = []xkms.PCRBank{
+		{Algorithm: "sha256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xDE, 0xAD}}}},
 	}
 	svc := newServiceWithMock(mock)
 
@@ -671,7 +670,7 @@ func TestP4A_ReplayEventLog_EventLogError(t *testing.T) {
 
 func TestP4A_ReplayEventLog_EmptyEvents(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.parsedEvents = []tpm2pkg.Event{}
+	mock.parsedEvents = []xkms.TPMEvent{}
 	mock.parsedEventsErr = nil
 	svc := newServiceWithMock(mock)
 
@@ -683,10 +682,10 @@ func TestP4A_ReplayEventLog_EmptyEvents(t *testing.T) {
 
 func TestP4A_ReplayEventLog_ReadPCRsError(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.parsedEvents = []tpm2pkg.Event{
+	mock.parsedEvents = []xkms.TPMEvent{
 		{
 			PCRIndex: 0, EventType: "EV_S_CRTM_CONTENTS", DigestCount: 1,
-			Digests: []tpm2pkg.Digest{{AlgorithmId: "sha256", Digest: hex.EncodeToString([]byte{0x01})}},
+			Digests: []xkms.TPMDigest{{AlgorithmId: "sha256", Digest: hex.EncodeToString([]byte{0x01})}},
 		},
 	}
 	mock.pcrBanksErr = errors.New("pcr read failed")
@@ -751,10 +750,10 @@ func TestP4A_BuildSubjectAltNames_Empty(t *testing.T) {
 
 func TestP4A_DetectPCRBanks_MultipleBanks(t *testing.T) {
 	mock := &mockTPM{
-		pcrBanks: []tpm2pkg.PCRBank{
-			{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
-			{Algorithm: "SHA1", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x02}}}},
-			{Algorithm: "SHA512", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x03}}}},
+		pcrBanks: []xkms.PCRBank{
+			{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
+			{Algorithm: "SHA1", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x02}}}},
+			{Algorithm: "SHA512", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x03}}}},
 		},
 	}
 	banks := detectPCRBanks(mock)
@@ -766,9 +765,9 @@ func TestP4A_DetectPCRBanks_MultipleBanks(t *testing.T) {
 
 func TestP4A_DetectPCRBanks_SHA384Variant(t *testing.T) {
 	mock := &mockTPM{
-		pcrBanks: []tpm2pkg.PCRBank{
-			{Algorithm: "SHA384", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x01}}}},
-			{Algorithm: "SHA386", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0x02}}}},
+		pcrBanks: []xkms.PCRBank{
+			{Algorithm: "SHA384", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x01}}}},
+			{Algorithm: "SHA386", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0x02}}}},
 		},
 	}
 	banks := detectPCRBanks(mock)
@@ -995,7 +994,7 @@ func TestP4A_GetPlatformSRKInfo_WithPKSAndSRKAttrs(t *testing.T) {
 	mock := defaultMockTPM()
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized: true, policyEnabled: true,
-		srkAttrs: &types.KeyAttributes{KeyAlgorithm: x509.RSA, TPMAttributes: &types.TPMAttributes{Handle: 0x81000003}},
+		srkAttrs: &xkms.KeyAttributes{KeyAlgorithm: x509.RSA, TPMAttributes: &xkms.TPMAttributes{Handle: 0x81000003}},
 	}
 	mock.readHandleErr = nil
 	svc := newServiceWithMock(mock)
@@ -1013,7 +1012,7 @@ func TestP4A_GetPlatformSRKInfo_HandleReadError(t *testing.T) {
 	mock := defaultMockTPM()
 	mock.platformKeyStore = &mockPlatformKeyStorer{
 		initialized: true, policyEnabled: false,
-		srkAttrs: &types.KeyAttributes{KeyAlgorithm: x509.ECDSA, TPMAttributes: &types.TPMAttributes{Handle: 0x81000004}},
+		srkAttrs: &xkms.KeyAttributes{KeyAlgorithm: x509.ECDSA, TPMAttributes: &xkms.TPMAttributes{Handle: 0x81000004}},
 	}
 	mock.readHandleErr = errors.New("handle not found")
 	svc := newServiceWithMock(mock)
@@ -1036,7 +1035,7 @@ func TestP4A_GetPlatformSRKInfo_NoPKS(t *testing.T) {
 
 func TestP4A_GetPlatformSRKInfo_FallbackToConfig(t *testing.T) {
 	mock := defaultMockTPM()
-	mock.config.PlatformSRK = &tpm2pkg.PlatformSRKConfig{SRKHandle: 0x81000099}
+	mock.config.PlatformSRK = &xkms.PlatformSRKConfig{SRKHandle: 0x81000099}
 	mock.platformKeyStore = &mockPlatformKeyStorer{initialized: false, srkAttrs: nil}
 	info, err := newServiceWithMock(mock).GetPlatformSRKInfo()
 	require.NoError(t, err)

@@ -24,13 +24,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -1318,11 +1318,11 @@ func TestKeymasterOriginName(t *testing.T) {
 }
 
 func TestVerifiedBootStateName(t *testing.T) {
-	assert.Equal(t, "verified", verifiedBootStateName(android.VerifiedBootVerified))
-	assert.Equal(t, "self-signed", verifiedBootStateName(android.VerifiedBootSelfSigned))
-	assert.Equal(t, "unverified", verifiedBootStateName(android.VerifiedBootUnverified))
-	assert.Equal(t, "failed", verifiedBootStateName(android.VerifiedBootFailed))
-	assert.Equal(t, "unknown", verifiedBootStateName(android.VerifiedBootState(99)))
+	assert.Equal(t, "verified", verifiedBootStateName(xkms.AndroidVerifiedBootVerified))
+	assert.Equal(t, "self-signed", verifiedBootStateName(xkms.AndroidVerifiedBootSelfSigned))
+	assert.Equal(t, "unverified", verifiedBootStateName(xkms.AndroidVerifiedBootUnverified))
+	assert.Equal(t, "failed", verifiedBootStateName(xkms.AndroidVerifiedBootFailed))
+	assert.Equal(t, "unknown", verifiedBootStateName(xkms.AndroidVerifiedBootState(99)))
 }
 
 // ---------------------------------------------------------------------------

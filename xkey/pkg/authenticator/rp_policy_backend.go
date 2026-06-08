@@ -20,17 +20,17 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// BackendRPPolicyStore implements RPPolicyStore using a storage.Backend.
+// BackendRPPolicyStore implements RPPolicyStore using a xkms.StorageBackend.
 // This is the production implementation, designed to work with barrier-encrypted
 // storage backends. It follows the same pattern as BackendStorage for credential
 // persistence and BackendTokenStore/BackendStore for OIDC/OATH token storage.
 //
 // Thread-safe using a read-write mutex.
 type BackendRPPolicyStore struct {
-	backend storage.Backend
+	backend xkms.StorageBackend
 	prefix  string // e.g., "fido2/authenticator/rp-policies/"
 	mu      sync.RWMutex
 	closed  bool
@@ -40,7 +40,7 @@ type BackendRPPolicyStore struct {
 // storage backend. The prefix is prepended to all storage keys to namespace
 // the RP policy data. If prefix is empty, "fido2/authenticator/rp-policies/"
 // is used as the default.
-func NewBackendRPPolicyStore(backend storage.Backend, prefix string) (*BackendRPPolicyStore, error) {
+func NewBackendRPPolicyStore(backend xkms.StorageBackend, prefix string) (*BackendRPPolicyStore, error) {
 	if backend == nil {
 		return nil, ErrNilStorage
 	}
@@ -102,7 +102,7 @@ func (b *BackendRPPolicyStore) GetPolicy(rpID string) (*RPPolicy, error) {
 	key := b.policyKey(rpID)
 	data, err := b.backend.Get(context.Background(), key)
 	if err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return nil, ErrRPPolicyNotFound
 		}
 		return nil, wrapStorageError(err)
@@ -131,7 +131,7 @@ func (b *BackendRPPolicyStore) DeletePolicy(rpID string) error {
 
 	key := b.policyKey(rpID)
 	if err := b.backend.Delete(context.Background(), key); err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
+		if errors.Is(err, xkms.ErrStorageNotFound) {
 			return ErrRPPolicyNotFound
 		}
 		return wrapStorageError(err)

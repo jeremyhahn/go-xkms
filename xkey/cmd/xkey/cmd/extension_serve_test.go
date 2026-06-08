@@ -24,8 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
@@ -563,7 +562,7 @@ func TestReadBarrierStrategy_Software(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rootKey := `{"version":1,"strategy":"software","salt":"AAAA","nonce":"BBBB","ciphertext":"CCCC","created_at":"2026-01-01T00:00:00Z"}`
+	rootKey := `{"version":1,"strategy":"passphrase","salt":"AAAA","nonce":"BBBB","ciphertext":"CCCC","created_at":"2026-01-01T00:00:00Z"}`
 	if err := os.WriteFile(filepath.Join(barrierDir, "root_key"), []byte(rootKey), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -572,8 +571,8 @@ func TestReadBarrierStrategy_Software(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strategy != seal.StrategyPassphrase {
-		t.Fatalf("expected %q, got %q", seal.StrategyPassphrase, strategy)
+	if strategy != xkms.StrategyPassphrase {
+		t.Fatalf("expected %q, got %q", xkms.StrategyPassphrase, strategy)
 	}
 }
 
@@ -593,8 +592,8 @@ func TestReadBarrierStrategy_TPM2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strategy != seal.StrategyTPM2 {
-		t.Fatalf("expected %q, got %q", seal.StrategyTPM2, strategy)
+	if strategy != xkms.StrategyTPM2 {
+		t.Fatalf("expected %q, got %q", xkms.StrategyTPM2, strategy)
 	}
 }
 
@@ -614,8 +613,8 @@ func TestReadBarrierStrategy_CloudKMS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if strategy != seal.StrategyAWSKMS {
-		t.Fatalf("expected %q, got %q", seal.StrategyAWSKMS, strategy)
+	if strategy != xkms.StrategyAWSKMS {
+		t.Fatalf("expected %q, got %q", xkms.StrategyAWSKMS, strategy)
 	}
 }
 
@@ -722,7 +721,7 @@ func TestInitHeadlessAuthenticator_Success(t *testing.T) {
 	dataDir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	backend, err := filestorage.New(dataDir)
+	backend, err := xkms.NewFileStorageBackend(dataDir)
 	if err != nil {
 		t.Fatalf("failed to create storage backend: %v", err)
 	}
@@ -736,14 +735,16 @@ func TestInitHeadlessAuthenticator_Success(t *testing.T) {
 		t.Fatal("expected non-nil authenticator")
 	}
 
-	// Verify the fido2 directory was created.
-	fido2Dir := filepath.Join(dataDir, "fido2")
-	info, err := os.Stat(fido2Dir)
-	if err != nil {
-		t.Fatalf("fido2 directory not created: %v", err)
+	// initHeadlessAuthenticator wires the authenticator's persistent storage
+	// to the supplied backend under the "fido2/xkey/" key prefix. The on-disk
+	// directory is created lazily on first write, so persist a record through
+	// the prefixed key and verify it lands under <dataDir>/fido2/xkey/.
+	if err := backend.Put(context.Background(), "fido2/xkey/probe", []byte("ok")); err != nil {
+		t.Fatalf("failed to write probe credential: %v", err)
 	}
-	if !info.IsDir() {
-		t.Fatal("expected fido2 path to be a directory")
+	credPath := filepath.Join(dataDir, "fido2", "xkey", "probe")
+	if _, err := os.Stat(credPath); err != nil {
+		t.Fatalf("credential not persisted under fido2/xkey prefix: %v", err)
 	}
 }
 
@@ -753,11 +754,11 @@ func TestInitHeadlessAuthenticator_InvalidDir(t *testing.T) {
 	dataDir := "/nonexistent/path/that/does/not/exist"
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	backend, err := filestorage.New(dataDir)
+	backend, err := xkms.NewFileStorageBackend(dataDir)
 	if err != nil {
 		// Backend creation itself may fail for invalid paths — that's acceptable.
 		// The test intent is to verify initHeadlessAuthenticator handles the failure.
-		t.Skipf("filestorage.New failed for invalid path (expected): %v", err)
+		t.Skipf("xkms.NewFileStorageBackend failed for invalid path (expected): %v", err)
 	}
 	pinSvc := services.NewPINService()
 

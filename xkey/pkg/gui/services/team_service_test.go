@@ -15,11 +15,9 @@ package services
 
 import (
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,13 +26,13 @@ import (
 func newTestTeamService(t *testing.T) *TeamService {
 	t.Helper()
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	store, err := staticpw.NewDAOTeamStore(kvStore)
+	store, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 

@@ -19,8 +19,10 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/custodian"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // Custodian handler typed errors.
@@ -54,23 +56,23 @@ type addCustodianMemberRequest struct {
 
 // createCustodianGroupResponse wraps the created group for the SDK contract.
 type createCustodianGroupResponse struct {
-	Group *custodian.CustodianGroup `json:"group"`
+	Group transport.CustodianGroupInfo `json:"group"`
 }
 
 // getCustodianGroupResponse wraps a single group for the SDK contract.
 type getCustodianGroupResponse struct {
-	Group *custodian.CustodianGroup `json:"group"`
+	Group transport.CustodianGroupInfo `json:"group"`
 }
 
 // listCustodianGroupsResponse wraps the groups list for the SDK contract.
 type listCustodianGroupsResponse struct {
-	Groups     []*custodian.CustodianGroup `json:"groups"`
-	Pagination transport.PageResponse      `json:"pagination"`
+	Groups     []transport.CustodianGroupInfo `json:"groups"`
+	Pagination transport.PageResponse         `json:"pagination"`
 }
 
 // addCustodianMemberResponse wraps the added member for the SDK contract.
 type addCustodianMemberResponse struct {
-	Member *custodian.CustodianMember `json:"member"`
+	Member transport.CustodianMemberInfo `json:"member"`
 }
 
 // distributeSharesResponse represents the response for share distribution.
@@ -78,14 +80,15 @@ type distributeSharesResponse struct {
 	Distributed int `json:"distributed"`
 }
 
-// CustodianHandlers holds the custodian service dependency for REST handlers.
-type CustodianHandlers struct {
-	service *custodian.Service
-}
+// CustodianHandlers serves the custodian group REST endpoints. Custodian state
+// is owned by the embedded go-qrdb node; the handlers delegate to the unified
+// XKMSService servicer, which passes calls through to the node's custodian
+// group client. The handlers hold no local state.
+type CustodianHandlers struct{}
 
-// NewCustodianHandlers creates a new CustodianHandlers with the given service.
-func NewCustodianHandlers(service *custodian.Service) *CustodianHandlers {
-	return &CustodianHandlers{service: service}
+// NewCustodianHandlers creates a new CustodianHandlers.
+func NewCustodianHandlers() *CustodianHandlers {
+	return &CustodianHandlers{}
 }
 
 // CreateGroupHandler handles POST /custodian/groups requests.
@@ -102,7 +105,8 @@ func NewCustodianHandlers(service *custodian.Service) *CustodianHandlers {
 //	  "total": int
 //	}
 func (h *CustodianHandlers) CreateGroupHandler(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -128,31 +132,39 @@ func (h *CustodianHandlers) CreateGroupHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	group, err := h.service.CreateGroup(r.Context(), req.ID, req.TenantID, req.Name, req.Purpose, req.Threshold, req.Total)
+	resp, err := svc.CreateCustodianGroup(r.Context(), &qrdbtransport.CreateCustodianGroupRequest{
+		ID:        req.ID,
+		TenantID:  req.TenantID,
+		Name:      req.Name,
+		Purpose:   req.Purpose,
+		Threshold: req.Threshold,
+		Total:     req.Total,
+	})
 	if err != nil {
 		handleCustodianError(w, err)
 		return
 	}
 
-	writeJSON(w, createCustodianGroupResponse{Group: group}, http.StatusCreated)
+	writeJSON(w, createCustodianGroupResponse{Group: resp.Group}, http.StatusCreated)
 }
 
 // ListGroupsHandler handles GET /custodian/groups requests.
 // Returns all custodian groups wrapped in a groups envelope.
 func (h *CustodianHandlers) ListGroupsHandler(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
 
-	groups, err := h.service.ListGroups(r.Context())
+	resp, err := svc.ListCustodianGroups(r.Context())
 	if err != nil {
 		handleCustodianError(w, err)
 		return
 	}
 
 	pageReq := parsePageRequest(r)
-	paged, pageResp := applyPagination(groups, pageReq)
+	paged, pageResp := applyPagination(resp.Groups, pageReq)
 
 	writeJSON(w, listCustodianGroupsResponse{Groups: paged, Pagination: pageResp}, http.StatusOK)
 }
@@ -163,7 +175,8 @@ func (h *CustodianHandlers) ListGroupsHandler(w http.ResponseWriter, r *http.Req
 // URL parameters:
 //   - id: custodian group identifier (required)
 func (h *CustodianHandlers) GetGroupHandler(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -174,13 +187,13 @@ func (h *CustodianHandlers) GetGroupHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	group, err := h.service.GetGroup(r.Context(), id)
+	resp, err := svc.GetCustodianGroup(r.Context(), id)
 	if err != nil {
 		handleCustodianError(w, err)
 		return
 	}
 
-	writeJSON(w, getCustodianGroupResponse{Group: group}, http.StatusOK)
+	writeJSON(w, getCustodianGroupResponse{Group: resp.Group}, http.StatusOK)
 }
 
 // DeleteGroupHandler handles DELETE /custodian/groups/{id} requests.
@@ -189,7 +202,8 @@ func (h *CustodianHandlers) GetGroupHandler(w http.ResponseWriter, r *http.Reque
 // URL parameters:
 //   - id: custodian group identifier (required)
 func (h *CustodianHandlers) DeleteGroupHandler(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -200,7 +214,7 @@ func (h *CustodianHandlers) DeleteGroupHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := h.service.DeleteGroup(r.Context(), id); err != nil {
+	if err := svc.DeleteCustodianGroup(r.Context(), id); err != nil {
 		handleCustodianError(w, err)
 		return
 	}
@@ -222,7 +236,8 @@ func (h *CustodianHandlers) DeleteGroupHandler(w http.ResponseWriter, r *http.Re
 //	  "method": "string"
 //	}
 func (h *CustodianHandlers) AddMemberHandler(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -244,13 +259,18 @@ func (h *CustodianHandlers) AddMemberHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	member, err := h.service.AddMember(r.Context(), groupID, req.UserID, req.Username, req.Method)
+	resp, err := svc.AddCustodianMember(r.Context(), &qrdbtransport.AddCustodianMemberRequest{
+		GroupID:  groupID,
+		UserID:   req.UserID,
+		Username: req.Username,
+		Method:   req.Method,
+	})
 	if err != nil {
 		handleCustodianError(w, err)
 		return
 	}
 
-	writeJSON(w, addCustodianMemberResponse{Member: member}, http.StatusCreated)
+	writeJSON(w, addCustodianMemberResponse{Member: resp.Member}, http.StatusCreated)
 }
 
 // RemoveMemberHandler handles DELETE /custodian/groups/{id}/members/{userID} requests.
@@ -258,9 +278,10 @@ func (h *CustodianHandlers) AddMemberHandler(w http.ResponseWriter, r *http.Requ
 //
 // URL parameters:
 //   - id: custodian group identifier (required)
-//   - uid: user identifier of the member to remove (required)
+//   - userID: user identifier of the member to remove (required)
 func (h *CustodianHandlers) RemoveMemberHandler(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -277,7 +298,10 @@ func (h *CustodianHandlers) RemoveMemberHandler(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if err := h.service.RemoveMember(r.Context(), groupID, uid); err != nil {
+	if err := svc.RemoveCustodianMember(r.Context(), &qrdbtransport.RemoveCustodianMemberRequest{
+		GroupID: groupID,
+		UserID:  uid,
+	}); err != nil {
 		handleCustodianError(w, err)
 		return
 	}
@@ -291,7 +315,8 @@ func (h *CustodianHandlers) RemoveMemberHandler(w http.ResponseWriter, r *http.R
 // URL parameters:
 //   - id: custodian group identifier (required)
 func (h *CustodianHandlers) DistributeSharesHandler(w http.ResponseWriter, r *http.Request) {
-	if h.service == nil {
+	svc, err := xkms.Get()
+	if err != nil {
 		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
 		return
 	}
@@ -302,36 +327,36 @@ func (h *CustodianHandlers) DistributeSharesHandler(w http.ResponseWriter, r *ht
 		return
 	}
 
-	count, err := h.service.DistributeShares(r.Context(), groupID)
+	resp, err := svc.DistributeShares(r.Context(), &qrdbtransport.DistributeSharesRequest{
+		GroupID: groupID,
+	})
 	if err != nil {
 		handleCustodianError(w, err)
 		return
 	}
 
-	writeJSON(w, distributeSharesResponse{Distributed: count}, http.StatusOK)
+	writeJSON(w, distributeSharesResponse{Distributed: resp.Distributed}, http.StatusOK)
 }
 
-// handleCustodianError maps custodian-specific errors to HTTP status codes
-// and writes the error response.
+// handleCustodianError maps custodian domain errors (surfaced by the go-qrdb
+// node's custodian client) to HTTP status codes and writes the error response.
 func handleCustodianError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, custodian.ErrGroupNotFound):
+	case errors.Is(err, xkms.ErrNotConfigured):
+		writeError(w, ErrCustodianNotConfigured, http.StatusServiceUnavailable)
+	case errors.Is(err, qrdbsdk.ErrCeremonyGroupNotFound),
+		errors.Is(err, qrdbsdk.ErrCeremonyMemberNotFound),
+		errors.Is(err, qrdbsdk.ErrCeremonyUserNotFound):
 		writeError(w, err, http.StatusNotFound)
-	case errors.Is(err, custodian.ErrGroupAlreadyExists):
+	case errors.Is(err, qrdbsdk.ErrCeremonyGroupAlreadyExists),
+		errors.Is(err, qrdbsdk.ErrCeremonyGroupFull),
+		errors.Is(err, qrdbsdk.ErrCeremonyMemberAlreadyExists):
 		writeError(w, err, http.StatusConflict)
-	case errors.Is(err, custodian.ErrGroupFull):
-		writeError(w, err, http.StatusConflict)
-	case errors.Is(err, custodian.ErrMemberAlreadyExists):
-		writeError(w, err, http.StatusConflict)
-	case errors.Is(err, custodian.ErrMemberNotFound):
-		writeError(w, err, http.StatusNotFound)
-	case errors.Is(err, custodian.ErrEmptyGroupID),
-		errors.Is(err, custodian.ErrEmptyGroupName),
-		errors.Is(err, custodian.ErrEmptyUserID),
-		errors.Is(err, custodian.ErrInvalidThreshold),
-		errors.Is(err, custodian.ErrInvalidTotalShares),
-		errors.Is(err, custodian.ErrInvalidPurpose),
-		errors.Is(err, custodian.ErrGroupEmpty):
+	case errors.Is(err, qrdbsdk.ErrCeremonyEmptyGroupID),
+		errors.Is(err, qrdbsdk.ErrCeremonyEmptyGroupName),
+		errors.Is(err, qrdbsdk.ErrCeremonyInvalidThreshold),
+		errors.Is(err, qrdbsdk.ErrCeremonyInvalidTotal),
+		errors.Is(err, qrdbsdk.ErrCeremonyInsufficientMembers):
 		writeError(w, err, http.StatusBadRequest)
 	default:
 		writeError(w, ErrInternalError, http.StatusInternalServerError)

@@ -27,8 +27,7 @@ import (
 	"encoding/asn1"
 	"fmt"
 
-	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/miekg/pkcs11"
 )
 
@@ -37,23 +36,23 @@ import (
 // because YubiKey PIV maps key generation to a management key operation.
 // All other operations delegate directly to the inner PKCS#11 backend.
 type Provider struct {
-	inner *pkcs11backend.Backend
+	inner *xkms.PKCS11Backend
 }
 
 // NewProvider creates a YubiKey KeyProvider wrapping the given PKCS#11 backend.
 // The backend's Config must have SOPIN set to the YubiKey management key
 // for key generation to succeed.
-func NewProvider(backend *pkcs11backend.Backend) *Provider {
+func NewProvider(backend *xkms.PKCS11Backend) *Provider {
 	return &Provider{inner: backend}
 }
 
 // Type returns the backend type identifier.
-func (p *Provider) Type() types.BackendType {
+func (p *Provider) Type() xkms.BackendType {
 	return p.inner.Type()
 }
 
 // Capabilities returns the inner backend's capabilities.
-func (p *Provider) Capabilities() types.Capabilities {
+func (p *Provider) Capabilities() xkms.Capabilities {
 	return p.inner.Capabilities()
 }
 
@@ -64,7 +63,7 @@ func (p *Provider) Capabilities() types.Capabilities {
 //
 // Once the key is generated on the hardware, GetKey retrieves the standard
 // PKCS#11 signer for the newly-created key.
-func (p *Provider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (p *Provider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	cfg := p.inner.Config()
 	if cfg.SOPIN == "" {
 		return p.inner.GenerateKey(attrs)
@@ -72,7 +71,7 @@ func (p *Provider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, e
 
 	pool := p.inner.Pool()
 	if pool == nil {
-		return nil, fmt.Errorf("yubikey: %w", pkcs11backend.ErrNotInitialized)
+		return nil, fmt.Errorf("yubikey: %w", xkms.ErrPKCS11BackendNotInitialized)
 	}
 
 	switch attrs.KeyAlgorithm {
@@ -90,32 +89,32 @@ func (p *Provider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, e
 }
 
 // GetKey retrieves an existing key from the YubiKey.
-func (p *Provider) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (p *Provider) GetKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	return p.inner.GetKey(attrs)
 }
 
 // DeleteKey removes a key from the YubiKey.
-func (p *Provider) DeleteKey(attrs *types.KeyAttributes) error {
+func (p *Provider) DeleteKey(attrs *xkms.KeyAttributes) error {
 	return p.inner.DeleteKey(attrs)
 }
 
 // ListKeys returns all keys managed by the inner backend.
-func (p *Provider) ListKeys() ([]*types.KeyAttributes, error) {
+func (p *Provider) ListKeys() ([]*xkms.KeyAttributes, error) {
 	return p.inner.ListKeys()
 }
 
 // Signer returns a crypto.Signer for the key identified by attrs.
-func (p *Provider) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (p *Provider) Signer(attrs *xkms.KeyAttributes) (crypto.Signer, error) {
 	return p.inner.Signer(attrs)
 }
 
 // Decrypter returns a crypto.Decrypter for the key identified by attrs.
-func (p *Provider) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (p *Provider) Decrypter(attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
 	return p.inner.Decrypter(attrs)
 }
 
 // RotateKey delegates to the inner backend.
-func (p *Provider) RotateKey(attrs *types.KeyAttributes) error {
+func (p *Provider) RotateKey(attrs *xkms.KeyAttributes) error {
 	return p.inner.RotateKey(attrs)
 }
 
@@ -134,7 +133,7 @@ var curveToOID = map[elliptic.Curve]asn1.ObjectIdentifier{
 // generateECDSAOnDevice creates an ECDSA key pair on the YubiKey under
 // CKU_SO authentication. The key pair is persisted on the token; the caller
 // should use inner.GetKey to obtain a signer afterward.
-func (p *Provider) generateECDSAOnDevice(pool *pkcs11backend.SessionPool, attrs *types.KeyAttributes, soPin, userPin string) error {
+func (p *Provider) generateECDSAOnDevice(pool *xkms.PKCS11SessionPool, attrs *xkms.KeyAttributes, soPin, userPin string) error {
 	curve := elliptic.P256()
 	if attrs.ECCAttributes != nil && attrs.ECCAttributes.Curve != nil {
 		curve = attrs.ECCAttributes.Curve
@@ -185,4 +184,4 @@ func (p *Provider) generateECDSAOnDevice(pool *pkcs11backend.SessionPool, attrs 
 }
 
 // Compile-time interface check.
-var _ types.KeyProvider = (*Provider)(nil)
+var _ xkms.KeyProvider = (*Provider)(nil)

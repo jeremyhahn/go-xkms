@@ -18,16 +18,14 @@ package gui
 import (
 	"github.com/miekg/pkcs11"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivpkcs11 "github.com/jeremyhahn/go-xkms/pkg/pivcert/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/pkcs11/manager"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // newPKCS11PIVCertStorage creates a PKCS#11-backed PIV certificate storage.
 // This stores certificates directly on the PKCS#11 token, compliant with
 // NIST SP 800-73-5.
-func newPKCS11PIVCertStorage(config *pivcert.PKCS11StorageConfig) (pivcert.PIVCertificateStorage, error) {
-	return pivpkcs11.New(config)
+func newPKCS11PIVCertStorage(config *xkms.PIVPKCS11StorageConfig) (xkms.PIVCertificateStorage, error) {
+	return xkms.NewPIVPKCS11Backend(config)
 }
 
 // newPKCS11PIVCertStorageFromConnection creates a PKCS#11 PIV cert storage
@@ -38,20 +36,20 @@ func newPKCS11PIVCertStorage(config *pivcert.PKCS11StorageConfig) (pivcert.PIVCe
 // When soPin is non-empty (e.g., YubiKey PIV management key), the storage
 // uses SO session elevation for write/delete operations to avoid
 // CKR_USER_TYPE_INVALID errors on tokens that reject those ops under CKU_USER.
-func newPKCS11PIVCertStorageFromConnection(conn *manager.Connection, soPin, userPin string) (pivcert.PIVCertificateStorage, error) {
+func newPKCS11PIVCertStorageFromConnection(conn *xkms.PKCS11Connection, soPin, userPin string) (xkms.PIVCertificateStorage, error) {
 	if conn == nil || conn.P11Ctx == nil {
-		return nil, pivcert.NewStorageTypeError("newPKCS11PIVCertStorageFromConnection",
-			pivcert.StorageTypePKCS11, pivcert.ErrPKCS11NotAvailable)
+		return nil, xkms.NewPIVStorageTypeError("newPKCS11PIVCertStorageFromConnection",
+			xkms.PIVStorageTypePKCS11, xkms.ErrPIVPKCS11NotAvailable)
 	}
 
 	p11ctx, ok := conn.P11Ctx.(*pkcs11.Ctx)
 	if !ok {
-		return nil, pivcert.NewStorageTypeError("newPKCS11PIVCertStorageFromConnection",
-			pivcert.StorageTypePKCS11, pivcert.ErrPKCS11NotAvailable)
+		return nil, xkms.NewPIVStorageTypeError("newPKCS11PIVCertStorageFromConnection",
+			xkms.PIVStorageTypePKCS11, xkms.ErrPIVPKCS11NotAvailable)
 	}
 
 	if soPin != "" {
-		return pivpkcs11.NewFromSessionWithSO(p11ctx, pkcs11.SessionHandle(conn.SessionHandle), conn.SlotID, soPin, userPin)
+		return xkms.NewPIVPKCS11BackendFromSessionWithSO(p11ctx, pkcs11.SessionHandle(conn.SessionHandle), conn.SlotID, soPin, userPin)
 	}
-	return pivpkcs11.NewFromSession(p11ctx, pkcs11.SessionHandle(conn.SessionHandle), conn.SlotID)
+	return xkms.NewPIVPKCS11BackendFromSession(p11ctx, pkcs11.SessionHandle(conn.SessionHandle), conn.SlotID)
 }

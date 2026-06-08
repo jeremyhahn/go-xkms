@@ -22,14 +22,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"math/big"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	pivcertfile "github.com/jeremyhahn/go-xkms/pkg/pivcert/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/backendregistry"
 	"github.com/stretchr/testify/assert"
@@ -374,10 +371,10 @@ func generatePIVCertPEM(t *testing.T, cn string) []byte {
 // singleton after the test completes.
 func initTestPIVManager(t *testing.T) {
 	t.Helper()
-	xkms.ResetPIV()
+	xkms.XKMSResetPIV()
 
-	memBackend := storage.NewMemory()
-	pivStore, err := pivcertfile.NewFileBackend(&pivcert.FileStorageConfig{
+	memBackend := xkms.NewStorageMemory()
+	pivStore, err := xkms.NewPIVFileBackend(&xkms.PIVFileStorageConfig{
 		Backend:    memBackend,
 		DEREnabled: true,
 		PEMEnabled: true,
@@ -385,14 +382,14 @@ func initTestPIVManager(t *testing.T) {
 	require.NoError(t, err)
 
 	err = xkms.InitializePIV(&xkms.PIVManagerConfig{
-		Stores: map[string]pivcert.PIVCertificateStorage{
+		Stores: map[string]xkms.PIVCertificateStorage{
 			"software": pivStore,
 		},
 	})
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		xkms.ResetPIV()
+		xkms.XKMSResetPIV()
 	})
 }
 
@@ -1286,8 +1283,8 @@ func TestPIVService_FallbackToLocal(t *testing.T) {
 
 func TestPIVService_LocalGetSlots_DegradedMode(t *testing.T) {
 	// Do NOT initialize the PIV manager - simulates degraded mode.
-	xkms.ResetPIV()
-	t.Cleanup(func() { xkms.ResetPIV() })
+	xkms.XKMSResetPIV()
+	t.Cleanup(func() { xkms.XKMSResetPIV() })
 
 	svc := NewPIVService(nil, "software")
 	svc.SetLocalEnabled(true)

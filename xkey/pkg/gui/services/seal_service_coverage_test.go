@@ -27,8 +27,6 @@ import (
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,7 +65,7 @@ func TestSealService_Coverage_SetBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	assert.Nil(t, svc.Backend())
 
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	assert.Equal(t, backend, svc.Backend())
@@ -76,7 +74,7 @@ func TestSealService_Coverage_SetBackend(t *testing.T) {
 
 func TestSealService_Coverage_SetBackend_NilClears(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 	assert.NotNil(t, svc.Backend())
 
@@ -131,7 +129,7 @@ func TestSealService_Coverage_LogSealEvent_NoLogger(t *testing.T) {
 
 func TestSealService_Coverage_DefaultBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
-	assert.Equal(t, string(types.BackendTypeTPM2), svc.DefaultBackend())
+	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.DefaultBackend())
 }
 
 func TestSealService_Coverage_SetDefaultBackend_Custom(t *testing.T) {
@@ -159,7 +157,7 @@ func TestSealService_Coverage_AutoSelectDefault_SelectsSoftware(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	mc := &sealMockClient{
 		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
-			if backend == string(types.BackendTypeSoftware) {
+			if backend == string(xkms.BackendTypeSoftware) {
 				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
 			}
 			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
@@ -168,7 +166,7 @@ func TestSealService_Coverage_AutoSelectDefault_SelectsSoftware(t *testing.T) {
 	svc.SetLocalClient(mc)
 
 	svc.AutoSelectDefault()
-	assert.Equal(t, string(types.BackendTypeSoftware), svc.DefaultBackend())
+	assert.Equal(t, string(xkms.BackendTypeSoftware), svc.DefaultBackend())
 }
 
 func TestSealService_Coverage_AutoSelectDefault_PrefersTPM(t *testing.T) {
@@ -181,7 +179,7 @@ func TestSealService_Coverage_AutoSelectDefault_PrefersTPM(t *testing.T) {
 	svc.SetLocalClient(mc)
 
 	svc.AutoSelectDefault()
-	assert.Equal(t, string(types.BackendTypeTPM2), svc.DefaultBackend())
+	assert.Equal(t, string(xkms.BackendTypeTPM2), svc.DefaultBackend())
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +190,7 @@ func TestSealService_Coverage_BestSealer_SoftwareOnly(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	mc := &sealMockClient{
 		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
-			if backend == string(types.BackendTypeSoftware) {
+			if backend == string(xkms.BackendTypeSoftware) {
 				return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
 			}
 			return &transport.CanSealResponse{CanSeal: false, Backend: backend}, nil
@@ -202,7 +200,7 @@ func TestSealService_Coverage_BestSealer_SoftwareOnly(t *testing.T) {
 
 	best := svc.BestSealer()
 	require.NotNil(t, best)
-	assert.Equal(t, string(types.BackendTypeSoftware), best.ID)
+	assert.Equal(t, string(xkms.BackendTypeSoftware), best.ID)
 }
 
 func TestSealService_Coverage_BestSealer_NoneAvailable(t *testing.T) {
@@ -261,18 +259,18 @@ func TestSealService_Coverage_SealerDetails(t *testing.T) {
 	svc := NewSealService(dir)
 
 	t.Run("software", func(t *testing.T) {
-		details := svc.sealerDetails(string(types.BackendTypeSoftware))
+		details := svc.sealerDetails(string(xkms.BackendTypeSoftware))
 		assert.Equal(t, dir, details["storage_dir"])
 	})
 
 	t.Run("tpm2", func(t *testing.T) {
-		details := svc.sealerDetails(string(types.BackendTypeTPM2))
+		details := svc.sealerDetails(string(xkms.BackendTypeTPM2))
 		assert.Equal(t, "0x81000002", details["srk_handle"])
 		assert.Equal(t, dir, details["storage_dir"])
 	})
 
 	t.Run("pkcs11", func(t *testing.T) {
-		details := svc.sealerDetails(string(types.BackendTypePKCS11))
+		details := svc.sealerDetails(string(xkms.BackendTypePKCS11))
 		assert.Empty(t, details, "pkcs11 is not a sealer, no details expected")
 	})
 
@@ -436,7 +434,7 @@ func TestSealService_Coverage_HandlePolicyPassword_Valid(t *testing.T) {
 
 func TestSealService_Coverage_HandlePolicyCustomPCR_NoPCRs(t *testing.T) {
 	req := &SealRequest{}
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
 	assert.NoError(t, err)
 	assert.Nil(t, opts.TPMPolicy) // No PCRs = no policy set
@@ -447,7 +445,7 @@ func TestSealService_Coverage_HandlePolicyCustomPCR_WithPCRs(t *testing.T) {
 		PCRs:    []int{0, 7},
 		PCRBank: "sha256",
 	}
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
 	assert.NoError(t, err)
 	require.NotNil(t, opts.TPMPolicy)
@@ -459,7 +457,7 @@ func TestSealService_Coverage_HandlePolicyCustomPCR_DefaultBank(t *testing.T) {
 		PCRs:    []int{0},
 		PCRBank: "", // should default to sha256
 	}
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
 	assert.NoError(t, err)
 	require.NotNil(t, opts.TPMPolicy)
@@ -471,7 +469,7 @@ func TestSealService_Coverage_HandlePolicyCustomPCR_UnknownBank(t *testing.T) {
 		PCRs:    []int{0},
 		PCRBank: "md5", // not in pcrBankAlgMap
 	}
-	opts := &types.SealOptions{}
+	opts := &xkms.SealOptions{}
 	err := handlePolicyCustomPCR(nil, req, opts)
 	assert.NoError(t, err)
 	require.NotNil(t, opts.TPMPolicy)
@@ -482,7 +480,7 @@ func TestSealService_Coverage_HandlePolicyPlatformPolicy_NilService(t *testing.T
 	svc := NewSealService(t.TempDir())
 	svc.policyService = nil
 
-	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, &types.SealOptions{})
+	err := handlePolicyPlatformPolicy(svc, &SealRequest{}, &xkms.SealOptions{})
 	assert.ErrorIs(t, err, ErrSealPolicyNotAvailable)
 }
 
@@ -619,8 +617,8 @@ func TestSealService_Coverage_SaveAndLoadBlob_Direct(t *testing.T) {
 		ID:        "test-blob",
 		Label:     "test-label",
 		SizeBytes: 42,
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeSoftware,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("ciphertext"),
 		},
 		CreatedAt: time.Now(),
@@ -665,15 +663,15 @@ func TestSealService_Coverage_LoadBlobByID_NotFound(t *testing.T) {
 func TestSealService_Coverage_SaveAndLoadBlob_ViaBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	blob := &sealedBlobStorage{
 		ID:        "backend-blob",
 		Label:     "backend-label",
 		SizeBytes: 100,
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeSoftware,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("test"),
 		},
 		CreatedAt: time.Now(),
@@ -691,7 +689,7 @@ func TestSealService_Coverage_SaveAndLoadBlob_ViaBackend(t *testing.T) {
 func TestSealService_Coverage_LoadBlobByID_ViaBackend_NotFound(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	_, err := svc.loadBlobByID("nonexistent")
@@ -701,7 +699,7 @@ func TestSealService_Coverage_LoadBlobByID_ViaBackend_NotFound(t *testing.T) {
 func TestSealService_Coverage_LoadBlobByID_ViaBackend_InvalidJSON(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Write invalid JSON to the backend.
@@ -718,7 +716,7 @@ func TestSealService_Coverage_LoadBlobByID_ViaBackend_InvalidJSON(t *testing.T) 
 func TestSealService_Coverage_ListBlobs_ViaBackend_Empty(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	entries, err := svc.ListBlobs()
@@ -729,7 +727,7 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_Empty(t *testing.T) {
 func TestSealService_Coverage_ListBlobs_ViaBackend_WithBlobs(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Save two blobs.
@@ -738,8 +736,8 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_WithBlobs(t *testing.T) {
 			ID:        id,
 			Label:     "label-" + id,
 			SizeBytes: 50,
-			SealedData: &types.SealedData{
-				Backend: types.BackendTypeSoftware,
+			SealedData: &xkms.SealedData{
+				Backend: xkms.BackendTypeSoftware,
 			},
 			CreatedAt: time.Now(),
 		}
@@ -754,14 +752,14 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_WithBlobs(t *testing.T) {
 func TestSealService_Coverage_ListBlobs_ViaBackend_SkipsInvalidJSON(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Write valid blob.
 	validBlob := &sealedBlobStorage{
 		ID:         "valid",
 		Label:      "valid-label",
-		SealedData: &types.SealedData{Backend: types.BackendTypeSoftware},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
 		CreatedAt:  time.Now(),
 	}
 	validData, marshalErr := json.Marshal(validBlob)
@@ -798,14 +796,14 @@ func TestSealService_Coverage_ListBlobs_Direct_NilContext(t *testing.T) {
 func TestSealService_Coverage_DeleteBlob_ViaBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Save a blob then delete it.
 	blob := &sealedBlobStorage{
 		ID:         "delete-me",
 		Label:      "to-delete",
-		SealedData: &types.SealedData{Backend: types.BackendTypeSoftware},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
 		CreatedAt:  time.Now(),
 	}
 	require.NoError(t, svc.saveBlob(blob))
@@ -821,7 +819,7 @@ func TestSealService_Coverage_DeleteBlob_ViaBackend(t *testing.T) {
 func TestSealService_Coverage_DeleteBlob_ViaBackend_NotFound(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	err := svc.DeleteBlob("nonexistent")
@@ -831,7 +829,7 @@ func TestSealService_Coverage_DeleteBlob_ViaBackend_NotFound(t *testing.T) {
 func TestSealService_Coverage_DeleteBlob_ViaBackend_WithAudit(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 	logger := &sealCoverageAuditLogger{}
 	svc.SetAuditLogger(logger)
@@ -839,7 +837,7 @@ func TestSealService_Coverage_DeleteBlob_ViaBackend_WithAudit(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:         "audit-delete",
 		Label:      "audit-label",
-		SealedData: &types.SealedData{Backend: types.BackendTypeSoftware},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
 		CreatedAt:  time.Now(),
 	}
 	require.NoError(t, svc.saveBlob(blob))
@@ -860,7 +858,7 @@ func TestSealService_Coverage_DeleteBlob_NilContext(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:         "ctx-nil",
 		Label:      "ctx-nil-label",
-		SealedData: &types.SealedData{Backend: types.BackendTypeSoftware},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
 		CreatedAt:  time.Now(),
 	}
 	svc.mu.Lock()
@@ -990,7 +988,7 @@ func TestSealService_Coverage_SealData_WithBackend(t *testing.T) {
 	svc.SetContext(context.Background())
 	mc := defaultSealMockClient()
 	svc.SetClientFunc(func() xkms.Client { return mc })
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	entry, err := svc.SealData(validSealRequest())
@@ -1062,8 +1060,8 @@ func TestSealService_Coverage_UnsealData_BackendIDFallback(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "no-backend",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeSoftware,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeSoftware,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1087,7 +1085,7 @@ func TestSealService_Coverage_UnsealData_FullBackendIDFallback(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "empty-backend",
 		Label: "test",
-		SealedData: &types.SealedData{
+		SealedData: &xkms.SealedData{
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -1221,11 +1219,11 @@ func TestSealService_Coverage_SealData_ExplicitBackend(t *testing.T) {
 	svc.SetClientFunc(func() xkms.Client { return mc })
 
 	req := validSealRequest()
-	req.Backend = string(types.BackendTypeSoftware)
+	req.Backend = string(xkms.BackendTypeSoftware)
 
 	entry, err := svc.SealData(req)
 	require.NoError(t, err)
-	assert.Equal(t, string(types.BackendTypeSoftware), entry.BackendID)
+	assert.Equal(t, string(xkms.BackendTypeSoftware), entry.BackendID)
 }
 
 // ---------------------------------------------------------------------------
@@ -1344,7 +1342,7 @@ func TestSealService_Coverage_AvailableSealers_SortedByLabel(t *testing.T) {
 func TestSealService_Coverage_AvailableSealers_MarksDefault(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	svc.SetContext(context.Background())
-	svc.SetDefaultBackend(string(types.BackendTypeSoftware))
+	svc.SetDefaultBackend(string(xkms.BackendTypeSoftware))
 	mc := &sealMockClient{
 		canSealFn: func(_ context.Context, backend string) (*transport.CanSealResponse, error) {
 			return &transport.CanSealResponse{CanSeal: true, Backend: backend}, nil
@@ -1355,7 +1353,7 @@ func TestSealService_Coverage_AvailableSealers_MarksDefault(t *testing.T) {
 	sealers := svc.AvailableSealers()
 	foundDefault := false
 	for _, s := range sealers {
-		if s.ID == string(types.BackendTypeSoftware) {
+		if s.ID == string(xkms.BackendTypeSoftware) {
 			assert.True(t, s.IsDefault)
 			foundDefault = true
 		}
@@ -1410,18 +1408,18 @@ func TestSealService_Coverage_PcrBankAlgMap(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSealService_Coverage_KnownSealerMeta(t *testing.T) {
-	tpmMeta, ok := knownSealerMeta[string(types.BackendTypeTPM2)]
+	tpmMeta, ok := knownSealerMeta[string(xkms.BackendTypeTPM2)]
 	assert.True(t, ok)
 	assert.True(t, tpmMeta.HardwareBacked)
-	assert.Equal(t, types.SecurityLevelVeryHigh, tpmMeta.SecurityLevel)
+	assert.Equal(t, xkms.SecurityLevelVeryHigh, tpmMeta.SecurityLevel)
 
-	swMeta, ok := knownSealerMeta[string(types.BackendTypeSoftware)]
+	swMeta, ok := knownSealerMeta[string(xkms.BackendTypeSoftware)]
 	assert.True(t, ok)
 	assert.False(t, swMeta.HardwareBacked)
-	assert.Equal(t, types.SecurityLevelLow, swMeta.SecurityLevel)
+	assert.Equal(t, xkms.SecurityLevelLow, swMeta.SecurityLevel)
 
 	// Only TPM2 and Software are sealers; PKCS11/cloud KMS are not.
-	_, hasPKCS11 := knownSealerMeta[string(types.BackendTypePKCS11)]
+	_, hasPKCS11 := knownSealerMeta[string(xkms.BackendTypePKCS11)]
 	assert.False(t, hasPKCS11, "pkcs11 should not be a sealer backend")
 }
 
@@ -1458,7 +1456,7 @@ func TestSealService_Coverage_SealData_PasswordPolicy_ViaBackend(t *testing.T) {
 	svc.SetContext(context.Background())
 	mc := defaultSealMockClient()
 	svc.SetClientFunc(func() xkms.Client { return mc })
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	req := &SealRequest{
@@ -1482,7 +1480,7 @@ func TestSealService_Coverage_UnsealData_ViaBackend(t *testing.T) {
 	svc.SetContext(context.Background())
 	mc := defaultSealMockClient()
 	svc.SetClientFunc(func() xkms.Client { return mc })
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	// Seal.
@@ -1533,7 +1531,7 @@ func TestSealService_Coverage_SaveBlob_BackendPutError(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:         "err-blob",
 		Label:      "err-label",
-		SealedData: &types.SealedData{Backend: types.BackendTypeSoftware},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
 		CreatedAt:  time.Now(),
 	}
 
@@ -1561,7 +1559,7 @@ func TestSealService_Coverage_ListBlobs_ViaBackend_ListError(t *testing.T) {
 
 // getErrorBackend returns an error for Get but works for List.
 type getErrorBackend struct {
-	storage.Backend
+	xkms.StorageBackend
 }
 
 func (b *getErrorBackend) List(_ context.Context, _ string) ([]string, error) {
@@ -1593,7 +1591,7 @@ func TestSealService_Coverage_SaveBlob_EmptyStorageDir(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:         "no-dir",
 		Label:      "no-dir-label",
-		SealedData: &types.SealedData{Backend: types.BackendTypeSoftware},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
 		CreatedAt:  time.Now(),
 	}
 
@@ -1608,13 +1606,13 @@ func TestSealService_Coverage_SaveBlob_EmptyStorageDir(t *testing.T) {
 func TestSealService_Coverage_SaveBlob_NilContext_ViaBackend(t *testing.T) {
 	svc := NewSealService(t.TempDir())
 	// ctx is nil
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	svc.SetBackend(backend, "sealed/")
 
 	blob := &sealedBlobStorage{
 		ID:         "nil-ctx",
 		Label:      "nil-ctx-label",
-		SealedData: &types.SealedData{Backend: types.BackendTypeSoftware},
+		SealedData: &xkms.SealedData{Backend: xkms.BackendTypeSoftware},
 		CreatedAt:  time.Now(),
 	}
 

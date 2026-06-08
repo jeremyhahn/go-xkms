@@ -26,7 +26,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -188,7 +188,7 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize TPM2 if mode is not software-only
-	var tpmModule tpm2.TrustedPlatformModule
+	var tpmModule xkms.TrustedPlatformModule
 	if attestMode != phone.AttestationModeSoftware {
 		tpmModule, err = initTPMForAttestation(tpmDevice, logger)
 		if err != nil {
@@ -289,25 +289,25 @@ func runDeviceListen(cmd *cobra.Command, args []string) error {
 }
 
 // initTPMForAttestation attempts to initialize a TPM2 connection for attestation.
-func initTPMForAttestation(devicePath string, logger *slog.Logger) (tpm2.TrustedPlatformModule, error) {
+func initTPMForAttestation(devicePath string, logger *slog.Logger) (xkms.TrustedPlatformModule, error) {
 	if devicePath == "" {
 		devicePath = defaultTPMDevice
 	}
 
 	logger.Debug("initializing TPM2 for attestation", slog.String("device", devicePath))
 
-	tpmCfg := &tpm2.Config{
+	tpmCfg := &xkms.TPMConfig{
 		Device: devicePath,
 		Hash:   "SHA-256",
 	}
 
-	tpmModule, err := tpm2.NewTPM2(&tpm2.Params{
+	tpmModule, err := xkms.NewTPM2(&xkms.TPMParams{
 		Config: tpmCfg,
 		Logger: logger,
 	})
 	if err != nil {
 		// Check if it's a "not initialized" error which means TPM is present but not provisioned
-		if errors.Is(err, tpm2.ErrNotInitialized) {
+		if errors.Is(err, xkms.ErrTPMNotInitialized) {
 			logger.Warn("TPM2 present but not initialized for attestation")
 			return nil, err
 		}
@@ -327,7 +327,7 @@ type listenRequestHandler struct {
 // newListenRequestHandler creates a new listen request handler with attestation support.
 func newListenRequestHandler(
 	logger *slog.Logger,
-	tpmModule tpm2.TrustedPlatformModule,
+	tpmModule xkms.TrustedPlatformModule,
 	mode phone.AttestationMode,
 ) (*listenRequestHandler, error) {
 	attestor, err := phone.NewLaptopAttestor(&phone.LaptopAttestorConfig{

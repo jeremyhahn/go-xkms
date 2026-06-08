@@ -27,7 +27,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/correlation"
-	"github.com/jeremyhahn/go-xkms/pkg/keyauthz"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
@@ -52,7 +51,7 @@ type Server struct {
 	keystore        xkms.Backend // Default keystore for backward compatibility
 	tlsConfig       *tls.Config
 	authenticator   auth.Authenticator
-	authorizer      keyauthz.Authorizer
+	authorizer      *auth.Authorizer
 	auditLogger     audit.Logger
 	logger          *slog.Logger
 	rateLimiter     *ratelimit.Limiter
@@ -73,7 +72,7 @@ type Config struct {
 	Version         string
 	TLSConfig       *tls.Config
 	Authenticator   auth.Authenticator
-	Authorizer      keyauthz.Authorizer
+	Authorizer      *auth.Authorizer
 	AuditLogger     audit.Logger
 	Logger          *slog.Logger
 	RateLimiter     *ratelimit.Limiter
@@ -100,10 +99,12 @@ func NewServer(config *Config) (*Server, error) {
 		authenticator = auth.NewNoOpAuthenticator()
 	}
 
-	// Set up authorizer (default to NoOp if not provided)
+	// Set up authorizer (default to a disabled authorizer if not provided).
+	// A nil-backed Authorizer treats authorization as disabled (allow all),
+	// preserving the historical "RBAC disabled => allow all" behavior.
 	authorizer := config.Authorizer
 	if authorizer == nil {
-		authorizer = &keyauthz.NoOpAuthorizer{}
+		authorizer = auth.NewAuthorizer(nil)
 	}
 
 	// Set up audit logger (default to NoOp if not provided)
@@ -302,9 +303,10 @@ func (s *Server) Stop() error {
 
 // authorize checks whether the current request is authorized to perform the
 // given action on the specified resource. It extracts the caller identity from
-// the request context, delegates to the configured keyauthz.Authorizer, and
-// records an audit event. Returns true when the request is allowed to proceed.
-// On denial or error the appropriate HTTP status is written to w.
+// the request context, delegates the decision to the qrdb-backed
+// *auth.Authorizer, and records an audit event. Returns true when the request
+// is allowed to proceed. On denial or missing identity the appropriate HTTP
+// status is written to w and false is returned.
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request, resource, action string) bool {
 	identity := auth.GetIdentity(r.Context())
 
@@ -315,24 +317,16 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, resource, act
 		role = extractRole(identity)
 	}
 
-	authzReq := &keyauthz.AuthorizationRequest{
-		Subject:  subject,
-		Role:     role,
-		Resource: resource,
-		Action:   action,
-		Context:  make(map[string]string),
-	}
+	err := s.authorizer.Authorize(r.Context(), identity, resource, action)
 
-	decision, err := s.authorizer.Authorize(r.Context(), authzReq)
-
-	// Determine outcome for audit logging
+	// Determine outcome for audit logging.
 	outcome := audit.OutcomeAllow
-	if err != nil || (decision != nil && !decision.Allowed) {
+	if err != nil {
 		outcome = audit.OutcomeDeny
 	}
 
 	// Build and log audit event (best effort - errors are intentionally
-	// discarded to avoid disrupting the request pipeline)
+	// discarded to avoid disrupting the request pipeline).
 	auditEvent := &audit.Event{
 		Timestamp:  time.Now(),
 		Subject:    subject,
@@ -350,19 +344,12 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, resource, act
 	}
 	_ = s.auditLogger.Log(r.Context(), auditEvent)
 
-	// Handle authorization errors
 	if err != nil {
-		s.sendError(w, http.StatusInternalServerError, ErrAuthorizationFailed.Error())
-		return false
-	}
-
-	// Handle denied decisions
-	if decision != nil && !decision.Allowed {
-		reason := ErrAccessDenied.Error()
-		if decision.Reason != "" {
-			reason = decision.Reason
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			s.sendError(w, http.StatusUnauthorized, err.Error())
+			return false
 		}
-		s.sendError(w, http.StatusForbidden, reason)
+		s.sendError(w, http.StatusForbidden, err.Error())
 		return false
 	}
 

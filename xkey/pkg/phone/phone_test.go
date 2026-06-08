@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator/keybackend"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/stretchr/testify/assert"
@@ -26,7 +26,7 @@ import (
 )
 
 func TestConstants(t *testing.T) {
-	assert.Equal(t, types.BackendTypePhone, BackendTypePhone)
+	assert.Equal(t, xkms.BackendTypePhone, BackendTypePhone)
 	assert.Equal(t, "f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d0f1d0", XKeyServiceUUIDString)
 	assert.Equal(t, "f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d00001", ControlPointUUIDString)
 	assert.Equal(t, "f1d0f1d0-f1d0-f1d0-f1d0-f1d0f1d00002", ResponseUUIDString)

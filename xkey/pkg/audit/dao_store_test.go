@@ -27,8 +27,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,10 +35,10 @@ import (
 // newTestDAOStore creates a DAOAuditStore backed by in-memory storage for testing.
 func newTestDAOStore(t *testing.T, opts ...Option) *DAOAuditStore {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
 	store, err := NewDAOAuditStore(kvStore, opts...)
@@ -446,10 +445,10 @@ func TestDAOAuditStore_RingBufferLoadRespectMaxSize(t *testing.T) {
 	// Create a store with large buffer, log 10 entries, then create a new
 	// store with maxSize=3 from the same backend and verify only 3 most
 	// recent are loaded.
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
 	store1, err := NewDAOAuditStore(kvStore, WithMaxEntries(100))
@@ -479,10 +478,10 @@ func TestDAOAuditStore_RingBufferLoadRespectMaxSize(t *testing.T) {
 
 func TestDAOAuditStore_Persistence(t *testing.T) {
 	// Entries survive store recreation from the same kvstore.
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
 	store1, err := NewDAOAuditStore(kvStore)
@@ -736,7 +735,7 @@ func TestDAOMigrateFromBackend(t *testing.T) {
 
 	t.Run("migrates entries from old backend to DAO store", func(t *testing.T) {
 		// Create old backend with entries in the old format.
-		oldBackend := storage.NewMemory()
+		oldBackend := xkms.NewStorageMemory()
 		t.Cleanup(func() { oldBackend.Close() })
 
 		ctx := context.Background()
@@ -783,14 +782,14 @@ func TestDAOMigrateFromBackend(t *testing.T) {
 	})
 
 	t.Run("nil store returns nil errors", func(t *testing.T) {
-		backend := storage.NewMemory()
+		backend := xkms.NewStorageMemory()
 		t.Cleanup(func() { backend.Close() })
 		errs := MigrateFromBackend(context.Background(), backend, nil)
 		assert.Nil(t, errs)
 	})
 
 	t.Run("invalid JSON entries are reported as errors", func(t *testing.T) {
-		oldBackend := storage.NewMemory()
+		oldBackend := xkms.NewStorageMemory()
 		t.Cleanup(func() { oldBackend.Close() })
 
 		ctx := context.Background()

@@ -2956,6 +2956,15 @@ integration-test-bootstrap:
 	@cd test/integration/bootstrap && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
+.PHONY: integration-test-cluster
+## integration-test-cluster: Run 3-node Raft cluster integration tests (leader election, replication, restart, failover)
+integration-test-cluster:
+	@echo "$(CYAN)$(BOLD)→ Running 3-node cluster integration tests...$(RESET)"
+	@cd test/integration/cluster && bash gen-certs.sh
+	@cd test/integration/cluster && docker compose down -v >/dev/null 2>&1 || true
+	@cd test/integration/cluster && (docker compose run --build --rm test; EXIT_CODE=$$?; docker compose down -v; exit $$EXIT_CODE)
+	@echo "$(GREEN)✓ Cluster integration tests complete$(RESET)"
+
 .PHONY: integration-test-truststrap
 ## integration-test-truststrap: Run xkey TrustService truststrap integration tests (Direct, SPKI, Noise)
 integration-test-truststrap:

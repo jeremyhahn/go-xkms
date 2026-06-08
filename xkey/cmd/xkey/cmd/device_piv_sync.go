@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/phone"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -312,7 +312,7 @@ func runPIVDevicePushCert(cmd *cobra.Command, args []string) error {
 		return ErrDeviceNotPaired
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Fprintf(cmd.OutOrStdout(), "Pushing certificate to slot %s (%s) on device \"%s\"...\n\n",
 		slot, slotName, device.Name)
 
@@ -398,7 +398,7 @@ func runPIVDevicePullCert(cmd *cobra.Command, args []string) error {
 		return ErrDeviceNotPaired
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Fprintf(cmd.OutOrStdout(), "Pulling certificate from slot %s (%s) on device \"%s\"...\n\n",
 		slot, slotName, device.Name)
 
@@ -504,7 +504,7 @@ func runPIVDeviceGenerateKey(cmd *cobra.Command, args []string) error {
 		return ErrDeviceNotPaired
 	}
 
-	slotName := pivcert.SlotName(slot)
+	slotName := xkms.PIVSlotName(slot)
 	fmt.Fprintf(cmd.OutOrStdout(), "Generating key in slot %s (%s) on device \"%s\"...\n\n",
 		slot, slotName, device.Name)
 

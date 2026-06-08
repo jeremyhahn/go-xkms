@@ -23,9 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/staticpw"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	"github.com/jeremyhahn/go-xkms/pkg/storage/kvadapter"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
 
@@ -37,14 +35,14 @@ func newFileBackedTeamService(t *testing.T) *services.TeamService {
 
 	tmpDir := t.TempDir()
 
-	backend, err := filestorage.New(tmpDir)
+	backend, err := xkms.NewFileStorageBackend(tmpDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	teamStore, err := staticpw.NewDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStore.Close() })
 
@@ -53,33 +51,33 @@ func newFileBackedTeamService(t *testing.T) *services.TeamService {
 	return svc
 }
 
-// newFileBackedPasswordStore creates a staticpw.Store backed by file storage
+// newFileBackedPasswordStore creates a xkms.StaticPasswordStore backed by file storage
 // in the given directory.
-func newFileBackedPasswordStore(t *testing.T, dir string) staticpw.Store {
+func newFileBackedPasswordStore(t *testing.T, dir string) xkms.StaticPasswordStore {
 	t.Helper()
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	store := staticpw.NewStore(backend)
+	store := xkms.NewStaticPasswordStore(backend)
 	t.Cleanup(func() { store.Close() })
 	return store
 }
 
-// newFileBackedTeamStore creates a staticpw.TeamStore backed by file storage
+// newFileBackedTeamStore creates a xkms.StaticPasswordTeamStore backed by file storage
 // in the given directory.
-func newFileBackedTeamStore(t *testing.T, dir string) staticpw.TeamStore {
+func newFileBackedTeamStore(t *testing.T, dir string) xkms.StaticPasswordTeamStore {
 	t.Helper()
 
-	backend, err := filestorage.New(dir)
+	backend, err := xkms.NewFileStorageBackend(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { backend.Close() })
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	teamStore, err := staticpw.NewDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err)
 	t.Cleanup(func() { teamStore.Close() })
 	return teamStore
@@ -141,7 +139,7 @@ func TestTeamScopedPasswordAccess(t *testing.T) {
 
 	// Create a team with an owner and a member.
 	ctx := context.Background()
-	team := &staticpw.TeamEntity{
+	team := &xkms.StaticPasswordTeamEntity{
 		Name:    "devops",
 		OwnerID: "admin",
 		Members: []string{"alice"},
@@ -149,17 +147,17 @@ func TestTeamScopedPasswordAccess(t *testing.T) {
 	require.NoError(t, teamStore.Create(ctx, team))
 
 	// Owner adds a password under team scope.
-	ownerScoped, err := staticpw.NewTeamScopedStore(passwordStore, teamStore, "admin")
+	ownerScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "admin")
 	require.NoError(t, err)
 
-	pw := &staticpw.StaticPassword{
+	pw := &xkms.StaticPassword{
 		Name:     "prod-db",
 		Password: "s3cret-db-pass",
 	}
 	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "devops", pw))
 
 	// Member can read team passwords.
-	memberScoped, err := staticpw.NewTeamScopedStore(passwordStore, teamStore, "alice")
+	memberScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "alice")
 	require.NoError(t, err)
 
 	passwords, err := memberScoped.ListTeamPasswords(ctx, "devops")
@@ -175,30 +173,30 @@ func TestTeamScopedPasswordAccess(t *testing.T) {
 	assert.Equal(t, "prod-db", fetched.Name)
 
 	// Non-member is denied access.
-	outsiderScoped, err := staticpw.NewTeamScopedStore(passwordStore, teamStore, "outsider")
+	outsiderScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "outsider")
 	require.NoError(t, err)
 
 	_, err = outsiderScoped.ListTeamPasswords(ctx, "devops")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, staticpw.ErrNotTeamMember))
+	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
 
 	_, err = outsiderScoped.GetTeamPassword(ctx, "devops", "prod-db")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, staticpw.ErrNotTeamMember))
+	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
 
 	// Member cannot add passwords (only owner can).
-	memberPW := &staticpw.StaticPassword{
+	memberPW := &xkms.StaticPassword{
 		Name:     "staging-db",
 		Password: "staging-pass",
 	}
 	err = memberScoped.AddTeamPassword(ctx, "devops", memberPW)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, staticpw.ErrNotTeamOwner))
+	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamOwner))
 
 	// Member cannot delete team passwords (only owner can).
 	err = memberScoped.DeleteTeamPassword(ctx, "devops", "prod-db")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, staticpw.ErrNotTeamOwner))
+	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamOwner))
 
 	// Owner can delete team passwords.
 	require.NoError(t, ownerScoped.DeleteTeamPassword(ctx, "devops", "prod-db"))
@@ -217,12 +215,12 @@ func TestMultipleTeamsIsolation(t *testing.T) {
 	ctx := context.Background()
 
 	// Create two teams with the same owner.
-	frontendTeam := &staticpw.TeamEntity{
+	frontendTeam := &xkms.StaticPasswordTeamEntity{
 		Name:    "frontend",
 		OwnerID: "admin",
 		Members: []string{"user-fe1"},
 	}
-	backendTeam := &staticpw.TeamEntity{
+	backendTeam := &xkms.StaticPasswordTeamEntity{
 		Name:    "backend",
 		OwnerID: "admin",
 		Members: []string{"user-be1"},
@@ -231,18 +229,18 @@ func TestMultipleTeamsIsolation(t *testing.T) {
 	require.NoError(t, teamStore.Create(ctx, backendTeam))
 
 	// Owner adds passwords to each team.
-	ownerScoped, err := staticpw.NewTeamScopedStore(passwordStore, teamStore, "admin")
+	ownerScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "admin")
 	require.NoError(t, err)
 
-	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "frontend", &staticpw.StaticPassword{
+	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "frontend", &xkms.StaticPassword{
 		Name:     "cdn-key",
 		Password: "cdn-secret-123",
 	}))
-	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "frontend", &staticpw.StaticPassword{
+	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "frontend", &xkms.StaticPassword{
 		Name:     "analytics-token",
 		Password: "analytics-abc",
 	}))
-	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "backend", &staticpw.StaticPassword{
+	require.NoError(t, ownerScoped.AddTeamPassword(ctx, "backend", &xkms.StaticPassword{
 		Name:     "database-root",
 		Password: "db-root-pass",
 	}))
@@ -267,20 +265,20 @@ func TestMultipleTeamsIsolation(t *testing.T) {
 	assert.Equal(t, "database-root", bePws[0].Name)
 
 	// Frontend member cannot see backend passwords.
-	feScoped, err := staticpw.NewTeamScopedStore(passwordStore, teamStore, "user-fe1")
+	feScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "user-fe1")
 	require.NoError(t, err)
 
 	_, err = feScoped.ListTeamPasswords(ctx, "backend")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, staticpw.ErrNotTeamMember))
+	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
 
 	// Backend member cannot see frontend passwords.
-	beScoped, err := staticpw.NewTeamScopedStore(passwordStore, teamStore, "user-be1")
+	beScoped, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "user-be1")
 	require.NoError(t, err)
 
 	_, err = beScoped.ListTeamPasswords(ctx, "frontend")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, staticpw.ErrNotTeamMember))
+	assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNotTeamMember))
 }
 
 func TestTeamServiceErrorCases(t *testing.T) {
@@ -292,7 +290,7 @@ func TestTeamServiceErrorCases(t *testing.T) {
 
 		_, err = svc.CreateTeam("devops")
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, staticpw.ErrTeamExists))
+		assert.True(t, errors.Is(err, xkms.ErrStaticPasswordTeamExists))
 	})
 
 	t.Run("delete non-existent team", func(t *testing.T) {
@@ -424,21 +422,21 @@ func TestTeamScopedStoreConstructorErrors(t *testing.T) {
 	teamStore := newFileBackedTeamStore(t, tmpDir)
 
 	t.Run("nil password store", func(t *testing.T) {
-		_, err := staticpw.NewTeamScopedStore(nil, teamStore, "user-1")
+		_, err := xkms.NewStaticPasswordTeamScopedStore(nil, teamStore, "user-1")
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, staticpw.ErrNilPasswordStore))
+		assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNilPasswordStore))
 	})
 
 	t.Run("nil team store", func(t *testing.T) {
-		_, err := staticpw.NewTeamScopedStore(passwordStore, nil, "user-1")
+		_, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, nil, "user-1")
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, staticpw.ErrNilTeamStore))
+		assert.True(t, errors.Is(err, xkms.ErrStaticPasswordNilTeamStore))
 	})
 
 	t.Run("empty user ID", func(t *testing.T) {
-		_, err := staticpw.NewTeamScopedStore(passwordStore, teamStore, "")
+		_, err := xkms.NewStaticPasswordTeamScopedStore(passwordStore, teamStore, "")
 		require.Error(t, err)
-		assert.True(t, errors.Is(err, staticpw.ErrInvalidUserID))
+		assert.True(t, errors.Is(err, xkms.ErrStaticPasswordInvalidUserID))
 	})
 }
 
@@ -472,14 +470,14 @@ func TestTeamPersistenceAcrossServiceInstances(t *testing.T) {
 
 	// First service instance: create a team and add members.
 	func() {
-		backend, err := filestorage.New(tmpDir)
+		backend, err := xkms.NewFileStorageBackend(tmpDir)
 		require.NoError(t, err)
 		defer backend.Close()
 
-		kvStore, err := kvadapter.New(backend)
+		kvStore, err := xkms.NewKVStoreAdapter(backend)
 		require.NoError(t, err)
 
-		teamStore, err := staticpw.NewDAOTeamStore(kvStore)
+		teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 		require.NoError(t, err)
 		defer teamStore.Close()
 
@@ -493,14 +491,14 @@ func TestTeamPersistenceAcrossServiceInstances(t *testing.T) {
 	}()
 
 	// Second service instance: verify the team and members persist.
-	backend, err := filestorage.New(tmpDir)
+	backend, err := xkms.NewFileStorageBackend(tmpDir)
 	require.NoError(t, err)
 	defer backend.Close()
 
-	kvStore, err := kvadapter.New(backend)
+	kvStore, err := xkms.NewKVStoreAdapter(backend)
 	require.NoError(t, err)
 
-	teamStore, err := staticpw.NewDAOTeamStore(kvStore)
+	teamStore, err := xkms.NewStaticPasswordDAOTeamStore(kvStore)
 	require.NoError(t, err)
 	defer teamStore.Close()
 

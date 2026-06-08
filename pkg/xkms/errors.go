@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -806,3 +808,88 @@ func (e *ErrMockCertChainNotFound) Error() string {
 
 // Unwrap returns the underlying sentinel error.
 func (e *ErrMockCertChainNotFound) Unwrap() error { return ErrCertChainNotFound }
+
+// ========================================================================
+// Cluster Errors
+// ========================================================================
+
+// ErrNotLeader is the canonical xkms representation of a write that reached a
+// Raft FOLLOWER in a clustered deployment. go-qrdb surfaces a
+// transport.NotLeaderError (or service.NotLeaderError) from the embedded
+// client write path; AsNotLeader translates it into this typed error, which
+// the REST/gRPC/QUIC transports map to a clear "retry on the leader" response.
+//
+// In a non-clustered (standalone) node the qrdb write path never produces a
+// not-leader condition, so this error is never constructed there. The error
+// handling itself is not build-tag gated.
+type ErrNotLeader struct {
+	// ShardID is the Raft shard (group) the write targeted.
+	ShardID uint64
+
+	// LeaderID is the replica ID of the current leader, or 0 if unknown.
+	LeaderID uint64
+
+	// LeaderAddress is the leader's advertised Raft address, or empty if
+	// unknown. NOTE: this is the Raft peer address, not the xkms API address;
+	// transparent forwarding is not yet possible (see AsNotLeader).
+	LeaderAddress string
+}
+
+// Error returns a human-readable description of the not-leader condition.
+func (e *ErrNotLeader) Error() string {
+	if e.LeaderID == 0 {
+		return fmt.Sprintf("keystore: not leader for shard %d, leader unknown", e.ShardID)
+	}
+	return fmt.Sprintf("keystore: not leader for shard %d, leader is replica %d at %s",
+		e.ShardID, e.LeaderID, e.LeaderAddress)
+}
+
+// AsNotLeader inspects err for a go-qrdb not-leader condition on the write path
+// and, if present, returns the equivalent xkms-typed ErrNotLeader. It matches
+// the transport-layer NotLeaderError that the embedded qrdb client surfaces.
+// The boolean reports whether a not-leader condition was found.
+//
+// TODO(cluster): transparent leader-forwarding needs a raft->API address map.
+// LeaderAddress is the Raft peer address, which is not directly dialable as an
+// xkms API endpoint; until that map exists, callers surface the typed redirect
+// to the client instead of forwarding the request server-side.
+func AsNotLeader(err error) (*ErrNotLeader, bool) {
+	if err == nil {
+		return nil, false
+	}
+	var nl *qrdbtransport.NotLeaderError
+	if errors.As(err, &nl) {
+		return &ErrNotLeader{
+			ShardID:       nl.ShardID,
+			LeaderID:      nl.LeaderID,
+			LeaderAddress: nl.LeaderAddress,
+		}, true
+	}
+	return nil, false
+}
+
+// ClusterStatusError is returned when the embedded go-qrdb node's cluster
+// client fails to report shard leadership.
+type ClusterStatusError struct {
+	ShardID uint64
+	Err     error
+}
+
+func (e *ClusterStatusError) Error() string {
+	return fmt.Sprintf("keystore: failed to read cluster status for shard %d: %v", e.ShardID, e.Err)
+}
+
+func (e *ClusterStatusError) Unwrap() error { return e.Err }
+
+// ClusterMembersError is returned when the embedded go-qrdb node's cluster
+// client fails to report shard membership.
+type ClusterMembersError struct {
+	ShardID uint64
+	Err     error
+}
+
+func (e *ClusterMembersError) Error() string {
+	return fmt.Sprintf("keystore: failed to read cluster members for shard %d: %v", e.ShardID, e.Err)
+}
+
+func (e *ClusterMembersError) Unwrap() error { return e.Err }

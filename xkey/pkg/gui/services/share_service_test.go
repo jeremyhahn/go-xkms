@@ -16,6 +16,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"os"
 	"sync"
 	"testing"
@@ -24,7 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 )
 
@@ -37,7 +37,7 @@ func TestNewShareService(t *testing.T) {
 func TestShareService_ListShares_Empty(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	svc.SetShareStore(sharestore.NewMemoryShareStore())
+	svc.SetShareStore(xkms.NewMemoryShareStore())
 
 	infos, err := svc.ListShares()
 	require.NoError(t, err)
@@ -57,10 +57,10 @@ func TestShareService_ListShares_NilStore(t *testing.T) {
 func TestShareService_ImportShare_Success(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	store := sharestore.NewMemoryShareStore()
+	store := xkms.NewMemoryShareStore()
 	svc.SetShareStore(store)
 
-	entry := sharestore.ShareEntry{
+	entry := xkms.ShareEntry{
 		ServerURL:  "https://xkms.example.com",
 		GroupID:    "group-1",
 		GroupName:  "Test Group",
@@ -100,7 +100,7 @@ func TestShareService_ImportShare_Success(t *testing.T) {
 func TestShareService_ImportShare_EmptyPath(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	svc.SetShareStore(sharestore.NewMemoryShareStore())
+	svc.SetShareStore(xkms.NewMemoryShareStore())
 
 	info, err := svc.ImportShare("")
 	assert.Nil(t, info)
@@ -119,7 +119,7 @@ func TestShareService_ImportShare_NilStore(t *testing.T) {
 func TestShareService_ImportShare_InvalidJSON(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	svc.SetShareStore(sharestore.NewMemoryShareStore())
+	svc.SetShareStore(xkms.NewMemoryShareStore())
 
 	tmpFile, err := os.CreateTemp(t.TempDir(), "bad-share-*.json")
 	require.NoError(t, err)
@@ -137,10 +137,10 @@ func TestShareService_ImportShare_InvalidJSON(t *testing.T) {
 func TestShareService_ImportShare_InvalidEntry(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	svc.SetShareStore(sharestore.NewMemoryShareStore())
+	svc.SetShareStore(xkms.NewMemoryShareStore())
 
 	// Missing ServerURL causes validation failure.
-	entry := sharestore.ShareEntry{
+	entry := xkms.ShareEntry{
 		GroupID:    "group-1",
 		ShareData:  []byte("data"),
 		ReceivedAt: time.Now().UTC(),
@@ -159,17 +159,17 @@ func TestShareService_ImportShare_InvalidEntry(t *testing.T) {
 	info, err := svc.ImportShare(tmpFile.Name())
 	assert.Nil(t, info)
 	require.Error(t, err)
-	require.ErrorIs(t, err, sharestore.ErrInvalidServerURL)
+	require.ErrorIs(t, err, xkms.ErrShareStoreInvalidServerURL)
 }
 
 func TestShareService_DeleteShare_Success(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	store := sharestore.NewMemoryShareStore()
+	store := xkms.NewMemoryShareStore()
 	svc.SetShareStore(store)
 
 	// Import a share first.
-	entry := sharestore.ShareEntry{
+	entry := xkms.ShareEntry{
 		ServerURL:  "https://xkms.example.com",
 		GroupID:    "group-del",
 		ShareIndex: 1,
@@ -208,7 +208,7 @@ func TestShareService_DeleteShare_Success(t *testing.T) {
 func TestShareService_DeleteShare_EmptyServerURL(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	svc.SetShareStore(sharestore.NewMemoryShareStore())
+	svc.SetShareStore(xkms.NewMemoryShareStore())
 
 	err := svc.DeleteShare("", "group-1", 1)
 	require.ErrorIs(t, err, ErrEmptyServerURL)
@@ -217,7 +217,7 @@ func TestShareService_DeleteShare_EmptyServerURL(t *testing.T) {
 func TestShareService_DeleteShare_EmptyGroupID(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	svc.SetShareStore(sharestore.NewMemoryShareStore())
+	svc.SetShareStore(xkms.NewMemoryShareStore())
 
 	err := svc.DeleteShare("https://xkms.example.com", "", 1)
 	require.ErrorIs(t, err, ErrEmptyGroupID)
@@ -234,7 +234,7 @@ func TestShareService_DeleteShare_NilStore(t *testing.T) {
 func TestShareService_EventEmission(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
-	svc.SetShareStore(sharestore.NewMemoryShareStore())
+	svc.SetShareStore(xkms.NewMemoryShareStore())
 
 	var mu sync.Mutex
 	var captured []events.Event
@@ -244,7 +244,7 @@ func TestShareService_EventEmission(t *testing.T) {
 		captured = append(captured, e)
 	})
 
-	entry := sharestore.ShareEntry{
+	entry := xkms.ShareEntry{
 		ServerURL:  "https://xkms.example.com",
 		GroupID:    "group-ev",
 		ShareIndex: 1,
@@ -279,7 +279,7 @@ func TestShareService_EventEmission(t *testing.T) {
 
 func TestShareService_EntryToShareInfo(t *testing.T) {
 	now := time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC)
-	entry := &sharestore.ShareEntry{
+	entry := &xkms.ShareEntry{
 		ServerURL:  "https://xkms.example.com",
 		GroupID:    "group-42",
 		GroupName:  "Admins",

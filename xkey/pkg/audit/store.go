@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 const (
@@ -52,12 +52,12 @@ type QueryFilter struct {
 }
 
 // BackendStore is a thread-safe audit store that persists entries to a
-// storage.Backend and maintains an in-memory cache (ring buffer) for
+// xkms.StorageBackend and maintains an in-memory cache (ring buffer) for
 // fast queries.
 type BackendStore struct {
 	mu      sync.RWMutex
 	slog    *SlogLogger
-	backend storage.Backend
+	backend xkms.StorageBackend
 	prefix  string
 	cache   []Entry
 	maxSize int
@@ -65,11 +65,11 @@ type BackendStore struct {
 }
 
 // NewBackendStore creates a new persistent audit store backed by the provided
-// storage.Backend. Existing entries are loaded from the backend into the
+// xkms.StorageBackend. Existing entries are loaded from the backend into the
 // in-memory cache on creation. If maxSize is <= 0, it defaults to 10000.
 // When a non-nil slog.Logger is provided, all logged entries are also
 // forwarded to it for structured log output.
-func NewBackendStore(backend storage.Backend, maxSize int, logger *slog.Logger) (*BackendStore, error) {
+func NewBackendStore(backend xkms.StorageBackend, maxSize int, logger *slog.Logger) (*BackendStore, error) {
 	if backend == nil {
 		return nil, ErrNilBackend
 	}
@@ -302,7 +302,7 @@ func (s *BackendStore) Count() int {
 // backend via Scan/Put, then swaps the backend reference. This supports
 // transitioning from an in-memory backend to barrier-encrypted storage
 // after unseal.
-func (s *BackendStore) MigrateBackend(newBackend storage.Backend) error {
+func (s *BackendStore) MigrateBackend(newBackend xkms.StorageBackend) error {
 	if newBackend == nil {
 		return ErrNilBackend
 	}

@@ -17,13 +17,13 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/stretchr/testify/assert"
@@ -205,7 +205,7 @@ func TestFinal2_Barrier_BestStrategy_SoftwareAlwaysAvailable(t *testing.T) {
 	best, err := svc.BestStrategy()
 	assert.NoError(t, err)
 	assert.NotNil(t, best)
-	assert.Equal(t, string(seal.StrategyPassphrase), best.ID)
+	assert.Equal(t, string(xkms.StrategyPassphrase), best.ID)
 }
 
 func TestFinal2_Barrier_Initialize_NoPassword(t *testing.T) {

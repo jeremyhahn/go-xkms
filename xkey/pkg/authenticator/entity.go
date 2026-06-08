@@ -13,7 +13,7 @@
 
 package authenticator
 
-import "github.com/jeremyhahn/go-xkms/pkg/types"
+import xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 // FIDO2CredentialEntity is the DAO entity representation of a FIDO2 credential.
 // It mirrors StoredCredential with DAO-compatible field tags for indexed
@@ -66,7 +66,7 @@ type FIDO2CredentialEntity struct {
 	HMACSecretKeyBase64 string `json:"hmac_secret_key_base64"`
 
 	// BackendID identifies which key backend manages this credential's private key.
-	BackendID types.BackendType `json:"backend_id"`
+	BackendID xkms.BackendType `json:"backend_id"`
 }
 
 // EntityID returns the DAO entity identifier.

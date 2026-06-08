@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,7 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/sharestore"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/agent"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
@@ -674,7 +674,7 @@ func TestCoverageBoostPhase3_ShareService_ListShares_Success(t *testing.T) {
 	svc := NewShareService()
 	svc.SetContext(context.Background())
 	svc.SetShareStore(&mockShareStore{
-		listResult: []*sharestore.ShareEntry{
+		listResult: []*xkms.ShareEntry{
 			{
 				ServerURL:  "https://example.com",
 				GroupID:    "grp-1",
@@ -731,7 +731,7 @@ func TestCoverageBoostPhase3_ShareService_ImportShare_ValidationFailure(t *testi
 	// Write valid JSON but missing required fields.
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "empty.json")
-	data, _ := json.Marshal(sharestore.ShareEntry{})
+	data, _ := json.Marshal(xkms.ShareEntry{})
 	require.NoError(t, os.WriteFile(filePath, data, 0600))
 
 	_, err := svc.ImportShare(filePath)
@@ -747,7 +747,7 @@ func TestCoverageBoostPhase3_ShareService_ImportShare_SaveError(t *testing.T) {
 
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "valid.json")
-	entry := sharestore.ShareEntry{
+	entry := xkms.ShareEntry{
 		ServerURL:  "https://example.com",
 		GroupID:    "grp-1",
 		ShareIndex: 1,
@@ -773,7 +773,7 @@ func TestCoverageBoostPhase3_ShareService_ImportShare_Success(t *testing.T) {
 
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "valid.json")
-	entry := sharestore.ShareEntry{
+	entry := xkms.ShareEntry{
 		ServerURL:  "https://example.com",
 		GroupID:    "grp-1",
 		ShareIndex: 1,

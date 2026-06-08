@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 func newTestBackendStore(t *testing.T) *BackendStore {
 	t.Helper()
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "oath/")
 	if err != nil {
 		t.Fatalf("failed to create backend store: %v", err)
@@ -36,7 +36,7 @@ func newTestBackendStore(t *testing.T) *BackendStore {
 // NewBackendStore tests
 
 func TestBackendStore_NewBackendStore_Success(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "oath/")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -50,7 +50,7 @@ func TestBackendStore_NewBackendStore_Success(t *testing.T) {
 }
 
 func TestBackendStore_NewBackendStore_EmptyPrefix(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -647,7 +647,7 @@ func TestBackendStore_Close_Idempotent(t *testing.T) {
 }
 
 func TestBackendStore_Close_DoesNotCloseBackend(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "oath/")
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
@@ -802,7 +802,7 @@ func TestBackendStore_Workflow(t *testing.T) {
 // Key format verification
 
 func TestBackendStore_KeyFormat(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "oath/")
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
@@ -823,7 +823,7 @@ func TestBackendStore_KeyFormat(t *testing.T) {
 }
 
 func TestBackendStore_KeyFormat_NoPrefix(t *testing.T) {
-	backend := storage.NewMemory()
+	backend := xkms.NewStorageMemory()
 	store, err := NewBackendStore(backend, "")
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)

@@ -36,7 +36,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/trust/fetcher"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/truststore"
 )
 
@@ -106,7 +106,7 @@ func tlsServerPin(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
 	leaf, err := x509.ParseCertificate(srv.Certificate().Raw)
 	require.NoError(t, err)
-	return fetcher.SPKIHash(leaf)
+	return xkms.TrustFetcherSPKIHash(leaf)
 }
 
 // configureTrustStorePath points the openTrustStore() helper at a temp dir
@@ -287,7 +287,7 @@ func TestTrustFetch_ServerErrorWraps(t *testing.T) {
 	// the HTTP failure surfaces).
 	srvCert, err := x509.ParseCertificate(srv.Certificate().Raw)
 	require.NoError(t, err)
-	pin := fetcher.SPKIHash(srvCert)
+	pin := xkms.TrustFetcherSPKIHash(srvCert)
 	_ = bundlePEM
 
 	configureTrustStorePath(t)
@@ -333,7 +333,7 @@ func TestMain_FetchSubcommands(t *testing.T) {
 	// and the constant is reachable.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := fetcher.Fetch(ctx, "https://example.invalid/api/v1/ca/bundle", fetcher.Options{
+	_, err := xkms.TrustFetcherFetch(ctx, "https://example.invalid/api/v1/ca/bundle", xkms.TrustFetcherOptions{
 		SPKIPin: strings.Repeat("a", 64),
 		Timeout: 10 * time.Millisecond,
 	})

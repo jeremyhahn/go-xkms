@@ -30,12 +30,7 @@ import (
 	"golang.org/x/term"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
-	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	tpm2store "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/authenticator"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
@@ -174,7 +169,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				return pwErr
 			}
 			logger.Info("barrier not initialized, initializing with software strategy")
-			if err := barrierSvc.Initialize(password, string(seal.StrategyPassphrase)); err != nil {
+			if err := barrierSvc.Initialize(password, string(xkms.StrategyPassphrase)); err != nil {
 				return fmt.Errorf("%w: %v", ErrServeBarrierUnsealFailed, err)
 			}
 		} else {
@@ -189,7 +184,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				slog.String("strategy", string(strategy)))
 
 			switch strategy {
-			case seal.StrategyPassphrase:
+			case xkms.StrategyPassphrase:
 				// Software strategy: password required for Argon2id unseal.
 				password, pwErr := resolveBarrierPassword(cmd)
 				if pwErr != nil {
@@ -199,7 +194,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 					return fmt.Errorf("%w: %v", ErrServeBarrierUnsealFailed, err)
 				}
 
-			case seal.StrategyTPM2:
+			case xkms.StrategyTPM2:
 				// TPM2 strategy: open the TPM and register it, then unseal
 				// without a password (the hardware protects the root key).
 				sealer, closer := probeTPMSealer(logger, dataDir)
@@ -207,7 +202,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 					return fmt.Errorf("%w: TPM device required for tpm2 barrier strategy", ErrServeTPMOpenFailed)
 				}
 				tpmCloser = closer
-				barrierSvc.SetTPMSealerFunc(func() types.Sealer { return sealer })
+				barrierSvc.SetTPMSealerFunc(func() xkms.Sealer { return sealer })
 
 				if err := barrierSvc.Unseal("", string(strategy)); err != nil {
 					return fmt.Errorf("%w: %v", ErrServeBarrierUnsealFailed, err)
@@ -235,7 +230,14 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	if err := os.MkdirAll(pinDir, 0700); err != nil {
 		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
 	}
-	fileStore, err := filestorage.New(pinDir)
+	fileStore, err := xkms.NewFileStorageBackend(pinDir)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
+	}
+	// Wrap the file storage in the PIN adapter so the qrdb software backend
+	// observes the canonical pin.ErrNotFound on a fresh install rather than
+	// xkey's storage.ErrNotFound (which it would treat as a load failure).
+	pinStore, err := xkms.NewPINStoreAdapter(fileStore)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
 	}
@@ -247,7 +249,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				"policy_max_attempts", ucfg.Policy.PINMaxAttempts)
 		}
 	}
-	pinBackend, err := qrdbsdk.NewSoftwareBackend(fileStore, hashConfig)
+	pinBackend, err := qrdbsdk.NewSoftwareBackend(pinStore, hashConfig)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrServePINManagerInitFailed, err)
 	}
@@ -258,7 +260,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 	if pinBackendSvc.UserPINSet() {
 		if !noBarrier {
 			strategy, stratErr := readBarrierStrategy(dataDir)
-			if stratErr == nil && strategy == seal.StrategyTPM2 {
+			if stratErr == nil && strategy == xkms.StrategyTPM2 {
 				appLockSvc.LockForStartup()
 				appLockSvc.AutoUnlock()
 				logger.Info("app auto-unlocked: TPM2 auto-unseal succeeded")
@@ -329,7 +331,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 		// Determine FIDO2 storage backend: barrier-backed or plain file.
 		// When the barrier is active, use the barrier backend so headless mode
 		// reads the same encrypted FIDO2 credentials as the GUI.
-		var fido2Backend storage.Backend
+		var fido2Backend xkms.StorageBackend
 		if !noBarrier {
 			fido2Backend = barrierSvc.GetBackend()
 			if fido2Backend == nil {
@@ -342,7 +344,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 				logger.Warn("failed to create FIDO2 directory", "error", err)
 			} else {
 				var fsErr error
-				fido2Backend, fsErr = filestorage.New(fido2Dir)
+				fido2Backend, fsErr = xkms.NewFileStorageBackend(fido2Dir)
 				if fsErr != nil {
 					logger.Warn("failed to create FIDO2 file storage", "error", fsErr)
 				}
@@ -435,7 +437,7 @@ func runExtensionServe(cmd *cobra.Command, _ []string) error {
 // production, plain file in development) matching the GUI's credential
 // storage, and an AutoGrantHandler for user presence since terminal
 // interaction is not available in headless mode.
-func initHeadlessAuthenticator(backend storage.Backend, pinSvc *services.PINService, logger *slog.Logger) (*authenticator.Authenticator, error) {
+func initHeadlessAuthenticator(backend xkms.StorageBackend, pinSvc *services.PINService, logger *slog.Logger) (*authenticator.Authenticator, error) {
 	store, err := authenticator.NewBackendStorage(backend, "fido2/xkey/")
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrServeAuthenticatorInitFailed, err)
@@ -536,7 +538,7 @@ func resolveBarrierPassword(cmd *cobra.Command) (string, error) {
 // and `xkey oath add --store` is visible to the headless server.
 func initPlainStores(dataDir string, passwordSvc *services.StaticPasswordService, oathSvc *services.OATHService) error {
 	// Password store: same as CLI default (data/staticpw subdirectory).
-	pwBackend, err := filestorage.New(filepath.Join(dataDir, "staticpw"))
+	pwBackend, err := xkms.NewFileStorageBackend(filepath.Join(dataDir, "staticpw"))
 	if err != nil {
 		return err
 	}
@@ -689,7 +691,7 @@ func (h *headlessHandler) HandleUnlock(pin string) (*ipc.UnlockResult, error) {
 // the strategy ID that was used to seal the barrier. This allows the serve
 // command to initialize only the required sealer backend rather than probing
 // all available hardware.
-func readBarrierStrategy(dataDir string) (seal.StrategyID, error) {
+func readBarrierStrategy(dataDir string) (xkms.StrategyID, error) {
 	rootKeyPath := filepath.Join(dataDir, "barrier", "root_key")
 	data, err := os.ReadFile(rootKeyPath)
 	if err != nil {
@@ -698,7 +700,7 @@ func readBarrierStrategy(dataDir string) (seal.StrategyID, error) {
 
 	// Parse only the strategy field to minimize exposure to the sealed blob.
 	var envelope struct {
-		Strategy seal.StrategyID `json:"strategy"`
+		Strategy xkms.StrategyID `json:"strategy"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return "", fmt.Errorf("parse root key: %w", err)
@@ -712,7 +714,7 @@ func readBarrierStrategy(dataDir string) (seal.StrategyID, error) {
 // probeTPMSealer attempts to open the system TPM for barrier unsealing.
 // Returns (sealer, closer) if the TPM is available, or (nil, nil) if not.
 // The caller must close the returned io.Closer when the TPM is no longer needed.
-func probeTPMSealer(logger *slog.Logger, dataDir string) (types.Sealer, io.Closer) {
+func probeTPMSealer(logger *slog.Logger, dataDir string) (xkms.Sealer, io.Closer) {
 	const tpmDevice = "/dev/tpmrm0"
 	if _, err := os.Stat(tpmDevice); err != nil {
 		logger.Debug("TPM device not found, barrier TPM2 strategy unavailable",
@@ -721,17 +723,17 @@ func probeTPMSealer(logger *slog.Logger, dataDir string) (types.Sealer, io.Close
 	}
 
 	tpmDataDir := filepath.Join(dataDir, "tpm")
-	factory, err := tpm2store.NewStorageFactory(logger, tpmDataDir)
+	factory, err := xkms.NewTPMStorageFactory(logger, tpmDataDir)
 	if err != nil {
 		logger.Warn("failed to create TPM storage factory", "error", err)
 		return nil, nil
 	}
 
-	cfg := tpm2pkg.DefaultConfig
+	cfg := xkms.DefaultTPMConfig
 	cfg.Device = tpmDevice
 	cfg.UseSimulator = false
 
-	tpm, err := tpm2pkg.NewTPM2(&tpm2pkg.Params{
+	tpm, err := xkms.NewTPM2(&xkms.TPMParams{
 		Logger:    logger,
 		Config:    &cfg,
 		BlobStore: factory.BlobStore(),

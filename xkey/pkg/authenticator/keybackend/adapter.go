@@ -26,20 +26,19 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// BackendAdapter wraps a go-xkms types.KeyProvider to implement FIDO2KeyBackend.
+// BackendAdapter wraps a go-xkms xkms.KeyProvider to implement FIDO2KeyBackend.
 // It translates between FIDO2 credential IDs / COSE algorithms and go-xkms
 // KeyAttributes, and handles COSE public key encoding. This eliminates the need
 // for per-backend FIDO2 implementations — any go-xkms KeyProvider that supports
 // EC key generation and signing works automatically.
 type BackendAdapter struct {
-	provider    types.KeyProvider
-	backendType types.BackendType
+	provider    xkms.KeyProvider
+	backendType xkms.BackendType
 	logger      *slog.Logger
-	slotModel   pivcert.SlotModel // nil for non-slot backends (software, generic PKCS#11)
+	slotModel   xkms.PIVSlotModel // nil for non-slot backends (software, generic PKCS#11)
 	closed      atomic.Bool
 	slotCache   sync.Map // credentialID (hex) -> PIVSlot string
 }
@@ -47,7 +46,7 @@ type BackendAdapter struct {
 // NewBackendAdapter creates a FIDO2KeyBackend that delegates all cryptographic
 // operations to a go-xkms KeyProvider. The backendType identifies this adapter
 // in the CompositeBackend routing and is stored in credential BackendID fields.
-func NewBackendAdapter(provider types.KeyProvider, backendType types.BackendType) *BackendAdapter {
+func NewBackendAdapter(provider xkms.KeyProvider, backendType xkms.BackendType) *BackendAdapter {
 	return &BackendAdapter{
 		provider:    provider,
 		backendType: backendType,
@@ -62,7 +61,7 @@ func (a *BackendAdapter) SetLogger(logger *slog.Logger) {
 
 // SetSlotModel attaches a PIV slot model for slot-constrained backends.
 // When set, GenerateCredentialKey auto-allocates the next available slot.
-func (a *BackendAdapter) SetSlotModel(sm pivcert.SlotModel) {
+func (a *BackendAdapter) SetSlotModel(sm xkms.PIVSlotModel) {
 	a.slotModel = sm
 }
 
@@ -70,15 +69,15 @@ func (a *BackendAdapter) SetSlotModel(sm pivcert.SlotModel) {
 type adapterKeyHandle struct {
 	credentialID []byte
 	algorithm    int
-	backendType  types.BackendType
+	backendType  xkms.BackendType
 }
 
-func (h *adapterKeyHandle) CredentialID() []byte         { return h.credentialID }
-func (h *adapterKeyHandle) Algorithm() int               { return h.algorithm }
-func (h *adapterKeyHandle) BackendID() types.BackendType { return h.backendType }
+func (h *adapterKeyHandle) CredentialID() []byte        { return h.credentialID }
+func (h *adapterKeyHandle) Algorithm() int              { return h.algorithm }
+func (h *adapterKeyHandle) BackendID() xkms.BackendType { return h.backendType }
 
 // Type returns the backend type.
-func (a *BackendAdapter) Type() types.BackendType {
+func (a *BackendAdapter) Type() xkms.BackendType {
 	return a.backendType
 }
 
@@ -109,8 +108,8 @@ func (a *BackendAdapter) Capabilities() FIDO2KeyCapabilities {
 // algorithmsForBackend returns the COSE algorithms supported by a backend type.
 // TPM2 only supports P-256 for FIDO2 credential keys. PKCS#11 and software
 // backends support the full set of EC curves.
-func algorithmsForBackend(bt types.BackendType) []int {
-	if bt == types.BackendTypeTPM2 || strings.HasPrefix(string(bt), "tpm2") {
+func algorithmsForBackend(bt xkms.BackendType) []int {
+	if bt == xkms.BackendTypeTPM2 || strings.HasPrefix(string(bt), "tpm2") {
 		return []int{COSEAlgES256}
 	}
 	return []int{COSEAlgES256, COSEAlgES384, COSEAlgES512, COSEAlgEdDSA}
@@ -329,10 +328,10 @@ func (a *BackendAdapter) Close() error {
 // and COSE algorithm identifier. The CN is derived deterministically from the
 // credential ID so that LoadKey, Sign, DeleteKey, and ExportPrivateKey can find
 // previously generated keys. No slot allocation is performed.
-func (a *BackendAdapter) lookupCredentialAttrs(credentialID []byte, algorithm int) (*types.KeyAttributes, error) {
-	attrs := &types.KeyAttributes{
+func (a *BackendAdapter) lookupCredentialAttrs(credentialID []byte, algorithm int) (*xkms.KeyAttributes, error) {
+	attrs := &xkms.KeyAttributes{
 		CN:        "fido2-" + hex.EncodeToString(credentialID),
-		KeyType:   types.KeyTypeSigning,
+		KeyType:   xkms.KeyTypeSigning,
 		StoreType: storeTypeForBackend(a.backendType),
 	}
 
@@ -341,17 +340,17 @@ func (a *BackendAdapter) lookupCredentialAttrs(credentialID []byte, algorithm in
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.Hash = crypto.SHA256
 		attrs.SignatureAlgorithm = x509.ECDSAWithSHA256
-		attrs.ECCAttributes = &types.ECCAttributes{Curve: elliptic.P256()}
+		attrs.ECCAttributes = &xkms.ECCAttributes{Curve: elliptic.P256()}
 	case COSEAlgES384:
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.Hash = crypto.SHA384
 		attrs.SignatureAlgorithm = x509.ECDSAWithSHA384
-		attrs.ECCAttributes = &types.ECCAttributes{Curve: elliptic.P384()}
+		attrs.ECCAttributes = &xkms.ECCAttributes{Curve: elliptic.P384()}
 	case COSEAlgES512:
 		attrs.KeyAlgorithm = x509.ECDSA
 		attrs.Hash = crypto.SHA512
 		attrs.SignatureAlgorithm = x509.ECDSAWithSHA512
-		attrs.ECCAttributes = &types.ECCAttributes{Curve: elliptic.P521()}
+		attrs.ECCAttributes = &xkms.ECCAttributes{Curve: elliptic.P521()}
 	case COSEAlgEdDSA:
 		attrs.KeyAlgorithm = x509.Ed25519
 	default:
@@ -368,7 +367,7 @@ func (a *BackendAdapter) lookupCredentialAttrs(credentialID []byte, algorithm in
 
 // generateCredentialAttrs builds KeyAttributes for new credential key generation.
 // If a SlotModel is present, it auto-allocates the next available PIV slot.
-func (a *BackendAdapter) generateCredentialAttrs(credentialID []byte, algorithm int) (*types.KeyAttributes, error) {
+func (a *BackendAdapter) generateCredentialAttrs(credentialID []byte, algorithm int) (*xkms.KeyAttributes, error) {
 	attrs, err := a.lookupCredentialAttrs(credentialID, algorithm)
 	if err != nil {
 		return nil, err
@@ -417,44 +416,44 @@ func curveForAlgorithm(algorithm int) elliptic.Curve {
 // storeTypeForBackend maps a BackendType to the corresponding StoreType.
 // Handles both exact matches (e.g., "pkcs11") and module-ID-style types
 // (e.g., "pkcs11-libykcs11-slot-0") by checking prefixes.
-func storeTypeForBackend(bt types.BackendType) types.StoreType {
+func storeTypeForBackend(bt xkms.BackendType) xkms.StoreType {
 	switch bt {
-	case types.BackendTypeSoftware:
-		return types.StoreSoftware
-	case types.BackendTypeTPM2:
-		return types.StoreTPM2
-	case types.BackendTypePKCS11:
-		return types.StorePKCS11
-	case types.BackendTypeAWSKMS:
-		return types.StoreAWSKMS
-	case types.BackendTypeGCPKMS:
-		return types.StoreGCPKMS
-	case types.BackendTypeAzureKV:
-		return types.StoreAzureKV
-	case types.BackendTypeVault:
-		return types.StoreVault
-	case types.BackendTypePhone:
-		return types.StorePhone
+	case xkms.BackendTypeSoftware:
+		return xkms.StoreSoftware
+	case xkms.BackendTypeTPM2:
+		return xkms.StoreTPM2
+	case xkms.BackendTypePKCS11:
+		return xkms.StorePKCS11
+	case xkms.BackendTypeAWSKMS:
+		return xkms.StoreAWSKMS
+	case xkms.BackendTypeGCPKMS:
+		return xkms.StoreGCPKMS
+	case xkms.BackendTypeAzureKV:
+		return xkms.StoreAzureKV
+	case xkms.BackendTypeVault:
+		return xkms.StoreVault
+	case xkms.BackendTypePhone:
+		return xkms.StorePhone
 	default:
 		// Handle module-ID-style backend types like "pkcs11-libykcs11"
 		// by matching the prefix to known backend types.
 		s := string(bt)
 		for _, mapping := range []struct {
 			prefix    string
-			storeType types.StoreType
+			storeType xkms.StoreType
 		}{
-			{"pkcs11", types.StorePKCS11},
-			{"tpm2", types.StoreTPM2},
-			{"awskms", types.StoreAWSKMS},
-			{"gcpkms", types.StoreGCPKMS},
-			{"azurekv", types.StoreAzureKV},
-			{"vault", types.StoreVault},
+			{"pkcs11", xkms.StorePKCS11},
+			{"tpm2", xkms.StoreTPM2},
+			{"awskms", xkms.StoreAWSKMS},
+			{"gcpkms", xkms.StoreGCPKMS},
+			{"azurekv", xkms.StoreAzureKV},
+			{"vault", xkms.StoreVault},
 		} {
 			if strings.HasPrefix(s, mapping.prefix) {
 				return mapping.storeType
 			}
 		}
-		return types.StoreType(bt)
+		return xkms.StoreType(bt)
 	}
 }
 

@@ -16,8 +16,6 @@ import (
 	"testing"
 	"time"
 
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc"
@@ -32,17 +30,17 @@ import (
 // fbMockSealer implements types.Sealer for seal_service tests.
 type fbMockSealer struct {
 	canSeal    bool
-	sealResult *types.SealedData
+	sealResult *xkms.SealedData
 	sealErr    error
 	unsealData []byte
 	unsealErr  error
 }
 
 func (m *fbMockSealer) CanSeal() bool { return m.canSeal }
-func (m *fbMockSealer) Seal(_ context.Context, _ []byte, _ *types.SealOptions) (*types.SealedData, error) {
+func (m *fbMockSealer) Seal(_ context.Context, _ []byte, _ *xkms.SealOptions) (*xkms.SealedData, error) {
 	return m.sealResult, m.sealErr
 }
-func (m *fbMockSealer) Unseal(_ context.Context, _ *types.SealedData, _ *types.UnsealOptions) ([]byte, error) {
+func (m *fbMockSealer) Unseal(_ context.Context, _ *xkms.SealedData, _ *xkms.UnsealOptions) ([]byte, error) {
 	return m.unsealData, m.unsealErr
 }
 
@@ -54,21 +52,21 @@ type fbPanicTPM struct {
 	panicOnReadPCRs   bool
 }
 
-func (m *fbPanicTPM) FixedProperties() (*tpm2pkg.PropertiesFixed, error) {
+func (m *fbPanicTPM) FixedProperties() (*xkms.PropertiesFixed, error) {
 	if m.panicOnFixedProps {
 		panic("fbPanicTPM: FixedProperties panic")
 	}
 	return m.fixedProps, m.fixedPropsErr
 }
 
-func (m *fbPanicTPM) EKAttributes() (*types.KeyAttributes, error) {
+func (m *fbPanicTPM) EKAttributes() (*xkms.KeyAttributes, error) {
 	if m.panicOnEKAttrs {
 		panic("fbPanicTPM: EKAttributes panic")
 	}
 	return m.ekAttrs, m.ekAttrsErr
 }
 
-func (m *fbPanicTPM) ReadPCRs(_ []uint) ([]tpm2pkg.PCRBank, error) {
+func (m *fbPanicTPM) ReadPCRs(_ []uint) ([]xkms.PCRBank, error) {
 	if m.panicOnReadPCRs {
 		panic("fbPanicTPM: ReadPCRs panic")
 	}
@@ -136,7 +134,7 @@ func fbWireSealClient(svc *SealService, m *fbMockSealer) {
 func TestFB_PlatformPolicy_GetStatus_PanicRecover(t *testing.T) {
 	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.policy.Store(&PlatformPolicyDefinition{
 		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -154,7 +152,7 @@ func TestFB_PlatformPolicy_GetStatus_PanicRecover(t *testing.T) {
 func TestFB_PlatformPolicy_CreatePolicy_PanicRecover(t *testing.T) {
 	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	status, err := svc.CreatePolicy([]int{0}, "sha256")
 	assert.Nil(t, status)
 	assert.Error(t, err)
@@ -164,7 +162,7 @@ func TestFB_PlatformPolicy_CreatePolicy_PanicRecover(t *testing.T) {
 func TestFB_PlatformPolicy_UpdatePolicy_PanicRecover(t *testing.T) {
 	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.policy.Store(&PlatformPolicyDefinition{
 		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -178,7 +176,7 @@ func TestFB_PlatformPolicy_UpdatePolicy_PanicRecover(t *testing.T) {
 func TestFB_PlatformPolicy_VerifyPolicy_PanicRecover(t *testing.T) {
 	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.policy.Store(&PlatformPolicyDefinition{
 		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -203,7 +201,7 @@ func TestFB_PlatformPolicy_ExportPolicy_WithStoredPolicy(t *testing.T) {
 func TestFB_PlatformPolicy_GetPlatformPolicyAsPCRPolicy_PanicRecover(t *testing.T) {
 	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.policy.Store(&PlatformPolicyDefinition{
 		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -219,7 +217,7 @@ func TestFB_PlatformPolicy_GetPlatformPolicyAsPCRPolicy_PanicRecover(t *testing.
 func TestFB_PlatformPolicy_RefreshPlatformPolicyPCRs_PanicRecover(t *testing.T) {
 	mock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnReadPCRs: true}
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.policy.Store(&PlatformPolicyDefinition{
 		PCRs: []int{0}, Bank: "sha256", Digests: map[int]string{0: "aa"},
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -257,12 +255,12 @@ func TestFB_PlatformPolicy_VerifyDigests_Mismatch(t *testing.T) {
 func TestFB_PlatformPolicy_VerifyDigests_MissingPCR(t *testing.T) {
 	mock := &policyMockTPM{
 		mockTPM: *defaultMockTPM(),
-		pcrBanksOverride: []tpm2pkg.PCRBank{
-			{Algorithm: "SHA256", PCRs: []tpm2pkg.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
+		pcrBanksOverride: []xkms.PCRBank{
+			{Algorithm: "SHA256", PCRs: []xkms.PCR{{ID: 0, Value: []byte{0xAA, 0xBB}}}},
 		},
 	}
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "platform.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	svc.policy.Store(&PlatformPolicyDefinition{
 		PCRs: []int{0, 7}, Bank: "sha256",
 		Digests:   map[int]string{0: hex.EncodeToString([]byte{0xAA, 0xBB}), 7: "ccdd"},
@@ -312,7 +310,7 @@ func TestFB_PlatformPolicy_CreatePolicy_SaveError(t *testing.T) {
 	defer os.Chmod(roDir, 0700)
 	policyPath := filepath.Join(roDir, "sub", "platform.policy")
 	svc := NewPlatformPolicyService(policyPath)
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return mock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return mock }))
 	status, err := svc.CreatePolicy([]int{0}, "sha256")
 	assert.Nil(t, status)
 	assert.ErrorIs(t, err, ErrPolicySaveFailed)
@@ -443,7 +441,7 @@ func TestFB_TrustService_IsSystemInstalled_NilStore(t *testing.T) {
 func fbTPMSvcWithPanic() *TPMService {
 	panicMock := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnFixedProps: true}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return panicMock }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return panicMock }))
 	return svc
 }
 
@@ -480,7 +478,7 @@ func TestFB_TPM_GetInfo_PanicRecover(t *testing.T) {
 func TestFB_TPM_GetEKInfo_PanicRecover(t *testing.T) {
 	m := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnEKAttrs: true}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return m }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return m }))
 	info, err := svc.GetEKInfo()
 	assert.Nil(t, err)
 	assert.NotNil(t, info)
@@ -490,7 +488,7 @@ func TestFB_TPM_GetEKInfo_PanicRecover(t *testing.T) {
 func TestFB_TPM_GetEKECCInfo_PanicRecover(t *testing.T) {
 	m := &fbPanicTPM{mockTPM: *defaultMockTPM(), panicOnEKAttrs: true}
 	svc := NewTPMService()
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return m }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return m }))
 	info, err := svc.GetEKECCInfo()
 	assert.Nil(t, err)
 	assert.NotNil(t, info)

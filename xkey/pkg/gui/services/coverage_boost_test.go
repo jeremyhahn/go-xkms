@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,9 +26,6 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	"github.com/jeremyhahn/go-xkms/pkg/seal"
-	tpm2pkg "github.com/jeremyhahn/go-xkms/pkg/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -86,7 +84,7 @@ func (m *mockPINBackendWithSOPINErr) VerifySOPIN(_ string) error {
 
 func TestBarrierService_ProbeStrategies_TPMReturnsNil(t *testing.T) {
 	svc := newTestBarrierService(t)
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return nil // Sealer function returns nil.
 	})
 
@@ -94,10 +92,10 @@ func TestBarrierService_ProbeStrategies_TPMReturnsNil(t *testing.T) {
 
 	require.Len(t, strategies, 2, "TPM strategy entry should still appear")
 	// Software strategy.
-	assert.Equal(t, string(seal.StrategyPassphrase), strategies[0].ID)
+	assert.Equal(t, string(xkms.StrategyPassphrase), strategies[0].ID)
 	assert.True(t, strategies[0].Available)
 	// TPM2 strategy marked as unavailable.
-	assert.Equal(t, string(seal.StrategyTPM2), strategies[1].ID)
+	assert.Equal(t, string(xkms.StrategyTPM2), strategies[1].ID)
 	assert.False(t, strategies[1].Available, "TPM strategy should be unavailable when sealer is nil")
 	assert.True(t, strategies[1].HardwareBacked)
 }
@@ -106,7 +104,7 @@ func TestBarrierService_assembleStrategy_Software(t *testing.T) {
 	svc := newTestBarrierService(t)
 	strategy, err := svc.assembleStrategy("passphrase")
 	require.NoError(t, err)
-	assert.Equal(t, seal.StrategyPassphrase, strategy.ID())
+	assert.Equal(t, xkms.StrategyPassphrase, strategy.ID())
 }
 
 func TestBarrierService_assembleStrategy_TPM_NilFunc(t *testing.T) {
@@ -120,7 +118,7 @@ func TestBarrierService_assembleStrategy_TPM_NilFunc(t *testing.T) {
 
 func TestBarrierService_assembleStrategy_TPM_CanSealFalse(t *testing.T) {
 	svc := newTestBarrierService(t)
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: false}
 	})
 	_, err := svc.assembleStrategy("tpm2")
@@ -129,12 +127,12 @@ func TestBarrierService_assembleStrategy_TPM_CanSealFalse(t *testing.T) {
 
 func TestBarrierService_assembleStrategy_TPM_Available(t *testing.T) {
 	svc := newTestBarrierService(t)
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return &mockSealer{canSeal: true}
 	})
 	strategy, err := svc.assembleStrategy("tpm2")
 	require.NoError(t, err)
-	assert.Equal(t, seal.StrategyTPM2, strategy.ID())
+	assert.Equal(t, xkms.StrategyTPM2, strategy.ID())
 }
 
 func TestBarrierService_assembleStrategy_UnknownStrategy(t *testing.T) {
@@ -284,8 +282,8 @@ func TestSealService_saveBlob_EmptyStorageDir(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-blob",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -300,8 +298,8 @@ func TestSealService_saveBlob_RelativeStorageDir(t *testing.T) {
 	blob := &sealedBlobStorage{
 		ID:    "test-blob",
 		Label: "test",
-		SealedData: &types.SealedData{
-			Backend:    types.BackendTypeTPM2,
+		SealedData: &xkms.SealedData{
+			Backend:    xkms.BackendTypeTPM2,
 			Ciphertext: []byte("data"),
 		},
 		CreatedAt: time.Now(),
@@ -467,10 +465,10 @@ func TestPlatformPolicyService_GetPlatformPolicyAsPCRPolicy_ValidFalse(t *testin
 	require.NoError(t, err)
 
 	// Change the PCR values so validation returns false.
-	mock.pcrBanksOverride = []tpm2pkg.PCRBank{
+	mock.pcrBanksOverride = []xkms.PCRBank{
 		{
 			Algorithm: "SHA256",
-			PCRs: []tpm2pkg.PCR{
+			PCRs: []xkms.PCR{
 				{ID: 0, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
 				{ID: 7, Value: []byte{0xFF, 0xFF, 0xFF, 0xFF}},
 			},
@@ -553,7 +551,7 @@ func TestPlatformPolicyService_VerifyPolicy_EmptyDigests(t *testing.T) {
 
 func TestPlatformPolicyService_CreatePolicy_TPMReturnsNilForAccessor(t *testing.T) {
 	svc := NewPlatformPolicyService(filepath.Join(t.TempDir(), "p.policy"))
-	svc.SetTPMAccessor(NewTPMAccessor(func() tpm2pkg.TrustedPlatformModule { return nil }))
+	svc.SetTPMAccessor(NewTPMAccessor(func() xkms.TrustedPlatformModule { return nil }))
 
 	_, err := svc.CreatePolicy([]int{0}, "sha256")
 	assert.ErrorIs(t, err, ErrPolicyTPMNotAvailable)
@@ -1000,14 +998,14 @@ func TestSetupWizardService_SetConfigDir(t *testing.T) {
 
 func TestBarrierService_BestStrategy_TPMNotAvailable(t *testing.T) {
 	svc := newTestBarrierService(t)
-	svc.SetTPMSealerFunc(func() types.Sealer {
+	svc.SetTPMSealerFunc(func() xkms.Sealer {
 		return nil // Returns nil sealer.
 	})
 
 	best, err := svc.BestStrategy()
 	require.NoError(t, err)
 	// TPM2 is listed but not available, so software should be best.
-	assert.Equal(t, string(seal.StrategyPassphrase), best.ID)
+	assert.Equal(t, string(xkms.StrategyPassphrase), best.ID)
 }
 
 // ===========================================================================
@@ -1024,7 +1022,7 @@ func TestSealService_SealData_BackendFieldPreserved(t *testing.T) {
 	// Load the blob and verify the sealed data has the backend set.
 	blob, err := svc.loadBlobByID(entry.ID)
 	require.NoError(t, err)
-	assert.Equal(t, types.BackendTypeTPM2, blob.SealedData.Backend)
+	assert.Equal(t, xkms.BackendTypeTPM2, blob.SealedData.Backend)
 }
 
 func TestSealService_UnsealData_PasswordEmptyOnNonPasswordBlob(t *testing.T) {

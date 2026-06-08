@@ -24,38 +24,37 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockSlotModel implements pivcert.SlotModel for testing slot allocation logic.
+// mockSlotModel implements xkms.PIVSlotModel for testing slot allocation logic.
 type mockSlotModel struct {
-	nextSlot      pivcert.PIVSlot
+	nextSlot      xkms.PIVSlot
 	nextErr       error
 	refreshCount  atomic.Int32
 	nextCallCount atomic.Int32
-	allSlots      []pivcert.PIVSlot
-	occupied      map[pivcert.PIVSlot]bool
+	allSlots      []xkms.PIVSlot
+	occupied      map[xkms.PIVSlot]bool
 }
 
-func newMockSlotModel(nextSlot pivcert.PIVSlot) *mockSlotModel {
+func newMockSlotModel(nextSlot xkms.PIVSlot) *mockSlotModel {
 	return &mockSlotModel{
 		nextSlot: nextSlot,
-		allSlots: []pivcert.PIVSlot{
-			pivcert.PIVSlotRetired1,
-			pivcert.PIVSlotRetired2,
-			pivcert.PIVSlotRetired3,
+		allSlots: []xkms.PIVSlot{
+			xkms.PIVSlotRetired1,
+			xkms.PIVSlotRetired2,
+			xkms.PIVSlotRetired3,
 		},
-		occupied: make(map[pivcert.PIVSlot]bool),
+		occupied: make(map[xkms.PIVSlot]bool),
 	}
 }
 
-func (m *mockSlotModel) AllSlots() []pivcert.PIVSlot { return m.allSlots }
+func (m *mockSlotModel) AllSlots() []xkms.PIVSlot { return m.allSlots }
 
-func (m *mockSlotModel) AvailableSlots() ([]pivcert.PIVSlot, error) {
-	var avail []pivcert.PIVSlot
+func (m *mockSlotModel) AvailableSlots() ([]xkms.PIVSlot, error) {
+	var avail []xkms.PIVSlot
 	for _, s := range m.allSlots {
 		if !m.occupied[s] {
 			avail = append(avail, s)
@@ -64,8 +63,8 @@ func (m *mockSlotModel) AvailableSlots() ([]pivcert.PIVSlot, error) {
 	return avail, nil
 }
 
-func (m *mockSlotModel) OccupiedSlots() ([]pivcert.PIVSlot, error) {
-	var occ []pivcert.PIVSlot
+func (m *mockSlotModel) OccupiedSlots() ([]xkms.PIVSlot, error) {
+	var occ []xkms.PIVSlot
 	for _, s := range m.allSlots {
 		if m.occupied[s] {
 			occ = append(occ, s)
@@ -74,17 +73,17 @@ func (m *mockSlotModel) OccupiedSlots() ([]pivcert.PIVSlot, error) {
 	return occ, nil
 }
 
-func (m *mockSlotModel) IsOccupied(slot pivcert.PIVSlot) (bool, error) {
+func (m *mockSlotModel) IsOccupied(slot xkms.PIVSlot) (bool, error) {
 	return m.occupied[slot], nil
 }
 
-func (m *mockSlotModel) NextAvailable() (pivcert.PIVSlot, error) {
+func (m *mockSlotModel) NextAvailable() (xkms.PIVSlot, error) {
 	m.nextCallCount.Add(1)
 	return m.nextSlot, m.nextErr
 }
 
-func (m *mockSlotModel) SlotOccupancy(slot pivcert.PIVSlot) (*pivcert.SlotOccupancyInfo, error) {
-	return &pivcert.SlotOccupancyInfo{
+func (m *mockSlotModel) SlotOccupancy(slot xkms.PIVSlot) (*xkms.PIVSlotOccupancyInfo, error) {
+	return &xkms.PIVSlotOccupancyInfo{
 		Slot:     slot,
 		Occupied: m.occupied[slot],
 	}, nil
@@ -96,31 +95,31 @@ func (m *mockSlotModel) Refresh() error {
 }
 
 // Compile-time interface check.
-var _ pivcert.SlotModel = (*mockSlotModel)(nil)
+var _ xkms.PIVSlotModel = (*mockSlotModel)(nil)
 
-// recordingKeyProvider implements types.KeyProvider and records what
+// recordingKeyProvider implements xkms.KeyProvider and records what
 // GenerateKey receives so tests can inspect the KeyAttributes.
 type recordingKeyProvider struct {
-	lastAttrs   *types.KeyAttributes
+	lastAttrs   *xkms.KeyAttributes
 	generateErr error
 	signerErr   error
 	getKeyErr   error
 	deleteErr   error
 }
 
-func (p *recordingKeyProvider) Type() types.BackendType {
-	return types.BackendTypePKCS11
+func (p *recordingKeyProvider) Type() xkms.BackendType {
+	return xkms.BackendTypePKCS11
 }
 
-func (p *recordingKeyProvider) Capabilities() types.Capabilities {
-	return types.Capabilities{
+func (p *recordingKeyProvider) Capabilities() xkms.Capabilities {
+	return xkms.Capabilities{
 		Keys:           true,
 		Signing:        true,
 		HardwareBacked: true,
 	}
 }
 
-func (p *recordingKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (p *recordingKeyProvider) GenerateKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	p.lastAttrs = attrs
 	if p.generateErr != nil {
 		return nil, p.generateErr
@@ -132,7 +131,7 @@ func (p *recordingKeyProvider) GenerateKey(attrs *types.KeyAttributes) (crypto.P
 	return key, nil
 }
 
-func (p *recordingKeyProvider) GetKey(attrs *types.KeyAttributes) (crypto.PrivateKey, error) {
+func (p *recordingKeyProvider) GetKey(attrs *xkms.KeyAttributes) (crypto.PrivateKey, error) {
 	if p.getKeyErr != nil {
 		return nil, p.getKeyErr
 	}
@@ -143,15 +142,15 @@ func (p *recordingKeyProvider) GetKey(attrs *types.KeyAttributes) (crypto.Privat
 	return key, nil
 }
 
-func (p *recordingKeyProvider) DeleteKey(attrs *types.KeyAttributes) error {
+func (p *recordingKeyProvider) DeleteKey(attrs *xkms.KeyAttributes) error {
 	return p.deleteErr
 }
 
-func (p *recordingKeyProvider) ListKeys() ([]*types.KeyAttributes, error) {
+func (p *recordingKeyProvider) ListKeys() ([]*xkms.KeyAttributes, error) {
 	return nil, nil
 }
 
-func (p *recordingKeyProvider) Signer(attrs *types.KeyAttributes) (crypto.Signer, error) {
+func (p *recordingKeyProvider) Signer(attrs *xkms.KeyAttributes) (crypto.Signer, error) {
 	if p.signerErr != nil {
 		return nil, p.signerErr
 	}
@@ -162,11 +161,11 @@ func (p *recordingKeyProvider) Signer(attrs *types.KeyAttributes) (crypto.Signer
 	return key, nil
 }
 
-func (p *recordingKeyProvider) Decrypter(attrs *types.KeyAttributes) (crypto.Decrypter, error) {
+func (p *recordingKeyProvider) Decrypter(attrs *xkms.KeyAttributes) (crypto.Decrypter, error) {
 	return nil, errors.New("not supported")
 }
 
-func (p *recordingKeyProvider) RotateKey(attrs *types.KeyAttributes) error {
+func (p *recordingKeyProvider) RotateKey(attrs *xkms.KeyAttributes) error {
 	return errors.New("not supported")
 }
 
@@ -175,16 +174,16 @@ func (p *recordingKeyProvider) Close() error {
 }
 
 // Compile-time interface check.
-var _ types.KeyProvider = (*recordingKeyProvider)(nil)
+var _ xkms.KeyProvider = (*recordingKeyProvider)(nil)
 
 // TestAdapter_GenerateCredentialAttrs_WithSlotModel verifies that when a
 // SlotModel is attached, GenerateCredentialKey allocates the next available
 // PIV slot and passes it through KeyAttributes to the provider.
 func TestAdapter_GenerateCredentialAttrs_WithSlotModel(t *testing.T) {
 	provider := &recordingKeyProvider{}
-	sm := newMockSlotModel(pivcert.PIVSlotRetired1) // NextAvailable returns "82"
+	sm := newMockSlotModel(xkms.PIVSlotRetired1) // NextAvailable returns "82"
 
-	adapter := NewBackendAdapter(provider, types.BackendTypePKCS11)
+	adapter := NewBackendAdapter(provider, xkms.BackendTypePKCS11)
 	adapter.SetSlotModel(sm)
 
 	credID := []byte("test-cred-with-slot")
@@ -196,12 +195,12 @@ func TestAdapter_GenerateCredentialAttrs_WithSlotModel(t *testing.T) {
 
 	// Verify the provider received PIVSlot="82" in its KeyAttributes.
 	require.NotNil(t, provider.lastAttrs)
-	assert.Equal(t, string(pivcert.PIVSlotRetired1), provider.lastAttrs.PIVSlot)
+	assert.Equal(t, string(xkms.PIVSlotRetired1), provider.lastAttrs.PIVSlot)
 
 	// Verify the handle metadata is correct.
 	assert.Equal(t, credID, handle.CredentialID())
 	assert.Equal(t, COSEAlgES256, handle.Algorithm())
-	assert.Equal(t, types.BackendTypePKCS11, handle.BackendID())
+	assert.Equal(t, xkms.BackendTypePKCS11, handle.BackendID())
 
 	// NextAvailable should have been called exactly once.
 	assert.Equal(t, int32(1), sm.nextCallCount.Load())
@@ -213,7 +212,7 @@ func TestAdapter_GenerateCredentialAttrs_WithSlotModel(t *testing.T) {
 func TestAdapter_GenerateCredentialAttrs_NoSlotModel(t *testing.T) {
 	provider := &recordingKeyProvider{}
 
-	adapter := NewBackendAdapter(provider, types.BackendTypeSoftware)
+	adapter := NewBackendAdapter(provider, xkms.BackendTypeSoftware)
 	// No SetSlotModel call -- slotModel remains nil.
 
 	credID := []byte("test-cred-no-slot")
@@ -233,16 +232,16 @@ func TestAdapter_GenerateCredentialAttrs_NoSlotModel(t *testing.T) {
 // SlotModel. Slot allocation is reserved for GenerateCredentialKey only.
 func TestAdapter_LookupCredentialAttrs_NeverAllocates(t *testing.T) {
 	provider := &recordingKeyProvider{}
-	sm := newMockSlotModel(pivcert.PIVSlotRetired1)
+	sm := newMockSlotModel(xkms.PIVSlotRetired1)
 
-	adapter := NewBackendAdapter(provider, types.BackendTypePKCS11)
+	adapter := NewBackendAdapter(provider, xkms.BackendTypePKCS11)
 	adapter.SetSlotModel(sm)
 
 	credID := []byte("test-cred-lookup")
 	handle := &adapterKeyHandle{
 		credentialID: credID,
 		algorithm:    COSEAlgES256,
-		backendType:  types.BackendTypePKCS11,
+		backendType:  xkms.BackendTypePKCS11,
 	}
 
 	// LoadKey -- lookup path, must NOT call NextAvailable.
@@ -272,9 +271,9 @@ func TestAdapter_LookupCredentialAttrs_NeverAllocates(t *testing.T) {
 func TestAdapter_GenerateCredentialAttrs_AllSlotsFull(t *testing.T) {
 	provider := &recordingKeyProvider{}
 	sm := newMockSlotModel("")
-	sm.nextErr = pivcert.ErrNoAvailableSlot
+	sm.nextErr = xkms.ErrPIVNoAvailableSlot
 
-	adapter := NewBackendAdapter(provider, types.BackendTypePKCS11)
+	adapter := NewBackendAdapter(provider, xkms.BackendTypePKCS11)
 	adapter.SetSlotModel(sm)
 
 	credID := []byte("test-cred-full")
@@ -286,7 +285,7 @@ func TestAdapter_GenerateCredentialAttrs_AllSlotsFull(t *testing.T) {
 	// The adapter uses fmt.Errorf("%w: %v", ...) which formats the inner
 	// error as a string via %v, so errors.Is cannot unwrap it. Verify the
 	// inner error message is present in the error string instead.
-	assert.Contains(t, err.Error(), pivcert.ErrNoAvailableSlot.Error(),
+	assert.Contains(t, err.Error(), xkms.ErrPIVNoAvailableSlot.Error(),
 		"error message should contain ErrNoAvailableSlot text")
 
 	// Provider.GenerateKey must NOT have been called when slot allocation fails.
@@ -298,9 +297,9 @@ func TestAdapter_GenerateCredentialAttrs_AllSlotsFull(t *testing.T) {
 // on the SlotModel after a successful key generation to update occupancy.
 func TestAdapter_SlotModelRefreshAfterGenerate(t *testing.T) {
 	provider := &recordingKeyProvider{}
-	sm := newMockSlotModel(pivcert.PIVSlotRetired2) // "83"
+	sm := newMockSlotModel(xkms.PIVSlotRetired2) // "83"
 
-	adapter := NewBackendAdapter(provider, types.BackendTypePKCS11)
+	adapter := NewBackendAdapter(provider, xkms.BackendTypePKCS11)
 	adapter.SetSlotModel(sm)
 
 	credID := []byte("test-cred-refresh")
@@ -317,9 +316,9 @@ func TestAdapter_SlotModelRefreshAfterGenerate_ProviderFails(t *testing.T) {
 	provider := &recordingKeyProvider{
 		generateErr: errors.New("hardware failure"),
 	}
-	sm := newMockSlotModel(pivcert.PIVSlotRetired1)
+	sm := newMockSlotModel(xkms.PIVSlotRetired1)
 
-	adapter := NewBackendAdapter(provider, types.BackendTypePKCS11)
+	adapter := NewBackendAdapter(provider, xkms.BackendTypePKCS11)
 	adapter.SetSlotModel(sm)
 
 	credID := []byte("test-cred-fail-refresh")
@@ -337,9 +336,9 @@ func TestAdapter_SlotModelRefreshAfterGenerate_ProviderFails(t *testing.T) {
 // disables slot allocation and GenerateCredentialKey works without one.
 func TestAdapter_SetSlotModel_Nil(t *testing.T) {
 	provider := &recordingKeyProvider{}
-	sm := newMockSlotModel(pivcert.PIVSlotRetired1)
+	sm := newMockSlotModel(xkms.PIVSlotRetired1)
 
-	adapter := NewBackendAdapter(provider, types.BackendTypePKCS11)
+	adapter := NewBackendAdapter(provider, xkms.BackendTypePKCS11)
 	adapter.SetSlotModel(sm)
 
 	// Now set it to nil.
